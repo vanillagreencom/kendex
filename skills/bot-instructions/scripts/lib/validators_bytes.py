@@ -15,47 +15,34 @@ validator's own identity rather than on the run's exit code.
 from .constants import (
     ALL_BLOCK_COLUMNS,
     CODERABBIT_SCHEMA_PATH,
-    QODO_VERBS,
     ROUTING_COLUMNS,
 )
 from .errors import Finding
-from . import jsonschema, refusals, render_coderabbit
+from . import config, jsonschema, refusals, render_coderabbit
 
 
 def doctrine_routing(ctx, out):
     """The routing table is the generator's single routing input, so a
-    one-character edit to it is a silent policy change."""
+    one-character edit to it is a silent policy change. Which blocks exist is
+    the doctrine source's alone, and each needs a row: a row the table reader
+    skips, such as one missing its closing pipe, leaves its block with none,
+    and that block, which reaches no destination, is a finding here."""
     v = "doctrine-routing"
-    doc = ctx.doctrine
-    headings = set(doc.blocks)
-    rows = set(doc.positions)
-    for bid in sorted(headings - rows):
-        out.append(Finding(v, f"doctrine block {bid!r} has no row in the routing table; "
-                              "an unrouted block renders into nothing at all"))
-    for bid in sorted(rows - headings):
-        out.append(Finding(v, f"routing table row {bid!r} names no `###` heading in the "
-                              "doctrine source, so it renders a hole"))
-    frozen = set(ctx.frozen_ids)
-    for bid in sorted(frozen - headings):
-        out.append(Finding(v, f"block id {bid!r} is frozen and the doctrine source no longer "
-                              "defines it. A consuming repo's [bot-instructions.doctrine.append] keyed on it "
-                              "would silently reach nothing"))
-    for bid in sorted(headings - frozen):
-        out.append(Finding(v, f"block id {bid!r} is not in the frozen set. Renaming a heading "
-                              "and its row together leaves both sides agreeing, which is why "
-                              "the comparison is against the frozen set and not the pair"))
+    rows = ctx.doctrine.positions
+    for bid in sorted(set(ctx.doctrine.blocks) - set(rows)):
+        out.append(Finding(v, f"doctrine block {bid!r} has no row in the routing table, "
+                              "or none the table reader reads; a row is how a block "
+                              "reaches any destination"))
     for column in ROUTING_COLUMNS:
-        order = doc.routing[column]
-        positions = [doc.positions[b][column] for b in order]
+        positions = sorted(cells[column] for cells in rows.values() if column in cells)
         if len(set(positions)) != len(positions):
             out.append(Finding(v, f"column {column!r} repeats a position"))
         if positions and positions != list(range(1, len(positions) + 1)):
             out.append(Finding(v, f"column {column!r} positions are {positions}, not 1..n"))
     for column in ALL_BLOCK_COLUMNS:
-        missing = headings - set(doc.routing[column])
-        for bid in sorted(missing):
-            out.append(Finding(v, f"column {column!r} omits {bid!r}. That bot reads no second "
-                                  "surface, so the block reaches it nowhere"))
+        for bid in sorted(b for b, cells in rows.items() if column not in cells):
+            out.append(Finding(v, f"column {column!r} omits {bid!r}. That column carries "
+                                  "every block, so the block reaches the bot reading it nowhere"))
 
 
 def coderabbit_schema(ctx, out):
@@ -164,8 +151,9 @@ def qodo_parity(ctx, out):
     if sections is None:
         return
     union = sections["pr_agent issues"] + "\n" + sections["pr_agent compliance"]
+    verbs = config.qodo_verbs()
     for verb in ctx.config.cadence["qodo_commands"]:
-        if QODO_VERBS.get(verb) != "review":
+        if verbs[verb] != "review":
             continue
         section = sections["pr_agent extra"] if verb == "/review" else union
         if not section.strip():

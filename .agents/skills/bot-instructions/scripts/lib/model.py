@@ -1,7 +1,7 @@
 """Everything a render reads, assembled once.
 """
 
-from .constants import CODERABBIT_SCHEMA_PATH
+from .constants import CODERABBIT_SCHEMA_PATH, REPLY_CONTRACT
 from .errors import InputError, ManifestError, SpecError
 from . import config as config_mod, manifest, marker as marker_mod, spec
 
@@ -95,7 +95,7 @@ def _assemble(config, doctrine):
         elif bid in config.doctrine_append:
             text = text + "\n\n" + config.doctrine_append[bid].strip("\n")
             from_repo[bid] = "append"
-        if bid == "reply-contract":
+        if bid == REPLY_CONTRACT:
             text = text.replace("<issue>", f"<{tracker}-n>" if tracker else "<issue>")
         out[bid] = text
     return out, from_repo

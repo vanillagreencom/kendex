@@ -191,7 +191,7 @@ The table itself stays until the package is gone, because a render with no `[bot
 | `qodo_commands` | array of string | `["/agentic_review"]` | `[github_app] pr_commands` |
 | `qodo_push_trigger` | bool | `false` | `[github_app] handle_push_trigger` |
 
-Each `qodo_commands` entry is a bare verb from this set:
+Each `qodo_commands` entry is a bare verb from this set. The generator reads the table as data, from its running copy, so it is the one statement of the set, and `qodo-parity` reads its Role column, `review` or `not review`:
 
 | Verb | Line | Role |
 |------|------|------|
@@ -201,8 +201,6 @@ Each `qodo_commands` entry is a bare verb from this set:
 | `/describe` | Merge | not review |
 | `/improve` | Merge | not review |
 
-- `constants.QODO_VERBS` encodes this set and its Role column by hand, and `qodo-parity` reads that constant.
-- `tests/toml-refusals.test.sh` holds this table against that constant, a stopgap `validators.md` § Cross-file sets lists.
 - `qodo-parity` requires guidance in the section a **review** verb reads, and this render writes it for both.
 - A verb in the other half reads a section this render leaves alone, so its presence is not a finding: `/agentic_describe` and `/describe` write the pull request body, and `/improve` reads `[pr_code_suggestions]`.
 - The vendor's documented default, `["/agentic_describe", "/agentic_review"]`, passes.
@@ -335,32 +333,31 @@ A path set plus what a reviewer needs to know about it. Zero or more.
 
 ## The content refusals
 
-One row per input string, one column per refusal class, and an **Enforced** column saying which side reads that row's value.
+One row per input string and one column per refusal class.
 
 - Every class here is one that would break the STRUCTURE of a file this package emits; a value this package merely dislikes is not refused.
 - Everything that judges these, `toml-schema` and the Escaping paragraphs in `renders.md`, cites this table rather than restating it.
-- Three structures encode it, one per kind of cell: `refusals.ROWS` holds the eight rows whose refusals are content classes, `globs.check` holds the glob row, and `config._cadence` holds the `qodo_commands` row.
-- [`tests/toml-refusals.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/bot-instructions/tests/toml-refusals.test.sh) holds the table against them.
+- The generator reads this table as data, from its running copy. It looks a row up by its input's name, so a row added here refuses that input's values with no other edit.
+- `scripts/lib/refusals.py` encodes each column's predicate once, under the column's name.
+- A row's refusals run in column order, and the first that matches names the refusal.
+- A run that reads the table refuses a row naming no string input, a column naming no predicate, and a cell other than `yes` or a dash.
+- `toml-schema` enforces every row except `doctrine block text`. Doctrine block text lives in the spec copy, not in `[bot-instructions]`, so the render-side check below enforces it.
 
-**One input string is outside this table.**
+**A repo input outside this table holds a class that admits no control character.**
 
-- `[bot-instructions.repo] code_review_path` is a path shape rather than a content class: a fourth structure, `config._code_review_path`, encodes it, and § `[bot-instructions.repo]` states its clauses.
+- The section of this file that defines the input states its class, such as § The glob dialect for a glob key.
 - Its refusals reach an operator as `toml-schema` findings like every row here.
 
-One row is not in `[bot-instructions]` at all: doctrine block text lives in the spec copy, so `toml-schema` never sees it, and the Enforced column names the render-side check.
-
-| Input string | heading | marker | comment-close | toml-delimiter | control | character class | Enforced |
-|--------------|---------|--------|---------------|----------------|---------|-----------------|----------|
-| `[bot-instructions.repo] name` | – | yes | – | yes | yes | single line | `toml-schema` |
-| `[bot-instructions.repo] tracker` | – | yes | – | yes | yes | single line | `toml-schema` |
-| `[bot-instructions.repo] summary` | yes | yes | – | yes | yes | – | `toml-schema` |
-| `[[bot-instructions.surface]] instructions` | yes | yes | – | – | yes | – | `toml-schema` |
-| `[bot-instructions.doctrine.append]` / `[bot-instructions.doctrine.replace]` values | yes | yes | – | yes | yes | – | `toml-schema` |
-| doctrine block text | yes | yes | – | yes | yes | – | render-side |
-| `[[bot-instructions.exclusions.path]] reason` | – | yes | yes | – | yes | single line | `toml-schema` |
-| `[[bot-instructions.surface]] globs`, `exclude_globs`, `[[bot-instructions.exclusions.path]] glob` | – | – | – | – | – | non-empty, the glob dialect above, and its path-shape rule | `toml-schema` |
-| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – | `toml-schema` |
-| `[bot-instructions.cadence] qodo_commands` entries | – | – | – | – | – | a verb from the set above, no whitespace, no `--` | `toml-schema` |
+| Input string | heading | marker | comment-close | toml-delimiter | control | single-line |
+|--------------|---------|--------|---------------|----------------|---------|-------------|
+| `[bot-instructions.repo] name` | – | yes | – | yes | yes | yes |
+| `[bot-instructions.repo] tracker` | – | yes | – | yes | yes | yes |
+| `[bot-instructions.repo] summary` | yes | yes | – | yes | yes | – |
+| `[[bot-instructions.surface]] instructions` | yes | yes | – | – | yes | – |
+| `[bot-instructions.doctrine.*]` values | yes | yes | – | yes | yes | – |
+| doctrine block text | yes | yes | – | yes | yes | – |
+| `[[bot-instructions.exclusions.path]] reason` | – | yes | yes | – | yes | yes |
+| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – |
 
 The predicates, written once:
 
@@ -377,11 +374,8 @@ The predicates, written once:
   - One predicate for both structured targets, TOML basic multi-line strings and YAML scalars.
   - TOML's own escapes are how one arrives, `summary = "\u0000"` parses to a literal NUL, so the class judges the decoded value.
   - `scripts/lib/refusals.py` is the one statement of the class, and `coderabbit-schema` runs that same predicate over the document it validates.
-  - A `single line` class does not exempt a row from this mark: it refuses the line breaks and says nothing about the rest of the class.
-- **character class**: as stated per row above.
-  - `single line` on `[bot-instructions.repo] name`, `[bot-instructions.repo] tracker` and `[[bot-instructions.exclusions.path]] reason`.
-  - The dialect's own class on the globs.
-  - A verb from a closed literal set on `qodo_commands`.
+  - A `single-line` mark does not exempt a row from this mark: it refuses the line breaks and says nothing about the rest of the class.
+- **single-line**: a value that reads as more than one line, a trailing break included.
   - Tab and newline stay legal in `[bot-instructions.tone] coderabbit`, whose newlines the render collapses to single spaces.
 
 **Refusals, not escapes.**
@@ -393,7 +387,7 @@ The predicates, written once:
 
 - Every marked cell names a rejection clause.
 - Admit its test protection under `validators.md` § Controls.
-- `toml-schema` carries no list of its own: it names this table, takes the rows Enforced marks as its, and adds the one clause that is a path shape rather than a content refusal.
+- `toml-schema` carries no list of its own: it names this table, takes every row but `doctrine block text`, and adds the class of each input outside it, per the rule above the table.
 
 Two surfaces may match the same file.
 

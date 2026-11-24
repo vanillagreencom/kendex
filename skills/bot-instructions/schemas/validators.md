@@ -48,41 +48,44 @@ The harness's control feeds a pattern the dialect **refuses** through the vector
 
 **"Derived" covers two different things, and a row says which.**
 
-- *Derived, read at run time* means the generator parses that file and the set arrives as data. Exactly two files are read that way, the doctrine source and the routing table, and SKILL.md § The render inputs names both.
+- *Derived, read at run time* means the generator parses the source and the set arrives as data. Four sources are read that way:
+  - the doctrine source and the routing table, from the spec copy SKILL.md § The render inputs names;
+  - the content-refusal table and the verb table in `repo-toml.md`, from the running copy, because they decide what the code accepts and `kendex verify` runs a trusted copy with `--spec` naming the copy inside the tree it judges.
 - *Derived, one statement* means one constant in the implementation holds the set and every reader reads that constant.
 - A file carrying **text a render emits** is data.
 - A spec table that states a set the implementation also encodes is a second hand-kept copy, not a derivation.
 
 Its sites, and which answer each takes:
 
-| Set | Answer | Deriving item |
-|-----|--------|---------------|
-| Doctrine block ids | Stopgap: `doctrine-routing` | KEN-5592 |
-| Which block reaches which destination, and in what order | Derived, read at run time | – |
-| Content refusals | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
-| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
-| The marker line | Derived, one statement | – |
-| The routing table's own shape | `doctrine-routing` | – |
-| Validator test protection | § Controls | – |
+| Set | Answer |
+|-----|--------|
+| Doctrine block ids | Derived, read at run time |
+| Which block reaches which destination, and in what order | Derived, read at run time |
+| Content refusals | Derived, read at run time |
+| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Derived, read at run time |
+| The marker line | Derived, one statement |
+| The routing table's own shape | `doctrine-routing` |
+| Validator test protection | § Controls |
 
-- **Doctrine block ids**: the doctrine source's `###` headings and the routing table's rows are two hand-kept copies, each held against the frozen id set. `doctrine-routing` holds set equality in both directions.
-- **Which block reaches which destination**: the routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own.
+- **Doctrine block ids**: the doctrine source's `###` headings are the one statement.
+  - The routing table's rows, `[bot-instructions.doctrine.append]` and `[bot-instructions.doctrine.replace]` each name ids from it, and a name it does not define is refused where it is read.
+  - The render addresses two blocks by id, `render-out-of-scope` and `reply-contract`, so a doctrine source without either is refused.
+- **Which block reaches which destination**: the routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own. Every block has a row there, which `doctrine-routing` holds.
 - **Content refusals**: which input string is under which refusal, and what each refusal's predicate is.
-  - The table in `repo-toml.md` § The content refusals states it; `toml-schema` and the Escaping paragraphs cite that table.
-  - Three structures encode it by hand: `refusals.ROWS` holds the content-class rows, `globs.check` the glob row, and `config._cadence` the `qodo_commands` row.
-  - `toml-refusals.test.sh` holds the table against all three.
-- **The Qodo verbs**, and which half `qodo-parity` requires guidance for: `repo-toml.md` § `[bot-instructions.cadence]` states the set and the split; `constants.QODO_VERBS` encodes the role column by hand, `qodo-parity` reads that constant, and `toml-refusals.test.sh` holds the stated table against it.
+  - The table in `repo-toml.md` § The content refusals is the single source of which input is under which refusal; `toml-schema` and the Escaping paragraphs cite it.
+  - `refusals.py` encodes each predicate once, under the name the table's column spells, and holds no row.
+- **The Qodo verbs**, and which half `qodo-parity` requires guidance for: the verb table in `repo-toml.md` § `[bot-instructions.cadence]` states the set and the split, and both `toml-schema` and `qodo-parity` read it.
 - **The marker line**: its exact form, the prologue that may precede it, and the one field it varies by.
   - One function emits the marker and one answers ownership against its opener, which both read from one constant, so the writer and the reader cannot spell it differently and a marker an earlier copy wrote still reads as owned.
   - One function splits the prologue, and both the ownership test and the marker's insertion read it.
   - The path class is one constant, which `spec.py` refuses outside of.
-- **The routing table's own shape**: positions contiguous per column, no duplicates, and every block in the two all-eight columns. `doctrine-routing` judges the table as well as comparing it to the doctrine source.
+- **The routing table's own shape**: a row for every doctrine block, positions contiguous per column, no duplicates, and every row in the three all-block columns. `doctrine-routing` judges the table's rows.
 - **Validator test protection**: judge the evidence against the named rejection and its cost under § Controls; no control count defines admission.
 
-**The frozen id set is behavior, not data.**
+**A block id rename is a breaking change, refused where it would reach nothing.**
 
-- Renaming a heading and its routing row together leaves both sides agreeing.
-- So `doctrine-routing` compares against a frozen set the implementation carries, and changing it is a deliberate edit in code a reviewer reads.
+- A consuming repo's `[bot-instructions.doctrine.append]` or `[bot-instructions.doctrine.replace]` keyed on the old id is a `toml-schema` finding on its next render, never an override that silently reaches nothing.
+- Renaming `render-out-of-scope` or `reply-contract` is refused in the spec copy itself, since the render addresses both.
 
 **What no validator can do.**
 
@@ -112,15 +115,15 @@ Its sites, and which answer each takes:
 
 **Rejects, the content set.**
 
-- The clauses are the cells of `repo-toml.md` § The content refusals **whose row this file supplies**: every marked cell on such a row names a rejection clause, and the predicates are that table's, the `qodo_commands` verb set included.
+- The clauses are the cells of `repo-toml.md` § The content refusals **whose row this file supplies**: every marked cell on such a row names a rejection clause, and the predicates are that table's.
 - The `doctrine block text` row is not this validator's: its enforcer is the render-side check `repo-toml.md` § Render-side second checks names.
-- The glob row's path-shape rule is the one entry whose clauses that table names rather than marks: an empty glob, a leading or trailing `/`, a `..` component, and an empty component, each a rejection clause.
+- A glob outside `repo-toml.md` § The glob dialect, and each of its path shapes: an empty glob, a leading or trailing `/`, a `..` component, and an empty component, each a rejection clause.
+- A `qodo_commands` entry outside the verb table in `repo-toml.md` § `[bot-instructions.cadence]`, or one carrying whitespace or `--`.
 
-**`[bot-instructions.repo] code_review_path` is the second such entry, and it is outside that table.**
+**`[bot-instructions.repo] code_review_path` is outside that table.**
 
 - Its clauses are shapes rather than content refusals: the marker path class, a `.md` suffix, no empty, `.` or `..` component, the `CODE_REVIEW_TREE` parent, no `AGENTS.md` basename in any case, and no upper-case basename.
 - `config._code_review_path` encodes them, and `repo-toml.md` § `[bot-instructions.repo]` states them under the key.
-- The table's Enforced column identifies the owner of each refusal.
 - Judge needed test protection under § Controls rather than a second list of rejection clauses.
 
 **Rejects, the cross-flag set.**
@@ -132,28 +135,18 @@ Its sites, and which answer each takes:
 
 **Silent failure.**
 
-- The routing table's rows and the doctrine source's `###` headings are two hand-kept copies of one set.
-- A heading with no row renders into nothing; a row naming a heading that does not exist renders a hole. Both render clean.
-- In the CI lane this package prescribes, the spec copy comes from the tree under judgment while the code runs from the trusted default-branch checkout, so a pull request adding a doctrine block changes the routing in the same copy.
-- `--spec` names both files from one copy.
+- The routing table is the generator's single routing input, so a one-character edit to a position is a silent policy change that renders clean.
+- In the CI lane this package prescribes, the spec copy comes from the tree under judgment while the code runs from the trusted default-branch checkout, so a pull request changing the routing changes it in the same copy.
+- `--spec` names both the doctrine source and the routing table from one copy.
 
-**Rejects, the set.**
+**Rejects, the table's own shape.** Nothing else judges the table:
 
-- A `###` block id in the doctrine source with no row in the routing table.
-- A routing-table row naming an id the doctrine source does not define.
-- Set equality in both directions.
-
-**Rejects, against the frozen id set.**
-
-- A frozen id the doctrine source no longer defines.
-- An id it defines that the frozen set does not carry.
-- This is the enforcer for "block ids are frozen": a rename leaves a consuming repo's `[bot-instructions.doctrine.append]` keyed on the old id reaching nothing.
-
-**Rejects, the table's own shape.** Nothing else judges the table, the generator's single routing input:
-
+- A doctrine block with no row. A row the reader skips, such as one missing its closing pipe, leaves its block with none, so the malformed row is this finding.
 - A position repeated inside a column.
 - A gap in a column's positions, which must run `1..n`.
-- A missing block in the `code-review.md` or `macroscope doctrine.md` column. Both columns carry every block.
+- A row leaving out the `code-review.md`, `pr_agent extra` or `macroscope doctrine.md` column. Those columns carry every block.
+
+Which blocks exist is the doctrine source's alone, so this validator holds the table to the doctrine source's headings with no second list of ids, and a row naming no block is refused where the table is read.
 
 A byte validator: both inputs belong to the render, from the one copy `--spec` names. Judge the validator's test protection under § Controls.
 
@@ -191,7 +184,7 @@ A byte validator: both inputs belong to the render, from the one copy `--spec` n
 
 **Rejects, the control-class clause.** A string in the rendered document carrying a character a YAML reader breaks a line on: C0 less tab and newline, DEL, U+0085, U+2028, U+2029.
 
-- This covers the one arrival route `repo-toml.md` § The content refusals cannot: a value from a vendored-schema default or from this package's own overrides.
+- This covers the arrival route that `repo-toml.md` § The content refusals, which holds every repo input to its table or to a class that admits no control character, does not: a value from a vendored-schema default or from this package's own overrides.
 - The refusal is this validator's finding rather than a raise out of the emitter.
 
 ## `exclusion-consistency`

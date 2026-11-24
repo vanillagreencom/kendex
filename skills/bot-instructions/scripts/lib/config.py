@@ -7,8 +7,12 @@ defaults produced plausible output.
 
 KEYS below is the schema. The required-key clause derives from its `required`
 column rather than restating which fields are required, because a restated
-list falls behind the column.
+list falls behind the column. A string key's content refusals are the row of
+`repo-toml.md` § The content refusals that names it, found by that name, so
+the schema carries no copy of which key is under which refusal.
 """
+
+import functools
 
 from .constants import (
     CODE_REVIEW_TREE,
@@ -16,58 +20,76 @@ from .constants import (
     DEFAULT_COPILOT_CHARS,
     DEFAULT_QODO_LINES,
     MARKER_PATH_CLASS,
-    QODO_VERBS,
     RESERVED_SURFACE_NAMES,
 )
 from .errors import InputError
-from . import globs, refusals, spec
+from . import globs, refusals, repo_toml, spec
 
-# table -> key -> (type, required, default, refusal row or None)
+# table -> key -> (type, required, default)
 KEYS = {
     "repo": {
-        "name": (str, True, None, "[bot-instructions.repo] name"),
-        "summary": (str, True, None, "[bot-instructions.repo] summary"),
-        "tracker": (str, False, None, "[bot-instructions.repo] tracker"),
-        "code_review_path": (str, False, DEFAULT_CODE_REVIEW_PATH, None),
+        "name": (str, True, None),
+        "summary": (str, True, None),
+        "tracker": (str, False, None),
+        "code_review_path": (str, False, DEFAULT_CODE_REVIEW_PATH),
     },
     "bots": {
-        k: (bool, False, False, None)
+        k: (bool, False, False)
         for k in (
             "codex", "copilot", "coderabbit", "qodo",
             "qodo_best_practices", "qodo_review_md", "macroscope",
         )
     },
     "cadence": {
-        "coderabbit_incremental": (bool, False, True, None),
-        "coderabbit_drafts": (bool, False, False, None),
-        "qodo_commands": (list, False, ["/agentic_review"], None),
-        "qodo_push_trigger": (bool, False, False, None),
+        "coderabbit_incremental": (bool, False, True),
+        "coderabbit_drafts": (bool, False, False),
+        "qodo_commands": (list, False, ["/agentic_review"]),
+        "qodo_push_trigger": (bool, False, False),
     },
-    "tone": {"coderabbit": (str, False, None, "[bot-instructions.tone] coderabbit")},
+    "tone": {"coderabbit": (str, False, None)},
     # What a bot keeps between pull requests. `false` renders CodeRabbit's
     # `knowledge_base.opt_out = true`: no stored learnings, issue or pull
     # request context. Code guidelines and web search are stateless and stay
     # on, so the `AGENTS.md` route survives an opt-out.
-    "retention": {"coderabbit": (bool, False, True, None)},
+    "retention": {"coderabbit": (bool, False, True)},
     "budgets": {
-        "copilot_chars": (int, False, DEFAULT_COPILOT_CHARS, None),
-        "qodo_best_practices_lines": (int, False, DEFAULT_QODO_LINES, None),
+        "copilot_chars": (int, False, DEFAULT_COPILOT_CHARS),
+        "qodo_best_practices_lines": (int, False, DEFAULT_QODO_LINES),
     },
-    "exclusions": {"derive_render": (bool, False, False, None), "path": (list, False, [], None)},
+    "exclusions": {"derive_render": (bool, False, False), "path": (list, False, [])},
 }
 
 SURFACE_KEYS = {
-    "name": (str, True, None, None),
-    "globs": (list, True, None, None),
-    "exclude_globs": (list, False, None, None),
-    "reviewer_only": (bool, False, False, None),
-    "instructions": (str, True, None, "[[bot-instructions.surface]] instructions"),
+    "name": (str, True, None),
+    "globs": (list, True, None),
+    "exclude_globs": (list, False, None),
+    "reviewer_only": (bool, False, False),
+    "instructions": (str, True, None),
 }
 
 EXCLUSION_KEYS = {
-    "glob": (str, True, None, None),
-    "reason": (str, True, None, "[[bot-instructions.exclusions.path]] reason"),
+    "glob": (str, True, None),
+    "reason": (str, True, None),
 }
+
+SURFACE = "[[bot-instructions.surface]]"
+EXCLUSION = "[[bot-instructions.exclusions.path]]"
+# Both override tables' values, under one row.
+DOCTRINE_VALUES = "[bot-instructions.doctrine.*] values"
+
+
+def _strings(prefix, schema):
+    return {f"{prefix} {key}" for key, (want, _, _) in schema.items() if want is str}
+
+
+# Every name a content-refusal row can carry: each string input `_table`
+# reads, by the name it looks its row up under, plus the override values.
+INPUTS = frozenset(
+    set().union(*(_strings(f"[bot-instructions.{name}]", schema) for name, schema in KEYS.items()))
+    | _strings(SURFACE, SURFACE_KEYS)
+    | _strings(EXCLUSION, EXCLUSION_KEYS)
+    | {DOCTRINE_VALUES}
+)
 
 TOP_LEVEL = frozenset({"schema", "surface", "doctrine"}) | frozenset(KEYS)
 
@@ -100,8 +122,9 @@ def _typed(value, want, where):
     return value
 
 
-def _table(raw, name, schema, where):
-    """Read one closed table: unknown keys, wrong types, absent required keys."""
+def _table(raw, name, schema, where, prefix):
+    """Read one closed table: unknown keys, wrong types, absent required keys,
+    and each value's content refusals, the row named `prefix key`."""
     given = raw.get(name, {})
     if not isinstance(given, dict):
         raise InputError(f"{where}: expected a table")
@@ -109,11 +132,12 @@ def _table(raw, name, schema, where):
     for key in given:
         if key not in schema:
             raise InputError(f"{where}: unknown key {key!r}")
-    for key, (want, required, default, row) in schema.items():
+    rows = refusals.rows()
+    for key, (want, required, default) in schema.items():
         if key in given:
             value = _typed(given[key], want, f"{where} {key}")
-            if row:
-                refusals.apply(row, value, f"{where} {key}")
+            if f"{prefix} {key}" in rows:
+                refusals.apply(f"{prefix} {key}", value, f"{where} {key}")
             out[key] = value
         elif required:
             raise InputError(f"{where}: required key {key!r} is absent")
@@ -135,7 +159,11 @@ def parse(raw, where):
             f"{where}: schema = {raw['schema']!r}; this generator knows 1 and refuses a "
             "value it does not know rather than rendering a partly understood file"
         )
-    data = {name: _table(raw, name, schema, f"{where} [bot-instructions.{name}]") for name, schema in KEYS.items()}
+    _refusal_inputs()
+    data = {
+        name: _table(raw, name, schema, f"{where} [bot-instructions.{name}]", f"[bot-instructions.{name}]")
+        for name, schema in KEYS.items()
+    }
     data["exclusions"]["path"] = _exclusions(raw.get("exclusions", {}), where)
     data["surface"] = surfaces(raw.get("surface", []), f"{where} [[bot-instructions.surface]]")
     data["doctrine"] = _doctrine(raw.get("doctrine", {}), where)
@@ -213,7 +241,7 @@ def _exclusions(table, where):
         w = f"{where} [[bot-instructions.exclusions.path]][{i}]"
         if not isinstance(entry, dict):
             raise InputError(f"{w}: expected a table")
-        out.append(_table({"e": entry}, "e", EXCLUSION_KEYS, w))
+        out.append(_table({"e": entry}, "e", EXCLUSION_KEYS, w, EXCLUSION))
         globs.check(out[-1]["glob"], f"{w} glob")
     return out
 
@@ -231,7 +259,7 @@ def surfaces(entries, where):
         w = f"{where}[{i}]"
         if not isinstance(entry, dict):
             raise InputError(f"{w}: expected a table")
-        s = _table({"e": entry}, "e", SURFACE_KEYS, w)
+        s = _table({"e": entry}, "e", SURFACE_KEYS, w, SURFACE)
         name = s["name"]
         if not name or not all(c.islower() or c.isdigit() or c == "-" for c in name) \
                 or not name.isascii():
@@ -275,18 +303,58 @@ def _doctrine(table, where):
         for block, value in given.items():
             w = f"{where} [bot-instructions.doctrine.{kind}] {block}"
             _typed(value, str, w)
-            refusals.apply("[bot-instructions.doctrine.*] values", value, w)
+            refusals.apply(DOCTRINE_VALUES, value, w)
             out[kind][block] = value
     return out
 
 
+def _refusal_inputs():
+    """Every content-refusal row names an input something applies it to.
+
+    A row is looked up by its input's name, so a row whose name nothing
+    carries, a misspelt key or a non-string one, refuses nothing while the
+    table reads as though it did.
+    """
+    for label in refusals.rows():
+        if label not in INPUTS and label != refusals.DOCTRINE_TEXT:
+            raise repo_toml.refused(
+                f"content-refusal row {label!r} names no string input this package reads, "
+                "so it would refuse nothing"
+            )
+
+
+@functools.cache
+def qodo_verbs():
+    """`repo-toml.md` § `[bot-instructions.cadence]`'s verb table: verb -> role.
+
+    That table is the one statement of the set `qodo_commands` accepts and of
+    which half `qodo-parity` requires guidance for. A role outside the two the
+    table defines would read as not review and silence `qodo-parity`, so it is
+    refused.
+    """
+    header, body = repo_toml.table("Verb")
+    if "Role" not in header:
+        raise repo_toml.refused("the verb table has no Role column")
+    role_at = header.index("Role")
+    out = {}
+    for cells in body:
+        verb, role = cells[0].replace("`", ""), cells[role_at]
+        if role not in ("review", "not review"):
+            raise repo_toml.refused(f"verb {verb!r} has role {role!r}, neither `review` nor `not review`")
+        if verb in out:
+            raise repo_toml.refused(f"the verb table has two rows for {verb!r}")
+        out[verb] = role
+    return out
+
+
 def _cadence(cadence, where):
+    verbs = qodo_verbs()
     for i, verb in enumerate(cadence["qodo_commands"]):
         w = f"{where} [bot-instructions.cadence] qodo_commands[{i}]"
         _typed(verb, str, w)
-        if verb not in QODO_VERBS:
+        if verb not in verbs:
             raise InputError(
-                f"{w}: {verb!r} is not one of {', '.join(sorted(QODO_VERBS))}"
+                f"{w}: {verb!r} is not one of {', '.join(sorted(verbs))}"
             )
         if any(c.isspace() for c in verb) or "--" in verb:
             raise InputError(

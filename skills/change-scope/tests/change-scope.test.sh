@@ -2165,10 +2165,10 @@ require_rows change-scope-fixture "$fixture_rows"
 # leave it alone.
 manifest_repo="$(new_repo change-scope-manifest)"
 printf 'schema = 7\n\n[skills.demo]\nsource = "cat"\n' >"$manifest_repo/kendex.toml"
-mkdir -p "$manifest_repo/.agents/skills/bot-instructions/schemas"
-cp "$BOT_INSTRUCTIONS_PACKAGE/SKILL.md" "$manifest_repo/.agents/skills/bot-instructions/"
-cp "$BOT_INSTRUCTIONS_PACKAGE/schemas/renders.md" "$manifest_repo/.agents/skills/bot-instructions/schemas/"
-cp -R "$BOT_INSTRUCTIONS_PACKAGE/scripts" "$manifest_repo/.agents/skills/bot-instructions/"
+# The whole package, as an install copies it: the running copy reads its own
+# schemas, so a hand-picked subset drifts from what the checker needs.
+mkdir -p "$manifest_repo/.agents/skills"
+cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$manifest_repo/.agents/skills/bot-instructions"
 commit_paths "$manifest_repo" 'a consumer manifest' seed.txt
 manifest_base="$(git -C "$manifest_repo" rev-parse HEAD)"
 printf '[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.toml"\n' >"$manifest_repo/kendex.settings.toml"

@@ -2,24 +2,25 @@
 
 SKILL.md § Doctrine defines a spec copy as a copy of this package whose
 skill file carries the doctrine section and whose `schemas/renders.md` carries
-the routing table. One `--spec` flag names both, because `doctrine-routing`
-holds one against the other and reading them from different copies would red
-on every legitimate doctrine change.
+the routing table. One `--spec` flag names both, because the table's rows name
+the doctrine's blocks, so the two are read from one copy.
 
 **The package validates its own spec copy for shape, and trusts it for
 content.** The input paths are interpolated into a comment that no
 structured-file validator need be in the render to catch, so they are held to
 a class that cannot close a comment. Doctrine text is trusted the way
 the rest of this package's own bytes are, and is re-checked only against the
-content refusals, which `refusals.py` owns.
+`doctrine block text` row of `repo-toml.md` § The content refusals, whose
+predicates `refusals.py` encodes.
 """
 
 import re
 import tomllib
 
 from .constants import (
-    FROZEN_BLOCK_IDS,
     MARKER_PATH_CLASS,
+    RENDER_OUT_OF_SCOPE,
+    REPLY_CONTRACT,
     ROUTING_COLUMNS,
 )
 from .errors import BotInstructionsError, InputError, SpecError
@@ -38,10 +39,11 @@ class Doctrine:
         # against the manifest's own surface schema where they meet the
         # repo's set, in `model.build`, which already reads the config.
         self.surfaces = surfaces
-        # block id -> {column: position}. Its own attribute rather than a
-        # `_positions` key inside `routing`, whose documented type is the line
-        # above: a sentinel key there makes any iteration over `routing` read
-        # one entry that is not a column.
+        # The routing table's rows: block id -> {column: position}, for the
+        # blocks the table names. A block with no row has no entry. Its own
+        # attribute rather than a `_positions` key inside `routing`, whose
+        # documented type is the line above: a sentinel key there makes any
+        # iteration over `routing` read one entry that is not a column.
         self.positions = positions
         # The loader's selected path belongs to the tree that supplied the
         # doctrine. A pointer must not select a filename from another tree.
@@ -119,7 +121,13 @@ def parse_doctrine(skill_text, where):
     for bid, text in blocks.items():
         if not text:
             raise SpecError(f"{where}: doctrine block {bid!r} has no text")
-        refusals.apply("doctrine block text", text, f"{where} § {bid}")
+        refusals.apply(refusals.DOCTRINE_TEXT, text, f"{where} § {bid}")
+    for bid in (RENDER_OUT_OF_SCOPE, REPLY_CONTRACT):
+        if bid not in blocks:
+            raise SpecError(
+                f"{where}: the `## Doctrine` section has no {bid!r} block, which the "
+                "render addresses by id"
+            )
     return blocks
 
 
@@ -168,8 +176,14 @@ def parse_default_surfaces(skill_text, where):
     return surfaces
 
 
-def parse_routing(renders_text, where):
-    """The one table in `renders.md` § Doctrine routing, read as data."""
+def parse_routing(renders_text, where, blocks):
+    """The one table in `renders.md` § Doctrine routing, read as data.
+
+    The doctrine source's `###` headings are the one statement of the block
+    ids, and a row naming no block is refused here. A block with no row, which
+    is also what a row this reader skips leaves, reaches no destination, and
+    `doctrine-routing` reports it.
+    """
     rows = [
         ln for ln in renders_text.splitlines()
         if ln.startswith("| `") and ln.count("|") == len(ROUTING_COLUMNS) + 2
@@ -193,6 +207,11 @@ def parse_routing(renders_text, where):
             positions[column] = int(m.group(1))
         if block in table:
             raise SpecError(f"{where}: routing table has two rows for {block!r}")
+        if block not in blocks:
+            raise SpecError(
+                f"{where}: routing table row {block!r} names no `###` block in the "
+                "doctrine source, so it routes nothing"
+            )
         table[block] = positions
     routing = {}
     for column in ROUTING_COLUMNS:
@@ -225,7 +244,7 @@ def load(spec_tree, skill_rel, renders_rel):
             raise SpecError(f"{renders_rel}: the spec copy has no routing table")
         blocks = parse_doctrine(skill_text, skill_rel)
         surfaces = parse_default_surfaces(skill_text, skill_rel)
-        routing, positions = parse_routing(renders_text, renders_rel)
+        routing, positions = parse_routing(renders_text, renders_rel, blocks)
     except BotInstructionsError as exc:
         # Mark WHERE it failed, not what the tree happens to be rooted at:
         # with `--staged --spec` inside the repository the backing tree is the
@@ -234,7 +253,3 @@ def load(spec_tree, skill_rel, renders_rel):
         exc.from_spec = True
         raise
     return Doctrine(blocks, routing, positions, surfaces, skill_rel)
-
-
-def frozen_ids():
-    return FROZEN_BLOCK_IDS

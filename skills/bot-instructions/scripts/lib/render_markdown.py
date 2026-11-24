@@ -5,7 +5,7 @@ doctrine text does not come through `[bot-instructions]`, so its refusals
 run in `spec.parse_doctrine` before any of this.
 """
 
-from .constants import AGENTS_DIRECTIVE
+from .constants import AGENTS_DIRECTIVE, RENDER_OUT_OF_SCOPE
 from .model import exclude_sentence
 
 AGENTS_HEADING = "## Code Review Rules"
@@ -101,7 +101,7 @@ def code_review(model):
         out.append(f"## {bid}")
         out.append("")
         paragraph_list = block_paragraphs(model, bid, text)
-        if bid == "render-out-of-scope" and excl:
+        if bid == RENDER_OUT_OF_SCOPE and excl:
             paragraph_list = paragraph_list + [
                 "Those paths here: " + ", ".join(excl) + "."
             ]

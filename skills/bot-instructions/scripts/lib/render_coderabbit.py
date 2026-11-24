@@ -18,6 +18,7 @@ from .constants import (
     CODERABBIT_SCHEMA_PATH,
     CODERABBIT_TOP_LEVEL,
     DEFAULT_TONE,
+    RENDER_OUT_OF_SCOPE,
 )
 from .model import exclude_sentence
 from . import yamlemit
@@ -58,7 +59,7 @@ def path_instructions(model):
         # copy's wrapping. A block a repo overrode keeps its own, like every
         # other destination, and then the paths need a paragraph of their own
         # so an override ending in a fence still closes it.
-        bid = "render-out-of-scope"
+        bid = RENDER_OUT_OF_SCOPE
         text = model.block(bid)
         joined = not model.repo_authored(bid)
         if joined:

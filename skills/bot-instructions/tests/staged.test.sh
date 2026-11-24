@@ -105,18 +105,29 @@ expect_green 'and the worktree copy still satisfies a worktree check' \
 reset
 
 # A staged doctrine source with an unstaged routing table is its own case,
-# since `doctrine-routing` compares the two: naming the spec copy as one file
-# would let the pair arrive from two different states.
+# since a routing row must name a block of the doctrine source it is read
+# with: naming the spec copy as one file would let the pair arrive from two
+# different states. A block heading is renamed and staged, and only the
+# worktree copy of the table follows it, so the staged pair disagrees and a
+# read mixing the staged doctrine with the worktree table sees them agree.
 reset
-python3 - "$SPEC/SKILL.md" <<'PY'
+python3 - "$SPEC/SKILL.md" "$SPEC/schemas/renders.md" <<'PY'
 import sys
-p = sys.argv[1]
-s = open(p).read().replace("\n## Adding a repo\n", "\n### unrouted\n\nA block.\n\n## Adding a repo\n", 1)
-open(p, "w").write(s)
+for path, old, new in ((sys.argv[1], "\n### trust-model\n", "\n### trust-terms\n"),
+                       (sys.argv[2], "| `trust-model` |", "| `trust-terms` |")):
+    s = open(path).read()
+    assert s.count(old) == 1, f"{path}: fixture shape changed"
+    open(path, "w").write(s.replace(old, new))
 PY
-git -C "$repo" add -A >/dev/null 2>&1
-expect_red doctrine-routing 'a staged doctrine source against an unstaged routing table' \
-  check --staged --repo "$repo" --spec "$SPEC"
+git -C "$repo" add -- "$BI_VENDORED_SPEC/SKILL.md" >/dev/null 2>&1
+bi_run check --staged --repo "$repo" --spec "$SPEC"
+got="$(bi_render)"
+if [ "$got" = 'rc=2 out=spec' ] && bi_carries "'trust-model'"; then
+  ok 'a staged doctrine source against an unstaged routing table'
+else
+  bad 'a staged doctrine source against an unstaged routing table' \
+    "want rc=2 out=spec naming 'trust-model'; got $got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+fi
 reset
 
 # The index and the working tree answer the same question about the same

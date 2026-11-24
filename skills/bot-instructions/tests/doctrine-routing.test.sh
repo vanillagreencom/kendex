@@ -13,8 +13,7 @@ repo="$(bi_rendered_repo routing)" || exit 1
 PKG="$BI_ROOT/skills/bot-instructions"
 
 # A spec copy is `SKILL.md` plus `schemas/renders.md`, and one flag names both
-# because this validator holds the headings in one against the rows in the
-# other.
+# because the table's rows name the blocks the other file defines.
 new_spec() {
   local dir
   dir="$BI_TMP/spec-$1"
@@ -87,11 +86,15 @@ EOF
   [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || { printf 'no row was asserted\n' >&2; exit 2; }
 }
 
-# An unrouted block is an error, never a silent drop. A row naming no
-# heading: set equality in both directions, since the one-directional half
-# leaves the orphaned row unchecked. Positions in a column run 1..n once
-# each. The two all-eight columns lose a block and Codex or Macroscope loses
-# it with every other validator green. Two `## Doctrine`
+# A block with no row is a finding, and so is a row the reader cannot read,
+# such as one missing its closing pipe, which a renderer shows like any other
+# row: either would otherwise leave its block reaching no bot without a word.
+# A row naming no heading is refused where the table is read. A doctrine source
+# without a block the render addresses by id is refused, so renaming one is
+# never a render that drops the exclusion paths or the tracker. Positions in a
+# column run 1..n once each. A row leaving out one of the three all-block
+# columns loses its block for Codex, Qodo's `/review` or Macroscope with every
+# other validator green. Two `## Doctrine`
 # sections, or none, is an error rather than a guess. Doctrine text is under
 # the same content refusals as repo text, applied where it is read
 # (`renders.md` § Render-side second checks): a `---` under a text line is a
@@ -102,11 +105,14 @@ EOF
 # inside a command substitution for quotes, and a row carrying an odd number
 # of double quotes runs its parse past the closing parenthesis.
 IFS= read -r -d '' rows <<'ROWS'
-a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no column carries.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
-a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
+a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no row routes.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
+a routing row missing its closing pipe~schemas/renders.md~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8\n~red:doctrine-routing:doctrine block 'reply-contract' has no row in the routing table
+a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | 9 | – | – | – | – | – | – | 9 |\n| `trust-model` |~msg:routing table row 'no-such-block' names no `###` block
+a block the render addresses by id, renamed~SKILL.md~\n### reply-contract\n~\n### reply-terms\n~msg:has no 'reply-contract' block, which the render addresses by id
 a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'code-review.md' repeats a position
 a gap in a column, whose positions must run 1..n~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 9 |~red:doctrine-routing:column 'code-review.md' positions are [1, 3, 4, 5, 6, 7, 8, 9], not 1..n
 a block missing from the code-review.md column~schemas/renders.md~| `reply-contract` | 8 |~| `reply-contract` | – |~red:doctrine-routing:column 'code-review.md' omits 'reply-contract'
+a block missing from the pr_agent extra column~schemas/renders.md~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | – | 6 | 8 |~red:doctrine-routing:column 'pr_agent extra' omits 'reply-contract'
 a block missing from the macroscope doctrine.md column~schemas/renders.md~re:(\| `reply-contract` \|.*\| )8 \|\n~\g<1>– |\n~red:doctrine-routing:column 'macroscope doctrine.md' omits 'reply-contract'
 two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\n\ny\n\n## Adding a repo\n~msg:exactly one is required
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
@@ -117,23 +123,69 @@ a default surfaces block carrying a table other than surface~SKILL.md~\n[[surfac
 ROWS
 spec_table "$rows"
 
-# The frozen-id invariant, the one mutation that edits both files. Renaming a
-# heading and its row together leaves both sets agreeing, so a comparison of
-# the pair passes and a consuming repo's `[bot-instructions.doctrine.append]`
-# on the old id silently reaches nothing. The comparison is against the
-# frozen set, which lives in the implementation.
+# A block added to the doctrine source, with its row, reaches validation and
+# the render with no edit to any list of ids: the repo's
+# `[bot-instructions.doctrine.append]` keyed on the new id is accepted, and the
+# block lands in each destination its row names, after the routed ones, and in
+# no other.
+spec="$(new_spec added-block)"
+spec_edit "$spec/SKILL.md" '\n## Adding a repo\n' '\n### added\n\nA block its row routes.\n\n## Adding a repo\n' || exit 1
+spec_edit "$spec/schemas/renders.md" '| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n' '| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n| `added` | 9 | – | – | 5 | – | 9 | – | 9 |\n' || exit 1
+added="$(bi_new_repo doctrine-added)"
+{ cat "$BI_FIXTURES/canonical.toml"
+  printf '\n[bot-instructions.doctrine.append]\nadded = "An appended line."\n'
+} > "$added/kendex.toml"
+bi_must_adopt --repo "$added" --spec "$spec" || exit 1
+expect_green 'a block added to the doctrine source with its row renders' \
+  render --repo "$added" --spec "$spec"
+expect_green 'and the render checks clean' \
+  check --repo "$added" --spec "$spec"
+if python3 - "$added" <<'PROBE'; then
+import os, sys, tomllib
+repo = sys.argv[1]
+TEXT = "A block its row routes.\n\nAn appended line."
+SUMMARY = "fixture is a small repository"
+def read(rel):
+    return open(os.path.join(repo, rel)).read()
+qodo = tomllib.loads(read(".pr_agent.toml"))
+for table, key in (("pr_reviewer", "extra_instructions"), ("review_agent", "issues_user_guidelines")):
+    value = qodo[table][key]
+    at = value.find(TEXT)
+    if at == -1 or not value[at + len(TEXT):].startswith("\n\n" + SUMMARY):
+        sys.exit(f".pr_agent.toml [{table}] {key} does not end with the block, then the summary: {value[-240:]!r}")
+pointed = read(".github/instructions/code-review.md")
+if not pointed.rstrip("\n").endswith("## added\n\n" + TEXT):
+    sys.exit(f"code-review.md does not end with the block and its append: {pointed[-160:]!r}")
+if TEXT not in read(".macroscope/correctness/doctrine.md"):
+    sys.exit("macroscope doctrine.md does not carry the block")
+if "A block its row routes." in qodo["review_agent"]["compliance_user_guidelines"]:
+    sys.exit(".pr_agent.toml [review_agent] compliance_user_guidelines carries a block its row leaves out")
+for rel in ("REVIEW.md", ".github/copilot-instructions.md", ".coderabbit.yaml"):
+    if "A block its row routes." in read(rel):
+        sys.exit(f"{rel} carries a block its row leaves out")
+PROBE
+  ok 'and it reaches each destination its row names, after the routed blocks, and nothing else'
+else
+  bad 'and it reaches each destination its row names, after the routed blocks, and nothing else'
+fi
+
+# A block id renamed in its one source, the heading and its row together, is
+# refused for a consuming repo whose override is keyed on the old id, so that
+# override never silently reaches nothing. The pair is the same manifest under
+# the running copy's own doctrine.
+renamed="$(bi_new_repo doctrine-renamed)"
+{ cat "$BI_FIXTURES/canonical.toml"
+  printf '\n[bot-instructions.doctrine.append]\nseverity = "An appended line."\n'
+} > "$renamed/kendex.toml"
+bi_must_adopt --repo "$renamed" || exit 1
+expect_green 'an override keyed on a block id the doctrine defines renders' \
+  render --dry-run --repo "$renamed"
 spec="$(new_spec renamed-pair)"
 spec_edit "$spec/SKILL.md" '\n### severity\n' '\n### severity-honesty\n' || exit 1
 spec_edit "$spec/schemas/renders.md" '| `severity` |' '| `severity-honesty` |' || exit 1
-expect_clause doctrine-routing "block id 'severity' is frozen and the doctrine source no longer defines it" \
-  'a heading and its row renamed together, against the frozen set' \
-  render --dry-run --repo "$repo" --spec "$spec"
-# The other direction of the same comparison, on the same fixture: the new
-# id is outside the frozen set, which is what makes adding a `###` heading a
-# deliberate edit to the constant a reviewer reads.
-expect_clause doctrine-routing "block id 'severity-honesty' is not in the frozen set" \
-  'and the renamed block is not in the frozen set either' \
-  render --dry-run --repo "$repo" --spec "$spec"
+expect_clause toml-schema "'severity' is not a doctrine block id" \
+  'a heading and its row renamed together refuse the override keyed on the old id' \
+  render --dry-run --repo "$renamed" --spec "$spec"
 
 # The other side of the heading predicate: `#` with NO whitespace after it is
 # a heading to no reader, and this repo writes pull request numbers that way.
