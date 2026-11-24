@@ -8,7 +8,7 @@
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
-//! | `live`, `wake` or `preparing`, before its review | a first launch joins it ([`join`]); a running lane's added path blocks: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path blocks: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
@@ -66,6 +66,9 @@
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
 
+use agent_runtime::confine::{self, Answer as Confinement};
+use agent_runtime::harness::Harness;
+use agent_runtime::intent::{EffectOp, Intent};
 use agent_runtime::record::{self, Document};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -79,10 +82,9 @@ use super::occupancy::{self, ChargeReason, Host};
 use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::{Delivery, Settings};
-use crate::state::{self, Carried, Lane, LaneStatus, StageKind};
+use crate::state::{self, Carried, Lane, LaneMembers, LaneStatus, StageKind};
 use crate::verify::wire::{Nullable, Pull, PullFile};
 use crate::verify::{Answer, Gh};
-use agent_runtime::intent::Intent;
 use agent_runtime::journal::{Env, intents};
 
 /// The item as its tracker reports it: the body the Location paths are
@@ -1340,6 +1342,9 @@ pub(super) fn judge(
             }
         }
     }
+    if let (Some(join), Some(checkout)) = (&join, a.checkout) {
+        join_checkout(path, a.item, checkout, &lanes[join.holder], intents)?;
+    }
     Ok(Judged {
         touched,
         classified,
@@ -1347,6 +1352,62 @@ pub(super) fn judge(
         join,
         checkout_common,
     })
+}
+
+/// A holder may carry work in its own checkout or outside it when its
+/// launch ran unconfined. The launch effect reports its actual confinement
+/// on the intent, including the linked-seat exception. The latest launch
+/// alone can authorize the join: a relaunch can change the confinement,
+/// and a still-opening or recovered launch may have no observation yet.
+fn join_checkout(
+    path: &Path,
+    item: &str,
+    checkout: &Path,
+    holder: &Lane,
+    intents: &[Intent],
+) -> Result<()> {
+    let launch = intents
+        .iter()
+        .rfind(|i| i.op == EffectOp::LaunchSession && i.target == holder.item);
+    let confinement = match launch {
+        Some(intent)
+            if intent.reconciled.is_none()
+                && LaneMembers::of(path, intent)?.lane_since == holder.session_since =>
+        {
+            intent
+                .observation
+                .as_ref()
+                .and_then(|o| o.get("confinement"))
+                .and_then(|value| serde_json::from_value::<Confinement>(value.clone()).ok())
+        }
+        // Before the fleet recorded launch intents, the platform can still
+        // prove a harness whose launcher never confines it here.
+        None if holder.status != LaneStatus::Preparing => holder
+            .harness
+            .as_deref()
+            .and_then(|name| Harness::named(name).ok())
+            .map(|harness| confine::answer(confine::Host::this(), harness))
+            .filter(|answer| matches!(answer, Confinement::Unconfined { .. })),
+        _ => None,
+    };
+    if matches!(confinement, Some(Confinement::Unconfined { .. })) {
+        return Ok(());
+    }
+    if let Some(root) = holder.mail_root.as_deref()
+        && let (Ok(held), Ok(candidate)) =
+            (std::fs::canonicalize(root), std::fs::canonicalize(checkout))
+        && held == candidate
+    {
+        return Ok(());
+    }
+    let cause = match confinement {
+        Some(Confinement::Confined) => "worktree-outside-holder",
+        _ => "confinement-unproved",
+    };
+    Err(Error::from(agent_runtime::Error::refused(
+        "join-confined",
+        &[("item", item), ("holder", &holder.item), ("cause", cause)],
+    )))
 }
 
 /// Whether a lane record names the pull request as its own work: its

@@ -303,9 +303,13 @@ impl Fleet {
     }
 
     fn write_lanes(&self, lanes: Vec<Value>) {
+        self.write_lanes_and_intents(lanes, Vec::new());
+    }
+
+    fn write_lanes_and_intents(&self, lanes: Vec<Value>, intents: Vec<Value>) {
         let mut fleet = self.fleet();
         fleet["lanes"] = Value::Array(lanes);
-        fleet["intents"] = json!([]);
+        fleet["intents"] = Value::Array(intents);
         std::fs::write(
             self.fleet_path(),
             serde_json::to_string_pretty(&fleet).unwrap(),
@@ -329,7 +333,8 @@ impl Fleet {
 }
 
 /// A holder's lane record: `process` its harness, `touched` its recorded
-/// set, `None` for a record the admission reads from its item.
+/// set, `None` for a record the admission reads from its item. The default
+/// harness is unconfined so the other admission gates can be tested alone.
 fn holder(item: &str, status: &str, process: Option<&Owned>, touched: Option<&[&str]>) -> Value {
     let launch = match process {
         Some(p) => json!({"pane": "%7", "server": 41020, "pid": p.pid(), "start": p.start()}),
@@ -338,7 +343,7 @@ fn holder(item: &str, status: &str, process: Option<&Owned>, touched: Option<&[&
     let mut record = json!({
         "item": item,
         "tracker": "linear",
-        "harness": "claude",
+        "harness": "copilot",
         "window": format!("fleet:{item}"),
         "mail_root": "/w/holder",
         "session_since": "2026-01-29T15:00:00Z",
@@ -1806,6 +1811,112 @@ fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
             .unwrap()
             .starts_with("joined item=KEN-Y holder=KEN-X")
     );
+}
+
+/// A cross-worktree join needs the current launch's unconfined answer.
+/// A confined holder may still carry work in its own checkout. Both ties
+/// are judged before the holder's record or mailbox changes.
+#[test]
+fn a_join_respects_the_current_holders_confinement() {
+    let unconfined = json!({"state": "unconfined", "cause": "linked-seat"});
+    let confined = json!({"state": "confined"});
+    for (row, blocker, same_checkout, answer, refusal_cause) in [
+        (
+            "shared file",
+            false,
+            false,
+            Some(&confined),
+            Some("worktree-outside-holder"),
+        ),
+        (
+            "launch blocker",
+            true,
+            false,
+            Some(&confined),
+            Some("worktree-outside-holder"),
+        ),
+        (
+            "opening again",
+            false,
+            false,
+            None,
+            Some("confinement-unproved"),
+        ),
+        ("linked seat", false, false, Some(&unconfined), None),
+        ("same checkout", false, true, Some(&confined), None),
+    ] {
+        let fleet = Fleet::new();
+        fleet.init_fleet();
+        let root = fleet.checkout("holder", None);
+        let checkout = if same_checkout {
+            let alias = fleet.dir.path().join("holder-alias");
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            alias
+        } else {
+            fleet.checkout("candidate", None)
+        };
+        let harness = Owned::sleep();
+        let status = if answer.is_some() {
+            "running"
+        } else {
+            "preparing"
+        };
+        let mut held = holder(
+            "KEN-H",
+            status,
+            answer.map(|_| &harness),
+            Some(&["src/a.sh"]),
+        );
+        held["harness"] = json!(if answer == Some(&confined) {
+            "claude"
+        } else {
+            "codex"
+        });
+        held["mail_root"] = json!(root);
+        let mut current = json!({
+            "id": "launch-session:KEN-H:2-1", "op": "launch-session", "target": "KEN-H",
+            "created_at": held["session_since"], "lane_since": held["session_since"],
+            "outcome": "not-started",
+        });
+        let mut intents = Vec::new();
+        if let Some(answer) = answer {
+            current["outcome"] = json!("confirmed");
+            current["observation"] = json!({"confinement": answer});
+        } else {
+            // Whole-second stamps can collide on a relaunch. The prior
+            // unconfined observation belongs to the earlier intent.
+            let mut earlier = current.clone();
+            earlier["id"] = json!("launch-session:KEN-H:1-1");
+            earlier["outcome"] = json!("confirmed");
+            earlier["observation"] = json!({"confinement": unconfined});
+            intents.push(earlier);
+        }
+        intents.push(current);
+        fleet.write_lanes_and_intents(vec![held], intents);
+        if blocker {
+            fleet.item_under("KEN-C", "", &["KEN-H"]);
+        } else {
+            fleet.item("KEN-C", "`src/a.sh`", 0, &[]);
+        }
+        let before = std::fs::read(fleet.fleet_path()).unwrap();
+        let out = fleet.op(&launch("KEN-C", &checkout));
+        if let Some(cause) = refusal_cause {
+            assert_eq!(
+                refusal(&out),
+                (
+                    "join-confined".to_owned(),
+                    pairs(&[("item", "KEN-C"), ("holder", "KEN-H"), ("cause", cause)]),
+                ),
+                "{row}"
+            );
+            assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before, "{row}");
+            assert!(inbox(&root, "KEN-H").is_empty(), "{row}");
+        } else {
+            assert_eq!(joined_or_launched(&reply(&out))["holder"], "KEN-H", "{row}");
+            assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "KEN-C", "{row}");
+            assert_eq!(inbox(&root, "KEN-H").len(), 1, "{row}");
+        }
+    }
 }
 
 /// A running lane before its review takes the candidate tied to it: a
