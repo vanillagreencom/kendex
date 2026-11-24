@@ -68,11 +68,14 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
 2. From the native session's own pane, run `.agents/skills/orch/scripts/orch-runtime register --fleet`.
    - The session's next native hook establishes its session binding.
    - A satellite registers only in its own home, and its loop runs as a satellite under [Control-host events: Satellite](../references/control-host-events.md#satellite).
-3. Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings.
+3. On a satellite, check `systemctl --user --property=WorkingDirectory --value show -- jarvis-watch.service` where systemd is available.
+   - If the directory resolves to HOME and `systemctl --user is-enabled --quiet jarvis-watch.service` or `systemctl --user is-active --quiet jarvis-watch.service` succeeds, use the standing service.
+4. Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings.
    - The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME.
-   - The start command names this same home and its harness route below.
+   - For the standing service, use `systemctl --user start jarvis-watch.service`. Otherwise use the home and harness route below.
    - The existing turn-end check reports an absent loop and that command. It starts no process.
-4. Start the loop by harness:
+5. With the standing service, use systemd to start it if needed. Read batches from the home mailbox through the installed delivery hook or `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` from HOME.
+6. Otherwise start the loop by harness:
    - On Claude Code, run `.agents/skills/jarvis/scripts/watch-loop --home HOME` through Monitor at its maximum expiry.
      - Keep that same loop for the session.
      - A batch pointer means the directive is ready in the home mailbox. Read it through the installed deliver hook or `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` from HOME.
@@ -83,7 +86,7 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
      - Exit 75 may have started the loop: keep `RUN.runner` and launch no second loop.
      - Pi's installed mailbox wake delivers the directive. Copilot's installed hooks deliver at their native checkpoints; this producer supplies no idle extension.
 
-To stop the loop:
+To stop a session-owned loop:
 
 - Stop a job through `.agents/skills/orch/scripts/orch-runtime stop-job --record RUN.runner`, using its retained record; `"stopped":null` means the loop had already ended.
 - Stop the Monitor-owned command through Monitor.

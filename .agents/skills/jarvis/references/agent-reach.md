@@ -173,9 +173,9 @@ For the saved value:
 
 ### Satellite
 
-A Jarvis satellite also runs a local console session through the [session command](session-command.md#session-command). That session handles local requests and forwards under [Forward](#forward), apart from Jarvis Voice.
+A Jarvis satellite runs Jarvis Voice, the local console session and the standing watch loop, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
 
-A Jarvis satellite handles local voice, windows, apps, files, screen and sign-ins. It forwards each request that acts on accounts, the fleet, the home repository or anything outside this machine.
+A Jarvis satellite handles local voice, windows, apps, files, screen and sign-ins. Start the console through the [session command](session-command.md#session-command).
 
 Its watch-loop runs under [Control-host events: Satellite](control-host-events.md#satellite).
 

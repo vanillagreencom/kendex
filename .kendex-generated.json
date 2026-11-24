@@ -678,6 +678,7 @@
   ".agents/skills/jarvis/scripts/task",
   ".agents/skills/jarvis/scripts/vm-watch.sh",
   ".agents/skills/jarvis/scripts/watch-loop",
+  ".agents/skills/jarvis/systemd/jarvis-watch.service",
   ".agents/skills/jarvis/workflows/docs-audit.md",
   ".agents/skills/jarvis/workflows/efficiency-audit.md",
   ".agents/skills/jarvis/workflows/session.md",

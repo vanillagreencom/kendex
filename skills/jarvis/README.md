@@ -55,7 +55,7 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 - **Jarvis** is the main long-running session.
 - **Jarvis Voice** is the VGS voice session on any computer.
 - **Jarvis main** is the computer that runs Jarvis.
-- **Jarvis satellite** is a computer that runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
+- A Jarvis satellite runs Jarvis Voice, the local console session and the standing watch loop, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
 - **Jarvis home** is the folder with Jarvis's instructions, skills and memory: `~/jarvis` if you followed [Install](#install). Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
 
 | Your question | Read |
@@ -99,8 +99,9 @@ To use Jarvis Voice on a second computer, make that computer a Jarvis satellite 
 3. Run `kendex guard install` to turn on the commit checks. Git does not copy them with a clone.
 4. Run `.agents/skills/jarvis/scripts/jarvis-session main-host --home . --set DEST:/path/to/main/home`, where `DEST` is the SSH destination of Jarvis main and the path is the Jarvis home on it. The command saves `JARVIS_MAIN_HOST` in this computer's `.env.local`. Never put it in `kendex.settings.toml`: Jarvis main would pull it and become a satellite too.
 5. Move the secrets this computer needs under [Secret transfer](references/accounts-and-secrets.md#secret-transfer). A clone carries none of them.
+6. On Linux with systemd, stop any [session-owned watch loop](workflows/session.md#control-host-events) for this home. Run `.agents/skills/jarvis/scripts/watch-loop install --home .` as the satellite user. The command enables lingering for that user so the watch loop starts at boot and keeps running after logout. The service uses the satellite user's SSH configuration to reach Jarvis main.
 
-The satellite handles voice, windows, apps, files, the screen and sign-ins on that computer. It forwards other work to Jarvis main, and the request and answer appear in your Slack channel. Set `JARVIS_FORWARD_CONFIRM` to `on` to have it ask you first; the [settings example](kendex.settings.toml.example) says when that helps.
+The satellite handles voice, windows, apps, files, the screen and sign-ins on that computer. Forwarded requests and answers appear in your Slack channel. Set `JARVIS_FORWARD_CONFIRM` to `on` to have it ask you first; the [settings example](kendex.settings.toml.example) says when that helps.
 
 - Leave `JARVIS_MAIN_HOST` empty on Jarvis main only.
 - Do not commit or push the Jarvis home from a satellite.

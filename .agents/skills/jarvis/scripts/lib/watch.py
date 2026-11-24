@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import selectors
 import shlex
+from string import Template
 import subprocess
 import sys
 import tempfile
@@ -1517,19 +1518,52 @@ class Watch:
         self.save()
 
 
+def install(home, print_only):
+    from home import replace
+
+    if not str(home).isprintable():
+        raise Failure("watch-install", "refusal", "home-invalid", repr(str(home)))
+    unit = LIB.parents[1] / "systemd/jarvis-watch.service"
+    # systemd.service(5) expands percent specifiers even when `:` disables
+    # environment substitution. ExecStart takes quoted words, not shell text.
+    workdir = str(home).replace("%", "%%")
+    launcher = str(LIB.parent / "watch-loop").replace("%", "%%")
+    rendered = Template(unit.read_text()).substitute(
+        directory=workdir, launcher=json.dumps(launcher, ensure_ascii=False),
+        home=json.dumps(workdir, ensure_ascii=False))
+    if print_only:
+        sys.stdout.write(rendered)
+        return
+
+    # loginctl(1): enable starts the unit with the user manager, while
+    # lingering starts the user manager at boot and keeps it after logout.
+    checked(["loginctl", "enable-linger", str(os.getuid())], operation="enable-linger")
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    target = config_dir / "systemd/user" / unit.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    replace(target, rendered)
+    for args in (("daemon-reload",), ("enable", unit.name), ("restart", unit.name)):
+        checked(["systemctl", "--user", *args], operation="systemctl-" + args[0])
+    print("watch-loop: installed=" + str(target))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("loop", "pass"))
+    parser.add_argument("mode", choices=("loop", "pass", "install"))
     parser.add_argument("--bash", required=True)
     parser.add_argument("--home", default=".")
     parser.add_argument("--side", default="local")
     parser.add_argument("--cursor", default="{}")
     parser.add_argument("--presence", action="store_true")
+    parser.add_argument("--satellite", action="store_true", help="require satellite settings at service start")
+    parser.add_argument("--print", action="store_true", help="render the unit without installing it")
     parser.add_argument("--initial-pass", action="append", type=Path,
                         help="initialize fresh loop state from a reconciled public pass, then exit; repeat per destination")
     args = parser.parse_args()
     if args.initial_pass and args.mode != "loop":
         parser.error("--initial-pass requires loop mode")
+    if args.print and args.mode != "install":
+        parser.error("--print requires install mode")
     initial_passes = [path.absolute() for path in args.initial_pass] if args.initial_pass else None
     home = home_root(args.home)
     if args.mode == "pass":
@@ -1542,6 +1576,10 @@ def main():
             print(mail_pass(args.bash, home, args.side, json.loads(args.cursor)), end="")
     else:
         settings = config(args.bash, home)
+        if (args.mode == "install" or args.satellite) and role(settings).kind != "satellite":
+            raise Failure("watch-loop", "refusal", "satellite-required", str(home))
+        if args.mode == "install":
+            return install(home, args.print)
         if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_WAKE_SETTLE_SECS"]):
             raise RuntimeError("settle-invalid")
         if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_VOICE_REMIND_SECS"]):
