@@ -303,7 +303,7 @@ Every pass owes two things before it answers a thread, whether it fixes, replies
 ```
 
 - `below`: the fix set below is the items marked Fixing.
-- `at-cap` with another stop on the part the last permitted round addressed: take the open defect out of the fix set, including cap-exempt items, and file it once by [review-pr.md § At The Cap](review-pr.md#at-the-cap). Reply `Tracked: [ISSUE_ID]` and resolve through § 6.3. Take the current head through the normal merge gates without another round or ruling for that defect.
+- `at-cap` with another stop on the part the last permitted round addressed: take the open defect out of the fix set, including cap-exempt items, and run [review-pr.md § At The Cap](review-pr.md#at-the-cap)'s single filing. Use § 6.3 to reply and resolve with `Tracked: [ISSUE_ID]` for a created issue or duplicate target, or `Declined: [REASON]` for a candidate that fails the filing bar. Take the current head through the normal merge gates without another round or ruling for that defect.
 - `at-cap` for a stop on a new part: ordinary fix rounds end on this pull request.
   - The cap is a ruling point. No ordinary fix round starts past it until the overseer has ruled and recorded one `ruling` row for the item in the fleet log ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). The overseer judges with the reply's `count` and `limit`.
   - At the cap the disposition still runs in full, and only the fix stops. Every thread is analyzed and gets its reply and resolve, on this pass and every later one.

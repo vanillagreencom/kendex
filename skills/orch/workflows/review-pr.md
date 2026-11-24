@@ -483,8 +483,8 @@ Record every decline, from this section or any disposition step, in one write pe
 
 Before routing recurrence, read the verdict from [review-cycle.md § Review cap](../references/review-cycle.md#review-cap).
 On `at-cap`, if review stops again on the part the last permitted round addressed, record the open defect once by [§ Escalation](../references/review-cycle.md#escalation), with `outcome` `skipped` and `reason` `same part at the review cap`. Leave it out of the fix set, including structural closes.
-File the defect as one related issue through the project-management skill's `audit-issues --single` route. This route authorizes the single filing without § 6's approval ask, including for a recurring defect the diff introduces. Apply Step 0, the creation bar and duplicate checks.
-In a lane, send the single filing to the overseer by `lane-mail notice` and use the issue ID they return. Exclude this defect from § 8's audit and take the current head through the normal merge gates without another round or ruling for it.
+File the defect as one related issue through the project-management skill's `audit-issues --single` route, including for a recurring defect the diff introduces. Apply Step 0, the creation bar and duplicate checks. Run § 6's `orch-env PM_CREATE_AUTONOMY ask` read with `PM_CREATE_AUTONOMY=auto` for this single filing and execute its Auto branch.
+In a lane, send the authorized single filing to the overseer by `lane-mail notice`. Carry back the created issue ID, the duplicate's `target` from TPM audit § 14, or the verified reason if the candidate fails the filing bar. Exclude this defect from § 8's audit and take the current head through the normal merge gates without another round or ruling for it.
 A stop on a new part takes the existing recurrence and cap routes below.
 
 **Recurrence before the cap.** [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions the remaining findings that share a root cause with one a prior round patched. No further patch round answers them. Each disposition owes one thing:
