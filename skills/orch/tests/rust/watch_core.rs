@@ -2452,10 +2452,14 @@ const BOT_TOKEN: &str = "ghs_projectBotFixture";
 /// The one repository the GitHub duty reads.
 const SIGN_IN_REPO: &str = "owner/repo";
 
-/// `value` at `path` whole: a reader between two writes sees one map or
-/// the other, never a part.
-fn plant_whole(path: &Path, value: &str) {
-    let partial = path.with_extension("partial");
+/// `value` at `path` whole: a reader between two writes sees one value or
+/// the other, never a part. The partial is staged in `staging`, a
+/// directory on `path`'s filesystem that no reader lists.
+fn plant_whole(path: &Path, staging: &Path, value: &str) {
+    let partial = staging.join(format!(
+        "{}.partial",
+        path.file_name().unwrap().to_string_lossy()
+    ));
     std::fs::write(&partial, value).unwrap();
     std::fs::rename(&partial, path).unwrap();
 }
@@ -2472,7 +2476,7 @@ fn plant_github(bin: &Path, sign_in: Value) {
         "graphql pulls owner=owner name=repo": reducer_listing(Vec::new()),
         "sign-in": sign_in,
     });
-    plant_whole(&bin.join("gh.json"), &quiet.to_string());
+    plant_whole(&bin.join("gh.json"), bin, &quiet.to_string());
 }
 
 /// `watch run` on a one-second long cadence over [`SIGN_IN_REPO`], started
@@ -3182,16 +3186,19 @@ fn sources_key(crate_dir: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// A crate of one source file, `source`, at `crate_dir`.
+/// A crate of one source file, `source`, at `crate_dir`, each file written
+/// whole: a watch pass reading the key mid-move would otherwise read a
+/// truncated file's key and say it stale. The partials stage in the
+/// crate's root, which the key reads only by the manifests' names.
 fn write_sources(crate_dir: &Path, source: &str) {
     std::fs::create_dir_all(crate_dir.join("src")).unwrap();
-    std::fs::write(
-        crate_dir.join("Cargo.toml"),
+    plant_whole(
+        &crate_dir.join("Cargo.toml"),
+        crate_dir,
         "[package]\nname = \"fixture\"\n",
-    )
-    .unwrap();
-    std::fs::write(crate_dir.join("Cargo.lock"), "").unwrap();
-    std::fs::write(crate_dir.join("src/lib.rs"), source).unwrap();
+    );
+    plant_whole(&crate_dir.join("Cargo.lock"), crate_dir, "");
+    plant_whole(&crate_dir.join("src/lib.rs"), crate_dir, source);
 }
 
 /// The key `source` gives the install's crate, read off a scratch copy so
@@ -3339,7 +3346,6 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
         &cache.join("bin").join(format!("orch-runtime-{fifth}")),
         "#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"orch-runtime-v1\",\"ok\":true,\"result\":{\"protocol\":\"orch-runtime-v1\"}}'\n",
     );
-    let mut stale_lines = 0;
     for (source, line) in [
         (
             "// third\n",
@@ -3354,8 +3360,13 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
             format!("EVENT watch-stale program={second} checkout={fifth} cause=unresumable"),
         ),
     ] {
+        // The episode runs from the move to two passes past its line; its
+        // stale lines are judged alone, whatever number of passes it holds.
+        let from = lines_of(&paths.log).len();
         write_sources(&sources, source);
-        let said = await_lines(&mut child, &paths.log, &line, |lines| lines.contains(&line));
+        let said = await_lines(&mut child, &paths.log, &line, |lines| {
+            lines[from.min(lines.len())..].contains(&line)
+        });
         let at = said.len();
         let later = await_lines(&mut child, &paths.log, "two passes past it", |lines| {
             lines[at.min(lines.len())..]
@@ -3364,13 +3375,13 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
                 .count()
                 >= 2
         });
-        stale_lines += 1;
+        let stale: Vec<&String> = later[from..]
+            .iter()
+            .filter(|l| l.starts_with("EVENT watch-stale "))
+            .collect();
         assert_eq!(
-            later
-                .iter()
-                .filter(|l| l.starts_with("EVENT watch-stale "))
-                .count(),
-            stale_lines,
+            stale,
+            [&line],
             "one line for the key, however many passes: {later:?}"
         );
         assert_eq!(
