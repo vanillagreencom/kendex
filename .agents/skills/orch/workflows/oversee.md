@@ -124,7 +124,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
    - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
    - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
-   - On `controller-resume-failed`, `note` is the refusal's key and `cause` the refusal's own cause.
+   - On `controller-resume-failed`, where the start was refused, `note` is the refusal's key and `cause` its own cause. Otherwise `note` names the failure, and `cause` is its cause, or `-` where it carries none.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 

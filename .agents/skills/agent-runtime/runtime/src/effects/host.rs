@@ -585,7 +585,7 @@ impl Operation<'_> {
         let server = match tmux::server(&socket) {
             Ok(server) => server,
             Err(e) => {
-                if !tmux::server_absent(&socket) || !self.recorded_socket(&socket)? {
+                if !tmux::server_absent(&e) || !self.recorded_socket(&socket)? {
                     return Err(e);
                 }
                 self.started_server(&socket, &session)?
@@ -626,18 +626,22 @@ impl Operation<'_> {
     /// two starts of one fleet start one server; tmux's own lock beside the
     /// socket holds a racing start from another fleet, whose second `-D`
     /// exits on the first server. No intent records the server, so no close
-    /// ends it: it ends with its last session. A launch refused, a server
-    /// that exits, or one that never answers within the verify bound
-    /// refuses `tmux-server-unstarted`: `launch` the launcher's answer,
-    /// `runner` its line, `cause` the server's own last stderr line, else
-    /// the last tmux error the wait read, else `unanswered`.
+    /// ends it: it ends with its last session. A stderr file it cannot
+    /// empty, a launch refused, a server that exits, or one that never
+    /// answers within the verify bound refuses `tmux-server-unstarted`.
+    /// `launch` is the launcher's answer (`refused`, `started`,
+    /// `unanswered`), `exited` where the server ended before it answered,
+    /// or `unrun` where the stderr file could not be written. `runner` is
+    /// the launcher's line, or its cause where it refused or did not answer.
+    /// `cause` is the server's own last stderr line, else the last tmux
+    /// error the wait read, else `unanswered`.
     fn started_server(&self, socket: &Path, session: &str) -> Result<Server> {
         let record = self.run.state_dir.join(SERVER_RECORD);
         let err = self.run.state_dir.join(SERVER_ERR);
         crate::record::lock(&record)?.with(|| {
             match tmux::server(socket) {
                 Ok(server) => return Ok(server),
-                Err(e) if !tmux::server_absent(socket) => return Err(e),
+                Err(e) if !tmux::server_absent(&e) => return Err(e),
                 Err(_) => {}
             }
             tmux::socket_dir(socket)?;
@@ -690,7 +694,7 @@ impl Operation<'_> {
             let answered = poll_until(self.clock, bound, POLL, || {
                 match tmux::server(socket) {
                     Ok(server) => return Some(Some(server)),
-                    Err(e) if !tmux::server_absent(socket) => tmux_error = Some(e.to_string()),
+                    Err(e) if !tmux::server_absent(&e) => tmux_error = Some(e.to_string()),
                     Err(_) => {}
                 }
                 // A server that exited answers no later read: its end is

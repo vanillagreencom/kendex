@@ -436,9 +436,11 @@ enum Verb {
     /// claimed runner recorded beside the fleet state. One stdout line, the
     /// effect's outcome: `controller-resumed intent=ID generation=N pane=%P
     /// session=ID socket=PATH` at exit 0, `controller-resume-failed
-    /// intent=ID note=KEY cause=CAUSE` at 3, the refusal's key and its own
-    /// cause, `controller-resume-unconfirmed intent=ID` at 75 with the
-    /// intent left for its reconcile. A refusal,
+    /// intent=ID note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
+    /// intent=ID` at 75 with the intent left for its reconcile. Where the
+    /// start was refused, `note` is the refusal's key and `cause` its own
+    /// cause; otherwise `note` names the failure and `cause` its cause, `-`
+    /// where it carries none. A refusal,
     /// with nothing started, at exit 1: `server-socket-unrecorded
     /// field=server_socket`, `session-unrecorded field=session_id`,
     /// `harness-unnamed`, `session-missing`, `watch-flags-unrecorded`.

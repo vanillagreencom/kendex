@@ -569,6 +569,65 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     }
 }
 
+/// A relaunch whose launch fails after a confirmed close, here on a
+/// recorded socket whose directory its server may not bind in, answers
+/// `launch-failed` at exit 3 naming the close's intent and the server's own
+/// line: the one signal that the lane now stands closed.
+#[test]
+fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let sockets = dir.path().join("sockets");
+    std::fs::create_dir(&sockets).unwrap();
+    let server = Server::start(&sockets, "fleet");
+    let runner = relaunch_world(dir.path(), &server, 5);
+    let killed = tmux(&server.socket, &["kill-server"]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while live(server.pid) {
+        assert!(Instant::now() < deadline, "the fleet server never ended");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let text = stderr(&out);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("orch-runtime: launch-failed item=KEN-1 "))
+        .unwrap_or_else(|| panic!("no launch-failed line: {text}"));
+    let fleet = runner.fleet();
+    let closes: Vec<&str> = fleet["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-1")
+        .filter_map(|i| i["id"].as_str())
+        .collect();
+    assert_eq!(closes.len(), 1, "{closes:?}");
+    assert!(
+        line.split(' ').any(|w| w == format!("close={}", closes[0])),
+        "{line}"
+    );
+    assert!(
+        line.split(' ').any(|w| w == "cause=tmux-server-unstarted"),
+        "{line}"
+    );
+    let said = std::fs::read_to_string(runner.state_dir().join("tmux-server.err")).unwrap();
+    let said = said
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_else(|| panic!("the server said nothing: {line}"));
+    assert!(line.ends_with(&format!(" detail={said}")), "{line}");
+    assert_ne!(
+        fleet["lanes"][0]["status"], "running",
+        "{}",
+        fleet["lanes"][0]
+    );
+}
+
 /// A launch whose server is gone from a socket the controller record does
 /// not name, the caller's own, starts no server there: the fleet stays on
 /// its recorded server. A fleet with no controller record names none.
@@ -600,7 +659,7 @@ fn a_launch_off_the_recorded_socket_starts_no_server() {
         assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
         let observation = &report["intent"]["observation"];
         assert_eq!(
-            observation["cause"], "tmux-refused",
+            observation["cause"], "tmux-server-absent",
             "{item}: {observation}"
         );
         assert!(

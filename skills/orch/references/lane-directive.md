@@ -128,7 +128,7 @@ These causes need more:
 - `harness-binary-missing`: install the harness, or name it in `AGENT_RUNTIME_HARNESS_BINARIES` as `harness=/absolute/path`.
 - `permission-mismatch`: drop the bypass word, or name a narrower one.
 - `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Repair what `file` names.
-- `tmux-session-unresolved`, `tmux-session-missing`, `tmux-server-unstarted`, `tmux-socket-dir-unsafe`, `tmux-socket-dir-unmade`: § Tmux session.
+- `tmux-session-unresolved`, `tmux-session-missing`, `tmux-server-absent`, `tmux-server-unstarted`, `tmux-socket-dir-unsafe`, `tmux-socket-dir-unmade`: § Tmux session.
 - `session-owned-elsewhere`, `session-store-unreadable`: the same request meets the same refusal. Repair the store, or report the session to the operator.
 - `read-only-unconfined`: a Codex seat linked outside its grants (`linked-seat`) cannot hold a read-only lane. Repair the seat, or launch on another account.
 
@@ -212,12 +212,15 @@ A request's `over_cap` admits one deliberate launch past its cap; the record kee
 Every lane window opens in one session on the fleet's tmux server: the one `AGENT_RUNTIME_TMUX_SESSION` names, else the fleet state's `tmux.session`, which the first confirmed launch records.
 
 - If no tmux server answers on the controller record's `server_socket`, as after a restart, the launch starts one there and makes that session in it. It first makes the socket's directory, mode `0700`, where it is gone.
-- On any other socket, such as a caller's own `$TMUX`, a server that does not answer refuses `tmux-refused`.
+- On any other socket, such as a caller's own `$TMUX`, a launch where no server listens refuses `tmux-server-absent`.
 - The server runs as its own job, a user unit or a `setsid` group, recorded in `tmux-server.runner` beside the fleet state, with its stderr in `tmux-server.err`. Stopping the caller does not end it, and an OOM kill in one pane does not end the unit. It ends with its last session.
 - A socket directory that is not this user's, or that group or others may write in, refuses `tmux-socket-dir-unsafe`. One it cannot make refuses `tmux-socket-dir-unmade`.
 - A launch that resolves no session refuses `tmux-session-unresolved`.
 - A server that stands without the session refuses `tmux-session-missing`: set `AGENT_RUNTIME_TMUX_SESSION`, or create that session.
-- A start the launcher refused, a server that exits, or one that never answers within `AGENT_RUNTIME_TMUX_VERIFY_SECS` refuses `tmux-server-unstarted`. Its `launch` field is the launcher's answer, `runner` the launcher's line, and `cause` the server's last stderr line, else the last tmux error.
+- A stderr file the start cannot empty, a start the launcher refused, a server that exits, or one that never answers within `AGENT_RUNTIME_TMUX_VERIFY_SECS` refuses `tmux-server-unstarted`.
+  - `launch` is the launcher's answer (`refused`, `started` or `unanswered`), `exited` where the server ended before it answered, or `unrun` where the stderr file could not be written.
+  - `runner` is the launcher's line, or its cause where it refused or did not answer.
+  - `cause` is the server's last stderr line, else the last tmux error, else `unanswered`.
   - A lane's observation has `cause: tmux-server-unstarted`, with the refusal's own cause in `detail`.
   - A controller start's observation has `note: tmux-server-unstarted`, with `launch`, `runner` and `cause` under `fields`. `controller-resume-failed` prints that `cause`.
 

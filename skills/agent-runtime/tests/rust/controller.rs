@@ -1083,7 +1083,7 @@ fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
     assert_eq!(world.log("tmux.log"), "", "no server named, none asked");
     pane.extend(["--socket".to_owned(), world.socket().display().to_string()]);
     let (key, fields) = refusal(&world.controller(world.root(), &pane, &[]));
-    assert_eq!(key, "tmux-refused", "{fields}");
+    assert_eq!(key, "tmux-server-absent", "{fields}");
     let named_server = format!("-S {} ", world.socket().display());
     let calls = world.log("tmux.log");
     assert!(
