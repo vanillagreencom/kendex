@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { DuckDuckGoClient } from "../providers/duckduckgo.js";
@@ -14,10 +13,12 @@ import { storeWebContent } from "../storage.js";
 import { sourceList, toResultRef, type ResultRef } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, oneLine, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
+// Pi's own pi-ai import for extensions builds StringEnum as this TypeBox Unsafe schema; the published
+// pi-ai types it as a pi-schema Schema since 1.5, which TypeBox's Static reads as unknown.
 export const webSearchSchema = Type.Object({
 	query: Type.Optional(Type.String()),
 	queries: Type.Optional(Type.Array(Type.String())),
-	provider: Type.Optional(StringEnum(WEB_PROVIDERS)),
+	provider: Type.Optional(Type.Unsafe<WebProvider>({ type: "string", enum: WEB_PROVIDERS })),
 	numResults: Type.Optional(Type.Number()),
 	textMaxCharacters: Type.Optional(Type.Number()),
 	includeDomains: Type.Optional(Type.Array(Type.String())),
