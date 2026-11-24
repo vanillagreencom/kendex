@@ -37,12 +37,12 @@ DEFECTS = (
      'record["private_brief"] = record.get("private_brief")',
      "test_a_context_succession_keeps_the_account_and_retires_the_predecessor_after_its_proof"),
     # An adopted session's successor loses the seat its record was written without.
-    ("seat", SESSION, "successor = dict(choice[\"successor\"], window=SESSION_NAME, seat=SEAT)",
-     "successor = dict(choice[\"successor\"], window=SESSION_NAME)",
+    ("seat", SESSION, "successor = dict(choice[\"successor\"], window=SESSION_NAME, seat=SEAT, **(posture or {}))",
+     "successor = dict(choice[\"successor\"], window=SESSION_NAME, **(posture or {}))",
      "test_an_adopted_session_is_handed_to_a_managed_successor_on_the_private_server"),
     # The adopted session's successor opens on the person's own server.
-    ("adopted server", SESSION, 'return self._hand_over(record, "context", self.server(args.harness))',
-     'return self._hand_over(record, "context", caller_socket)',
+    ("adopted server", SESSION, 'return self._hand_over(record, "context", self.server(args.harness), posture)',
+     'return self._hand_over(record, "context", caller_socket, posture)',
      "test_an_adopted_session_is_handed_to_a_managed_successor_on_the_private_server"),
 )
 

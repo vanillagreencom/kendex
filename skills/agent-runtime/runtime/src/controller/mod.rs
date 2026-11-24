@@ -247,7 +247,10 @@ pub struct AdoptController {
     #[serde(default)]
     pub session_rows: Option<PathBuf>,
     /// The permission posture the session runs under and its own permission
-    /// words, which the next succession launches with.
+    /// words, which the next succession launches with. Either one alone
+    /// states the other: words spell their posture, a posture carries no
+    /// words. Both left out, the adoption reads them off the session's own
+    /// launch.
     #[serde(default)]
     pub permission: Option<Permission>,
     #[serde(default)]

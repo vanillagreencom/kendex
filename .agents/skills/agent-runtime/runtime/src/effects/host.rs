@@ -4,7 +4,7 @@
 //! acting method takes a [`Standing`] token, writes `signalled` before it
 //! acts and discharges the token's key by its own answer.
 
-use crate::controller::Overseer;
+use crate::controller::{Overseer, views};
 use crate::record::Locking;
 use crate::settings::EngineSettings;
 use std::path::{Path, PathBuf};
@@ -1461,7 +1461,11 @@ pub enum Delivery {
 /// reads live, or its pane stands on the proven server holding anything
 /// but shells with no identity recorded; one it cannot read refuses
 /// `overseer-unreadable`; one nothing
-/// resolves refuses `predecessor-unproven`. The one
+/// resolves refuses `predecessor-unproven`. A request naming neither the
+/// permission nor its words records the posture that harness was launched
+/// under ([`launched_posture`]), keeping the recorded one where those words
+/// cannot be read on the process the record names ([`adopted_posture`]);
+/// one naming either records the pair it states ([`stated_posture`]). The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
 pub fn adopt_controller(
@@ -1470,7 +1474,17 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
-    adopt_on(path, r, None, settings, locking)
+    adopt_on(path, r, None, Unnamed::Launched, settings, locking)
+}
+
+/// The posture an adoption records where its request names neither the
+/// permission nor its words.
+#[derive(Clone, Copy)]
+enum Unnamed {
+    /// The one the harness in the pane was launched under.
+    Launched,
+    /// The one the record keeps: a heal of the pane it already names.
+    Kept,
 }
 
 /// [`adopt_controller`] on `confirmed`, the server a caller already read at
@@ -1481,6 +1495,7 @@ fn adopt_on(
     path: &Path,
     r: &AdoptController,
     confirmed: Option<tmux::Server>,
+    unnamed: Unnamed,
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
@@ -1554,6 +1569,26 @@ fn adopt_on(
             },
         }
     }
+    let posture = adopted_posture(
+        stated_posture(harness, r),
+        unnamed,
+        || launched_posture(harness, identity.pid),
+        same,
+        overseer.as_ref(),
+        &identity,
+    );
+    let adopted;
+    let r = match posture {
+        Some((permission, words)) => {
+            adopted = AdoptController {
+                permission: Some(permission),
+                extra_args: Some(words),
+                ..r.clone()
+            };
+            &adopted
+        }
+        None => r,
+    };
     let read = Recorded {
         value: AdoptionRead {
             identity,
@@ -1651,7 +1686,15 @@ pub fn heal_controller(
         permission: None,
         extra_args: None,
     };
-    adopt_on(path, &request, Some(server), settings, locking).map(Some)
+    adopt_on(
+        path,
+        &request,
+        Some(server),
+        Unnamed::Kept,
+        settings,
+        locking,
+    )
+    .map(Some)
 }
 
 /// The fields of `pane` on `server`: gone refuses `pane-gone`, a failed
@@ -1878,15 +1921,77 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
     Spelled {
         model: values(harness.model_flag()).into_iter().next(),
         effort,
-        permission: if harness.bypass_word_in(argv).is_some() {
-            Permission::Bypass
-        } else {
-            Permission::Native
-        },
+        permission: posture_of(harness, argv),
         words: harness
             .permission_word_in(argv)
             .map(|(spelling, _)| spelling.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default(),
+    }
+}
+
+/// The posture `words` spell for `harness`: the full bypass where a
+/// full-bypass spelling stands, else the native posture.
+fn posture_of(harness: Harness, words: &[String]) -> Permission {
+    match harness.bypass_word_in(words) {
+        Some(_) => Permission::Bypass,
+        None => Permission::Native,
+    }
+}
+
+/// The posture and permission words a request states, from its one half
+/// where it names only one, so the record never pairs a posture with words
+/// the builder refuses beside it (`permission-mismatch`): named words
+/// spell the posture ([`posture_of`]), a named posture carries no words
+/// but those named. `None` where it names neither.
+fn stated_posture(harness: Harness, r: &AdoptController) -> Option<(Permission, Vec<String>)> {
+    match (r.permission, &r.extra_args) {
+        (Some(permission), words) => Some((permission, words.clone().unwrap_or_default())),
+        (None, Some(words)) => Some((posture_of(harness, words), words.clone())),
+        (None, None) => None,
+    }
+}
+
+/// The posture the harness process `pid` was launched under and its own
+/// permission words, as its argument words spell them; `None` where they
+/// cannot be read, as on a host with no `/proc`.
+fn launched_posture(harness: Harness, pid: u32) -> Option<(Permission, Vec<String>)> {
+    let argv = proc_words(pid, "cmdline").ok()?;
+    let spelled = spelled(harness, &argv);
+    Some((spelled.permission, spelled.words))
+}
+
+/// The posture and words an adoption records, `None` keeping the record's:
+/// the pair its request states, else under [`Unnamed::Launched`] the pair
+/// `launched` reads off the harness's launch. Where those words cannot be
+/// read, a `recorded` record that already names the pane (`same`), whose
+/// harness pid and start are `identity`, the process read in it, and that
+/// names a permission keeps its posture, as a heal does, since nothing read
+/// contradicts it; any other takes the harness's native defaults with no
+/// words, since nobody chose the launch setting's posture, a full bypass by
+/// default, for a session they started by hand, and a record with no
+/// permission would hand its successor exactly that setting.
+fn adopted_posture(
+    stated: Option<(Permission, Vec<String>)>,
+    unnamed: Unnamed,
+    launched: impl FnOnce() -> Option<(Permission, Vec<String>)>,
+    same: bool,
+    recorded: Option<&Overseer>,
+    identity: &Identity,
+) -> Option<(Permission, Vec<String>)> {
+    let recorded_process = || {
+        same && recorded.is_some_and(|recorded| {
+            views::permission(recorded.extra.get("permission")).is_some()
+                && predecessor_identity(recorded).is_some_and(|prior| prior == *identity)
+        })
+    };
+    match (stated, unnamed) {
+        (Some(pair), _) => Some(pair),
+        (None, Unnamed::Kept) => None,
+        (None, Unnamed::Launched) => match launched() {
+            Some(pair) => Some(pair),
+            None if recorded_process() => None,
+            None => Some((Permission::Native, Vec::new())),
+        },
     }
 }
 
@@ -1897,12 +2002,12 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
 /// `identity-fallback` (the harness its foreground process is, the
 /// directory it runs in); then what the running harness process itself was
 /// started with, so the next hand-over launches the session that runs: the
-/// account its environment names, ahead of the row's, and the model, effort
-/// and permission posture its argument words spell, the row's model first
+/// account its environment names, ahead of the row's, and the model and
+/// effort its argument words spell, the row's model first
 /// (`launch-unread` where that process cannot be read, the row and the
 /// caller's own environment standing in); `account` ahead of every reading.
-/// Then the one adoption, which writes the rows file as the record's
-/// `session_rows`. Answers the reply with the harness it registered.
+/// Then the one adoption, which reads the permission posture and writes the
+/// rows file as the record's `session_rows`. Answers the reply with the harness it registered.
 pub fn register_controller(
     path: &Path,
     account: Option<&str>,
@@ -1953,7 +2058,7 @@ pub fn register_controller(
     };
     // The process's own environment and words where the host keeps them;
     // where it does not, the row and the caller's own environment, which the
-    // harness's shell tool handed down, stand in, and no posture is recorded.
+    // harness's shell tool handed down, stand in.
     // The model is read first: the account a session spends is the variable
     // its model routes it through, which for a Pi session on a Claude seat
     // is not the variable its own home is under.
@@ -1998,10 +2103,7 @@ pub fn register_controller(
         Harness::Claude | Harness::Copilot | Harness::Pi => home_var
             .or_else(|| session::default_home(harness).map(|home| home.display().to_string())),
     };
-    let (effort, permission, extra_args) = match spelled {
-        Some(s) => (s.effort, Some(s.permission), Some(s.words)),
-        None => (None, None, None),
-    };
+    let effort = spelled.and_then(|s| s.effort);
     let request = AdoptController {
         pane: pane.clone(),
         socket: Some(socket),
@@ -2013,8 +2115,8 @@ pub fn register_controller(
         effort,
         cwd: Some(cwd),
         session_rows: Some(rows),
-        permission,
-        extra_args,
+        permission: None,
+        extra_args: None,
     };
     let adopted = adopt_controller(path, &request, settings, locking)?;
     Ok((
@@ -2055,6 +2157,146 @@ mod tests {
         assert_eq!(session_of(None, None, fallback).unwrap(), "predecessor");
         let err = session_of(None, None, None).unwrap_err();
         assert_eq!(err.key(), "tmux-session-unresolved");
+    }
+
+    /// An adoption request states its posture and words as one pair: named
+    /// words spell the posture, a named posture carries only the words
+    /// named, and a request naming neither states none.
+    #[test]
+    fn an_adoption_request_states_its_posture_and_words_as_one_pair() {
+        type Row<'a> = (
+            Option<Permission>,
+            Option<&'a [&'a str]>,
+            Option<(Permission, &'a [&'a str])>,
+        );
+        let words = |w: &[&str]| w.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        let bypass: &[&str] = &["--dangerously-skip-permissions"];
+        let narrow: &[&str] = &["--permission-mode", "dontAsk"];
+        let rows: [Row; 7] = [
+            (None, None, None),
+            (None, Some(bypass), Some((Permission::Bypass, bypass))),
+            (None, Some(narrow), Some((Permission::Native, narrow))),
+            (None, Some(&[]), Some((Permission::Native, &[]))),
+            (
+                Some(Permission::Native),
+                None,
+                Some((Permission::Native, &[])),
+            ),
+            (
+                Some(Permission::Bypass),
+                None,
+                Some((Permission::Bypass, &[])),
+            ),
+            (
+                Some(Permission::Native),
+                Some(narrow),
+                Some((Permission::Native, narrow)),
+            ),
+        ];
+        for (permission, extra_args, stated) in rows {
+            let request = AdoptController {
+                pane: "%1".to_owned(),
+                socket: None,
+                harness: "claude".to_owned(),
+                session_id: None,
+                account: None,
+                home: None,
+                model: None,
+                effort: None,
+                cwd: None,
+                session_rows: None,
+                permission,
+                extra_args: extra_args.map(words),
+            };
+            assert_eq!(
+                stated_posture(Harness::Claude, &request),
+                stated.map(|(p, w)| (p, words(w))),
+                "{permission:?} {extra_args:?}"
+            );
+        }
+    }
+
+    /// An adoption naming no posture whose harness's launch words cannot be
+    /// read keeps the posture recorded for that same pane and process,
+    /// a full bypass included, and gives any other process its harness's
+    /// native defaults with no words: a respawn in the pane, another pane,
+    /// a record with no harness identity, a record with no permission.
+    #[test]
+    fn unreadable_launch_words_keep_the_recorded_process_posture_and_default_any_other() {
+        let read = Identity {
+            pid: 4242,
+            start: "ticks:100".to_owned(),
+        };
+        let record = |extra: Value| -> Overseer {
+            let mut fields = json!({
+                "generation": 1,
+                "permission": "bypass",
+                "extra_args": ["--dangerously-skip-permissions"],
+            });
+            let fields_map = fields.as_object_mut().unwrap();
+            for (key, value) in extra.as_object().unwrap() {
+                // A null member leaves the field out, as a record written
+                // before the field existed does.
+                match value {
+                    Value::Null => fields_map.remove(key),
+                    _ => fields_map.insert(key.clone(), value.clone()),
+                };
+            }
+            serde_json::from_value(fields).unwrap()
+        };
+        let native = Some((Permission::Native, Vec::new()));
+        let rows = [
+            (
+                "same pane, pid and start",
+                true,
+                json!({"harness_pid": 4242, "harness_start": "ticks:100"}),
+                None,
+            ),
+            (
+                "same pane and pid, respawned start",
+                true,
+                json!({"harness_pid": 4242, "harness_start": "ticks:200"}),
+                native.clone(),
+            ),
+            (
+                "another pane, same pid and start",
+                false,
+                json!({"harness_pid": 4242, "harness_start": "ticks:100"}),
+                native.clone(),
+            ),
+            (
+                "same pane, no harness pid",
+                true,
+                json!({"harness_start": "ticks:100"}),
+                native.clone(),
+            ),
+            (
+                "same pane, pid and start, record with no permission",
+                true,
+                json!({
+                    "harness_pid": 4242,
+                    "harness_start": "ticks:100",
+                    "permission": null,
+                    "extra_args": null,
+                }),
+                native.clone(),
+            ),
+        ];
+        for (case, same, extra, expected) in rows {
+            let recorded = record(extra);
+            assert_eq!(
+                adopted_posture(
+                    None,
+                    Unnamed::Launched,
+                    || None,
+                    same,
+                    Some(&recorded),
+                    &read,
+                ),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     /// The words each harness spells its launch choices with, as its own

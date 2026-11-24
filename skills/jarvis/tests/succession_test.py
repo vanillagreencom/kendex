@@ -186,35 +186,55 @@ class SuccessionContract(SessionContract):
 
     def test_an_adopted_session_is_handed_to_a_managed_successor_on_the_private_server(self):
         # A session a person runs by hand becomes the home's controller: its
-        # pane is bound, the managed successor opens on the home's own
-        # server, and the person's server keeps everything but that pane.
-        owner = self.stand_in("owner", "kept")
-        line = ("cd " + shlex.quote(str(self.home)) + " && exec env CLAUDE_CONFIG_DIR=" + shlex.quote(str(self.account))
-                + " PATH=" + shlex.quote(self.env["PATH"]) + " claude --session-id adopted-1")
-        self.tmux_read(owner, "send-keys", "-t", "=owner:", line, "Enter")
-        deadline = time.monotonic() + 30
-        while not self.started() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        adopted = self.started()[-1]
-        pane = self.pane_of(owner, "owner")
-        env = self.inside_env(owner, "kept")
-        argv = [str(session_test.SCRIPT), "start", "--home", str(self.home), "--harness", "claude",
-                "--account", str(self.account), "--adopt-pane", pane, "--adopt-pid", str(adopted["pid"])]
-        result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=300)
-        answer = session_test.validate(result.stdout, result.returncode, "start", adopt=True)
-        self.assertEqual(answer["state"], "running", result.stderr)
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            status = self.call("status")[0]
-            if status["state"] == "running" and status["terminal"] and status["terminal"]["server"] != owner:
-                break
-            time.sleep(0.2)
-        else:
-            self.fail("the adoption did not settle\n" + self.diagnostics())
-        self.assertEqual(self.controller().get("seat"), "jarvis")
-        with self.assertRaises(ProcessLookupError):
-            os.kill(adopted["pid"], 0)
-        self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=kept").returncode, 0)
+        # pane is bound, the managed successor opens on the home's own server
+        # under the posture the adopted session was started under, never the
+        # runtime's bypass default, or unattended where the home names its
+        # harness, and the person's server keeps everything but that pane.
+        settings = self.home / "kendex.settings.toml"
+        base = settings.read_text()
+        rows = (("", "native", set()),
+                ('JARVIS_UNATTENDED_HARNESSES = "claude"\n', "bypass", session_test.PERMISSION_WORDS["claude"]))
+        for setting, permission, words in rows:
+            with self.subTest(setting=setting):
+                settings.write_text(base + setting)
+                try:
+                    name = "owner-" + permission
+                    owner = self.stand_in(name, "kept-" + permission)
+                    line = ("cd " + shlex.quote(str(self.home)) + " && exec env CLAUDE_CONFIG_DIR="
+                            + shlex.quote(str(self.account)) + " PATH=" + shlex.quote(self.env["PATH"])
+                            + " claude --session-id adopted-" + permission)
+                    launched = len(self.started())
+                    self.tmux_read(owner, "send-keys", "-t", "=" + name + ":", line, "Enter")
+                    deadline = time.monotonic() + 30
+                    while len(self.started()) == launched and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                    adopted = self.started()[-1]
+                    pane = self.pane_of(owner, name)
+                    env = self.inside_env(owner, "kept-" + permission)
+                    argv = [str(session_test.SCRIPT), "start", "--home", str(self.home), "--harness", "claude",
+                            "--account", str(self.account), "--adopt-pane", pane, "--adopt-pid", str(adopted["pid"])]
+                    result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=300)
+                    answer = session_test.validate(result.stdout, result.returncode, "start", adopt=True)
+                    self.assertEqual(answer["state"], "running", result.stderr)
+                    deadline = time.monotonic() + 120
+                    while time.monotonic() < deadline:
+                        status = self.call("status")[0]
+                        if status["state"] == "running" and status["terminal"] and status["terminal"]["server"] != owner:
+                            break
+                        time.sleep(0.2)
+                    else:
+                        self.fail("the adoption did not settle\n" + self.diagnostics())
+                    controller = self.controller()
+                    self.assertEqual((controller.get("seat"), controller.get("permission")), ("jarvis", permission))
+                    successor = self.started()[-1]
+                    self.assertEqual(set(successor["argv"]) & session_test.ANY_PERMISSION_WORD, words, successor["argv"])
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(adopted["pid"], 0)
+                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=kept-" + permission).returncode, 0)
+                finally:
+                    # Each row adopts into a home with no running controller.
+                    self.call("stop")
+                    self.settled()
 
 
 class HandOverBound(unittest.TestCase):

@@ -795,10 +795,19 @@ fn a_live_controller_reads_through_its_servers_own_program_past_a_stale_client_o
             .replacen("1769590000", &server.start.to_string(), 1)
             .replacen("\"%7\"", &format!("\"{}\"", server.pane), 1)
             .replacen("    \"harness_pid\": \"41388\",\n", "", 1)
-            .replacen("    \"harness_start\": \"ticks:9912345\",\n", "", 1);
+            .replacen("    \"harness_start\": \"ticks:9912345\",\n", "", 1)
+            .replacen(
+                "    \"harness\": \"claude\",\n",
+                "    \"harness\": \"claude\",\n    \"permission\": \"bypass\",\n    \"extra_args\": [],\n",
+                1,
+            );
         assert!(
             !fleet.contains("harness_pid"),
             "{row}: no recorded identity"
+        );
+        assert!(
+            fleet.contains("\"permission\""),
+            "{row}: a recorded posture"
         );
         let record = world.root().join("workflow-state-oversee.json");
         world.record(&record, &fleet);
@@ -836,6 +845,10 @@ fn a_live_controller_reads_through_its_servers_own_program_past_a_stale_client_o
                     doc["controller"]["harness_pid"], server.pane_pid,
                     "{row}: {after}"
                 );
+                // The heal keeps the recorded posture, never the one the
+                // pane's harness, started with no permission word, spells.
+                assert_eq!(doc["controller"]["permission"], "bypass", "{row}: {after}");
+                assert_eq!(doc["controller"]["extra_args"], json!([]), "{row}: {after}");
                 assert_eq!(
                     world.log("tmux.log"),
                     "",
