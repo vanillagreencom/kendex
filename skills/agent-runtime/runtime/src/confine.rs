@@ -73,7 +73,7 @@ const NO_DISPLAY: &str = ".agent-runtime-no-display";
 /// How long the probe's trial run may take before it reads as refused.
 const TRIAL: Duration = Duration::from_secs(30);
 
-/// A read-only directory with explicit writable directories beneath it.
+/// A read-only directory with explicit writable paths beneath it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedDirectory {
     pub root: PathBuf,

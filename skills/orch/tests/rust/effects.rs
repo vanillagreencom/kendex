@@ -12555,8 +12555,35 @@ fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
 }
 
-/// The linked lane can write its own Git and kendex data while the
-/// shared Git directory keeps a sibling worktree's config read-only.
+/// A main checkout with a separate Git directory can still launch and
+/// write its Git data. Its protected configuration remains read-only.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_main_checkout_with_a_separate_git_directory_keeps_its_git_grants() {
+    let world = Confined::new();
+    let root = world.runner.state_dir();
+    let common = world.dir.path().join("main.git");
+    git(
+        root,
+        &["init", "-q", "--separate-git-dir", common.to_str().unwrap()],
+    );
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "[ -w '{common}/objects' ] && echo objects=writable\n\
+             [ -r '{common}/config' ] && [ ! -w '{common}/config' ] && echo config=read-only",
+            common = common.display(),
+        ),
+    );
+    world.launch(&launch_request("KEN-SEPARATE", root));
+    let probe = world.probe("KEN-SEPARATE", 1);
+    for line in ["objects=writable", "config=read-only"] {
+        assert!(probe.lines().any(|actual| actual == line), "{probe}");
+    }
+}
+
+/// The linked lane can use Git and kendex writer endpoints while the
+/// common directory protects its sibling's config and the writer paths.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_writing() {
@@ -12570,6 +12597,10 @@ fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_wr
     let sibling_admin = PathBuf::from(git(&sibling, &["rev-parse", "--absolute-git-dir"]));
     let sibling_config = sibling_admin.join("config.worktree");
     std::fs::write(&sibling_config, "[core]\n").unwrap();
+    let data = common.join("kendex/lane-data");
+    std::fs::create_dir_all(&data).unwrap();
+    let session_lock = data.join("kendex-worktree-session-guard.lock");
+    std::fs::File::create(&session_lock).unwrap();
     // A broad grant around the repository must still leave its Git
     // metadata protected.
     world
@@ -12582,11 +12613,24 @@ fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_wr
             "if [ -r '{sibling}' ]; then\n\
                (: >> '{sibling}') 2>/dev/null && echo sibling-config=writable || echo sibling-config=refused\n\
              else echo sibling-config=unreadable; fi\n\
-             for dir in objects refs logs worktrees/ken-writer kendex/lane-data; do\n\
+             for dir in objects refs logs worktrees/ken-writer; do\n\
                [ -w '{common}/'\"$dir\" ] && echo \"git-data=$dir writable\" || echo \"git-data=$dir refused\"\n\
-             done",
+             done\n\
+             data='{data}'\n\
+             session=\"$data/kendex-worktree-session-guard.lock\"\n\
+             if [ -f \"$session\" ]; then\n\
+               mv -- \"$session\" \"$session.moved\" 2>/dev/null && echo session-path=moved || echo session-path=held\n\
+             fi\n\
+             key=$(printf %s ken-writer | git hash-object --stdin)\n\
+             for lock in \"$session\" \"$data/kendex-worktree-claim-$key.lock\"; do\n\
+               (exec 9>>\"$lock\" && flock -x -n 9) 2>/dev/null && echo lock=held || echo lock=refused\n\
+             done\n\
+             (: >> \"$data/commit-guards-runs.tsv\") 2>/dev/null && echo log=writable || echo log=refused\n\
+             mkdir -- \"$data/reviewer-stop/fixture-marker\" 2>/dev/null && echo marker=created || echo marker=refused\n\
+             [ -w \"$data\" ] && echo lane-data=writable || echo lane-data=read-only",
             sibling = sibling_config.display(),
             common = common.display(),
+            data = data.display(),
         ),
     );
     world.launch(&launch_request("KEN-WRITER", &wt));
@@ -12595,13 +12639,20 @@ fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_wr
         probe.lines().any(|line| line == "sibling-config=refused"),
         "{probe}"
     );
-    for dir in [
-        "objects",
-        "refs",
-        "logs",
-        "worktrees/ken-writer",
-        "kendex/lane-data",
+    for line in [
+        "session-path=held",
+        "log=writable",
+        "marker=created",
+        "lane-data=read-only",
     ] {
+        assert!(probe.lines().any(|actual| actual == line), "{probe}");
+    }
+    assert_eq!(
+        probe.lines().filter(|line| *line == "lock=held").count(),
+        2,
+        "{probe}"
+    );
+    for dir in ["objects", "refs", "logs", "worktrees/ken-writer"] {
         assert!(
             probe
                 .lines()

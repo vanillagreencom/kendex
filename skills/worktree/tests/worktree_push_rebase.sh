@@ -1402,11 +1402,24 @@ for candidate_case in first tracked explicit-upstream head-mismatch stale-base u
   esac
   candidate_tree="$(git -C "$WT" rev-parse 'HEAD^{tree}')"
   candidate_parents="$(git -C "$WT" show -s --format=%P HEAD)"
+  if [[ "$candidate_case" == tracked ]]; then
+    printf 'previous fetch record\n' >"$MAIN/.git/FETCH_HEAD"
+    git -C "$MAIN" config fetch.prune true
+    retained_ref="$(git -C "$MAIN" rev-parse origin/main)"
+    git -C "$MAIN" update-ref refs/remotes/origin/retained-fixture "$retained_ref"
+    git -C "$MAIN" pack-refs --all
+  fi
   candidate_rc=0
   (cd "$MAIN" && PATH="${ROW_PATH:-$TMP_ROOT/bin}:$PATH" "$candidate_script" push "$WT" \
     --publish-candidate "$candidate_declared_head" "$candidate_declared_base" ${candidate_options[@]+"${candidate_options[@]}"} \
     >"$ROOT/candidate.out" 2>"$ROOT/candidate.err") || candidate_rc=$?
   assert_eq "$candidate_rc" "$candidate_rc_want" "$candidate_case: publication result"
+  if [[ "$candidate_case" == tracked ]]; then
+    assert_eq "$(cat "$MAIN/.git/FETCH_HEAD")" "previous fetch record" \
+      "tracked publication preserves the main checkout's fetch record"
+    assert_eq "$(git -C "$MAIN" rev-parse --verify refs/remotes/origin/retained-fixture)" "$retained_ref" \
+      "tracked publication leaves other remote-tracking refs intact despite the prune setting"
+  fi
   assert_eq "$(git -C "$WT" rev-parse HEAD)" "$candidate_head" "$candidate_case: candidate head unchanged"
   assert_eq "$(git -C "$WT" rev-parse 'HEAD^{tree}')" "$candidate_tree" "$candidate_case: candidate tree unchanged"
   assert_eq "$(git -C "$WT" show -s --format=%P HEAD)" "$candidate_parents" "$candidate_case: candidate parents unchanged"

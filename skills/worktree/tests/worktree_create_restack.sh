@@ -1018,6 +1018,10 @@ echo "=== a rewrite whose record cannot be written never starts ==="
 # must not rewrite anything: there would be no way to refuse the publish
 # afterwards. A directory at the file's own path is what makes the write fail.
 build map-unwritable clean
+printf 'previous fetch record\n' >"$MAIN/.git/FETCH_HEAD"
+git -C "$MAIN" config fetch.prune true
+git -C "$MAIN" update-ref refs/remotes/origin/retained-fixture origin/main
+git -C "$MAIN" pack-refs --all
 claim_key="$(printf '%s' "$ISSUE" | git -C "$MAIN" hash-object --stdin)"
 claim_lock="$MAIN/.git/kendex/lane-data/kendex-worktree-claim-$claim_key.lock"
 rm -f -- "$claim_lock"
@@ -1031,6 +1035,10 @@ unwritable_rc=0
 assert_eq "$unwritable_rc" "1" "a restack whose record cannot be written fails"
 assert_eq "$([[ -f "$claim_lock" ]] && echo yes || echo no)" yes \
   "restack takes its claim lock in the writable lane data folder"
+assert_eq "$(cat "$MAIN/.git/FETCH_HEAD")" "previous fetch record" \
+  "restack leaves the main checkout's fetch record intact"
+assert_eq "$(git -C "$MAIN" rev-parse --verify refs/remotes/origin/retained-fixture)" "$BASE" \
+  "restack leaves other remote-tracking refs intact despite the prune setting"
 assert_eq "$(grep '^worktree-rebase-pending-unrecorded:' "$ROOT/unwritable.err" | sed "s|$WT|<wt>|")" \
   "worktree-rebase-pending-unrecorded: <wt>" "the refusal names the worktree it could not record in"
 assert_eq "$(git -C "$WT" rev-parse HEAD)" "$unwritable_head" "the branch was never rewritten"

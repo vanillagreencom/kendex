@@ -158,11 +158,15 @@ record_and_block() { # KEY VALUE [DETAIL]
   if [ -e "$MARKER" ]; then
     exit 0
   fi
-  # Both probes are captured rather than left to write first: the group runs
-  # the redirection in a subshell so the shell's own "cannot create" reaches
-  # the same variable mkdir's message would.
-  if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1) ||
-    ! MARKER_ERR=$( { : >"$MARKER"; } 2>&1 ); then
+  if ! MARKER_ERR=$(mkdir -p -- "$MARKER_DIR" 2>&1); then
+    refuse marker "$MARKER" "$MARKER_ERR"
+  fi
+  # The marker carries no data. A directory can be claimed exclusively
+  # without opening the name another stop has already put there.
+  if ! MARKER_ERR=$(mkdir -- "$MARKER" 2>&1); then
+    if [ -d "$MARKER" ] && [ ! -L "$MARKER" ]; then
+      exit 0
+    fi
     refuse marker "$MARKER" "$MARKER_ERR"
   fi
   refuse "$@"

@@ -582,7 +582,7 @@ abort_orphaned_restack_record() {
     restack_state_refusal "$wt" authorization-missing "missing its tool-created authorization"
     return 1
   fi
-  acquire_issue_claim_lock "$branch" || return 1
+  acquire_restack_claim_lock "$wt" "$branch" || return 1
   # The lock is what makes the precondition durable. A concurrent
   # 'create <ID> --restack' holds it across the window where it writes the
   # record and starts the rebase, so a sample taken before the lock can name a

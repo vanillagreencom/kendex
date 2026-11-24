@@ -636,6 +636,12 @@ RACE_ROOT="$TMP_ROOT/exclusive-file-race"
 make_repo "$RACE_ROOT"
 MAIN="$RACE_ROOT/main"; ROOT="$RACE_ROOT"; add_merged_tree issue-race
 RACE_WT="$RACE_ROOT/trees/issue-race"
+confined_rc=0
+confined_err=$(AGENT_RUNTIME_CONFINED=1 PATH="$NOFLOCK_BIN" \
+  "$GUARD_SCRIPT" claim "$RACE_WT" --owner confined 2>&1 >/dev/null) || confined_rc=$?
+assert_eq "rc=$confined_rc cause=${confined_err%%:*} state=$(guard_status_code "$RACE_WT" "$MAIN")" \
+  "rc=1 cause=worktree-guard-flock-required state=3" \
+  "a confined session without flock refuses before taking a lease"
 RACE_GO="$RACE_ROOT/go"
 RACE_OUT="$RACE_ROOT/out"
 mkdir -p "$RACE_OUT"

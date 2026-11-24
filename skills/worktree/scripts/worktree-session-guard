@@ -114,8 +114,9 @@ Options (a flag a command does not take is a usage failure):
   --repo DIR         release, status, list, sweep. Repository checkout.
 
 Mutations (claim, refresh, release, sweep) serialize on a lock in the
-repository's common dir, through flock(1) where it is on PATH and an
-exclusive-file mutex otherwise; either refuses after waiting 60 seconds for it.
+repository's common dir. A confined session requires flock(1). An unconfined
+session uses an exclusive-file mutex where flock is absent. Both wait up to
+60 seconds.
 An established --session claim makes one attempt and does not wait.
 
 Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
@@ -494,13 +495,17 @@ acquire_guard_mutex() { # COMMON [WAIT_SECONDS]
 		return 1
 	}
 	if command -v flock >/dev/null 2>&1; then
-		{ exec 9>"$lock_path"; } 2>/dev/null || { worktree_message guard-lock-open "$lock_path" "Cannot open the session lock file." >&2; return 1; }
+		{ exec 9>>"$lock_path"; } 2>/dev/null || { worktree_message guard-lock-open "$lock_path" "Cannot open the session lock file." >&2; return 1; }
 		if [[ "$wait" -eq 0 ]]; then
 			flock -x -n 9 || { worktree_message guard-lock-busy "$lock_path" "Another guard process holds the session lock." >&2; return 1; }
 		else
 			flock -x -w "$wait" 9 || { worktree_message guard-lock-timeout "$lock_path" "Cannot acquire the session lock within ${wait}s; another guard process holds it." >&2; return 1; }
 		fi
 		return 0
+	fi
+	if [[ "${AGENT_RUNTIME_CONFINED:-}" == 1 ]]; then
+		worktree_message guard-flock-required "$lock_path" "A confined session needs flock for its session lock." >&2
+		return 1
 	fi
 	# Keep cleanup inert until this process owns the file. A signal between
 	# acquisition and the assignment can leave a file to remove by hand; arming
