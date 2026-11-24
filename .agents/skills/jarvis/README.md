@@ -21,7 +21,7 @@ Jarvis turns your coding assistant into a personal assistant that carries out th
 
 You need kendex, Git, Python 3.8 or newer, Bash, jq, tmux, one supported coding assistant you have signed in to (Claude Code, Codex, Copilot CLI or Pi), and a Linear workspace. The continuing session keeps its open work in Linear.
 
-Your Jarvis home is a new folder of its own, outside any existing project. Running `git init` in a folder inside a project does not separate it from that project.
+Create your Jarvis home outside any existing project. See [Initialize](references/home-layout.md#initialize) before choosing a folder.
 
 Before the first start with Copilot CLI, follow [Copilot folder trust](references/home-layout.md#copilot-folder-trust).
 
@@ -45,18 +45,12 @@ In a new home, `kendex add` asks these questions in this order:
 - To answer all of them without being asked, add `--yes --commit --allow-repo-effects` to the `kendex add` command.
 - To commit with your own message, add `--message TEXT`.
 - List each assistant you use in `--harness`, comma-separated.
-- The first `start` writes the starting files, an `AGENTS.md` that loads the [persona](persona.md), the memory index and `state/`, and then starts the session. It uses the account folder your assistant uses, such as `~/.codex` or the folder `CODEX_HOME` names; add `--account DIR` for another one. In a folder that is not a new home of its own, it refuses and names what to do. [Initialize](references/home-layout.md#initialize) has the details.
-- `attach` puts your terminal on the running session.
+- The first `start` initializes the home and starts the session. Add `--account DIR` to use a different account folder from your assistant's default.
+- `attach` opens the running session in your terminal.
 
 ## How it works
 
-Jarvis runs as a session of your coding assistant in your Jarvis home. You give it requests in its terminal, through Slack or by voice. For each request it reads the guidance it needs, does the work or hands part of it to a specialist agent, checks the result and tells you what the evidence shows. It asks you before any step you keep for yourself. Open work stays in your tracker, and notes in the home let the next session carry on. These pages explain the current package and name the parts still being built.
-
-- **Jarvis** is the main long-running session.
-- **Jarvis Voice** is the VGS voice session on any computer.
-- **Jarvis main** is the computer that runs Jarvis.
-- A Jarvis satellite runs Jarvis Voice and the local console session, runs the standing watch loop when installed as a systemd user service, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
-- **Jarvis home** is the folder with Jarvis's instructions, skills and memory: `~/jarvis` if you followed [Install](#install). Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
+Give Jarvis requests in its terminal, through Slack or by voice. Keep your Jarvis home in a private Git repository of its own. Committed files travel with the repository. Scratch files and secrets stay on each computer.
 
 | Your question | Read |
 |---|---|
@@ -74,17 +68,12 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 Your own files sit in the Jarvis home beside the package, and package updates leave them as they are. The [home layout](references/home-layout.md) lists every file and whether Git keeps it.
 
 - `AGENTS.md` holds your standing instructions: who decides what, and which work Jarvis may do without asking.
+- Before adding an agent or skill or changing an installed agent, read [Personal additions](references/home-contract.md#personal-additions) for the checks to run before editing. Follow its refresh and readback steps after editing.
 - `skills/NAME/` holds skills you write. To add one:
   1. Create `skills/my-task/SKILL.md` with a frontmatter `name: my-task` and a `description` that says when to read it, then the instructions below it.
   2. In your home's `kendex.toml`, declare `[sources."."]` with `path = "."`.
   3. List the skill under `[skills.my-task]` with `source = "."`.
-  4. Run `kendex refresh` from your home to install it.
-- `agents/NAME.md` holds agents you write. To add one:
-  1. Give the agent a frontmatter `name` and `description`, followed by its scope and instructions.
-  2. Reuse the same home source and list it under `[agents.NAME]` with `source = "."`.
-  3. Refresh from your home.
-  4. Check the agent in each selected supported assistant.
-- Change an installed agent through the manifest's agent overrides or `kendex fork`, rather than editing its generated file.
+- To add your own agent, give `agents/NAME.md` a frontmatter `name` and `description`, followed by its scope and instructions. Reuse the home source above and declare `[agents.NAME]` with `source = "."`.
 - `memory/` holds facts and preferences under [Memory](references/memory.md). Keep secrets in a password manager, never in memory.
 - Ask Jarvis to remember a fact or establish a workstream through [Personal additions](references/home-contract.md#personal-additions). Workstream notes keep the goal, scope, owner and tracker links; tasks and waiting conditions stay in the tracker.
 - `kendex.settings.toml` holds shared settings under `[env]`, such as the report cadence, quiet hours, time zone and report folder. The [settings example](kendex.settings.toml.example) lists them.
@@ -92,18 +81,16 @@ Your own files sit in the Jarvis home beside the package, and package updates le
 
 ## Use from another computer
 
-To use Jarvis Voice on a second computer, make that computer a Jarvis satellite with a clone of your Jarvis home:
+Jarvis Voice is the VGS voice session. To use it on a second computer, set up a Jarvis satellite. The computer that runs the main Jarvis session is Jarvis main.
 
 1. Clone the Jarvis home's private repository onto the computer.
-2. Run the next steps in the clone.
-3. Run `kendex guard install` to turn on the commit checks. Git does not copy them with a clone.
-4. Run `.agents/skills/jarvis/scripts/jarvis-session main-host --home . --set DEST:/path/to/main/home`, where `DEST` is the SSH destination of Jarvis main and the path is the Jarvis home on it. The command saves `JARVIS_MAIN_HOST` in this computer's `.env.local`. Never put it in `kendex.settings.toml`: Jarvis main would pull it and become a satellite too.
-5. Move the secrets this computer needs under [Secret transfer](references/accounts-and-secrets.md#secret-transfer). A clone carries none of them.
-6. On Linux with systemd, stop any [session-owned watch loop](workflows/session.md#control-host-events) for this home. Run `.agents/skills/jarvis/scripts/watch-loop install --home .` as the satellite user. The command enables lingering for that user so the watch loop starts at boot and keeps running after logout. The service uses the satellite user's SSH configuration to reach Jarvis main.
+2. In the clone, run `kendex guard install` to turn on the commit checks.
+3. In the clone, run `.agents/skills/jarvis/scripts/jarvis-session main-host --home . --set DEST:/path/to/main/home`, where `DEST` is the SSH destination of Jarvis main and the path is its Jarvis home. Follow [Main and satellites](references/agent-reach.md#main-and-satellites) for where to keep this setting and when to leave it empty.
+4. Move the secrets this computer needs under [Secret transfer](references/accounts-and-secrets.md#secret-transfer).
+5. On Linux with systemd, stop any [session-owned watch loop](workflows/session.md#control-host-events) for this home. In the clone, run `.agents/skills/jarvis/scripts/watch-loop install --home .` as the satellite user. The watch loop runs at boot and after logout. It uses the satellite user's SSH configuration to reach Jarvis main.
 
-The satellite handles voice, windows, apps, files, the screen and sign-ins on that computer. Forwarded requests and answers appear in your Slack channel. Set `JARVIS_FORWARD_CONFIRM` to `on` to have it ask you first; the [settings example](kendex.settings.toml.example) says when that helps.
+The satellite handles voice, the local console, windows, apps, files, the screen and sign-ins on that computer. It forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main. Forwarded requests and answers appear in your Slack channel. Set `JARVIS_FORWARD_CONFIRM` to `on` to have it ask you first. The [settings example](kendex.settings.toml.example) says when to use it.
 
-- Leave `JARVIS_MAIN_HOST` empty on Jarvis main only.
 - Do not commit or push the Jarvis home from a satellite.
 
 ## Update
