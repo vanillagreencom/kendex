@@ -38,6 +38,7 @@ import {
 	makeTruncatedLines,
 	preview,
 	readCallText,
+	readImageUnsupportedLine,
 	readOnlyCallText,
 	readResultSummary,
 	renderPathListPreview,
@@ -192,7 +193,12 @@ export function createReadRenderers(cwd: string): ToolRenderers {
 			const count = lineCount(content);
 			const summary = readResultSummary(result, context?.args ?? {}, theme);
 			const mode = readOutputMode(context?.cwd ?? cwd);
-			if (mode === "hidden") return renderReadImages(makeEmpty(), result, expanded, theme, context, cwd);
+			// The warning shows in every mode: without it a person trusts an answer about an image the model never saw.
+			const imageWarning = readImageUnsupportedLine(result, theme, context?.cwd ?? cwd);
+			if (mode === "hidden") {
+				const row = imageWarning ? makeTruncatedLines(`${stackPrefix(theme)}${call}${imageWarning}`) : makeEmpty();
+				return renderReadImages(row, result, expanded, theme, context, cwd);
+			}
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
 			if (mode === "preview" && expanded && content) {
 				const limit = Math.max(1, Math.floor(settingNumber("readPreviewLines", 80, context?.cwd)));
@@ -201,6 +207,7 @@ export function createReadRenderers(cwd: string): ToolRenderers {
 					.join("\n")}`;
 				if (count > limit) text += `\n${treeConnector(theme, "│")}${theme.fg("muted", `… ${count - limit} more line(s)`)}`;
 			}
+			text += imageWarning;
 			return renderReadImages(makeTruncatedLines(text), result, expanded, theme, context, cwd);
 		},
 	};
