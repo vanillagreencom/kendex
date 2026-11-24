@@ -907,6 +907,67 @@ fn a_path_only_one_source_names_overlaps_the_holder() {
     assert_eq!(lane["in_scope"], json!(["src/b.sh"]));
 }
 
+/// An item naming its `skills/` files "with their `.agents/skills`
+/// renders" records each file and that file's render, never the bare render
+/// directory. Beside the first as a live holder in its review, a second on
+/// disjoint files is admitted, and a third on the first's render meets it.
+#[test]
+fn items_naming_their_renders_hold_each_files_render_and_disjoint_ones_both_launch() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.item(
+        "KEN-A",
+        "`skills/a/SKILL.md` (Tests) and its `.agents/skills` render.",
+        0,
+        &[],
+    );
+    fleet.item(
+        "KEN-B",
+        "`skills/b/SKILL.md`, `skills/b/x.md`, with their `.agents/skills` renders.",
+        0,
+        &[],
+    );
+    fleet.item("KEN-C", "`.agents/skills/a/SKILL.md`", 0, &[]);
+
+    let out = fleet.op(&launch("KEN-A", fleet.state_dir().as_path()));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let held = [".agents/skills/a/SKILL.md", "skills/a/SKILL.md"];
+    assert_eq!(fleet.lane("KEN-A")["touched"], json!(held));
+
+    fleet.init_item("KEN-A", "ken-a");
+    fleet.review("KEN-A");
+    let mut harness = Owned::sleep();
+    fleet.write_lanes(vec![holder(
+        "KEN-A",
+        "running",
+        Some(&harness),
+        Some(&held),
+    )]);
+    let out = fleet.op(&launch("KEN-B", fleet.state_dir().as_path()));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-B")["touched"],
+        json!([
+            ".agents/skills/b/SKILL.md",
+            ".agents/skills/b/x.md",
+            "skills/b/SKILL.md",
+            "skills/b/x.md"
+        ])
+    );
+
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-C", fleet.state_dir().as_path())));
+    assert_eq!(key, "launch-overlap");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-C"),
+            ("file", ".agents/skills/a/SKILL.md"),
+            ("holder", "KEN-A")
+        ])
+    );
+    end(&mut harness);
+}
+
 /// A container, by children or by the `agent:multi` label, is refused from
 /// its body before any record or intent; a GitHub item is read through gh,
 /// launched from a checkout of its repository.

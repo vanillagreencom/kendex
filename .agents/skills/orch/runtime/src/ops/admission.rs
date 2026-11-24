@@ -615,8 +615,8 @@ fn without_line_suffix(token: &str) -> &str {
     }
 }
 
-/// The paths the body's Location lines name. A Location line naming no
-/// backticked path is unread (`location`).
+/// The paths the body's Location lines name, each line read by
+/// [`named_paths`]. A Location line naming no path is unread (`location`).
 fn location_paths(body: &str) -> std::result::Result<Vec<String>, &'static str> {
     let mut located = false;
     let mut paths = Vec::new();
@@ -624,7 +624,7 @@ fn location_paths(body: &str) -> std::result::Result<Vec<String>, &'static str> 
         let line = line.strip_suffix('\r').unwrap_or(line);
         if is_location_line(line) {
             located = true;
-            paths.extend(ticks(line));
+            paths.extend(named_paths(line));
         }
     }
     if located && paths.is_empty() {
@@ -633,14 +633,52 @@ fn location_paths(body: &str) -> std::result::Result<Vec<String>, &'static str> 
     Ok(paths)
 }
 
-/// The paths a brief names: its backticked tokens that hold a `/`, less
-/// a URL and an option word. A brief names files in prose, so the form is
-/// the rule; a token that is no path overlaps nothing.
-fn brief_paths(brief: &str) -> Vec<String> {
-    ticks(brief)
-        .into_iter()
-        .filter(|t| t.contains('/') && !t.contains("://") && !t.starts_with('-'))
-        .collect()
+/// Where a source catalog's `skills/` tree renders in the checkout that
+/// installs it.
+const SKILLS_SOURCE: &str = "skills/";
+const SKILLS_RENDER: &str = ".agents/skills/";
+
+/// The paths `text` names: its backticked tokens that read as a path
+/// ([`is_path`]). Item text names files in prose beside flags and function
+/// names, so the form is the rule; the touched set reaches change-scope
+/// as `--path` values, which refuses one that reads as an option. Text
+/// that names the bare render directory beside other paths ("with their
+/// `.agents/skills` renders") names the render of each of its paths under
+/// `skills/` in place of the directory, which no file of a branch meets;
+/// the directory named alone is a claim on the whole rendered tree.
+fn named_paths(text: &str) -> Vec<String> {
+    let mut paths: Vec<String> = ticks(text).into_iter().filter(|t| is_path(t)).collect();
+    let is_render_root = |p: &str| p.trim_end_matches('/') == SKILLS_RENDER.trim_end_matches('/');
+    if paths.iter().any(|p| is_render_root(p)) && paths.iter().any(|p| !is_render_root(p)) {
+        let renders: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.strip_prefix(SKILLS_SOURCE))
+            .map(|rest| format!("{SKILLS_RENDER}{rest}"))
+            .collect();
+        paths.retain(|p| !is_render_root(p));
+        paths.extend(renders);
+    }
+    paths
+}
+
+/// Whether a backticked token reads as a path: one holding a `/`, less a
+/// URL, or a file name with an extension (`Cargo.lock`, `.gitignore`), and
+/// never an option word. A function, a field or a version names no file.
+fn is_path(token: &str) -> bool {
+    if token.starts_with('-') || token.contains("://") {
+        return false;
+    }
+    if token.contains('/') {
+        return true;
+    }
+    let name_chars = token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+' | '@'));
+    let extension = token.rsplit_once('.').is_some_and(|(_, ext)| {
+        ext.starts_with(|c: char| c.is_ascii_alphabetic())
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+    });
+    name_chars && extension
 }
 
 /// The touched set: the body's Location paths, the brief's paths, the
@@ -659,7 +697,7 @@ pub(super) fn touched(
         touched.extend(location_paths(body)?);
     }
     if let Some(brief) = brief {
-        touched.extend(brief_paths(brief));
+        touched.extend(named_paths(brief));
     }
     touched.extend(range.iter().chain(added).cloned());
     touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
@@ -2129,8 +2167,31 @@ mod tests {
 
     #[test]
     fn location_lines_are_read_into_their_paths() {
-        let rows: [(&str, std::result::Result<Vec<&str>, &str>); 8] = [
+        let rows: [(&str, std::result::Result<Vec<&str>, &str>); 12] = [
             ("**Location**: `src/a.sh`", Ok(vec!["src/a.sh"])),
+            (
+                "**Location**: `skills/x/a.rs` (`location_paths`, the `--overseer` flag)",
+                Ok(vec!["skills/x/a.rs"]),
+            ),
+            (
+                "**Location**: the `--overseer` branch of `location_paths`",
+                Err("location"),
+            ),
+            (
+                "**Location**: `Cargo.toml` (`[workspace.dependencies]`), `Cargo.lock`",
+                Ok(vec!["Cargo.toml", "Cargo.lock"]),
+            ),
+            (
+                "**Location**: `skills/a/SKILL.md` (Tests), `skills/b/x.md`, `src/c.rs`, \
+                 with their `.agents/skills` renders.",
+                Ok(vec![
+                    "skills/a/SKILL.md",
+                    "skills/b/x.md",
+                    "src/c.rs",
+                    ".agents/skills/a/SKILL.md",
+                    ".agents/skills/b/x.md",
+                ]),
+            ),
             (
                 "* **Location**: `src/a.sh` (the gate)",
                 Ok(vec!["src/a.sh"]),
@@ -2155,10 +2216,39 @@ mod tests {
     }
 
     #[test]
-    fn a_brief_names_the_tokens_that_read_as_paths() {
-        let brief = "Edit `src/a.sh` and `docs/`. Run `cargo test`, pass `--json`, see \
-                     `https://x.y/z`, read `README.md`, line `src/b.rs:12`.";
-        assert_eq!(brief_paths(brief), ["src/a.sh", "docs/", "src/b.rs"]);
+    fn text_names_the_tokens_that_read_as_paths() {
+        let rows: [(&str, &[&str]); 7] = [
+            ("", &[]),
+            (
+                "Edit `src/a.sh` and `docs/`. Run `cargo test`, pass `--json`, see \
+                 `https://x.y/z`, read `README.md`, line `src/b.rs:12`.",
+                &["src/a.sh", "docs/", "README.md", "src/b.rs"],
+            ),
+            (
+                "`.gitignore`, `pnpm-lock.yaml`, `kendex.settings.toml.example`",
+                &[
+                    ".gitignore",
+                    "pnpm-lock.yaml",
+                    "kendex.settings.toml.example",
+                ],
+            ),
+            (
+                "`ticks`, `Error::refused`, `classify()`, `0.4.1`, `-x/y`, `e.g.`, `rust-version`",
+                &[],
+            ),
+            ("the `.agents/skills/` tree", &[".agents/skills/"]),
+            (
+                "`docs/x.md` and its `.agents/skills` render",
+                &["docs/x.md"],
+            ),
+            (
+                "`skills/` and its `.agents/skills/` render",
+                &["skills/", ".agents/skills/"],
+            ),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(named_paths(text), expected, "{text:?}");
+        }
     }
 
     #[test]

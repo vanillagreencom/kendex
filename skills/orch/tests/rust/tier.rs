@@ -132,6 +132,12 @@ fn each_input_opens_its_cycle_with_the_line_a_brief_carries() {
         "- **Location**: `.github/workflows/ci.yml`\n**Expected delta**: 4 lines\n",
     );
     let bare_body = w.file("bare-body", "**Location**: `src/a.rs:3-9`\nNo sizing.\n");
+    // Prose spans beside the path, one an option word, are not passed to
+    // the arm, whose `--path` would read an option word as no value.
+    let prose_body = w.file(
+        "prose-body",
+        "**Location**: `src/a.rs` (the `--overseer` branch of `classify`)\n**Expected delta**: 4 lines\n",
+    );
     let rows: &[(&[&str], &str)] = &[
         (
             &["--production", "1"],
@@ -160,6 +166,10 @@ fn each_input_opens_its_cycle_with_the_line_a_brief_carries() {
         (
             &["--body", bare_body.to_str().unwrap()],
             "tier=standard brief=start cause=body-without-tier-inputs estimate=- delta=- paths=1",
+        ),
+        (
+            &["--body", prose_body.to_str().unwrap()],
+            "tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=1",
         ),
     ];
     for (args, line) in rows {
