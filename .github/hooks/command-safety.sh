@@ -2852,7 +2852,7 @@ refuse() { # KEY VALUE [CAUSE]
         else
           echo "push to a remote the repository already has, by its name, in a plain pipeline from a directory named literally, for example: git push origin HEAD"
         fi
-        echo "for GitHub authentication, use the github skill's git-https-auth push origin HEAD so the credential helper selects the push credential and ordinary gh calls in pre-push retain the read selection"
+        echo "for GitHub authentication, use the github skill's git-https-auth push origin HEAD. In GitHub HTTPS sessions configured with both read and push credential selectors, the helper selects the push credential and ordinary gh calls in pre-push retain the read selection"
         echo "a new destination is the owner's choice: the owner adds the remote, or starts the session with COMMAND_SAFETY_OWNER_COMMAND set to this exact command" ;;
       report=plain-stage)
         for line in ${transfer_reports[@]+"${transfer_reports[@]}"}; do printf 'command-safety: %s\n' "$line"; done

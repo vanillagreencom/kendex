@@ -2277,7 +2277,7 @@ transfer_rows() { # HOOK [LABEL...]
       # after a refusal's text would stand below them.
       late=""
       if [ "$status" -eq 2 ] && grep -q '^command-safety: report=' "$scratch/stderr"; then late=" late-report"; fi
-      if [ "$label" = push-inline-credential-helper ] && ! grep -Fqx "for GitHub authentication, use the github skill's git-https-auth push origin HEAD so the credential helper selects the push credential and ordinary gh calls in pre-push retain the read selection" "$scratch/stderr"; then
+      if [ "$label" = push-inline-credential-helper ] && ! grep -Fqx "for GitHub authentication, use the github skill's git-https-auth push origin HEAD. In GitHub HTTPS sessions configured with both read and push credential selectors, the helper selects the push credential and ordinary gh calls in pre-push retain the read selection" "$scratch/stderr"; then
         late="$late missing-credential-helper-remedy"
       fi
       if [ "$status" -eq "$expected" ] && [ "${got:--}" = "$keyed" ] && [ -z "$late" ]; then
