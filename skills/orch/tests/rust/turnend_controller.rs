@@ -802,12 +802,10 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             );
         } else {
             assert_eq!(out.code, 0, "{name}: {}", out.stderr);
-            // Below the token cap a Claude reading with compaction on names
-            // no window, so the percentage mark is said unmeasured.
             let told = if case.home == "other" {
                 vec![format!("transcript-unowned={}", named.display())]
             } else {
-                vec!["window-unread=claude-opus-4-5".to_owned()]
+                Vec::new()
             };
             assert_eq!(out.keyed(), told, "{name}: {}", out.stderr);
         }
