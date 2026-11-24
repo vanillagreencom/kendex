@@ -92,8 +92,10 @@ TARGETS=${TARGETS%$'\037'}
 HOOK_PATH=${BASH_SOURCE[0]}
 HOOK_ROOT=${KENDEX_HOOK_ROOT-}
 HOME_PATH=${HOME:-/nonexistent}
+WINDOWS_PATHS=''
 case "$OSTYPE" in
   msys* | cygwin* | win32*)
+    WINDOWS_PATHS=1
     HOME_PATH=${USERPROFILE:-$HOME_PATH}
     HOME_PATH=${HOME_PATH//\\//}
     HOOK_PATH=${HOOK_PATH//\\//}
@@ -235,15 +237,17 @@ esac
 
 edited_file() { # PATH — resolve the parent, including parents yet to be made
   local path=$1 parent suffix
-  case "$path" in /*) ;; *) path="$BASE/$path" ;; esac
+  [ -z "$WINDOWS_PATHS" ] || path=${path//\\//}
+  [[ "$path" == /* || "$path" =~ $absolute_root ]] || path="$BASE/$path"
   parent=${path%/*}
   suffix=/${path##*/}
-  while [ ! -d "${parent:-/}" ]; do
+  while [ ! -d "$parent/" ]; do
+    [[ "$parent" == */* ]] || return 2
     case "${parent##*/}" in . | .. | '') return 2 ;; esac
     suffix="/${parent##*/}$suffix"
     parent=${parent%/*}
   done
-  parent=$(physical_dir "${parent:-/}") || return 2
+  parent=$(physical_dir "$parent/") || return 2
   printf '%s' "${parent%/}$suffix"
 }
 

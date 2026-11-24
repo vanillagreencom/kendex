@@ -238,6 +238,16 @@ pi_rows() {
       "$(pi_edit "$REPO/shell/Panel.qml" pi-relocated)" 'ui-copy-note: path=shell/Panel.qml'
 }
 pi_rows
+# Pi's native file_path resolves through the Windows drive on these Bash hosts.
+case "$OSTYPE" in
+  msys* | cygwin*)
+    drive_target=$(cygpath -aw "$REPO/ui/Panel.tsx")
+    KENDEX_HOOK_SCOPE=global KENDEX_HOOK_ROOT="$SIBLING/.pi" \
+      EXPECTED_GUIDE="$HOME/.agents/skills/code-quality/references/ui.md" \
+      check 'Pi edit with a Windows drive path' pi-global \
+        "$(pi_edit "$drive_target" pi-drive-path)" 'ui-copy-note: path=ui/Panel.tsx'
+    ;;
+esac
 mkdir -p "$TMP_ROOT/dotfiles/pi-home/agent"
 ln -s "$TMP_ROOT/dotfiles/pi-home" "$HOME/.pi"
 [ -L "$HOME/.pi" ]
