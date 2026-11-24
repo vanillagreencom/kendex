@@ -184,7 +184,7 @@ A must-fail control ([§ Tests](#tests)) proves that an instrument detects the d
 - A bug fix ships the test that failed before the fix.
 - The control is not owed per surface, per rule or per row.
 - A control's absence from the suite is no omission.
-- A control stays in the suite only where it is the cheapest catch of a failure that recurs.
+- A control stays in the suite only where a record shows the failure it catches recurred and no cheaper check catches it; without that record, remove it.
 - [§ Prove Your Guards](#prove-your-guards) holds the mechanics.
 - When no production edit can redden a test, state why and what it establishes.
 - A port keeps the original's answers on the inputs that matter: its fixtures, its incidents and the edges you name, recorded by running the original once.
