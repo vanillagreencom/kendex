@@ -126,7 +126,7 @@ pub(super) fn warning_lines(
             false => lines.extend(style.report_warning(&format!("{target}: {}", warning.message))),
         }
         if let Some(fix) = &warning.remediation {
-            lines.extend(style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  "));
+            lines.extend(fix_line(style, fix));
         }
         // The keyed diagnostic line, where a terminal reader finds the
         // code the message leaves out.
@@ -135,6 +135,11 @@ pub(super) fn warning_lines(
         }
     }
     lines
+}
+
+/// A warning's remedy under it, in every verb that prints warnings.
+pub(super) fn fix_line(style: &ui::Style, fix: &str) -> Vec<String> {
+    style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  ")
 }
 
 fn report_lines(style: &ui::Style, report: &EngineReport, blocked: bool) -> Vec<String> {
