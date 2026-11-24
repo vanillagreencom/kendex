@@ -439,7 +439,8 @@ fn a_hook_record_whose_source_cannot_be_read_names_the_cause() {
         (
             "re-pointed at a repository never downloaded",
             "repo = \"owner/absent\"\n",
-            "source 'cat' has not been downloaded yet — refresh it first",
+            "source 'cat' has not been downloaded yet — fetch it with `kendex source refresh` \
+             (add `--global` for a global source)",
         ),
         (
             "re-pointed at another repository that holds the commit",

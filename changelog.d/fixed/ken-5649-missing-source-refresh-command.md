@@ -1,0 +1,1 @@
+- When a catalog has yet to be downloaded, kendex names `kendex source refresh` as the fix.

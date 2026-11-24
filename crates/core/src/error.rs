@@ -315,7 +315,10 @@ pub enum CoreError {
     #[error("plan is stale: {path} changed since the plan was computed — re-plan and retry")]
     PlanStale { path: PathBuf },
 
-    #[error("source '{name}' has not been downloaded yet — refresh it first")]
+    #[error(
+        "source '{name}' has not been downloaded yet — fetch it with `{}` (add `--global` for a global source)",
+        crate::drift::report::SOURCE_REFRESH_COMMAND
+    )]
     SourcePending { name: String },
 
     /// A tracking fetch that failed while the cache still answered, for a
