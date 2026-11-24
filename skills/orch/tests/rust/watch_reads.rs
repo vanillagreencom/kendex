@@ -972,6 +972,7 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
         "lanes": [
             {"item": "KEN-1", "status": "parked", "parked": {"pr": 7, "repo": "owner/repo", "head": "abc"}},
             {"item": "KEN-2", "status": "parked", "parked": {"until_pr": 8, "repo": "owner/repo", "head": "abc"}},
+            {"item": "KEN-3", "status": "running", "pending_pr": {"until_pr": 8, "repo": "owner/repo", "head": "abc"}},
         ]}));
     quiet_github(&mut world);
     let pull = |number, branch| json!({"number": number, "state": "closed", "title": "repair", "body": null,
@@ -999,25 +1000,25 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
             ]);
         }
         let mut body = github::body(world.github_context(settings, None, &["owner/repo"], shared));
-        let produced = pass_as(
-            Duty::GitHub,
-            &mut body,
-            &mut Baseline::default(),
-            &FakeClock::new(),
-            SINCE_EPOCH + 1000,
-        )
-        .unwrap();
-        let parked: Vec<_> = produced
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                Event::ParkedMerged { item, pr, repo } => {
-                    Some((item.as_str(), pr.as_str(), repo.as_str()))
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(parked, expected, "team={team:?} verdict={verdict:?}");
+        let clock = FakeClock::new();
+        let mut baseline = Baseline::default();
+        for (pass, wall) in [("first", SINCE_EPOCH + 1000), ("standing", SINCE_EPOCH + 1240)] {
+            let produced = pass_as(Duty::GitHub, &mut body, &mut baseline, &clock, wall).unwrap();
+            let parked: Vec<_> = produced
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::ParkedMerged { item, pr, repo } => {
+                        Some((item.as_str(), pr.as_str(), repo.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(parked, expected, "pass={pass} team={team:?} verdict={verdict:?}");
+            if pass == "standing" {
+                assert!(!produced.events.iter().any(|event| matches!(event, Event::Merged { .. })));
+            }
+        }
     }
 }
 
