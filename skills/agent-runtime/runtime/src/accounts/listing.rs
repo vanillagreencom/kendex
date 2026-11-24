@@ -1140,6 +1140,17 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         detail = "authenticated, but the usage response carried no weekly, monthly or model window"
             .to_owned();
     }
+    if e.harness == Harness::Codex
+        && matches!(usage, Some(Usage::Body(_)))
+        && credits
+            .as_ref()
+            .is_some_and(|c| c["spend_control_reached"].is_null())
+    {
+        if !detail.is_empty() {
+            detail.push_str("; ");
+        }
+        detail.push_str("spend_control unread");
+    }
     let mut row = json!({
         "alias": e.alias,
         "harness": e.harness,

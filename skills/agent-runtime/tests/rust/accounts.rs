@@ -2972,6 +2972,80 @@ fn each_endpoint_shape_is_read_as_its_recorded_body() {
 }
 
 #[test]
+fn codex_credit_room_requires_a_readable_spend_control() {
+    // Credit fields from https://github.com/openai/codex/issues/53559.
+    let pro = json!({
+        "credits": {"has_credits": true, "overage_limit_reached": false, "balance": "62381.9437950000"},
+        "spend_control": {"reached": false}
+    });
+    // Keep all the gates but spend control satisfied to isolate its effect.
+    let mut absent = pro.clone();
+    absent.as_object_mut().unwrap().remove("spend_control");
+    let mut null = pro.clone();
+    null["spend_control"] = Value::Null;
+    let cases = [
+        // CodeyBox.Tests/Fixtures/Quota/codex-wham-usage.redacted.json in AdamFrisby/CodeyBox.
+        (
+            "prolite",
+            json!({"credits": {"has_credits": false, "unlimited": false,
+            "overage_limit_reached": false, "balance": "0"}}),
+            None,
+            false,
+        ),
+        // https://github.com/steipete/CodexBar/issues/2736 records a cap with no balance.
+        (
+            "team",
+            json!({"credits": {"has_credits": true, "unlimited": false,
+            "overage_limit_reached": false, "balance": null}, "spend_control": {
+            "reached": false, "individual_limit": {"source": "workspace_spend_controls", "limit": "1000"}}}),
+            Some(false),
+            false,
+        ),
+        ("pro", pro, Some(false), true),
+        ("absent", absent, None, false),
+        ("null", null, None, false),
+    ];
+    let mut world = World::new(&[]);
+    let mut account = measured("acodex", 100, 0);
+    account["harness"] = json!("codex");
+    world.plant_listing(&[account]);
+    world.write_fleet(Vec::new(), None);
+    let settings = world.settings.accounts.get().unwrap();
+    for (case, mut body, spend_reached, room) in cases {
+        // Exhaust the plan window so the listing's verdict depends on credits.
+        body["rate_limit"] = json!({"primary_window": {
+            "used_percent": 100, "limit_window_seconds": 604_800, "reset_at": now() + 3600
+        }});
+        std::fs::remove_file(world.record_path("codex", "acodex")).unwrap();
+        world.plant_answer("token-acodex", "usage", &body, None);
+        let row = listed_row(&world, "acodex");
+        let parsed = AccountRow::parse(&row, &settings).unwrap();
+        assert_eq!(
+            row["credits"]["spend_control_reached"],
+            json!(spend_reached),
+            "{case}"
+        );
+        assert_eq!(
+            accounts::credit_room(&parsed, settings.codex_credit_floor as f64),
+            room,
+            "{case}"
+        );
+        assert_eq!(
+            row["verdict"],
+            json!(if room { "room" } else { "walled" }),
+            "{case}"
+        );
+        // The roster's detail is the diagnostic shown for this account.
+        let detail = row["detail"].as_str().unwrap_or_default();
+        assert_eq!(
+            detail.contains("spend_control unread"),
+            spend_reached.is_none(),
+            "{case}: {row}"
+        );
+    }
+}
+
+#[test]
 fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_stands_in() {
     let mut world = World::new(&[]);
     world.write_fleet(Vec::new(), None);
