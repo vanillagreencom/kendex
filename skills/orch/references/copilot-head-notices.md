@@ -1,6 +1,6 @@
 # Copilot head notices
 
-Read when the overseer handles a Copilot head notice: the three notices [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route) sends as a `lane-notice`, the review call's own `copilot-fallback`, or a pr-watch `awaiting-stale` or `refresh-ready` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The first line of a § 7.2 notice is its kind, then `PR #[N] head [SHA]`. Read the review call's notice by [gates.md § Copilot requests](gates.md#copilot-requests).
+Read when the overseer handles a Copilot head notice: the three notices [copilot-head-route.md § Copilot head route](copilot-head-route.md#copilot-head-route) sends as a `lane-notice`, the review call's own `copilot-fallback`, or a pr-watch `awaiting-stale` or `refresh-ready` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The first line of a notice copilot-head-route.md sends is its kind, then `PR #[N] head [SHA]`. Read the review call's notice by [gates.md § Copilot requests](gates.md#copilot-requests).
 
 ## Approve a head
 
@@ -71,7 +71,7 @@ A refusal of the request itself approves nothing and names what it judged in `re
 While the lane status file's `Review:` line reads `pending` for that pull request ([review-pr.md § 1](../workflows/review-pr.md#1-identify-changes)), no rule on this page acts, § Fallback approval included: approve nothing, request no Copilot review and direct no lane.
 
 - Once the push carrying the review's fix round lands, [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 1 writes a verdict line in its place, which ends the hold.
-- That step routes the pushed head once by [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route), which re-delivers what the hold held. A head Copilot read takes its notice; any other head takes the review call's `request` route.
+- That step routes the pushed head once by [copilot-head-route.md § Copilot head route](copilot-head-route.md#copilot-head-route), which re-delivers what the hold held. A head Copilot read takes its notice; any other head takes the review call's `request` route.
 - A request that call sends restarts pr-watch's quiet period, so a held `awaiting-stale` line rises again.
 
 ## Notice rules

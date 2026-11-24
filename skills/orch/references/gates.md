@@ -166,7 +166,7 @@ Where the retry cannot stand, the verdict is `copilot-error`, its `reason` `copi
 - The call's own request or error retry counts as that work.
 - Past the bound, `copilot.state` reads `expired` and the verdict stands as read: the expiry grants no approval.
 - A step that merges runs the call before every merge call, and repeats it while it answers `pending copilot-pending` ([merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1).
-- The triage waits on the same work through `orch-runtime copilot-wait` before it reads threads ([review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)), never through this call.
+- The triage waits on the same work through `orch-runtime copilot-wait` before it reads threads ([copilot-head-route.md § Current-head Copilot wait](copilot-head-route.md#current-head-copilot-wait)), never through this call.
 
 ## Which waiter answers which state
 
@@ -185,7 +185,7 @@ How each tool's replies route:
   - `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md); `complete` routed by `submit-pr.md` § 5's result table.
   - A `fail` verdict takes [publication.md § One rerun per head](publication.md#one-rerun-per-head) before ci-fix.
   - The merge state is read through `pr-merge --check` before the first call, and `CONFLICTING` takes the workflow's `conflict` route, never the wait.
-- `copilot-wait`: its bound and its reply's routes are [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)'s.
+- `copilot-wait`: its bound and its reply's routes are [copilot-head-route.md § Current-head Copilot wait](copilot-head-route.md#current-head-copilot-wait)'s.
 - `queue-watch`: one wait bounded by `--max-wait`, its reply's `status`, `verdict` and `cause` routed by the table of [merge-contracts.md § Queue wait](merge-contracts.md#queue-wait).
 
 Per-verdict routing lives in the workflows, `submit-pr.md` § 4 and § 5 and `merge-pr.md` § 5, and in [merge-attempt.md](merge-attempt.md) and [merge-contracts.md](merge-contracts.md).

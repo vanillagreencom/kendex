@@ -121,8 +121,9 @@ PR_COPILOT_REQUESTS = "on"
 # its own output. Where approve-head's hold starts: references/settings.md.
 # What the review
 # call holds and from when: references/gates.md § Copilot requests;
-# copilot-wait's bound: workflows/review-pr-comments.md § 1. Requires the
-# overseer token app's repository Checks: read permission.
+# copilot-wait's bound: references/copilot-head-route.md § Current-head
+# Copilot wait. Requires the overseer token app's repository Checks: read
+# permission.
 ORCH_COPILOT_HOLD_SECS = "600"
 
 # Who reviews this repository's own kendex refresh pull request when no

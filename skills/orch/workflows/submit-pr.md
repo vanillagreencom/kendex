@@ -275,7 +275,7 @@ Record whether `autoMergeRequest` is set.
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"open-first-pushed"}'
    ```
 
-   **Published-head route.** Run [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) from its current-head Copilot wait.
+   **Published-head route.** Run [copilot-head-route.md § Copilot head route](../references/copilot-head-route.md#copilot-head-route) from its current-head Copilot wait.
 
    - Keep `[REVIEW_READ]` for its **Head moved** route.
    - Keep its body checks, its policy and refusal handling, and its **Head unmoved** notice for a completed review on the unchanged head.
@@ -683,8 +683,8 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "
 ```
 
 - On exit `1`, rewrite the replies by gate 3 of [publication.md § Merge gates](../references/publication.md#merge-gates).
-- Send every `suppressed-entry` through the body-finding route of [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with managed context.
-  - Complete its triage pass and its §§ 7.2-8, then return here with the current head and whether the pass pushed.
+- Send every `suppressed-entry` through the body-finding route of [copilot-head-route.md § Body findings](../references/copilot-head-route.md#body-findings) with managed context.
+  - Complete its triage pass and [review-pr-comments.md](review-pr-comments.md) §§ 7.2-8, then return here with the current head and whether the pass pushed.
   - If it pushed commits, re-confirm the gates as the thread pass above does.
 - Run the command once more. A second exit `1` records `review-replies-unmet`.
 - On exit `2`, report its first stderr line. The gate is unmet.
