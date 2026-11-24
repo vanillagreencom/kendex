@@ -2643,11 +2643,18 @@ jobs:
         # probes catch launchers whose optional platform binaries failed to
         # install before the Rust tests start.
         run: |
+          # The Copilot launcher can reach npm before its Linux binary.
+          copilot_version="$(npm view @github/copilot-linux-x64@latest version)" || exit $?
+          if [[ -z $copilot_version ]]; then
+            echo 'npm returned no version for @github/copilot-linux-x64@latest' >&2
+            exit 1
+          fi
+          printf 'Installing @github/copilot@%s\n' "$copilot_version"
           npm install -g \
             opencode-ai \
             @google/gemini-cli \
             @openai/codex \
-            @github/copilot
+            "@github/copilot@$copilot_version"
           # Only CLIs whose version flag is confirmed; adding one means
           # confirming it first, because a wrong probe here reds the build
           # for a reason that has nothing to do with kendex.
