@@ -791,7 +791,7 @@ fn prefer(
         || (provider.status == "no_usage_data" && provider.headroom_pct.is_none());
     let unscoped = scoped
         && (provider.measured() || provider.status == "no_usage_data")
-        && model_buckets(&provider, model).is_empty();
+        && model_buckets(&provider, Some(model)).is_empty();
     if !unread && !unscoped {
         return provider;
     }
@@ -1135,10 +1135,11 @@ fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
 
 /// The plan windows of a measured row a lane on `model` spends, each of
 /// which can stop it: the shared windows of [`WINDOWS`] and the model
-/// windows [`model_buckets`] names; with no model, or under the floor
-/// ([`lane_binding`]), the reader's model window too, the fullest any model
-/// spends, as the reader's own binding reads it. The binding is the
-/// fullest of them, so a launch judges the age of each beside it.
+/// windows [`model_buckets`] names. With no model, the launch checks every
+/// scoped window and the aggregate. A rounded tie can pair the aggregate's
+/// reset with another scope's label, so only that pair matches the roster's
+/// measured rate. A named model under the floor ([`lane_binding`]) also
+/// checks the aggregate.
 fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Binding> {
     if !row.measured() {
         return Vec::new();
@@ -1160,27 +1161,32 @@ fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Bindi
             })
         })
         .collect();
-    if let Some(model) = model {
-        windows.extend(model_buckets(row, model));
-    }
+    windows.extend(model_buckets(row, model));
     windows
 }
 
-/// `model_bindings($model)`: the model-scoped windows whose label names
-/// the model (a trailing `[1m]` dropped, the normalized spellings contained
-/// either way; a window with no label counts for every model).
-fn model_buckets(row: &AccountRow, model: &str) -> Vec<Binding> {
-    let m = norm(
-        model
-            .strip_suffix("[1m]")
-            .or_else(|| model.strip_suffix("[1M]"))
-            .unwrap_or(model),
-    );
+/// `model_bindings($model)`: every scoped window when the model is absent;
+/// otherwise the windows whose label names it (a trailing `[1m]` dropped,
+/// the normalized spellings contained either way; a window with no label
+/// counts for every model).
+fn model_buckets(row: &AccountRow, model: Option<&str>) -> Vec<Binding> {
+    let model = model.map(|name| {
+        norm(
+            name.strip_suffix("[1m]")
+                .or_else(|| name.strip_suffix("[1M]"))
+                .unwrap_or(name),
+        )
+    });
     row.model_buckets
         .iter()
-        .filter(|bucket| match bucket.label.as_deref().map(norm) {
-            None => true,
-            Some(l) => !l.is_empty() && !m.is_empty() && (l.contains(&m) || m.contains(&l)),
+        .filter(|bucket| {
+            model.as_ref().is_none_or(|model| {
+                bucket.label.as_deref().map(norm).is_none_or(|label| {
+                    !label.is_empty()
+                        && !model.is_empty()
+                        && (label.contains(model) || model.contains(&label))
+                })
+            })
         })
         .map(|bucket| Binding {
             bucket: MODEL.to_owned(),
