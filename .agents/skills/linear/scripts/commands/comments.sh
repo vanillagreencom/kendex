@@ -15,6 +15,7 @@ Usage: comments.sh <action> [options]
 Actions:
   list       List comments on an issue
   bulk-list  List the comments of several issues in one read
+  bulk-get   Read comment URLs by comment ID
   owner-requests  Complete owner-mentioned requests in the assigned, labelled view
   create     Create a new comment
   update  Update an existing comment
@@ -39,6 +40,11 @@ Bulk List:
                         read with a `missing` list; a lookup that fails any
                         other way (a quota, a 5xx) fails it with no
                         `missing`. --stdin reads one identifier per line.
+
+Bulk Get:
+  comments.sh bulk-get <COMMENT_ID> ...
+                        One object keyed by comment ID, with a url field in
+                        each value. Absent comments have no entry.
 
 Owner Requests:
   comments.sh owner-requests --email EMAIL --label LABEL
@@ -222,6 +228,23 @@ bulk_list_comments() {
         | (.[1].nodes | map({key: .identifier, value: .comments.nodes}) | from_entries) as $read
         | reduce $ids[] as $i ({}; .[$i] = $read[$refs[$i]])
         | if $format == "raw" then . else map_values(map(comment_safe)) end' <<<"$id_json"$'\n'"$result"
+}
+
+bulk_get_comments() {
+    if [[ $# -eq 0 ]]; then
+        printf '{}\n'
+        return
+    fi
+    local query='query BulkGetComments($filter: CommentFilter!, $first: Int!, $after: String) {
+        comments(filter: $filter, first: $first, after: $after, includeArchived: true) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id url }
+        }
+    }'
+    local variables result
+    variables=$(jq -cn --args '{filter: {id: {in: $ARGS.positional}}}' -- "$@") || return 1
+    result=$(LINEAR_LIST_BOUND=all linear_list_read "$query" "$variables" comments) || return 1
+    jq -c '.comments.nodes | map({key: .id, value: {url}}) | from_entries' <<<"$result"
 }
 
 owner_requests() {
@@ -492,6 +515,9 @@ case "$action" in
         ;;
     bulk-list)
         bulk_list_comments "$@"
+        ;;
+    bulk-get)
+        bulk_get_comments "$@"
         ;;
     owner-requests)
         owner_requests "$@"

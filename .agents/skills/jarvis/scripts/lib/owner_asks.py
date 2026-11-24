@@ -307,14 +307,10 @@ class Sources:
             raise Unavailable("The original mailbox read is incomplete.")
         return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:] if line]}
 
-    def posted(self, issues):
-        """The comments of each of ISSUES, in one read however many there are:
-        the call's one deadline holds a fixed number of reads, not one per issue."""
-        if not issues:
+    def posted(self, comment_ids):
+        if not comment_ids:
             return {}
-        read = self.caller("linear", "linear.sh", ["comments", "bulk-list", "--format=safe", *issues])
-        # bulk-list keys each issue by its identifier upper-cased.
-        return {issue: read[issue.upper()] for issue in issues}
+        return self.caller("linear", "linear.sh", ["comments", "bulk-get", *comment_ids])
 
     def tracker(self):
         """The owner tracker settings and, where they are set, the owner-requests view."""
@@ -345,16 +341,16 @@ class Sources:
             mailboxes = [mailbox for read in reads for mailbox in read.result()]
             # Retained closed asks still own their exact tracker mirror; a
             # delayed label update must not resurrect that mirror.
-            posted = self.posted(list(dict.fromkeys(ask["issue"] for mailbox in mailboxes
+            posted = self.posted(list(dict.fromkeys(ask["tracker_comment"] for mailbox in mailboxes
                                                     for ask in mailbox["outward"]["rows"] if mirrored(ask))))
             config, tracker = tracker.result()
         for mailbox in mailboxes:
             mailbox["links"] = {}
             for ask in mailbox["outward"]["rows"]:
                 if mirrored(ask):
-                    comment = next((row for row in posted[ask["issue"]] if row["id"] == ask["tracker_comment"]), None)
+                    comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
-                        mailbox["links"][ask["id"]] = {"url": comment["url"]}
+                        mailbox["links"][ask["id"]] = comment
         return {"config": config, "tracker": tracker, "mailboxes": mailboxes, "posted": posted}
 
     def stable(self):
