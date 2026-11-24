@@ -414,19 +414,15 @@ def row_metadata(rows, jq_defs):
 
 
 def row_links(obj):
-    """The ids and items a row keeps or is kept by.
-
-    owner-answers judges each owner comment on an item against every question
-    of this mailbox there, and against the questions an open ask replaced, and
-    a delivery record keeps a comment from being judged twice. So the rows
-    naming one item (owner asks, their tracker records, the reports of
-    unmatched comments) leave together, and an ask keeps the asks it replaced.
-    """
-    replaced = obj.get("replaces") if isinstance(obj.get("replaces"), list) else []
-    replaced = [entry for entry in replaced if isinstance(entry, dict)]
+    """The ids a row keeps or is kept by: its own, the ask it answers or
+    closes, the note it refers to, and each ask it replaced, so an open
+    replacement keeps the exchange of every question a reply can still reach
+    it through."""
     ids = {obj[key] for key in ("id", "re", "ref") if isinstance(obj.get(key), str)}
-    ids.update(entry["id"] for entry in replaced if isinstance(entry.get("id"), str))
-    ids.update(("issue", entry["issue"]) for entry in [obj, *replaced] if isinstance(entry.get("issue"), str))
+    replaced = obj.get("replaces")
+    if isinstance(replaced, list):
+        ids.update(entry["id"] for entry in replaced
+                   if isinstance(entry, dict) and isinstance(entry.get("id"), str))
     return ids
 
 

@@ -4937,8 +4937,6 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let (mut settings, events) = posted_owner_ask(&world);
     settings.linear_team = None;
     world.linear("issues list --assignee", json!({"body": []}));
-    // The posted ask's item is read for owner comments whatever its label.
-    world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
     world.linear("comments create", json!({"body": {"success": true}}));
     world.linear("issues update", json!({"body": {}}));
     world.linear(
@@ -5155,6 +5153,13 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         let posting = json!({
             "users list": {"body": [{"id": "maya", "name": "Maya Owner", "email": "owner@example.com", "display_name": "maya"}]},
             "teams keys": {"body": {"urlKey": "test", "keys": ["KEN"]}},
+            // The tracker identity the ask reads of its item and of each
+            // open ask's item.
+            "issues bulk-get": {"body": [
+                {"id": "KEN-7", "uuid": "00000007-0000-4000-8000-000000000007"},
+                {"id": "KEN-8", "uuid": "00000008-0000-4000-8000-000000000008"},
+                {"id": "KEN-9", "uuid": "00000009-0000-4000-8000-000000000009"},
+                {"id": "KEN-10", "uuid": "00000010-0000-4000-8000-000000000010"}]},
             "graphql OwnerTracker": {"body": {"issue": {"description": body, "assignee": null,
                 "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
             "issues update": {"body": {}},
@@ -5214,8 +5219,8 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     world.linear(
         "issues list --assignee",
         json!({"body": [
-            {"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"},
-            {"id": "KEN-8", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-8"}
+            {"id": "KEN-7", "uuid": "00000007-0000-4000-8000-000000000007", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"},
+            {"id": "KEN-8", "uuid": "00000008-0000-4000-8000-000000000008", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-8"}
         ]}),
     );
     world.linear("issues update", json!({"body": {}}));
@@ -5383,7 +5388,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     let quota_due = ask("KEN-10", "question-4");
     world.linear(
         "issues list --assignee",
-        json!({"body": [{"id": "KEN-10", "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
+        json!({"body": [{"id": "KEN-10", "uuid": "00000010-0000-4000-8000-000000000010", "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
     );
     world.linear("comments bulk-list", json!({"exit": 1}));
     pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1600).unwrap();
@@ -5590,11 +5595,8 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         )),
         "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
     );
-        // The floor's item is read for owner comments, as every item holding
-        // a question of the mailbox is, and never written.
         assert!(
-            !log.lines()
-                .any(|line| line.contains("KEN-8") && !line.starts_with("comments bulk-list ")),
+            !log.contains("KEN-8"),
             "the floor's ask is never written: {log}"
         );
         assert_eq!(marks(&log), (1, 1));
