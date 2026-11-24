@@ -353,9 +353,15 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
   # An unposted ask leaves no question comment: the chat carries it, and no
   # reader follows a reply to a comment the ask does not record.
+  # `comments delete` exits 0 on a refused delete too, so its answer is judged
+  # as the create's is.
   if [[ -n "$comment_id" ]]; then
-    "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err" ||
+    if "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err"; then
+      jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 ||
+        owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.out"
+    else
       owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
+    fi
   fi
   latest="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker-rollback.err")" || {
     owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
