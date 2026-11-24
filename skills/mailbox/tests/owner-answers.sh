@@ -63,6 +63,8 @@ case "$1:$2" in
     printf '{}\\n' ;;
   graphql:--query)
     case "$3" in
+      'query OwnerTrackerComment('*)
+        printf '%s\\n' '{"comment":{"bodyData":"{\\"type\\":\\"doc\\",\\"content\\":[{\\"type\\":\\"suggestion_userMentions\\",\\"attrs\\":{\\"id\\":\\"owner\\"}}]}"}}' ;;
       'query OwnerTracker('*) printf '{"issue":{"description":"Body","assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}\\n' ;;
       'query OwnerItem('*)
         if [[ -e "$FIXTURE/readback" ]]; then cat "$FIXTURE/readback"

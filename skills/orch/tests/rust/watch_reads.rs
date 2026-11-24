@@ -4664,6 +4664,9 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
                 "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
             "issues update": {"body": {}},
             "comments create": {"body": {"success": true, "data": {"success": true, "comment": {"id": comment}}}},
+            // The saved comment read back, mentioning the owner.
+            "graphql OwnerTrackerComment": {"body": {"comment": {"bodyData": json!({"type": "doc",
+                "content": [{"type": "suggestion_userMentions", "attrs": {"id": "maya"}}]}).to_string()}}},
         });
         std::fs::write(
             skills.join("linear/scripts/linear.json"),
