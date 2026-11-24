@@ -50,6 +50,9 @@ def directive(text, key):
 def posts():
     with urllib.request.urlopen(settings.api_url + "/_test/state", timeout=10) as response:
         rows = json.load(response)["messages"].get(bound.channel, [])
+    if mode == "hold-answer":
+        # The owner's reply is also posted to Slack. Count only unread pages.
+        rows = [row for row in rows if "remains unread" in row.get("text", "")]
     return [row for row in rows if row.get("user") == "UBOT"]
 
 
@@ -120,13 +123,18 @@ try:
         command("inbox", "--item", "overseer")
     if mode == "horizon":
         now += 366 * 86400
-    if mode in ("hold-read", "hold-release"):
+    if mode in ("hold-answer", "hold-read", "hold-release"):
         presence = root / "tmp/page-presence"
         presence.touch()
         os.utime(presence, (now, now))
         poll()
         if mode == "hold-read":
             command("inbox", "--item", "overseer")
+        if mode == "hold-answer":
+            reply = root / "tmp/page-reply"
+            reply.write_text("The owner request is answered.")
+            command("notice", "--item", "overseer", "--to", "owner",
+                    "--ref", original["id"], "--file", str(reply))
         presence.unlink()
     if mode == "read-during-prepare":
         outbound = relay_module.outbound

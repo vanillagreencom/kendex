@@ -224,7 +224,9 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
             | objects($box)[] | .line as $line | .envelope
             | . + {box: (if $b == 0 then "to-overseer" else "to-lane" end), line: $line, count: $box.count}
             | if $b == 1 then . + {mail_class: overseer_mail_class} else . end] as $rows
+          | ([$rows[] | select(.box == "to-overseer")] | mailbox_answers) as $replies
           | {rows: [$rows[] | owner_tracker_snapshot($now)],
+             answered: [$rows[] | select(.box == "to-lane" and (.id | type) == "string" and $replies[.id]) | .id],
              release_at: ([$rows[] | select(.tracker_pending == true) | owner_tracker_release_at
                            | select(. > $now)] | min),
              directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}]}
@@ -236,6 +238,7 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
         projected = json.loads(result.stdout)
         previous.clear()
         previous.update(stamp=before, rows=projected["rows"], release_at=projected["release_at"],
+                        answered=set(projected["answered"]),
                         directives=projected["directives"], count=snapshots[1]["count"])
         break
     receipt = None
@@ -247,7 +250,7 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
             raise StoreRefusal("receipt-missed", box / "to-lane.cursor")
         count = 0 if cursor == "missed" else int(cursor)
         read = {row["id"] for row in previous["directives"] if row["line"] <= count}
-        receipt = count, read
+        receipt = count, read | previous["answered"]
     return [dict(row) for row in previous["rows"]], receipt
 
 
