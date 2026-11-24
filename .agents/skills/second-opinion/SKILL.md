@@ -39,6 +39,8 @@ Cross-model second opinion via external AI CLI. Full contract: `second-opinion -
 
 ## Execution Rules
 
+- Execute every section of the workflow in order.
+- Never skip a section on your own scope assessment.
 - `<output_format>` tags are literal templates:
   - Fill `[PLACEHOLDERS]`.
   - Omit empty lines.

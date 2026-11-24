@@ -67,7 +67,7 @@ Each version was tested on Linux on 2026-10-26. The runtime refuses a harness na
 - Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`.
 - A personal value goes in `.env.local`.
 - `agent-runtime <verb> --help` names the settings each command reads.
-- orch's `references/settings.md` holds each default.
+- To look up defaults, start with the orch skill's `references/settings.md`.
 
 | Setting | What it changes |
 | --- | --- |

@@ -9,7 +9,7 @@ An account is a Copilot CLI home, read through its `config.json` login or the Se
 - `orch-runtime lane roster` prints one record per account at `result.rows[].record`.
 - `orch-runtime lane pick --fleet --harness copilot` replies `{answer, exit, record}`. `--lane <dir>` judges that one account.
 - Each account's endpoint answer is kept in one usage record, `usage/copilot-<cksum of the account dir>-<its length>.json` under `AGENT_RUNTIME_ACCOUNT_STATE_DIR`.
-- Every reader on the machine serves a figure younger than `AGENT_RUNTIME_USAGE_TTL` seconds, or than a caller's longer `AGENT_RUNTIME_USAGE_MAX_AGE`. [settings.md § Accounts](../references/settings.md#accounts) gives the three settings' defaults and what a TTL of 0 does.
+- Every reader on the machine serves a figure younger than `AGENT_RUNTIME_USAGE_TTL` seconds, or than a caller's longer `AGENT_RUNTIME_USAGE_MAX_AGE`. [settings.md § Accounts](../references/settings.md#accounts) explains a TTL of `0`. For the usage defaults, see `AccountSettings::read_except_retirements` in [the agent-runtime settings](../../agent-runtime/runtime/src/settings.rs). The same file's `account_state_dir` supplies the records root default.
 
 `lane pick`'s `record`, by `answer`:
 

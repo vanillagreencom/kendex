@@ -189,7 +189,7 @@ Every script and every verb takes `--help`. The exceptions are `resolve-base-bra
 
 ## Configuration
 
-Settings, where each is set and its default: [references/settings.md](references/settings.md). The review-gate keys: [references/gates.md](references/gates.md).
+For setting precedence, key meanings and where to look up built-in defaults, read [references/settings.md](references/settings.md). For review-gate keys, read [references/gates.md](references/gates.md).
 
 - The tools the runtime, `setup` and the scripts need: [README.md § Setup](README.md#setup). `orch-runtime ready` names any a duty lacks.
 - A lingering systemd user manager with `systemd-run` contains the runtime's detached jobs. Where the manager does not run a unit, the job runs as a `setsid` group ([job-units](references/job-units.md)).
