@@ -40,22 +40,10 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_CLIENT_SECRET` | OAuth application client secret, in the project's private env file |
 | `LINEAR_API_KEY` | Personal API key fallback, in the project's private env file |
 | `LINEAR_TEAM` | Team target |
-| `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
-| `LINEAR_AGENT_LABELS` | Agent-routing labels |
-| `LINEAR_REQUIRE_REACH` | Require the issue opening and the reach, supersession and symptom fields |
-| `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
-| `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry |
-| `LINEAR_JOURNAL_DIR` | Explicit absolute directory for a bounded observation session |
-| `LINEAR_JOURNAL_CALLER` | Known parent script identifier, without arguments |
 | `LINEAR_JOURNAL_ITEM` | Known carrying issue identifier or `owner/repo#number` |
 | `KENDEX_USER_EMAIL` | Your Linear account email address, in the project's private env file |
 
 - `LINEAR_TEAM` targets creates and writes that do not address an issue. It is also the one team whose issues `linear.sh` creates or changes: [SKILL.md § Team Target](SKILL.md#team-target).
-- An `issues create` must carry one of the `LINEAR_AGENT_LABELS` labels. Under a declared label taxonomy, the list is the agent labels the taxonomy declares.
-- `LINEAR_REQUIRE_REACH` is on when unset and off when empty. [SKILL.md § Issue Creation Routing](SKILL.md#issue-creation-routing) owns the requirements.
-- `LINEAR_RETRY_BASE_DELAY` applies to a rate-limited call, and to a query or attachment download answered 5xx or not at all. The delay doubles after each retry.
-- An unset or empty `LINEAR_JOURNAL_DIR` keeps collection off. See [request journal](references/request-journal.md).
-- Without `LINEAR_JOURNAL_CALLER`, the journal names the Linear command script.
 - An absent or invalid `LINEAR_JOURNAL_ITEM` stays unread.
 
 - Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names another private file.
