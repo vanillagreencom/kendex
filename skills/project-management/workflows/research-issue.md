@@ -81,29 +81,35 @@ Then:
 - A failed or incomplete disposition stops here with that owner's diagnostic and applied outcomes preserved.
 - The audit writer supplies `[SUPERSESSION]` from its execution result.
 - `[REACH]` is the ask, run, or decision that raised the question.
+- The body keeps the section order of [issue-description-template.md](../templates/issue-description-template.md): the research sections stand where its Done when and Requirements stand, before Filing record.
 
 ```markdown
 > **Story:** [Who needs this research.] [What they cannot decide today.] [What the findings let them decide, and its consequence.]
 
 > **Why this matters:** [The cost of leaving the question unanswered, and the benefit of deciding with evidence.]
 
+## Summary
+
+[1-2 sentences on TOPIC]
+
+## Questions
+
+[QUESTIONS]
+
+[TYPE_SECTION]
+
+## Expected Decision
+
+Next available ID via `.agents/skills/decider/scripts/decisions next-id`
+
 ## Filing record
 
 **Reached by**: [REACH]
 
 **Supersession**: [SUPERSESSION]
-
-## Summary
-[1-2 sentences on TOPIC]
-
-## Questions
-[QUESTIONS]
-[TYPE_SECTION]
-## Expected Decision
-Next available ID via `.agents/skills/decider/scripts/decisions next-id`
 ```
 
-Execution and output sections are appended in § 3.
+Execution and output sections are appended after Filing record in § 3, where the template's Context stands.
 
 `[TYPE_SECTION]`:
 
@@ -196,16 +202,20 @@ Reply with a structured section per item.
 
 ```markdown
 ## Assets
+
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
 
 ## Output
+
 Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 
 ## Completion
+
 `research-complete [RESEARCH_ISSUE_ID]`
 
 ## Researcher Execution
+
 Before either execution route, use existing local assets first. For each absent file in Assets, find it on [RESEARCH_ISSUE_ID] by the route the project-management skill's references/planning-artifacts.md gives, create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 ```
 

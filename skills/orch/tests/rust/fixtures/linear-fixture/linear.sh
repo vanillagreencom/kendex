@@ -15,7 +15,11 @@
 # unset, the map and the log are `linear.json` and `linear.log` beside the
 # path this was invoked as: a row symlinks the fixture into its own world
 # under that name, so no wrapper is written while another row's child is
-# between fork and exec (ETXTBSY).
+# between fork and exec (ETXTBSY). Every `comments create` also appends
+# {issue, parent, body} as one JSON line to $LINEAR_FAKE_COMMENTS,
+# `linear-comments.jsonl` beside the log by default, its body whole from
+# --body or from the file --body-file names, which the runtime removes
+# with its run directory once the call returns.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ "${0##*/}" = curl ]; then
@@ -35,6 +39,29 @@ fi
 : "${LINEAR_FAKE_REPLIES:=$here/linear.json}"
 : "${LINEAR_FAKE_LOG:=$here/linear.log}"
 printf '%s\n' "$*" >> "$LINEAR_FAKE_LOG"
+: "${LINEAR_FAKE_COMMENTS:=$(dirname "$LINEAR_FAKE_LOG")/linear-comments.jsonl}"
+fake_comment() {
+  local issue="$3" parent="" body="" file=""
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --parent) parent="${2:-}"; shift ;;
+      --body) body="${2:-}"; shift ;;
+      --body-file) file="${2:-}"; shift ;;
+    esac
+    shift
+  done
+  if [ -n "$file" ]; then
+    jq -cn --arg issue "$issue" --arg parent "$parent" --rawfile body "$file" \
+      '{issue: $issue, parent: $parent, body: $body}'
+  else
+    jq -cn --arg issue "$issue" --arg parent "$parent" --arg body "$body" \
+      '{issue: $issue, parent: $parent, body: $body}'
+  fi >> "$LINEAR_FAKE_COMMENTS"
+}
+if [ "${1:-} ${2:-}" = 'comments create' ] && [ $# -ge 3 ]; then
+  fake_comment "$@" || { echo "linear-fake: comment-unrecorded" >&2; exit 65; }
+fi
 if [ -n "${LINEAR_PAGE_REPLIES:-}" ] &&
    { [ "${1:-}" = graphql ] || [ "${1:-} ${2:-}" = 'issues get' ]; }; then
   {
