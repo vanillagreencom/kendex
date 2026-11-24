@@ -1,4 +1,5 @@
 import { normalizeContext, type AssistantMessage, type AssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
+import * as piAi from "@earendil-works/pi-ai";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
@@ -78,8 +79,10 @@ export async function runCodexProvider(
 	modelOverrides: Record<string, unknown> = {},
 	contextOverrides: Record<string, unknown> = {},
 ): Promise<AssistantMessage> {
-	// Pi hands a provider the normalized transcript, never the raw Context.
+	// Pi 0.86.0 and later hand a provider the normalized transcript, never the raw Context;
+	// an older Pi, which exports no resolveTranscript, hands the raw Context.
 	const provider = createCodexProvider();
+	const context = { systemPrompt: "", messages: [{ role: "user", content: "hello", timestamp: 0 }], tools: [], ...contextOverrides } as Context;
 	const stream = provider.streamSimple(
 		{
 			provider: "openai-codex",
@@ -92,12 +95,7 @@ export async function runCodexProvider(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			...modelOverrides,
 		},
-		normalizeContext({
-			systemPrompt: "",
-			messages: [{ role: "user", content: "hello", timestamp: 0 }],
-			tools: [],
-			...contextOverrides,
-		} as Context),
+		"resolveTranscript" in piAi ? normalizeContext(context) : context,
 		{ apiKey: codexJwt(), transport: "sse", ...streamOptions },
 	);
 	return stream.result();
@@ -122,6 +120,17 @@ export function sseResponse(body: string): Response {
 
 export function successSseResponse(): Response {
 	return sseResponse(`data: ${JSON.stringify(completedEvent)}\n\n`);
+}
+
+/** The events of one completed response that answers "ok". */
+export function textResponseEvents(id: string, messageId: string): unknown[] {
+	return [
+		{ type: "response.created", response: { id } },
+		{ type: "response.output_item.added", output_index: 0, item: { type: "message", id: messageId } },
+		{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "ok" },
+		{ type: "response.output_item.done", output_index: 0, item: { type: "message", id: messageId, content: [{ type: "output_text", text: "ok" }] } },
+		{ ...completedEvent, response: { ...completedEvent.response, id } },
+	];
 }
 
 
@@ -183,13 +192,18 @@ export async function stalledHttpServer(t: Pick<TestContext, "after">, transport
 
 type Listener = (event: unknown) => void;
 
-/** Replace the global WebSocket with a Codex socket that records each sent request and answers it with one completed text response. */
-export function codexWebSocket(t: Pick<TestContext, "after">): { requests: Array<Record<string, any>> } {
+/**
+ * Replace the global WebSocket with a Codex socket that records each handshake's headers
+ * and each sent request, and answers each request with one completed text response.
+ */
+export function codexWebSocket(t: Pick<TestContext, "after">): { requests: Array<Record<string, any>>; handshakes: Array<Record<string, string>> } {
 	const requests: Array<Record<string, any>> = [];
+	const handshakes: Array<Record<string, string>> = [];
 	class ScriptedCodexSocket {
 		readyState = 1;
 		private readonly listeners = new Map<string, Set<Listener>>();
-		constructor() {
+		constructor(_url: string, options?: { headers?: HeadersInit }) {
+			handshakes.push(Object.fromEntries(new Headers(options?.headers).entries()));
 			globalThis.setImmediate(() => this.emit("open", {}));
 		}
 		addEventListener(type: string, listener: Listener) {
@@ -202,15 +216,7 @@ export function codexWebSocket(t: Pick<TestContext, "after">): { requests: Array
 		}
 		send(data: string) {
 			requests.push(JSON.parse(data));
-			const id = `resp_${requests.length}`;
-			const messageId = `msg_${requests.length}`;
-			const events = [
-				{ type: "response.created", response: { id } },
-				{ type: "response.output_item.added", output_index: 0, item: { type: "message", id: messageId } },
-				{ type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "ok" },
-				{ type: "response.output_item.done", output_index: 0, item: { type: "message", id: messageId, content: [{ type: "output_text", text: "ok" }] } },
-				{ ...completedEvent, response: { ...completedEvent.response, id } },
-			];
+			const events = textResponseEvents(`resp_${requests.length}`, `msg_${requests.length}`);
 			globalThis.setImmediate(() => { for (const event of events) this.emit("message", { data: JSON.stringify(event) }); });
 		}
 		close() {
@@ -224,5 +230,5 @@ export function codexWebSocket(t: Pick<TestContext, "after">): { requests: Array
 	const previous = global.WebSocket;
 	global.WebSocket = ScriptedCodexSocket;
 	t.after(() => { global.WebSocket = previous; });
-	return { requests };
+	return { requests, handshakes };
 }

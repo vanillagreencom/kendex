@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as piAi from "@earendil-works/pi-ai";
 import { processResponsesStream } from "../src/providers/openai-responses-shared.js";
 import { asAsyncIterable, createAssistantOutput, model } from "./helpers/responses.js";
 
@@ -109,10 +110,15 @@ const argumentDeltas = Array.from('{"path":"/tmp/streamed","content":"body"}', (
 const argumentsJson = argumentDeltas.map((event) => event.delta).join("");
 const functionCall = { type: "function_call", id: "fc_1", call_id: "call_1", name: "write", arguments: "" };
 
-// Each delta is read once and the partial arguments show while the call streams; the
-// whole text is parsed once, at completion, so a stream of one delta per character
-// costs time linear in the argument length.
-test("streamed function-call arguments show as they arrive and parse once at completion", async (t) => {
+// Pi 1.5.0 and later parse arguments as they stream, through pi-ai's ToolCallArgumentsStream.
+// On an older host they stay `{}` until the call completes, then parse once, with no repair
+// and no argumentsError. `older-pi-host.test.ts` runs these rows on such a host.
+const streamsArguments = "ToolCallArgumentsStream" in piAi;
+
+// Each delta is read once and, where the host streams them, the partial arguments show
+// while the call streams; the whole text is parsed once, at completion, so a stream of
+// one delta per character costs time linear in the argument length.
+test("streamed function-call arguments are read once and parse once at completion", async (t) => {
 	const parse = t.mock.method(JSON, "parse");
 	const { output, pushed } = await run([
 		{ type: "response.output_item.added", output_index: 0, item: functionCall },
@@ -128,15 +134,16 @@ test("streamed function-call arguments show as they arrive and parse once at com
 	const deltas = pushed.filter((event) => event.type === "toolcall_delta");
 	assert.equal(deltas.map((event) => event.delta).join(""), argumentsJson);
 	const pathClosed = argumentsJson.indexOf(",");
-	assert.equal((deltas[pathClosed]?.arguments as { path?: string } | undefined)?.path, "/tmp/streamed");
+	assert.equal((deltas[pathClosed]?.arguments as { path?: string } | undefined)?.path, streamsArguments ? "/tmp/streamed" : undefined);
 	assert.equal(Object.keys(output.content[0]!).some((key) => key === "partialJson" || key === "customInput"), false, "no stream state on the block");
 });
 
-// The final arguments go through Pi's repairing parser; text that is still no JSON
-// object carries argumentsError, so validation shows the model what it sent.
+// Where the host streams arguments, the final arguments go through Pi's repairing parser,
+// and text that is still no JSON object carries argumentsError, so validation shows the
+// model what it sent.
 for (const row of [
-	{ name: "an invalid \\u escape keeps every field", text: '{"command":"\\usepackage","count":1}', arguments: { command: "\\usepackage", count: 1 }, error: false },
-	{ name: "malformed arguments carry argumentsError", text: '{"command":"ls"', arguments: {}, error: true },
+	{ name: "an invalid escape", text: '{"command":"\\usepackage","count":1}', streamed: { arguments: { command: "\\usepackage", count: 1 }, error: false }, completed: { arguments: {}, error: false } },
+	{ name: "malformed arguments", text: '{"command":"ls"', streamed: { arguments: {}, error: true }, completed: { arguments: {}, error: false } },
 ]) {
 	test(`completed function-call arguments: ${row.name}`, async () => {
 		const { output } = await run([
@@ -146,7 +153,8 @@ for (const row of [
 			completed,
 		]);
 		const toolCall = output.content[0] as { arguments: unknown; argumentsError?: string };
-		assert.deepEqual(toolCall.arguments, row.arguments);
-		assert.equal(typeof toolCall.argumentsError === "string" && toolCall.argumentsError.includes(row.text), row.error);
+		const expected = streamsArguments ? row.streamed : row.completed;
+		assert.deepEqual(toolCall.arguments, expected.arguments);
+		assert.equal(typeof toolCall.argumentsError === "string" && toolCall.argumentsError.includes(row.text), expected.error);
 	});
 }

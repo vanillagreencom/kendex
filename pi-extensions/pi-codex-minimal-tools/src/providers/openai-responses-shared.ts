@@ -396,7 +396,9 @@ export function convertResponsesMessages<TApi extends Api>(
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 	const toolSupport = getResponsesToolSupport(options ?? {});
-	const transcriptTools = resolveTranscriptTools(source.messages, toolSupport);
+	// Only a transcript has system messages to fold, and a Pi below 0.86.0, which hands
+	// fields, exports no `getCurrentTools` for resolveTranscriptTools to read.
+	const foldedSystemMessages = isTranscript(source) ? resolveTranscriptTools(source.messages, toolSupport).foldedSystemMessages : 0;
 	let declaredAdditionalTools = false;
 	/** Tools announced as removed and not declared again since. */
 	const unavailableTools = new Set<string>();
@@ -444,7 +446,7 @@ export function convertResponsesMessages<TApi extends Api>(
 		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
 		if (msg.role === "system") {
 			// transformMessages keeps system messages in order, so their position matches the transcript.
-			const anchorsToolChanges = systemIndex++ >= transcriptTools.foldedSystemMessages;
+			const anchorsToolChanges = systemIndex++ >= foldedSystemMessages;
 			if (anchorsToolChanges) appendSystemToolAdditions(msg, `system:${msgIndex}`);
 			const parts = [isLeadingSystemMessage ? piAi.getSystemMessageText(msg) : piAi.renderSystemMessageUpdate(msg)];
 			if (anchorsToolChanges) {
