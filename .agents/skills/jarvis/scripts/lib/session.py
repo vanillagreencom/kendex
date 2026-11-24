@@ -27,7 +27,10 @@ LANE_MAIL = SKILLS / "mailbox/scripts/lane-mail"
 BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
-START_BRIEF = "Read .agents/skills/jarvis/SKILL.md and follow the Start procedure in .agents/skills/jarvis/workflows/session.md."
+START_BRIEF = (
+    "Read .agents/skills/jarvis/SKILL.md. Read and follow the Start section using "
+    "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md Start`."
+)
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
