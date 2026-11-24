@@ -8,13 +8,14 @@
 //! reading, never a judgement as if no lane ran.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
 
 use super::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
-use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, TAG};
+use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, ProviderKey, TAG};
 use crate::error::{Error, Result};
 use crate::group::{self, Seats};
 use crate::harness::Harness;
@@ -25,6 +26,9 @@ use crate::process;
 pub const ORCH_ENTRY: &str = ".agents/skills/orch/scripts/orch-runtime";
 /// The count's own bound, its start included.
 const COUNT_BOUND: Duration = Duration::from_secs(60);
+/// Pi's credential check's bound, its start included: the check reads
+/// stored files and answers in under a second (pi 1.6.0).
+const KEY_BOUND: Duration = Duration::from_secs(30);
 
 /// The lanes' charges orch counted for one fleet record, as `orch-runtime
 /// lane charges` prints them, and the record they were read from.
@@ -171,10 +175,87 @@ pub fn pick(
     now: u64,
 ) -> Result<PickAnswer> {
     if let Some(answer) = super::unbilled(req) {
-        return Ok(answer);
+        return Ok(match (&answer, req.lane.as_deref()) {
+            (PickAnswer::Unbilled { .. }, Some(dir)) if req.admit_unbilled => {
+                admitted(settings, dir, req, now)
+            }
+            _ => answer,
+        });
     }
     let ground = Beside::read(settings, project, record)?;
     Ok(judge(settings, &ground, req, now))
+}
+
+/// A named Pi root admitted on a model whose provider nothing bills,
+/// judged on Pi's own read of that model's credential under it. A check
+/// that gave no answer judges nothing.
+fn admitted(settings: &Env, dir: &str, req: &PickRequest, now: u64) -> PickAnswer {
+    let accounts = match settings.accounts.get() {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            return PickAnswer::Unjudged {
+                cause: e.to_string(),
+            };
+        }
+    };
+    match provider_key(dir, req.model.as_deref().unwrap_or("")) {
+        Ok(key) => super::admitted_unbilled(dir, &key, req, &accounts, now),
+        Err(cause) => PickAnswer::Unjudged { cause },
+    }
+}
+
+/// `pi auth check --model MODEL --json` under the root `dir`, in the
+/// environment the pick inherits, which a launch from the same caller
+/// inherits too: Pi's documented readiness check over every source it
+/// signs in from, its root's `auth.json` and `models.json` and the
+/// provider's environment variables (pi 1.6.0, the package's `cli.md`
+/// § Credential commands, the package's `models.md` § Authenticate). Exit 0
+/// answers `ready`, 1 `not_ready` and 2 `invalid`, each with its JSON
+/// line; any other ending is no answer.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one run of Pi's own credential check, `pi auth check` under the named root through the one runner under the accounts tag; it reads and writes nothing of the pick's"
+)]
+fn provider_key(dir: &str, model: &str) -> std::result::Result<ProviderKey, String> {
+    let home = [(Harness::Pi.home_var(), OsStr::new(dir))];
+    let out = host::run_tagged_in(
+        TAG,
+        Harness::Pi.binary(),
+        Path::new(Harness::Pi.binary()),
+        "auth-check",
+        &["auth", "check", "--model", model, "--json"],
+        Place {
+            cwd: Some(Path::new(dir)),
+            env: &home,
+        },
+        KEY_BOUND,
+    )
+    .map_err(|e| format!("provider-key-unread dir={dir} cause={e}"))?;
+    let exit = out.status.code();
+    let answer: Option<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .last()
+        .and_then(|line| serde_json::from_str(line).ok());
+    let field = |name: &str| {
+        answer
+            .as_ref()
+            .and_then(|a| a.get(name))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    match (exit, field("status").as_deref()) {
+        (Some(0), Some("ready")) => Ok(ProviderKey::Ready),
+        (Some(1), Some(status @ "not_ready")) | (Some(2), Some(status @ "invalid")) => {
+            Ok(ProviderKey::Refused {
+                status: status.to_owned(),
+                reason: field("reason").unwrap_or_default(),
+            })
+        }
+        _ => Err(format!(
+            "provider-key-unread dir={dir} exit={}",
+            exit.map_or("signal".to_owned(), |c| c.to_string())
+        )),
+    }
 }
 
 /// The walk here: every entry judged on this machine, an entry naming a

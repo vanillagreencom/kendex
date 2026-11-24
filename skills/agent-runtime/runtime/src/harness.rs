@@ -155,12 +155,17 @@ impl Harness {
     /// except a Pi launch, which spends the account its model's provider
     /// bills. `pi-claude/` is pi-claude-bridge on a Claude seat, so the seat
     /// is `CLAUDE_CONFIG_DIR`; `github-copilot/` and `anthropic/` are Pi's
-    /// own root; any other Pi provider, or a Pi model naming none, takes the
-    /// Claude variable too.
+    /// own root, and so is any other provider a Pi model names, since Pi
+    /// reads that provider's key from its root's `auth.json` (pi 1.6.0,
+    /// the package's `providers.md`); a Pi model naming none takes the Claude
+    /// variable.
     pub fn account_var(self, model: Option<&str>) -> &'static str {
-        self.billed(model.unwrap_or_default())
-            .unwrap_or(Harness::Claude)
-            .home_var()
+        let model = model.unwrap_or_default();
+        match self.billed(model) {
+            Some(billed) => billed.home_var(),
+            None if model.contains('/') => self.home_var(),
+            None => Harness::Claude.home_var(),
+        }
     }
 
     /// The kind of account a launch of this harness on `model` spends: its
@@ -855,6 +860,10 @@ mod tests {
         );
         assert_eq!(
             Harness::Pi.account_var(Some("ollama/x")),
+            "PI_CODING_AGENT_DIR"
+        );
+        assert_eq!(
+            Harness::Pi.account_var(Some("sonnet:high")),
             "CLAUDE_CONFIG_DIR"
         );
         assert_eq!(Harness::Pi.account_var(None), "CLAUDE_CONFIG_DIR");

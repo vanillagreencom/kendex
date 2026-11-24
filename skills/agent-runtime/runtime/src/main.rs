@@ -686,6 +686,13 @@ enum AccountsOp {
         /// model's window.
         #[arg(long)]
         binding_floor: bool,
+        /// Take the named Pi root on a model whose provider nothing bills
+        /// where `pi auth check` reads its credential ready, its record's
+        /// `scope` `unmeasured`; refused `unmeasured` with
+        /// `refusal.cause=provider-key` and Pi's `status` and `reason`
+        /// where it does not.
+        #[arg(long, requires = "account")]
+        admit_unbilled: bool,
         /// The fleet record whose controller member is a seat and whose
         /// lanes are charged; orch's own fleet where unset.
         #[arg(long)]
@@ -922,6 +929,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
             max_pct,
             min_headroom_pct,
             binding_floor,
+            admit_unbilled,
             record,
             env: text,
         } => {
@@ -937,6 +945,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 admit_unread_scope: false,
+                admit_unbilled,
                 opens_here: false,
             };
             let answer =

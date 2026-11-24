@@ -122,12 +122,12 @@ class Task(Session):
                                            "--outcome", "succeeded"]) + ".")
                     chosen = json.loads(self.backend("task-model", args.harness, args.model, args.effort,
                                                      self.home).stdout)
-                    account = self.account(chosen, args, parent.fleet())
+                    account, reading = self.account(chosen, args, parent.fleet())
                     problem = setup_problem(chosen["harness"], account)
                     if problem:
                         raise Refusal("harness-setup-pending", "fix=" + problem)
                     record.update(harness=chosen["harness"], model=chosen["model"] or "native-default",
-                                  account=account, effort=chosen["effort"])
+                                  account=account, reading=reading, effort=chosen["effort"])
                     if not shutil.which(chosen["harness"], path=self.env["PATH"]):
                         raise Refusal("app-missing", chosen["harness"])
                     env = {"JARVIS_TASK_ID": record["id"], "JARVIS_BASH": BASH, "JARVIS_TASK_SCRATCH": str(scratch),
@@ -214,12 +214,16 @@ class Task(Session):
                 raise
 
     def account(self, chosen, args, fleet):
-        """The account the task spends: agent-runtime's one judge asked once."""
+        """The account the task spends and how it was read: agent-runtime's
+        one judge asked once."""
         pick = ["accounts", "pick", "--harness", chosen["harness"], "--record", fleet]
         if chosen["model"]:
             pick += ["--native-model", chosen["model"]]
         if args.account:
-            pick += ["--account", args.account]
+            # A named Pi root on a provider nothing measures, paid by its own
+            # key, is a task's to spend: the judge takes it where Pi reads
+            # the key ready, and the task records its reading unmeasured.
+            pick += ["--account", args.account, "--admit-unbilled"]
         # A short task admits an account's room up to its wall, and on a named
         # account is judged on its projected wall, as the chooser judges every
         # account; a full task on a named account is judged on its reading.
@@ -230,7 +234,7 @@ class Task(Session):
             sys.stderr.write(errors)
             answer = (result or {}).get("answer") or refusal or "unjudged"
             raise Refusal("account-" + answer, json.dumps((result or {}).get("record"), separators=(",", ":")))
-        return result["record"]["config_dir"]
+        return result["record"]["config_dir"], result["record"].get("scope", "measured")
 
     def in_front(self, record):
         """Whether RECORD's window is the current window of its tmux session."""

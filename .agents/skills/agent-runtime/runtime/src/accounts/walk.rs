@@ -925,6 +925,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
+                admit_unbilled: false,
                 // An overseer runs here; a lane does where its host opens
                 // it in a window of this machine.
                 opens_here: overseer || launch == Some("window"),

@@ -854,13 +854,16 @@ fn prefer(
 /// reading, not no account, and a launch onto a pool nobody measured is a
 /// read to repair, never one made unjudged.
 fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountRow {
-    let (through, detail) = if pool == "api-credit" {
-        ("local", "no provider API-credit row")
-    } else {
-        (
+    let (through, detail) = match pool {
+        "api-credit" => ("local", "no provider API-credit row"),
+        "copilot" => (
             "stated",
             "no lane host row and no AGENT_RUNTIME_COPILOT_POOL entry reads a Copilot pool for this account",
-        )
+        ),
+        // The plan pool of a Pi model whose provider nothing bills
+        // ([`admitted_unbilled`]), the one other pool `Harness::pool`
+        // answers for Pi.
+        _ => ("local", "no reader measures this model's provider"),
     };
     let raw = json!({
         "alias": listing::alias(settings, dir),
@@ -904,7 +907,9 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
 /// in both forms before any row is read, since nothing measures what it
 /// spends and an unmeasured pool is never room. The chooser's answer
 /// carries the chooser's refusal; the named answer carries none
-/// ([`PickAnswer::Unbilled`]).
+/// ([`PickAnswer::Unbilled`]). A caller that admits what nothing measures
+/// asks the named form again with Pi's credential read
+/// ([`admitted_unbilled`]).
 pub fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
     let model = req.model.as_deref().unwrap_or("");
     req.harness
@@ -919,6 +924,63 @@ fn unbilled_answer(req: &PickRequest) -> PickAnswer {
         PickAnswer::Unbilled { harness, model }
     } else {
         PickAnswer::ProviderUnmeasured { harness, model }
+    }
+}
+
+/// Pi's own answer for a model's credential under a root, as `pi auth
+/// check --model M --json` prints it: `ready` at exit 0, else `not_ready`
+/// at exit 1 or `invalid` at exit 2 with a `reason` (pi 1.6.0,
+/// the package's `cli.md` § Credential commands).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderKey {
+    Ready,
+    Refused { status: String, reason: String },
+}
+
+/// The named Pi root a caller admits on a model whose provider nothing
+/// bills ([`PickRequest::admit_unbilled`]), judged on the row nothing
+/// measured ([`unmeasured_row`]), so the owner's exclusion and a stated
+/// end still refuse it by their words. Otherwise it is the account to
+/// spend where Pi reads the model's credential ready, its record's
+/// `scope` `unmeasured` as the walk's kept account carries it; and
+/// `unmeasured`, exit 5, where Pi does not, with Pi's status and reason as
+/// the record's `refusal` (`cause=provider-key`).
+pub fn admitted_unbilled(
+    dir: &str,
+    key: &ProviderKey,
+    req: &PickRequest,
+    settings: &AccountSettings,
+    now: u64,
+) -> PickAnswer {
+    let pool = req.harness.pool(req.model.as_deref().unwrap_or(""));
+    let judged = judge_one(
+        &unmeasured_row(dir, pool, settings),
+        req,
+        &FleetFacts::default(),
+        settings,
+        now,
+    );
+    if judged.verdict == EXCLUDED {
+        return PickAnswer::Excluded(judged);
+    }
+    let mut judged = match named_answer(judged, req, &today(now)) {
+        PickAnswer::Unmeasured(judged) => judged,
+        // A stated end or a reservation refuses it by its word.
+        refused => return refused,
+    };
+    let (field, value) = match key {
+        ProviderKey::Ready => ("scope", json!("unmeasured")),
+        ProviderKey::Refused { status, reason } => (
+            "refusal",
+            json!({"cause": "provider-key", "status": status, "reason": reason, "retry_at": Value::Null}),
+        ),
+    };
+    if let Value::Object(raw) = &mut judged.row.raw {
+        raw.insert(field.to_owned(), value);
+    }
+    match key {
+        ProviderKey::Ready => PickAnswer::Lane(judged),
+        ProviderKey::Refused { .. } => PickAnswer::Unmeasured(judged),
     }
 }
 
@@ -955,6 +1017,12 @@ pub struct PickRequest {
     /// walk's question alone, where the account-wall succession covers the
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
+    /// Admit the named Pi root on a model whose provider nothing bills
+    /// where Pi reads that provider's credential ready under it
+    /// (`--admit-unbilled`, [`admitted_unbilled`]): a Jarvis task's
+    /// question, whose caller records the launch as unmeasured. An orch
+    /// lane never asks it, since an unmeasured pool is never a lane's room.
+    pub admit_unbilled: bool,
     /// The session the pick places opens on this machine (an overseer, a
     /// lane in a local window), so it signs in with this machine's stored
     /// login of the account and never with the token a provider measured
@@ -977,6 +1045,7 @@ impl PickRequest {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
+            admit_unbilled: false,
             opens_here: false,
         }
     }
