@@ -69,9 +69,13 @@ usage() {
 usage: md-refs [--staged | --base REF | --against REF | --all] [--strict] [--verbose]
 
 A citing file listed under emitted.paths in the indexed .kendex-lock.json,
-including files below a listed directory, warns instead of blocking. Only
-the citing file decides severity; a consumer file citing a render still
-fails. --strict blocks for rendered files too, for the catalog install check.
+including files below a listed directory, warns instead of blocking. A link
+or citation from any other file into a listed path is not judged, neither
+its path nor its heading, while the indexed lock lists it; a target the
+lock no longer lists is judged like any other. A citation between the
+repository's own files is judged in full. --strict
+reads no lock, so it judges every reference and blocks for rendered files
+too, for the catalog install check.
 
 A dead relative link, code-span section, anchor or content citation, or
 decision reference fails. A link followed by § must start with a heading from
@@ -453,7 +457,7 @@ fi
 # Pass two: the headings of every file a citation reaches into, read from
 # the index whether or not the file is in scope.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v tracked="$GG_TMP/tracked" \
-  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
+  -v lock_paths="$LOCK_PATHS" -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/targets" \
   || gg_fail targets-exit "$?" "The reference target resolver failed."
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
@@ -478,7 +482,7 @@ strict_unjudged
 # The pairs are sorted so every phrase for one target is contiguous and the
 # blob behind them is read once.
 LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=contents -v tracked="$GG_TMP/tracked" \
-  -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/wanted" \
+  -v lock_paths="$LOCK_PATHS" -v dec_dir="$DEC_DIR" -v dec_judge="$DEC_JUDGE" -v dec_index="$DEC_INDEX" -v id_prefix="$ID_PREFIX" -- "$GG_TMP/refs.tsv" >"$GG_TMP/wanted" \
   || gg_fail contents-exit "$?" "The citation content resolver failed."
 LC_ALL=C sort -- "$GG_TMP/wanted" >"$GG_TMP/wanted.sorted" \
   || gg_fail contents-sort "$?" "The citation phrase list could not be sorted."

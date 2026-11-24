@@ -388,9 +388,15 @@ case "$1" in
     : >"$TEST_STATE/refreshed"
     [ -z "${TEST_REFRESH_SAID:-}" ] || printf '%s\n' "$TEST_REFRESH_SAID"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
-    # A landing row's render that moves a file the base holds to a new
-    # name, which git's default rename detection pairs.
-    if [ -f .fixture-render-removes ]; then mv .fixture-render-removes .fixture-render-renamed; fi
+    # A landing row's render: each FROM line it removes, each FROM TO line
+    # it moves to a new name, which git's default rename detection pairs,
+    # and the root lock it writes.
+    if [ -f .fixture-render-removes ]; then
+      while read -r from to; do
+        if [ -n "$to" ]; then mkdir -p "$(dirname "./$to")" && mv -- "./$from" "./$to"; else rm -- "./$from"; fi
+      done <.fixture-render-removes
+    fi
+    if [ -f .fixture-render-lock ]; then cp .fixture-render-lock .kendex-lock.json; fi
     if [ -f "$TEST_STATE/classifier-proof" ]; then
       mkdir -p .agents/skills/probe
       printf 'a gained render\n' >.agents/skills/probe/SKILL.md
@@ -535,6 +541,10 @@ repo="$DIR"
 git -C "$repo" branch -M main
 git -C "$repo" config gc.auto 0
 mkdir -p "$repo/.agents/skills/harness-ci/scripts"
+# The landing check reads the root lock through md-refs' own reader, which
+# the release tree holds under the commit-guards package.
+mkdir -p "$repo/.agents/skills/commit-guards/scripts"
+cp -R "$REFRESH_DIR/../skills/commit-guards/scripts/lib" "$repo/.agents/skills/commit-guards/scripts/lib"
 cat >"$TMP/stub-change-class" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1120,9 +1130,11 @@ cp "$TMP/arm-helper" "$arm_helper"
 # A render this run committed goes to the default branch from the run
 # itself, with no pull request and with the landing token alone, where its
 # merge queue holds no entry, and lands where GitHub takes the push. No
-# token, another class, a render that removes a path, other sources, a busy
-# or unread queue and GitHub's refusal keep the pull request route, and a
-# default branch that moved defers to the next run. A retained head never lands, and a landed run
+# token, another class, a render that removes a path no emitted path of the
+# root lock covers, an unread lock, other sources, a busy or unread queue
+# and GitHub's refusal keep the pull request route, a removal inside a
+# position the lock still emits lands, and a default branch that moved
+# defers to the next run. A retained head never lands, and a landed run
 # closes the open rolling pull request only while GitHub still holds it
 # open. SAID is the one refresh-land line the run prints, or none: every
 # precondition that keeps the pull request names itself, once a landing
@@ -1276,9 +1288,11 @@ edits = {
     'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
     'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
     'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
-    'removal-ignored': (runner, '  if [ -n "$removed" ]; then land_check=skipped:path-removed; return 0; fi\n', ''),
-    'renames-paired': (runner, 'git diff --no-renames --diff-filter=D --name-only "$base" "$head"', 'git diff --diff-filter=D --name-only "$base" "$head"'),
     'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
+    'removal-ignored': (runner, '          *) land_check=skipped:path-removed; return 0 ;;\n', '          *) break ;;\n'),
+    'renames-paired': (runner, 'git diff -z --no-renames --diff-filter=D --name-only "$base" "$head"', 'git diff -z --diff-filter=D --name-only "$base" "$head"'),
+    'emitted-ignored': (runner, '      until grep -qxF -- "$position" "$TMP/emitted-paths"; do\n', '      until false; do\n'),
+    'lock-unread-ignored': (runner, 'then land_check=unavailable:lock-read; return 0; fi', 'then :; fi'),
     'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
     'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
     'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
@@ -1333,8 +1347,12 @@ arm_runs=0
 # CONFIGURED is KENDEX_LAND_CONFIGURED, which the shared workflow sets true
 # where either landing name is set; the half-pair row holds a name and no
 # token. The third-party row's project also subscribes to a catalog other
-# than kendex's, the sources-unread row's engine fails its subscription
-# list, and the render-removes row's render renames a file its base holds.
+# than kendex's, and the sources-unread row's engine fails its subscription
+# list. The package-pruned row's render drops package gone from the root
+# lock and moves its file to package renamed; the in-package row's render
+# removes a file inside package kept, which the lock still emits; the
+# lock-unread row's render does the same and writes a lock no reader can
+# parse.
 for row in \
   'landed|render|true||landed|token-exported|0|land-token|close|true|' \
   'merged-since-start|render|true||landed|close-merged|0|land-token|merged|true|' \
@@ -1342,7 +1360,9 @@ for row in \
   'half-pair|render|true||unasked|token-unsaid|0|||true|unavailable value=token' \
   'small-class|small|true||unasked|precondition-unsaid|0|land-token||true|skipped value=class' \
   'unmeasured|standard|false||unasked||0|land-token||true|skipped value=class' \
-  'render-removes|render|true||unasked|removal-ignored renames-paired|0|land-token||true|skipped value=path-removed' \
+  'package-pruned|render|true||unasked|removal-ignored renames-paired|0|land-token||true|skipped value=path-removed' \
+  'in-package|render|true||landed|emitted-ignored|0|land-token|close|true|' \
+  'lock-unread|render|true||unasked|lock-unread-ignored|0|land-token||true|unavailable value=lock-read' \
   'base-moved|render|true|moved|base-moved|moved-unread|0|land-token||true|' \
   'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token||true|refused value=1' \
   'third-party|render|true||unasked|coverage-ignored|0|land-token||true|skipped value=sources-uncovered' \
@@ -1368,7 +1388,22 @@ for row in \
     case "$name" in
       third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources" ;;
       sources-unread) : >"$repo/.fixture-source-unread" ;;
-      render-removes) printf 'one\ntwo\nthree\nfour\n' >"$repo/.fixture-render-removes" ;;
+      package-pruned | in-package | lock-unread)
+        mkdir -p "$repo/.agents/skills/gone" "$repo/.agents/skills/kept"
+        printf 'one\ntwo\nthree\nfour\n' >"$repo/.agents/skills/gone/SKILL.md"
+        printf 'kept\n' >"$repo/.agents/skills/kept/SKILL.md"
+        printf 'old\n' >"$repo/.agents/skills/kept/old.md"
+        lock='{"version":12,"entries":{"skill:gone":{"emitted":{"paths":[".agents/skills/gone"]}},"skill:kept":{"emitted":{"paths":[".agents/skills/kept"]}}}}'
+        printf '%s\n' "$lock" >"$repo/.kendex-lock.json"
+        case "$name" in
+          package-pruned)
+            printf '.agents/skills/gone/SKILL.md .agents/skills/renamed/SKILL.md\n' >"$repo/.fixture-render-removes"
+            printf '%s\n' "${lock//gone/renamed}" >"$repo/.fixture-render-lock" ;;
+          in-package) printf '.agents/skills/kept/old.md\n' >"$repo/.fixture-render-removes" ;;
+          lock-unread)
+            printf '.agents/skills/kept/old.md\n' >"$repo/.fixture-render-removes"
+            printf 'not a lock\n' >"$repo/.fixture-render-lock" ;;
+        esac ;;
     esac
     commit "$repo"
     git -C "$repo" push -q origin main
@@ -1403,9 +1438,10 @@ for row in \
     else bad "$name $mutation landing control" "$OUT"; fi
     git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
     case "$name" in
-      third-party | sources-unread | render-removes)
+      third-party | sources-unread | package-pruned | in-package | lock-unread)
         reset_default
-        git -C "$repo" rm -q .fixture-sources .fixture-source-unread .fixture-render-removes --ignore-unmatch
+        git -C "$repo" rm -q -r --ignore-unmatch -- .fixture-sources .fixture-source-unread .fixture-render-removes \
+          .fixture-render-lock .kendex-lock.json .agents/skills/gone .agents/skills/kept
         commit "$repo" ;;
     esac
   done
@@ -1435,9 +1471,9 @@ for close in close merged; do
   else bad "current route close=$close" "$OUT"; fi
   rm -f -- "${TMP:?}/state/prepush-state.json"
 done
-# A revert on kendex main that changes files back reaches the consumer as
-# one more render, which lands by the same route: a render back to the
-# bytes the landed one replaced lands on top of it.
+# A revert on kendex main that drops no emitted position reaches the
+# consumer as one more render, which lands by the same route: a render back
+# to the bytes the landed one replaced lands on top of it.
 reset_default
 cp "$TMP/land-runner" "$runner"
 printf '0\n' >"$TMP/state/queue-entries"

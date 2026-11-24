@@ -34,9 +34,13 @@
 #       `dec_index` holds the tracked `DECISIONS_DIR/INDEX.md` blob; each
 #       of its rows reserves its ID only within that row.
 #       `lock_paths` holds newline-separated repo-relative emitted paths from
-#       .kendex-lock.json, supplied by gg_md_lock_paths and read in `verdict`.
-#       A citing source at a listed path or below it emits W instead of V.
-#       An omitted or empty `lock_paths` value keeps all dead references V.
+#       .kendex-lock.json, supplied by gg_md_lock_paths and read in every
+#       phase. A citing source at a listed path or below it emits W instead
+#       of V. A link or code-span citation from any other source into a
+#       listed path or below it is not judged, neither its path nor its
+#       heading: the update that renders the target moves it, and the
+#       repository's own file names the package at most. An omitted or empty
+#       `lock_paths` value judges every reference and keeps it V.
 #       Reads the refs records; `targets` prints each tracked markdown path a
 #       heading citation needs indexed, `contents` prints
 #       target<TAB>phrase for each content citation whose path resolves, and
@@ -417,12 +421,22 @@ function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   return 0
 }
 
-function fail(rule, value,   path, kind) {
-  if (phase != "verdict") return
-  kind = "V"
-  for (path in rendered) {
-    if (src_path == path || index(src_path, path "/") == 1) { kind = "W"; break }
+# A path at or below an emitted path; emitted paths are literal, and a
+# directory owns what lies below its slash.
+function rendered_path(p,   d) {
+  d = p
+  while (d != "") {
+    if (d in rendered) return 1
+    if (!sub(/\/[^\/]*$/, "", d)) return 0
   }
+  return 0
+}
+
+function into_render(t) { return !rendered_path(src_path) && rendered_path(t) }
+
+function fail(rule, value,   kind) {
+  if (phase != "verdict") return
+  kind = rendered_path(src_path) ? "W" : "V"
   printf "%s\t%s\t%d\t%s\t%s\n", kind, src_path, line_no, rule, value
 }
 
@@ -467,16 +481,14 @@ BEGIN {
     }
     load_tracked()
     if (dec_judge) load_dec_index()
-    if (phase == "verdict") {
-      load_headings(); load_contents(); load_skips(); load_unread()
-      if (lock_paths != "") {
-        while ((lock_status = getline path < lock_paths) > 0) rendered[path] = 1
-        if (lock_status < 0) {
-          printf "md-refs: lock-read=%s\n", lock_paths > "/dev/stderr"
-          exit 2
-        }
-        close(lock_paths)
+    if (phase == "verdict") { load_headings(); load_contents(); load_skips(); load_unread() }
+    if (lock_paths != "") {
+      while ((lock_status = getline path < lock_paths) > 0) rendered[path] = 1
+      if (lock_status < 0) {
+        printf "md-refs: lock-read=%s\n", lock_paths > "/dev/stderr"
+        exit 2
       }
+      close(lock_paths)
     }
     judged = 0
   } else if (mode == "index") {
@@ -540,6 +552,7 @@ mode == "resolve" {
     sub(/\/$/, "", path)
     if (path == "") target = src_path
     else target = resolve_from(dir_of(src_path), path)
+    if (into_render(target)) next
     judged++
     if (ESCAPED) { fail("link-escape", raw); next }
     if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
@@ -556,15 +569,20 @@ mode == "resolve" {
     ckind = f[5]
     value = f[6]
     raw = f[7]
-    judged++
     target = (path == "") ? src_path : resolve_from(dir_of(src_path), path)
     if (ESCAPED || !(target in tracked_set)) {
+      relative = target
       target = normalize(path)
       if (ESCAPED || !(target in tracked_set)) {
+        # Either spelling of a dead path may be the render's.
+        if (into_render(relative) || into_render(target)) next
+        judged++
         fail("citation-target", raw ":" path ":" src_path)
         next
       }
     }
+    if (into_render(target)) next
+    judged++
     seen_target(target)
     if (ckind == "content") {
       want_content(target, value)

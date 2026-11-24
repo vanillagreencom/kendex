@@ -579,7 +579,7 @@ run_rows \
 # exit status, beside the table.
 assert_eq "--help prints usage at exit 0" "rc=0 md-refs: usage=md-refs" "$(run '' --help | sed -n 1p | LC_ALL=C cut -d';' -f1)"
 
-echo "=== lock-listed citing files warn; authored files and strict scans block ==="
+echo "=== lock-listed citing files warn; authored citations into them go unjudged; strict scans block ==="
 fx_lock_ref() { # NAME POSITION CALLER
   repo "$1"
   put "$3" '# Citing file\n\n`skills/orch/references/oversee-events.md § Judgement rules`\n'
@@ -607,6 +607,23 @@ fx_lock_target() {
   put .agents/skills/orch/SKILL.md '# Orch\n'
   put AGENTS.md '`.agents/skills/orch/SKILL.md § Missing`\n'
 }
+# An authored AGENTS.md cites a file, a heading and an anchor in a tree, a
+# committed refresh deletes the file and renames the heading, and an
+# unrelated file is staged after it. EMITTED decides whether the lock renders
+# that tree.
+fx_lock_moved() { # NAME EMITTED
+  repo "$1"
+  put .kendex-lock.json "{\"version\":11,\"entries\":{\"skill:orch:codex\":{\"emitted\":{\"paths\":[\"$2\"]}}}}"
+  put .agents/skills/orch/SKILL.md '# Orch\n\n## Rules\n'
+  put .agents/skills/orch/references/x.md '# X\n'
+  put AGENTS.md '`.agents/skills/orch/references/x.md § X` [x](.agents/skills/orch/references/x.md) [rules](.agents/skills/orch/SKILL.md#rules)\n'
+  commit seed
+  git -C "$R" rm -q .agents/skills/orch/references/x.md
+  put .agents/skills/orch/SKILL.md '# Orch\n\n## Judgement\n'
+  commit refresh
+  put notes.md 'Unrelated.\n'
+}
+moved_dead="$(dead AGENTS.md 1 "$(nocite '.agents/skills/orch/references/x.md § X' .agents/skills/orch/references/x.md AGENTS.md)");$(dead AGENTS.md 1 "$(untracked '](.agents/skills/orch/references/x.md)' .agents/skills/orch/references/x.md)");$(dead AGENTS.md 1 "$(noslug '](.agents/skills/orch/SKILL.md#rules)' .agents/skills/orch/SKILL.md rules)")"
 run_rows \
   "an exact emitted citing file warns|fx_lock_exact lock-exact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
   "a compact record keeps emitted citing files advisory|fx_lock_compact lock-compact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
@@ -623,7 +640,9 @@ run_rows \
   "the generated inventory cannot lower severity|fx_lock_generated lock-generated||--all|rc=1 $(dead AGENTS.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 1 1)" \
   "emitted paths are literal, not globs|fx_lock_literal lock-literal||--all|rc=0 $(warning '.agents/skills/[orch]/SKILL.md' 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md '.agents/skills/[orch]/SKILL.md')");$(clean 1 1) warnings=1" \
   "warnings do not hide an authored failure|fx_lock_mixed lock-mixed||--all|rc=1 $warn_record;$(dead AGENTS.md 1 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 2 2) warnings=1" \
-  "an authored caller into a render still blocks|fx_lock_target lock-target||--all|rc=1 $(dead AGENTS.md 1 "$(notext '.agents/skills/orch/SKILL.md § Missing' .agents/skills/orch/SKILL.md Missing)");$(failed 1 1 2)"
+  "an authored caller into a render is not judged for its heading|fx_lock_target lock-target||--all|rc=0 $(clean 0 2)" \
+  "an unrelated commit passes over authored citations into a render the update moved|fx_lock_moved lock-moved .agents/skills/orch|||rc=0 $(clean 0 2)" \
+  "control: the same citations into a tree the lock does not render block the unrelated commit|fx_lock_moved lock-moved-owned .agents/skills/other|||rc=1 $moved_dead;$(failed 3 3 2)"
 
 fx_lock_tree lock-report-command
 report_output="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" \
@@ -636,18 +655,26 @@ esac
 # Mutate private copies, keeping each matched expression but removing its
 # effect. Each copy must turn the matching production assertion red.
 REAL_MDR="$MDR"
-for control in warn strict position; do
+for control in warn render strict position; do
   copy="$TMP/mutant-$control"
   mkdir -p "$copy"
   cp -R "$SKILL_DIR/scripts" "$copy/scripts"
   case "$control" in
     warn)
       file="$copy/scripts/lib/md-refs.awk"
-      match='kind = "W"; break'
-      edit='s/kind = "W"; break/kind = "V"; break/'
+      match='kind = rendered_path(src_path) ? "W" : "V"'
+      edit='s/? "W" : "V"/? "V" : "V"/'
       fx_lock_tree world-mutant-warn
       args=--all
       expected="rc=0 $warn_record;$(clean 1 1) warnings=1"
+      ;;
+    render)
+      file="$copy/scripts/lib/md-refs.awk"
+      match='return !rendered_path(src_path) && rendered_path(t)'
+      edit='s/return !rendered_path(src_path) && rendered_path(t)/return 0/'
+      fx_lock_moved world-mutant-render .agents/skills/orch
+      args=""
+      expected="rc=0 $(clean 0 2)"
       ;;
     strict)
       file="$copy/scripts/md-refs"

@@ -258,6 +258,9 @@ gg_md_take() { # PATH BLOBFILE SHA
 # those positions, never derive a destination from a package or harness name.
 # An absent lock owns nothing. Index policy keeps an unstaged lock edit from
 # lowering the severity of a staged citation.
+# kendex's consumer refresh calls this reader too, to land a render only
+# where md-refs will still skip the citations into what it removes, so its
+# output stays one path per line.
 gg_md_lock_paths() { # OUTPUT: newline-separated emitted paths
   local content="" status=0
   content="$(gg_policy_content .kendex-lock.json)" || status=$?
