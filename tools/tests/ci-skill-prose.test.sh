@@ -37,6 +37,12 @@ cargo_rows() {
   check "an unplaced test file keeps all tests beside known Markdown" \
     "true null $ROSTER $QUEUE_ALL [] $(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
     "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field shards <<<"$selected") $(field queue_macos_shards <<<"$selected") $(field skipped_suites <<<"$selected") $(field rust_targets <<<"$selected")"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection micro false tools/apt-install)"
+  check "workflow package setup keeps its Cargo and smoke jobs" 'true null true true false' \
+    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field cargo_lint <<<"$selected") $(field smoke <<<"$selected") $(field cargo_windows_check <<<"$selected")"
+  check "workflow package setup keeps its checkout-kendex shell shards" true \
+    "$(field shards <<<"$selected" | jq '(["refresh", "orch-rest", "rest", "jarvis"] - .) == [] and index("node") == null')"
 }
 [ "${1-}" = --inventory-proof ] || cargo_rows
 if [ "${1-}" = --cargo-reads ]; then
