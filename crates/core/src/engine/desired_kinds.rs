@@ -388,6 +388,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
                 name: ctx.name.to_owned(),
                 harness: Some(harness),
                 message,
+                remedy: None,
                 remediation: Some(format!(
                     "use an event {} supports, or remove it from this hook's harnesses",
                     harness.display_name(),

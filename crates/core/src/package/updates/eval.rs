@@ -3,6 +3,7 @@
 //! silent skip only for the sources that have no versions to speak of.
 
 use super::*;
+use crate::drift::report::Remedy;
 
 /// The scope-wide inputs one package's standing is judged against.
 pub(super) struct Eval<'a> {
@@ -169,6 +170,7 @@ impl Eval<'_> {
                         name: name.clone(),
                         harness: Some(HarnessId::Pi),
                         message: reason,
+                        remedy: None,
                         remediation: None,
                         detail: None,
                     });
@@ -179,6 +181,7 @@ impl Eval<'_> {
                 name: name.clone(),
                 harness: Some(HarnessId::Pi),
                 message: "kendex could not compare the installed Pi package with its source".into(),
+                remedy: None,
                 remediation: None,
                 detail: Some(error.to_string()),
             }),
@@ -209,6 +212,7 @@ impl Eval<'_> {
                 name: name.clone(),
                 harness: None,
                 message,
+                remedy: None,
                 remediation,
                 detail,
             };
@@ -291,28 +295,6 @@ impl Eval<'_> {
         }
     }
 
-    /// The fix for an installed commit the source's copy has not fetched,
-    /// as a lock pulled from another clone can name. A source refresh
-    /// fetches it and writes nothing in the project, which matters in a
-    /// clone that must not commit; `kendex refresh` would rewrite the lock.
-    ///
-    /// A command in a warning's text is an exception to engine.md rule 18:
-    /// `kendex updates` and the app's Updates page show a warning's own text
-    /// and no template remedy, so the command would reach neither. The
-    /// spelling is the drift report's template's, and the check line names
-    /// it as that template from the row's `unfetched`, never from this text.
-    fn source_refresh_fix(&self) -> Option<String> {
-        let remedy = crate::drift::report::Remedy::SourceRefresh {
-            global: matches!(self.scope, Scope::Global),
-        };
-        match remedy.render(None)? {
-            crate::drift::report::Fix::Here(command)
-            | crate::drift::report::Fix::Elsewhere(command) => {
-                Some(format!("fetch its source again with {command}"))
-            }
-        }
-    }
-
     /// The bound package's standing, from its mirror's history. A history
     /// that cannot be read surfaces as a warning while the row survives
     /// with no versions — the package keeps its identity, flags, and
@@ -333,14 +315,15 @@ impl Eval<'_> {
         // where the step is known to be the fix.
         let warn = |report: &mut UpdatesReport,
                     message: &str,
-                    remediation: Option<String>,
+                    remedy: Option<Remedy>,
                     error: &CoreError| {
             report.warnings.push(ItemWarning {
                 kind,
                 name: name.clone(),
                 harness: None,
                 message: message.to_owned(),
-                remediation,
+                remedy,
+                remediation: None,
                 detail: Some(error.to_string()),
             });
         };
@@ -377,7 +360,9 @@ impl Eval<'_> {
                     warn(
                         report,
                         "kendex could not find the installed version in its source",
-                        unfetched.then(|| self.source_refresh_fix()).flatten(),
+                        unfetched.then_some(Remedy::SourceRefresh {
+                            global: matches!(self.scope, Scope::Global),
+                        }),
                         &error,
                     );
                     None
@@ -586,16 +571,17 @@ mod tests {
         crate::lock::save(&lock_path, &lock).unwrap();
 
         let report = super::super::updates(&env, &scope).unwrap();
-        let fixes: Vec<_> = report
+        let warnings: Vec<_> = report
             .warnings
             .iter()
             .filter(|warning| warning.name == "gh")
-            .map(|warning| warning.remediation.as_deref())
             .collect();
-        assert_eq!(fixes.len(), 1, "{:?}", report.warnings);
-        assert!(
-            fixes[0].is_some_and(|fix| fix.contains("kendex source refresh")),
-            "{fixes:?}"
+        assert_eq!(warnings.len(), 1);
+        let serialized = serde_json::to_value(warnings[0]).unwrap();
+        assert_eq!(
+            serialized["remedy"],
+            serde_json::json!({"verb": "source-refresh", "global": false})
         );
+        assert!(serialized.get("remediation").is_none());
     }
 }

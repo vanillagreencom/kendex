@@ -314,6 +314,7 @@ fn unoffered(
         name: member.name.clone(),
         harness: None,
         message,
+        remedy: None,
         remediation: Some(format!(
             "add {} to that catalog, or drop it from the bundle {name}",
             member.name
@@ -439,6 +440,7 @@ fn disagreement(
             differ.join(" and "),
             held.by
         ),
+        remedy: None,
         remediation: Some(format!(
             "declare the {} {name} in {manifest_file} to say how it should install",
             kind.name()

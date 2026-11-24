@@ -171,6 +171,7 @@ fn stored_links(
                 name: item.name.clone(),
                 harness: None,
                 message: "Kept as delivered, because its installed copies read its links differently; each copy keeps reading what it read before".to_owned(),
+                remedy: None,
                 remediation: None,
                 detail: Some(format!(
                     "skill-links-delivered-apart: {}",

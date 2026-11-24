@@ -1469,6 +1469,7 @@ fn retired(
         name: name.to_owned(),
         harness: None,
         message,
+        remedy: None,
         remediation: None,
         detail: None,
     })

@@ -73,6 +73,7 @@ pub(super) fn desired_custom_hooks(
                         name: name.clone(),
                         harness: Some(harness),
                         message: advisory_downgrade(harness, &spec),
+                        remedy: None,
                         remediation: Some(
                             "set agents = \"all\" to make it run for everything, or keep it as instructions"
                                 .to_owned(),

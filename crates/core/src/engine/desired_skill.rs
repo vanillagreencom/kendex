@@ -521,6 +521,7 @@ fn render_variant(
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: finding.message,
+            remedy: None,
             remediation: Some(finding.remediation),
             detail: None,
         });
@@ -584,6 +585,7 @@ fn rebase_for_surface(
                     name: ctx.name.to_owned(),
                     harness: None,
                     message: warning.message,
+                    remedy: None,
                     remediation: warning.remediation,
                     detail: warning.detail,
                 };

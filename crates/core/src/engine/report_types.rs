@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::apply::Plan;
+use crate::drift::report::{Fix, Remedy};
 use crate::lock::Lock;
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -250,6 +251,9 @@ pub struct ItemWarning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness: Option<HarnessId>,
     pub message: String,
+    /// A command-bearing fix from the drift report's templates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<Remedy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
     /// The technical cause, verbatim: the failed command and what it
@@ -260,6 +264,21 @@ pub struct ItemWarning {
     /// updates listing shows it beneath the warning with `--verbose`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+impl ItemWarning {
+    /// Render a template remedy for display in the warning's own scope.
+    pub fn render_remedy(&self) -> Option<String> {
+        let remedy = self.remedy.as_ref()?;
+        let Fix::Here(command) = remedy.render(None)? else {
+            return None;
+        };
+        Some(if matches!(remedy, Remedy::SourceRefresh { .. }) {
+            format!("fetch its source again with {command}")
+        } else {
+            command
+        })
+    }
 }
 
 /// A writer's plan with what its link conversion kept: the links whose

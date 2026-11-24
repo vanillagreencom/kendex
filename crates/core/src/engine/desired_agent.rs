@@ -90,6 +90,7 @@ fn loadable(
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: warning.message.clone(),
+            remedy: None,
             remediation: warning.remediation.clone(),
             detail: warning.detail.clone(),
         });
@@ -100,6 +101,7 @@ fn loadable(
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: finding.message.clone(),
+            remedy: None,
             remediation: Some(finding.remediation.clone()),
             detail: None,
         });
@@ -134,6 +136,7 @@ pub(super) fn desired_agent(
             name: ctx.name.to_owned(),
             harness: None,
             message: warning.clone(),
+            remedy: None,
             remediation: None,
             detail: None,
         });

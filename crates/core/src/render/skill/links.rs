@@ -496,6 +496,7 @@ pub(crate) fn kept_warning(name: &str, link: &KeptLink) -> ItemWarning {
             crate::paths::slashed(&link.file),
             link.target
         ),
+        remedy: None,
         remediation: Some(
             "Use an absolute path or URL for a file outside the project or catalog.".to_owned(),
         ),
@@ -519,6 +520,7 @@ pub(crate) fn not_converted_warning(name: &str, file: &Path) -> ItemWarning {
             "{} is a link, so the links inside it were not converted",
             crate::paths::slashed(file)
         ),
+        remedy: None,
         remediation: Some(
             "Replace it with a regular file for its links to be converted.".to_owned(),
         ),

@@ -1,0 +1,1 @@
+- The Updates page and `kendex updates` show the same source refresh command as `kendex check` when the installed version has not been fetched.

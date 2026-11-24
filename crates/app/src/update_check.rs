@@ -55,9 +55,17 @@ pub fn overview(env: &Env, scopes: &[Scope]) -> updates::UpdatesReport {
                 name: scope.label(),
                 harness: None,
                 message: format!("drift snapshot not derived: {error}"),
+                remedy: None,
                 remediation: None,
                 detail: None,
             });
+        }
+        // The page draws the display text beside the warning. Keep the
+        // command's spelling in Rust, where the CLI renders it too.
+        for warning in &mut report.warnings {
+            if let Some(fix) = warning.render_remedy() {
+                warning.remediation = Some(fix);
+            }
         }
         reports.push(report);
     }

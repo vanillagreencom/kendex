@@ -3010,6 +3010,8 @@ export type ItemWarning_Deserialize = {
 	name: string,
 	harness: HarnessId | null,
 	message: string,
+	/**  A command-bearing fix from the drift report's templates. */
+	remedy?: Remedy | null,
 	remediation: string | null,
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
@@ -3031,6 +3033,8 @@ export type ItemWarning_Serialize = {
 	name: string,
 	harness?: HarnessId | null,
 	message: string,
+	/**  A command-bearing fix from the drift report's templates. */
+	remedy?: Remedy | null,
 	remediation?: string | null,
 	/**
 	 *  The technical cause, verbatim: the failed command and what it
@@ -4663,6 +4667,59 @@ export type Relocation = {
 	standing: Standing,
 	confirm: Confirm,
 };
+
+/**
+ *  The closed remedy vocabulary. Nothing else ever renders in a command
+ *  position; identifiers are validated before rendering and a name that
+ *  fails validation drops the remedy rather than escaping into it.
+ */
+export type Remedy = 
+/**  Restore declared files and remove records no declaration needs. */
+{ verb: "apply"; global: boolean } | 
+/**
+ *  Move files kendex never wrote out of a declaration's way and
+ *  install the declared render there. Offered only where the plan
+ *  measured those files against the render and found them different:
+ *  a report that prescribed the take-over from a stat alone would be
+ *  prescribing the destructive exit for a state it never judged.
+ */
+{ verb: "replace-unmanaged"; global: boolean; 
+/**
+ *  The take-over installs a package whose repository effect needs
+ *  its own yes, which the command carries. The session report
+ *  leaves it out ([`render::render_plain`]).
+ */
+allowRepoEffects?: boolean } | 
+/**  Install or replace Pi packages through their carrier installer. */
+{ verb: "update-pi"; global: boolean } | { verb: "refresh"; global: boolean } | 
+/**
+ *  Fetch the scope's sources and derive its standing again: the fix
+ *  for a record naming a commit this machine's copy of the source has
+ *  not fetched. It writes nothing in the project, so a clone that must
+ *  not commit can run it.
+ */
+{ verb: "source-refresh"; global: boolean } | 
+/**  Compare installed packages with the current source state. */
+{ verb: "updates"; global: boolean } | 
+/**  Replace this scope's old session drift hook with the current copy. */
+{ verb: "drift-hook"; global: boolean } | 
+/**
+ *  Move an unmanaged Pi copy out of the directory Pi scans. Paths are
+ *  shell-quoted when rendered. `windows` selects PowerShell syntax.
+ */
+{ verb: "move-aside"; from: string; to: string; windows: boolean } | 
+/**
+ *  Remove one item by kind and name: a bare name also removes a live
+ *  item of another kind that shares it.
+ */
+{ verb: "remove"; kind: ItemKind; name: string; global: boolean } | { verb: "add"; kind: ItemKind; name: string; global: boolean } | { verb: "fork"; kind: ItemKind; name: string; global: boolean } | 
+/**
+ *  Show what an apply would do here and why. Where a line names a
+ *  state whose right resolution depends on which of two directions the
+ *  reader wants, the preview that names both is the remedy: a report
+ *  built from stats alone must not prescribe the destructive one.
+ */
+{ verb: "plan"; global: boolean };
 
 /**  A package's declared effects on the repository it installs into. */
 export type RepoEffects = {
