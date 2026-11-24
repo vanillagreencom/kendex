@@ -176,6 +176,8 @@ File only for:
 Review-born findings:
 
 - A review-born finding clears the bar only where what reaches it is a user or a shipped run.
+- A worker's or CI's run of a tracked gate, guard, or check tool counts as a shipped run.
+- When a fail-open defect reaches this bar through Step 0's exception, apply the same reach requirement and the rest of the filing criteria.
 - It files at priority 2 carrying the symptom that showed it (project-management references/filing.md § Name what reaches it, which every filing goes through).
 - Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason.
 - A review-born P3 does not file.
