@@ -22,6 +22,13 @@ JARVIS_REPO_ALIASES = ""
 # DEST:/abs/main/home, DEST being what `ssh DEST` takes. Set a satellite's
 # value in its private env file, never here: a cloned home would carry it.
 JARVIS_MAIN_HOST = ""
+# On makes a satellite ask you to say "forward" or "yes" before it sends a
+# request to Jarvis main, and refuses a forward that records no such answer.
+# Turn it on where the satellite can take a request you did not make, such as
+# a microphone others in the room can reach. Off forwards with no question.
+# Jarvis main approves each action in the request either way.
+# values: off | on
+JARVIS_FORWARD_CONFIRM = "off"
 # Default when unset: ${XDG_STATE_HOME:-$HOME/.local/state}/jarvis.
 # Each home that runs at the same time needs a separate directory.
 JARVIS_LOG_DIR = "~/.local/state/jarvis"

@@ -235,6 +235,22 @@ Not your request? Reply in this thread." \
   "a legacy forward with a voice header posts its root, its whole text the request and its multi-line words one line, unlike a direct voice directive"
 assert_eq "$(threads_of 'Garage answer.')" "[$(jq -c '.[0].ts' <<<"$VOICE_ROOT")]" "the voice request's answer sits in its root's thread"
 
+KEY_N="$(forward_key 9)"
+FWD_NONE="$(forward_directive forwarded-none "$KEY_N" 'forwarded-confirmation: caller=unproved
+request-text: "Check tonight'\''s test plan."
+
+forwarded-request: satellite=px13 request-ref=vgs-audit:aud-1 request-at=2026-11-02T14:03:07.120Z confirmation-ref=null confirmed-at=null key='"$KEY_N"' confirmation-method=none confirmation-text=null')"
+answer "$FWD_NONE" 'Test plan answer.'
+sk_poll "$ROOT"
+NONE_ROOT="$(roots | jq -c '[.[] | select(.text | contains("test plan"))]')"
+assert_eq "$RC|$(jq -r 'length' <<<"$NONE_ROOT")|$(jq -r '.[0].text' <<<"$NONE_ROOT")" "0|1|Forwarded from px13, $ASKED:
+
+> Check tonight's test plan.
+
+Not your request? Reply in this thread." \
+  "a forward sent with no confirmation turn posts its root with no confirmation clause"
+assert_eq "$(threads_of 'Test plan answer.')" "[$(jq -c '.[0].ts' <<<"$NONE_ROOT")]" "the unconfirmed forward's answer sits in its root's thread"
+
 KEY_R="$(forward_key 7)"
 FWD_RETRY="$(forward_directive forwarded-retry "$KEY_R" "Renew the parking permit.
 

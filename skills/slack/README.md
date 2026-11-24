@@ -114,7 +114,7 @@ A tracker-posted question shows an @mention, its first line, item link and deadl
 
 The overseer records its ruling and closes the question. A reserved question waits for your decision; no option stands by default. [Owner asks](../orch/references/communication-modes.md#owner-asks) defines question closure and deadline handling.
 
-A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed and the request's words. The overseer's notices follow in that thread.
+A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed, if the satellite asked, and the request's words. The overseer's notices follow in that thread.
 
 - The confirmation does not prove who asked: reply in that thread if the request is not yours.
 - The overseer judges the confirmation words in its mailbox, where the references stay.

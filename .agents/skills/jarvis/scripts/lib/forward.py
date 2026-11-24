@@ -1,4 +1,4 @@
-"""A satellite's forwards of confirmed owner requests to the main home, and their outbox.
+"""A satellite's forwards of owner requests to the main home, and their outbox.
 
 The outbox is machine-local and is the one record of each forward. `forward`
 checks the caller's record, enqueues the request and makes the first attempt.
@@ -100,8 +100,12 @@ def canonical_at(value):
     return "%s-%s-%sT%s:%s:%s." % match.groups()[:6] + (match[7] or "").ljust(9, "0") + "Z"
 
 
-def checked_record(path):
-    """The caller's record at PATH after its shape and order checks; the first failure refuses."""
+def checked_record(path, confirm):
+    """The caller's record at PATH after its shape and order checks; the first failure refuses.
+
+    CONFIRM requires a confirmation object. Without it a record may omit one,
+    but a session record keeps its confirmation, the grant its lease bounds.
+    """
     try:
         with open(path, "rb") as source:
             data = source.read(RECORD_BYTES + 1)
@@ -118,20 +122,22 @@ def checked_record(path):
             raise Refusal("record-invalid", "field=" + field)
 
     scoped = "session" in record
-    invalid("record", set(record) == ({"v", "request", "confirmation", "session"} if scoped
-                                      else {"v", "request", "confirmation"})
+    confirmed = confirm or scoped or "confirmation" in record
+    invalid("record", set(record) == {"v", "request", *(("confirmation",) if confirmed else ()),
+                                      *(("session",) if scoped else ())}
             and type(record["v"]) is int and record["v"] == 1)
     # VGS records modality, not identity; its legacy records need no caller field.
-    confirmation = record["confirmation"]
+    confirmation = record.get("confirmation")
     form = "method" if isinstance(confirmation, dict) and "method" in confirmation else "words"
     caller = ("caller",) if isinstance(confirmation, dict) and "caller" in confirmation else ()
-    fields = {"request": ("ref", "at", "text"),
-              "confirmation": ("ref", "at", form, *caller, *(("scope",) if scoped else ()))}
+    fields = {"request": ("ref", "at", "text")}
+    if confirmed:
+        fields["confirmation"] = ("ref", "at", form, *caller, *(("scope",) if scoped else ()))
     for part, keys in fields.items():
         invalid(part, isinstance(record[part], dict) and set(record[part]) == set(keys))
         for key in keys:
             invalid(part + "." + key, isinstance(record[part][key], str))
-    invalid("confirmation.caller", confirmation.get("caller", "unproved") == "unproved")
+    invalid("confirmation.caller", not confirmed or confirmation.get("caller", "unproved") == "unproved")
     invalid("confirmation.method", form == "words" or confirmation["method"] in METHODS)
     if scoped:
         session = record["session"]
@@ -150,6 +156,8 @@ def checked_record(path):
     for part in fields:
         invalid(part + ".at", nanoseconds(record[part]["at"]) is not None)
     invalid("request.text", record["request"]["text"].strip())
+    if not confirmed:
+        return record
     invalid("confirmation.words", form == "method" or confirmation["words"].strip())
     # One record row may hold both turns, so the references may match and the times be equal.
     if not scoped and nanoseconds(confirmation["at"]) < nanoseconds(record["request"]["at"]):
@@ -561,8 +569,15 @@ class Forwarder:
         self.satellite()
         if self.role.kind == "invalid":
             raise Refusal("setting-invalid", "JARVIS_MAIN_HOST")
-        record = checked_record(path)
-        request, confirmation = record["request"], record["confirmation"]
+        if self.settings["JARVIS_FORWARD_CONFIRM"] not in ("off", "on"):
+            # The setting asks for the owner's step before a send, so a value
+            # it cannot read sends nothing rather than dropping the step.
+            raise Refusal("setting-invalid", "JARVIS_FORWARD_CONFIRM")
+        record = checked_record(path, self.settings["JARVIS_FORWARD_CONFIRM"] == "on")
+        request, confirmation = record["request"], record.get("confirmation")
+        # A forward with no confirmation turn cites none: `null` is no
+        # reference or time a record can hold, and `none` no method.
+        cited = confirmation or {"ref": "null", "at": "null", "method": "none"}
         # A reference reused with a new request time is a new request, with its own key.
         key = "forward-" + hashlib.sha256((self.home + "\n" + request["ref"] + "\n" +
                                            canonical_at(request["at"])).encode()).hexdigest()
@@ -572,10 +587,10 @@ class Forwarder:
         # they cannot fake a field.
         line = "forwarded-request: " + " ".join("%s=%s" % pair for pair in (
             ("satellite", watch.line_value(os.uname().nodename, True)), ("request-ref", request["ref"]),
-            ("request-at", request["at"]), ("confirmation-ref", confirmation["ref"]),
-            ("confirmed-at", confirmation["at"]), ("key", key),
-            ("confirmation-method", confirmation.get("method", "words")),
-            ("confirmation-text", json.dumps(confirmation.get("words"), ensure_ascii=True))))
+            ("request-at", request["at"]), ("confirmation-ref", cited["ref"]),
+            ("confirmed-at", cited["at"]), ("key", key),
+            ("confirmation-method", cited.get("method", "words")),
+            ("confirmation-text", json.dumps(cited.get("words"), ensure_ascii=True))))
         now = watch.epoch()
         with self.outbox.locked() as state:
             state["entries"] = [entry for entry in state["entries"] if kept(entry, now)]
@@ -592,7 +607,8 @@ class Forwarder:
                 # under one key, citing the first confirmation.
                 state["entries"].append({
                     "key": key, "request": request["ref"], "request_at": request["at"], "request_sha256": digest,
-                    "confirmation": confirmation["ref"], "confirmed_at": confirmation["at"],
+                    "confirmation": confirmation and confirmation["ref"],
+                    "confirmed_at": confirmation and confirmation["at"],
                     "text": "forwarded-confirmation: caller=unproved\nrequest-text: "
                             + json.dumps(request["text"], ensure_ascii=True) + "\n\n" + line,
                     "queued_at": now, "attempts": 0,

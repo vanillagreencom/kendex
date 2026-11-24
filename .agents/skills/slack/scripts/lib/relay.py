@@ -209,14 +209,15 @@ COMMAND_KEY = "command:"
 # the key, the request time, the words string, and the framing line with its
 # decoded request-text, to show them; it validates no citation and applies
 # no word rule, which are the satellite's `forward` and the main session's to
-# judge.
+# judge. A forward sent with no confirmation turn reads method `none`, its
+# confirmation fields `null`.
 FORWARD_KEY = re.compile(r"forward-[0-9a-f]{64}")
 FORWARD_LINE = re.compile(
     r"forwarded-request: satellite=(?P<satellite>\S+) request-ref=(?P<request_ref>\S+)"
     r" request-at=(?P<request_at>(?P<asked_second>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]{1,9})?Z)"
     r" confirmation-ref=(?P<confirmation_ref>\S+)"
     r" confirmed-at=(?P<confirmed_at>\S+) key=(?P<key>forward-[0-9a-f]{64})"
-    r" confirmation-method=(?P<method>words|voice|physical) confirmation-text=(?P<words>\".*\"|null)")
+    r" confirmation-method=(?P<method>words|voice|physical|none) confirmation-text=(?P<words>\".*\"|null)")
 # The framing `forward` puts above the provenance line since its caller
 # became explicit: the request as one ASCII-escaped JSON string. A forward
 # without it is legacy, its whole text the request.
@@ -407,7 +408,7 @@ def forwarded(envelope: Dict) -> Optional[Dict[str, Optional[str]]]:
     """The citation of a forwarded owner directive, FORWARD_LINE's fields,
     `request`, the request's words, and `asked_at`, its time cut to the
     second; None for any other envelope. `words` is the decoded
-    confirmation words, None for a method confirmation."""
+    confirmation words, None for a method confirmation or no confirmation."""
     text = str(envelope.get("text", ""))
     head, _, last = text.rstrip("\n").rpartition("\n")
     line = FORWARD_LINE.fullmatch(last)
@@ -434,15 +435,17 @@ def forwarded(envelope: Dict) -> Optional[Dict[str, Optional[str]]]:
 def forward_root(citation: Dict[str, Optional[str]]) -> str:
     """The top-level post a forwarded directive's answers thread under, for
     a person: the computer, the request time in each reader's zone, how
-    forwarding was confirmed and the request's words, so the owner can catch
-    a wrong one. A confirmation proves no caller, so the post asks the owner to
-    disown a request that is not theirs. References, the unproved-caller
-    framing and exact stamps stay in the directive the main reads."""
+    forwarding was confirmed, if it was, and the request's words, so the
+    owner can catch a wrong one. A confirmation proves no caller, so the post
+    asks the owner to disown a request that is not theirs. References, the
+    unproved-caller framing and exact stamps stay in the directive the main
+    reads."""
     words = json.dumps(citation["words"], ensure_ascii=True)
-    confirmed = {"words": f"with {words}", "voice": "by voice", "physical": "physically"}
+    confirmed = {"words": f", confirmed with {words}", "voice": ", confirmed by voice",
+                 "physical": ", confirmed physically", "none": ""}
     quoted = "\n".join(f"> {line}" if line else ">" for line in str(citation["request"]).splitlines())
-    return (f"Forwarded from {citation['satellite']}, {local_time(str(citation['asked_at']))}, "
-            f"confirmed {confirmed[str(citation['method'])]}:\n\n{quoted}\n\nNot your request? Reply in this thread.")
+    return (f"Forwarded from {citation['satellite']}, {local_time(str(citation['asked_at']))}"
+            f"{confirmed[str(citation['method'])]}:\n\n{quoted}\n\nNot your request? Reply in this thread.")
 
 
 def mention(binding: Binding) -> str:

@@ -31,8 +31,8 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
    - For another selected event source, use its supported registration and delivery interface.
 6. On a satellite, read `jarvis-session status --home HOME --main`.
    - Report each open forward that has a cause.
-   - A confirmation a crash left unforwarded is forwarded by running `forward` again with the same record.
-   - A console confirmation with no reply still shows in `owner-unanswered`.
+   - A request a crash left unforwarded is forwarded by running `forward` again with the same record.
+   - A console request or confirmation with no reply still shows in `owner-unanswered`.
 7. Check the user channel and each agent's channel for unread events.
    - Keep one communication channel per agent.
    - Use the source's delivery order rather than sorting event ids.

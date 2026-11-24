@@ -14,7 +14,7 @@ Jarvis turns your coding assistant into a personal assistant that carries out th
 - Fills in forms and works in your accounts from its own browser profile.
 - Reads reports from the agents in your other kendex projects and sends them the instructions you approve.
 - Guided setup for Slack, Linear, GitHub and fleet machines.
-- Takes long work from Jarvis Voice on another computer after you confirm.
+- Takes long work from Jarvis Voice on another computer.
 - Runs skills you write yourself.
 
 ## Install
