@@ -22,11 +22,4 @@ A data notice, an envelope of kind `data`, is text a program wrote, from the sou
 
 ## Replacing an owner question
 
-One question to the owner stands on an item at a time.
-
-- An owner ask with `--issue` replaces every open owner ask of this mailbox on the same item. `--replaces ID` also replaces that open owner ask, with or without a tracker comment. An open ask on another item is not replaced.
-- `lane-mail` strikes through each replaced question comment this Linear credential wrote, under one line linking the new question, and closes each replaced ask as `resolve` closes it.
-- Where another overseer's question already stands on the item, such as one a Jarvis session relayed, an item ask posts no comment and no assignment and follows that comment instead.
-- An owner reply under a replaced question reaches the open ask, with a first line naming both asks.
-
-`lane-mail --help` gives the `replaces` field and the stderr lines for a comment left unmarked or an ask left open.
+To change a question already asked, send the new question as a new ask; it replaces the earlier one. The owner-channel `ask` in `lane-mail --help` gives which asks it replaces, what becomes of the earlier question comment, when an ask follows another overseer's question instead of posting, and where a reply under a replaced question goes.

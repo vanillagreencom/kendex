@@ -66,6 +66,11 @@ assert_eq "$(jq '.replaces_refused' <<<"$REPLACE_FACTS")" true 'a --replaces nam
 assert_eq "$(jq '.replaced_reply' <<<"$REPLACE_FACTS")" true 'a reply under a replaced question reaches the open ask naming both'
 assert_eq "$(jq '.relay' <<<"$REPLACE_FACTS")" true 'a second overseer asking on the item follows the standing question in either order'
 assert_eq "$(jq '.own_author' <<<"$REPLACE_FACTS")" true 'the replace step edits no comment another credential wrote'
+assert_eq "$(jq '.own_question' <<<"$REPLACE_FACTS")" true 'an ask after a closed ask on the item posts its own question'
+assert_eq "$(jq '.unposted_keeps' <<<"$REPLACE_FACTS")" true 'an item ask whose question fails to post leaves the earlier ask open'
+assert_eq "$(jq '.chat_replaces' <<<"$REPLACE_FACTS")" true 'a reply under a question a chat ask replaced reaches that ask'
+assert_eq "$(jq '.chain' <<<"$REPLACE_FACTS")" true 'a chain of replacing asks carries the first question to the last ask'
+assert_eq "$(jq '.standing_error' <<<"$REPLACE_FACTS")" true 'an unreadable standing-question read retains the reader error'
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.
@@ -110,7 +115,7 @@ owner account|ORCH_OWNER_ASK_LABEL=owner-gated|ORCH_OWNER_EMAIL
 both||ORCH_OWNER_ASK_LABEL,ORCH_OWNER_EMAIL
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings replace adopt replaced-reply; do
+  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -148,18 +153,6 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'owner_tracker_mentioned "$tracker" "$comment_id"' 'true "$tracker" "$comment_id"'
       assertion='a saved comment without the owner mention refuses by its key and records no post'
-    elif [[ "$rule" == replace ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
-        'done <<<"$(jq -c '"'"'.[]'"'"' <<<"$REPLACE_OPEN")"' 'done <<<""'
-      assertion='a new ask on the item strikes the earlier question under a link to the new one'
-    elif [[ "$rule" == adopt ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'if [[ -n "$standing" ]]; then' 'if false && [[ -n "$standing" ]]; then'
-      assertion='a second overseer asking on the item follows the standing question in either order'
-    elif [[ "$rule" == replaced-reply ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
-        '| . as $row | select(any($replaced[]; .thread == ($row.parent_id // "")) | not)' ''
-      assertion='a reply under a replaced question reaches the open ask naming both'
     elif [[ "$rule" == close-untracked ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"' \

@@ -77,6 +77,9 @@ elif args[:2] == ["issues", "list"]:
                       for key, item in items.items()
                       if item["assignee"] == "Owner Person" and option("--label") in item["labels"]]))
 elif args[:2] == ["comments", "create"]:
+    if (state / "fail-create").exists():
+        print("tracker: refused=create", file=sys.stderr)
+        sys.exit(1)
     number = len(comments) + 1
     comments.append({"id": "c%d" % number, "issue": args[2], "body": Path(option("--body-file")).read_text(),
                      "user_id": me, "user_email": email[me], "parent_id": option("--parent"),
@@ -92,6 +95,8 @@ elif args[:2] == ["comments", "update"]:
     row["body"] = Path(option("--body-file")).read_text()
     save()
     print(json.dumps({"success": True, "data": {"success": True}}))
+elif args[:2] == ["comments", "list"] and (state / "garble-list").exists():
+    print("not json")
 elif args[:2] == ["comments", "list"]:
     print(json.dumps([safe(row) for row in comments if row["issue"] == args[2]]))
 elif args[:2] == ["comments", "bulk-list"]:
@@ -181,6 +186,24 @@ class Overseer:
         result = self.run("pending", "--item", "overseer", "--to", "owner")
         return {row["id"]: row for row in map(json.loads, result.stdout.splitlines())}
 
+    def owner_answers(self):
+        """The answers owner-answers delivered, by the tracker comment each came from."""
+        env = dict(self.env, OVERSEE_WATCH_TRACKER=str(self.root / ".agents/skills/linear/scripts/linear.sh"))
+        result = subprocess.run([*self.mail, "owner-answers", "--item", "overseer"], cwd=self.root, env=env,
+                                capture_output=True, text=True, timeout=30)
+        answers = {row["delivery_id"].split(":", 1)[1]: row for row in self.rows("to-lane.jsonl")
+                   if row["kind"] == "answer"}
+        return result, answers
+
+
+def marked(body, original, url):
+    """The replaced question no longer opens with the owner mention, opens
+    with a link to the newer question, and ends with its own lines struck."""
+    lines, original = body.splitlines(), original.splitlines()
+    struck = [("~~" + line + "~~") if line.strip() else line for line in original]
+    return (lines[0] != original[0] and "(" + url + ")" in lines[0]
+            and lines[-len(struck):] == struck)
+
 
 def tracker_comment(overseer, ask):
     return next(row["tracker_comment"] for row in overseer.rows("to-overseer.jsonl")
@@ -208,11 +231,7 @@ def replace(scratch, source, bash, facts):
     second, stderr = overseer.item_ask("KEN-7", "--replaces", chat)
     second_comment = tracker_comment(overseer, second)
     comments = {row["id"]: row for row in case.comments()}
-    lines = comments[first_comment]["body"].splitlines()
-    original = before[first_comment].splitlines()
-    facts["marked"] &= (lines[0] == "**Replaced** by [the newer question](%s). Answer that one only."
-                        % comments[second_comment]["url"]
-        and lines[1] == "" and lines[2:] == [("~~" + line + "~~") if line.strip() else line for line in original])
+    facts["marked"] &= marked(comments[first_comment]["body"], before[first_comment], comments[second_comment]["url"])
     # An open ask on another item is neither marked nor closed.
     facts["other_item"] &= comments[other_comment]["body"] == before[other_comment]
     open_asks = overseer.pending()
@@ -242,6 +261,74 @@ def replace(scratch, source, bash, facts):
         and answers["linear:" + plain]["re"] == second and answers["linear:" + plain]["text"] == "B"
         and {(row["ask"], row["comment"]) for row in delivered if row["kind"] == "delivered"}
         == {(second, under), (second, plain)})
+
+
+def follow_up(scratch, source, bash, facts):
+    """Asks on one item after an earlier one closed, and while a replacing
+    ask's question fails to post."""
+    case = Case(scratch, source, bash, ("KEN-10", "KEN-11"))
+    overseer = case.checkout("asker", "agent")
+    # A closed ask's question still reads as standing until the watch rules
+    # on it; a later ask from the same mailbox posts its own question.
+    closed, _ = overseer.item_ask("KEN-10")
+    overseer.run("resolve", "--item", "overseer", "--id", closed)
+    count = len(case.comments())
+    later, _ = overseer.ask("--issue", "KEN-10", "--do", "Approve change", text="Ship it today?\n")
+    later_comment = tracker_comment(overseer, later)
+    facts["own_question"] &= (len(case.comments()) == count + 1 and later_comment != tracker_comment(overseer, closed)
+        and "Ship it today?" in {row["id"]: row for row in case.comments()}[later_comment]["body"])
+    # A replacing item ask whose question fails to post leaves the earlier
+    # question open and unedited, and a reply under it answers that ask.
+    first, _ = overseer.item_ask("KEN-11")
+    first_comment = tracker_comment(overseer, first)
+    before = {row["id"]: row["body"] for row in case.comments()}
+    (case.state / "fail-create").touch()
+    unposted, stderr = overseer.ask("--issue", "KEN-11", "--do", "Approve change", text="Approve it today?\n")
+    (case.state / "fail-create").unlink()
+    under = case.owner_reply("KEN-11", first_comment, "A")
+    imported, answers = overseer.owner_answers()
+    facts["unposted_keeps"] &= (set(overseer.pending()) >= {first, unposted}
+        and {row["id"]: row["body"] for row in case.comments()}[first_comment] == before[first_comment]
+        and "lane-mail: replace-unclosed id=%s cause=tracker-unwritten" % first in stderr.splitlines()
+        and imported.returncode == 0 and answers.get(under, {}).get("re") == first)
+    # The next item ask replaces both: the posted one and the one whose
+    # question never reached the item.
+    third, _ = overseer.ask("--issue", "KEN-11", "--do", "Approve change", text="Approve half of it?\n")
+    comments = {row["id"]: row for row in case.comments()}
+    facts["unposted_keeps"] &= (not {first, unposted} & set(overseer.pending())
+        and marked(comments[first_comment]["body"], before[first_comment],
+                   comments[tracker_comment(overseer, third)]["url"]))
+    # A standing-question read the tracker answered with unreadable output
+    # keeps the reader's refusal in the retained error file.
+    (case.state / "garble-list").touch()
+    _, stderr = case.checkout("other", "jarvis").item_ask("KEN-10")
+    (case.state / "garble-list").unlink()
+    prefix = "lane-mail: tracker-unwritten issue=KEN-10 cause=comments-read error-file="
+    retained = [line[len(prefix):] for line in stderr.splitlines() if line.startswith(prefix)]
+    facts["standing_error"] &= len(retained) == 1 and Path(retained[0]).read_text().strip() != ""
+
+
+def chat_chain(scratch, source, bash, facts):
+    """Asks without an item, each replacing the one before, after an item ask."""
+    case = Case(scratch, source, bash, ("KEN-8",))
+    overseer = case.checkout("asker", "agent")
+    first, _ = overseer.item_ask("KEN-8")
+    question = tracker_comment(overseer, first)
+    second, _ = overseer.ask("--replaces", first)
+    under = case.owner_reply("KEN-8", question, "A")
+    imported, answers = overseer.owner_answers()
+    reply = answers.get(under, {})
+    head = reply.get("text", "").splitlines()[:1]
+    facts["chat_replaces"] &= (imported.returncode == 0 and set(overseer.pending()) == {second}
+        and reply.get("re") == second and bool(head) and first in head[0] and second in head[0]
+        and reply["text"].splitlines()[-1] == "A")
+    # A third ask replacing the second carries the first question forward.
+    third, _ = overseer.ask("--replaces", second)
+    later = case.owner_reply("KEN-8", question, "B")
+    imported, answers = overseer.owner_answers()
+    facts["chain"] &= ({"id": first, "issue": "KEN-8", "tracker_comment": question}
+        in overseer.pending()[third].get("replaces", [])
+        and imported.returncode == 0 and answers.get(later, {}).get("re") == third)
 
 
 def relay(scratch, source, bash, facts, overseer_first):
@@ -278,8 +365,12 @@ def relay(scratch, source, bash, facts, overseer_first):
 
 def run(source, scratch, bash):
     facts = {"marked": True, "other_item": True, "closed": True, "replaces_field": True,
-             "replaces_refused": True, "replaced_reply": True, "relay": True, "own_author": True}
+             "replaces_refused": True, "replaced_reply": True, "relay": True, "own_author": True,
+             "own_question": True, "unposted_keeps": True, "chat_replaces": True, "chain": True,
+             "standing_error": True}
     replace(scratch, source, bash, facts)
+    follow_up(scratch, source, bash, facts)
+    chat_chain(scratch, source, bash, facts)
     relay(scratch, source, bash, facts, overseer_first=True)
     relay(scratch, source, bash, facts, overseer_first=False)
     return facts
