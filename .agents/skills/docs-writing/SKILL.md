@@ -26,8 +26,6 @@ A repository's internal design documentation holds what the code cannot show: th
 
 This skill governs repository markdown and documentation HTML. Policy and operating documents also follow § Writing.
 
-Do not hand-copy code-owned inventories or defaults.
-
 ## The standard
 
 - Write short sentences. Put one idea in each sentence. A condition and its exception are one idea, and so are a field and its grammar.
@@ -117,6 +115,8 @@ The first row whose path matches wins. `*` matches across `/`. Shape names the s
 | none: the product content directory a repository names | [human-page.md](references/human-page.md) | [human-page.md](examples/human-page.md) | none |
 
 ### One home per fact
+
+When code or a tool's output owns a value, roster, inventory or procedure, point readers to that owner in place of a hand copy.
 
 For an internal design claim, ask the questions below in order. Stop at the first yes. First classify user help, operating steps, skill procedures and reference contracts by their file-type section.
 
