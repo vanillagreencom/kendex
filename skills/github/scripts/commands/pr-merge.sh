@@ -195,11 +195,11 @@ Merge route:
   The queue-only class is read only once everything else allows the admin
   route, from <skills>/harness-ci/scripts/change-class, else change-class on
   PATH, over the PR's range from the base branch's current tip to its head.
-  It is read only where the PR's recorded baseRefOid is that tip. Where the
-  two differ, the PR's CI may have classified against a base between them,
-  so no read stands for it: the PR is queue-only, detail line
-  cause=base-moved recorded=<sha> tip=<sha>, per
-  <skills>/harness-ci/references/wiring.md § The endpoint expressions.
+  It is read only where the PR's recorded baseRefOid is that tip. GitHub
+  does not move baseRefOid when the base branch advances, so where the two
+  differ the PR's CI may have classified against a base between them, and
+  no read stands for it: the PR is queue-only, detail line
+  cause=base-moved recorded=<sha> tip=<sha>.
   The classifier takes a merge-base diff, so both commits AND an ancestor
   they share must be in this checkout: the two SHAs
   are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
@@ -405,8 +405,8 @@ checkout_root() {
 # tip, the base recorded on the pull request (its baseRefOid) and the head,
 # blank-separated. Non-zero where it cannot be read, with gh's own words, or
 # the missing end, on stderr for the caller to keep. The tip is read off the
-# branch because the recorded base can predate it:
-# .agents/skills/harness-ci/references/wiring.md § The endpoint expressions.
+# branch because GitHub does not move the recorded base when the base branch
+# advances, so the recorded base can predate the tip.
 pr_range() { # PR
     local range_json branch encoded tip_sha recorded_sha head_sha
     range_json=$(gh pr view "$1" --json baseRefName,baseRefOid,headRefOid) || return 1
@@ -1011,8 +1011,7 @@ merge_route() { # PR TOKEN HEAD QUEUE ACCEPTED...
 # is the base branch's tip. The pull request's CI classified against that
 # recorded base or a base between it and the tip, and a `:queue` mark or a
 # setting can come and go between them, so where the two differ no single
-# read answers for the CI run and the change takes the queue, cause=base-moved:
-# .agents/skills/harness-ci/references/wiring.md § The endpoint expressions.
+# read answers for the CI run and the change takes the queue, cause=base-moved.
 QUEUE_ONLY=""
 QUEUE_ONLY_DETAIL=""
 QUEUE_ONLY_NOTES=""
