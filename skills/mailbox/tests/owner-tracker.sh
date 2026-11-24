@@ -64,13 +64,9 @@ assert_eq "$(jq '.other_item' <<<"$REPLACE_FACTS")" true 'an open ask on another
 assert_eq "$(jq '.replaces_field' <<<"$REPLACE_FACTS")" true 'the new ask names each ask it replaced and its question comment'
 assert_eq "$(jq '.replaces_refused' <<<"$REPLACE_FACTS")" true 'a --replaces naming no open owner ask appends nothing'
 assert_eq "$(jq '.replaced_reply' <<<"$REPLACE_FACTS")" true 'a reply under a replaced question reaches the open ask naming both'
-assert_eq "$(jq '.relay' <<<"$REPLACE_FACTS")" true 'a second overseer asking on the item follows the standing question in either order'
-assert_eq "$(jq '.own_author' <<<"$REPLACE_FACTS")" true 'the replace step edits no comment another credential wrote'
-assert_eq "$(jq '.own_question' <<<"$REPLACE_FACTS")" true 'an ask after a closed ask on the item posts its own question'
-assert_eq "$(jq '.unposted_keeps' <<<"$REPLACE_FACTS")" true 'an item ask whose question fails to post leaves the earlier ask open'
+assert_eq "$(jq '.unposted_keeps' <<<"$REPLACE_FACTS")" true 'an item ask whose question fails to post leaves the earlier ask open and replaces nothing'
 assert_eq "$(jq '.chat_replaces' <<<"$REPLACE_FACTS")" true 'a reply under a question a chat ask replaced reaches that ask'
 assert_eq "$(jq '.chain' <<<"$REPLACE_FACTS")" true 'a chain of replacing asks carries the first question to the last ask'
-assert_eq "$(jq '.standing_error' <<<"$REPLACE_FACTS")" true 'an unreadable standing-question read retains the reader error'
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.
@@ -144,7 +140,8 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
         'OWNER_TRACKER_COMMENT="$comment_id"' ':'
       assertion='the folded ask names its failure cause or posted comment'
     elif [[ "$rule" == mention ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" '    $mention, "",' ''
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",' ''
       assertion='the question comment mentions the owner and carries no ask id'
     elif [[ "$rule" == attribution ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" ' --no-attribution --body-file' ' --body-file'
@@ -160,8 +157,8 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       assertion='a close calls no tracker'
     elif [[ "$rule" == retained-error ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
-        'OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
+        'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
+        'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
       assertion='a refused label retains tracker error bytes after close'
     elif [[ "$rule" == rollback-owner ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \

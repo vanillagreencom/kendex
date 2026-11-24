@@ -26,4 +26,4 @@ A data notice, an envelope of kind `data`, is text a program wrote, from the sou
 
 ## Replacing an owner question
 
-To change a question already asked, send the new question as a new ask; it replaces the earlier one. The owner-channel `ask` in `lane-mail --help` gives which asks it replaces, what becomes of the earlier question comment, when an ask follows another overseer's question instead of posting, and where a reply under a replaced question goes.
+To change a question already asked, send the new question as a new ask that replaces the earlier one: an item ask on the same item, or an ask naming the earlier one with `--replaces ID`. The owner-channel `ask` in `lane-mail --help` gives when the replacement takes effect, what becomes of the earlier question comment, and where a reply under a replaced question goes.

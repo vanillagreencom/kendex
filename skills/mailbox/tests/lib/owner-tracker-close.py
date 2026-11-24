@@ -48,11 +48,6 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         "assignee": {"name": item["assignee"]} if item["assignee"] else None,
         "labels": {"pageInfo": {"hasNextPage": False},
                    "nodes": [{"name": label} for label in item["labels"]]}}}))
-elif args[:2] == ["comments", "list"]:
-    # The ask reads the item's comments where the owner label and assignee
-    # already stand; none of these is a standing question.
-    print(json.dumps([{"id": "c%d" % number, "body": body, "user_id": "agent", "parent_id": None,
-                       "created_at": "2026-01-01T00:00:%02dZ" % number} for number, body in enumerate(comments)]))
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
