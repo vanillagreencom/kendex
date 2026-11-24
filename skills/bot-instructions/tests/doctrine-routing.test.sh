@@ -86,8 +86,10 @@ EOF
   [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || { printf 'no row was asserted\n' >&2; exit 2; }
 }
 
-# A row naming no heading is refused where the table is read: its block
-# would otherwise take the default route without a word. A doctrine source
+# A block with no row is a finding, and so is a row the reader cannot read,
+# such as one missing its closing pipe, which a renderer shows like any other
+# row: either would otherwise take the default route without a word. A row
+# naming no heading is refused where the table is read. A doctrine source
 # without a block the render addresses by id is refused, so renaming one is
 # never a render that drops the exclusion paths or the tracker. Positions in a
 # column run 1..n once each. A row leaving out one of the three all-block
@@ -103,6 +105,8 @@ EOF
 # inside a command substitution for quotes, and a row carrying an odd number
 # of double quotes runs its parse past the closing parenthesis.
 IFS= read -r -d '' rows <<'ROWS'
+a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no row routes.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
+a routing row missing its closing pipe~schemas/renders.md~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n~| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8\n~red:doctrine-routing:doctrine block 'reply-contract' has no row in the routing table
 a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | 9 | – | – | – | – | – | – | 9 |\n| `trust-model` |~msg:routing table row 'no-such-block' names no `###` block
 a block the render addresses by id, renamed~SKILL.md~\n### reply-contract\n~\n### reply-terms\n~msg:has no 'reply-contract' block, which the render addresses by id
 a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'code-review.md' repeats a position
@@ -119,85 +123,51 @@ a default surfaces block carrying a table other than surface~SKILL.md~\n[[surfac
 ROWS
 spec_table "$rows"
 
-# A block added to the doctrine source alone, its one source, reaches
-# validation and the render with no second edit: the repo's
+# A block added to the doctrine source, with its row, reaches validation and
+# the render with no edit to any list of ids: the repo's
 # `[bot-instructions.doctrine.append]` keyed on the new id is accepted, and the
-# block lands in the default route's columns, after the routed ones, and in no
-# destination a row would have to name. Two manifests: every bot on, and Qodo
-# alone at the shipped default `qodo_commands`, where `.pr_agent.toml` is the
-# only file carrying doctrine and `/agentic_review`, which reads only the
-# `[review_agent]` keys, is the one verb, so a default route missing either
-# Qodo section renders the block where no verb the manifest runs reads it,
-# and passes. Which section a verb reads is Qodo's documented split
-# (`references/limits.md` § Qodo).
+# block lands in each destination its row names, after the routed ones, and in
+# no other.
 spec="$(new_spec added-block)"
-spec_edit "$spec/SKILL.md" '\n## Adding a repo\n' '\n### unrouted\n\nA block no row routes.\n\n## Adding a repo\n' || exit 1
-for world in all qodo-only; do
-  added="$(bi_new_repo "doctrine-added-$world")"
-  { if [ "$world" = qodo-only ]; then
-      python3 - "$BI_FIXTURES/canonical.toml" <<'PY' || exit 1
-import sys
-s = open(sys.argv[1]).read()
-for bot in ("codex", "copilot", "coderabbit", "macroscope"):
-    old = f"\n{bot} = true\n"
-    assert s.count(old) == 1, f"canonical.toml: no {bot} line"
-    s = s.replace(old, f"\n{bot} = false\n")
-old = '\nqodo_commands = ["/agentic_review", "/review"]\n'
-assert s.count(old) == 1, "canonical.toml: no qodo_commands line"
-s = s.replace(old, "\n")
-sys.stdout.write(s)
-PY
-    else
-      cat "$BI_FIXTURES/canonical.toml"
-    fi
-    printf '\n[bot-instructions.doctrine.append]\nunrouted = "An appended line."\n'
-  } > "$added/kendex.toml"
-  bi_must_adopt --repo "$added" --spec "$spec" || exit 1
-  expect_green "$world: a block added to the doctrine source alone renders" \
-    render --repo "$added" --spec "$spec"
-  expect_green "$world: and the render checks clean" \
-    check --repo "$added" --spec "$spec"
-  if python3 - "$added" "$world" <<'PROBE'; then
+spec_edit "$spec/SKILL.md" '\n## Adding a repo\n' '\n### added\n\nA block its row routes.\n\n## Adding a repo\n' || exit 1
+spec_edit "$spec/schemas/renders.md" '| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n' '| `reply-contract` | 8 | – (b) | – (a) | – | 4 | 8 | 6 | 8 |\n| `added` | 9 | – | – | 5 | – | 9 | – | 9 |\n' || exit 1
+added="$(bi_new_repo doctrine-added)"
+{ cat "$BI_FIXTURES/canonical.toml"
+  printf '\n[bot-instructions.doctrine.append]\nadded = "An appended line."\n'
+} > "$added/kendex.toml"
+bi_must_adopt --repo "$added" --spec "$spec" || exit 1
+expect_green 'a block added to the doctrine source with its row renders' \
+  render --repo "$added" --spec "$spec"
+expect_green 'and the render checks clean' \
+  check --repo "$added" --spec "$spec"
+if python3 - "$added" <<'PROBE'; then
 import os, sys, tomllib
-repo, world = sys.argv[1], sys.argv[2]
-TEXT = "A block no row routes.\n\nAn appended line."
+repo = sys.argv[1]
+TEXT = "A block its row routes.\n\nAn appended line."
 SUMMARY = "fixture is a small repository"
 def read(rel):
     return open(os.path.join(repo, rel)).read()
 qodo = tomllib.loads(read(".pr_agent.toml"))
-verbs = qodo["github_app"]["pr_commands"]
-if world == "qodo-only" and verbs != ["/agentic_review"]:
-    sys.exit(f"the qodo-only world is not at the shipped default qodo_commands: {verbs!r}")
-READS = {"/review": [("pr_reviewer", "extra_instructions")],
-         "/agentic_review": [("review_agent", "issues_user_guidelines"),
-                             ("review_agent", "compliance_user_guidelines")]}
-for verb in verbs:
-    if not any(TEXT in qodo[t][k] for t, k in READS[verb]):
-        sys.exit(f"{verb} runs and no section it reads carries the block")
 for table, key in (("pr_reviewer", "extra_instructions"), ("review_agent", "issues_user_guidelines")):
     value = qodo[table][key]
     at = value.find(TEXT)
     if at == -1 or not value[at + len(TEXT):].startswith("\n\n" + SUMMARY):
         sys.exit(f".pr_agent.toml [{table}] {key} does not end with the block, then the summary: {value[-240:]!r}")
-if "A block no row routes." in qodo["review_agent"]["compliance_user_guidelines"]:
-    sys.exit(".pr_agent.toml [review_agent] compliance_user_guidelines carries a block no row routes to it")
-absent = ["REVIEW.md"]
-if world == "all":
-    pointed = read(".github/instructions/code-review.md")
-    if not pointed.rstrip("\n").endswith("## unrouted\n\n" + TEXT):
-        sys.exit(f"code-review.md does not end with the block and its append: {pointed[-160:]!r}")
-    if TEXT not in read(".macroscope/correctness/doctrine.md"):
-        sys.exit("macroscope doctrine.md does not carry the block")
-    absent += [".github/copilot-instructions.md", ".coderabbit.yaml"]
-for rel in absent:
-    if "A block no row routes." in read(rel):
-        sys.exit(f"{rel} carries a block no row routes to it")
+pointed = read(".github/instructions/code-review.md")
+if not pointed.rstrip("\n").endswith("## added\n\n" + TEXT):
+    sys.exit(f"code-review.md does not end with the block and its append: {pointed[-160:]!r}")
+if TEXT not in read(".macroscope/correctness/doctrine.md"):
+    sys.exit("macroscope doctrine.md does not carry the block")
+if "A block its row routes." in qodo["review_agent"]["compliance_user_guidelines"]:
+    sys.exit(".pr_agent.toml [review_agent] compliance_user_guidelines carries a block its row leaves out")
+for rel in ("REVIEW.md", ".github/copilot-instructions.md", ".coderabbit.yaml"):
+    if "A block its row routes." in read(rel):
+        sys.exit(f"{rel} carries a block its row leaves out")
 PROBE
-    ok "$world: and it reaches each default-route column the manifest renders and every Qodo verb it runs, after the routed blocks, and nothing else"
-  else
-    bad "$world: and it reaches each default-route column the manifest renders and every Qodo verb it runs, after the routed blocks, and nothing else"
-  fi
-done
+  ok 'and it reaches each destination its row names, after the routed blocks, and nothing else'
+else
+  bad 'and it reaches each destination its row names, after the routed blocks, and nothing else'
+fi
 
 # A block id renamed in its one source, the heading and its row together, is
 # refused for a consuming repo whose override is keyed on the old id, so that

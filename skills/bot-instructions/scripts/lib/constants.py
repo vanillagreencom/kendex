@@ -123,11 +123,10 @@ ROUTING_COLUMNS = (
 # leaves one out.
 ALL_BLOCK_COLUMNS = ("code-review.md", "pr_agent extra", "macroscope doctrine.md")
 
-# Where a block the routing table has no row for goes: the columns above, and
-# `pr_agent issues`, so `/agentic_review`, which reads only the two
-# `[review_agent]` keys and is the shipped default verb, reads it too. Not a
-# shape rule: a routed block picks `issues` or `compliance` by its row.
-DEFAULT_ROUTE_COLUMNS = ALL_BLOCK_COLUMNS + ("pr_agent issues",)
+# Where `spec.parse_routing` places a block the routing table has no row for.
+# `doctrine-routing` reports every such block, so a build carrying one is
+# refused before anything is written.
+DEFAULT_ROUTE_COLUMNS = ("code-review.md", "macroscope doctrine.md")
 
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the

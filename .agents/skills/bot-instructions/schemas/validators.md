@@ -70,7 +70,7 @@ Its sites, and which answer each takes:
 - **Doctrine block ids**: the doctrine source's `###` headings are the one statement.
   - The routing table's rows, `[bot-instructions.doctrine.append]` and `[bot-instructions.doctrine.replace]` each name ids from it, and a name it does not define is refused where it is read.
   - The render addresses two blocks by id, `render-out-of-scope` and `reply-contract`, so a doctrine source without either is refused.
-- **Which block reaches which destination**: the routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own. A block it has no row for takes the default route that table states.
+- **Which block reaches which destination**: the routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own. Every block has a row there, which `doctrine-routing` holds.
 - **Content refusals**: which input string is under which refusal, and what each refusal's predicate is.
   - The table in `repo-toml.md` § The content refusals is the single source of which input is under which refusal; `toml-schema` and the Escaping paragraphs cite it.
   - `refusals.py` encodes each predicate once, under the name the table's column spells, and holds no row.
@@ -79,7 +79,7 @@ Its sites, and which answer each takes:
   - One function emits the marker and one answers ownership against its opener, which both read from one constant, so the writer and the reader cannot spell it differently and a marker an earlier copy wrote still reads as owned.
   - One function splits the prologue, and both the ownership test and the marker's insertion read it.
   - The path class is one constant, which `spec.py` refuses outside of.
-- **The routing table's own shape**: positions contiguous per column, no duplicates, and every row in the three all-block columns. `doctrine-routing` judges the table's rows.
+- **The routing table's own shape**: a row for every doctrine block, positions contiguous per column, no duplicates, and every row in the three all-block columns. `doctrine-routing` judges the table's rows.
 - **Validator test protection**: judge the evidence against the named rejection and its cost under § Controls; no control count defines admission.
 
 **A block id rename is a breaking change, refused where it would reach nothing.**
@@ -141,11 +141,12 @@ Its sites, and which answer each takes:
 
 **Rejects, the table's own shape.** Nothing else judges the table:
 
+- A doctrine block with no row. A row the reader skips, such as one missing its closing pipe, leaves its block with none, so the malformed row is this finding rather than a block routed by default.
 - A position repeated inside a column.
 - A gap in a column's positions, which must run `1..n`.
 - A row leaving out the `code-review.md`, `pr_agent extra` or `macroscope doctrine.md` column. Those columns carry every block.
 
-Which blocks exist is the doctrine source's alone, so this validator compares the table with no second list of ids: a row naming no block is refused where the table is read, and a block with no row takes the default route `renders.md` § Doctrine routing states.
+Which blocks exist is the doctrine source's alone, so this validator holds the table to the doctrine source's headings with no second list of ids, and a row naming no block is refused where the table is read.
 
 A byte validator: both inputs belong to the render, from the one copy `--spec` names. Judge the validator's test protection under § Controls.
 

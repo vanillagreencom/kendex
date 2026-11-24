@@ -5,7 +5,7 @@ One section per output. Each names the exact path, what the generator owns insid
 - Whole-file outputs in this reference apply to full mode.
 - [§ Local output](#local-output) owns local mode and its installed-doctrine pointer.
 - Doctrine block ids are the `###` headings of the doctrine source, whose parse rule is SKILL.md § Doctrine.
-- The routing table below is the only other place they are written down, and `doctrine-routing` holds the two to the same set.
+- The routing table below is the only other place they are written down: a row naming no block is refused where the table is read, and `doctrine-routing` reports a block with no row.
 
 ## Local output
 
@@ -130,18 +130,14 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 ## Doctrine routing
 
-One table, one row per routed doctrine block, one column per destination that carries doctrine.
+One table, one row per doctrine block, one column per destination that carries doctrine.
 
 - A number is that block's position in that destination.
 - A dash is a deliberate omission with its reason below.
 - Every per-surface section below cites this table rather than restating its own list.
 - The generator reads it as its single routing input.
 - The doctrine source's `###` headings are the one statement of the block ids, and a row names one of them. A row naming no block is refused.
-- A block with no row reaches `code-review.md`, `pr_agent issues`, `pr_agent extra` and `macroscope doctrine.md`, after the routed blocks, in doctrine order, and no other destination.
-  - `code-review.md`, `pr_agent extra` and `macroscope doctrine.md` carry every block: Codex, Copilot and CodeRabbit are sent to the first, `/review` reads the second, and Macroscope reads only the third.
-  - `pr_agent issues` is a `[review_agent]` key, which `/agentic_review` reads, so both Qodo review verbs read a block with no row.
-  - Every manifest that renders doctrine enables Codex, Qodo or Macroscope, since Copilot and CodeRabbit require Codex and the other Qodo outputs require Qodo, so a block with no row reaches every bot the manifest enables.
-  - A row is how a block reaches `pr_agent compliance` or any other destination.
+- Every block has a row, and a row is how a block reaches any destination. A block with no row is a `doctrine-routing` finding, and so is a block whose row the reader cannot read, such as one missing its closing pipe.
 
 | Block | code-review.md | copilot-instructions.md | .coderabbit.yaml | pr_agent issues | pr_agent compliance | pr_agent extra | REVIEW.md | macroscope doctrine.md |
 |-------|----------------|-------------------------|------------------|-----------------|---------------------|----------------|-----------|------------------------|
@@ -455,8 +451,7 @@ Read by Qodo from the root of the default branch.
 - The routing table's three `pr_agent` columns say which block goes where and in what order.
 - `issues` and `compliance` split the set between the two `[review_agent]` keys.
 - `extra` holds every block in one string, because `[pr_reviewer]` has no per-agent split.
-- Keep every routed block in `extra` in one of the two `[review_agent]` keys when editing those columns; no validator checks that direction. The reverse holds because `doctrine-routing` refuses a row without a `pr_agent extra` position.
-- A block with no row is in `extra` and `issues`, per § Doctrine routing.
+- Keep every block in `extra` in one of the two `[review_agent]` keys when editing those columns; no validator checks that direction. The reverse holds because `doctrine-routing` refuses a row without a `pr_agent extra` position.
 - `qodo-parity` checks only that the section each review verb in `qodo_commands` reads carries guidance.
 - In `issues` and `extra`, `render-out-of-scope` takes position 1 and carries the exclusion paths after its text.
 - Qodo's `[ignore]` filters what it analyzes for `/improve`, not what the review agent reads, and Qodo has no per-path exclusion for review content, so prose is the only exclusion route to its review agent.
@@ -511,7 +506,7 @@ No doctrine. `.pr_agent.toml` carries every block the table routes to Qodo, so t
 **`.macroscope/correctness/doctrine.md`.**
 
 - No frontmatter, so it applies repo-wide.
-- The marker as an HTML comment, then every doctrine block: the routed ones in its routing-table column's order, then any block with no row, per § Doctrine routing.
+- The marker as an HTML comment, then the blocks its routing-table column names, which is every block.
 - Its name is reserved, as are `correctness` and the two `.macroscope/` root names.
 
 **`.macroscope/correctness/<name>.md`.**

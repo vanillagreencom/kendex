@@ -181,10 +181,10 @@ def parse_routing(renders_text, where, blocks):
     """The one table in `renders.md` § Doctrine routing, read as data.
 
     The doctrine source's `###` headings are the one statement of the block
-    ids, so the table needs no row per block: a block it has no row for
-    reaches `constants.DEFAULT_ROUTE_COLUMNS`, after the routed ones, in
-    doctrine order, and no other. A row naming no block is refused, since its
-    block would otherwise take that default without a word.
+    ids, and a row naming no block is refused here. A block with no row, which
+    is also what a row this reader skips leaves, is placed in
+    `constants.DEFAULT_ROUTE_COLUMNS` after the routed ones, and
+    `doctrine-routing` reports it.
     """
     rows = [
         ln for ln in renders_text.splitlines()

@@ -36,6 +36,7 @@ The catalog's skills, one directory per skill, each rendered under `.agents/skil
 - A script proves its jq filters with jq 1.7.1, where `f? .r` does not parse and `f? | .r` does.
 - A script that sources another skill's lib declares that skill `required` under `dependencies` in its own `SKILL.md`.
   - Every fixture that copies a skill into an isolated project installs the required sibling beside it.
+  - Such a fixture copies each package whole, never a hand-picked subset, so a file the running copy starts to read cannot go missing from it.
   - A copy outside that layout refuses at startup.
   - A script that sources the lib on one path only, feature-detects it there and refuses that path when it is absent declares the skill `optional` instead.
   - Executing another skill's script is a dependency by the same rule as sourcing its lib.

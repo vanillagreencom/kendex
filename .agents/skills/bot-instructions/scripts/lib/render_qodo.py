@@ -4,8 +4,7 @@
 extra_instructions`; `/agentic_review` reads `[review_agent]`. Whichever
 command a repo runs, the guidance has to be in the section that command reads,
 so the generator writes the same doctrine into both, split differently. The
-routing table's three `pr_agent` columns say which block goes where, and a
-block with no row goes to `extra` and `issues`, so both verbs read it.
+routing table's three `pr_agent` columns say which block goes where.
 """
 
 from .constants import RENDER_OUT_OF_SCOPE

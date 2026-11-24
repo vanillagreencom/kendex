@@ -23,10 +23,16 @@ from . import config, jsonschema, refusals, render_coderabbit
 
 def doctrine_routing(ctx, out):
     """The routing table is the generator's single routing input, so a
-    one-character edit to it is a silent policy change. Its rows are judged
-    as a table: which blocks exist is the doctrine source's alone."""
+    one-character edit to it is a silent policy change. Which blocks exist is
+    the doctrine source's alone, and each needs a row: a row the table reader
+    skips, such as one missing its closing pipe, leaves its block with none,
+    and that block is a finding here rather than a block routed by default."""
     v = "doctrine-routing"
     rows = ctx.doctrine.positions
+    for bid in sorted(set(ctx.doctrine.blocks) - set(rows)):
+        out.append(Finding(v, f"doctrine block {bid!r} has no row in the routing table, "
+                              "or none the table reader reads; a row is how a block "
+                              "reaches any destination"))
     for column in ROUTING_COLUMNS:
         positions = sorted(cells[column] for cells in rows.values() if column in cells)
         if len(set(positions)) != len(positions):

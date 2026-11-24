@@ -37,11 +37,13 @@ output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
   || bad "CI runs the candidate's checker" "exit $status: $output"
 
 # The real package in the candidate's copy: a clean candidate passes and a
-# stale one is refused, so the wiring judges what it reads.
+# stale one is refused, so the wiring judges what it reads. The whole package,
+# as an install copies it, since the running copy reads its own schemas.
 rm -rf -- "${spec:?}/scripts"
-python3 - "$BI_ROOT/skills/bot-instructions/scripts" "$spec/scripts" <<'PY' || exit 1
+python3 - "$BI_ROOT/skills/bot-instructions" "$spec" <<'PY' || exit 1
 import shutil, sys
-shutil.copytree(sys.argv[1], sys.argv[2], ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns('tests', '__pycache__', '*.pyc'))
 PY
 output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
 [ "$status" -eq 0 ] && ok "a clean candidate passes its own checker" \
