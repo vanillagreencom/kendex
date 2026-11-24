@@ -193,6 +193,23 @@ SH
   fi
 done <<<"$CLAUDE_ROWS"
 
+# A hosted lane inherits only an OAuth token. The listed homes give the real
+# picker no stored login, so its keyed refusal must describe the session login.
+build claude-token ps:none current:codex models:claude+codex+my-model count:1 \
+  bin:claude orch:installed tier:class cmd:codex=codex cmd:my-model=extra model:my-model=deepseek extra:parse
+H="$ROW/home"
+USAGE="$ROW/usage"
+mkdir -p "$H/.firstclaude" "$H/.secondclaude" "$USAGE" "$PROJ/.agents/skills"
+printf '[env]\nAGENT_RUNTIME_ACCOUNT_DIRS = "%s:%s"\n' "$H/.firstclaude" "$H/.secondclaude" > "$PROJ/kendex.settings.toml"
+ln -s "$SKILL_DIR/../agent-runtime" "$PROJ/.agents/skills/agent-runtime"
+ln -s "$USAGE_CURL" "$ROW/bin/curl"
+W_ENV+=("CLAUDE_CODE_OAUTH_TOKEN=fixture-ambient-claude-login" "USAGE_FIXTURE_DIR=$USAGE"
+  "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+got="$(run review)"
+assert_eq "${got%% *}:$(count claude):$(count extra)" rc=0:0:1 'an unjudged token login skips Claude and the next reviewer runs'
+assert_eq "$(sed -n 's/^agent-runtime: account-//p' "$ROW/stderr")" \
+  'unjudged harness=claude exit=1 cause=claude-oauth-token-room-unmeasured' 'the room refusal identifies the inherited Claude token as unmeasured'
+
 # The stock Copilot entries' default room check with the real chooser, from a
 # Claude session on a consumer roster naming them: the pool AGENT_RUNTIME_COPILOT_POOL states
 # for a Pi root is what pick judges, and the root it picks is the Pi
