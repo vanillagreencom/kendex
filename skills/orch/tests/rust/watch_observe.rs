@@ -7801,6 +7801,107 @@ fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
     }
 }
 
+/// A detached hosted launch retains its confirmed host-exec phase. A
+/// provider's failed capture of the running harness breaks the sequence of
+/// exit readings, even though the watch could not read the harness's screen.
+#[test]
+fn a_hosted_lane_with_an_unreadable_native_observation_is_not_exited() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("gh-4", dir.path(), "exec sleep 600");
+    let mut lane = hosted_lane(dir.path(), "KEN-4", "gh-4", "/remote/KEN-4");
+    lane["launch"] = json!({"pane": pane, "server": server.pid, "server_start": server.start});
+    let mut doc = fleet.runner.fleet();
+    doc["lanes"] = json!([lane]);
+    doc["intents"] = json!([{
+        "id": "launch-session:KEN-4:1-1", "op": "launch-session", "target": "KEN-4",
+        "created_at": "2027-01-15T07:59:00Z", "outcome": "confirmed",
+        "phase": {"phase": "preparing", "step": "host-exec", "at": provider(dir.path())},
+        "observation": {"note": "session-hosted", "pane": pane, "server": server.pid}
+    }]);
+    fleet.runner.write_fleet(&doc);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path(), &server, &fleet);
+    write_executable(
+        &world.scripts.join(hosted::ORCH_RUNTIME),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 1\n",
+            world.scripts.join("close.log").display()
+        ),
+    );
+    let plant = |status| {
+        world.plant_host(&[
+            ("capabilities", ok(VERB_LINE)),
+            ("status --item KEN-4 --harness claude", status),
+            (
+                "capture --item KEN-4",
+                json!({"exit": 1, "stderr": "lane-host: ssh-failed\n"}),
+            ),
+        ]);
+    };
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    plant(ok("exited\n"));
+    let before = driver.pass(&state);
+    plant(ok("running\n"));
+    let unread = driver.pass(&state);
+    plant(ok("exited\n"));
+    let after = driver.pass(&state);
+    let observed = [
+        event_lines(&before),
+        event_lines(&unread),
+        event_lines(&after),
+    ];
+    let attempts = world.log("close.log").len();
+    assert!(
+        !observed
+            .iter()
+            .flatten()
+            .any(|l| l == "EVENT lane-exited gh-4")
+            && attempts == 0,
+        "events={observed:?} close-attempts={attempts} failure={:?}",
+        after.failed
+    );
+    assert_eq!(
+        observed[1],
+        [
+            "EVENT lane-unreadable gh-4 cause=capture-failed item=KEN-4 capture exit=1 lane-host: ssh-failed"
+        ]
+    );
+
+    // Two clean reads report the exit. If that close fails, an unreadable
+    // next pass neither retries it nor forgets that the exit was reported.
+    let reported = driver.pass(&state);
+    assert_eq!(event_lines(&reported), ["EVENT lane-exited gh-4"]);
+    assert_eq!(world.log("close.log").len(), 1);
+    plant(json!({"exit": 1, "stderr": "lane-host: status read failed\n"}));
+    assert_eq!(
+        event_lines(&driver.pass(&state)),
+        [
+            "EVENT lane-unreadable gh-4 cause=harness-probe-failed item=KEN-4 status exit=1 lane-host: status read failed"
+        ]
+    );
+    assert_eq!(world.log("close.log").len(), 1);
+    plant(ok("exited\n"));
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    assert_eq!(world.log("close.log").len(), 2);
+
+    // A successful running status invalidates the old exit even when the
+    // capture fails. The first fresh exit cannot retry the old close.
+    plant(ok("running\n"));
+    assert_eq!(event_lines(&driver.pass(&state)), observed[1]);
+    assert_eq!(world.log("close.log").len(), 2);
+    plant(ok("exited\n"));
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    assert_eq!(world.log("close.log").len(), 2);
+    assert_eq!(
+        event_lines(&driver.pass(&state)),
+        ["EVENT lane-exited gh-4"]
+    );
+    assert_eq!(world.log("close.log").len(), 3);
+}
+
 /// A hosted lane with no recorded pane keys its exit row on the empty pane
 /// key, which an absent row must not read as, so the row standing is the
 /// first pass's record: the lane the provider reads exited is `lane-exited`

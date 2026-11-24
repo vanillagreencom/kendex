@@ -565,7 +565,14 @@ struct Observed<'a> {
     identity: Option<Identity>,
     screen: Option<String>,
     row: Option<rows::Row>,
+    provider_running: bool,
     state: LaneState,
+}
+
+impl Observed<'_> {
+    fn hosted_unreadable(&self) -> bool {
+        matches!(self.state, LaneState::Unreadable { .. }) && hosted::host_of(self.lane) != "local"
+    }
 }
 
 fn hash_of(text: &str) -> u64 {
@@ -671,6 +678,7 @@ fn read_lane<'a>(
         identity: identity.clone(),
         screen: None,
         row: None,
+        provider_running: false,
         state,
     };
     let harness_up = match host.status {
@@ -735,6 +743,7 @@ fn read_lane<'a>(
             identity: identity.clone(),
             screen: screen.ok(),
             row,
+            provider_running: harness_up,
             state,
         };
     }
@@ -763,6 +772,7 @@ fn read_lane<'a>(
                 identity,
                 screen: (readers.capture)(&kept).ok(),
                 row,
+                provider_running: false,
                 state: LaneState::Exited,
             };
         }
@@ -796,6 +806,7 @@ fn read_lane<'a>(
         identity,
         screen: screen.and_then(Result::ok),
         row,
+        provider_running: harness_up,
         state,
     }
 }
@@ -1069,13 +1080,15 @@ pub fn observe(pass: &Pass) -> Produced {
     let observed: Vec<Observed> = lanes
         .iter()
         .map(|(lane, caps)| {
-            read_lane(
-                lane,
-                pass.readers,
-                &sockets,
-                HostRead::of(pass.scripts, lane, *caps),
-                None,
-            )
+            let host = HostRead::of(pass.scripts, lane, *caps);
+            let failed_status = matches!(host.status, Some(Err(_)));
+            let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
+            // The lane status verb carries this cause as unjudged. The
+            // watch reports that failed provider read as lane-unreadable.
+            if failed_status && let LaneState::Unjudged { cause } = obs.state {
+                obs.state = LaneState::Unreadable { cause };
+            }
+            obs
         })
         .collect();
     let mut walls = Vec::new();
@@ -1087,7 +1100,11 @@ pub fn observe(pass: &Pass) -> Produced {
             reading,
         });
     }
-    let observed_lanes: Vec<&Lane> = observed.iter().map(|o| o.lane).collect();
+    let observed_lanes: Vec<&Lane> = observed
+        .iter()
+        .filter(|o| !o.hosted_unreadable())
+        .map(|o| o.lane)
+        .collect();
     hosted::retry_pending_closes(&observed_lanes, pass, &hosts, &mut out);
     wall_pauses(&walls, pass, &mut out);
     hosted::prepare(pass, &mut out);
@@ -1320,10 +1337,12 @@ fn observe_one(
             (obs.state.clone(), WallReading::Clear)
         }
     };
-    if !matches!(
-        state,
-        LaneState::Gone | LaneState::Exited | LaneState::Idle { .. }
-    ) {
+    if !obs.hosted_unreadable()
+        && !matches!(
+            state,
+            LaneState::Gone | LaneState::Exited | LaneState::Idle { .. }
+        )
+    {
         let key = format!("{pane_key}|{}", hash_of(&slice));
         hosted::close_left(obs.lane, pass, hosts, &key, out);
     }
@@ -1359,6 +1378,19 @@ fn observe_one(
             return reading;
         }
         LaneState::Unreadable { cause } => {
+            // A failed hosted read breaks the sequence of exit readings.
+            // Keep a reported exit unless the provider read it running.
+            if obs.hosted_unreadable()
+                && get("lane-exited")
+                    .is_some_and(|prior| obs.provider_running || !prior.ends_with("|reported"))
+            {
+                out.changes.push(clear("lane-exited", lane));
+                if get(hosted::CLOSE_PENDING_ROW)
+                    .is_some_and(|pending| pending.starts_with("lane-exited|"))
+                {
+                    out.changes.push(clear(hosted::CLOSE_PENDING_ROW, lane));
+                }
+            }
             if get("lane-unreadable").as_deref() != Some(cause.as_str()) {
                 out.events.push(Event::LaneUnreadable {
                     lane: lane.clone(),
