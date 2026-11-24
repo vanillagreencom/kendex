@@ -38,7 +38,7 @@ key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/agent-runtime-$key"
 if [ ! -x "$binary" ] && command -v cargo >/dev/null 2>&1; then
   printf 'agent-runtime: setup-building key=%s run=%s\n' "$key" "$here/setup" >&2
-  "$here/setup" </dev/null >&2 || exit 69
+  agent_runtime_run_setup "$here/setup" || exit 69
 fi
 if [ ! -x "$binary" ]; then
   printf 'agent-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2

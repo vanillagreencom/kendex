@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Surface: the agent-runtime setup route and its wrapper. Inputs:
 # skills/agent-runtime/scripts/**, skills/agent-runtime/runtime/Cargo.toml,
-# runtime/Cargo.lock, runtime/src/**.
+# runtime/Cargo.lock, runtime/src/**, skills/agent-runtime/tests/setup/wrapper-timeout.py.
 #
 # The planted cargo beside this suite, first on PATH, records its argv and
 # writes a small executable where a real build would, so no row compiles
@@ -101,6 +101,14 @@ key_of() { # OUT — the key the success line names
   line="${line#*key=}"
   printf '%s' "${line%% *}"
 }
+
+RC=0
+python3 -B "$SRC/tests/setup/wrapper-timeout.py" "$WRAPPER" "$PKG/scripts/lib/key.sh" "$TMP_ROOT" 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC" 0 'wrapper timeout during a build leaves the keyed binary ready' "$TMP_ROOT/err"
+if [ "${1:-}" = wrapper-timeout ]; then
+  exit "$((FAIL != 0))"
+fi
+: >"$FAKE_CARGO_LOG"
 
 CACHE="$TMP_ROOT/cache"
 
