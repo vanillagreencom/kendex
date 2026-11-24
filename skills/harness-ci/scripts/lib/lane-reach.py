@@ -53,6 +53,11 @@ JS_TRIVIA = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
 JS_REFERENCE = re.compile(r"\b(?:import\b" + JS_TRIVIA + r"(\(" + JS_TRIVIA +
                           r")?|from\b" + JS_TRIVIA + r")")
 JS_SPECIFIER = re.compile(r"""(['"])([^'"\\\r\n]+)\1""")
+VITEST_STATIC_IMPORT = re.compile(
+    r"\s*import\s*\{\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*,?\s*\}\s*"
+)
+JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
+JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
 
@@ -316,17 +321,27 @@ class Evidence:
             config_dirs.update((parent, *parent.parents))
             source = self.blob(path)
             require(not re.search(
-                r"\b(?:require|eval|Function|fetch|process|globalThis|vi\.(?:mock|stub\w*))\b"
-                r"|\bimport\.meta|\b(?:node:|new\s+URL)|Snapshot\b", source,
+                r"\b(?:require|eval|Function|fetch|process|globalThis)\b"
+                r"|\bimport\.meta|\b(?:node:|new\s+URL)|Snapshot\b|\\u", source,
             ), "vitest-opaque-source")
             for reference in JS_REFERENCE.finditer(source):
+                require(not reference[1], "vitest-runtime-import")
                 start = reference.end()
-                if not reference[1] and source[start:start + 1] not in {"'", '"'}:
+                if source[start:start + 1] not in {"'", '"'}:
                     continue
                 specifier = JS_SPECIFIER.match(source, start)
                 require(specifier, "vitest-computed-import")
                 target = specifier[2]
                 if target == "vitest":
+                    # Namespace access and passed or extracted bindings can
+                    # load modules without a Vitest transform edge.
+                    line = source.rfind("\n", 0, reference.start()) + 1
+                    named = VITEST_STATIC_IMPORT.fullmatch(source[line:reference.start()])
+                    require(named, "vitest-runtime-binding")
+                    bindings = r"\b(?:" + "|".join(binding.strip() for binding in named[1].split(",")) + r")\b"
+                    uses = source[:line] + source[specifier.end():]
+                    require(all(re.match(JS_TRIVIA + r"\(", uses[use.end():])
+                                for use in re.finditer(bindings, uses)), "vitest-runtime-binding")
                     continue
                 require(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
                         "vitest-opaque-import")
@@ -336,7 +351,7 @@ class Evidence:
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
         require(not any(
-            Path(path).parent in config_dirs and Path(path).name in {"tsconfig.json", "jsconfig.json"}
+            Path(path).parent in config_dirs and Path(path).name in JS_CONFIG
             for path in self.files
         ), "vitest-inherited-config")
         cwd = self.checkout / directory
@@ -350,9 +365,7 @@ class Evidence:
             path for path in paths if (
                 under(path, directory) and not MODULE.search(path)
             ) or (
-                Path(path).parent in config_dirs and Path(path).name in {
-                    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-                }
+                Path(path).parent in config_dirs and Path(path).name in JS_PACKAGES
             )
         }
         paths -= reads
@@ -448,6 +461,17 @@ def reads_lane_gate(condition):
     return re.search(r"outputs.*lane_|results.*lane_", condition)
 
 
+def publishes_lanes(job):
+    return any(
+        key.startswith("lane_") or reads_lane_gate(value)
+        for key, value in job.get("outputs", {}).items()
+    ) or any(
+        "lane_verdicts" in value
+        for step in job.get("steps", [])
+        for value in [step.get("run", ""), *step.get("env", {}).values()]
+    )
+
+
 def roster(jobs, classifier, step):
     require(not os.environ.get("GITHUB_JOB") or os.environ["GITHUB_JOB"] == classifier,
             "workflow-classifier-mismatch")
@@ -532,10 +556,7 @@ def derived(evidence, exceptions, settings):
     jobs = document["jobs"]
     if not classifiers:
         raise SystemExit(3)
-    advertised = any(
-        output.startswith("lane_")
-        for name, _ in classifiers for output in jobs[name].get("outputs", {})
-    )
+    advertised = any(publishes_lanes(jobs[name]) for name, _ in classifiers)
     if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
     require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
@@ -544,7 +565,8 @@ def derived(evidence, exceptions, settings):
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
     require(evidence.authority == evidence.compared, "comparison-base-differs")
     require(evidence.changed, "no-changed-paths")
-    authority = {path, ".github/ci-lanes.conf", *settings}
+    authority = {path, ".github/ci-lanes.conf", "Cargo.toml", "Cargo.lock",
+                 *JS_CONFIG, *JS_PACKAGES, *settings}
     if not evidence.rendered:
         authority.update({".kendex-lock.json", ".kendex-generated.json"})
     for control_step in jobs[classifier]["steps"]:
@@ -557,48 +579,48 @@ def derived(evidence, exceptions, settings):
             owner = evidence.owner(installed)
             if owner:
                 authority.update(name for name in evidence.changed if evidence.owner(name) == owner)
-    outcomes = dict.fromkeys(lane_by_job.values(), "unread")
+    retain_all = dict.fromkeys(lane_by_job.values(), "unread")
     # Checkout attributes can change the bytes of a lane input without
     # changing its blob. Both ends of a removed or moved file are in the diff.
     if evidence.changed & authority or any(Path(name).name == ".gitattributes"
                                           for name in evidence.changed):
-        return outcomes
+        return retain_all
 
-    job_evidence = {}
-    for name in lane_by_job:
+    owners = {name: {evidence.owner(name)} for name in evidence.changed if name.startswith(RENDER)}
+    if any(None in packages for packages in owners.values()):
+        return retain_all
+    if evidence.rendered:
+        for name, packages in owners.items():
+            if name in evidence.proved_head_ownership:
+                packages.add(evidence.proved_head_ownership[name])
+
+    first_reader = {}
+    outcomes = dict.fromkeys(lane_by_job.values(), "miss")
+    for name, lane in lane_by_job.items():
         try:
             ordinary, readers = job_reads(evidence, jobs[name])
             reads = ordinary | set().union(*(read for read, _ in readers))
             packages = {evidence.owner(path) for path in reads if path.startswith(RENDER)} - {None}
-            unresolved = any(evidence.changed - covered for _, covered in readers)
-            job_evidence[name] = (reads, packages, unresolved)
+            hits = (reads & evidence.changed) | {
+                rendered_path for rendered_path, package_owners in owners.items()
+                if packages & package_owners
+            }
+            unresolved = set().union(*(evidence.changed - covered for _, covered in readers))
         except UNAVAILABLE as error:
             print(f"lane-reach: job={name} cause={str(error).splitlines()[0]}", file=sys.stderr)
-
-    owners = {name: evidence.owner(name) for name in evidence.changed if name.startswith(RENDER)}
-    installed = set(owners.values()) - {None}
-    if evidence.rendered:
-        installed.update(evidence.proved_head_ownership[name] for name in owners
-                         if name in evidence.proved_head_ownership)
-    unowned = {name for name, owner in owners.items() if owner is None}
-    selected = set()
-    outcomes = dict.fromkeys(lane_by_job.values(), "miss")
-    for name, lane in lane_by_job.items():
-        if name not in job_evidence or unowned:
-            outcomes[lane] = "unread"
-            selected.add(name)
-            continue
-        reads, packages, unresolved = job_evidence[name]
+            hits, unresolved = set(), evidence.changed
+        if lane in exceptions:
+            # The legacy claim pass gives us lane names across the diff.
+            hits = evidence.changed
+        if any(first_reader.setdefault(path, lane) != lane for path in hits | unresolved):
+            return retain_all
         if unresolved:
             outcomes[lane] = "unread"
-            selected.add(name)
-        elif lane in exceptions or evidence.changed & reads or packages & installed:
-            if outcomes[lane] == "miss":
-                outcomes[lane] = "hit"
-            selected.add(name)
+        elif hits and outcomes[lane] == "miss":
+            outcomes[lane] = "hit"
     # A shared lane runs its entire group. Keep each running job's gated
     # ancestors, including dependencies through jobs without gates.
-    selected.update(name for name, lane in lane_by_job.items() if outcomes[lane] != "miss")
+    selected = {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
     selected.update(name for name in jobs if name not in lane_by_job
                     and jobs[name].get("if", "") not in {"always()", "${{ always() }}"})
     visited = set()

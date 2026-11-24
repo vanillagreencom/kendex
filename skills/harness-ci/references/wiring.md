@@ -384,12 +384,12 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 ### Per-lane verdicts
 
-The shared producer reads the workflow at the pull request or merge group base. A push can derive lanes when the runner payload confirms the default branch and both endpoints. Keep the template's `changes` outputs, verdict publishing step and job-level gates. Jobs sharing an output share a verdict. A running job keeps its gated prerequisites. An unsupported gate or incomplete reader retains coverage. A derived hit opens the global `lanes` gate on eligible runs. The docs-only, trivial and event waivers still apply.
+The producer reads the event's base workflow. Push derivation needs runner proof of the default branch and endpoints. Keep the template's outputs, verdict step and gates. Jobs sharing an output share a verdict. Keep gated prerequisites. On eligible runs, a shared input or possible overlap keeps every lane, as do shared root config and checkout attributes. Unreadable per-lane wiring keeps coverage. The docs, trivial and event waivers still apply.
 
 **Command evidence**
 
 - Run a literal `cargo test`, `cargo check`, `cargo clippy` or `cargo build`. The reader supports `-p NAME`, `--workspace` and the literal flags in `lane-reach.py`. It asks Cargo for offline package metadata and follows local dependencies and literal Rust includes. A build script, proc macro, external dependency or opaque input keeps the lane.
-- Run a literal `vitest run`, `./node_modules/.bin/vitest run` or `npx --no-install vitest run` in a project using default discovery and static local imports. Provision the project's locked Vitest installation in `lanes-from` at the exact event base. Vitest lists changed paths using a private index and follows static imports across the checkout. Inherited configuration, additions and other unresolved inputs retain coverage.
+- Run a literal `vitest run`, `./node_modules/.bin/vitest run` or `npx --no-install vitest run` in a project using default discovery and static local imports. Provision locked Vitest in `lanes-from` at the event base. The private index supplies changed paths for the static graph. Narrowing accepts one-line named Vitest imports used only as direct calls. Dynamic loading, inherited config and unresolved inputs retain coverage.
 - Use literal shell commands and paths. The shell reader follows `bash FILE`, `./FILE`, `source ./FILE` and `. ./FILE` through their literal reads. An installed package reader also runs when a file listed for that package changes under `.agents`, `.claude`, `.codex` or `.pi`. Each graph must rule out a path on its own evidence.
 
 Install Python 3.11 or later and PyYAML in the classifier job. Cargo and Vitest must be available there for their respective readers. A missing tool keeps the affected lanes eligible.
