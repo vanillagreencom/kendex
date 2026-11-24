@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.3.1
 
 - With `defaultProvider` set to `openai-native`, `web_search` uses OpenAI's own web search again on the newest OpenAI models, gpt-6.2-sol among them. Since Pi 1.4.0, Pi lists those models' tools in `additional_tools` input items, which the package did not read, so the model was sent the package's stand-in tool, and calling it returned a notice instead of search results.
 

@@ -1,6 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { ExaClient, type ExaDeepType, type NormalizedExaResponse } from "../providers/exa.js";
@@ -51,13 +50,15 @@ const researchModeDefaults: Record<ResearchMode, ResearchModeDefaults> = {
 	full: { type: "deep-reasoning", numResults: 150, textMaxCharacters: 24000, timeoutSeconds: 1800, highlightsMaxCharacters: 1200, highlightNumSentences: 5, highlightsPerUrl: 3, summaryQuery: "Summarize the source evidence relevant to the research question, emphasizing decision criteria, tradeoffs, risks, and revisit triggers.", outputSchema: defaultResearchOutputSchema },
 };
 
+// Pi's own pi-ai import for extensions builds StringEnum as this TypeBox Unsafe schema; the published
+// pi-ai types it as a pi-schema Schema since 1.5, which TypeBox's Static reads as unknown.
 export const webResearchSchema = Type.Object({
 	query: Type.Optional(Type.String({ description: "Research question to investigate with Exa Deep Search." })),
 	queryFile: Type.Optional(Type.String({ description: "Path to a file containing the research question. Relative paths resolve against ctx.cwd; leading @ is stripped." })),
 	contextFiles: Type.Optional(Type.Array(Type.String({ description: "Context files to append to the system prompt. Relative paths resolve against ctx.cwd; leading @ is stripped." }))),
 	contextGlob: Type.Optional(Type.String({ description: "Simple bounded glob for context files, e.g. tmp/plans/research/ISSUE/context-*.md." })),
-	researchMode: Type.Optional(StringEnum(researchModes)),
-	type: Type.Optional(StringEnum(deepTypes)),
+	researchMode: Type.Optional(Type.Unsafe<ResearchMode>({ type: "string", enum: researchModes })),
+	type: Type.Optional(Type.Unsafe<(typeof deepTypes)[number]>({ type: "string", enum: deepTypes })),
 	systemPrompt: Type.Optional(Type.String()),
 	additionalQueries: Type.Optional(Type.Array(Type.String())),
 	numResults: Type.Optional(Type.Number()),
@@ -75,7 +76,7 @@ export const webResearchSchema = Type.Object({
 	outputSchema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 	outputPath: Type.Optional(Type.String({ description: "Optional path for the findings report. Relative paths resolve against ctx.cwd; leading @ is stripped." })),
 	reportTitle: Type.Optional(Type.String()),
-	reportFormat: Type.Optional(StringEnum(reportFormats)),
+	reportFormat: Type.Optional(Type.Unsafe<(typeof reportFormats)[number]>({ type: "string", enum: reportFormats })),
 	rawOutputPath: Type.Optional(Type.String({ description: "Optional explicit path for raw Exa JSON metadata. Defaults to findings.raw.json next to outputPath for findings and markdown reports; json reports write none." })),
 });
 
