@@ -1321,7 +1321,6 @@ mod tests {
         i.env.insert("TMPDIR".to_owned(), "/host".to_owned());
         i.grants = Some(Grants {
             writable: vec![root.to_path_buf()],
-            shared_directory: None,
             seats: Vec::new(),
             read_only: Vec::new(),
             runtime_dir: None,

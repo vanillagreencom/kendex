@@ -3378,7 +3378,6 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
     let _agent = UnixListener::bind(rt.join("agent.sock")).unwrap();
     let grants = Grants {
         writable: vec![wt.clone(), seat.join("projects")],
-        shared_directory: None,
         seats: vec![seat.clone()],
         read_only: vec![seat.join("settings.json")],
         runtime_dir: Some(rt.clone()),
@@ -3456,7 +3455,6 @@ fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scrat
     }
     let grants = Grants {
         writable: vec![wt.clone()],
-        shared_directory: None,
         seats: Vec::new(),
         read_only: Vec::new(),
         runtime_dir: None,
@@ -3531,7 +3529,6 @@ fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself
     let refusal = |read_only: Vec<PathBuf>| {
         let grants = Grants {
             writable: vec![wt.clone()],
-            shared_directory: None,
             seats: Vec::new(),
             read_only,
             runtime_dir: None,

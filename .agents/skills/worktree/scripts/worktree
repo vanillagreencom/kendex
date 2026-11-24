@@ -211,15 +211,6 @@ git_with_github_https_auth() (
   fi
 )
 
-# Operations on an existing worktree fetch only the refs they read. Git's
-# shared metadata and remote-ref pruning belong to the main checkout.
-fetch_worktree_refs() { # CHECKOUT REMOTE REFSPEC...
-  local checkout="$1" remote="$2"
-  shift 2
-  git_with_github_https_auth -C "$checkout" fetch --no-write-fetch-head --no-prune \
-    --no-tags --no-recurse-submodules --no-auto-maintenance --refmap= "$remote" "$@"
-}
-
 # Every gh read takes the github skill's user ladder: GH_TOKEN, then
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
 # identity and never a read credential, as gh never reads it. A token GitHub
@@ -532,7 +523,7 @@ remote_ref_lease_oid() {
 
   if [[ -z "$expected_oid" && "$remote" != "origin" ]]; then
     fetch_err="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-fetch.XXXXXX")"
-    if fetch_worktree_refs "$wt" "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>"$fetch_err"; then
+    if git_with_github_https_auth -C "$wt" fetch "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>"$fetch_err"; then
       expected_oid="$(git -C "$wt" show-ref --verify --hash "$remote_tracking_ref" 2>/dev/null || true)"
     else
       fetch_status=$?
@@ -1304,20 +1295,14 @@ resolve_default_branch() { # [optional]
   DEFAULT_BRANCH="${recorded#origin/}"
 }
 
-# Initial claims refresh ownership across branches. Reuse already knows its
-# branch and fetches the refs it will use.
-fetch_origin() { # [REFSPEC...]
-  local output=""
-  if output="$(
-    if [[ $# -eq 0 ]]; then
-      git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
-    else
-      fetch_worktree_refs "$PROJECT_ROOT" origin "$@"
-    fi 2>&1
-  )"; then
+# Refresh one remote for ownership discovery. initial-work claims must never treat
+# an outage or stale remote-tracking refs as proof that a branch is unowned.
+fetch_ownership_remote() {
+  local remote="$1" output=""
+  if output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune "$remote" 2>&1)"; then
     return 0
   fi
-  worktree_message ownership-fetch-failed origin "Error: Could not refresh remote 'origin' for authoritative worktree ownership discovery." >&2
+  worktree_message ownership-fetch-failed "$remote" "Error: Could not refresh remote '$remote' for authoritative worktree ownership discovery." >&2
   [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
   return 1
 }
@@ -1375,15 +1360,9 @@ discover_ownership_remote_heads() {
   done
 }
 
-fetch_reuse_base() { # BRANCH
-  local branch="$1" refspecs=()
-  [[ -n "$branch" ]] || return 0
-  resolve_default_branch || return 1
-  refspecs=("+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH")
-  if [[ "$branch" != "$DEFAULT_BRANCH" ]] && remote_branch_discovered origin "$branch"; then
-    refspecs+=("+refs/heads/$branch:refs/remotes/origin/$branch")
-  fi
-  fetch_origin "${refspecs[@]}"
+# Explicit owner reuse requires a fresh origin before rebasing.
+fetch_origin() {
+  fetch_ownership_remote origin
 }
 
 worktree_path() { # ISSUE [OUT_VAR]
@@ -2504,33 +2483,41 @@ add_claim_worktree() {
 }
 
 acquire_issue_claim_lock() {
-  local issue="$1" normalized_issue="" claim_key="" lock_path=""
+  local issue="$1" normalized_issue="" claim_key="" legacy_lock="" lock_path=""
   if ! command -v flock >/dev/null 2>&1; then
     worktree_message flock-required "claim" "Error: flock is required to serialize worktree claims." >&2
     return 1
   fi
   normalized_issue="$(issue_branch_name "$issue")"
   claim_key="$(printf '%s' "$normalized_issue" | git -C "$PROJECT_ROOT" hash-object --stdin)" || return 1
-  lock_path="$PROJECT_COMMON_GIT_DIR/kendex/lane-data/kendex-worktree-claim-$claim_key.lock"
-  # Fixed descriptor: Bash 3.2 cannot allocate a descriptor dynamically.
-  if ! mkdir -p -- "${lock_path%/*}" 2>/dev/null || ! { exec 9>>"$lock_path"; } 2>/dev/null; then
+  legacy_lock="$PROJECT_COMMON_GIT_DIR/kendex-worktree-claim-$claim_key.lock"
+  lock_path="$PROJECT_COMMON_GIT_DIR/kendex/lane-data/${legacy_lock##*/}"
+  # Hold the common-root lock first so an older checkout shares this claim.
+  if ! { exec 8>>"$legacy_lock"; } 2>/dev/null; then
+    worktree_message claim-lock-open "$legacy_lock" "Error: could not open the worktree claim lock." >&2
+    return 1
+  fi
+  if ! flock -x 8; then
+    exec 8>&-
+    return 1
+  fi
+  if ! mkdir -p -- "${lock_path%/*}" 8>&- 2>/dev/null || ! { exec 9>>"$lock_path"; } 2>/dev/null; then
+    exec 8>&-
     worktree_message claim-lock-open "$lock_path" "Error: could not open the worktree claim lock." >&2
     return 1
   fi
+  if ! flock -x 9 8>&-; then
+    exec 9>&- 8>&-
+    return 1
+  fi
   ISSUE_CLAIM_LOCK_HELD=true
-  flock -x 9
-}
-
-acquire_restack_claim_lock() { # WT BRANCH
-  local issue=""
-  issue="$(recorded_worktree_issue "$1" 2>/dev/null)" || issue=""
-  acquire_issue_claim_lock "${issue:-$2}"
 }
 
 release_issue_claim_lock() {
   if [[ "${ISSUE_CLAIM_LOCK_HELD:-false}" == true ]]; then
     flock -u 9 2>/dev/null || true
-    exec 9>&-
+    flock -u 8 2>/dev/null || true
+    exec 9>&- 8>&-
     ISSUE_CLAIM_LOCK_HELD=false
   fi
 }
@@ -3263,7 +3250,7 @@ case "${1:-}" in
     fi
     validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
     RESTACK_BRANCH="$(restack_state_get "$WT_PATH" branch)"
-    acquire_restack_claim_lock "$WT_PATH" "$RESTACK_BRANCH" || exit 1
+    acquire_issue_claim_lock "$RESTACK_BRANCH" || exit 1
     # The first validation gives a useful error without taking a lock. Repeat
     # under the branch claim lock immediately before controlling the rebase.
     validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
@@ -3515,12 +3502,11 @@ case "${1:-}" in
       fi
       refresh_reuse_session_lease "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
 
-      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then
         discover_ownership_remote_heads || exit 1
         acquire_issue_claim_lock "$ISSUE" || exit 1
         require_registered_project_worktree "$WT_PATH" "materialize it" || exit 1
-        fetch_reuse_base "$CURRENT_BRANCH" || exit 1
+        fetch_origin || exit 1
         materialize_worktree_claim "$WT_PATH" || exit 1
         if [[ "$RESTACK" == true || "$REPLAY" == true ]]; then
           require_clean_restack "$WT_PATH" || exit 1
@@ -3545,8 +3531,10 @@ case "${1:-}" in
       if ! is_registered_project_worktree "$WT_PATH"; then
         refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fi
-      if [[ "$REUSE_CHECKOUT_MODE" != claim ]]; then fetch_reuse_base "$CURRENT_BRANCH" || exit 1; fi
+      if [[ "$REUSE_CHECKOUT_MODE" != claim ]]; then fetch_origin || exit 1; fi
+      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null) || exit $?
       if [[ -n "$CURRENT_BRANCH" ]]; then
+        resolve_default_branch || exit 1
         if ! read_committed_unexport; then
           worktree_message reuse-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the commit hooks; refusing to move the branch." >&2
           exit 1
@@ -4650,7 +4638,7 @@ case "${1:-}" in
 
     if [[ "$AUTO_REBASE" == true ]]; then
       BASE_FETCH_FAILED=false
-      BASE_FETCH_ERR="$(fetch_worktree_refs "$PROJECT_ROOT" origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" 2>&1 >/dev/null)" || BASE_FETCH_FAILED=true
+      BASE_FETCH_ERR="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" 2>&1 >/dev/null)" || BASE_FETCH_FAILED=true
       if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
         # Every reading below compares the branch with origin/$DEFAULT_BRANCH,
         # and a failed fetch leaves that ref wherever it last was: a stale base

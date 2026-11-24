@@ -12555,11 +12555,51 @@ fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
 }
 
-/// A main checkout with a separate Git directory can still launch and
-/// write its Git data. Its protected configuration remains read-only.
+/// Retained linked worktrees can relaunch with either the recorded
+/// repository or the executor's applicable repository as the anchor.
+/// A checkout moved without repairing its Git registration is refused.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_main_checkout_with_a_separate_git_directory_keeps_its_git_grants() {
+fn a_retained_linked_lane_requires_its_git_registration() {
+    for (name, recorded, moved) in [
+        ("recorded", true, false),
+        ("legacy", false, false),
+        ("moved", true, true),
+    ] {
+        let world = Confined::new();
+        let repo = world.runner.state_dir();
+        git(repo, &["config", "gc.auto", "0"]);
+        git(repo, &["config", "maintenance.auto", "false"]);
+        let mut wt = world.linked_worktree("ken-retained");
+        if moved {
+            let destination = world.dir.path().join("moved");
+            std::fs::rename(&wt, &destination).unwrap();
+            wt = destination;
+        }
+        let mut fleet = world.runner.fleet();
+        let mut stopped = lane("KEN-RETAINED", "stopped", &world.runner, Value::Null);
+        stopped["mail_root"] = json!(wt);
+        if recorded {
+            stopped["checkout_common"] = json!(repo.join(".git").canonicalize().unwrap());
+        }
+        fleet["lanes"] = json!([stopped]);
+        world.runner.write_fleet(&fleet);
+        let report = effect_report(&world.runner.op_fleet(&launch_request("KEN-RETAINED", &wt)));
+        let intent = &report["intent"];
+        if moved {
+            assert_eq!(intent["outcome"], "failed", "{name}: {report}");
+            assert_eq!(intent["observation"]["cause"], "checkout-registration");
+            assert!(!repo.join(".git/lane-mail/ken-retained").exists());
+        } else {
+            assert_eq!(intent["outcome"], "confirmed", "{name}: {report}");
+        }
+    }
+}
+
+/// The executor's primary checkout can have a separate Git directory.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_retained_main_checkout_can_have_a_separate_git_directory() {
     let world = Confined::new();
     let root = world.runner.state_dir();
     let common = world.dir.path().join("main.git");
@@ -12567,99 +12607,16 @@ fn a_main_checkout_with_a_separate_git_directory_keeps_its_git_grants() {
         root,
         &["init", "-q", "--separate-git-dir", common.to_str().unwrap()],
     );
-    world.probe_env(
-        "PROBE_RUN",
-        &format!(
-            "[ -w '{common}/objects' ] && echo objects=writable\n\
-             [ -r '{common}/config' ] && [ ! -w '{common}/config' ] && echo config=read-only",
-            common = common.display(),
-        ),
-    );
-    world.launch(&launch_request("KEN-SEPARATE", root));
-    let probe = world.probe("KEN-SEPARATE", 1);
-    for line in ["objects=writable", "config=read-only"] {
-        assert!(probe.lines().any(|actual| actual == line), "{probe}");
-    }
-}
-
-/// The linked lane can use Git and kendex writer endpoints while the
-/// common directory protects its sibling's config and the writer paths.
-#[test]
-#[cfg(target_os = "linux")]
-fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_writing() {
-    let mut world = Confined::new();
-    let repo = world.runner.state_dir().to_path_buf();
-    git(&repo, &["config", "gc.auto", "0"]);
-    git(&repo, &["config", "maintenance.auto", "false"]);
-    let wt = world.linked_worktree("ken-writer");
-    let sibling = world.linked_worktree("ken-sibling");
-    let common = repo.join(".git");
-    let sibling_admin = PathBuf::from(git(&sibling, &["rev-parse", "--absolute-git-dir"]));
-    let sibling_config = sibling_admin.join("config.worktree");
-    std::fs::write(&sibling_config, "[core]\n").unwrap();
-    let data = common.join("kendex/lane-data");
-    std::fs::create_dir_all(&data).unwrap();
-    let session_lock = data.join("kendex-worktree-session-guard.lock");
-    std::fs::File::create(&session_lock).unwrap();
-    // A broad grant around the repository must still leave its Git
-    // metadata protected.
-    world
-        .runner
-        .env
-        .push(("ORCH_LANE_WRITABLE".to_owned(), repo.display().to_string()));
-    world.probe_env(
-        "PROBE_RUN",
-        &format!(
-            "if [ -r '{sibling}' ]; then\n\
-               (: >> '{sibling}') 2>/dev/null && echo sibling-config=writable || echo sibling-config=refused\n\
-             else echo sibling-config=unreadable; fi\n\
-             for dir in objects refs logs worktrees/ken-writer; do\n\
-               [ -w '{common}/'\"$dir\" ] && echo \"git-data=$dir writable\" || echo \"git-data=$dir refused\"\n\
-             done\n\
-             data='{data}'\n\
-             session=\"$data/kendex-worktree-session-guard.lock\"\n\
-             if [ -f \"$session\" ]; then\n\
-               mv -- \"$session\" \"$session.moved\" 2>/dev/null && echo session-path=moved || echo session-path=held\n\
-             fi\n\
-             key=$(printf %s ken-writer | git hash-object --stdin)\n\
-             for lock in \"$session\" \"$data/kendex-worktree-claim-$key.lock\"; do\n\
-               (exec 9>>\"$lock\" && flock -x -n 9) 2>/dev/null && echo lock=held || echo lock=refused\n\
-             done\n\
-             (: >> \"$data/commit-guards-runs.tsv\") 2>/dev/null && echo log=writable || echo log=refused\n\
-             mkdir -- \"$data/reviewer-stop/fixture-marker\" 2>/dev/null && echo marker=created || echo marker=refused\n\
-             [ -w \"$data\" ] && echo lane-data=writable || echo lane-data=read-only",
-            sibling = sibling_config.display(),
-            common = common.display(),
-            data = data.display(),
-        ),
-    );
-    world.launch(&launch_request("KEN-WRITER", &wt));
-    let probe = world.probe_in(&wt, "KEN-WRITER", 1);
-    assert!(
-        probe.lines().any(|line| line == "sibling-config=refused"),
-        "{probe}"
-    );
-    for line in [
-        "session-path=held",
-        "log=writable",
-        "marker=created",
-        "lane-data=read-only",
-    ] {
-        assert!(probe.lines().any(|actual| actual == line), "{probe}");
-    }
+    let mut fleet = world.runner.fleet();
+    let mut stopped = lane("KEN-SEPARATE", "stopped", &world.runner, Value::Null);
+    stopped["checkout_common"] = json!(common.canonicalize().unwrap());
+    fleet["lanes"] = json!([stopped]);
+    world.runner.write_fleet(&fleet);
+    let report = world.launch(&launch_request("KEN-SEPARATE", root));
     assert_eq!(
-        probe.lines().filter(|line| *line == "lock=held").count(),
-        2,
-        "{probe}"
+        report["intent"]["observation"]["confinement"]["state"],
+        "confined"
     );
-    for dir in ["objects", "refs", "logs", "worktrees/ken-writer"] {
-        assert!(
-            probe
-                .lines()
-                .any(|line| line == format!("git-data={dir} writable")),
-            "{probe}"
-        );
-    }
 }
 
 /// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before

@@ -1573,7 +1573,15 @@ pub(super) fn launch_lane(
             let lane = lane_doc_mut(path, doc, index)?;
             // Over the same `mail_root` the folder first recorded stands: a
             // session of the lane may have rewritten the checkout's `.git`.
-            if previous.get("mail_root").and_then(Value::as_str) != Some(r.mail_root.as_str()) {
+            if !previous
+                .get("mail_root")
+                .and_then(Value::as_str)
+                .is_some_and(|prior| {
+                    prior == r.mail_root
+                        || crate::archive::resolve(Path::new(prior))
+                            == crate::archive::resolve(Path::new(&r.mail_root))
+                })
+            {
                 record_checkout_common(lane, checkout_common.as_deref(), r, host);
             }
             record::set(lane, "mail_root", r.mail_root.as_str());

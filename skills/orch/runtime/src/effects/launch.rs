@@ -492,6 +492,7 @@ struct LaunchPrep {
     trust: Option<trust::Route>,
     /// What the harness may reach inside its wrapper.
     granted: super::grants::Granted,
+    checkout: marker::Checkout,
     /// The worktree package reused a claim in the launch directory and kept
     /// it on its own head (`tree=unrebased`).
     unrebased: bool,
@@ -538,11 +539,33 @@ fn prepare_launch(
     lane: &Lane,
     fleet: Fleet,
     route: &Route,
+    relaunch: bool,
 ) -> std::result::Result<LaunchPrep, Unready> {
     let harness = Harness::parse(&r.harness)
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
+    let checkout = if relaunch {
+        let common = lane
+            .extra
+            .get(crate::ops::lane::CHECKOUT_COMMON)
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(Path::new)
+                    .filter(|path| path.is_absolute())
+                    .ok_or_else(|| refused("checkout-registration", &[("path", &r.mail_root)]))
+            })
+            .transpose()?;
+        marker::retained_checkout(
+            &cwd,
+            common,
+            &settings.roots.common,
+            &settings.roots.project,
+        )?
+    } else {
+        marker::checkout(&cwd)?
+    };
     let unrebased = reuse_claim(&settings.worktree_cli, &cwd, &r.item).map_err(Unready::Gate)?;
     let opening = opening_brief(r, lane, harness)?;
     let opening = if unrebased {
@@ -631,7 +654,7 @@ fn prepare_launch(
     let granted = super::grants::of(
         settings,
         &r.item,
-        &cwd,
+        &checkout,
         harness,
         r.account.as_deref().map(Path::new),
         &homes,
@@ -645,6 +668,7 @@ fn prepare_launch(
     check_program(&command)?;
     Ok(LaunchPrep {
         granted,
+        checkout,
         target: Target::new(&settings.engine.harness_binaries, harness)?,
         home: homes.sessions,
         home_implicit: homes.cleared,
@@ -823,7 +847,7 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
         .selection
         .is_some_and(|s| s.relaunch);
     let mut outcome = match surface {
-        Surface::Local(fleet) => local_launch(run, operation, r, &lane, fleet, &route)?,
+        Surface::Local(fleet) => local_launch(run, operation, r, &lane, fleet, &route, relaunch)?,
         Surface::Hosted(provider) => {
             let mut sandbox = HostSandbox::default();
             let mut outcome =
@@ -989,9 +1013,10 @@ fn local_launch(
     lane: &Lane,
     fleet: Fleet,
     route: &Route,
+    relaunch: bool,
 ) -> Result<EffectOutcome> {
     let cwd = PathBuf::from(&r.mail_root);
-    let prep = match prepare_launch(&operation, run.settings, r, lane, fleet, route) {
+    let prep = match prepare_launch(&operation, run.settings, r, lane, fleet, route, relaunch) {
         Ok(prep) => prep,
         // A harness, session, directory, program or brief the effect cannot
         // resolve: `failed` before anything opens, never a bare refusal.
@@ -1013,7 +1038,7 @@ fn local_launch(
         }),
         Route::Fresh { .. } | Route::Refuse { .. } => None,
     };
-    if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
+    if let Err(e) = marker::write_checkout(&prep.checkout, &r.item, r.refresh, resumed) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     if let Err(e) = prep.granted.write() {

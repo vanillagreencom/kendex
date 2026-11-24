@@ -382,16 +382,15 @@ make_repo "$MUTEX_ROOT"
 MAIN="$MUTEX_ROOT/main"; ROOT="$MUTEX_ROOT"; add_merged_tree issue-m
 MUTEX_WT="$MUTEX_ROOT/trees/issue-m"
 mkdir -p -- "$MUTEX_ROOT/main/.git/kendex/lane-data"
-exec 8>"$MUTEX_ROOT/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock"
-flock -x 8
-set +e
-timeout 3 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1
-mutex_code=$?
-set -e
-assert_eq "$mutex_code" "124" "claim blocks while another mutation holds the guard mutex"
-assert_eq "$(guard_status_code "$MUTEX_WT" "$MUTEX_ROOT/main")" "3" \
-  "the blocked claim wrote no lease"
-exec 8>&-
+for mutex_dir in "$MUTEX_ROOT/main/.git" "$MUTEX_ROOT/main/.git/kendex/lane-data"; do
+  exec 8>"$mutex_dir/kendex-worktree-session-guard.lock"
+  flock -x 8
+  mutex_code=0
+  timeout 3 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1 || mutex_code=$?
+  assert_eq "rc=$mutex_code state=$(guard_status_code "$MUTEX_WT" "$MUTEX_ROOT/main")" \
+    "rc=124 state=3" "the claim writes no lease while a holder owns $mutex_dir's mutex"
+  exec 8>&-
+done
 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-A >/dev/null
 set +e
 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1
@@ -420,7 +419,7 @@ chmod +x "$BOUND_BIN/flock"
 BOUND_WT="$MUTEX_ROOT/trees/bounded"
 git -C "$MUTEX_ROOT/main" worktree add -q -b bounded "$BOUND_WT" main
 bounded_wait_row() { # GUARD
-  local lock="$MUTEX_ROOT/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock" bound_rc=0 bound_err
+  local lock="$MUTEX_ROOT/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock" bound_rc=0 bound_err legacy_rc=0
   exec 8>"$lock"
   flock -x 8
   bound_err=$(PATH="$BOUND_BIN:$PATH" timeout 5 "$1" claim "$BOUND_WT" --owner OWNER-B 2>&1 >/dev/null) || bound_rc=$?
@@ -428,6 +427,8 @@ bounded_wait_row() { # GUARD
   assert_eq "rc=$bound_rc record=${bound_err%%$'\n'*} state=$(guard_status_code "$BOUND_WT" "$MUTEX_ROOT/main")" \
     "rc=1 record=worktree-guard-lock-timeout: $lock state=3" \
     "a claim the mutex holds past the guard's bound refuses by name and writes no lease"
+  flock -x -n "$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock" true || legacy_rc=$?
+  assert_eq "$legacy_rc" 0 "a claim which loses the second mutex releases the first"
 }
 bounded_wait_row "$GUARD_SCRIPT"
 
@@ -435,7 +436,7 @@ bounded_wait_row "$GUARD_SCRIPT"
 # by the row's own timeout instead.
 BOUND_CONTROL="$TMP_ROOT/bound-control"
 cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$BOUND_CONTROL"
-BOUND_ANCHOR='flock -x -w "$wait" 9'
+BOUND_ANCHOR='flock -x -w "$remaining" 9'
 assert_eq "$(grep -cF -- "$BOUND_ANCHOR" "$BOUND_CONTROL/worktree-session-guard")" "1" \
   "control: the flock bound anchor appears once in the guard"
 BOUND_ANCHOR=$BOUND_ANCHOR awk '{ i = index($0, ENVIRON["BOUND_ANCHOR"]); if (i) $0 = substr($0, 1, i - 1) "flock -x 9" substr($0, i + length(ENVIRON["BOUND_ANCHOR"])); print }' \
@@ -636,12 +637,6 @@ RACE_ROOT="$TMP_ROOT/exclusive-file-race"
 make_repo "$RACE_ROOT"
 MAIN="$RACE_ROOT/main"; ROOT="$RACE_ROOT"; add_merged_tree issue-race
 RACE_WT="$RACE_ROOT/trees/issue-race"
-confined_rc=0
-confined_err=$(AGENT_RUNTIME_CONFINED=1 PATH="$NOFLOCK_BIN" \
-  "$GUARD_SCRIPT" claim "$RACE_WT" --owner confined 2>&1 >/dev/null) || confined_rc=$?
-assert_eq "rc=$confined_rc cause=${confined_err%%:*} state=$(guard_status_code "$RACE_WT" "$MAIN")" \
-  "rc=1 cause=worktree-guard-flock-required state=3" \
-  "a confined session without flock refuses before taking a lease"
 RACE_GO="$RACE_ROOT/go"
 RACE_OUT="$RACE_ROOT/out"
 mkdir -p "$RACE_OUT"
@@ -906,22 +901,32 @@ read_failure_rows() { # HARNESS
 # at the exclusive-file mutex another guard holds: maintenance, with the lease
 # and that mutex left as they stand.
 established_rows() { # HARNESS
-  local harness="$1" hdir common
+  local harness="$1" hdir common legacy_mutex current_mutex held other label
   live_tree
   hdir="$LIVE_ROOT/harness-$live_n"
   session_harness_start "$hdir" "$harness"
   LIVE_PATH="$PATH"
   in_harness "$hdir" bob claim "$LIVE_WT" --session
   common="$(git -C "$LIVE_MAIN" rev-parse --path-format=absolute --git-common-dir)"
-  : >"$common/kendex/lane-data/kendex-worktree-session-guard.lock.d"
+  legacy_mutex="$common/kendex-worktree-session-guard.lock.d"
+  current_mutex="$common/kendex/lane-data/kendex-worktree-session-guard.lock.d"
   LIVE_PATH="$NOFLOCK_BIN"
-  in_harness "$hdir" bob claim "$LIVE_WT" --session
-  # The busy record is the zero-wait branch's own; a claim that waited out the
-  # bound would end on the same exit with the timeout record instead.
-  assert_eq "rc=$LIVE_RC first=$(message_records <"$hdir/err" | sed -n 1p) owner=$(live_owner) mutex=$([[ -e $common/kendex/lane-data/kendex-worktree-session-guard.lock.d ]] && echo held || echo gone)" \
-    "rc=6 first=worktree-guard-mutex-busy: $common/kendex/lane-data/kendex-worktree-session-guard.lock.d owner=bob mutex=held" \
-    "$harness: an established claim without flock makes one attempt at a held mutex"
-  rm -f -- "${common:?}/kendex/lane-data/kendex-worktree-session-guard.lock.d"
+  for held in "$legacy_mutex" "$current_mutex"; do
+    other="$legacy_mutex"
+    label=lane-data
+    if [[ "$held" == "$legacy_mutex" ]]; then
+      other="$current_mutex"
+      label=legacy
+    fi
+    : >"$held"
+    in_harness "$hdir" bob claim "$LIVE_WT" --session
+    # A failed second acquisition must leave the competitor's file alone
+    # and remove only its own first acquisition.
+    assert_eq "rc=$LIVE_RC first=$(message_records <"$hdir/err" | sed -n 1p) owner=$(live_owner) locks=$([[ -e "$held" && ! -e "$other" ]] && echo held || echo changed)" \
+      "rc=6 first=worktree-guard-mutex-busy: $held owner=bob locks=held" \
+      "$harness: an established claim without flock keeps the occupied $label mutex and lease"
+    rm -f -- "$held"
+  done
   session_harness_stop "$hdir"
 }
 
@@ -1121,7 +1126,7 @@ takeover on age alone^worktree-session-guard^	[[ "$(lease_session_state "$1")" =
 release on age alone^worktree-session-guard^		none | dead) return 0 ;;^		*) return 0 ;;^release^claude: release --stale keeps an expired lease whose session lives;claude: sweep keeps an expired lease whose session lives;claude: remove'"'"'s close-out from another process keeps a live session'"'"'s lease
 a session claim reads nothing silently^worktree-session-guard^[[ -n "$caller" ]] || worktree_message guard-session-unidentified^[[ -n "$caller" ]] || : guard-session-unidentified^unidentified^a session-bound claim that cannot read its session process says so and records none
 a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
-an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex
+an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" 1 ||^established^claude: an established claim without flock keeps the occupied legacy mutex and lease;claude: an established claim without flock keeps the occupied lane-data mutex and lease
 a ps diagnostic reads as no process^lib/process-identity.sh^ && -z "$err" ]]^ ]]^psread^ps read: ps that fails within itself gives no answer
 an ended release waits out the TTL^worktree-session-guard^if [[ "$ended" != true || "$state" == none ]]; then^if true; then^reuse^create --reuse refuses a foreign lease whose session lives and keeps the lock;create --reuse releases a foreign lease whose session is dead and reuses the tree;create over a removed tree releases its dead session'"'"'s lease and prunes the registration;create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease;create over a removed tree leaves another item'"'"'s removed tree registered
 a reuse never releases an ended lease^worktree^release_ended_session_lease "$wt" || release_rc=$?^release_rc=75^reuse^create --reuse refuses a foreign lease whose session lives and keeps the lock;create --reuse releases a foreign lease whose session is dead and reuses the tree;create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock

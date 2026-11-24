@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::confine::{self, Answer, Cause, Grants, Host, SharedDirectory};
+use agent_runtime::confine::{self, Answer, Cause, Grants, Host};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
@@ -72,9 +72,6 @@ const OWN_RUNTIME_CACHE: &str = "runtime-cache";
 /// How long `gh auth token` may take.
 const GH_BOUND: Duration = Duration::from_secs(30);
 
-/// Bound for the launch's Git claim-key read.
-const GIT_BOUND: Duration = Duration::from_secs(30);
-
 /// The second-opinion roster where the setting names none: `DEFAULT_MODELS`
 /// in `skills/second-opinion/scripts/second-opinion`, copied because the
 /// runtime cannot read the script's shell variable. The
@@ -109,9 +106,6 @@ pub(super) struct Granted {
     /// common git folder and a Codex seat's command rules), and a read-only
     /// seat's session folders, which the harness could not make there.
     kept: Vec<PathBuf>,
-    /// Existing writer paths become file mounts, so the launch makes any
-    /// absent file before starting the wrapper.
-    git_writer_files: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
     /// A confined lane's own runtime cache, which its line names as
@@ -193,18 +187,6 @@ fn review_harnesses(roster: Option<&str>, lane: Harness) -> Vec<Harness> {
 /// leads to; `None` for one that does not stand.
 fn resolved(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
-}
-
-fn required_git_directory(path: &Path) -> Result<PathBuf> {
-    std::fs::canonicalize(path).map_err(|error| {
-        refused(
-            "grant-git-directory",
-            &[
-                ("path", &path.display().to_string()),
-                ("cause", &error.to_string()),
-            ],
-        )
-    })
 }
 
 /// Where a read-only grant binds. A path that stands as a link binds the
@@ -301,120 +283,11 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch checks the git directories it will bind; nothing is written"
-)]
-fn linked_git_grant(
-    common: &Path,
-    admin: &Path,
-    root: &Path,
-    item: &str,
-    read_only: bool,
-    kept: &mut Vec<PathBuf>,
-    writer_files: &mut Vec<PathBuf>,
-) -> Result<SharedDirectory> {
-    let refused_dir = |path: &Path| {
-        refused(
-            "grant-git-directory",
-            &[("path", &path.display().to_string())],
-        )
-    };
-    let mut grant = SharedDirectory {
-        root: common.to_path_buf(),
-        writable: Vec::new(),
-    };
-    if read_only {
-        return Ok(grant);
-    }
-    // Verify the admin directory belongs to this checkout before giving
-    // it write access. Git records the .git path back in worktrees/<id>/gitdir
-    // (gitrepository-layout(5)).
-    let worktrees = common.join("worktrees");
-    if admin.parent() != Some(&worktrees) {
-        return Err(refused_dir(admin));
-    }
-    let pointer = admin.join("gitdir");
-    if !std::fs::symlink_metadata(&pointer).is_ok_and(|meta| meta.is_file()) {
-        return Err(refused_dir(&pointer));
-    }
-    let target = std::fs::read_to_string(&pointer).map_err(|_| refused_dir(&pointer))?;
-    if resolved(&admin.join(target.trim_end_matches(['\n', '\r']))).as_deref()
-        != Some(root.join(".git").as_path())
-    {
-        return Err(refused_dir(&pointer));
-    }
-    grant.writable.push(admin.to_path_buf());
-    // A link must not reopen any path outside its named data directory.
-    for (name, prepare, writable) in [
-        ("objects", false, true),
-        ("refs", false, true),
-        ("logs", false, true),
-        ("reftable", false, true),
-        ("kendex", true, false),
-        ("kendex/lane-data", true, false),
-        ("kendex/lane-data/reviewer-stop", true, true),
-    ] {
-        let dir = common.join(name);
-        match std::fs::symlink_metadata(&dir) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && prepare => kept.push(dir.clone()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Ok(_) | Err(_) => return Err(refused_dir(&dir)),
-        }
-        if writable {
-            grant.writable.push(dir);
-        }
-    }
-    // Each fixed mount stays in a read-only parent. Unconfined writers
-    // share these paths, so a lane must be unable to replace the entries.
-    let data = common.join("kendex/lane-data");
-    let key = claim_lock_key(root, item)?;
-    writer_files.extend([
-        data.join("kendex-worktree-session-guard.lock"),
-        data.join(format!("kendex-worktree-claim-{key}.lock")),
-        data.join("commit-guards-runs.tsv"),
-    ]);
-    grant.writable.extend(writer_files.iter().cloned());
-    Ok(grant)
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch reads a git object ID without writing an object, through the one runner"
-)]
-fn claim_lock_key(root: &Path, item: &str) -> Result<String> {
-    // Match the worktree package's acquire_issue_claim_lock. Git supplies
-    // the repository's object format, and marker::item_name admits only ASCII.
-    let failed = |cause: &str| refused("grant-claim-key", &[("item", item), ("cause", cause)]);
-    let out = host::run_tagged_fed(
-        "launch",
-        "git",
-        Path::new("git"),
-        "claim-lock-key",
-        &["hash-object", "--stdin"],
-        host::Place {
-            cwd: Some(root),
-            env: &[],
-        },
-        item.to_ascii_lowercase().as_bytes(),
-        GIT_BOUND,
-    )
-    .map_err(|error| failed(&error.to_string()))?;
-    if !out.status.success() {
-        return Err(failed(host::stderr_text(&out).lines().next().unwrap_or("")));
-    }
-    let key = host::stdout_text(&out);
-    if !matches!(key.len(), 40 | 64) || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(failed("invalid object ID"));
-    }
-    Ok(key)
-}
-
-/// The grants of a local launch of `item` on `harness` from `mail_root`
-/// under `homes`: writable its checkout and its linked worktree's git
-/// directory, with only the shared Git data and kendex writer paths writable
-/// in the common git directory, the item's own
+/// The grants of a local launch of `item` on `harness` from its `checkout`
+/// under `homes`: writable its checkout (the root, and the common git
+/// folder of a linked worktree with its hooks, its configuration, the main
+/// checkout's per-worktree configuration and the launch records every
+/// lane's hook resolves read-only), the item's own
 /// folder of the state directory, whose other entries stay read-only, and
 /// the room pick's usage records; in the seats its own launch runs under and
 /// every configured account of a harness its second opinion can run on,
@@ -445,7 +318,7 @@ fn claim_lock_key(root: &Path, item: &str) -> Result<String> {
 pub(super) fn of(
     settings: &Settings,
     item: &str,
-    mail_root: &Path,
+    checkout: &crate::marker::Checkout,
     harness: Harness,
     account: Option<&Path>,
     homes: &LaunchHome,
@@ -459,7 +332,6 @@ pub(super) fn of(
         .get("desktop")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let checkout = crate::marker::checkout(mail_root)?;
     let root = resolved(&checkout.root).unwrap_or_else(|| checkout.root.clone());
     let answer = confine::answer(Host::this(), harness);
     let tmp = checkout.root.join("tmp");
@@ -489,27 +361,8 @@ pub(super) fn of(
     let mut read_only = Vec::new();
     let mut kept = Vec::new();
     let mut missing = Vec::new();
-    let mut git_writer_files = Vec::new();
-    let mut shared_directory = None;
-    let (common, admin) = match answer {
-        Answer::Confined => (
-            Some(required_git_directory(&checkout.common)?),
-            Some(required_git_directory(&checkout.git_dir)?),
-        ),
-        Answer::Unconfined { .. } => (resolved(&checkout.common), None),
-    };
-    if let Some(common) = common {
-        if let Some(admin) = admin.filter(|admin| admin != &common) {
-            shared_directory = Some(linked_git_grant(
-                &common,
-                &admin,
-                &root,
-                item,
-                lane.read_only,
-                &mut kept,
-                &mut git_writer_files,
-            )?);
-        } else if !lane.read_only && !common.starts_with(&root) {
+    if let Some(common) = resolved(&checkout.common) {
+        if !lane.read_only && !common.starts_with(&root) {
             writable.push(common.clone());
         }
         for name in ["hooks", "config"] {
@@ -707,7 +560,6 @@ pub(super) fn of(
     };
     let grants = Grants {
         writable,
-        shared_directory,
         seats: seat_paths,
         read_only,
         runtime_dir: std::env::var_os(RUNTIME_DIR_VAR)
@@ -726,7 +578,6 @@ pub(super) fn of(
         usage: Some(usage),
         item_dir,
         kept,
-        git_writer_files,
         lane_writable,
         own_cache,
         own_caches,
@@ -993,7 +844,7 @@ impl Granted {
     )]
     pub fn write(&self) -> Result<()> {
         use std::io::Write as _;
-        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        use std::os::unix::fs::OpenOptionsExt as _;
         let failed = |path: &Path, e: std::io::Error| {
             refused(
                 "grant-write-failed",
@@ -1012,25 +863,6 @@ impl Granted {
         std::fs::create_dir_all(&self.item_dir).map_err(|e| failed(&self.item_dir, e))?;
         for dir in &self.kept {
             std::fs::create_dir_all(dir).map_err(|e| failed(dir, e))?;
-        }
-        for file in &self.git_writer_files {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(file)
-            {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let meta = std::fs::symlink_metadata(file).map_err(|e| failed(file, e))?;
-                    if !meta.is_file() || meta.nlink() != 1 {
-                        return Err(refused(
-                            "grant-git-writer-file",
-                            &[("path", &file.display().to_string())],
-                        ));
-                    }
-                }
-                Err(e) => return Err(failed(file, e)),
-            }
         }
         for (file, empty) in &self.missing {
             match std::fs::OpenOptions::new()

@@ -2255,6 +2255,12 @@ fn a_launch_records_its_checkouts_common_git_folder_once_and_never_one_under_its
         common(&other),
         "a relaunch over the same mail_root"
     );
+    launch_from("KEN-1", &wt.join("."));
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        common(&other),
+        "an alias of the same mail_root keeps the original repository"
+    );
     let (third, third_wt) = worktree_of("third");
     launch_from("KEN-1", &third_wt);
     assert_eq!(
