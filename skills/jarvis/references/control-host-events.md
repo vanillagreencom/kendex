@@ -8,7 +8,6 @@ The [producer](../scripts/lib/watch.py) declares the event encoding, every heade
 
 `watch-loop` appends each changed local and declared-host pass to `events.log` under `JARVIS_LOG_DIR`, and keeps its progress in `batch.json` beside it.
 
-- Keep both files across restarts.
 - Give each Jarvis home that runs at the same time its own log directory.
 
 An `EVENT` line opens a block, and the next `EVENT` or `cursor:` line closes it. A consumer check appends complete blocks under an exclusive advisory lock on the event log's inode:
@@ -30,10 +29,8 @@ TEXT
 cursor: {"side":"consumer","roots":{}}
 ```
 
-- Never edit the pass cursor's bookkeeping or its root positions.
-- Never truncate `events.log`.
-- Never replace `events.log`.
-- Never logrotate `events.log`: an outside rotation cannot reconcile its positions with `batch.json`.
+- Leave pass cursor bookkeeping and root positions to the producer.
+- Preserve the event log's positions and inode. Avoid truncating, replacing or rotating it outside the producer.
 
 ## Delivery
 
@@ -41,7 +38,6 @@ The loop reads its own home's relay through the sibling Slack command `listen --
 
 - It emits `EVENT relay-down` on an unhealthy reading and `EVENT relay-up` when a later reading is `ok`.
 - A failed or unreadable status emits `EVENT relay-unavailable`, which never shows recovery.
-- Another machine's relay is outside this check.
 - The mailbox signal can reach a running session while Slack is down.
 
 The loop polls `jarvis-session report-due`, which runs `orch-runtime report due` with the controller's session start as its floor, and appends each distinct `EVENT report-due` to the event log.
@@ -82,18 +78,14 @@ The loop prints one batch pointer without its body; the [session workflow](../wo
 
 `vm-watch.sh` discovers registered projects on each machine through `kendex project list`.
 
-- The host lists a hosted repository only after [Agent reach: Control host setup](agent-reach.md#control-host-setup).
-- On `JARVIS_CONTROL_HOST` with `JARVIS_CONTROL_USER` set, its mail and presence passes run as that account, as that section states.
+- For hosted repository discovery and the account used on the control host, see [Control host setup](agent-reach.md#control-host-setup).
 - It skips noted rows.
-- The canonical `events --mark-read` command records owner-message consumption for the relay.
 - An unreachable root reports its failure once, and the other roots continue.
 - A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`.
 
 ## Restart and destination identity
 
-- After an interruption or a storage failure, keep both owner files.
-  - Restart with this producer.
-  - Never edit their recovery data.
+- Keep `events.log` and `batch.json` across restarts, including after an interruption or storage failure. Restart with this producer and leave recovery data untouched.
 - Do not downgrade to an older producer after reclamation starts.
 - Keep `JARVIS_CONTROL_HOST` at its original alias through the first upgrade: the producer binds old `host` state to that alias as `ssh:ALIAS`.
   - With no configured control alias, old host state stays dormant, and added aliases do not inherit it.
@@ -120,7 +112,6 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
    - Stop the earlier reader through its process owner.
    - Confirm it stopped.
    - Do not edit its private offsets.
-   - Do not leave it sending alongside.
    - Adoption imports no pending send or reminder ledger; finish those obligations, or keep their explicit consumer handoff.
 3. Capture a successful, complete public pass for each destination to adopt.
    - Locally, run `.agents/skills/jarvis/scripts/vm-watch.sh --home HOME --side local > PASS_FILE`.
@@ -135,21 +126,17 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
    - Then capture the pass again.
 5. From the Jarvis home, run the native `lane-mail inbox --item overseer` for the final home inbox handoff.
    - A local home pass records positions but prints no ordinary home to-lane mail as `EVENT mail`, so the pass alone does not prove the session received those rows.
-   - Use the native reader for this drain, not the earlier private reader.
 6. Initialize once with those unchanged pass files.
    - On a refusal, keep the files.
    - Fix the prerequisite the refusal names.
    - Never edit a footer.
-   - Never delete state.
    - Never force a reset.
    - After success, start the packaged loop under the [session workflow](../workflows/session.md#control-host-events).
-   - Keep its state and log for every restart.
    - Record the consumer's adoption and the private reader's retirement on the consumer's tracker.
 
 Unsupplied destinations and newly discovered roots start from the beginning, and can replay kept history. On a satellite, initialization admits only `local`.
 
 - The operator binds each unsigned pass to its actual destination, stable alias and home; the footer authenticates none of them.
-- Skipping reconciliation or the final home inbox drain can lose a wake and is unsupported.
 - Capturing a public pass marks owner messages consumed for the relay, through `events --mark-read`; that mark proves no human handling and deletes no envelope.
 - Kept mail stays readable through `lane-mail events --item overseer --box BOX --after 0` without `--mark-read`, under the mailbox's ordinary retention.
 
@@ -168,7 +155,6 @@ A satellite is a home whose `JARVIS_MAIN_HOST` is set.
 
 The loop renews a live, bound session's presence hold apart from mail acquisition.
 
-- A stopped or unbound session renews nothing.
 - An unavailable native probe denies renewal and leaves mail delivery active.
 
 The producer's declared Slack package resolves each target root's `SLACK_JARVIS_SESSION_FILE`; a target root needs no Slack installation.

@@ -41,10 +41,8 @@
    - Keep the original request in its exchange home until capture succeeds.
    - While capture fails, record the outcome as a State entry under [State retention](../references/long-session.md#state-retention).
    - Remove that entry once a retried capture reads back.
-   - Once the binding reads back, the work's next action goes on the item under [Retain the next action](#5-retain-the-next-action), never in State.
 4. Before treating an owner thread as handled, read every request in the thread.
-   - For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item.
-   - Read back each binding.
+   - For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item and read back the binding.
 
 ## 3. Reconcile decisions and attempts
 
@@ -61,11 +59,10 @@
    - Adopt a matching running attempt or reuse a completed result that meets the current request.
    - Keep attempt identity at that owner; create no second attempt registry.
    - Link the attempt from the tracker item.
-   - If a known launch or result has unread identity or state, retain that uncertainty.
-   - Recover that uncertainty before launching a replacement.
+   - Record an unread launch or result identity or state as unresolved. Recover it at the execution owner before retrying or launching a replacement.
 3. For an authorized new attempt, put the tracker item id, original request reference, current outcome and acceptance check/owner in its existing task brief.
    - Record the returned attempt id and result destination on that same tracker item immediately.
-   - An unconfirmed launch remains a recovery action at the execution owner before any retry.
+   - Apply step 2's recovery rule to an unconfirmed launch.
 
 ## 4. Check the outcome
 
@@ -82,15 +79,13 @@
 
 1. Before settling an owner thread, follow [Bind the request](#2-bind-the-request).
 2. On the same tracker item, record the current decision, evidence or explicit unknown, existing attempt reference, unresolved next action and responsible actor.
-   - Record the next action here, never in the handoff's State.
-   - State keeps only the entries [State retention](../references/long-session.md#state-retention) admits.
+   - Apply [State retention](../references/long-session.md#state-retention) to the handoff.
    - For an external wait, retain its condition, evidence source and trigger or review date.
    - For an answer or result awaiting acceptance, retain the acceptance action.
    - Preserve the original criterion when another owner's item completes.
    - Update only changed facts; write no periodic timestamp comment to keep work open.
 3. When setting aside Linear work, use `progress-log --operation TEXT --result TEXT --decision TEXT --next-action TEXT --item ID`.
    - Give the next action and responsible actor as one line.
-   - The command updates one comment on the item, reads back that exact comment, then appends the progress record and removes the matching State entry.
    - Add `--state-key KEY` when the local entry uses a different key.
    - For work outside the selected project, read back the open linked check under [Homes](../references/long-session.md#homes) before clearing State.
    - For terminal or archived work, follow [Check the outcome](#4-check-the-outcome) first.
@@ -100,7 +95,6 @@
    - Then name that item with `--item ID`.
 5. For authorized capture with no terminal or archived binding to resolve, replace `--item ID` with `--task-project UUID --source REF --outcome TEXT`.
    - Use the original request reference and the same outcome text on repeat calls.
-   - When no binding exists, the installed Linear skill creates a session task in its configured team.
    - If discovery reports ambiguity, read the named candidates.
    - Use `--item` once the binding is clear.
    - A tracker refusal leaves the handoff intact. Read the tracker result before retrying.
