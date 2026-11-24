@@ -132,7 +132,9 @@ Repeat a failed write with the same summary within the same UTC minute, the minu
 The owner's selected format, which overrides communication's shared summary sections for this report:
 
 - Keep the three opening quote blocks separate, then put Numbers before Completed.
-- Under Numbers, give the merged, created, verified and cancelled counts across all Linear teams since the previous owner report, each with its source and window. Keep a count unread when its source has no reading.
+- Under Numbers, give the created, verified and cancelled counts across all Linear teams since the previous owner report, each with its source and window. Keep a count unread when its source has no reading.
+  - Verified counts the issues that entered a completed status, and cancelled those that entered a canceled or duplicate status.
+  - Numbers carries no merged count. Completed lists each merge read from GitHub.
 - Then give the post-merge checks waiting, the active workers, and the workers past 3.5 hours with their work and identity. Keep an issue's stage age separate from a job's duration.
 - Continue with Completed, In progress, Blocked, the linked Issues created, Waiting on you, per-account Headroom remaining, the self-analysis and Next report, in that order.
 - Each Bad line names its fix in that bullet.

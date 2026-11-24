@@ -391,11 +391,27 @@ struct Created {
     related: Vec<String>,
 }
 
-/// The issues created in `[since, now)` across every team: one whole list
-/// from the window's start with no team filter, so the count is never one
-/// team's or one page's. `None` is a read that failed or did not parse;
-/// the cell prints unread and the cause goes to stderr.
-fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
+/// One row of the tracker CLI's triage selection: the times the closed
+/// counts read, each empty while the issue is not in that status.
+#[derive(serde::Deserialize)]
+struct Closed {
+    completed_at: String,
+    canceled_at: String,
+}
+
+/// The issues one `issues list` filter bounds from the window's start
+/// (`floor` names it, `select` the selection) across every team, kept where
+/// `stamp` dates them in `[since, now)`: one whole list with no team filter,
+/// so a count is never one team's or one page's. `None` is a read that
+/// failed or did not parse; the cell prints unread and the cause goes to
+/// stderr under `figure`.
+fn dated<T: serde::de::DeserializeOwned>(
+    ctx: &Context,
+    (figure, floor, select): (&str, &str, &str),
+    stamp: fn(&T) -> &str,
+    since: u64,
+    now: u64,
+) -> Option<Vec<T>> {
     let from = clock::iso_utc(since);
     let read = escapes::command(
         &ctx.settings.roots.project,
@@ -403,8 +419,10 @@ fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
         &[
             "issues",
             "list",
-            "--created-since",
+            floor,
             &from,
+            "--select",
+            select,
             "--max",
             "--format=safe",
         ],
@@ -416,10 +434,10 @@ fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
         escapes::Failure::Failed => "linear-failed",
     })
     .and_then(|text| {
-        let rows: Vec<Created> = serde_json::from_str(&text).map_err(|_| "unparsed")?;
+        let rows: Vec<T> = serde_json::from_str(&text).map_err(|_| "unparsed")?;
         let mut kept = Vec::new();
         for row in rows {
-            let at = escapes::epoch(&row.created_at).map_err(|_| "unparsed")?;
+            let at = escapes::epoch(stamp(&row)).map_err(|_| "unparsed")?;
             if at >= since && at < now {
                 kept.push(row);
             }
@@ -429,10 +447,22 @@ fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
     match read {
         Ok(rows) => Some(rows),
         Err(cause) => {
-            let _ = writeln!(std::io::stderr(), "report-created-unread cause={cause}");
+            let _ = writeln!(std::io::stderr(), "report-{figure}-unread cause={cause}");
             None
         }
     }
+}
+
+/// The issues created in the window, with the fields the linked section
+/// reads.
+fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
+    dated(
+        ctx,
+        ("created", "--created-since", "full"),
+        |row: &Created| &row.created_at,
+        since,
+        now,
+    )
 }
 
 /// The section's line for `issue` where it links to a fleet item, naming
@@ -774,11 +804,28 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         "> **Overall:** Work status follows from the fleet records.\n\n> **What's going well:** Completed work is listed below.\n\n> **What's not going well:** Unread figures need a reading before a conclusion.\n\n```\nNumbers\n```\n\n",
     );
     let created = created(ctx, since, now);
+    // Linear dates a status entry, never a merge, so the Numbers have no
+    // merged row: Completed lists the merges GitHub reads. Verified counts
+    // every entry into a completed status, whoever set it, Linear's GitHub
+    // integration marking an issue Done on merge included.
+    let verified = dated(
+        ctx,
+        ("verified", "--completed-since", "triage"),
+        |row: &Closed| &row.completed_at,
+        since,
+        now,
+    );
+    let cancelled = dated(
+        ctx,
+        ("cancelled", "--canceled-since", "triage"),
+        |row: &Closed| &row.canceled_at,
+        since,
+        now,
+    );
     for (name, count) in [
-        ("Issues merged", None),
         ("Issues created", created.as_ref().map(Vec::len)),
-        ("Issues verified", None),
-        ("Issues cancelled", None),
+        ("Issues verified", verified.as_ref().map(Vec::len)),
+        ("Issues cancelled", cancelled.as_ref().map(Vec::len)),
     ] {
         let count = count.map_or("unread".to_owned(), |n| n.to_string());
         out.push_str(&format!(

@@ -221,6 +221,11 @@ enum Verb {
     },
     /// Judge, render or publish the owner progress report.
     Report {
+        /// `render` prints the report body. Its Numbers are the issues
+        /// created, verified (entered a completed status) and cancelled
+        /// (entered a canceled or duplicate status) across every Linear team
+        /// in the window, each `unread` when its read fails; no merged
+        /// count, since Completed lists the merges GitHub reads.
         #[arg(value_parser = ["due", "render", "write"])]
         action: String,
         #[arg(long)]
