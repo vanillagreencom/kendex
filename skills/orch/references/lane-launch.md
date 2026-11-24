@@ -31,7 +31,7 @@ A tracker item at the `micro` tier launches as a lane like any other, with its t
 - Start it between events, never beside another read of the base checkout.
 - Read a micro run's § 5 `Checkout` value: return a main checkout still on the item's branch to the base before the next launch.
 
-An owner-directed small change, keyed `directive-[ID]`, is the overseer's own: [micro.md](../workflows/micro.md) § Items states the rule, its host and its checks.
+An owner-directed small change, keyed `directive-[ID]`, is the overseer's own: [directed-change.md](directed-change.md) § Who makes it states the rule, its host and its checks.
 
 A tracker item's run that ends at [micro.md](../workflows/micro.md) § Escape or [small.md](../workflows/small.md) § Escape comes back as an item to launch at the next class up, on the branch it left. So does a run that stops before an escape, such as on a failed push or create.
 
@@ -43,7 +43,7 @@ A tracker item's run that ends at [micro.md](../workflows/micro.md) § Escape or
    - `[HEAD_REF]` is `origin/[BRANCH]` once a pushed branch is fetched, else the local `[BRANCH]` every worktree on this host shares.
    - A hosted lane's unpushed branch exists only on its host, so that lane runs the line with its worktree as `--repo`.
 
-A directed change's run comes back as the item [micro.md](../workflows/micro.md) § Escape files, tiered from its body with no `--floor`. A directed run that stops before an escape also takes the directed paragraph of [micro.md § Escape](../workflows/micro.md#escape).
+A directed change's run comes back as the item [directed-change.md](directed-change.md) § Escape files, tiered from its body with no `--floor`. A directed run that stops before an escape also takes [directed-change.md § Escape](directed-change.md#escape).
 
 ## Shared files
 
