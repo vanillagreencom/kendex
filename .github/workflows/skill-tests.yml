@@ -1049,18 +1049,34 @@ jobs:
           done
           bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-rest "$@"
 
+      # The package runtimes the orch-rest leg holds, read once for the
+      # lockfile check and the Rust targets step below so the two cannot hold
+      # different sets: the targets tools/ci-job-set's `rust_targets` lists,
+      # or every target of both runtimes where the changes job published
+      # none, as on a night, a manual dispatch or a failed changes job.
+      - name: the package runtimes the reach selects
+        id: runtime-selection
+        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && needs.changes.outputs.rust_targets != '[]' }}
+        env:
+          RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
+        run: |
+          set -euo pipefail
+          targets="$(jq -c . <<<"${RUST_TARGETS:-[\"agent-runtime/*\",\"orch/*\"]}")"
+          packages="$(jq -r '.[] | split("/")[0]' <<<"$targets" | sort -u | paste -sd' ' -)"
+          [ -n "$packages" ] || { echo "runtime-selection: no-package targets=$targets" >&2; exit 1; }
+          printf 'targets=%s\npackages=%s\n' "$targets" "$packages" >>"$GITHUB_OUTPUT"
+
       # The package runtimes' lockfiles, held by cargo-deny to the one policy
       # skills/agent-runtime/runtime/deny.toml names: advisories, licenses,
-      # bans and sources. A package is checked where tools/ci-job-set's
-      # `rust_targets` names a target of it, which the reach selects for any
-      # change under its runtime/, the lockfile and the policy included; every
-      # runtime is checked where the changes job published no list. A merge
-      # group and a main push run it on the orch-rest Linux leg, and a night
-      # or a manual dispatch, which run no Linux shard, on the macOS orch-rest
-      # leg, so an advisory published against an unchanged lockfile still
-      # reaches the night. The action installs the pinned release's prebuilt
-      # binary, checked against the release's own SHA-256, with no fallback
-      # to a source build; the release runs on both runners.
+      # bans and sources, for each package the selection above holds. A
+      # merge group and a main push run it on the orch-rest Linux leg, and a
+      # night or a manual dispatch, which run no Linux shard, on the macOS
+      # orch-rest leg. So an advisory published against an unchanged
+      # lockfile reaches the next night that runs; a night whose head is the
+      # latest successful night's stands down and runs no check. The action
+      # installs the pinned release's prebuilt binary, checked against the
+      # release's own SHA-256, with no fallback to a source build; the
+      # release runs on both runners.
       - name: cargo-deny, the pinned release
         id: cargo-deny
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && needs.changes.outputs.rust_targets != '[]' && (runner.os == 'Linux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
@@ -1071,34 +1087,23 @@ jobs:
       - name: the package runtimes' lockfiles, held to their dependency policy
         if: ${{ !cancelled() && steps.cargo-deny.outcome == 'success' }}
         env:
-          RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
+          PACKAGES: ${{ steps.runtime-selection.outputs.packages }}
         run: |
           set -euo pipefail
-          if [ -n "$RUST_TARGETS" ]; then
-            packages="$(jq -r '.[] | split("/")[0]' <<<"$RUST_TARGETS" | sort -u)"
-          else
-            packages="$(for manifest in skills/*/runtime/Cargo.toml; do
-              [ -f "$manifest" ] || continue
-              manifest="${manifest#skills/}"
-              echo "${manifest%%/*}"
-            done)"
-          fi
-          [ -n "$packages" ] || { echo "lockfile-policy: no-package targets=${RUST_TARGETS:-unpublished}" >&2; exit 1; }
+          [ -n "$PACKAGES" ] || { echo "lockfile-policy: no-selection" >&2; exit 1; }
           failed=""
-          for package in $packages; do
+          for package in $PACKAGES; do
             echo "=== skills/$package/runtime/Cargo.lock"
             cargo deny --manifest-path "skills/$package/runtime/Cargo.toml" --locked \
               --config skills/agent-runtime/runtime/deny.toml check || failed="$failed $package"
           done
           [ -z "$failed" ] || { echo "lockfile-policy: failed packages=${failed# }" >&2; exit 1; }
 
-      # The runtimes' Rust targets tools/ci-job-set's `rust_targets` list
-      # names, on the orch-rest Linux leg (on a push, those its same-head
-      # group left unproved), and every target of both runtimes where the
-      # changes job published none. It runs after the orch-rest suites
-      # whatever they answered, so neither red hides the other. The fixture
-      # gh's projector is held to the jq the catalog's scripts are held to, so
-      # the step names the runner's jq first.
+      # The runtimes' Rust targets the selection above holds, on the orch-rest
+      # Linux leg (on a push, those its same-head group left unproved). It
+      # runs after the orch-rest suites whatever they answered, so neither red
+      # hides the other. The fixture gh's projector is held to the jq the
+      # catalog's scripts are held to, so the step names the runner's jq first.
       # Run one after another, the targets took 843-1055s of a 1284-1541s leg
       # in runs 44611935189, 44789074453, 44843919810 and 44860396393: each
       # test binary waits on the processes and real time it holds, with about
@@ -1111,12 +1116,14 @@ jobs:
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
-          RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
+          TARGETS: ${{ steps.runtime-selection.outputs.targets }}
+          PACKAGES: ${{ steps.runtime-selection.outputs.packages }}
         run: |
           set -euo pipefail
           jq --version
-          targets="${RUST_TARGETS:-[\"agent-runtime/*\",\"orch/*\"]}"
-          packages="$(jq -r '.[] | split("/")[0]' <<<"$targets" | sort -u)"
+          [ -n "$TARGETS" ] && [ -n "$PACKAGES" ] || { echo "rust-targets: no-selection" >&2; exit 1; }
+          targets="$TARGETS"
+          packages="$PACKAGES"
           out="$RUNNER_TEMP/rust-targets"
           battery="$out/tests"
           mkdir -p "$battery"

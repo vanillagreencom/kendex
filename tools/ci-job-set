@@ -206,9 +206,11 @@
 #                       leave out in place of skipped_suites.
 #   rust_targets        the JSON list of skill runtime Rust targets the
 #                       reach holds, each `<package>/<target>` (`lib` or a
-#                       [[test]] name), run by one step of the orch-rest Linux
-#                       leg; every target of every skill runtime where a
-#                       lane source changed or the reach could not be read.
+#                       [[test]] name), which the orch-rest leg's runtime
+#                       selection reads for its lockfile check and its Rust
+#                       targets step; every target of every skill runtime
+#                       where a lane source changed or the reach could not
+#                       be read.
 #                       On a push, the selected targets the group left
 #                       unproved.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
