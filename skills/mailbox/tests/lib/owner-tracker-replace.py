@@ -8,6 +8,7 @@ one comment store per case.
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -303,13 +304,45 @@ def chat_chain(scratch, source, bash, facts):
         and imported.returncode == 0 and answers.get(later, {}).get("re") == third)
 
 
+def earlier_answer(scratch, source, bash, facts):
+    """Owner comments on the item, not under any question, posted while an ask
+    stood and before the ask that replaced it, reach the ask left open, each
+    naming the question it followed; one after the open question is its own."""
+    case = Case(scratch, source, bash, ("KEN-7", "KEN-8"))
+    overseer = case.checkout("asker")
+
+    def follows(answers, comment, replaced, open_ask, text):
+        answer = answers.get(comment, {})
+        lines = answer.get("text", "").splitlines()
+        return (answer.get("re") == open_ask and bool(lines)
+                and set(re.findall(r"\d+-\d+-\d+", lines[0])) == {replaced, open_ask} and lines[-1] == text)
+
+    first, _ = overseer.item_ask("KEN-7")
+    approve = case.owner_reply("KEN-7", None, "approve")
+    second, _ = overseer.ask("--issue", "KEN-7", "--do", "Approve change", text="Approve, hold or split?\n")
+    hold = case.owner_reply("KEN-7", None, "hold")
+    third, _ = overseer.ask("--issue", "KEN-7", "--do", "Approve change", text="Approve half of it?\n")
+    after = case.owner_reply("KEN-7", None, "approve half")
+    imported, answers = overseer.owner_answers()
+    facts["earlier_answer"] &= (imported.returncode == 0 and set(overseer.pending()) == {third}
+        and follows(answers, approve, first, third, "approve") and follows(answers, hold, second, third, "hold")
+        and answers.get(after, {}).get("re") == third and answers[after].get("text") == "approve half")
+    # An ask without an item replacing an item ask takes the comment too.
+    asked, _ = overseer.item_ask("KEN-8")
+    early = case.owner_reply("KEN-8", None, "approve")
+    chat, _ = overseer.ask("--replaces", asked, text="Approve the whole change?\n")
+    imported, answers = overseer.owner_answers()
+    facts["earlier_answer"] &= imported.returncode == 0 and follows(answers, early, asked, chat, "approve")
+
+
 def run(source, scratch, bash):
     facts = {"marked": True, "other_item": True, "closed": True, "replaces_field": True,
              "replaces_refused": True, "replaced_reply": True, "unposted_keeps": True,
-             "chat_replaces": True, "chain": True}
+             "chat_replaces": True, "chain": True, "earlier_answer": True}
     replace(scratch, source, bash, facts)
     follow_up(scratch, source, bash, facts)
     chat_chain(scratch, source, bash, facts)
+    earlier_answer(scratch, source, bash, facts)
     return facts
 
 

@@ -67,6 +67,7 @@ assert_eq "$(jq '.replaced_reply' <<<"$REPLACE_FACTS")" true 'a reply under a re
 assert_eq "$(jq '.unposted_keeps' <<<"$REPLACE_FACTS")" true 'an item ask whose question fails to post leaves the earlier ask open and replaces nothing'
 assert_eq "$(jq '.chat_replaces' <<<"$REPLACE_FACTS")" true 'a reply under a question a chat ask replaced reaches that ask'
 assert_eq "$(jq '.chain' <<<"$REPLACE_FACTS")" true 'a chain of replacing asks carries the first question to the last ask'
+assert_eq "$(jq '.earlier_answer' <<<"$REPLACE_FACTS")" true 'an item comment after a replaced question and before the next reaches the open ask naming that question'
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.
