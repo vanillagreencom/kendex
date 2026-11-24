@@ -123,8 +123,9 @@ pub enum Remedy {
         global: bool,
     },
     /// Fast-forward a checkout on its default branch to origin's copy,
-    /// which already carries a newer record: in a copy that follows the
-    /// default branch, a refresh would write what the pull brings.
+    /// which records the package at another commit: in a copy that follows
+    /// the default branch, a refresh would write a record of its own over
+    /// the one the pull brings.
     Pull,
     /// Fetch the scope's sources and derive its standing again: the fix
     /// for a record naming a commit this machine's copy of the source has

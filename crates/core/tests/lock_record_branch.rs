@@ -12,7 +12,7 @@ use test_util::rooted;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kendex_core::lock::branch::{OffBranch, Recording, behind_default, recording};
+use kendex_core::lock::branch::{OffBranch, Recording, pulled_record, recording};
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 
@@ -206,7 +206,7 @@ fn only_the_default_branch_reads_behind_origin() {
         git(&root, &["reset", "--quiet", "--hard", "HEAD~1"]);
         arrange(&root);
         assert_eq!(
-            behind_default(&project(&root)).unwrap(),
+            pulled_record(&project(&root)).unwrap().is_some(),
             expected,
             "{shape}"
         );

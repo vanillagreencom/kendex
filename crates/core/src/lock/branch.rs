@@ -10,12 +10,13 @@
 //! on the branch the checkout has checked out, never on whether it is a
 //! linked worktree, so a standalone clone on a branch is covered too.
 //!
-//! The same reading of the default branch answers whether a checkout on
-//! it is behind origin's copy, which decides the fix the check names for
-//! a package that reads behind ([`behind_default`]).
+//! The same reading of the default branch answers what record a pull of
+//! origin's copy would bring a checkout on it, which decides the fix the
+//! check names for a package that reads behind ([`pulled_record`]).
 
 use std::path::Path;
 
+use super::LockFile;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 use crate::process::Hardened;
@@ -75,31 +76,28 @@ pub fn recording(scope: &Scope) -> Result<Recording> {
     }))
 }
 
-/// Whether `scope` is a checkout on the default branch that origin's copy
-/// of that branch, as this clone last fetched it, is ahead of with nothing
-/// of its own to keep: a copy that follows the default branch and has not
-/// pulled yet. Its fix is the pull, since a refresh here would write a
-/// record the next pull brings anyway. Read from the refs the clone holds;
-/// nothing is fetched. A copy with commits of its own is not behind in
-/// this sense, because `git pull --ff-only` refuses it.
-pub fn behind_default(scope: &Scope) -> Result<bool> {
+/// The record `git pull --ff-only` would bring `scope`: the lock origin's
+/// copy of the default branch holds, as this clone last fetched it, where
+/// `scope` is a checkout on that branch behind it with nothing of its own.
+/// `None` where no such pull applies: a copy with commits of its own is
+/// one `--ff-only` refuses, and a copy at origin's commit has nothing to
+/// pull. Read from the objects the clone holds; nothing is fetched. The
+/// copy goes through the decoder the file on disk does, so one this build
+/// cannot read is the refusal that file would get.
+pub fn pulled_record(scope: &Scope) -> Result<Option<LockFile>> {
     let Scope::Project { root } = scope.canonical() else {
-        return Ok(false);
+        return Ok(None);
     };
     if crate::guard::Repo::probe(&root)?.is_none() {
-        return Ok(false);
+        return Ok(None);
     }
     let branch = default_branch(&root)?;
     if symbolic_ref(&root, "HEAD")?.as_deref() != Some(&format!("{LOCAL_BRANCHES}{branch}")) {
-        return Ok(false);
+        return Ok(None);
     }
     let upstream = format!("{REMOTE_BRANCHES}{branch}");
-    let probe = ["rev-parse", "--verify", "--quiet", upstream.as_str()];
-    let found = Hardened::git(&probe, Some(&root)).run()?;
-    match found.status.code() {
-        Some(0) => {}
-        Some(1) => return Ok(false),
-        _ => return Err(git_failed(&probe, &found)),
+    if resolved(&root, &upstream)?.is_none() {
+        return Ok(None);
     }
     let range = format!("HEAD...{upstream}");
     let count = ["rev-list", "--left-right", "--count", range.as_str()];
@@ -110,11 +108,45 @@ pub fn behind_default(scope: &Scope) -> Result<bool> {
     let said = String::from_utf8_lossy(&counted.stdout);
     let mut sides = said.split_whitespace().map(str::parse::<u64>);
     match (sides.next(), sides.next(), sides.next()) {
-        (Some(Ok(ahead)), Some(Ok(behind)), None) => Ok(ahead == 0 && behind > 0),
-        _ => Err(CoreError::GitFailed {
-            command: format!("git {}", count.join(" ")),
-            stderr: format!("it printed {:?}, not two counts", said.trim()),
-        }),
+        (Some(Ok(0)), Some(Ok(behind)), None) if behind > 0 => {}
+        (Some(Ok(_)), Some(Ok(_)), None) => return Ok(None),
+        _ => {
+            return Err(CoreError::GitFailed {
+                command: format!("git {}", count.join(" ")),
+                stderr: format!("it printed {:?}, not two counts", said.trim()),
+            });
+        }
+    }
+    // `./` resolves against the project root git runs in, which a project
+    // in a subdirectory of its repository needs.
+    let lock = crate::env::Env::project_lock_file(&root);
+    let Some(object) = resolved(&root, &format!("{upstream}:./{}", super::LOCK_FILE))? else {
+        return Ok(Some(LockFile::Absent));
+    };
+    let read = ["cat-file", "blob", object.as_str()];
+    let blob = Hardened::git(&read, Some(&root)).run()?;
+    if !blob.status.success() {
+        return Err(git_failed(&read, &blob));
+    }
+    let text = String::from_utf8(blob.stdout).map_err(|_| CoreError::LockCorrupt {
+        path: lock.clone(),
+        message: format!("the copy at {upstream} is not UTF-8"),
+    })?;
+    super::parse_text(&lock, &text).map(|lock| Some(LockFile::Current(lock)))
+}
+
+/// The object `spec` names, or `None` where it names none: `--quiet`
+/// makes exit 1 that answer alone, for a missing ref and a path the
+/// revision does not hold alike; any other failure is git's.
+fn resolved(root: &Path, spec: &str) -> Result<Option<String>> {
+    let args = ["rev-parse", "--verify", "--quiet", spec];
+    let output = Hardened::git(&args, Some(root)).run()?;
+    match output.status.code() {
+        Some(0) => Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )),
+        Some(1) => Ok(None),
+        _ => Err(git_failed(&args, &output)),
     }
 }
 

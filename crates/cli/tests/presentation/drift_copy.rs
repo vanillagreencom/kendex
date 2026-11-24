@@ -134,12 +134,14 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
     }
 }
 
-/// A project checkout on `main` with one package that reads behind its
-/// source, and origin's `main` placed `origin` relative to it: `behind` is
-/// one commit the checkout lacks, `diverged` adds one of its own, `even`
-/// is the checkout's own commit, and `None` is a clone that never fetched.
+/// A project checkout on `main` with no install record and one package,
+/// `gh`, that reads behind its source, and origin's `main` placed `origin`
+/// relative to it: `behind` is one commit the checkout lacks, `diverged`
+/// adds one of its own, `even` is the checkout's own commit, and `None` is
+/// a clone that never fetched. The commit the checkout lacks commits an
+/// install record of the package `records` names, or changes no record.
 #[allow(clippy::unwrap_used)]
-fn behind_checkout(home: &Path, origin: Option<&str>) -> PathBuf {
+fn behind_checkout(home: &Path, origin: Option<&str>, records: Option<&str>) -> PathBuf {
     let project = home.join("dev/app");
     fs::create_dir_all(&project).unwrap();
     fs::write(
@@ -151,6 +153,9 @@ fn behind_checkout(home: &Path, origin: Option<&str>) -> PathBuf {
     test_util::git(&project, &["add", "-A"]);
     test_util::git(&project, &["commit", "--quiet", "-m", "one"]);
     let one = test_util::git(&project, &["rev-parse", "HEAD"]);
+    if let Some(name) = records {
+        commit_record(&project, name);
+    }
     test_util::git(
         &project,
         &["commit", "--quiet", "--allow-empty", "-m", "two"],
@@ -220,23 +225,70 @@ fn behind_checkout(home: &Path, origin: Option<&str>) -> PathBuf {
     project
 }
 
-/// A copy that follows `main` and has not pulled is told to pull: the
-/// newer record is already on `main`, and a refresh would write files the
-/// copy must not commit. Any other copy keeps the refresh.
+/// Stages an install record of the skill `name` at a source commit, for
+/// the next commit to carry.
+#[allow(clippy::unwrap_used)]
+fn commit_record(project: &Path, name: &str) {
+    let harness = kendex_core::model::HarnessId::Claude;
+    let entry = kendex_core::lock::LockEntry {
+        requirer_provenance: None,
+        name: name.to_owned(),
+        kind: ItemKind::Skill,
+        harness,
+        source: "cat".to_owned(),
+        source_repo: "owner/repo".to_owned(),
+        source_hash: "0".repeat(64),
+        source_commit: Some(HASH.to_owned()),
+        selector: None,
+        rendered_hash: None,
+        enabled: true,
+        upstream_skills: None,
+        emitted: None,
+        registration: None,
+        output_style: None,
+        reasons: std::collections::BTreeSet::new(),
+        machine: None,
+    };
+    let lock = kendex_core::lock::Lock {
+        version: kendex_core::lock::LOCK_VERSION,
+        entries: std::collections::BTreeMap::from([(
+            kendex_core::lock::entry_key(ItemKind::Skill, name, harness),
+            entry,
+        )]),
+        ..Default::default()
+    };
+    let path = Env::project_lock_file(project);
+    fs::write(
+        &path,
+        kendex_core::lock::committed_text(&path, &lock).unwrap(),
+    )
+    .unwrap();
+    test_util::git(project, &["add", kendex_core::lock::LOCK_FILE]);
+}
+
+/// A copy that follows `main` and has not pulled is told to pull where
+/// `main` records the package at another commit: the pull brings that
+/// record, and a refresh would write files the copy must not commit. A
+/// pull that leaves the package's record as it is would leave the newer
+/// version where it is, so that copy, and any copy the pull does not
+/// apply to, keeps the refresh.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_checkout_behind_its_default_branch_is_told_to_pull() {
-    for (origin, verb, command) in [
-        (Some("behind"), "pull", "git pull --ff-only"),
-        (Some("diverged"), "refresh", "kendex refresh"),
-        (Some("even"), "refresh", "kendex refresh"),
-        (None, "refresh", "kendex refresh"),
+    for (origin, records, verb, command) in [
+        (Some("behind"), Some("gh"), "pull", "git pull --ff-only"),
+        (Some("behind"), None, "refresh", "kendex refresh"),
+        (Some("behind"), Some("other"), "refresh", "kendex refresh"),
+        (Some("diverged"), Some("gh"), "refresh", "kendex refresh"),
+        (Some("even"), None, "refresh", "kendex refresh"),
+        (None, None, "refresh", "kendex refresh"),
     ] {
+        let case = format!("{origin:?} recording {records:?}");
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
-        let project = behind_checkout(&home, origin);
+        let project = behind_checkout(&home, origin, records);
         let (code, json) = check(&home, &project, &["--json"]);
-        assert_eq!(code, Some(1), "{origin:?}: {json}");
+        assert_eq!(code, Some(1), "{case}: {json}");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let line = parsed["sections"]
             .as_array()
@@ -244,16 +296,13 @@ fn a_checkout_behind_its_default_branch_is_told_to_pull() {
             .iter()
             .flat_map(|section| section["lines"].as_array().unwrap())
             .find(|line| line["text"].as_str().unwrap().contains("'gh'"))
-            .unwrap_or_else(|| panic!("{origin:?}: no gh line in {json}"));
-        assert_eq!(line["remedy"]["verb"], verb, "{origin:?}: {line}");
+            .unwrap_or_else(|| panic!("{case}: no gh line in {json}"));
+        assert_eq!(line["remedy"]["verb"], verb, "{case}: {line}");
         let (_, text) = check(&home, &project, &[]);
         let fix = text
             .lines()
             .find(|line| line.contains("'gh'"))
-            .unwrap_or_else(|| panic!("{origin:?}: no gh line in {text}"));
-        assert!(
-            fix.contains(&format!("fix: {command}")),
-            "{origin:?}: {fix}"
-        );
+            .unwrap_or_else(|| panic!("{case}: no gh line in {text}"));
+        assert!(fix.contains(&format!("fix: {command}")), "{case}: {fix}");
     }
 }

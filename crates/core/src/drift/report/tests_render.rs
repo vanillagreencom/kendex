@@ -190,7 +190,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
     // The label, the remedy, and its rendering unnamed, against the main
     // checkout's project and against the checked worktree's own.
     type Row = (&'static str, Remedy, Option<Fix>, Option<Fix>, Option<Fix>);
-    let rows: [Row; 11] = [
+    let rows: [Row; 13] = [
         (
             "apply",
             Remedy::Apply { global: false },
@@ -240,6 +240,20 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex updates"),
             here("kendex updates --project-path '/w/app'"),
             here("kendex updates"),
+        ),
+        (
+            "source refresh, a fetch that writes nothing in the checkout",
+            Remedy::SourceRefresh { global: false },
+            here("kendex source refresh"),
+            here("kendex source refresh"),
+            here("kendex source refresh"),
+        ),
+        (
+            "pull, which moves the branch of the checkout it is typed in",
+            Remedy::Pull,
+            here("git pull --ff-only"),
+            elsewhere("git pull --ff-only"),
+            here("git pull --ff-only"),
         ),
         (
             "update-pi, a write that names the main checkout's project",
