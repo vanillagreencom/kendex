@@ -4943,9 +4943,10 @@ fn begin_round_mints_supersedes_and_opens_in_one_write() {
     );
     assert_eq!(
         keys(after["stages"][1].as_object().unwrap()),
-        ["kind", "round_id", "start", "end"]
+        ["kind", "round_id", "start", "end", "tier"]
     );
     assert_eq!(body.stages[1].kind, StageKind::Dev);
+    assert_eq!(body.stages[1].tier.as_deref(), Some("standard"));
     assert_eq!(body.stages[1].start, NOW_SECS);
     assert_eq!(body.stages[1].end, None);
     // A review round leaves the dev stage open.
