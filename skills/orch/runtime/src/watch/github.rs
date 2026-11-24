@@ -644,6 +644,7 @@ fn merged_at(pull: &Pull, since: Option<u64>) -> Option<u64> {
 /// one stands, and the dependency it is parked until.
 struct MergeItem {
     item: String,
+    parked: bool,
     /// `<repo>#<n>` of the item's own parked pull request.
     parked_key: Option<String>,
     /// The dependency's `(repo, number)` the record is parked until.
@@ -687,6 +688,7 @@ fn merge_items(lanes: &[Lane]) -> Vec<MergeItem> {
         });
         out.push(MergeItem {
             item: lane.item.clone(),
+            parked: parked.is_some(),
             parked_key,
             until,
             own,
@@ -1241,8 +1243,8 @@ pub(super) fn merged_keys(
 /// after the floor, by head branch and by mention; a key not in the
 /// item's row is a `merged` line, the row then holds every key and merge epoch; a parked
 /// item's dependency is read by number and its state change is the
-/// parked-merged or parked-closed line, the hand deferred while the
-/// tracker's verdict is unknown.
+/// parked-merged or parked-closed line. A fleet with a Linear team
+/// defers the merged line while the tracker's verdict is unknown.
 fn merged(
     gh: &Gh,
     inputs: &Inputs,
@@ -1252,27 +1254,28 @@ fn merged(
     inventory: &mut Inventory,
 ) -> Result<()> {
     let items = merge_items(inputs.lanes);
-    let verdict_of = |item: &str| -> Option<TerminalState> { inputs.terminal.get(item).copied() };
-    let parked_merged = |item: &str, key: &str, produced: &mut Produced| -> bool {
-        // The parked line: deferred with no verdict, nothing on an
-        // ended item, the line on an open one. Returns whether the row
-        // may advance.
-        match verdict_of(item) {
-            None => false,
-            Some(TerminalState::Completed | TerminalState::Canceled) => true,
-            Some(TerminalState::Open) => {
-                let (repo, pr) = key.rsplit_once('#').unwrap_or((key, ""));
-                produced.events.push(Event::ParkedMerged {
-                    item: item.to_owned(),
-                    pr: pr.to_owned(),
-                    repo: repo.to_owned(),
-                });
-                true
+    let parked_merged =
+        |entry: &MergeItem, key: &str, allow_unread, produced: &mut Produced| -> bool {
+            // A park can advance from the GitHub read when the fleet publishes
+            // no tracker verdict. An explicit terminal verdict owns the close.
+            match (inputs.terminal.get(&entry.item), allow_unread) {
+                (None, false) => false,
+                (Some(TerminalState::Completed | TerminalState::Canceled), _) => true,
+                (Some(TerminalState::Open), _) | (None, true) => {
+                    let (repo, pr) = key.rsplit_once('#').unwrap_or((key, ""));
+                    produced.events.push(Event::ParkedMerged {
+                        item: entry.item.clone(),
+                        pr: pr.to_owned(),
+                        repo: repo.to_owned(),
+                    });
+                    true
+                }
             }
-        }
-    };
+        };
     let mut parked_items = BTreeSet::new();
     for entry in &items {
+        // An observed merge does not establish that a park was released.
+        let repeat_parked = entry.parked && inputs.settings.linear_team.is_none();
         let mut deferred = false;
         if let Some((repo, until)) = &entry.until {
             parked_items.insert(entry.item.clone());
@@ -1300,9 +1303,18 @@ fn merged(
             };
             let parked_key = entry.parked_key.clone().unwrap_or_default();
             let key = format!("{parked_key} {state}");
-            if baseline.get(PARKED_UNTIL_ROW, &entry.item) != Some(key.as_str()) {
+            if baseline.get(PARKED_UNTIL_ROW, &entry.item) != Some(key.as_str())
+                || (repeat_parked && state == "MERGED")
+            {
                 match state {
-                    "MERGED" => deferred = !parked_merged(&entry.item, &parked_key, produced),
+                    "MERGED" => {
+                        deferred = !parked_merged(
+                            entry,
+                            &format!("{repo}#{until}"),
+                            repeat_parked,
+                            produced,
+                        );
+                    }
                     "CLOSED" => produced.events.push(Event::ParkedClosed {
                         item: entry.item.clone(),
                         pr: until.to_string(),
@@ -1333,17 +1345,22 @@ fn merged(
             .unwrap_or_default();
         let mut keys = Vec::new();
         let mut dated = Vec::new();
-        let mut fresh = Vec::new();
         for (number, repo, at) in &hits {
             let key = format!("{repo}#{number}");
             if !prior.contains(&key.as_str()) {
                 produced.events.push(Event::Merged {
                     line: format!("{number} {} {repo}", entry.item.to_ascii_lowercase()),
                 });
-                fresh.push(key.clone());
             }
             dated.push(format!("{key}@{at}"));
             keys.push(key);
+        }
+        if entry.own.is_none()
+            && let Some(parked_key) = entry.parked_key.as_deref()
+            && keys.iter().any(|key| key == parked_key)
+            && (repeat_parked || !prior.contains(&parked_key))
+        {
+            parked_merged(entry, parked_key, repeat_parked, produced);
         }
         inventory.merged.insert(entry.item.clone(), keys);
         produced.changes.push(Change::Set {
@@ -1351,16 +1368,6 @@ fn merged(
             identity: entry.item.clone(),
             value: dated.join(" "),
         });
-        if entry.own.is_some() {
-            continue;
-        }
-        // A parked item's fresh own merge hands it on; a fresh merge that
-        // is not its recorded key is not its own delivery.
-        if let Some(parked_key) = &entry.parked_key
-            && fresh.iter().any(|k| k == parked_key)
-        {
-            parked_merged(&entry.item, parked_key, produced);
-        }
     }
     // A Verifying item no live lane carries as its own has its landing in the
     // index the verification pass reads, with no line and no row: no lane

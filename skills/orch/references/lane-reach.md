@@ -27,7 +27,9 @@ The watch's wake duty types one line into a positively idle running lane and con
 
 A [`lane-ended`](oversee-events.md#lane-ended) line names a lane whose harness ended while no tracker read says its item ended. Handle it in the heartbeat pass that prints it.
 
-A line with `tracker=unread` comes first: read the item in its tracker. Where it ended, close the lane through § Lane close. Otherwise take its `waits=`:
+On a fleet with no Linear team, the watch reports [`parked-merged`](oversee-events.md#parked-merged) from the merged state of the parked lane's pull request or blocking dependency.
+
+A line with `tracker=unread` comes first, even when the watch also prints `parked-merged`. Read the item in its tracker. Where it ended, close the lane through § Lane close. Otherwise take its `waits=` value.
 
 - `nothing`: nothing holds the lane.
   1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
