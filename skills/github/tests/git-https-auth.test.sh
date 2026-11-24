@@ -271,6 +271,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -C|-c) prefix+=("$1" "$2"); shift 2 ;;
     push|fetch)
+      if [[ "$1" == push && "${GIT_TERMINAL_PROMPT:-}" != 0 ]]; then
+        printf 'terminal-prompt-enabled\n' >>"$STUB_SELECTOR_LOG"
+      fi
       "$REAL_GIT" "${prefix[@]}" credential fill >/dev/null <<'CREDENTIAL'
 protocol=https
 host=github.com
@@ -283,6 +286,12 @@ done
 exec "$REAL_GIT" "${args[@]}"
 EOF
 chmod +x "$TMP_ROOT/selector-bin/git"
+cat >"$TMP_ROOT/selector-bin/askpass" <<'EOF'
+#!/usr/bin/env bash
+printf 'askpass-called\n' >>"$STUB_SELECTOR_LOG"
+printf 'synthetic-answer\n'
+EOF
+chmod +x "$TMP_ROOT/selector-bin/askpass"
 git init -q --bare "$TMP_ROOT/repos/origin.git"
 git -C "$TMP_ROOT/repos/origin.git" config gc.auto 0
 git -C "$TMP_ROOT/repos/origin.git" config maintenance.auto false
@@ -306,17 +315,19 @@ selection_result() { # auth-library push-file-state
     invalid) push_env=("ORCH_GH_PUSH_TOKEN_FILE=$TMP_ROOT/missing") ;;
   esac
   : >"$TMP_ROOT/selector.log"
-  env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_GH_PUSH_TOKEN_FILE \
+  env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_GH_PUSH_TOKEN_FILE -u GIT_TERMINAL_PROMPT \
     PATH="$TMP_ROOT/selector-bin:$TMP_ROOT/bin:$PATH" REAL_GIT="$REAL_GIT" \
-    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ASKPASS="$TMP_ROOT/selector-bin/askpass" \
     GH_TOKEN=ambient-marker ORCH_GH_READ_TOKEN_FILE="$TMP_ROOT/read-token" \
     KENDEX_GITHUB_GIT_HTTPS_FALLBACK=always STUB_SELECTOR_LOG="$TMP_ROOT/selector.log" \
     ${push_env[@]+"${push_env[@]}"} "$BASH" -c '
       set -euo pipefail
       source "$1"
+      caller_askpass="$GIT_ASKPASS"
       push_rc=0; fetch_rc=0
-      kendex_github_git -C "$2" -c core.askPass= push origin HEAD:refs/heads/selector >/dev/null 2>&1 || push_rc=$?
+      kendex_github_git -C "$2" push origin HEAD:refs/heads/selector >/dev/null 2>&1 || push_rc=$?
       kendex_github_git -C "$2" fetch origin >/dev/null 2>&1 || fetch_rc=$?
+      [[ "${GIT_ASKPASS:-}" == "$caller_askpass" && -z "${GIT_TERMINAL_PROMPT+x}" ]]
       printf "push=%s fetch=%s parent=%s\n" "$push_rc" "$fetch_rc" "$ORCH_GH_READ_TOKEN_FILE"
     ' selector "$library" "$selector_repo" || rc=$?
   printf 'shell=%s\n' "$rc"
@@ -333,7 +344,7 @@ for state in absent empty invalid; do
   assert_eq "$(selection_result "$REPO_ROOT/skills/github/scripts/lib/gh-auth.sh" "$state")" "push=128 fetch=0 parent=$TMP_ROOT/read-token
 shell=0
 refused
-credential:$TMP_ROOT/read-token" "$state push file refuses despite valid read and ambient credentials"
+credential:$TMP_ROOT/read-token" "$state push file refuses without prompting despite valid read and ambient credentials"
 done
 
 # Keep the helper and its text; remove only the push selection in a disposable
