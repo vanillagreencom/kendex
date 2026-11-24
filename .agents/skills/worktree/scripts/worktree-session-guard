@@ -49,7 +49,7 @@ Commands:
                     records none is never taken over.
   refresh PATH      Refresh the same owner's heartbeat without unlocking.
   release PATH      Release the owner's lease. --stale uses heartbeat age and
-                    session liveness.
+                    session liveness; --ended, session liveness first.
   status PATH       Print lock state as JSON.
   list              Print one JSON object per linked worktree.
   sweep             Release every guard lease past the TTL whose recorded
@@ -70,7 +70,7 @@ started at another time, in the same PID namespace and boot; unknown on
 another host, in another PID namespace or when a read fails. A lease that
 records processes is held while any of them is live or unknown. A lease that
 records none, such as an older lease or a plain --owner claim, is released by
-release --stale and sweep on heartbeat age alone.
+release --stale, release --ended and sweep on heartbeat age alone.
 
 Options (a flag a command does not take is a usage failure):
   --owner NAME       claim, refresh, release, status. Lease owner; defaults to
@@ -95,6 +95,12 @@ Options (a flag a command does not take is a usage failure):
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
   --stale            release. Release a lease only when it is past the TTL
                      and every session process it records is verified dead.
+  --ended            release. As --stale, except that a lease recording
+                     session processes releases at any heartbeat age once
+                     every one is verified dead; a lease that records none
+                     still waits out the TTL. worktree create releases
+                     through it before reusing a tree or pruning the
+                     registration of a removed one.
   --force            release. Release a foreign lease regardless of age or
                      session liveness.
   --inactive         release. With --owner, release only when no session
@@ -598,17 +604,22 @@ release_session_held() { # STATE
 }
 
 release_current() {
-	local stale="$1" force="$2" ttl_seconds="$3" recorded age
+	local stale="$1" force="$2" ttl_seconds="$3" recorded age state
 	read_lease || { worktree_message guard-lease-missing "$REQUESTED_PATH" >&2; return "$EXIT_NO_LEASE"; }
 	lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" >&2; return "$EXIT_UNMANAGED"; }
 	recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
-	if [[ "$stale" == true && "$force" != true ]]; then
-		age="$(lease_age "$LEASE_TEXT" 2>/dev/null || true)"
-		[[ "$age" =~ ^-?[0-9]+$ && "$age" -ge "$ttl_seconds" ]] || {
-			worktree_message guard-lease-not-stale "$REQUESTED_PATH" >&2
-			return "$EXIT_OWNED"
-		}
-		release_session_held "$(lease_session_state "$LEASE_TEXT")" || return "$EXIT_SESSION_HELD"
+	if [[ ( "$stale" == true || "$ended" == true ) && "$force" != true ]]; then
+		state="$(lease_session_state "$LEASE_TEXT")" || state=unknown
+		# A recorded session read dead is the evidence --ended acts on; the
+		# heartbeat is the only evidence a lease recording none carries.
+		if [[ "$ended" != true || "$state" == none ]]; then
+			age="$(lease_age "$LEASE_TEXT" 2>/dev/null || true)"
+			[[ "$age" =~ ^-?[0-9]+$ && "$age" -ge "$ttl_seconds" ]] || {
+				worktree_message guard-lease-not-stale "$REQUESTED_PATH" >&2
+				return "$EXIT_OWNED"
+			}
+		fi
+		release_session_held "$state" || return "$EXIT_SESSION_HELD"
 	elif [[ "$force" != true && "$recorded" != "$OWNER" ]]; then
 		claimed_by "${recorded:-unknown}"
 		return "$EXIT_OWNED"
@@ -646,12 +657,7 @@ command="${1:-}"
 shift
 case "$command" in
 	-h | --help | help) usage; exit 0 ;;
-	claim | refresh | release | status)
-		[[ $# -gt 0 ]] || fail guard-path-required "$command" "This command requires a worktree path."
-		path="$1"
-		shift
-		;;
-	list | sweep) path='' ;;
+	claim | refresh | release | status | list | sweep) ;;
 	*) fail guard-command-unknown "$command" "Unknown session-guard command." ;;
 esac
 
@@ -666,6 +672,8 @@ require_flag_applies() {
 	fail guard-option-command "$flag=$command" "This option applies to: $applicable."
 }
 
+path=''
+path_set=false
 OWNER=''
 owner_set=false
 owner_only=false
@@ -673,6 +681,7 @@ repo="$PWD"
 repo_set=false
 ttl="$DEFAULT_TTL_MINUTES"
 stale=false
+ended=false
 force=false
 inactive=false
 dry_run=false
@@ -684,6 +693,7 @@ while [[ $# -gt 0 ]]; do
 		--owner-only) require_flag_applies --owner-only 'status'; owner_only=true; shift ;;
 		--ttl-minutes) require_flag_applies --ttl-minutes 'release sweep'; [[ $# -ge 2 && "$2" =~ ^[0-9]{1,10}$ ]] || fail guard-ttl-invalid "${2:-}" "TTL must be a non-negative integer."; ttl="$2"; shift 2 ;;
 		--stale) require_flag_applies --stale 'release'; stale=true; shift ;;
+		--ended) require_flag_applies --ended 'release'; ended=true; shift ;;
 		--force) require_flag_applies --force 'release'; force=true; shift ;;
 		--inactive) require_flag_applies --inactive 'release'; inactive=true; shift ;;
 		--dry-run) require_flag_applies --dry-run 'sweep'; dry_run=true; shift ;;
@@ -691,9 +701,18 @@ while [[ $# -gt 0 ]]; do
 		--session) require_flag_applies --session 'claim'; session=true; shift ;;
 		--repo) require_flag_applies --repo 'release status list sweep'; [[ $# -ge 2 ]] || fail guard-option-value --repo "This option requires a directory."; repo="$2"; repo_set=true; shift 2 ;;
 		-h | --help) usage; exit 0 ;;
-		*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
+		# PATH stands before, between or after the options, as the usage line
+		# shows; a command that takes none reads any operand as an option.
+		-*) fail guard-option-unknown "$1" "Unknown session-guard option." ;;
+		*)
+			[[ "$path_set" != true && "$command" != list && "$command" != sweep ]] || fail guard-option-unknown "$1" "Unknown session-guard option."
+			path="$1"
+			path_set=true
+			shift
+			;;
 	esac
 done
+[[ "$path_set" == true || "$command" == list || "$command" == sweep ]] || fail guard-path-required "$command" "This command requires a worktree path."
 if [[ "$inactive" == true && ( "$owner_set" != true || "$stale" == true || "$force" == true ) ]]; then
 	fail guard-option-combination --inactive "This option requires --owner and cannot combine with --stale or --force."
 fi
@@ -701,7 +720,7 @@ fi
 env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
 if [[ "$owner_set" != true ]]; then
 	OWNER="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-}}"
-	if [[ -z "$OWNER" && ( "$command" == claim || "$command" == refresh || ( "$command" == release && "$stale" != true ) ) ]]; then
+	if [[ -z "$OWNER" && ( "$command" == claim || "$command" == refresh || ( "$command" == release && "$stale" != true && "$ended" != true ) ) ]]; then
 		OWNER="${USER:-}"
 	fi
 	[[ -z "$OWNER" ]] || OWNER="$(sanitize_owner "$OWNER")"
@@ -792,7 +811,7 @@ case "$command" in
 		;;
 	release)
 		resolve_registration "$path" "$repo" || fail guard-worktree-invalid "$path" "Path is not a linked worktree of $repo."
-		[[ -n "$OWNER" || "$stale" == true || "$force" == true ]] || fail guard-owner-required release "Release requires an owner, --stale, or --force."
+		[[ -n "$OWNER" || "$stale" == true || "$ended" == true || "$force" == true ]] || fail guard-owner-required release "Release requires an owner, --stale, --ended, or --force."
 		acquire_guard_mutex "$COMMON_DIR" || exit 1
 		release_current "$stale" "$force" "$ttl_seconds"
 		worktree_message guard-released "$REQUESTED_PATH"

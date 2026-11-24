@@ -741,6 +741,14 @@ registered_worktree_git_dir() {
   return 1
 }
 
+# A registration's rebase map outlives its directory, and dropping the
+# registration deletes it: while it is not empty it is the only record of a
+# rewrite record-push has yet to reconcile, so no route may drop the
+# registration. Succeeds when the map in GIT-DIR is not empty.
+registration_holds_rebase_map() { # GIT-DIR
+  [[ -s "$1/kendex-rebase-map" ]]
+}
+
 # Git can remove registration before directory deletion fails. Missing identity
 # never authorizes a retry to delete the directory; recovery stays with its owner.
 remove_recovery_guidance() {
@@ -2531,7 +2539,10 @@ worktree_lock_reason() {
 #                     other session process it records is live or
 #                     unverifiable, so a claiming session can still tear down
 #                     its own tree
-#   create --reuse    refuses a foreign lease by name, refreshes its own
+#   create --reuse    refuses a foreign lease by name, refreshes its own,
+#                     and releases one the guard's --ended route finds ended
+#   create            prunes the registration of a removed tree once its
+#                     lease, if any, is released the same way
 #
 SESSION_GUARD="$SCRIPT_DIR/worktree-session-guard"
 readonly SESSION_GUARD_DEFAULT_TTL_MINUTES=720
@@ -2704,13 +2715,97 @@ reuse_respects_session_lease() {
     # No identity at all (no issue-usable ID and an empty env ladder) means
     # nothing was probed; proceed rather than refusing on silence.
     [[ "$rc" -eq 75 ]] || return 0
+    local release_rc=0
+    release_ended_session_lease "$wt" || release_rc=$?
+    case "$release_rc" in
+      0) return 0 ;;
+      7 | 75) ;;
+      *) return 1 ;;
+    esac
     worktree_message lease-foreign "$wt" "Error: $wt is claimed by another session; refusing to reuse it." >&2
     [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
+    [[ -n "$SESSION_GUARD_RELEASE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
   REUSE_LEASE_OWNER="$owner"
   return 0
+}
+
+# A release the guard judges under its mutex (--ended, --stale). Sets
+# SESSION_GUARD_RELEASE_ERR to the guard's keyed stderr and returns its
+# verdict: 0 released, 7 a session the lease records is live or cannot be
+# verified ended, 75 not yet stale. Any other exit is a guard that reached no
+# verdict, such as a mutex it could not take; that is reported here and
+# returns 1, so no caller reads it as another session's hold.
+SESSION_GUARD_RELEASE_ERR=""
+release_judged_session_lease() { # WT RELEASE-OPTION...
+  local wt="$1" rc=0
+  shift
+  SESSION_GUARD_RELEASE_ERR=""
+  SESSION_GUARD_RELEASE_ERR="$("$SESSION_GUARD" release "$wt" "$@" --repo "$PROJECT_ROOT" 2>&1 >/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 7 | 75) return "$rc" ;;
+  esac
+  worktree_message lease-release-unjudged "path=$wt exit=$rc" "Error: the session guard could not judge the lease on $wt (exit $rc); it stays in place." >&2
+  [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
+  return 1
+}
+
+# The guard judges whether every session the lease records has ended
+# (--ended); a lease that records none must be past the TTL. Returns
+# release_judged_session_lease's status.
+release_ended_session_lease() {
+  local wt="$1" rc=0
+  release_judged_session_lease "$wt" --ended || rc=$?
+  [[ "$rc" -eq 0 ]] || return "$rc"
+  worktree_message lease-ended-released "$wt" "Released the guard lease of an ended session: $wt" >&2
+}
+
+# A registration whose directory is gone holds no work, yet git still lists
+# it, so the ownership scan reads it as the item's tree. Once its guard lease
+# has ended, or with no lock at all, `git worktree remove` drops this one
+# registration, never another item's (git refuses a locked one). One that
+# still holds a rebase map, or that cannot be resolved to rule one out, is
+# kept with its lease, and like anything else is left to the refusals below.
+# With no guard nothing is released, so the missing guard is no warning here.
+clear_removed_registration() {
+  local wt="$1" rc=0 err="" git_dir=""
+  [[ -x "$SESSION_GUARD" ]] || return 0
+  # Status 1 is also the answer for a path git never registered, every fresh
+  # create's case, so it says nothing here.
+  "$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0 | 3 | 75) ;;
+    *) return 0 ;;
+  esac
+  if ! git_dir="$(registered_worktree_git_dir "$wt")"; then
+    worktree_message registration-unresolved "$wt" "Warning: the registration of the removed worktree $wt could not be resolved, so an unreconciled rebase map cannot be ruled out; keeping it." >&2
+    return 0
+  fi
+  if registration_holds_rebase_map "$git_dir"; then
+    worktree_message registration-rebase-map "$git_dir/kendex-rebase-map" "Warning: the registration of the removed worktree $wt still holds an unreconciled rebase map; keeping it and its lease." >&2
+    return 0
+  fi
+  if [[ "$rc" -ne 3 ]]; then
+    rc=0
+    release_ended_session_lease "$wt" || rc=$?
+    case "$rc" in
+      0) ;;
+      7 | 75)
+        # The guard's reason is the one cause the refusal below can name.
+        [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  fi
+  if ! err="$(git -C "$PROJECT_ROOT" worktree remove "$wt" 2>&1 >/dev/null)"; then
+    worktree_message registration-prune-failed "$wt" "Warning: could not prune the registration of the removed worktree $wt." >&2
+    [[ -z "$err" ]] || sed 's/^/  /' <<<"$err" >&2
+    return 0
+  fi
+  worktree_message registration-pruned "$wt" "Pruned the registration of the removed worktree $wt." >&2
 }
 
 # The refresh is the reuse's first mutation, so it follows every admission.
@@ -2783,7 +2878,7 @@ cleanup_lease_permits_removal() {
     return 1
   fi
   local release_rc=0
-  "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || release_rc=$?
+  release_judged_session_lease "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" || release_rc=$?
   case "$release_rc" in
     0)
       worktree_message lease-stale-released "$wt" "Released stale session guard lease: $wt" >&2
@@ -2795,8 +2890,11 @@ cleanup_lease_permits_removal() {
       worktree_message cleanup-lease-session-held "$wt" "Skipped (guard lease is past the ${CLEANUP_TTL_MINUTES}m TTL, but a session it records is live or unverified): $wt" >&2
       return 1
       ;;
+    75)
+      worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
+      return 1
+      ;;
   esac
-  worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
   return 1
 }
 
@@ -3360,6 +3458,11 @@ case "${1:-}" in
     # are recognized as active work and reusable in place.
     WT_PATH="$(worktree_path_for_issue "$ISSUE")"
     validate_worktree_setup_config || exit 1
+    # --reuse and --restack refuse a removed tree below, so they release and
+    # prune nothing they would not replace.
+    if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" && "$REUSE" != true && "$RESTACK" != true ]]; then
+      clear_removed_registration "$WT_PATH"
+    fi
 
     # 1. Existing work is an ownership signal. Bare create only claims unowned
     # work; reuse must be explicit so discovery cannot rewrite another
@@ -3979,7 +4082,7 @@ case "${1:-}" in
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
       refuse_unidentified_worktree "$WT_PATH" "$REMOVE_RECORD_PATH" || exit 1
     fi
-    if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
+    if [[ -n "$REMOVE_GIT_DIR" ]] && registration_holds_rebase_map "$REMOVE_GIT_DIR"; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
       echo "Nothing was released, removed or pruned." >&2
       echo "Let orch's record-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2

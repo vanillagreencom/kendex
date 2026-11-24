@@ -154,6 +154,13 @@ claim() {
   "$GUARD_SCRIPT" claim "$ROOT/trees/$1" --owner "$2" >/dev/null
 }
 
+# A directory where the guard's mutex file goes: every guard mutation then
+# fails to take the mutex, the guard reaching no verdict on any lease.
+plant_unopenable_mutex() { # MAIN
+  rm -f -- "$1/.git/kendex-worktree-session-guard.lock"
+  mkdir -- "$1/.git/kendex-worktree-session-guard.lock"
+}
+
 step() {
   case "$1" in
     # `create` through the script, under the self identity.
@@ -175,6 +182,7 @@ step() {
     claim-x) claim topic SESSION-X ;;
     claim-pending) claim pending GONE-SESSION ;;
     no-guard) ROW_SCRIPT="$NOGUARD_SCRIPTS/worktree" ;;
+    mutex-unopenable) plant_unopenable_mutex "$MAIN" ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
       exit 2
@@ -268,7 +276,8 @@ err_text() {
     unknown-option) printf 'worktree-cleanup-option-unknown: --bogus' ;;
     ttl-nan) printf 'worktree-cleanup-ttl-invalid: abc' ;;
     unguarded) printf 'worktree-session-guard-unavailable: <guard>' ;;
-    reuse-foreign:*) printf 'worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=%s' "${1#reuse-foreign:}" ;;
+    unjudged) printf 'worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex-worktree-session-guard.lock' ;;
+    reuse-foreign:*) printf 'worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=%s;worktree-guard-lease-not-stale: <topic>' "${1#reuse-foreign:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -284,6 +293,7 @@ create <ID> --reuse keeps the issue-keyed lease with no session env|created clai
 create <ID> --reuse with no session env refuses a session-keyed lease|created claim-self|none|create topic --reuse|75|-|reuse-foreign:ISSUE-1|topic=present/branch/ISSUE-1
 cleanup collects the unclaimed merged tree and names the held one|merged free claim-other|self|cleanup|0|cleaned-free|held|topic=present/branch/OTHER-SESSION free=absent/no-branch/1
 cleanup --stale leaves a fresh lease alone|merged claim-other|self|cleanup --stale|0|-|fresh|topic=present/branch/OTHER-SESSION
+cleanup --stale names a guard that cannot judge the lease, not a fresh lease, and keeps the tree|merged claim-other mutex-unopenable|self|cleanup --stale --ttl-minutes 0|0|-|unjudged|topic=present/branch/OTHER-SESSION
 cleanup --stale --ttl-minutes 0 releases a past-TTL lease and collects|merged claim-other|self|cleanup --stale --ttl-minutes 0|0|cleaned-topic|stale-released|topic=absent/no-branch/1
 cleanup skips a zero-commit tree and names it|merged pending|self|cleanup|0|cleaned-topic|pending-skip|topic=absent/no-branch/1 pending=present/branch/3
 cleanup --stale neither collects a zero-commit tree nor releases its lease|pending claim-pending|self|cleanup --stale --ttl-minutes 0|0|-|pending-skip|pending=present/branch/GONE-SESSION
@@ -512,6 +522,29 @@ while IFS='|' read -r label refusal_path flags expected_rc expected_record expec
   assert_eq "rc=$refusal_rc record=${refusal_err%%$'\n'*} state=$(guard_status_code "$refusal_path" "$refusal_path" --owner OWNER-A)" \
     "rc=$expected_rc record=$expected_record state=$expected_state" "$label"
 done <<<"$REFUSALS"
+
+echo "=== PATH stands before or after the options ==="
+
+# The usage line puts PATH before the options; a caller may also write it
+# after them. Each row starts from a fresh OWNER-A lease and runs one argv,
+# <wt> standing for the worktree. A row: label|argv|rc|first stderr
+# line|status code for OWNER-A after.
+ORDER_WT="$MUTEX_ROOT/trees/order"
+git -C "$MUTEX_ROOT/main" worktree add -q -b order "$ORDER_WT" main
+ORDER_ROWS='release takes PATH after its options|release --stale <wt> --owner OWNER-A --ttl-minutes 0|0||3
+release takes PATH before its options|release <wt> --stale --owner OWNER-A --ttl-minutes 0|0||3
+status takes PATH after its options|status --owner OWNER-A <wt>|0||0
+claim takes PATH after its options|claim --owner OWNER-A <wt>|0||0
+refresh takes PATH after its options|refresh --owner OWNER-A <wt>|0||0'
+while IFS='|' read -r label argspec expected_rc expected_record expected_state; do
+  read -r -a order_args <<<"${argspec//<wt>/$ORDER_WT}"
+  "$GUARD_SCRIPT" release "$ORDER_WT" --force >/dev/null 2>&1 || :
+  "$GUARD_SCRIPT" claim "$ORDER_WT" --owner OWNER-A >/dev/null
+  order_rc=0
+  order_err=$(cd "$MUTEX_ROOT/main" && "$GUARD_SCRIPT" "${order_args[@]}" 2>&1 >/dev/null) || order_rc=$?
+  assert_eq "rc=$order_rc record=${order_err%%$'\n'*} state=$(guard_status_code "$ORDER_WT" "$MUTEX_ROOT/main" --owner OWNER-A)" \
+    "rc=$expected_rc record=$expected_record state=$expected_state" "$label"
+done <<<"$ORDER_ROWS"
 
 echo "=== registrations resolve without a cwd or a directory ==="
 
@@ -1005,6 +1038,69 @@ verb_rows() { # RUN SCRIPTS-DIR
 }
 verb_rows main "$WORKTREE_PACKAGE_DIR/scripts"
 
+# create over a lease its session left behind: the guard alone judges the
+# recorded session. A reuse over a foreign lease whose session lives refuses
+# by name and keeps the lock; one whose session is dead releases the lease
+# and reuses the tree. A bare create, which a relaunch runs once the tree's
+# directory is gone, releases a dead session's lease on the removed tree,
+# prunes its registration and makes the tree again; over a live session's it
+# names the guard's reason before refusing. A guard that cannot take its
+# mutex reaches no verdict, and the reuse names that instead of another
+# session. The create drops the removed tree's registration alone: one that
+# holds a rebase map keeps it and its lease and refuses, and another item's
+# removed tree stays registered. A --reuse, which makes no tree there, keeps
+# the removed tree's lease and registration. A row:
+# label|lease edit|tree edit|guard mutex|command|rc|leading stderr records|lease after|tree|kept beside
+REUSE_ROWS='create --reuse refuses a foreign lease whose session lives and keeps the lock|-|-|-|create topic --reuse|75|worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=other;worktree-guard-lease-session-held: path=<topic> state=live|other|present|-
+create --reuse releases a foreign lease whose session is dead and reuses the tree|restart|-|-|create topic --reuse|0|worktree-lease-ended-released: <topic>|3|present|-
+create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock|restart|-|unopenable|create topic --reuse|75|worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex-worktree-session-guard.lock|other|present|-
+create over a removed tree releases its dead session'"'"'s lease and prunes the registration|restart|removed|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|-
+create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease|-|removed|-|create topic|75|worktree-guard-lease-session-held: path=<topic> state=live;worktree-worktree-owned: <topic>|other|absent|topic
+create over a removed tree keeps a registration holding a rebase map, its map and its lease|restart|removed-mapped|-|create topic|75|worktree-registration-rebase-map: <main>/.git/worktrees/topic/kendex-rebase-map;worktree-worktree-owned: <topic>|other|absent|map,topic
+create over a removed tree leaves another item'"'"'s removed tree registered|restart|removed-beside|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|aside
+create --reuse over a removed tree keeps its dead session'"'"'s lease and registration and refuses|restart|removed|-|create topic --reuse|1|worktree-reuse-missing: <topic>|other|absent|topic'
+reuse_rows() { # RUN SCRIPTS-DIR
+  local run="$1" script="$2/worktree" label lease_edit tree_edit mutex command want_rc want_records want_lease want_tree want_kept root tree hdir rc owner status_rc records want_count kept map
+  local -a argv
+  local n=0
+  while IFS='|' read -r label lease_edit tree_edit mutex command want_rc want_records want_lease want_tree want_kept; do
+    n=$((n + 1))
+    root="$TMP_ROOT/reuse-$run-$n"
+    make_repo "$root"
+    tree="$root/trees/topic"
+    hdir="$root/harness"
+    (cd "$root/main" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER "$script" create topic >/dev/null 2>&1)
+    map="$root/main/.git/worktrees/topic/kendex-rebase-map"
+    [[ "$tree_edit" != removed-mapped ]] || printf 'rebase-hop: 1\nrebase-map: %040d %040d\n' 1 2 >"$map"
+    if [[ "$tree_edit" == removed-beside ]]; then
+      (cd "$root/main" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER "$script" create aside >/dev/null 2>&1)
+      rm -rf -- "${root:?}/trees/aside"
+    fi
+    session_harness_start "$hdir" claude
+    LIVE_PATH="$PATH" LIVE_MAIN="$root/main" GUARD_UNDER_TEST="$2/worktree-session-guard"
+    in_harness "$hdir" other claim "$tree" --session
+    [[ "$lease_edit" == - ]] || session_lease_rewrite "$tree" "$lease_edit" "$SESSION_HARNESS_PID"
+    [[ "$tree_edit" != removed* ]] || rm -rf -- "${root:?}/trees/topic"
+    [[ "$mutex" != unopenable ]] || plant_unopenable_mutex "$root/main"
+    read -r -a argv <<<"$command"
+    rc=0
+    (cd "$root/main" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER GH_STATE="$root/gh-state" "$script" "${argv[@]}" >/dev/null 2>"$root/err") || rc=$?
+    [[ "$mutex" != unopenable ]] || rmdir -- "$root/main/.git/kendex-worktree-session-guard.lock"
+    status_rc=0
+    owner="$("$GUARD_SCRIPT" status "$tree" --repo "$root/main" 2>/dev/null | jq -r '.owner // empty')" || status_rc=$?
+    want_count="$(tr ';' '\n' <<<"$want_records" | wc -l)"
+    records="$(message_records <"$root/err" | sed -n -e "s|$tree|<topic>|g" -e "s|$root/main|<main>|g" -e "1,${want_count// /}p" | paste -s -d ';' -)"
+    kept=""
+    [[ ! -s "$map" ]] || kept=map
+    ! git -C "$root/main" worktree list --porcelain | grep -qxF "worktree $root/trees/aside" || kept="${kept:+$kept,}aside"
+    [[ -d $tree ]] || ! git -C "$root/main" worktree list --porcelain | grep -qxF "worktree $tree" || kept="${kept:+$kept,}topic"
+    assert_eq "rc=$rc records=$records lease=${owner:-$status_rc} tree=$([[ -d $tree ]] && echo present || echo absent) kept=${kept:--}" \
+      "rc=$want_rc records=$want_records lease=$want_lease tree=$want_tree kept=$want_kept" "$label"
+    session_harness_stop "$hdir"
+  done <<<"$REUSE_ROWS"
+}
+reuse_rows main "$WORKTREE_PACKAGE_DIR/scripts"
+
 # Must-fail controls, one per row group, each a scripts copy with one text
 # replaced in one file; the row groups it names run against it, and the rows
 # listed go red.
@@ -1019,7 +1115,11 @@ release on age alone^worktree-session-guard^		none | dead) return 0 ;;^		*) retu
 a session claim reads nothing silently^worktree-session-guard^[[ -n "$caller" ]] || worktree_message guard-session-unidentified^[[ -n "$caller" ]] || : guard-session-unidentified^unidentified^a session-bound claim that cannot read its session process says so and records none
 a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
 an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex
-a ps diagnostic reads as no process^lib/process-identity.sh^ && -z "$err" ]]^ ]]^psread^ps read: ps that fails within itself gives no answer'
+a ps diagnostic reads as no process^lib/process-identity.sh^ && -z "$err" ]]^ ]]^psread^ps read: ps that fails within itself gives no answer
+an ended release waits out the TTL^worktree-session-guard^if [[ "$ended" != true || "$state" == none ]]; then^if true; then^reuse^create --reuse refuses a foreign lease whose session lives and keeps the lock;create --reuse releases a foreign lease whose session is dead and reuses the tree;create over a removed tree releases its dead session'"'"'s lease and prunes the registration;create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease;create over a removed tree leaves another item'"'"'s removed tree registered
+a reuse never releases an ended lease^worktree^release_ended_session_lease "$wt" || release_rc=$?^release_rc=75^reuse^create --reuse refuses a foreign lease whose session lives and keeps the lock;create --reuse releases a foreign lease whose session is dead and reuses the tree;create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock
+a guard with no verdict reads as a hold^worktree^0 | 7 | 75) return "$rc" ;;^0) return 0 ;; *) return 75 ;;^reuse^create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock
+a create keeps a removed tree'"'"'s registration^worktree^clear_removed_registration "$WT_PATH"^:^reuse^create over a removed tree releases its dead session'"'"'s lease and prunes the registration;create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease;create over a removed tree keeps a registration holding a rebase map, its map and its lease;create over a removed tree leaves another item'"'"'s removed tree registered'
 PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ "$boot_part" == differ ]]; then^	if false; then^relaunch^codex: a relaunched session'"'"'s claim drops the session from before the boot;codex: the relaunched session'"'"'s close-out releases its lease'
 [[ "$PROC_IDENTITY" != true ]] || LIVENESS_CONTROLS="$LIVENESS_CONTROLS
 $PROC_LIVENESS_CONTROLS"
@@ -1061,6 +1161,8 @@ while IFS='^' read -r control_label control_file control_text control_replacemen
   ! cmp -s "$control_source" "$control_dir/$control_file" || { echo "worktree_session_guard_lifecycle: control=$control_label mutation=unchanged" >&2; exit 2; }
   if [[ "$control_groups" == verbs ]]; then
     liveness_control_log="$(PASS=0 FAIL=0; verb_rows "control-$control_n" "$control_dir"; session_harness_stop_all)"
+  elif [[ "$control_groups" == reuse ]]; then
+    liveness_control_log="$(PASS=0 FAIL=0; reuse_rows "control-$control_n" "$control_dir"; session_harness_stop_all)"
   else
     liveness_control_log="$(PASS=0 FAIL=0; liveness_rows "control-$control_n" "$control_dir/worktree-session-guard" $control_groups; session_harness_stop_all)"
   fi

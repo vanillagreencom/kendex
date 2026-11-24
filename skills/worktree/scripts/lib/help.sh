@@ -286,6 +286,13 @@ implementer.
     'git worktree add'.
   - Run issue creates as separate commands and check each result.
   - A fresh worktree is unclaimed: create never claims a session-guard lease.
+  - A registered tree whose directory is gone is no claim once it holds no
+    lock, or its guard lease is one 'worktree-session-guard release --ended'
+    finds ended: a create without --reuse or --restack removes that one
+    registration (worktree-registration-pruned) and goes on. A lease the
+    guard keeps, or a non-empty rebase map (worktree-registration-rebase-map),
+    leaves the registration, which exits 75. --reuse and --restack release
+    and remove nothing there and exit 1 (worktree-reuse-missing).
 
 Options:
   --no-checkout  Create the Git worktree and issue record without source files
@@ -314,12 +321,14 @@ Options:
                   unless orch-runtime prints live=none for it
                   (worktree-resume-held, exit 75), asking $ORCH_RUNTIME_BINARY
                   when set, else orch's wrapper where it is installed beside
-                  this package; refuses a foreign session-guard lease by
-                  name (exit 75), refreshes its
-                  own lease in place, and skips the rebase for a tree with
-                  uncommitted work. A clean tree whose branch is an ancestor
-                  of its remote branch, whose commits another machine pushed,
-                  first fast-forwards to it (worktree-reuse-fast-forward).
+                  this package; releases a foreign session-guard lease that
+                  'worktree-session-guard release --ended' finds ended
+                  (worktree-lease-ended-released), refuses any other foreign
+                  lease by name (exit 75), refreshes its own lease in place,
+                  and skips the rebase for a tree with uncommitted work. A
+                  clean tree whose branch is an ancestor of its remote
+                  branch, whose commits another machine pushed, first
+                  fast-forwards to it (worktree-reuse-fast-forward).
                   A clean tree at its remote branch's head stays there,
                   unrebased, until the next push rebases it; --restack and
                   --replay rebase it. Any other clean tree rebases onto
