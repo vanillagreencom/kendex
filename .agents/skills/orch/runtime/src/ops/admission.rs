@@ -642,21 +642,25 @@ const SKILLS_RENDER: &str = ".agents/skills/";
 /// ([`is_path`]). Item text names files in prose beside flags and function
 /// names, so the form is the rule; the touched set reaches change-scope
 /// as `--path` values, which refuses one that reads as an option. Text
-/// that names the bare render directory beside other paths ("with their
-/// `.agents/skills` renders") names the render of each of its paths under
-/// `skills/` in place of the directory, which no file of a branch meets;
-/// the directory named alone is a claim on the whole rendered tree.
+/// that names the bare render directory beside paths under `skills/`
+/// ("with their `.agents/skills` renders") names the render of each of
+/// those paths in place of the directory, which no file of a branch meets.
+/// With no `skills/` path to render, the directory stays as named: it is
+/// then the only claim on the renders the item writes, such as those a
+/// `kendex-local.toml` instruction or a render-engine change rewrites.
 fn named_paths(text: &str) -> Vec<String> {
     let mut paths: Vec<String> = ticks(text).into_iter().filter(|t| is_path(t)).collect();
     let is_render_root = |p: &str| p.trim_end_matches('/') == SKILLS_RENDER.trim_end_matches('/');
-    if paths.iter().any(|p| is_render_root(p)) && paths.iter().any(|p| !is_render_root(p)) {
+    if paths.iter().any(|p| is_render_root(p)) {
         let renders: Vec<String> = paths
             .iter()
             .filter_map(|p| p.strip_prefix(SKILLS_SOURCE))
             .map(|rest| format!("{SKILLS_RENDER}{rest}"))
             .collect();
-        paths.retain(|p| !is_render_root(p));
-        paths.extend(renders);
+        if !renders.is_empty() {
+            paths.retain(|p| !is_render_root(p));
+            paths.extend(renders);
+        }
     }
     paths
 }
@@ -2217,7 +2221,7 @@ mod tests {
 
     #[test]
     fn text_names_the_tokens_that_read_as_paths() {
-        let rows: [(&str, &[&str]); 7] = [
+        let rows: [(&str, &[&str]); 9] = [
             ("", &[]),
             (
                 "Edit `src/a.sh` and `docs/`. Run `cargo test`, pass `--json`, see \
@@ -2239,7 +2243,19 @@ mod tests {
             ("the `.agents/skills/` tree", &[".agents/skills/"]),
             (
                 "`docs/x.md` and its `.agents/skills` render",
-                &["docs/x.md"],
+                &["docs/x.md", ".agents/skills"],
+            ),
+            (
+                "`kendex-local.toml` (`[skill-instructions]`) and the `.agents/skills/` renders it writes",
+                &["kendex-local.toml", ".agents/skills/"],
+            ),
+            (
+                "`crates/r.rs`, `skills/a/SKILL.md` and their `.agents/skills/` renders",
+                &[
+                    "crates/r.rs",
+                    "skills/a/SKILL.md",
+                    ".agents/skills/a/SKILL.md",
+                ],
             ),
             (
                 "`skills/` and its `.agents/skills/` render",
