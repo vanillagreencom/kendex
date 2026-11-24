@@ -127,6 +127,8 @@ pub struct Clis {
     /// The orch package's scripts directory, which a provider read carries
     /// ([`crate::watch::overseer::scripts_dir`]).
     pub scripts: PathBuf,
+    /// The mailbox package's `lane-mail`, which reads a lane's open asks.
+    pub lane_mail: PathBuf,
 }
 
 /// Why a read answered nothing: the cause the refusal carries.
@@ -186,10 +188,24 @@ pub(super) struct BranchUnread {
     pub cause: String,
 }
 
-/// The paths a hosted holder's branch changes and its default branch does
-/// not hold: its unmerged change, both sides of a rename.
+/// A hosted holder's head as its host reads it, and the paths that commit
+/// changes that the repository's default branch does not hold: its
+/// unmerged change, both sides of a rename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BranchChange {
+    pub branch: String,
+    pub head: String,
+    pub files: Vec<String>,
+}
+
+/// The hosted holder's unmerged change ([`BranchChange`]).
 pub(super) type BranchReader<'a> =
-    Box<dyn Fn(&Clis, &Lane) -> std::result::Result<Vec<String>, BranchUnread> + 'a>;
+    Box<dyn Fn(&Clis, &Lane) -> std::result::Result<BranchChange, BranchUnread> + 'a>;
+
+/// Whether the hosted holder's worktree stands clean at the head read and
+/// the lane still waits, so its branch is all it holds.
+pub(super) type HeldReader<'a> =
+    Box<dyn Fn(&Clis, &Lane, &BranchChange) -> std::result::Result<(), BranchUnread> + 'a>;
 
 /// The repository a directory sits in, as git names it: its common
 /// directory, resolved, and the `owner/name` its `origin` names on
@@ -230,6 +246,7 @@ pub(super) struct AdmissionReads<'a> {
     pub range_paths: RangeReader<'a>,
     pub pulls: PullsReader<'a>,
     pub branch: BranchReader<'a>,
+    pub held: HeldReader<'a>,
     pub checkout: CheckoutReader<'a>,
     pub team_key: TeamReader<'a>,
     pub tier: TierReader<'a>,
@@ -246,6 +263,7 @@ impl AdmissionReads<'static> {
             }),
             pulls: Box::new(read_open_pulls),
             branch: Box::new(read_branch_change),
+            held: Box::new(read_held_clean),
             checkout: Box::new(read_checkout),
             team_key: Box::new(read_team_key),
             tier: Box::new(read_tier),
@@ -821,13 +839,14 @@ fn unreachable(lane: &Lane) -> Option<&'static str> {
     }
 }
 
-/// Whether an unreachable holder's branch changes a path of `touched`
-/// that the scope leaves in. A lane whose stage and mailbox are on its host
-/// takes no join, so it holds what its branch changes: one whose branch
-/// changes none of the candidate's paths, such as a lane held for an answer
-/// before its first commit to them, yields. A branch that cannot be read
-/// refuses `join-unreachable` naming it and the cause. A cloud session's
-/// head is on its cloud, which no verb reads.
+/// Whether an unreachable holder holds a path of `touched` that the scope
+/// leaves in. A lane whose stage and mailbox are on its host takes no join.
+/// Its branch's unmerged change to such a path holds it. With no such
+/// change, the holder yields only where its worktree stood clean at that
+/// head and it still waits ([`read_held_clean`]): edits it has not committed
+/// are on its host alone. A read that fails refuses `join-unreachable`
+/// naming the branch and the cause. A cloud session's head is on its cloud,
+/// which no verb reads.
 fn branch_changes(
     lane: &Lane,
     route: &str,
@@ -836,20 +855,8 @@ fn branch_changes(
     item: &str,
     host: &Host,
 ) -> Result<bool> {
-    let unread = |cause: &str| {
-        Err(BranchUnread {
-            branch: None,
-            cause: cause.to_owned(),
-        })
-    };
-    let changed = match host.admission.as_ref() {
-        _ if route == "session" => unread("session-head-unread"),
-        None => unread("admission-reads-unavailable"),
-        Some(reads) => (reads.branch)(&reads.clis, lane),
-    };
-    match changed {
-        Ok(changed) => Ok(!shared(touched, &changed, in_scope).is_empty()),
-        Err(unread) => Err(Error::from(agent_runtime::Error::refused(
+    let refused = |unread: BranchUnread| {
+        Error::from(agent_runtime::Error::refused(
             "join-unreachable",
             &[
                 ("item", item),
@@ -858,8 +865,25 @@ fn branch_changes(
                 ("branch", unread.branch.as_deref().unwrap_or("unknown")),
                 ("cause", &unread.cause),
             ],
-        ))),
+        ))
+    };
+    let unread = |cause: &str| BranchUnread {
+        branch: None,
+        cause: cause.to_owned(),
+    };
+    if route == "session" {
+        return Err(refused(unread("session-head-unread")));
     }
+    let reads = host
+        .admission
+        .as_ref()
+        .ok_or_else(|| refused(unread("admission-reads-unavailable")))?;
+    let change = (reads.branch)(&reads.clis, lane).map_err(refused)?;
+    if !shared(touched, &change.files, in_scope).is_empty() {
+        return Ok(true);
+    }
+    (reads.held)(&reads.clis, lane, &change).map_err(refused)?;
+    Ok(false)
 }
 
 /// Whether the fleet delivers straight onto its base (`ORCH_DELIVERY`), the
@@ -1928,12 +1952,12 @@ struct Comparison {
 }
 
 /// The production branch read: the hosted lane's head, read on its host
-/// ([`crate::watch::hosted::worktree_head`]), judged only once its sandbox's
-/// `origin` ref names it, then GitHub's comparison of that branch with the
-/// repository's default branch. An unpushed head is unread, since commits
-/// the remote lacks may change any path; edits the lane has not committed
-/// are read by no verb.
-fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<Vec<String>, BranchUnread> {
+/// ([`crate::watch::hosted::worktree_head`]), then GitHub's comparison of
+/// that commit with the repository's default branch. GitHub compares commit
+/// SHAs it holds, so a 404 is a head the lane has not pushed, whose commits
+/// may change any path. A lane's fresh worktree stands on its base commit,
+/// which GitHub holds.
+fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<BranchChange, BranchUnread> {
     let unread = |branch: Option<&str>, cause: String| BranchUnread {
         branch: branch.map(str::to_owned),
         cause,
@@ -1951,16 +1975,6 @@ fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<Vec<Strin
     )
     .map_err(|()| unread(None, "head-unread".to_owned()))?;
     let branch = Some(head.branch.as_str());
-    if !head.pushed() {
-        return Err(unread(
-            branch,
-            format!(
-                "head-unpushed head={} remote={}",
-                head.head,
-                head.remote.as_deref().unwrap_or("absent")
-            ),
-        ));
-    }
     let repo = lane
         .repo
         .as_deref()
@@ -1976,11 +1990,11 @@ fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<Vec<Strin
             BRANCH_READ,
             &format!(
                 "repos/{repo}/compare/{}...{}",
-                base.default_branch, head.branch
+                base.default_branch, head.head
             ),
         )
         .map_err(|e| unread(branch, format!("compare-unread {e}")))?
-        .ok_or_else(|| unread(branch, "branch-absent".to_owned()))?;
+        .ok_or_else(|| unread(branch, format!("head-unpushed head={}", head.head)))?;
     let files = compared
         .files
         .ok_or_else(|| unread(branch, "files-absent".to_owned()))?;
@@ -1990,7 +2004,84 @@ fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<Vec<Strin
             format!("files-capped files={}", files.len()),
         ));
     }
-    Ok(both_sides(files))
+    Ok(BranchChange {
+        files: both_sides(files),
+        branch: head.branch,
+        head: head.head,
+    })
+}
+
+/// The production read that the holder's worktree holds no edit it has not
+/// committed: the clean reading the lane writes before it asks to park
+/// (`tmp/park-status.json`, the same reading the close's park judge takes)
+/// names the head read and its branch with an empty status, at or after the
+/// lane's latest start, and the lane's mailbox still holds its open ask. The
+/// lane changes no file while it waits, and the ask's answer ends that wait;
+/// a lane waiting on anything else gives no reading that its wait stands.
+fn read_held_clean(
+    clis: &Clis,
+    lane: &Lane,
+    change: &BranchChange,
+) -> std::result::Result<(), BranchUnread> {
+    let unread = |cause: String| BranchUnread {
+        branch: Some(change.branch.clone()),
+        cause,
+    };
+    let root = lane.mail_root.as_deref().unwrap_or("");
+    let text = match crate::watch::hosted::fetch(
+        &clis.scripts,
+        crate::watch::hosted::host_of(lane),
+        &lane.item,
+        &format!("{root}/tmp/park-status.json"),
+    ) {
+        crate::watch::hosted::Answer::Live(text) => text,
+        crate::watch::hosted::Answer::Gone => {
+            return Err(unread("worktree-unread status=absent".to_owned()));
+        }
+        crate::watch::hosted::Answer::Unreadable { cause } => {
+            return Err(unread(format!("worktree-unread status=unread {cause}")));
+        }
+    };
+    let status: ParkStatus = serde_json::from_str(&text)
+        .map_err(|_| unread("worktree-unread status=invalid".to_owned()))?;
+    if status.head != change.head || status.branch != change.branch {
+        return Err(unread(format!(
+            "worktree-unread status=moved head={}",
+            status.head
+        )));
+    }
+    if !status.porcelain.is_empty() {
+        return Err(unread("worktree-unread status=dirty".to_owned()));
+    }
+    let started = lane.running_at.as_deref().or(lane.launched_at.as_deref());
+    match (
+        agent_runtime::clock::epoch_secs(&status.at),
+        started.and_then(agent_runtime::clock::epoch_secs),
+    ) {
+        (Some(at), Some(started)) if at >= started => {}
+        _ => {
+            return Err(unread(format!(
+                "worktree-unread status=stale at={} started={}",
+                status.at,
+                started.unwrap_or("unrecorded")
+            )));
+        }
+    }
+    match crate::effects::pending_ask(&clis.lane_mail, lane) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(unread("wait-unproved ask=none".to_owned())),
+        Err(read) => Err(unread(format!("wait-unproved {read}"))),
+    }
+}
+
+/// `tmp/park-status.json` as the lane writes it before a park
+/// (`references/oversee-lanes.md` § The lane's steps before a park).
+#[derive(Deserialize)]
+struct ParkStatus {
+    head: String,
+    branch: String,
+    porcelain: String,
+    at: String,
 }
 
 #[allow(
@@ -2041,6 +2132,7 @@ mod tests {
                     // the gh fixture.
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
                     branch: unplanted_branch(),
+                    held: unplanted_held(),
                     checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
                     team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
                     tier: as_requested(),

@@ -880,7 +880,7 @@ fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
 /// Why a hosted lane's box did not read: the one judgement every close that
 /// reads the box acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Unread {
+pub(crate) enum Unread {
     /// The provider's call pool refused the call at `step` (`mail-read`, or
     /// `list` for the presence read after it): nothing ran, and the same
     /// read asked again can answer.
@@ -953,7 +953,7 @@ impl std::fmt::Display for Unread {
 /// first envelope of kind `ask`. A hosted lane's mailbox is read under its
 /// record's host, never the caller's. `Err` is a read that did not answer
 /// ([`Unread::of`]), or a lane with no recorded root.
-pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, Unread> {
+pub(crate) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, Unread> {
     let Some(root) = lane.mail_root.as_deref() else {
         return Err(Unread::Failed {
             cause: "mail-root-unrecorded".to_owned(),

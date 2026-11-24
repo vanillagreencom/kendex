@@ -1486,13 +1486,15 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert!(inbox(&root, "KEN-H").is_empty());
 }
 
-/// A hosted holder in flight holds what its branch changes. Its head is read
-/// on its host and judged once its sandbox's `origin` ref names it; GitHub
-/// compares that branch with the default branch. A branch that changes the
-/// candidate's path refuses `join-unreachable` as an unjudged holder did; an
-/// unpushed head, or a comparison as long as GitHub's file cap, refuses it
-/// naming the branch and the cause; a branch that changes only other paths
-/// yields, and the launch is recorded.
+/// A hosted holder in flight holds what its head commit changes against
+/// the default branch, as GitHub compares them, a rename's old path among
+/// them: such a change refuses `join-unreachable` as an unjudged holder did.
+/// With no shared change, it yields only where its own clean reading names
+/// that head with an empty status after its latest start, and its open ask
+/// shows it still waits. Every other reading refuses `join-unreachable`
+/// naming the branch and the cause: a failed comparison, a head GitHub does
+/// not hold, and a reading that is absent, dirty or stale, or with no ask.
+/// Each refusal writes nothing.
 #[test]
 fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
     let mut fleet = Fleet::new();
@@ -1508,77 +1510,131 @@ fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
             fixtures().join("lane-host/provider").display(),
         ),
     );
-    let disk = |path: &str, text: &str| {
+    // The lane's mailbox: `pending` prints the planted ask, where one is.
+    let ask = world.join("ask.jsonl");
+    let lane_mail = world.join("lane-mail");
+    write_executable(
+        &lane_mail,
+        format!(
+            "#!/bin/sh\n[ \"$1\" = pending ] || exit 64\n[ ! -f '{0}' ] || cat '{0}'\n",
+            ask.display()
+        ),
+    );
+    let env = [("LANE_MAIL_CLI", lane_mail.to_str().unwrap())];
+    let disk = |path: &str, text: Option<&str>| {
         let at = world.join("disk").join(path.trim_start_matches('/'));
-        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-        std::fs::write(at, text).unwrap();
+        match text {
+            Some(text) => {
+                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+                std::fs::write(at, text).unwrap();
+            }
+            None => std::fs::remove_file(at).unwrap(),
+        }
     };
-    disk("/w/ken-r/.git", "gitdir: /w/main/.git/worktrees/ken-r\n");
+    disk(
+        "/w/ken-r/.git",
+        Some("gitdir: /w/main/.git/worktrees/ken-r\n"),
+    );
     disk(
         "/w/main/.git/worktrees/ken-r/HEAD",
-        "ref: refs/heads/ken-r\n",
+        Some("ref: refs/heads/ken-r\n"),
     );
-    disk("/w/main/.git/refs/heads/ken-r", "h1\n");
+    disk("/w/main/.git/refs/heads/ken-r", Some("h1\n"));
+    let status = |porcelain: &str, at: &str| {
+        json!({"head": "h1", "branch": "ken-r", "porcelain": porcelain, "at": at}).to_string()
+    };
     let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
     hosted["host"] = json!(provider.display().to_string());
     hosted["kind"] = json!("ssh");
     hosted["repo"] = json!("o/r");
     hosted["mail_root"] = json!("/w/ken-r");
+    hosted["running_at"] = json!("2026-01-29T15:30:00Z");
     fleet.write_lanes(vec![hosted]);
     fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
     let mut request = launch("KEN-S", &fleet.checkout("s", None));
     request["repo"] = json!("o/r");
-    let changing = |files: &[&str]| {
+    const COMPARE: &str = "repos/o/r/compare/main...h1";
+    let compared = |files: Value| {
         let mut map = gh_map(&[]);
         map["repos/o/r"] = json!({"body": {"default_branch": "main"}});
-        map["repos/o/r/compare/main...ken-r"] = json!({"body": {
-            "files": files.iter().map(|f| json!({"filename": f})).collect::<Vec<_>>(),
-        }});
+        map[COMPARE] = files;
         map
     };
+    let changing = |files: &[&str]| {
+        compared(json!({"body": {
+            "files": files.iter().map(|f| json!({"filename": f})).collect::<Vec<_>>(),
+        }}))
+    };
     let before = fleet.fleet();
+    let refused = |fleet: &Fleet| {
+        let (key, fields) = refusal(&fleet.op_with(&request, &env));
+        assert_eq!(key, "join-unreachable", "{fields:?}");
+        assert_eq!(fleet.fleet(), before, "nothing written");
+        fields
+    };
+    let unread = |fleet: &Fleet, cause: &str| {
+        let fields = refused(fleet);
+        assert_eq!(
+            fields[..4],
+            pairs(&[
+                ("item", "KEN-S"),
+                ("holder", "KEN-R"),
+                ("route", "hosted"),
+                ("branch", "ken-r"),
+            ])[..]
+        );
+        assert_eq!(fields[4].0, "cause");
+        assert!(fields[4].1.starts_with(cause), "{fields:?}");
+    };
+    let held = pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")]);
 
-    disk("/w/main/.git/refs/remotes/origin/ken-r", "h0\n");
     fleet.gh_api(&changing(&["src/r.sh"]));
-    let (key, fields) = refusal(&fleet.op(&request));
-    assert_eq!(key, "join-unreachable");
-    assert_eq!(
-        fields,
-        pairs(&[
-            ("item", "KEN-S"),
-            ("holder", "KEN-R"),
-            ("route", "hosted"),
-            ("branch", "ken-r"),
-            ("cause", "head-unpushed head=h1 remote=h0"),
-        ])
-    );
-    assert_eq!(fleet.fleet(), before, "nothing written");
+    assert_eq!(refused(&fleet), held);
+    fleet.gh_api(&compared(json!({"body": {"files": [
+        {"filename": "src/s.sh", "previous_filename": "src/r.sh"},
+    ]}})));
+    assert_eq!(refused(&fleet), held, "a rename away holds the old path");
 
-    disk("/w/main/.git/refs/remotes/origin/ken-r", "h1\n");
-    let (key, fields) = refusal(&fleet.op(&request));
-    assert_eq!(key, "join-unreachable");
-    assert_eq!(
-        fields,
-        pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")])
-    );
-    assert_eq!(fleet.fleet(), before, "nothing written");
-
+    fleet.gh_api(&compared(
+        json!({"exit": 1, "stderr": "gh: HTTP 500: boom"}),
+    ));
+    unread(&fleet, "compare-unread ");
+    let mut map = changing(&[]);
+    map.as_object_mut().unwrap().remove(COMPARE);
+    fleet.gh_api(&map);
+    unread(&fleet, "head-unpushed head=h1");
     // GitHub lists at most 300 changed files for a comparison, so a list
     // that long may leave the shared path out.
     let many: Vec<String> = (0..300).map(|n| format!("docs/{n}.md")).collect();
     fleet.gh_api(&changing(
         &many.iter().map(String::as_str).collect::<Vec<_>>(),
     ));
-    let (key, fields) = refusal(&fleet.op(&request));
-    assert_eq!(key, "join-unreachable");
-    assert_eq!(
-        fields[3..],
-        pairs(&[("branch", "ken-r"), ("cause", "files-capped files=300")])[..]
-    );
-    assert_eq!(fleet.fleet(), before, "nothing written");
+    unread(&fleet, "files-capped files=300");
 
     fleet.gh_api(&changing(&["docs/other.md"]));
-    let out = fleet.op(&request);
+    unread(&fleet, "worktree-unread status=absent");
+    disk(
+        "/w/ken-r/tmp/park-status.json",
+        Some(&status(" M src/r.sh", "2026-01-29T16:00:00Z")),
+    );
+    unread(&fleet, "worktree-unread status=dirty");
+    disk(
+        "/w/ken-r/tmp/park-status.json",
+        Some(&status("", "2026-01-29T15:10:00Z")),
+    );
+    unread(&fleet, "worktree-unread status=stale");
+    disk(
+        "/w/ken-r/tmp/park-status.json",
+        Some(&status("", "2026-01-29T16:00:00Z")),
+    );
+    unread(&fleet, "wait-unproved ask=none");
+
+    std::fs::write(
+        &ask,
+        "{\"id\":\"ask-1\",\"kind\":\"ask\",\"text\":\"which base\"}\n",
+    )
+    .unwrap();
+    let out = fleet.op_with(&request, &env);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     assert_eq!(fleet.lane("KEN-S")["touched"], json!(["src/r.sh"]));
     assert_eq!(fleet.lane("KEN-R"), before["lanes"][0]);
