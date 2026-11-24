@@ -339,6 +339,10 @@ assert_settings_ranges() {
     git -C "$SETTINGS_REPO" checkout -q -f -B "$row" "$SETTINGS_BASE"
     printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
     git -C "$SETTINGS_REPO" add -- "$file"
+    if [ "$file" = kendex-local.toml ]; then
+      printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
+      git -C "$SETTINGS_REPO" add -- kendex.toml
+    fi
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
@@ -366,16 +370,16 @@ assert_settings_ranges <<'SETTINGS'
 ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
 uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
-standalone-consumer|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|standard cause=configuration-source
-local-manifest|kendex-local.toml|name = "old"|name = "new"|standard cause=configuration-source
+standalone-consumer|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
 size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
 at-ceiling|kendex.settings.toml|||micro cause=settings-only
 over-ceiling|kendex.settings.toml|||standard cause=configuration-source
 catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
 mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
-mixed-manifest|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|standard cause=configuration-source
-mixed-local-manifest|kendex-local.toml|name = "old"|name = "new"|standard cause=configuration-source
+mixed-manifest|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+mixed-local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
 claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
 gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
 standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
