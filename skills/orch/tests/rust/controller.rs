@@ -5724,7 +5724,9 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
     let pane = controller["pane"].as_str().unwrap();
     let pid = u32::try_from(controller["harness_pid"].as_u64().unwrap()).unwrap();
     assert!(live(pid), "the published successor is running");
-    assert_eq!(server.panes().len(), 2, "the base pane and one successor");
+    // The record names a pane on a server since restarted, so the session's
+    // idle shell closed at the publication.
+    assert_eq!(server.panes(), vec![pane.to_owned()], "the successor alone");
     assert_eq!(server.pane_pid(pane), pid);
 }
 
@@ -8092,11 +8094,11 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
 
 /// An overseer's start through orch hands its session what a lane's launch
 /// does. On a fleet server whose environment carries an opener's own
-/// declaration, model-line hold and Codex compaction reading, a Copilot CLI
-/// controller declares the model its pending pins, a Codex controller
-/// declares nothing and sees its own line's compaction reading, and the
-/// opener's hold reaches neither. Both stubs draw no composer, so each start
-/// is abandoned once the stub has written what it was opened with.
+/// declaration and Codex compaction reading, a Copilot CLI controller
+/// declares the model its pending pins, and a Codex controller declares
+/// nothing and sees its own line's compaction reading. Both stubs draw no
+/// composer, so each start is abandoned once the stub has written what it
+/// was opened with.
 #[test]
 fn an_overseer_s_start_declares_its_pinned_model_to_the_review_as_a_lane_does() {
     for (harness, model, declared) in [
@@ -8107,7 +8109,6 @@ fn an_overseer_s_start_declares_its_pinned_model_to_the_review_as_a_lane_does() 
         let server = Server::start(dir.path(), "fleet");
         for (name, value) in [
             ("SECOND_OPINION_CURRENT_MODEL", "the opener's model"),
-            ("ORCH_MODEL_LINES_HELD", "1"),
             ("ORCH_COMPACTION_OVERRIDES", "the opener's reading"),
         ] {
             let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
@@ -8151,11 +8152,6 @@ fn an_overseer_s_start_declares_its_pinned_model_to_the_review_as_a_lane_does() 
             opened["SECOND_OPINION_CURRENT_MODEL"],
             declared.map_or(Value::Null, |m| json!(m)),
             "{harness}: the model the controller declares: {opened}"
-        );
-        assert_eq!(
-            opened["ORCH_MODEL_LINES_HELD"],
-            Value::Null,
-            "{harness}: the opener's hold: {opened}"
         );
         if harness == "codex" {
             let reading = opened["ORCH_COMPACTION_OVERRIDES"].as_str().unwrap_or("");

@@ -9,7 +9,7 @@
 # unset.
 opened() {
   local name out="" sep=""
-  for name in SECOND_OPINION_CURRENT_MODEL ORCH_MODEL_LINES_HELD ORCH_COMPACTION_OVERRIDES; do
+  for name in SECOND_OPINION_CURRENT_MODEL ORCH_COMPACTION_OVERRIDES; do
     if [ -n "${!name+x}" ]; then
       out="$out$sep\"$name\":\"$(printf '%s' "${!name}" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
     else
