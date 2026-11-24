@@ -1,7 +1,7 @@
-//! The ended lanes: every lane record whose harness has ended while its
-//! item is open, named on each heartbeat as one `lane-ended` line with
-//! what the lane waits for, so no such lane holds its sandbox, files and
-//! account room unnamed until its pull request closes.
+//! The ended lanes: every lane record whose harness ended while no tracker
+//! read says its item ended, named on each heartbeat as one `lane-ended`
+//! line with what the lane waits for, so no such lane holds its sandbox,
+//! files and account room unnamed until its pull request closes.
 //!
 //! A harness has ended on a `stopped` or `parked` record by its status. On a
 //! `running` record it has ended where the lane duty reported the lane
@@ -309,8 +309,8 @@ impl Items<'_> {
     }
 }
 
-/// The `lane-ended` lines, one per item whose latest record's harness has
-/// ended while the item is open, in item order.
+/// The `lane-ended` lines, one per item whose latest record's harness ended
+/// while no tracker read says the item ended, in item order.
 pub fn events(
     fleet: &FleetState,
     items: &Items,

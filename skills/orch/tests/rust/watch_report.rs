@@ -1524,9 +1524,8 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             .any(|l| l.starts_with("EVENT lane-ended ")),
         "{lines:?}"
     );
-    // Before any team read, and on a fleet with no `linear_team`, the
-    // terminal reads alone answer: a stopped record read open is named, and
-    // a running record no read answers for is named unread.
+    // Before any team read, and on a fleet with no `linear_team`, no read
+    // answers for any item, so each ended lane is named unread.
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": [
         {"item": "KEN-30", "status": "stopped", "window": "@KEN-30", "session_since": SINCE},
         {"item": "KEN-31", "status": "running", "window": "@KEN-31", "session_since": SINCE},
@@ -1534,7 +1533,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
     {
         let mut latest = shared.lock().unwrap();
         latest.tracker = None;
-        latest.terminal = [("KEN-30".to_owned(), Open)].into_iter().collect();
+        latest.terminal = Default::default();
     }
     baseline.apply(watch::Change::Set {
         kind: STOP_ROW.to_owned(),
@@ -1557,7 +1556,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
     assert_eq!(
         lines[..heartbeat],
         [
-            "EVENT lane-ended KEN-30 lane=stopped waits=nothing",
+            "EVENT lane-ended KEN-30 lane=stopped waits=unknown tracker=unread",
             "EVENT lane-ended KEN-31 lane=running waits=unknown stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
         ],
         "{lines:?}"
