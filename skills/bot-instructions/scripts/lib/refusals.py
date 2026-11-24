@@ -1,29 +1,30 @@
-"""The content refusals, as one table.
+"""The content refusals: the predicates, and the table that applies them.
 
-`schemas/repo-toml.md` § The content refusals is the spec's statement of this.
-Every row here refuses text that would break the STRUCTURE of a file this
+Which input string is under which refusal is `schemas/repo-toml.md` § The
+content refusals, read as data by `rows`: that table is its one statement, so
+this module holds no row of it. What each refusal's predicate is lives here,
+once, under the name that table's column spells.
+
+Every predicate refuses text that would break the STRUCTURE of a file this
 package emits; a value this package merely dislikes is not refused.
-`toml-schema` applies the rows whose source is `[bot-instructions]`; the
+`toml-schema` applies the rows whose input is in `[bot-instructions]`; the
 render-side second check applies the `doctrine block text` row, because
 doctrine text does not come through that file at all.
-
-**Two of the table's rows are enforced elsewhere, and this is not their copy.**
-The glob row is `globs.check`; the `[bot-instructions.cadence] qodo_commands` row is
-`config._cadence` reading `constants.QODO_VERBS`. The catalog's
-tests/toml-refusals.test.sh
-(https://github.com/vanillagreencom/kendex/blob/main/skills/bot-instructions/tests/toml-refusals.test.sh)
-holds the table against these three, so a row added to either side without the
-other reds.
 
 Refusals, not escapes: every class here is refused at input. The render
 escapes only what a format requires of text already known to be legal.
 """
 
+import functools
 import re
 
 from .constants import MARKER_TOKEN
 from .errors import InputError
-from . import markdown
+from . import markdown, repo_toml
+
+# The row the doctrine parse applies. Every other row names a `[bot-instructions]`
+# input, and `config` applies it by that name.
+DOCTRINE_TEXT = "doctrine block text"
 
 # C0 less tab and newline, DEL, and the three characters ABOVE the C0 range
 # that a reader still breaks a line on: NEL, LINE SEPARATOR and PARAGRAPH
@@ -107,26 +108,6 @@ def _single_line(value):
     return None
 
 
-# One row per input string, one predicate list per row, mirroring the columns
-# of `repo-toml.md` § The content refusals. The second element names which
-# side reads the value, and it is why the doctrine row is not a `toml-schema`
-# clause: that value is in the spec copy, not in `[bot-instructions]`.
-_STRUCTURAL = ["single-line", "marker", "toml-delimiter", "control"]
-
-ROWS = {
-    "[bot-instructions.repo] name": (_STRUCTURAL, "toml-schema"),
-    "[bot-instructions.repo] tracker": (_STRUCTURAL, "toml-schema"),
-    "[bot-instructions.repo] summary": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
-    "[[bot-instructions.surface]] instructions": (["heading", "marker", "control"], "toml-schema"),
-    "[bot-instructions.doctrine.*] values": (["heading", "marker", "toml-delimiter", "control"], "toml-schema"),
-    "doctrine block text": (["heading", "marker", "toml-delimiter", "control"], "render-side"),
-    "[[bot-instructions.exclusions.path]] reason": (
-        ["marker", "comment-close", "control", "single-line"],
-        "toml-schema",
-    ),
-    "[bot-instructions.tone] coderabbit": (["control"], "toml-schema"),
-}
-
 _PREDICATES = {
     "heading": _heading,
     "marker": _marker,
@@ -137,13 +118,47 @@ _PREDICATES = {
 }
 
 
+@functools.cache
+def rows():
+    """Input string -> the predicates its row marks, in the table's column order.
+
+    The label is the row's first cell with its code spans unwrapped, which is
+    the name `config` gives the input. A column the predicates do not name,
+    or a cell that is neither `yes` nor a dash, is refused rather than read as
+    no refusal.
+    """
+    header, body = repo_toml.table("Input string")
+    columns = header[1:]
+    for name in columns:
+        if name not in _PREDICATES:
+            raise repo_toml.refused(
+                f"the content-refusal column {name!r} names no predicate; the predicates are "
+                f"{', '.join(_PREDICATES)}"
+            )
+    out = {}
+    for cells in body:
+        label = cells[0].replace("`", "")
+        if label in out:
+            raise repo_toml.refused(f"the content-refusal table has two rows for {label!r}")
+        marked = []
+        for name, cell in zip(columns, cells[1:]):
+            if cell == "yes":
+                marked.append(name)
+            elif cell not in ("–", "-"):
+                raise repo_toml.refused(
+                    f"content-refusal cell {cell!r} for {label!r} under {name!r} is neither "
+                    "`yes` nor a dash"
+                )
+        out[label] = marked
+    return out
+
+
 def apply(row, value, where):
-    """Run one row's refusals over `value`. Raises InputError on the first."""
-    if row not in ROWS:
-        raise KeyError(f"no refusal row named {row!r}")
+    """Run one row's refusals over `value`, in column order. Raises
+    InputError on the first that matches."""
     if not isinstance(value, str):
         raise InputError(f"{where}: expected a string, got {type(value).__name__}")
-    for name in ROWS[row][0]:
+    for name in rows()[row]:
         why = _PREDICATES[name](value)
         if why is not None:
             raise InputError(f"{where}: {why} ({name} refusal, {row})")

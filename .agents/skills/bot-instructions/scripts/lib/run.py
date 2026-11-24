@@ -111,7 +111,6 @@ class Context:
             local_review_path = os.path.relpath(
                 os.path.join(installed_spec, os.path.basename(self.doctrine.skill_path)), root
             ).replace(os.sep, "/") + "#doctrine"
-        self.frozen_ids = spec_mod.frozen_ids()
         # An unknown `[bot-instructions.doctrine.*]` block id is a `toml-schema` clause; a
         # manifest that declares no install is an `exclusion-consistency` one.
         # Both are raised where the value is first needed, and both are the

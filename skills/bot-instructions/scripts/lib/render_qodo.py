@@ -7,6 +7,7 @@ so the generator writes the same doctrine into both, split differently. The
 routing table's three `pr_agent` columns say which block goes where.
 """
 
+from .constants import RENDER_OUT_OF_SCOPE
 from .errors import RenderError
 
 NOISE_KEYS = (
@@ -43,7 +44,7 @@ def toml_multiline(value, key):
 def _guidance(model, column):
     parts = []
     for bid, text in model.blocks_for(column):
-        if bid == "render-out-of-scope" and model.exclusions:
+        if bid == RENDER_OUT_OF_SCOPE and model.exclusions:
             text = text + "\n\nThose paths here: " + ", ".join(model.exclusion_globs) + "."
         parts.append(text)
     parts.append(model.summary.strip("\n"))

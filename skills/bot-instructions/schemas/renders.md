@@ -130,12 +130,14 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 ## Doctrine routing
 
-One table, one row per doctrine block, one column per destination that carries doctrine.
+One table, one row per routed doctrine block, one column per destination that carries doctrine.
 
 - A number is that block's position in that destination.
 - A dash is a deliberate omission with its reason below.
 - Every per-surface section below cites this table rather than restating its own list.
 - The generator reads it as its single routing input.
+- The doctrine source's `###` headings are the one statement of the block ids, and a row names one of them. A row naming no block is refused.
+- A block with no row reaches `code-review.md` and `macroscope doctrine.md`, after the routed blocks, in doctrine order, and no other destination. Those two carry every block; a row is how a block reaches any other destination.
 
 | Block | code-review.md | copilot-instructions.md | .coderabbit.yaml | pr_agent issues | pr_agent compliance | pr_agent extra | REVIEW.md | macroscope doctrine.md |
 |-------|----------------|-------------------------|------------------|-----------------|---------------------|----------------|-----------|------------------------|
@@ -191,9 +193,9 @@ What each surface gets:
 - `trust-model` is about a merge gate's evidence rather than about writing a finding.
 - Both reach Qodo through `.pr_agent.toml`.
 
-**`code-review.md` carries all eight**, and so does `macroscope doctrine.md`. The first is where Codex, Copilot and CodeRabbit are all sent, and the second is Macroscope's only instruction surface, so a block omitted from either reaches those bots nowhere.
+**`code-review.md` carries every block**, and so does `macroscope doctrine.md`. The first is where Codex, Copilot and CodeRabbit are all sent, and the second is Macroscope's only instruction surface, so a block omitted from either reaches those bots nowhere.
 
-**`best_practices.md` carries no doctrine.** It gives `[[bot-instructions.surface]]` text a route to Qodo, and `.pr_agent.toml` already carries every block.
+**`best_practices.md` carries no doctrine.** It gives `[[bot-instructions.surface]]` text a route to Qodo, and `.pr_agent.toml` already carries every block the table routes to Qodo.
 
 ## `AGENTS.md` § Code Review Rules
 
@@ -476,7 +478,7 @@ Read by Qodo from the root of the default branch.
 
 Surface text has no other route to Qodo.
 
-No doctrine. `.pr_agent.toml` carries every block already, so this file has no column in the routing table.
+No doctrine. `.pr_agent.toml` carries every block the table routes to Qodo, so this file has no column in the routing table.
 
 **No surfaces.** The file is not written. An existing marked one becomes an orphan, which the next render removes.
 

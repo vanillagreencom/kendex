@@ -293,13 +293,14 @@ fixture_rows=0
 while IFS='|' read -r label edit expected; do
   fixture_rows=$((fixture_rows + 1))
   fixture="$SANDBOX/catalog-$fixture_rows"
-  mkdir -p "$fixture/change-scope/references" "$fixture/orch" "$fixture/bot-instructions"
+  mkdir -p "$fixture/change-scope/references" "$fixture/orch" "$fixture/bot-instructions/schemas"
   cp -R "$CATALOG/change-scope/scripts" "$fixture/change-scope/scripts"
   cp "$REAL_CONF" "$fixture/change-scope/references/narrow-change.conf"
   # orch's libraries stand beside the fixture so a spelled source of one
   # resolves to a catalog file and is named undeclared, never unresolved.
   cp -R "$CATALOG/orch/scripts" "$fixture/orch/scripts"
   cp -R "$CATALOG/bot-instructions/scripts" "$fixture/bot-instructions/scripts"
+  cp "$CATALOG/bot-instructions/schemas/repo-toml.md" "$fixture/bot-instructions/schemas/repo-toml.md"
   conf="$fixture/change-scope/references/narrow-change.conf"
   measured="$fixture/change-scope/scripts/change-scope"
   case "$edit" in

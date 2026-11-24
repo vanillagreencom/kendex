@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # `toml-schema`'s content refusals. Each row here is one red control over a
-# cell of `repo-toml.md` § The content refusals, whose predicates are encoded
-# once in `scripts/lib/refusals.py`. It is NOT a control per cell of that
-# table: a row carries several predicates and only the combinations below are
-# exercised, so `[bot-instructions.repo] name` is here for its marker refusal
-# and not its others, and `[bot-instructions.tone] coderabbit` has no row at
-# all. The cross-file probe checks that the table and the structures encoding
-# it agree, which is the table's SHAPE rather than each input, and that the
-# table records `[bot-instructions.repo] code_review_path` as the one input
-# string outside it. The schema's shape clauses are `toml-schema.test.sh`.
+# cell of `repo-toml.md` § The content refusals, which the generator reads as
+# data and whose predicates are encoded once in `scripts/lib/refusals.py`. It
+# is NOT a control per cell of that table: a row carries several predicates
+# and only the combinations below are exercised, so
+# `[bot-instructions.repo] name` is here for its marker refusal and not its
+# others, and `[bot-instructions.tone] coderabbit` has no row at all. A row
+# added to the table alone is proved to reach validation below. The schema's
+# shape clauses are `toml-schema.test.sh`.
 #
 # Every control starts from a TOML with every `[bot-instructions.bots]` flag
 # false, a legitimate state that renders nothing, and pins the
@@ -131,111 +130,26 @@ END
 ROWS
 bi_toml_table 'the content refusals' "$repo" "$rows"
 
-# The stopgap `validators.md` § Cross-file sets names: the content-refusal
-# table and the three structures that encode it by hand (refusals.ROWS,
-# globs.check, config._cadence) are hand-kept copies, held together here so a
-# row or a marked cell present on one side and absent from the other reds.
-# config._code_review_path encodes code_review_path, the one key the table
-# excludes.
-if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
-import os, re, sys
-PKG = sys.argv[1]
-sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import refusals
-from lib.constants import QODO_VERBS
-
-table = open(os.path.join(PKG, "schemas/repo-toml.md")).read()
-rows = [ln for ln in table.split("\n")
-        if ln.startswith("| ") and ln.count("|") == 9
-        and not ln.startswith("| Input string")
-        and not ln.startswith("|---")]
-if len(rows) != 10:
-    sys.exit(f"read {len(rows)} rows out of the table, expected the documented ten")
-
-# The five columns whose cells are a yes/dash, in the table's order, against
-# the predicate names ROWS spells.
-COLUMNS = ["heading", "marker", "comment-close", "toml-delimiter", "control"]
-# The table's row labels, mapped to the ROWS key or to the structure that owns
-# them. Two rows are not content classes and are enforced elsewhere.
-ELSEWHERE = {
-    "`[[bot-instructions.surface]] globs`, `exclude_globs`, `[[bot-instructions.exclusions.path]] glob`": "globs.check",
-    "`[bot-instructions.cadence] qodo_commands` entries": "config._cadence",
-}
-LABELS = {
-    "`[bot-instructions.repo] name`": "[bot-instructions.repo] name",
-    "`[bot-instructions.repo] tracker`": "[bot-instructions.repo] tracker",
-    "`[bot-instructions.repo] summary`": "[bot-instructions.repo] summary",
-    "`[[bot-instructions.surface]] instructions`": "[[bot-instructions.surface]] instructions",
-    "`[bot-instructions.doctrine.append]` / `[bot-instructions.doctrine.replace]` values": "[bot-instructions.doctrine.*] values",
-    "doctrine block text": "doctrine block text",
-    "`[[bot-instructions.exclusions.path]] reason`": "[[bot-instructions.exclusions.path]] reason",
-    "`[bot-instructions.tone] coderabbit`": "[bot-instructions.tone] coderabbit",
-}
-seen = set()
-for line in rows:
-    cells = [c.strip() for c in line.strip().strip("|").split("|")]
-    label = cells[0]
-    if label in ELSEWHERE:
-        seen.add(label)
-        continue
-    if label not in LABELS:
-        sys.exit(f"table row {label!r} is neither a ROWS row nor one of the two "
-                 "the table says are enforced elsewhere")
-    key = LABELS[label]
-    if key not in refusals.ROWS:
-        sys.exit(f"table row {label!r} has no {key!r} in refusals.ROWS")
-    seen.add(label)
-    want = {COLUMNS[i] for i, cell in enumerate(cells[1:6]) if cell == "yes"}
-    have = {p for p in refusals.ROWS[key][0] if p in COLUMNS}
-    if want != have:
-        sys.exit(f"{key!r}: the table marks {sorted(want)} and ROWS runs {sorted(have)}")
-    enforced = cells[7]
-    owner = refusals.ROWS[key][1]
-    if owner not in enforced:
-        sys.exit(f"{key!r}: the table's Enforced column says {enforced!r}, ROWS says {owner!r}")
-if len(seen) != 10:
-    sys.exit(f"matched {len(seen)} of the table's rows")
-if set(LABELS.values()) != set(refusals.ROWS):
-    sys.exit("refusals.ROWS holds a row the table does not")
-# The two the table says live elsewhere, held against the structures that own
-# them rather than taken on trust.
-from lib import globs
-from lib.errors import InputError
-try:
-    globs.check("a,b", "control")
-except InputError:
-    pass
-else:
-    sys.exit("globs.check does not enforce the glob row")
-# The verb row has its own table one section up, a hand-kept copy of
-# constants.QODO_VERBS, which `qodo-parity` reads. Compared cell by cell: a
-# count passes for ANY role assignment.
-verbs = {}
-for ln in table.split("\n"):
-    cells = [c.strip().strip("`") for c in ln.strip().strip("|").split("|")]
-    if len(cells) == 3 and cells[0].startswith("/"):
-        verbs[cells[0]] = cells[2]
-if verbs != QODO_VERBS:
-    sys.exit(f"[bot-instructions.cadence] verb table says {verbs}; constants.QODO_VERBS says {QODO_VERBS}")
-
-# The one input string the table does NOT carry. Counting clauses off the
-# table alone undercounts by its five, so the table has to say so and the
-# fourth structure has to be the one that encodes it.
-from lib import config
-if not hasattr(config, "_code_review_path"):
-    sys.exit("config._code_review_path is gone; the table names it as the fourth structure")
-for row in refusals.ROWS:
-    if "code_review_path" in row:
-        sys.exit(f"refusals.ROWS carries {row!r}; the table says that key is outside it")
-if "code_review_path` is a path shape rather than a content class" not in table:
-    sys.exit("repo-toml.md does not record code_review_path as outside the table")
-if "config._code_review_path" not in table:
-    sys.exit("repo-toml.md does not name the fourth structure")
-PROBE
-  ok 'the content-refusal table agrees with the structures that encode it'
-else
-  bad 'the content-refusal table agrees with the structures that encode it'
-fi
+# § Cross-file sets: the content-refusal table is the one statement of which
+# input is under which refusal, so a row added there alone reaches
+# validation. `code_review_path` has no row, and a value carrying the marker
+# text fails its path class; under a copy whose table gives it a marker row,
+# the same value is that row's refusal, which no hand-kept list could supply.
+repo="$(bi_minimal_repo refusal-row-added)"
+{ printf '%s' "$BI_MIN_HEAD"
+  printf 'code_review_path = ".github/instructions/generated by bot-instructions.md"\n'
+} > "$repo/kendex.toml"
+expect_clause toml-schema 'must be non-empty and hold only [A-Za-z0-9._/-]' \
+  'a code_review_path carrying the marker text, with no row of its own, fails its path class' \
+  check --repo "$repo"
+added="$(bi_mutant refusal-row-added schemas/repo-toml.md \
+  '| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – |
+' '| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – |
+| `[bot-instructions.repo] code_review_path` | – | yes | – | – | – | – |
+')" || exit 1
+BI="$added" expect_clause toml-schema '(marker refusal, [bot-instructions.repo] code_review_path)' \
+  'a row added to the content-refusal table alone refuses that input' \
+  check --repo "$repo"
 
 # The class holds three characters ABOVE C0, because a YAML reader breaks a
 # line on all three: U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH

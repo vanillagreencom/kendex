@@ -365,6 +365,7 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # measures-with: skills/bot-instructions/scripts/lib/render_coderabbit.py
 # measures-with: skills/bot-instructions/scripts/lib/render_markdown.py
 # measures-with: skills/bot-instructions/scripts/lib/render_qodo.py
+# measures-with: skills/bot-instructions/scripts/lib/repo_toml.py
 # measures-with: skills/bot-instructions/scripts/lib/run.py
 # measures-with: skills/bot-instructions/scripts/lib/spec.py
 # measures-with: skills/bot-instructions/scripts/lib/tree.py
@@ -373,6 +374,7 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # measures-with: skills/bot-instructions/scripts/lib/verbs.py
 # measures-with: skills/bot-instructions/scripts/lib/writer.py
 # measures-with: skills/bot-instructions/scripts/lib/yamlemit.py
+# measures-with: skills/bot-instructions/schemas/repo-toml.md
 # The one version of `kendex verify --json` this script reads. The document
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.

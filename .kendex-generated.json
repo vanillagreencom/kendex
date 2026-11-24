@@ -90,6 +90,7 @@
   ".agents/skills/bot-instructions/scripts/lib/render_coderabbit.py",
   ".agents/skills/bot-instructions/scripts/lib/render_markdown.py",
   ".agents/skills/bot-instructions/scripts/lib/render_qodo.py",
+  ".agents/skills/bot-instructions/scripts/lib/repo_toml.py",
   ".agents/skills/bot-instructions/scripts/lib/run.py",
   ".agents/skills/bot-instructions/scripts/lib/spec.py",
   ".agents/skills/bot-instructions/scripts/lib/tree.py",

@@ -1,7 +1,8 @@
 """Literals more than one module needs, written once.
 
-Where a spec table also states one, as `repo-toml.md` does `QODO_VERBS`, the
-two are hand-kept copies, a stopgap `validators.md` § Cross-file sets lists.
+A set the spec states, the content refusals, the Qodo verbs and the doctrine
+block ids, is not restated here: the code reads it from the spec, per
+`validators.md` § Cross-file sets.
 """
 
 PACKAGE = "bot-instructions"
@@ -94,23 +95,14 @@ DEFAULT_QODO_LINES = 800
 # already governs.
 RESERVED_SURFACE_NAMES = frozenset({"doctrine", "correctness", "ignore", "approvability"})
 
-# Block ids are frozen: `renders.md` names blocks by id, and a rename is a
-# breaking change to every render — a consuming repo's `[bot-instructions.doctrine.append]`
-# keyed on the old id would silently reach nothing. `doctrine-routing`
-# compares against THIS set rather than against the current heading/row pair,
-# because renaming a heading and its row together leaves the two sides
-# agreeing and the rule unenforced. Changing this tuple is the breaking
-# change, made deliberately, in code a reviewer reads.
-FROZEN_BLOCK_IDS = (
-    "scope",
-    "rounds",
-    "severity",
-    "no-preferences",
-    "declined",
-    "render-out-of-scope",
-    "trust-model",
-    "reply-contract",
-)
+# The two blocks the render addresses by id: the exclusion paths ride
+# `render-out-of-scope`, and `[bot-instructions.repo] tracker` fills
+# `reply-contract`'s `<issue>` placeholder. Every other id is the doctrine
+# source's alone. `spec.parse_doctrine` refuses a source that lacks either, so
+# renaming one is a refusal rather than a render that drops the paths or the
+# tracker without a word.
+RENDER_OUT_OF_SCOPE = "render-out-of-scope"
+REPLY_CONTRACT = "reply-contract"
 
 # The routing table's columns, in the order the table writes them.
 ROUTING_COLUMNS = (
@@ -126,21 +118,12 @@ ROUTING_COLUMNS = (
 
 # The pointed file is where Codex, Copilot and CodeRabbit are all sent, and
 # Macroscope reads no second instruction surface, so a block left out of one
-# of these reaches those bots nowhere. `doctrine-routing` judges the table
-# against this.
+# of these reaches those bots nowhere. A block the routing table has no row
+# for reaches these two and nothing else, and `doctrine-routing` reds a row
+# that leaves either out.
 ALL_BLOCK_COLUMNS = ("code-review.md", "macroscope doctrine.md")
 
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the
 # block as prose there.
 EXCLUSION_PROSE_COLUMNS = ("code-review.md", "pr_agent issues", "pr_agent extra")
-
-# `repo-toml.md` § `[bot-instructions.cadence]`: the verb set and the half `qodo-parity`
-# requires guidance for. The role column is what that validator reads.
-QODO_VERBS = {
-    "/agentic_review": "review",
-    "/review": "review",
-    "/agentic_describe": "not review",
-    "/describe": "not review",
-    "/improve": "not review",
-}

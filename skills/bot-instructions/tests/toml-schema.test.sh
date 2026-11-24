@@ -292,6 +292,27 @@ EOF
 
 bi_toml_table 'the schema clauses' "$repo" "$rows"
 
+# The verb table in `repo-toml.md` § `[bot-instructions.cadence]` is the one
+# statement of the Qodo verb set, so a verb added there alone reaches
+# validation and the render. The unedited copy refuses `/ask` in the table
+# above; this copy's table carries it, and the render writes it into
+# `pr_commands`.
+verb_repo="$(bi_minimal_repo verb-added)"
+{ printf '%s' "$BI_MIN_HEAD"
+  printf '[bot-instructions.bots]\nqodo = true\n[bot-instructions.cadence]\nqodo_commands = ["/ask"]\n'
+} > "$verb_repo/kendex.toml"
+verb_copy="$(bi_mutant verb-added schemas/repo-toml.md \
+  '| `/improve` | Merge | not review |
+' '| `/improve` | Merge | not review |
+| `/ask` | Merge | not review |
+')" || exit 1
+BI="$verb_copy" expect_green 'a verb added to the verb table alone renders' render --repo "$verb_repo"
+if grep -qxF 'pr_commands = ["/ask"]' "$verb_repo/.pr_agent.toml" 2>/dev/null; then
+  ok 'and the render writes it into pr_commands'
+else
+  bad 'and the render writes it into pr_commands' "$(cat "$verb_repo/.pr_agent.toml" 2>&1)"
+fi
+
 # Every flag false is a legitimate state and passes: the clauses above are
 # narrower than "renders nothing readable".
 printf '%s' "$BI_MIN_HEAD" > "$repo/kendex.toml"
