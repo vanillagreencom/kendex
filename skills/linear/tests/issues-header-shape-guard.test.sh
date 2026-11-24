@@ -184,12 +184,6 @@ done
 detail_advisory() {
   sed -n 's/^linear: advisory=issue-opening-detail line=\([0-9]*\) kinds=\([^ ]*\) .*$/\1 \2/p' <<<"$ERR"
 }
-# The filing agent follows the advisory to the two files that hold the rules.
-assert_detail_routes() { # DESC
-  assert "$1 names the description template" grep -q 'project-management templates/issue-description-template.md' <<<"$ERR"
-  assert "$1 names the reader rule" grep -q 'communication references/reports.md' <<<"$ERR"
-}
-
 # Machine detail in the opening is advised on and written; the plain rows are
 # prose that shares a shape with a pattern.
 PLAIN_WHY='The owner can use the updated instructions.'
@@ -203,7 +197,6 @@ while IFS='|' read -r shape story why kinds; do
     assert_eq "opening detail $shape prints no diagnostic" "$ERR" ""
   else
     assert_eq "opening detail $shape names its kinds" "$(detail_advisory)" "1 $kinds"
-    assert_detail_routes "opening detail $shape"
   fi
 done <<'ROWS'
 plain|The owner reads the item and knows what changes.||

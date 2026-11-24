@@ -416,8 +416,8 @@ MAIN_FIXED="cargo-check-windows catalog changes"
 MAIN_BUILT="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
 MAIN_JOBS="$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
 PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] cache_compile=false main_suites=[]'
-PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"] cache_compile=true main_suites=[{"suite":"orch-shard-partition.test"}]'
-PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[] cache_compile=false main_suites=[{"suite":"pi-agents-tmux"}]'
+PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"] cache_compile=true main_suites=[{"suite":"adopt-refresh.test"}]'
+PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[] cache_compile=false main_suites=[]'
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
 # The night's selections: every leg proved at the head, and one macOS shard
 # and the macOS cargo tests left unproved.
@@ -438,7 +438,7 @@ merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
 push|success|$PUSH_PROVED|$MAIN_FIXED smoke
 push|success|$PUSH_REST|$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
-push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
+push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|failure|$ALL_OFF|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
 schedule|success|$NIGHT_PROVED|changes

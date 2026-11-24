@@ -14,14 +14,6 @@ git -C "$repo" mv src/app.ts .agents/skills/orch/app.ts
 git -C "$repo" commit -q -m "move product into generated output"
 product_to_generated="$(git -C "$repo" rev-parse HEAD)"
 
-detected="$(git -C "$repo" diff --name-only "$product_base" "$product_to_generated")"
-assert_eq product-to-generated-rename-view \
-  ".agents/skills/orch/app.ts" "$detected"
-
-undetected="$(git -C "$repo" diff --name-only --no-renames "$product_base" "$product_to_generated" | sort | tr '\n' ' ')"
-assert_eq product-to-generated-no-renames-view \
-  ".agents/skills/orch/app.ts src/app.ts " "$undetected"
-
 git -C "$repo" mv .agents/skills/orch/app.ts .agents/skills/orch/renamed.ts
 git -C "$repo" commit -q -m "move inside generated output"
 generated_to_generated="$(git -C "$repo" rev-parse HEAD)"

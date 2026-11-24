@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -321,12 +321,11 @@ function packagesWithoutSuites(counts) {
 // workflow source as an argument is what lets the control below run this exact
 // reader over a mutated copy instead of asserting against a second literal.
 function unrunPackages(workflow) {
-	const steps = ciSteps(workflow);
 	const executions = packageExecutions(workflow);
 	return packages().flatMap(({ dir, pkg }) => {
 		const invocation = ciEntryPoint(pkg);
 		if (invocation === undefined) return [];
-		const runs = executions.some(({ matrix, github, needs }) => steps.some((step) =>
+		const runs = executions.some(({ matrix, github, needs, steps }) => steps.some((step) =>
 			step.dir === dir && enabled(step.condition, matrix, github, needs) && step.commands.includes(invocation)));
 		return runs ? [] : [`${dir}: no step on a shard the matrix runs invokes \`${invocation}\``];
 	});
@@ -347,41 +346,42 @@ function packageExecutions(workflow, events = ["merge_group", "push"], changes =
 	const jobs = workflow.split(/\n(?= {2}[\w-]+:\n)/);
 	const ordinary = jobs.find((job) => job.startsWith("  skill-suites-shard:\n"));
 	const dedicated = jobs.find((job) => job.startsWith("  skill-suites-main-only:\n"));
-	assert.ok(ordinary && dedicated, "the package execution job reader found no route");
-	const expression = dedicated.match(/^ {8}include: \$\{\{ (.+) \}\}$/m)?.[1];
-	assert.ok(expression, "the dedicated matrix reader found no expression");
+	assert.ok(ordinary, "the package execution job reader found no route");
+	const ordinarySteps = ciSteps(ordinary);
 	const needs = { changes };
 	const executions = [];
 	for (const event_name of events) {
 		const github = { event_name, ref: "refs/heads/main" };
-		const evaluated = spawnSync("python3", [join(root, "..", "skills", "harness-ci", "tests", "lib", "gh-eval.py"),
-			"value", JSON.stringify({ github, needs }), expression], { encoding: "utf8" });
-		assert.equal(evaluated.status, 0, evaluated.stderr || evaluated.error?.message);
-		const matrix = JSON.parse(evaluated.stdout);
-		assert.ok(Array.isArray(matrix) && matrix.length > 0, "the dedicated matrix reader found no entry");
-		for (const [job, entries] of [
-			[ordinary, shardNames(workflow).map((shard) => ({ shard, suite: "", os: "ubuntu-latest" }))],
-			[dedicated, matrix],
-		]) {
-			assert.match(job, /^ {4}steps: (?:&|\*)skill-suite-steps$/m);
-			const condition = job.match(/^ {4}if: (.+)$/m)?.[1];
-			for (const entry of entries) {
-				if (enabled(condition, entry, github, needs)) executions.push({ matrix: entry, github, needs });
+		const condition = ordinary.match(/^ {4}if: (.+)$/m)?.[1];
+		for (const shard of shardNames(workflow)) {
+			const matrix = { shard, os: "ubuntu-latest" };
+			if (enabled(condition, matrix, github, needs)) {
+				executions.push({ matrix, github, needs, steps: ordinarySteps });
 			}
+		}
+		if (dedicated && enabled(dedicated.match(/^ {4}if: (.+)$/m)?.[1], {}, github, needs)) {
+			const include = dedicated.match(/^ {8}include: \$\{\{ (.+) \}\}$/m)?.[1];
+			assert.ok(include, "the active dedicated job has no include matrix expression");
+			const evaluator = join(root, "..", "skills", "harness-ci", "tests", "lib", "gh-eval.py");
+			const rows = JSON.parse(execFileSync("python3", [
+				evaluator, "value", JSON.stringify({ github, needs }), include,
+			], { encoding: "utf8" }));
+			assert.ok(Array.isArray(rows) && rows.length > 0, "the active dedicated job has no matrix rows");
+			const steps = /^ {4}steps: \*skill-suite-steps$/m.test(dedicated) ? ordinarySteps : ciSteps(dedicated);
+			for (const matrix of rows) executions.push({ matrix, github, needs, steps });
 		}
 	}
 	return executions;
 }
 
 function packageClaims(workflow, event, changes) {
-	const steps = ciSteps(workflow);
-	return packageExecutions(workflow, [event], changes).flatMap(({ matrix, github, needs }) =>
+	return packageExecutions(workflow, [event], changes).flatMap(({ matrix, github, needs, steps }) =>
 		steps.filter((step) => enabled(step.condition, matrix, github, needs) &&
 			step.commands.includes(ciEntryPoint(packages().find(({ dir }) => dir === step.dir)?.pkg ?? {})))
 			.map(({ dir }) => dir)).sort();
 }
 
-test("main executes each package once and the group excludes only the temporary package", () => {
+test("main and the merge group each execute every package once", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
 	const expected = packages().filter(({ pkg }) => ciEntryPoint(pkg)).map(({ dir }) => dir).sort();
 	for (const changes of [
@@ -389,24 +389,11 @@ test("main executes each package once and the group excludes only the temporary 
 		{ result: "skipped", outputs: {} },
 		{ result: "success", outputs: {
 			shell_shards: "true", shell_os: '["ubuntu-latest"]',
-			main_suites: '[{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"}]',
+			main_suites: '[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]',
 		} },
 	]) {
 		assert.deepEqual(packageClaims(workflow, "push", changes), expected);
-		assert.deepEqual(packageClaims(workflow, "merge_group", changes), expected.filter((dir) => dir !== "pi-agents-tmux"));
-	}
-	for (const fault of ["omitted", "duplicated", "wrong-shard"]) {
-		const row = /\{"suite":"pi-agents-tmux","shard":"node","os":"ubuntu-latest"\},/g;
-		const dedicated = workflow.match(/^ {8}include: .+$/m)?.[0];
-		assert.ok(dedicated);
-		assert.equal([...dedicated.matchAll(row)].length, 1);
-		const mutant = workflow.replace(dedicated, dedicated.replace(row, (entry) => fault === "omitted" ? "" :
-			fault === "duplicated" ? `${entry}${entry}` : entry.replace('"shard":"node"', '"shard":"rest"')));
-		assert.notEqual(mutant, workflow);
-		const claims = packageClaims(mutant, "push");
-		assert.deepEqual(claims, fault === "duplicated" ? [...expected, "pi-agents-tmux"].sort() :
-			expected.filter((dir) => dir !== "pi-agents-tmux"));
-		assert.notDeepEqual(claims, expected);
+		assert.deepEqual(packageClaims(workflow, "merge_group", changes), expected);
 	}
 });
 

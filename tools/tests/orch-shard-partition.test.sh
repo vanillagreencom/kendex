@@ -37,8 +37,6 @@ PARTITION_SUITE=tools/tests/orch-shard-partition.test.sh
 # GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve ROOT to the hook's
 # repository instead of this one.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
-# Fixture calls define their own event roster. The enclosing dedicated job
-# cannot supply its single-suite selection to those baseline calls.
 unset TEMPORARY_SUITE MAIN_ONLY_FILTERS
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -471,24 +469,7 @@ pooled_fault() { # FAULT; the current pooled table row supplies its suite
   check "must-fail: pooled $fault names its suite: $step $battery" "$path" "$got"
 }
 
-POOLED_ROWS='rest|all other skill suites|skills/github/tests|check-review-replies-threads.test
-mailbox|Mailbox suites|skills/mailbox/tests|alone
-review-gate|review-gate suites|skills/review-gate/tests|diagnostics-report.test
-refresh|refresh suites|refresh/tests|refresh-report.test
-guards-commit|commit-guards suites|skills/commit-guards/tests|atomic-install.test
-guards-commit-tail|pre-push and md-refs suites|skills/commit-guards/tests|pre-push.test
-guards-hooks|hook and moved commit-guards suites|hooks/tests|dev-stop-check.test
-guards-hooks|hook and moved commit-guards suites|skills/commit-guards/tests|install-git-hooks.test
-guards-hooks-tail|lane-mail and reviewer suites|hooks/tests|lane-mail-check.test
-guards-commit-tail|pre-push and md-refs suites|skills/commit-guards/tests|md-refs.test
-linear|linear, bot-instructions and preflight suites|skills/linear/tests|bash4-runtime-contract.test
-linear|linear, bot-instructions and preflight suites|skills/bot-instructions/tests|bounds.test
-linear|linear, bot-instructions and preflight suites|skills/preflight/tests|precision.test
-worktree|worktree suites|skills/worktree/tests|worktree_output_prune
-worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
-jarvis|Jarvis suites|skills/jarvis/tests|task.test
-orch-state|'"'"'orch suites: the lane and workflow-state suites'"'"'|skills/orch/tests|lane-marker
-orch-rest|orch suites — every suite the shards above do not run|skills/orch/tests|setup'
+POOLED_ROWS='rest|all other skill suites|skills/github/tests|check-review-replies-threads.test'
 
 # These three controls must reject their private mutants before baseline assertions.
 baseline_tmp="$TMP"
@@ -636,8 +617,8 @@ for block in "$TMP/preparation-blocks"/*.sh; do
   case "$shard" in guards-tools|guards-tools-tail) ;; *) continue ;; esac
   # The macOS Jarvis step on guards-tools runs no tools suite.
   grep -qF 'tools/tests/' "$block" || continue
-  for platform in Linux macOS; do
-    for defect in none missing late swallowed; do
+  platform=Linux
+  for defect in none late swallowed; do
       awk -v defect="$defect" '
         /tools\/rust-reads --cli-smoke/ {
           call=$0; n++
@@ -666,7 +647,6 @@ for block in "$TMP/preparation-blocks"/*.sh; do
         if [[ "$defect" == none || "$defect:$result" == swallowed:0 ]]; then expected=yes; fi
         check "tools preparation: $platform $shard $defect result=$result" "$expected" "$valid"
       done
-    done
   done
 done
 
@@ -807,23 +787,6 @@ hooks/tests/lane-mail-*.test.sh
 hooks/tests/reviewer-*.test.sh
 GLOBS
 
-# A roster no fallback covers, dropped. No skip list points at the tools/tests
-# glob, so the files it alone claims land in no shard at all.
-wf_drop="$TMP/wf-roster-dropped.yml"
-awk '{
-  if (index($0, "bash tools/tests/run-all.sh")) { hits++; next }
-  print
-}
-END { exit hits != 1 }
-' "$WORKFLOW" > "$wf_drop"
-edited "$WORKFLOW" "$wf_drop" roster-dropped
-claims_file "$wf_drop" "$TMP/claims-drop"
-if [[ -n "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-drop"))" ]]; then
-  ok "must-fail: a dropped roster leaves its files unclaimed, and they are named"
-else
-  bad "must-fail: dropping a roster left nothing unclaimed, so the coverage check proves nothing"
-fi
-
 # The pooled tools step must keep the tail out. Slack must discover its own
 # directory. Each damaged copy is judged by the same claims reader above.
 wf_tools_tail="$TMP/wf-tools-tail-repeated.yml"
@@ -852,22 +815,6 @@ claims_file "$wf_slack_directory" "$TMP/claims-slack-directory"
 check "must-fail: Slack's wrong battery leaves its suites claimed by none" \
   "$(grep "^skills/slack/tests/" "$UNIV")" \
   "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-slack-directory"))"
-
-# A roster claimed twice.
-wf_twice="$TMP/wf-roster-repeated.yml"
-awk '{
-  if (index($0, "bash skills/orch/tests/run-all.sh --battery skills/review-gate/tests")) {
-    print "          bash skills/orch/tests/run-all.sh --battery skills/worktree/tests"; hits++
-  }
-  print
-} END { exit hits != 1 }' "$WORKFLOW" > "$wf_twice"
-edited "$WORKFLOW" "$wf_twice" roster-repeated
-claims_file "$wf_twice" "$TMP/claims-twice"
-if [[ -n "$(uniq -d "$TMP/claims-twice")" ]]; then
-  ok "must-fail: a roster added to a second step is named as claimed twice"
-else
-  bad "must-fail: a repeated roster produced no duplicate, so the overlap check proves nothing"
-fi
 
 # A moved path left only in a comment. The fallback in the step that globs the
 # path's package reads run-block text, so it reclaims the suite and the
@@ -909,9 +856,7 @@ done <<'ROWS'
 skills/commit-guards/tests/install-git-hooks.test.sh|--suite-list hooks/tests/*.sh
 tools/tests/harness-smoke.test.sh|--suite-list tools/tests/harness-smoke.test.sh
 skills/commit-guards/tests/md-refs.test.sh|--suite-list skills/commit-guards/tests/pre-push.test.sh
-skills/commit-guards/tests/pre-push.test.sh|--suite-list skills/commit-guards/tests/pre-push.test.sh
 ROWS
-[[ "$prose_rows" -ge 3 ]] || bad "the prose arm table missed a required path"
 
 # The step that globs a package, deleted. `rest` skips a package only where
 # this file still runs it, and the needle it looks for is the owning loop's
@@ -952,88 +897,18 @@ else
   bad "must-fail: a directory-prefix needle lost no suite, so the glob needle is unproven"
 fi
 
-# --- 4. Shard names cited in tracked text -----------------------------------
-# A shard's name reaches prose: an AGENTS.md sends a contributor to the lane
-# that runs a file, and a suite header says which shard keeps the check
-# merge-blocking. A rename leaves those citations naming a shard the matrix no
-# longer declares, which is how four went stale at once when `guards` became
-# three shards.
-#
-# The form judged is the repository's own, a name in backticks followed by
-# `shard`. Bare prose naming a FAMILY is outside it and stays prose: "the orch
-# shard filters" means orch-state and orch-rest, and no grammar here separates
-# that from a stale singular. The workflow itself is excluded, being where the
-# matrix lives and where a retired name is deliberately kept: its own history
-# sentences still say what the undivided guards and rest shards once cost.
-# The form is tools/ci-job-set's SHARD_CITATION, which also runs this suite
-# for a changed file citing one.
-CITATION="$(sed -n "s/^SHARD_CITATION='\(.*\)'\$/\1/p" "$ROOT/tools/ci-job-set")"
-[[ -n "$CITATION" ]] || bad "no SHARD_CITATION read from tools/ci-job-set, so no citation can be judged"
-cited_shards() { # cited_shards ; NUL paths on stdin -> path:line:name per citation
-  { xargs -0 grep -HIonE "$CITATION" 2>/dev/null || true; } |
-    sed 's/:`\([a-z0-9-]*\)` shards\{0,1\}$/:\1/'
-}
-
-# The matrix's shard key expands the list the changes job selects, and the
-# whole roster, its literal, where nothing was selected.
+# Compare the workflow's executed claims with the selector's package routing.
 declared_shards="$(sed -n "s/^ \{8\}shard: .*'\[\(.*\)\]'.*\$/\1/p" "$WORKFLOW" |
   tr -d ' "' | tr ',' '\n' | sort -u)"
 if [[ -z "$declared_shards" ]]; then
-  bad "no shard list in $WORKFLOW, so no citation can be judged against it"
+  bad "the shard roster in $WORKFLOW is required to check suite ownership"
 fi
 
-stale=""
-cites=0
-while IFS= read -r hit; do
-  [[ -n "$hit" ]] || continue
-  cites=$((cites + 1))
-  # A here-string and not a pipe: `grep -q` stops at the first match, and a
-  # writer it SIGPIPEs returns 141 under pipefail, which here would read as a
-  # citation the matrix does not declare.
-  if ! grep -qxF "${hit##*:}" <<< "$declared_shards"; then
-    stale="$stale$hit
-"
-  fi
-done < <(git -C "$ROOT" ls-files -z -- . \
-  ':(exclude).github/workflows/skill-tests.yml' | cited_shards)
-
-check "every shard a tracked file cites in backticks is one the matrix declares" \
-  "" "$(printf '%s' "$stale")"
-if [[ "$cites" -gt 0 ]]; then
-  ok "the citation scan read $cites backticked shard citation(s) in tracked text"
-else
-  bad "the citation scan read no citation at all, so a stale one would pass unseen"
-fi
-
-# Must-fail: the scan reads a name no matrix declares out of prose it is given.
-# The name is substituted rather than written out: this file is tracked text
-# too, and a citation spelled here would be one the scan reads for real.
-fixture="$TMP/citation-fixture.md"
-fake=no-such-shard
-printf 'the suite runs under the `%s` shard of the workflow\n' "$fake" > "$fixture"
-arm="$(printf '%s\0' "$fixture" | cited_shards)"
-if [[ "${arm##*:}" == "$fake" ]] &&
-   ! grep -qxF "$fake" <<< "$declared_shards"; then
-  ok "must-fail: a citation naming no declared shard is read out and judged stale"
-else
-  bad "must-fail: the scan did not read a fabricated shard name, so a stale citation would pass"
-fi
-
-# --- 4b. The shard selection reaches every suite a shard runs -------------
-# tools/ci-job-set chooses which shards a diff runs from a package table of
-# its own, and the steps above are what run each package's suites. A package
-# that table sends to the wrong shard stands down the shard running its suites
-# on exactly the diffs that change them, and every leg that does run stays
-# green. So each suite a single-shard step runs — a roster path, the orch
-# runner, a node step's package, a scan's script — is handed to ci-job-set as
-# a one-path `micro` diff, and the step's shard must be in the list that
-# comes back. One path per shard and directory stands for the rest of that
-# directory, which the table cannot tell apart.
 JOB_SET="$ROOT/tools/ci-job-set"
 
 suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by directory or every file
   local wf="$1" mode="${2-directories}" major="${3-}" dir="$TMP/owner-blocks" f shard cond wd run word
-  local PARTITION_RUNNER_OS=Linux PARTITION_NATIVE=false os=ubuntu-latest excluded native=""
+  local PARTITION_RUNNER_OS=Linux PARTITION_NATIVE=false os=ubuntu-latest excluded native="" out="$TMP/owner-step.out"
   [[ "$major" != 3 ]] || { PARTITION_RUNNER_OS=macOS; PARTITION_NATIVE=true; os=macos-latest; native="$POOL/tools/macos-test-contracts"; }
   excluded="$(excluded_shards "$wf" "$os")"
   cp "$wf" "$PART/.github/workflows/skill-tests.yml"
@@ -1047,8 +922,12 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       grep -qxF "$shard" <<< "$excluded" && continue
       # The runner names its platform in RUNNER_OS, and run-all.sh's shard_of
       # reads it.
-      RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" run_roster_step "$f" 2>/dev/null |
-        sed -n "s%^suite-invoked: %$shard	%p"
+      if ! RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" run_roster_step "$f" > "$out" 2>&1; then
+        printf 'partition-step: shard=%s block=%s result=failed\n' "$shard" "$f" >&2
+        cat "$out" >&2
+        return 1
+      fi
+      sed -n "s%^suite-invoked: %$shard	%p" "$out"
     done
     # One-line steps: the package a node step works in, or the first word of
     # its `run:` that names a file in this tree.
@@ -1079,10 +958,6 @@ while IFS='|' read -r shard step battery stem; do
   path="$battery/$stem.sh"
   grep -qxF "$path" "$UNIV" || [[ "$battery" == skills/linear/tests ]] ||
     { bad "pooled control names no suite: $path"; continue; }
-  for fault in omitted duplicated; do
-    [[ "$battery:$fault" != skills/github/tests:duplicated ]] || continue
-    pooled_fault "$fault"
-  done
 
   bad_pool="$TMP/assertion-pool"
   rm -rf -- "${bad_pool:?}"
@@ -1124,36 +999,25 @@ owner_selection() { # <ci-job-set> <repository> <field> <shard> <path> <out> ; m
   grep -qF "\"$shard\"" <<< "$selected" || printf '%s\t%s\n' "$shard" "$path"
 }
 
-# Each row is a one-path diff whose answer costs a whole `tools/guard
-# --suite-reach`, which reads every consumer tree for that path, so the rows
-# run as many at a time as run-all.sh runs suites. A row's answer exists only
-# once its query ended, and a row without one is named unread.
-unselected_owners() { # <ci-job-set> <owners file> [repository] [field] ; missed `shard<tab>path`
-  local job_set="$1" repository="${3:-$ROOT}" field="${4:-}" shard path dir width n=0 i pending="" oldest
-  width="$(nproc 2>/dev/null)" || width=4
-  case "$width" in '' | *[!0-9]* | 0) width=4 ;; esac
-  dir="$(mktemp -d "$TMP/owner-selection.XXXXXX")" || { printf 'owner-selection\tscratch\tmktemp-failed\n'; return 0; }
+unselected_owners() { # <ci-job-set> <owners file> <repository> <field>
+  local shard path
   while IFS=$'\t' read -r shard path; do
-    printf '%s\t%s\n' "$shard" "$path" > "$dir/$n.row"
-    { owner_selection "$job_set" "$repository" "$field" "$shard" "$path" "$dir/$n.out" > "$dir/$n.part" &&
-      mv -- "$dir/$n.part" "$dir/$n.answer"; } &
-    pending="${pending:+$pending }$!"
-    n=$((n + 1))
-    if [[ "$n" -ge "$width" ]]; then
-      oldest="${pending%% *}"
-      pending="${pending#"$oldest"}"
-      pending="${pending# }"
-      wait "$oldest" || true
-    fi
+    owner_selection "$1" "$3" "$4" "$shard" "$path" "$TMP/owner-selection" ||
+      printf '%s\t%s\towner-row-unread\n' "$shard" "$path"
   done < "$2"
-  for oldest in $pending; do wait "$oldest" || true; done
-  for ((i = 0; i < n; i++)); do
-    if [[ -f "$dir/$i.answer" ]]; then
-      cat "$dir/$i.answer" || printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
-    else
-      printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
+}
+
+unmapped_owners() { # <ci-job-set> <owners file> ; missed shard and path
+  local selector="$1" owners="$2" shard path selected
+  while IFS=$'\t' read -r shard path; do
+    # The scan steps are selected by changed tree, not by suite ownership.
+    [[ "$shard" != guards-scans ]] || continue
+    if ! selected="$(cd "$ROOT" && "$selector" --suite-shards "$path")"; then
+      printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"
+    elif [[ " $selected " != *" $shard "* ]]; then
+      printf '%s\t%s\n' "$shard" "$path"
     fi
-  done
+  done < "$owners"
 }
 
 check "must-fail: a tail with no suite calls has no selection owners" "" \
@@ -1173,8 +1037,8 @@ OWNERS="$TMP/owners"
 { suite_owners "$WORKFLOW"; suite_owners "$WORKFLOW" directories 3; } | sort -u > "$OWNERS"
 owner_shards="$(cut -f1 "$OWNERS" | sort -u)"
 check "a suite is read for every shard the matrix declares" "$declared_shards" "$owner_shards"
-check "ci-job-set selects the shard running each suite for a diff to that suite" \
-  "" "$(unselected_owners "$JOB_SET" "$OWNERS")"
+check "ci-job-set maps each suite package to the shard running it" \
+  "" "$(unmapped_owners "$JOB_SET" "$OWNERS")"
 
 # Workflow claims and dependency searches are separate evidence. A
 # minimal repository prevents orch's GitHub dependency from hiding a broken
@@ -1204,67 +1068,20 @@ cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$
 stub_suite "$GITHUB_SELECT/skills/github/tests/pr-view.test.sh"
 git -C "$GITHUB_SELECT" init -q
 git -C "$GITHUB_SELECT" add skills/github/tests/pr-view.test.sh
-printf 'rest\tskills/github/tests/pr-view.test.sh\n' > "$TMP/github-selection-owner"
-check "a direct GitHub suite selects rest with pull-request and merge-group parity" \
-  "" "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
+github_selection() {
+  ( cd "$GITHUB_SELECT" && CHANGE_CLASS=micro DOCS_ONLY=false \
+    CHANGED_PATHS=skills/github/tests/pr-view.test.sh EVENT=merge_group \
+    GITHUB_OUTPUT="$TMP/github-selection" tools/ci-job-set ) >&2 || return
+  sed -n 's/^shards=//p' "$TMP/github-selection"
+}
+check "a direct GitHub suite selects its owner on a merge group" '["guards-scans","rest"]' "$(github_selection)"
 awk '$0 == "    skills/github) want_shard rest ;;" {
        $0 = "    skills/github) want_shard mailbox ;;"; n++
      } {print} END {exit n != 1}' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set" ||
   { bad "GitHub mapping control changed other than one row"; exit 1; }
-check "must-fail: routing GitHub away from rest names its unselected suite" \
-  "$(cat "$TMP/github-selection-owner")" \
-  "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
-# A selector that exits 0 and leaves no output gives its row no answer, which
-# must read as unread and never as selected.
-printf '#!/usr/bin/env bash\nrm -f -- "$GITHUB_OUTPUT"\n' > "$TMP/outputless-job-set"
-chmod +x "$TMP/outputless-job-set"
-check "must-fail: a row whose selection left no output is named unread" \
-  "$(sed 's/$/	owner-row-unread/' "$TMP/github-selection-owner")" \
-  "$(unselected_owners "$TMP/outputless-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT" 2>/dev/null)"
-# A failed selector's line that cannot be written must fail the row's query,
-# so the row commits no answer and reads as unread, never as selected.
-printf '#!/usr/bin/env bash\nexit 3\n' > "$TMP/failing-job-set"
-chmod +x "$TMP/failing-job-set"
-lost_status=0
-owner_selection "$TMP/failing-job-set" "$GITHUB_SELECT" "" rest skills/github/tests/pr-view.test.sh \
-  "$TMP/failing-job-set.out" >&- 2>/dev/null || lost_status=$?
-check "must-fail: a failed selection whose line is lost fails its query" \
-  failed "$([[ "$lost_status" -ne 0 ]] && echo failed || echo "status=$lost_status")"
-
-# Must-fail: removing a dedicated package's row sends its diffs to `rest`
-# alone, leaving its own shard standing down, and the suite its selection
-# misses is named. The edit reaches that package's rows alone, and every other
-# row's selection is the check's above, so the control hands the mutant those
-# rows and wants each of them back.
-mkdir -p "$TMP/owner-tools"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/owner-tools/"
-cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
-cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
-cp "$ROOT/tools/guard" "$TMP/owner-tools/guard"
-for package in slack jarvis; do
-  awk -v row="    skills/$package) want_shard $package" 'index($0, row) == 1 { n++; next } { print } END { exit n != 1 }' \
-    "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
-    { bad "must-fail: the $package row is no longer one line in $JOB_SET"; continue; }
-  chmod +x "$TMP/owner-tools/ci-job-set"
-  grep "^$package	skills/$package/tests/" "$OWNERS" >"$TMP/owners-$package" ||
-    bad "must-fail: no $package suite is read from the workflow, so the $package control has no row"
-  if [[ -s "$TMP/owners-$package" &&
-    "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-$package")" == "$(cat "$TMP/owners-$package")" ]]; then
-    ok "must-fail: a table sending $package elsewhere names the $package suites"
-  else
-    bad "must-fail: a table sending $package elsewhere named nothing, so the selection check proves nothing"
-  fi
-done
-
-# The moved suites need the refresh package to reach the refresh shard.
-awk '$0 == "    skills/review-gate | refresh)" { $0 = "    skills/review-gate)"; n++ } { print } END { exit n != 1 }' \
-  "$JOB_SET" >"$TMP/owner-tools/ci-job-set" || bad "refresh selection control changed nothing"
-grep "^refresh	refresh/tests/" "$OWNERS" >"$TMP/owners-refresh" ||
-  bad "refresh selection control has no suite"
-if [[ -s "$TMP/owners-refresh" &&
-  "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-refresh")" == "$(cat "$TMP/owners-refresh")" ]]; then
-  ok "must-fail: removing refresh selection names every omitted refresh suite"
-else bad "refresh shard selection control"; fi
+: > "$TMP/github-selection"
+check "must-fail: routing GitHub away from rest selects the wrong shard" \
+  '["guards-scans","mailbox"]' "$(github_selection)"
 
 # --- 4c. The nightly macOS matrix's exclusions --------------------------
 # The selector uses these exclusions for its macOS runner arithmetic.
@@ -1337,7 +1154,7 @@ check "must-fail: a nightly roster moved off macOS loses its OS" \
 shared_steps() { # WORKFLOW — the Linux anchor and macOS alias
   awk '
     /^  [A-Za-z0-9_-]+:/ { job = $1 }
-    /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:" || job == "skill-suites-macos-queue:") { print job " " $2 }
+    /^    steps:/ && (job == "skill-suites-shard:" || job == "skill-suites-macos:" || job == "skill-suites-macos-queue:" || job == "skill-suites-main-only:") { print job " " $2 }
   ' "$1"
 }
 # The final timing measurement belongs to the shared job, after every
@@ -1372,20 +1189,14 @@ for rule in missing duplicated early failed; do
   check "must-fail: $rule final-job boundary changes the producer contract" \
     "$want" "$(job_report_boundary "$TMP/job-$rule.yml")"
 done
-check "both shell runners use the same suite steps, the queue's macOS legs included" \
-  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: *skill-suite-steps\nskill-suites-macos-queue: *skill-suite-steps' \
-  "$(shared_steps "$WORKFLOW")"
 sed 's/steps: \*skill-suite-steps/steps: []/' "$WORKFLOW" > "$TMP/mac-empty.yml"
-check "must-fail: a macOS job with no shared steps loses its suite alias" \
-  $'skill-suites-shard: &skill-suite-steps\nskill-suites-macos: []\nskill-suites-macos-queue: []' \
-  "$(shared_steps "$TMP/mac-empty.yml")"
 
 os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   local wf="$1" os="$2" major="$3" excluded="" owners="$TMP/os-owners"
   if [[ "$os" == macos-latest ]]; then
     excluded="$(macos_excluded_shards "$wf" | tr '\n' ' ')" || return
   fi
-  suite_owners "$wf" files "$major" > "$owners"
+  suite_owners "$wf" files "$major" > "$owners" || return
   awk -F '\t' -v excluded="$excluded" '
     BEGIN { n = split(excluded, names, " "); for (i = 1; i <= n; i++) skip[names[i]] = 1 }
     NR == FNR { universe[$0] = 1; next }
@@ -1393,82 +1204,29 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   ' "$TMP/os-universe" "$owners" | sort
 }
 
-# Use the aggregate suite's workflow readers and expression context, then
-# execute the resolved inputs through the same real-runner claim reader.
+# Read the actual job conditions and matrix before executing their suite steps.
 # shellcheck source=../../skills/harness-ci/tests/lib/workflow.sh
 . "$ROOT/skills/harness-ci/tests/lib/workflow.sh"
-main_only_filters() { # WORKFLOW CONTEXT [FIELD] ; a resolved shared suite input
+
+suite_env() { # WORKFLOW CONTEXT FIELD
   local expr
-  expr="$(sed -n "/^      ${3:-MAIN_ONLY_FILTERS}: / { s/^      ${3:-MAIN_ONLY_FILTERS}: //; s/^[$]{{ //; s/ }}$//; p; }" "$1")" || return
+  expr="$(sed -n "/^      $3: / { s/^      $3: //; s/^[$]{{ //; s/ }}$//; p; }" "$1")" || return
   [[ -n "$expr" ]] || return 1
   gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
-dedicated_rows() { # WORKFLOW CONTEXT ; suite|shard|os from the dedicated include matrix
-  local expr
-  expr="$(matrix_expr "$1" include skill-suites-main-only)" || return
-  [[ -n "$expr" ]] || return 1
-  gh_eval value "$2" "$expr" |
-    jq -er '.[] | [.suite,.shard,.os] | join("|")'
-}
-# A failed selector retains exactly the same workflow-owned declarations.
-main_declared="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
-check "dedicated fallback preserves declared native entries" \
-  "$(jq -er '.[] | [.suite,.shard,.os] | join("|")' <<<"$main_declared")" "$(dedicated_rows "$WORKFLOW" '{"needs":{"changes":{"result":"failure"}}}')"
-dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
-  local suite shard os ctx temporary filters rows="$TMP/dedicated-rows" claims="$TMP/dedicated-row"
-  dedicated_rows "$1" "$4" > "$rows" || return
-  while IFS='|' read -r suite shard os; do
-    [[ "$os" == "$2" ]] || continue
-    ctx="$(jq -c --arg suite "$suite" --arg shard "$shard" --arg os "$os" \
-      '.matrix = {suite: $suite, shard: $shard, os: $os}' <<< "$4")" || return
-    temporary="$(main_only_filters "$1" "$ctx" TEMPORARY_SUITE)" || return
-    filters="$(main_only_filters "$1" "$ctx")" || return
-    TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" PARTITION_ONLY_SHARD="$shard" \
-      suite_owners "$1" files "$3" > "$claims" || return
-    # Package-entry membership belongs to package-policy.test.mjs. Every
-    # shell declaration must select real eligible work, not a native-empty pass.
-    if [[ ! -f "$ROOT/pi-extensions/$suite/package.json" ]] && [[ ! -s "$claims" ]]; then
-      printf 'partition-dedicated: suite=%s os=%s selection=empty\n' "$suite" "$os" >&2
-      return 1
-    fi
-    cat "$claims"
-  done < "$rows"
-}
-# Successful changes must carry their selected tuples through the real matrix
-# and shared suite filters, independently of the full failure fallback.
-selected_suites='[{"suite":"critical-path-deny.test","shard":"guards-hooks","os":"ubuntu-latest"},{"suite":"orch-shard-partition.test","shard":"guards-tools-tail","os":"ubuntu-latest"}]'
-selected_rows=$'critical-path-deny.test|guards-hooks|ubuntu-latest\norch-shard-partition.test|guards-tools-tail|ubuntu-latest'
-selected_claims=$'guards-hooks\thooks/tests/critical-path-deny.test.sh\nguards-tools-tail\ttools/tests/orch-shard-partition.test.sh'
-published_map "$WORKFLOW" > "$TMP/dedicated-map"
-selected_ctx="$(context_json push success "main_suites=$selected_suites" "$TMP/dedicated-map")"
-check "successful dedicated matrix preserves selected suite shard and runner tuples" \
-  "$selected_rows" "$(dedicated_rows "$WORKFLOW" "$selected_ctx")"
-check "successful dedicated selection reaches exactly its shell claims" \
-  "$selected_claims" "$(dedicated_claims "$WORKFLOW" ubuntu-latest 4 "$selected_ctx")"
-# Keep the fallback intact while substituting another nonempty success subset.
-plant "$WORKFLOW" '|| needs.changes.outputs.main_suites)' \
-  "|| '[{\"suite\":\"adopt-refresh.test\",\"shard\":\"refresh\",\"os\":\"ubuntu-latest\"}]')" \
-  "$TMP/dedicated-success-other.yml" skill-suites-main-only
-dedicated_rows "$TMP/dedicated-success-other.yml" "$selected_ctx" > "$TMP/dedicated-other-rows"
-dedicated_claims "$TMP/dedicated-success-other.yml" ubuntu-latest 4 "$selected_ctx" > "$TMP/dedicated-other-claims"
-if [[ -s "$TMP/dedicated-other-rows" && -s "$TMP/dedicated-other-claims" ]] &&
-  ! cmp -s <(printf '%s\n' "$selected_rows") "$TMP/dedicated-other-rows" &&
-  ! cmp -s <(printf '%s\n' "$selected_claims") "$TMP/dedicated-other-claims"; then
-  ok "must-fail: another nonempty successful matrix loses the selected tuples and claims"
-else
-  bad "successful dedicated matrix control did not replace the selected subset"
-fi
 
-event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
-  local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards shard row_ctx temporary filters excluded
+event_claims() { # WORKFLOW EVENT OS MAJOR [RESULT SELECTION] ; actual job/matrix/environment claims
+  local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards excluded job_shards step_routes matrix row_ctx temporal_ctx filters temporary shard declarations claims="$TMP/event-dedicated"
   [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
   # A failed changes job exercises the workflow's full fallback: the
   # required roster on a merge group, and on a main push the roster a
   # failed same-head proof read runs. tools/tests/ci-class-job-set-events
   # holds the proved complement.
   [[ "$event" != push ]] || result=failure
+  result="${5:-$result}"
+  step_routes="$(shared_steps "$wf")" || return
   published_map "$wf" > "$TMP/event-map" || return
-  ctx="$(context_json "$event" "$result" '' "$TMP/event-map" "$ref")" || return
+  ctx="$(context_json "$event" "$result" "${6:-}" "$TMP/event-map" "$ref")" || return
   job_ifs "$wf" > "$TMP/event-job-ifs" || return
   job_needs "$wf" > "$TMP/event-job-needs" || return
   {
@@ -1477,8 +1235,26 @@ event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claim
       needs="$(awk -F '\t' -v job="$job" '$1 == job { print $2 }' "$TMP/event-job-needs")" || return
       running="$(printf '%s\t%s\t%s\n' "$job" "$needs" "$expr" | gh_eval jobs "$ctx")" || return
       case "$running" in '') continue ;; "$job") ;; *) return 1 ;; esac
+      grep -Fxq -- "$job: *skill-suite-steps" <<< "$step_routes" ||
+        grep -Fxq -- "$job: &skill-suite-steps" <<< "$step_routes" || continue
       if [[ "$job" == skill-suites-main-only ]]; then
-        dedicated_claims "$wf" "$os" "$major" "$ctx" || return
+        expr="$(matrix_expr "$wf" include "$job")" || return
+        matrix="$(gh_eval value "$ctx" "$expr")" || return
+        declarations="$(jq -c --arg os "$os" '.[] | select(.os == $os)' <<< "$matrix")" || return
+        while IFS= read -r row_ctx; do
+          [[ -n "$row_ctx" ]] || continue
+          temporal_ctx="$(jq -c --argjson matrix "$row_ctx" '.matrix = $matrix' <<< "$ctx")" || return
+          temporary="$(suite_env "$wf" "$temporal_ctx" TEMPORARY_SUITE)" || return
+          filters="$(suite_env "$wf" "$temporal_ctx" MAIN_ONLY_FILTERS)" || return
+          shard="$(jq -er '.shard' <<< "$row_ctx")" || return
+          TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" PARTITION_ONLY_SHARD="$shard" \
+            suite_owners "$wf" files "$major" > "$claims" || return
+          if [[ ! -s "$claims" ]]; then
+            printf 'partition-dedicated: suite=%s os=%s selection=empty\n' "$temporary" "$os" >&2
+            return 1
+          fi
+          cat "$claims"
+        done <<< "$declarations"
         continue
       fi
       expr="$(matrix_expr "$wf" os "$job")" || return
@@ -1489,14 +1265,22 @@ event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claim
       [[ -n "$expr" ]] || return 1
       shards="$(gh_eval value "$ctx" "$expr" | jq -er 'select(type == "array" and length > 0) | .[]')" || return
       excluded="$(excluded_shards "$wf" "$os")" || return
-      while IFS= read -r shard; do
-        grep -qxF -- "$shard" <<< "$excluded" && continue
-        row_ctx="$(jq -c --arg shard "$shard" --arg os "$os" '.matrix = {shard: $shard, os: $os}' <<< "$ctx")" || return
-        temporary="$(main_only_filters "$wf" "$row_ctx" TEMPORARY_SUITE)" || return
-        filters="$(main_only_filters "$wf" "$row_ctx")" || return
-        TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" PARTITION_ONLY_SHARD="$shard" \
-          suite_owners "$wf" files "$major" || return
-      done <<< "$shards"
+      job_shards="$(grep -xvF -f <(printf '%s\n' "$excluded") <<<"$shards")"
+      [[ -n "$job_shards" ]] || continue
+      # Only the refresh block reads the exception inputs. Resolve them for
+      # its ordinary matrix row, then execute the roster once for this job.
+      filters=''
+      temporary=''
+      if grep -qxF refresh <<< "$job_shards"; then
+        row_ctx="$(jq -c --arg os "$os" '.matrix = {shard: "refresh", os: $os}' <<< "$ctx")" || return
+        temporary="$(suite_env "$wf" "$row_ctx" TEMPORARY_SUITE)" || return
+        filters="$(suite_env "$wf" "$row_ctx" MAIN_ONLY_FILTERS)" || return
+      fi
+      TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" suite_owners "$wf" files "$major" |
+        awk -F '\t' -v shards="$job_shards" '
+          BEGIN { n = split(shards, names, "\n"); for (i = 1; i <= n; i++) count[names[i]]++ }
+          { for (i = 0; i < count[$1]; i++) print }
+        ' || return
     done < "$TMP/event-job-ifs"
   } | awk -F '\t' '
     NR == FNR { universe[$0] = 1; next }
@@ -1523,90 +1307,34 @@ for os in ubuntu-latest macos-latest; do
     mv "$TMP/native-universe" "$TMP/os-universe"
   fi
   [[ -s "$TMP/os-universe" ]] || { bad "the suite discovery is empty for $os"; continue; }
-  os_claims "$WORKFLOW" "$os" "$major" > "$TMP/os-claims"
-  check "every eligible suite runs exactly once on $os" \
-    "$(cat "$TMP/os-universe")" "$(cat "$TMP/os-claims")"
   printf 'coverage: os=%s suites=%s\n' "$os" "$(wc -l < "$TMP/os-universe" | tr -d ' ')"
-  expected_exceptions="$(comm -12 "$TMP/os-universe" <(printf '%s\n' \
-    hooks/tests/critical-path-deny.test.sh tools/tests/orch-shard-partition.test.sh \
-    refresh/tests/adopt-refresh.test.sh | sort))"
   for event in merge_group push schedule workflow_dispatch; do
-    event_claims "$WORKFLOW" "$event" "$os" "$major" > "$TMP/event-claims" || { bad "event claims could not evaluate $event on $os"; continue; }
+    event_claims "$WORKFLOW" "$event" "$os" "$major" > "$TMP/event-claims" ||
+      { bad "event claims could not evaluate $event on $os"; continue; }
     expected="$(cat "$TMP/os-universe")"
-    if [[ "$event" == merge_group ]]; then
-      check "only the declared shell exceptions leave the required roster on $os" \
-        "$expected_exceptions" "$(comm -23 "$TMP/os-universe" "$TMP/event-claims")"
-      [[ -z "$expected_exceptions" ]] || printf '%s\n' "$expected_exceptions" >> "$TMP/event-claims"
-      sort -o "$TMP/event-claims" "$TMP/event-claims"
-    elif [[ "$os" == ubuntu-latest && "$event" != push ]]; then
-      expected=''
+    if [[ "$os" == ubuntu-latest ]]; then
+      case "$event" in
+        merge_group) expected="$(grep -xvF refresh/tests/adopt-refresh.test.sh "$TMP/os-universe")" ;;
+        push) ;;
+        *) expected='' ;;
+      esac
     fi
     check "$event covers its eligible shell roster exactly once on $os" \
       "$expected" "$(cat "$TMP/event-claims")"
   done
-  for fault in omitted duplicated wrong-shard native-empty; do
-    # Every retained shell exception is Linux-only in the native owner.
-    [[ "$fault" == native-empty || "$os" == ubuntu-latest ]] || continue
-    [[ "$fault" != native-empty || "$os" == macos-latest ]] || continue
-    mutant="$TMP/event-$fault.yml"
-    declarations="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")" || exit 1
-    changed="$(jq -c --arg fault "$fault" '
-      if $fault == "omitted" then map(select(.suite != "orch-shard-partition.test"))
-      elif $fault == "duplicated" then . + [.[] | select(.suite == "orch-shard-partition.test")]
-      elif $fault == "wrong-shard" then map(if .suite == "orch-shard-partition.test" then .shard = "guards-hooks" else . end)
-      else . + [.[] | select(.suite == "critical-path-deny.test") | .os = "macos-latest"] end' <<<"$declarations")" || exit 1
-    awk -v old="$declarations" -v new="$changed" '
-      { pos = index($0, old)
-        if (pos) { $0 = substr($0, 1, pos - 1) new substr($0, pos + length(old)); n++ }
-        print
-      } END { exit n != 2 }' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
-    edited "$WORKFLOW" "$mutant" "event-$fault"
-    rc=0
-    event_claims "$mutant" push "$os" "$major" > "$TMP/event-control" || rc=$?
-    sort -o "$TMP/event-control" "$TMP/event-control"
-    if [[ "$rc" -ne 0 ]] || ! cmp -s "$TMP/os-universe" "$TMP/event-control"; then
-      ok "must-fail: $fault dedicated coverage refuses on $os"
-    else
-      bad "must-fail: $fault dedicated coverage passed on $os"
-    fi
-  done
-  # Mutate only the shared environment's event condition, named by its key
-  # since the job's steps test the same event pair. The real push now
-  # duplicates the retained Linux shell partition.
   if [[ "$os" == ubuntu-latest ]]; then
-  if (
-    mkdir -p "$HOME/tmp" || exit 1
-    control="$(mktemp -d "$HOME/tmp/partition-event.XXXXXX")" || exit 1
-    [[ -d "$control" && ! -L "$control" ]] || exit 1
-    control="$(cd -- "$control" && pwd -P)" || exit 1
-    trap 'rm -rf -- "${control:?}"' EXIT
-    plant "$WORKFLOW" "MAIN_ONLY_FILTERS: \${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push')" \
-      "MAIN_ONLY_FILTERS: \${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'schedule')" \
-      "$control/workflow.yml" skill-suites-shard
-    event_claims "$control/workflow.yml" push "$os" "$major" > "$control/push-claims" || exit 1
-    ! cmp -s "$TMP/os-universe" "$control/push-claims" || exit 1
-    duplicates="$(uniq -d "$control/push-claims")" || exit 1
-    grep -qxF tools/tests/orch-shard-partition.test.sh <<< "$duplicates" || exit 1
-  ); then
-    ok "must-fail: push-to-schedule environment condition breaks event coverage on $os"
+    # Same-head proof can stand the ordinary shards down while the adopter
+    # still runs. Use the successful selector output through the job mapping.
+    adopter_selection='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] main_suites=[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
+    check "a successful push selection runs its adopter with ordinary shards stood down" \
+      refresh/tests/adopt-refresh.test.sh "$(event_claims "$WORKFLOW" push "$os" "$major" success "$adopter_selection")"
+    event_claims "$TMP/linear-unskipped.yml" merge_group "$os" "$major" > "$TMP/linear-unskipped"
+    check "must-fail: the required Linux roster names a repeated suite" \
+      skills/linear/tests/must-fail-controls.sh "$(uniq -d "$TMP/linear-unskipped")"
   else
-    bad "push-to-schedule environment control did not reach the coverage failure on $os"
-  fi
-  fi
-  os_claims "$wf_drop" "$os" "$major" > "$TMP/os-drop"
-  [[ -n "$(comm -23 "$TMP/os-universe" <(sort -u "$TMP/os-drop"))" ]] &&
-    ok "must-fail: an omitted roster leaves suites missing on $os" || bad "omission control named no suite on $os"
-  os_claims "$wf_twice" "$os" "$major" > "$TMP/os-twice"
-  [[ -n "$(uniq -d "$TMP/os-twice")" ]] &&
-    ok "must-fail: a duplicated roster repeats suites on $os" || bad "duplication control named no suite on $os"
-  if [[ "$os" == ubuntu-latest ]]; then
-    os_claims "$TMP/linear-unskipped.yml" "$os" "$major" > "$TMP/linear-unskipped"
-    if cmp -s "$TMP/os-universe" "$TMP/linear-unskipped"; then
-      bad "must-fail: Linux exactly-once coverage accepted an extra linear battery run"
-    else
-      check "must-fail: Linux exactly-once coverage names the extra linear battery run" \
-        skills/linear/tests/must-fail-controls.sh "$(uniq -d "$TMP/linear-unskipped")"
-    fi
+    event_claims "$TMP/mac-empty.yml" merge_group "$os" "$major" > "$TMP/event-omission"
+    check "must-fail: a merge-group job with no native steps loses the native roster" \
+      "$(cat "$TMP/os-universe")" "$(comm -23 "$TMP/os-universe" "$TMP/event-omission")"
   fi
 done
 

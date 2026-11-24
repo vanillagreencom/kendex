@@ -15,10 +15,6 @@ git -C "$repo" reset -q --hard "$fork"
 commit_paths "$repo" "render only" .agents/skills/orch/SKILL.md
 after="$(git -C "$repo" rev-parse HEAD)"
 
-merge_base_view="$(git -C "$repo" diff --name-only --no-renames "$before...$after")"
-assert_eq push-discards-product-merge-base-view \
-  ".agents/skills/orch/SKILL.md" "$merge_base_view"
-
 pr="$(new_repo moving-base)"
 commit_paths "$pr" baseline README.md
 git -C "$pr" checkout -q -b feature

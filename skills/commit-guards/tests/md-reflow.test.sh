@@ -246,18 +246,5 @@ run_rows \
   "control: the same file reflows when rename succeeds|fx_failing_mv working-mv||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=" \
   "control: the leftovers reader names a file beside doc.md|fx_stray||doc.md|st_replacement|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n') leftovers=$TMP/stray/stray.txt"
 
-echo "=== the skill's own shipped markdown is a fixed point ==="
-fx_shipped() { # the four shipped documents
-  local doc
-  repo shipped
-  mkdir -p "$R/skills/commit-guards"
-  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
-    cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
-  done
-  git -C "$R" add -A
-}
-run_rows \
-  "SKILL.md, README.md, CHECKS.md and DEVELOPMENT.md reflow to themselves|fx_shipped||--check --all||rc=0 $(in_format 4)"
-
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

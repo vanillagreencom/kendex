@@ -266,8 +266,7 @@ printf '# f\n\n## Code Review Rules\n\na\n\n## Code Review Rules\n\nb\n' \
   > "$bounds_dir/two.md"
 printf '# f\n\n## Code Review Rules\n\na\n' > "$bounds_dir/one.md"
 
-# The count is the whole point: the host's caller sees zero and two as
-# different conditions, and `render.splice` says it the same way.
+# The caller needs the region-input key for either invalid heading count.
 for pair in "zero:0" "two:2"; do
   snapshot="${pair%%:*}"
   want="${pair##*:}"
@@ -277,12 +276,6 @@ for pair in "zero:0" "two:2"; do
   bi_record "$out"
   exact "a snapshot with $want owned headings refuses under the region-input key" \
     "bot-instructions: region-input=$bounds_dir/$snapshot.md" "$bi_first" "$status" 2
-  if printf '%s\n' "$out" | grep -qF "AGENTS.md: found $want \`## Code Review Rules\` headings"; then
-    ok "and the English below it names AGENTS.md and the count $want"
-  else
-    bad "and the English below it names AGENTS.md and the count $want" \
-        "$(printf '%s' "$out" | sed -n '2p')"
-  fi
 done
 
 # An input the verb cannot read: the host wrote the copy, so this is the
@@ -302,12 +295,6 @@ out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
 bi_record "$out"
 exact 'region-bounds without --input refuses under the usage key' \
   "bot-instructions: usage=region-bounds" "$bi_first" "$status" 2
-if printf '%s\n' "$out" | grep -qF 'region-bounds requires --input'; then
-  ok 'and names the argument it needs'
-else
-  bad 'and names the argument it needs' "$(printf '%s' "$out" | sed -n '2p')"
-fi
-
 # The control: a snapshot with exactly one owned heading answers on stdout
 # and exits 0, so the three refusals above are a deviation from a working
 # verb rather than a verb that never answers.

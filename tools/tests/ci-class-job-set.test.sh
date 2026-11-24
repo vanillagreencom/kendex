@@ -53,7 +53,7 @@ micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
@@ -106,6 +106,9 @@ check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
 leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
 check "group-leader.sh runs the runtime target that runs it" true \
   "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
+evaluator="$(SELECT_EVENT=merge_group selection micro false skills/harness-ci/tests/lib/gh-eval.py)"
+check "an evaluator-only merge group selects the Pi package policy's node shard" true \
+  "$(field shards <<<"$evaluator" | jq 'index("node") != null')"
 # PATH|THE SUITES WHOSE NOTES NAME IT
 while IFS='|' read -r path suites; do
   skipped="$(selection micro false "$path" | field skipped_suites)"

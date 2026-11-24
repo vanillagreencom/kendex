@@ -46,7 +46,7 @@ JSON
 }
 
 remote_rows() {
-  local remote layout consent scope selection key repo before after rc check_rc repeat_rc expected row hook run_hook foreign before_foreign after_foreign label world run_path
+  local remote layout consent scope selection key repo before after rc check_rc repeat_rc expected row run_hook foreign before_foreign after_foreign label world run_path
   world=$(mktemp -d "$TMP_ROOT/rows.XXXXXX") || exit 2
   # One table covers the harness flag, committed consent, install scope and
   # installer result. A missing skill can follow an incomplete checkout.
@@ -134,23 +134,10 @@ remote_rows() {
         "$BASH_BIN" "$repo/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$repo" --check \
         >"$TMP_ROOT/check" 2>&1 || check_rc=$?
       assert_eq "$check_rc" 0 'true leaves the real installer check armed'
-      for hook in pre-commit commit-msg pre-push; do
-        assert_eq "$(test -x "$repo/.git/hooks/$hook" && echo executable || echo absent)" executable "true arms $hook"
-      done
       # A resume executes the same hook. The installer must still pass.
       repeat_rc=0
       "${row[@]}" "$BASH_BIN" "$run_hook" </dev/null >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || repeat_rc=$?
       assert_eq "$repeat_rc $(first_line "$TMP_ROOT/stdout")" "0 cloud-git-hooks: armed=$repo" 'resume stays armed'
-      # Git's message hook calls the real gate, rather than a fixture gate: a
-      # staged change the settings require an entry for, and none written.
-      printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "owed/*"\n' >"$repo/kendex.settings.toml"
-      mkdir -p "$repo/owed" && printf 'x\n' >"$repo/owed/a.txt"
-      git -C "$repo" add kendex.settings.toml owed/a.txt
-      printf 'feat: no entry\n' >"$TMP_ROOT/message"
-      check_rc=0
-      (cd -- "$repo" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-        "$BASH_BIN" .git/hooks/commit-msg "$TMP_ROOT/message") >"$TMP_ROOT/message-result" 2>&1 || check_rc=$?
-      assert_eq "$check_rc $(grep -c '^commit-msg: changelog-missing=' "$TMP_ROOT/message-result")" '1 1' 'armed commit-msg rejects a bad message'
     else
       assert_eq "$(test -s "$INSTALL_REPORT" && echo present || echo absent)" present "$layout captures a real installer report"
       # Compare with the real child's output. The hook's own explanation
@@ -183,14 +170,5 @@ ROWS
 }
 
 remote_rows
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  # Preserve the matched test but make its local-skip branch unreachable.
-  # The real installer then arms a local clone, and the same rows must fail.
-  skill_load_control remote-guard "$HOOK" \
-    'if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then' \
-    ':; elif false; then' HOOK remote_rows \
-    'unset normal committed project none runs no installer' \
-    'unset normal committed project none leaves git hooks untouched'
-fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

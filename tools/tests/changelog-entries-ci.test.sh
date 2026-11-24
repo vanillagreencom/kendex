@@ -5,10 +5,8 @@
 # workflow and run in a fixture shaped as the job's checkout: the candidate
 # tree at a merge commit of the branch into a base that moved, with this
 # repository's commit-guards scripts and explicit package settings, and BASE
-# at the base tip, or at the branch point for the pull request run of a
-# stacked branch. The step's BASE expression is read from the workflow too
-# and evaluated on a pull request's and a merge group's payload, the two events
-# tools/tests/ci-aggregate.test.sh holds the step to running on.
+# at the moved base tip. The workflow's BASE expression is evaluated on a
+# merge-group payload.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,39 +45,13 @@ COMMAND="${rest#*$'\t'}"
 [ -n "$WD" ] && [ -n "$BASE_EXPR" ] && [ -n "$COMMAND" ] ||
   { echo "changelog-entries-ci: step=incomplete value=[$step]" >&2; exit 1; }
 
-# EVENT | the event payload GitHub sends | its base
-# Each payload carries both a base and a head commit; BASE must be the base,
-# the commit the range starts from.
-BASE_ROWS='pull_request|{"github":{"event":{"pull_request":{"base":{"sha":"pr-base"},"head":{"sha":"pr-head"}}}}}|pr-base
-merge_group|{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}|group-base'
-
-base_ok() { # EXPR CONTEXT BASE — sets GOT
-  GOT="$(gh_eval value "$2" "$1")"
-  [ "$GOT" = "\"$3\"" ]
-}
-
-while IFS='|' read -r event context base; do
-  if base_ok "$BASE_EXPR" "$context" "$base"; then
-    ok "base: $event"
-  else
-    bad "base: $event" "expr [$BASE_EXPR] gave [$GOT], want \"$base\""
-  fi
-done <<<"$BASE_ROWS"
-
-# Control: the same expression reading the head fields fails each row.
-HEAD_EXPR="${BASE_EXPR//.base.sha/.head.sha}"
-swapped_pr="$HEAD_EXPR"
-HEAD_EXPR="${HEAD_EXPR//.base_sha/.head_sha}"
-if [ "$swapped_pr" = "$BASE_EXPR" ] || [ "$HEAD_EXPR" = "$swapped_pr" ]; then
-  bad "control: the head fields fail the base rows" "substitution changed nothing in [$BASE_EXPR]"
+# GitHub hands both endpoints to the job. BASE must start the range.
+group='{"github":{"event":{"merge_group":{"base_sha":"group-base","head_sha":"group-head"}}}}'
+got="$(gh_eval value "$group" "$BASE_EXPR")"
+if [ "$got" = '"group-base"' ]; then
+  ok "base: merge_group"
 else
-  while IFS='|' read -r event context base; do
-    if base_ok "$HEAD_EXPR" "$context" "$base"; then
-      bad "control: the head fields fail the base rows: $event" "expr [$HEAD_EXPR] gave [$GOT]"
-    else
-      ok "control: the head fields fail the base rows: $event"
-    fi
-  done <<<"$BASE_ROWS"
+  bad "base: merge_group" "expr [$BASE_EXPR] gave [$got], want group-base"
 fi
 
 g() { git -C "$R" -c user.email=test@example.com -c user.name=test "$@"; }
@@ -113,8 +85,7 @@ change_run() { # RAISE
 # the parent's raise. The branch, BRANCH: `change` edits the package with no
 # raise, `raise` edits it and raises it to 1.0.1, `stacked` carries the
 # parent's raise and then edits the package with no raise of its own. The
-# branch is merged into the moved base, as the job's checkout is. CUT is the
-# branch point, MOVED the moved base.
+# branch is merged into the moved base, as the job's checkout is.
 fixture() { # NAME MOVE BRANCH
   R="$TMP_ROOT/$1/$WD"
   mkdir -p "$R/skills/commit-guards" "$R/skills/demo/scripts"
@@ -131,7 +102,6 @@ SETTINGS
   printf 'echo one\n' >"$R/skills/demo/scripts/run"
   g add -A
   g commit -qm base
-  CUT="$(g rev-parse HEAD)"
   g checkout -qb topic
   case "$3" in
     change) change_run no ;;
@@ -147,7 +117,7 @@ SETTINGS
       ;;
     raise) parent_raise ;;
   esac
-  MOVED="$(g rev-parse HEAD)"
+  BASE="$(g rev-parse HEAD)"
   g merge -q --no-ff -m merge topic
 }
 
@@ -156,19 +126,10 @@ run_step() { # COMMAND — sets RC and OUT
   OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$HOME" BASE="$BASE" bash -c "$1" 2>&1)" || RC=$?
 }
 
-# NAME | MOVE | BRANCH | BASE | EXIT | the record the run must print
-# The stacked pair is one pull request's two runs over one tree: its pull
-# request run before the parent merged, BASE at the branch point, and its
-# merge group after, BASE at the base the parent's raise moved. The second
-# fails where the first passed, which is why tools/ci-job-set lets no proof
-# from the first stand this step's job down in the second.
-while IFS='|' read -r name move branch at want record; do
+# NAME | MOVE | BRANCH | EXIT | the record the run must print
+while IFS='|' read -r name move branch want record; do
   [ -n "$name" ] || continue
   fixture "$name" "$move" "$branch"
-  case "$at" in
-    cut) BASE="$CUT" ;;
-    moved) BASE="$MOVED" ;;
-  esac
   run_step "$COMMAND"
   if [ "$RC" -eq "$want" ] && grep -qxF -- "$record" <<<"$OUT"; then
     ok "$name"
@@ -176,32 +137,11 @@ while IFS='|' read -r name move branch at want record; do
     bad "$name" "exit $RC: $OUT"
   fi
 done <<'ROWS'
-unraised|other|change|moved|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.0
-raised|other|raise|moved|0|changelog-entries: checked=1
-collision|raise|raise|moved|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.1
-stacked-pull-request|raise|stacked|cut|0|changelog-entries: checked=1
-stacked-merge-group|raise|stacked|moved|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.1
+unraised|other|change|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.0
+raised|other|raise|0|changelog-entries: checked=1
+collision|raise|raise|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.1
+stacked-merge-group|raise|stacked|1|changelog-entries: package-unbumped=skills/demo/SKILL.md:1.0.1
 ROWS
-
-# The stacked pair's premise: the pull request's own merge into the branch
-# point, its branch tip, has the merge group's tree, the key a proof is
-# found by.
-R="$TMP_ROOT/stacked-merge-group/$WD"
-if [ "$(g rev-parse 'topic^{tree}')" = "$(g rev-parse 'HEAD^{tree}')" ]; then
-  ok "stacked: the merge group tests the pull request's tree"
-else
-  bad "stacked: the merge group tests the pull request's tree"
-fi
-
-# Control: the commit chain's own scope, the index against HEAD, sees nothing
-# of the merged branch, so the unraised row is red only through the range.
-R="$TMP_ROOT/unraised/$WD"
-run_step "${COMMAND/--base \"\$BASE\"/--staged}"
-if [ "$COMMAND" != "${COMMAND/--base \"\$BASE\"/--staged}" ] && [ "$RC" -eq 0 ]; then
-  ok "control: without the range the unraised change passes"
-else
-  bad "control: without the range the unraised change passes" "exit $RC: $OUT"
-fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

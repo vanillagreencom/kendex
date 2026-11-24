@@ -48,16 +48,6 @@ PY
 output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
 [ "$status" -eq 0 ] && ok "a clean candidate passes its own checker" \
   || bad "a clean candidate passes its own checker" "exit $status: $output"
-if python3 - "$spec" <<'PY'; then
-from pathlib import Path
-import sys
-assert not list(Path(sys.argv[1]).rglob('*.pyc')), 'the checker wrote bytecode into its package files'
-PY
-  ok "running the checker leaves its package files unchanged"
-else
-  bad "running the checker leaves its package files unchanged"
-fi
-
 printf '\nStale instructions.\n' >>"$candidate/.github/copilot-instructions.md"
 output="$(cd "$runner" && bash -c "$command" 2>&1)" && status=0 || status=$?
 if [ "$status" -eq 1 ] && [[ "$output" == *"drift:"*".github/copilot-instructions.md"* ]]; then

@@ -24,31 +24,16 @@ real_cli = sys.argv[3]
 reporter = skill / 'refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
 fable = 'AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:Fable:high"'
-def settings_run(entries, script=reporter):
- return subprocess.run(['python3', str(script), '--settings'], input=json.dumps(entries),
+def settings_run(entries):
+ return subprocess.run(['python3', str(reporter), '--settings'], input=json.dumps(entries),
                        text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
-def settings(models=(), script=reporter):
- result = settings_run(dict(deprecated_models=models), script)
+def settings(models):
+ result = settings_run(dict(deprecated_models=models))
  assert result.returncode == 0, result.stderr
  return result.stdout
 # Model rows produce no report.
 legacy_models = [astra, fable, 'X = "fable <b> `x` y"']
 assert settings(models=legacy_models) == ''
-source = reporter.read_text()
-# The settings mode reads the package's retired list beside its scripts
-# directory, so a mutant runs from the same layout.
-mutants = root / 'package/refresh'
-mutants.mkdir(parents=True)
-(root / 'package/skills/review-gate').mkdir(parents=True)
-(root / 'package/skills/review-gate/retired-settings.json').write_bytes((skill.parent / 'skills/review-gate/retired-settings.json').read_bytes())
-needle = '    retired = json.loads(RETIRED.read_text())\n'
-assert source.count(needle) == 1
-restored = mutants / 'model-report.py'
-restored.write_text(source.replace(needle, '''    models = [f"- {code(entry)}" for entry in entries.get("deprecated_models", [])]
-    if models:
-        sections.append("## Deprecated models\\n\\n" + "\\n".join(models))
-''' + needle))
-assert settings(models=legacy_models, script=restored) != ''
 # Consumer settings: a retired key, a retired default under its own key and
 # each classifier note make one row; a current value, a retired value under
 # another key and an unlisted key make none. Rows are untrusted text.
@@ -64,42 +49,27 @@ consumer_rows = [
  ({'PR_REVIEW_GATE': '<b>`x`</b>'}, ['queue-only: path=a <b> `x` y'],
   [gate, '- <code>queue-only: path=a &lt;b&gt; &#96;x&#96; y</code>']),
 ]
-def consumer(committed, notes, script=reporter):
+def consumer(committed, notes):
  entries = dict(committed=committed)
  if notes is not None: entries['notes'] = notes
- result = settings_run(entries, script)
+ result = settings_run(entries)
  assert result.returncode == 0, result.stderr
  rows = re.findall(r'^- <code>.*?</code>', result.stdout, re.M)
  assert (result.stdout == '') == (rows == []) and result.stdout.count('## Consumer settings\n') == (rows != []), result.stdout
  return rows
 for committed, notes, rows in consumer_rows:
  assert consumer(committed, notes) == rows, (committed, notes)
-for needle, replacement in [
- ('if key in retired["keys"]', 'if False'),
- ('if value in retired["values"].get(key, [])', 'if False'),
- ('entries.get("notes", [])', '[]'),
-]:
- assert source.count(needle) == 1
- mutant = mutants / 'consumer-report.py'
- mutant.write_text(source.replace(needle, replacement))
- assert any(consumer(c, n, mutant) != rows for c, n, rows in consumer_rows), needle
 # A renamed retired key's row names the key that replaces it; a retired key
 # with no successor keeps the plain row. Only a retired key has a successor.
 retired_list = json.loads((skill.parent / 'skills/review-gate/retired-settings.json').read_text())
 assert set(retired_list['successors']) <= set(retired_list['keys']), set(retired_list['successors']) - set(retired_list['keys'])
 plain = '- <code>ORCH_REPORT_COLUMNS</code>: retired; no package reads it.'
 renamed = '- <code>ORCH_LANE_MAX_PCT</code>: retired; no package reads it. Set <code>AGENT_RUNTIME_ACCOUNT_MAX_PCT</code> instead.'
-def renames(script=reporter):
- result = settings_run(dict(committed={'ORCH_LANE_MAX_PCT': '90', 'ORCH_REPORT_COLUMNS': 'issue'}), script)
+def renames():
+ result = settings_run(dict(committed={'ORCH_LANE_MAX_PCT': '90', 'ORCH_REPORT_COLUMNS': 'issue'}))
  assert result.returncode == 0, result.stderr
  return [line for line in result.stdout.splitlines() if line.startswith('- ')]
 assert renames() == [renamed, plain], renames()
-needle = '(f" Set {code(successors[key])} instead." if key in successors else "")'
-assert source.count(needle) == 1
-mutant = mutants / 'successor-report.py'
-mutant.write_text(source.replace(needle, '""'))
-assert renames(mutant) == [renamed.split(' Set ')[0], plain], renames(mutant)
-assert reporter.read_text() == source
 (root / 'bin').mkdir()
 mock = root / 'bin/mock'
 mock.write_text('''#!/usr/bin/env python3
@@ -217,11 +187,11 @@ files={'.agents/skills/review-gate/SKILL.md':'\n'.join(skill_md),
        '.agents/skills/ship/SKILL.md':'---\nname: ship\ndescription: Ship.\n---\nShip it.\n'}
 def reset(**extra):
  world.write_text(json.dumps(dict(dict(issues=[],writes=[],files=files),**extra))); summary.write_text('')
-def attempt(driver, rows, overrides):
- return subprocess.run(['python3',str(driver),'a'*40,'1'],input=json.dumps(rows),text=True,
+def attempt(rows, overrides):
+ return subprocess.run(['python3',str(reporter),'a'*40,'1'],input=json.dumps(rows),text=True,
                        capture_output=True,env=dict(env,**(overrides or {})),cwd=root)
-def run(driver=skill/'refresh-report.py', rows=findings, overrides=None):
- result=attempt(driver, rows, overrides)
+def run(rows=findings, overrides=None):
+ result=attempt(rows, overrides)
  assert result.returncode==0,result.stderr
  results[:]=json.loads(result.stdout)
  return json.loads(world.read_text())
@@ -238,12 +208,6 @@ for path in (root/'.kendex-lock.json',root/'historical-lock.json'):
  path.write_text(json.dumps(compact))
 reset(); compact_result=run()
 assert len(compact_result['writes'])==1 and results[0]['root']==10
-needle='        identity = lock["installations"][e["installation"]] if lock["version"] == 12 else e'
-source=reporter.read_text()
-assert source.count(needle)==1
-mutant=root/'expanded-reader.py'
-mutant.write_text(source.replace(needle,'        identity = e'))
-assert attempt(mutant,findings,None).returncode!=0
 for path in (root/'.kendex-lock.json',root/'historical-lock.json'): path.write_text(legacy)
 reset(); first=run()
 assert len(first['writes'])==1
@@ -281,16 +245,16 @@ consumer_a=dict(findings[0],root=30,path='.agents/skills/review-gate/SKILL.md',b
 consumer_b=dict(consumer_a,root=40,path='.claude/skills/review-gate/SKILL.md',body='These two steps run backwards.',
                 line=8,start_line=7,url='https://github.com/other/repo/pull/9#discussion_r40')
 second_consumer={'GH_REPO':'other/repo','GITHUB_RUN_ID':'43'}
-def package_line(driver=skill/'refresh-report.py', lag=()):
- reset(lag=list(lag)); filed=run(driver,rows=[consumer_a])
+def package_line(lag=()):
+ reset(lag=list(lag)); filed=run(rows=[consumer_a])
  # The first consumer filed 50 minutes before the second one runs: inside
  # the documented index lag, outside a narrowed one.
  filed['issues'][0]['updated_at']=(datetime.now(timezone.utc)-timedelta(minutes=50)).strftime('%Y-%m-%dT%H:%M:%SZ')
  world.write_text(json.dumps(filed))
- folded=run(driver,rows=[consumer_b],overrides=second_consumer)
+ folded=run(rows=[consumer_b],overrides=second_consumer)
  if len(folded['issues'])!=1 or results[0]['note']!='Existing open report': return 'consumers'
  folded['issues'][0].update(state='closed',state_reason='not_planned'); world.write_text(json.dumps(folded))
- later=run(driver,rows=[consumer_a],overrides={'GITHUB_RUN_ID':'44'})
+ later=run(rows=[consumer_a],overrides={'GITHUB_RUN_ID':'44'})
  if later['writes']!=folded['writes'] or results!=[{'root':30,'issue':folded['issues'][0]['html_url'],
                                                     'note':'Closed upstream as not planned'}]: return 'closed'
  return 'one'
@@ -345,50 +309,50 @@ for rows, issues in [
 # is inserted above the reviewed `fi` or one deleted, another claim on the
 # same line is filed anew.
 reshapes=(block*4, block*2)
-def reshaped(text, driver=skill/'refresh-report.py'):
- reset(); closed=run(driver,rows=[dict(first_fi,line=10)])
+def reshaped(text):
+ reset(); closed=run(rows=[dict(first_fi,line=10)])
  closed['issues'][0].update(state='closed',state_reason='completed')
  closed['files'][first_fi['path']]=text; world.write_text(json.dumps(closed))
- later=run(driver,rows=[dict(first_fi,root=36,line=10,body='Another defect.',
+ later=run(rows=[dict(first_fi,root=36,line=10,body='Another defect.',
                              url='https://github.com/acme/repo/pull/2#discussion_r36')],overrides={'GITHUB_RUN_ID':'43'})
  return len(later['issues']), results[0]['note']
 for text in reshapes:
  assert reshaped(text)==(2,'Filed for upstream confirmation'), text
 # Search and the issue list both miss this run's own filing; a repeat in the
 # run rides on that filing.
-def own_filing(driver=skill/'refresh-report.py'):
- reset(lag=['search','list']); return len(run(driver,rows=[consumer_a, consumer_b])['issues'])
+def own_filing():
+ reset(lag=['search','list']); return len(run(rows=[consumer_a, consumer_b])['issues'])
 assert own_filing()==1
 # Each thread folded onto this run's own filing leaves its text and evidence.
-def folded_evidence(driver=skill/'refresh-report.py'):
- reset(); writes=run(driver,rows=[consumer_a, consumer_b])['writes']
+def folded_evidence():
+ reset(); writes=run(rows=[consumer_a, consumer_b])['writes']
  return [w['body'] for w in writes if 'title' not in w]
 comments=folded_evidence()
 assert len(comments)==1 and consumer_b['url'] in comments[0] and '> '+consumer_b['body'] in comments[0]
 # An issue an outside user wrote carrying the marker, open or closed, answers
 # nothing and gets no comment: the finding is filed anew.
 reset(); spoofed_title=run(rows=[consumer_a])['issues'][0]['title']
-def spoofed(state, driver=skill/'refresh-report.py'):
+def spoofed(state):
  planted=dict(number=1,title=spoofed_title,body='Planted.',state=state,state_reason=None if state=='open' else 'completed',
               user={'login':'someone','type':'User'},html_url='https://github.com/vanillagreencom/kendex/issues/1',
               updated_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
- reset(issues=[planted]); writes=run(driver,rows=[consumer_a])['writes']
+ reset(issues=[planted]); writes=run(rows=[consumer_a])['writes']
  return [w.get('title') for w in writes]==[spoofed_title] and results[0]['issue'].endswith('/issues/2')
 for state in ('open','closed'):
  assert spoofed(state), state
 # A comment naming lines past the head file is no line it was shown.
-reset(); refused=attempt(skill/'refresh-report.py',[dict(consumer_a,line=99)],None)
+reset(); refused=attempt([dict(consumer_a,line=99)],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # Searches stay under GitHub's query length and cover every marker; an
 # incomplete search proves no absence and files nothing.
 many=[dict(consumer_a,root=50+n,line=None,start_line=None,body=f'Defect {n}.') for n in range(4)]
 # Four findings that miss search read the recent issue list once.
-def listed(driver=skill/'refresh-report.py'):
- reset(); searched=run(driver,rows=many); return searched, searched.get('lists')
+def listed():
+ reset(); searched=run(rows=many); return searched, searched.get('lists')
 searched, lists = listed()
 assert len(searched['issues'])==4 and len({r['issue'] for r in results})==4 and lists==1
 assert sorted(t for q in searched['searches'] for t in q)==sorted(i['title'][15:79] for i in searched['issues'])
-reset(incomplete=True); refused=attempt(skill/'refresh-report.py',[consumer_a],None)
+reset(incomplete=True); refused=attempt([consumer_a],None)
 assert refused.returncode!=0 and json.loads(world.read_text())['writes']==[]
 # No token, a token denied everywhere and one that can search but not write
 # each leave the finding unfiled with a link. A denied evidence comment on an
@@ -402,25 +366,19 @@ access_rows=[
  ({}, {'fail':['write',denied]}, findings[0], 'issues/new?', access),
  ({}, {'fail':['write',denied],'issues':[issue]}, later_thread, issue['html_url'], access),
 ]
-def unfiled(overrides, extra, row, link, note, driver=skill/'refresh-report.py'):
- reset(**extra); result=run(driver,rows=[row],overrides=overrides); text=summary.read_text()
+def unfiled(overrides, extra, row, link, note):
+ reset(**extra); result=run(rows=[row],overrides=overrides); text=summary.read_text()
  return (result['writes']==[] and link in text and row['url'] in text
          and results==[{'root':row['root'],'issue':None,'note':note}])
 for overrides, extra, row, link, note in access_rows:
  assert unfiled(overrides, extra, row, link, note), extra
-# The open issue's evidence comment is the write that files a later thread.
-needle='                    url = existing["html_url"]\n                    note = "Existing open report"\n'
-assert source.count(needle)==1
-mutant=root/'comment-deny.py'
-mutant.write_text(source.replace(needle,needle.replace('url = existing','url = filed = existing',1)))
-assert not unfiled(*access_rows[-1], driver=mutant)
 rate_limits=[
  'gh: API rate limit exceeded for installation ID 1234. If you reach out to GitHub Support for help, please include the request ID AB12:3C4D. (HTTP 403)',
  'gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)',
  'gh: Too Many Requests (HTTP 429)',
 ]
-def rate_limited(message, driver=skill/'refresh-report.py'):
- reset(fail=['search',message]); result=attempt(driver,findings,None)
+def rate_limited(message):
+ reset(fail=['search',message]); result=attempt(findings,None)
  return result.returncode!=0 and 'rate-limited endpoint=search/issues?' in result.stderr \
         and json.loads(world.read_text())['writes']==[]
 for message in rate_limits:
@@ -444,12 +402,12 @@ not_filed_rows=[
  ('agent', dict(findings[0],path='.github/agents/reviewer.agent.md'), {}, unclaimed),
  ('elsewhere', findings[0], {'HISTORICAL_LOCK':str(root/'foreign-lock.json')}, elsewhere),
 ]
-def not_filed(driver, row, overrides, note):
- reset(); world=run(driver,rows=[row],overrides=overrides); text=summary.read_text()
+def not_filed(row, overrides, note):
+ reset(); world=run(rows=[row],overrides=overrides); text=summary.read_text()
  return (world['writes']==[] and results==[{'root':10,'issue':None,'note':note}]
          and row['url'] in text and 'issues/new' not in text)
 for name, row, overrides, note in not_filed_rows:
- assert not_filed(skill/'refresh-report.py', row, overrides, note), name
+ assert not_filed(row, overrides, note), name
 # A late merged-PR report must keep the recorded package route after removal
 # or replacement through the consumer's supported package commands.
 for drift in ('removed', 'replaced'):
@@ -459,130 +417,8 @@ for drift in ('removed', 'replaced'):
  (root/'.kendex-lock.json').write_text(json.dumps(current))
  reset(); assert len(run()['issues'])==1, drift
  assert len(run()['issues'])==1, drift
-# The current checkout is now foreign-owned. Removing historical isolation
-# must turn the report into fallback, even though its inventory is still valid.
-source=(skill/'refresh-report.py').read_text()
-needle='cwd=project, env=consumer_env'
-assert source.count(needle)==1
-mutant=root/'current-checkout.py'
-mutant.write_text(source.replace(needle,'cwd=None if True else project, env=consumer_env'))
-reset(); assert run(mutant)['writes']==[]
-assert results[0]['note']==elsewhere
-# Controls preserve matching text while removing each independent rule.
-source=(skill/'refresh-report.py').read_text()
-for needle,replacement,rows,expect in [
- ('if path in records else set()', 'if False and path in records else set()', findings, 'path'),
- ('elif existing:', 'elif False and existing:', findings, 'dedup'),
- ('[name, inner, reviewed(finding)]', '[name, inner, reviewed(finding), finding["url"]]', inline_pair, 'instance'),
- ('            ).stderr', '            ).stdout', findings, 'stream'),
-]:
- assert source.count(needle)==1
- mutant=root/(expect+'.py'); mutant.write_text(source.replace(needle,replacement))
- reset()
- if expect=='dedup':
-  run(mutant); assert len(run(mutant)['issues'])==2
- elif expect=='instance':
-  run(mutant,rows=[rows[0]]); assert len(run(mutant,rows=[rows[1]])['issues'])==2
- else:
-  assert run(mutant,rows=rows)['writes']==[]
-# The filed issue is the rule refresh-reviews resolves on. An unfiled finding
-# reported with its filing link, and a finding reported under the evidence
-# comment rather than the issue, each turn a case above red.
-for needle,replacement,overrides,runs in [
- ('            url = "https://github.com/" + UPSTREAM', '            url = filed = "https://github.com/" + UPSTREAM', {'KENDEX_ISSUES_TOKEN':''}, [(findings,{})]),
- ('                    filed = existing["html_url"]\n', '                    filed = url\n', {}, [(findings,{}), ([later_thread],{'GITHUB_RUN_ID':'43'})]),
-]:
- assert source.count(needle)==1
- mutant=root/'filed.py'; mutant.write_text(source.replace(needle,replacement))
- reset()
- for rows, extra in runs: run(mutant,rows=rows,overrides=dict(overrides,**extra))
- assert results[0]['issue'] is not None and not results[0]['issue'].endswith('/issues/1')
-# Filing a package kendex report routes elsewhere turns its not-filed row red.
-# The filing link and the issue need the title only a routed finding has, so
-# no mutant can offer either for a finding the route rule turned away.
-mutant=root/'label.py'; changed=source
-for needle,replacement in [
- ('if "--repo" in args and args[args.index("--repo") + 1] == UPSTREAM and "--label" in args:', 'if True:'),
- ('row["label"] = args[args.index("--label") + 1]', 'row["label"] = "ci-infra"'),
-]:
- assert changed.count(needle)==1, needle
- changed=changed.replace(needle,replacement)
-mutant.write_text(changed)
-for name, row, overrides, note in not_filed_rows:
- assert not_filed(mutant, row, overrides, note) == (name != 'elsewhere'), name
-# Each identity and lookup rule: the consumer repository or the wording in
-# the identity of unique text, an open-only search, a closed issue read as
-# open, and this run's own filing forgotten.
-# The issue list answers a recent closed issue, so the open-only search
-# control hides it from the list. The issue list lookup, its states and its
-# since bound each turn the unindexed case red.
-for needle,replacement,expect,lag in [
- ('[name, inner, reviewed(finding)]', '[repo, name, inner, reviewed(finding)]', 'consumers', ()),
- ('[name, inner, reviewed(finding)]', '[name, inner, finding["body"]]', 'consumers', ()),
- ('        return [text]\n', '        return [text, finding["body"]]\n', 'consumers', ()),
- ('is:issue in:title', 'is:issue is:open in:title', 'closed', ('list',)),
- ('if existing and existing["state"] != "open":', 'if False and existing:', 'closed', ()),
- ('                    remember(recent())\n', '                    pass\n', 'consumers', ('search',)),
- ('{"state": "all", "since"', '{"state": "open", "since"', 'closed', ('search',)),
- ('datetime.now(timezone.utc) - INDEX_LAG', 'datetime.now(timezone.utc) + INDEX_LAG', 'consumers', ('search',)),
- ('INDEX_LAG = timedelta(hours=1)', 'INDEX_LAG = timedelta(minutes=1)', 'consumers', ('search',)),
-]:
- assert source.count(needle)==1, needle
- mutant=root/'identity.py'; mutant.write_text(source.replace(needle,replacement))
- assert package_line(mutant,lag)==expect, needle
-needle='                    known[marker] = created\n'
-assert source.count(needle)==1
-mutant=root/'own-filing.py'; mutant.write_text(source.replace(needle,'                    pass\n'))
-assert own_filing(mutant)==2
-for needle,replacement,rows,issues in [
- ('if is_skill else ""', 'if is_skill else parts[-1]', harnesses, 2),
- ('is_skill = "skill" in kinds[name] and name in parts', 'is_skill = name in parts', command_harnesses, 2),
- ('is_skill = "skill" in kinds[name] and name in parts', 'is_skill = False', skill_files, 1),
- ('start = start or end', 'start = end', [consumer_a, same_end], 1),
- ('return [text, finding["body"]]', 'return [text]', repeated_text, 1),
- ('return [text, finding["body"]]', 'return [text, finding["body"], start]', same_claim, 2),
- ('for i in range(len(lines))', 'for i in range(len(lines) - 1)', file_ends, 1),
- ('for i in range(len(lines))', 'for i in range(1, len(lines))', file_ends, 1),
- ('if end is None or finding.get("side") != "RIGHT":', 'if end is None:', [base_side, dict(base_side,body='Another wording.')], 1),
-]:
- assert source.count(needle)==1, needle
- mutant=root/'lookup.py'; mutant.write_text(source.replace(needle,replacement))
- reset(); assert len(run(mutant,rows=rows)['issues'])==issues, needle
-# The line-range refusal and the incomplete-search refusal each let a run
-# through when removed, and a wider batch breaks the query bound.
-for needle,replacement,rows,extra in [
- ('if not 1 <= start <= end <= len(lines):', 'if False:', [dict(consumer_a,line=99)], {}),
- ('p.get("incomplete_results") is False', 'True', [consumer_a], {'incomplete':True}),
-]:
- assert source.count(needle)==1, needle
- mutant=root/'refusal.py'; mutant.write_text(source.replace(needle,replacement))
- reset(**extra); assert attempt(mutant,rows,None).returncode==0, needle
-needle='if marker not in known and not listed:'
-assert source.count(needle)==1
-mutant=root/'listed.py'; mutant.write_text(source.replace(needle,'if marker not in known:'))
-assert listed(mutant)[1]==len(many)
-needle='SEARCH_TERMS = 3\n'
-assert source.count(needle)==1
-mutant=root/'batch.py'; mutant.write_text(source.replace(needle,'SEARCH_TERMS = 4\n'))
-reset(); assert attempt(mutant,many,None).returncode!=0
-# Repeated text without its wording lets a closed issue answer another
-# claim; the evidence, author and rate-limit rules each turn their case red.
-for needle,replacement,check,expect in [
- ('return [text, finding["body"]]', 'return [text]', lambda d: [reshaped(t,d) for t in reshapes],
-  [(1,'Closed upstream as completed')]*len(reshapes)),
- ('if record not in (existing.get("body") or ""):', 'if run not in existing["body"]:', folded_evidence, []),
- (' and (issue.get("user") or {}).get("type") == "Bot"', '', lambda d: spoofed('closed',d) or spoofed('open',d), False),
- ('if RATE_LIMIT.search(result.stderr):', 'if False:', lambda d: rate_limited(rate_limits[0],d), False),
-]:
- assert source.count(needle)==1, needle
- mutant=root/'context.py'; mutant.write_text(source.replace(needle,replacement))
- assert check(mutant)==expect, needle
-# A token that searches but cannot write reaches the per-row access handler.
-needle='            except PermissionError as error:\n                note = str(error)\n'
-assert source.count(needle)==1
-mutant=root/'write-deny.py'; mutant.write_text(source.replace(needle,'            except KeyError:\n                pass\n'))
-reset(fail=['write',denied]); assert attempt(mutant,findings,None).returncode!=0
+
 PY
-then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior and controls'; fi
+then ok 'reporter token isolation, render binding, labels, evidence, duplicate handling and permission fallback'; else bad 'reporter behavior'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

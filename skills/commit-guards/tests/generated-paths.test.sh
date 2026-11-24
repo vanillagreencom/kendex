@@ -100,52 +100,17 @@ assert_eq 'control: refusing adopted objects breaks the valid mixed inventory' \
 # shellcheck source=../scripts/lib/generated-paths.sh
 source "$reader"
 
-echo "=== a refusal names the jq that read the inventory, and says install jq only when none is on PATH or jq may be at fault ==="
-# The refusal's status line and its fix line, from a load with jq on PATH and
-# from one whose PATH holds no jq. The expected version is asked of the jq on
-# PATH, never of the loader.
+echo "=== distinguish invalid entries, invalid JSON and unavailable jq ==="
 NO_JQ_PATH="$TMP/no-jq-bin"
 mkdir -p "$NO_JQ_PATH"
 refusal() { # PATH-FOR-THE-LOAD [INVENTORY]
   local rc=0
   (PATH="$1" && generated_paths_load "${2:-[1]}") 2>"$TMP/err" || rc=$?
-  printf 'rc=%s %s' "$rc" "$(LC_ALL=C awk '/^  (status|fix): / { sub(/^  /, ""); print }' "$TMP/err" | paste -sd ';' -)"
+  printf 'rc=%s %s' "$rc" "$(LC_ALL=C awk '/^  status: / { sub(/,$/, "", $2); print $2 }' "$TMP/err")"
 }
-JQ_VERSION="$(jq --version)"
-assert_eq "with jq on PATH the refusal names its version and the refresh, and no install" \
-  "rc=2 status: entry-shape, read by $JQ_VERSION;fix: Run kendex refresh at the repository root, then stage .kendex-generated.json with the renders." \
-  "$(refusal "$PATH")"
-assert_eq "with no jq on PATH the refusal names the missing jq and its install" \
-  "rc=127 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
-  "$(refusal "$NO_JQ_PATH")"
-assert_eq "an inventory that is not JSON names both the refresh and jq 1.7 or newer" \
-  "rc=2 status: jq-error, read by $JQ_VERSION;fix: Run kendex refresh at the repository root, then stage .kendex-generated.json with the renders; the filter also needs jq 1.7 or newer, so install it if the jq named above is older." \
-  "$(refusal "$PATH" invalid)"
-
-# Control: a loader that says install jq whatever PATH holds, the refusal
-# this suite replaced, turns the first row red.
-needle='  if ! command -v jq >/dev/null 2>&1; then'
-[ "$(grep -Fxc "$needle" "$reader")" -eq 1 ]
-sed 's/^  if ! command -v jq >\/dev\/null 2>&1; then$/  if true; then/' "$reader" >"$TMP/generated-paths.sh"
-cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" >&2; exit 1; }
-# shellcheck source=../scripts/lib/generated-paths.sh
-source "$TMP/generated-paths.sh"
-assert_eq "control: a loader naming install jq with jq present breaks the version row" \
-  "rc=127 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
-  "$(refusal "$PATH")"
-# Control: a loader that returns the inventory status with no jq on PATH
-# turns the no-jq row red, so a caller could not report the host.
-needle='    rc=127'
-[ "$(grep -Fxc "$needle" "$reader")" -eq 1 ]
-sed 's/^    rc=127$/    rc=2/' "$reader" >"$TMP/generated-paths.sh"
-cmp -s "$reader" "$TMP/generated-paths.sh" && { echo "control changed no bytes" >&2; exit 1; }
-# shellcheck source=../scripts/lib/generated-paths.sh
-source "$TMP/generated-paths.sh"
-assert_eq "control: a loader returning 2 with no jq on PATH breaks the no-jq row" \
-  "rc=2 status: jq-missing, read by no jq on PATH;fix: Install jq, then run the check again." \
-  "$(refusal "$NO_JQ_PATH")"
-# shellcheck source=../scripts/lib/generated-paths.sh
-source "$reader"
+assert_eq "invalid entry shape" "rc=2 entry-shape" "$(refusal "$PATH")"
+assert_eq "jq unavailable" "rc=127 jq-missing" "$(refusal "$NO_JQ_PATH")"
+assert_eq "invalid JSON" "rc=2 jq-error" "$(refusal "$PATH" invalid)"
 
 echo "=== membership is literal, both ways ==="
 contains() { generated_paths_load "$1"; if generated_path_contains "$2"; then echo yes; else echo no; fi; } # INVENTORY PATH

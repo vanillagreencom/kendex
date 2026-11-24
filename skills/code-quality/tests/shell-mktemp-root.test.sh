@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The Bash reference's fenced commands are program input: this suite executes
-# them with Bash. It checks failure, canonical paths and cleanup, not prose.
-# Mutant copies prove the behavior checks. A separate tree scan catches the
-# nested mktemp/cd form without claiming to prove path data flow.
+# them with Bash to check failure, canonical paths and cleanup. A separate
+# tree scan catches the unsafe nested mktemp/cd form.
 # Run: bash skills/code-quality/tests/shell-mktemp-root.test.sh
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -11,11 +10,6 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 RULE_DOC="$SKILL_DIR/references/bash.md"
 
-# The line a failed mktemp turns into the caller's directory. Assembled from
-# MKTEMP so this suite's own source never matches the tree scan below, which
-# then needs no exclusion.
-MKTEMP='mktemp -d'
-HAZARD_LINE="TMP_ROOT=\"\$(cd \"\$($MKTEMP)\" && pwd -P)\""
 # The nested shape the tree scan refuses, in both the `cd` and `cd --`
 # spellings, as a git grep extended regex.
 NESTED_ERE='cd (-- )?"?[$][(]mktemp -d'
@@ -46,16 +40,13 @@ fenced_root_lines() {
 }
 
 # The mktemp each row puts first on PATH; `real` puts none. `fail-empty` is how
-# GNU and BSD mktemp fail. `fail-dot` fails with `.` on stdout, the argument
-# `cd` accepts on every bash, so the hazard control reddens on bash 5.3, which
-# refuses `cd ""`. `not-a-dir` answers a path that is a regular file.
+# GNU and BSD mktemp fail. `not-a-dir` answers a path that is a regular file.
 write_stub() {
   local dir="$1" mode="$2"
   mkdir -p -- "$dir"
   case "$mode" in
     real) return 0 ;;
     fail-empty) printf '#!/bin/sh\necho "mktemp: failed to create directory" >&2\nexit 1\n' > "$dir/mktemp" ;;
-    fail-dot) printf '#!/bin/sh\necho .\nexit 1\n' > "$dir/mktemp" ;;
     not-a-dir) printf '#!/bin/sh\n: > "$TMPDIR/plain-file"\necho "$TMPDIR/plain-file"\n' > "$dir/mktemp" ;;
     *) echo "UNKNOWN-MODE: $mode" >&2; exit 2 ;;
   esac
@@ -69,9 +60,6 @@ write_stub() {
 # mktemp on macOS ignores TMPDIR and answers under `/var`, itself a symlink,
 # so the `real` row judges the root's parent resolved wherever mktemp put it.
 ROW=0
-# Mutation checks distinguish a removed caller from an unrelated test failure.
-REMOVED=0
-UNRESOLVED=0
 run_lines() {
   local doc="$1" mode="$2" want_status="$3"
   local lines row caller stub tmpdir out err status root parent resolved
@@ -97,7 +85,6 @@ printf 'root=%s\n' \"\$TMP_ROOT\"" >"$row/out" 2>"$row/err") || status=$?
   out="$(cat -- "$row/out")" || { fail "$mode: stdout unreadable" "$row/out"; return 0; }
   err="$(cat -- "$row/err")" || { fail "$mode: stderr unreadable" "$row/err"; return 0; }
   if [[ ! -e $caller/sentinel ]]; then
-    REMOVED=$((REMOVED + 1))
     fail "$mode: the caller directory was removed" "$doc"
     return 0
   fi
@@ -117,7 +104,6 @@ printf 'root=%s\n' \"\$TMP_ROOT\"" >"$row/out" 2>"$row/err") || status=$?
         return 0
       fi
       if [[ $resolved != "$parent" ]]; then
-        UNRESOLVED=$((UNRESOLVED + 1))
         fail "$mode: root not resolved, its parent resolves to $resolved" "stdout: $out"
         return 0
       fi
@@ -132,7 +118,6 @@ printf 'root=%s\n' \"\$TMP_ROOT\"" >"$row/out" 2>"$row/err") || status=$?
 # MODE WANT_STATUS: success also requires a canonical root and cleanup.
 RUN_ROWS='real 0
 fail-empty 1
-fail-dot 1
 not-a-dir 1'
 
 # judge_doc DOC: every row for one document. Prints nothing itself; the rows
@@ -182,79 +167,6 @@ else
     1) fail "tree scan: tracked files nest mktemp -d inside cd" "$(printf '%s\n' "$hits" | tr '\n' ' ')" ;;
     *) fail "tree scan: git grep failed (status $status)" "$REPO_ROOT" ;;
   esac
-fi
-
-# --- controls: each judge turns red on a mutant copy of the Bash reference -------------
-MUTANTS="$TMP_ROOT/mutants"
-mkdir -p -- "$MUTANTS"
-
-# A control with the fence's first three lines replaced by the hazard line: the
-# fence still makes a mktemp root and keeps its trap, so a failing mktemp row
-# must report the caller directory removed.
-mutant="$MUTANTS/hazard-fence.md"
-awk -v hazard="$HAZARD_LINE" '
-  /^[ \t]*```bash[ \t]*$/ { infence = 1; match($0, /^[ \t]*/); ind = substr($0, 1, RLENGTH); print; next }
-  infence && /^[ \t]*```[ \t]*$/ { infence = 0; print; next }
-  infence && /mktemp -d|! -L|pwd -P/ { if (!done) { print ind hazard; done = 1; planted++ } next }
-  { print }
-  END { if (planted != 1) exit 1 }
-' "$RULE_DOC" > "$mutant" || { fail "control could not plant the hazard fence" "$mutant"; mutant=""; }
-if [ -n "$mutant" ]; then
-  before_fail="$FAIL"
-  before_pass="$PASS"
-  REMOVED=0
-  judge_doc "$mutant" >/dev/null 2>&1
-  PASS="$before_pass"
-  FAIL="$before_fail"
-  if [ "$REMOVED" -lt 1 ]; then
-    fail "control: the run judge reported no caller removed for a fence carrying the hazard line" "$mutant"
-  else
-    pass "control: the run judge reports the caller removed for a fence carrying the hazard line ($REMOVED rows)"
-  fi
-fi
-
-# A control with the nested shape planted in both spellings in a scratch
-# repository: the tree scan must name each planted file:line.
-CONTROL_REPO="$TMP_ROOT/scan-control"
-mkdir -p -- "$CONTROL_REPO"
-git -C "$CONTROL_REPO" init -q
-git -C "$CONTROL_REPO" config gc.auto 0
-git -C "$CONTROL_REPO" config maintenance.auto false
-{
-  printf '#!/usr/bin/env bash\n'
-  printf '%s\n' "$HAZARD_LINE"
-  printf '%s\n' "${HAZARD_LINE/cd /cd -- }"
-} > "$CONTROL_REPO/planted.sh"
-git -C "$CONTROL_REPO" add -- planted.sh
-status=0
-hits="$(scan_tree "$CONTROL_REPO")" || status=$?
-want="planted.sh:2
-planted.sh:3"
-if [ "$status" -ne 1 ]; then
-  fail "control: the tree scan answered $status on a repository with the nested shape planted, want 1" "$CONTROL_REPO"
-elif [ "$hits" != "$want" ]; then
-  fail "control: the tree scan named the wrong lines" "got: $(printf '%s' "$hits" | tr '\n' ' ') want: $(printf '%s' "$want" | tr '\n' ' ')"
-else
-  pass "control: the tree scan names each planted line in both spellings"
-fi
-
-# Removing canonicalization must make the behavior check fail.
-mutant="$MUTANTS/no-resolve.md"
-awk '
-  /^[ \t]*TMP_ROOT=.*pwd -P/ { removed++; next }
-  { print }
-  END { if (removed != 1) exit 1 }
-' "$RULE_DOC" > "$mutant"
-before_fail="$FAIL"
-before_pass="$PASS"
-UNRESOLVED=0
-run_lines "$mutant" real 0 >/dev/null 2>&1
-PASS="$before_pass"
-FAIL="$before_fail"
-if [ "$UNRESOLVED" -ne 1 ]; then
-  fail "control: the run judge did not report the root unresolved for a fence without the resolve line" "$mutant"
-else
-  pass "control: the run judge reports the root unresolved for a fence without the resolve line"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

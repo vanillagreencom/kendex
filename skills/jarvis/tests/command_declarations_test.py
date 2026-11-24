@@ -17,7 +17,7 @@ class Declaration(World):
             self.skipTest("kendex is unavailable on this host")
         project = self.root / "project"
         project.joinpath(".claude").mkdir(parents=True)
-        source = Path(os.environ.get("JARVIS_TOOL_SKILL", Path(__file__).resolve().parents[1] / "SKILL.md"))
+        source = Path(__file__).resolve().parents[1] / "SKILL.md"
         declaration = source.read_text()
         catalog = project / "catalog/skills/jarvis"
         catalog.mkdir(parents=True)

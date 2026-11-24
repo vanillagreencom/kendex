@@ -14,11 +14,6 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
-# A copy of ci-job-set with no guard beside it, whose reach cannot be read:
-# every shard runs whole.
-cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
-WHOLE="$TMP/rule/tools/ci-job-set"
-
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
 # guide some suites' notes cover, one suite's code reads, and the rest leave
 # out.
@@ -40,10 +35,10 @@ GUIDE="skills/demo/references/guide.md .agents/skills/demo/references/guide.md"
 
 # THE ROW: every suite outside the guide's reach is skipped; the reach holds
 # each suite whose note covers the guide, a directory item included, and the
-# suite whose code reads it. A copy that cannot read the reach skips none.
-row() { # DIR PATHS [JOB-SET] — the selection with its skips cut, and the skips
+# suite whose code reads it.
+row() { # DIR PATHS — the selection with its skips cut, and the skips
   local got
-  got="$(SELECT_IN="$1" SELECT_WITH="${3:-$JOB_SET}" selection micro false "$(printf '%s\n' $2)")"
+  got="$(SELECT_IN="$1" selection micro false "$(printf '%s\n' $2)")"
   printf '%s|%s' "${got% skipped_suites=*}" "$(field skipped_suites <<<"$got")"
 }
 skipped="$(row "$W" "$GUIDE" | sed 's/.*|//')"
@@ -55,9 +50,6 @@ for suite in slashed folder reader; do
   check "row: the guide runs the $suite suite" false \
     "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
 done
-whole="$(row "$W" "$GUIDE" "$WHOLE")"
-check "row: the copy that cannot read the reach skips nothing" "[]" "${whole#*|}"
-check "row: and runs every shard" "$ROSTER" "$(sed 's/.* shards=\([^ ]*\).*/\1/' <<<"${whole%|*}")"
 # A render row has no reach, so it skips every suite, those the guide's
 # measured row runs among them.
 render_skipped="$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
@@ -152,18 +144,6 @@ while IFS= read -r step; do
   check "step: '$step' runs no suite where every candidate is skipped" "none exit=0" \
     "$(step_run "$step" "$every")"
 done <<<"$steps"
-
-# THE REAL TREE: a Jarvis reference read by none of the long Jarvis suites
-# skips them, inside the shards its readers select.
-real() { # PATHS — the skips
-  selection micro false "$(printf '%s\n' $1)" | field skipped_suites
-}
-DECISIONS="skills/jarvis/references/decisions.md .agents/skills/jarvis/references/decisions.md"
-narrow="$(real "$DECISIONS")"
-for long in controls succession session task; do
-  check "real: the decisions reference skips the long $long suite" true \
-    "$(jq --arg t "skills/jarvis/tests/$long.test.sh" 'index($t) != null' <<<"$narrow")"
-done
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

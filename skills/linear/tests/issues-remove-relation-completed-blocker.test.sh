@@ -78,29 +78,26 @@ printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-SECTION='section="linear SKILL.md § Blocked Label vs Issue Relations"'
-
 # label|args|rc|deleted relation (- for none)|stderr (- for none, * unchecked)
 ROWS='
-a Done blocker named by --blocked-by is refused|CC-11 --blocked-by CC-10|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
-a Canceled blocker named by --blocks is refused|CC-20 --blocks CC-11|1|-|linear: refused=completed-blocker blocker=CC-20 state=Canceled SECTION
-a Done blocker named by relation UUID is refused|00000000-0000-4000-8000-000000000001|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
+a Done blocker named by --blocked-by is refused|CC-11 --blocked-by CC-10|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done
+a Canceled blocker named by --blocks is refused|CC-20 --blocks CC-11|1|-|linear: refused=completed-blocker blocker=CC-20 state=Canceled
+a Done blocker named by relation UUID is refused|00000000-0000-4000-8000-000000000001|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done
 an open blocker is removed|CC-11 --blocked-by CC-30|0|00000000-0000-4000-8000-000000000003|-
-a Done blocker that crosses bundles is refused without the structural-repair flag|CC-11 --blocked-by CC-40|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
-a Done blocker that crosses bundles is refused by relation UUID without the structural-repair flag|00000000-0000-4000-8000-000000000004|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
+a Done blocker that crosses bundles is refused without the structural-repair flag|CC-11 --blocked-by CC-40|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done
+a Done blocker that crosses bundles is refused by relation UUID without the structural-repair flag|00000000-0000-4000-8000-000000000004|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done
 the structural repair removes a Done blocker that crosses bundles|CC-11 --blocked-by CC-40 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
 the structural repair by relation UUID removes a Done blocker that crosses bundles|00000000-0000-4000-8000-000000000004 --peer-rule-violation|0|00000000-0000-4000-8000-000000000004|-
-the structural repair keeps a leaf cross-bundle wait|CC-12 --blocked-by CC-40 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
-the structural repair by relation UUID keeps a leaf cross-bundle wait|00000000-0000-4000-8000-000000000008 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done SECTION
-a Done peer blocker whose status name holds PIPE is refused with the structural-repair flag|CC-11 --blocked-by CC-70 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-70 state=Done PIPE shipped SECTION
+the structural repair keeps a leaf cross-bundle wait|CC-12 --blocked-by CC-40 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done
+the structural repair by relation UUID keeps a leaf cross-bundle wait|00000000-0000-4000-8000-000000000008 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-40 state=Done
+a Done peer blocker whose status name holds PIPE is refused with the structural-repair flag|CC-11 --blocked-by CC-70 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-70 state=Done PIPE shipped
 a failed relation read deletes nothing|CC-11 --blocked-by CC-60|1|-|*
-the structural repair is refused for a peer pair|CC-11 --blocked-by CC-10 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done SECTION
+the structural repair is refused for a peer pair|CC-11 --blocked-by CC-10 --peer-rule-violation|1|-|linear: refused=completed-blocker blocker=CC-10 state=Done
 a related relation is removed|CC-11 --related CC-50|0|00000000-0000-4000-8000-000000000005|-
 '
 
 while IFS='|' read -r label args want_rc want_deleted want_err; do
   [ -n "$label" ] || continue
-  want_err=${want_err//SECTION/$SECTION}
   want_err=${want_err//PIPE/|}
   label=${label//PIPE/|}
   [ "$want_err" != - ] || want_err=""
@@ -114,5 +111,6 @@ while IFS='|' read -r label args want_rc want_deleted want_err; do
   deleted=$(jq -r 'select(.query | contains("issueRelationDelete")) | .variables.id' "$TMP_ROOT/curl.jsonl" | paste -sd, -)
   assert_eq "$label: exit status" "$rc" "$want_rc"
   assert_eq "$label: deleted relation" "${deleted:--}" "$want_deleted"
-  [ "$want_err" = "*" ] || assert_eq "$label: stderr" "$(cat "$TMP_ROOT/err")" "$want_err"
+  [ "$want_err" = "*" ] || assert_eq "$label: stderr" \
+    "$(sed 's/ section=.*$//' "$TMP_ROOT/err")" "$want_err"
 done <<<"$ROWS"

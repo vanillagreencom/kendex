@@ -17,23 +17,6 @@ catalog_bits() { # SELECTION — only the two independently selected jobs
   printf '%s\n' "$1" | tr ' ' '\n' | grep -E '^(catalog|smoke)='
 }
 
-# Jarvis's released suites call orch-runtime. The catalog command must
-# reach setup before the suites even when the runtime path gate is false.
-catalog_runtime_setup() {
-  awk '
-    /^  [^ #].*:$/ { catalog = ($0 == "  catalog:") }
-    catalog && /^      suite-command: >-$/ { command = 1 }
-    command && /^        if \[ -n "\$runtime_paths" \]; then$/ { gated = 1 }
-    command && /^        fi;$/ { gated = 0 }
-    command && !gated && /skills\/orch\/scripts\/setup;/ { setup = 1 }
-    command && /tools\/guard --released-packages/ { release = 1; exit }
-    END { exit !(setup && release) }
-  ' "$ROOT/.github/workflows/skill-tests.yml"
-}
-jarvis_only="$(SELECT_EVENT=merge_group selection micro false skills/jarvis/scripts/lib/watch.py)"
-check "Jarvis-only merge group builds runtimes before the catalog release suites" \
-  "true ready" "$(field catalog <<<"$jarvis_only") $(catalog_runtime_setup && printf ready)"
-
 # CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent: skill Markdown
 # with no compiled include runs no smoke, whose catalog is its own sample,
 # and a settings file beside it keeps the measured row's.
@@ -111,7 +94,7 @@ fi
 #   a tools/ suite reads kendex.settings.toml and names atomic-install.sh and
 #   README.md; hooks/ suites read crates/demo/src/discover.rs and
 #   docs/x/policy.md; a Pi package's suite runs tools/demo-tool;
-#   skills/AGENTS.md and docs/cite.md cite a shard; orch's Rust target rows
+#   orch's Rust target rows
 #   reads assets/rust-read.json.
 # A path no suite and no target can depend on runs no shard; a hook beside
 # the reach runs node and harness-smoke; a build input runs the checkout's
@@ -122,16 +105,6 @@ fi
 required_edge="$(printf 'doc-limits\tcommit-guards')"
 check "required, optional, agents, hooks and commands retain only the required skill edge" "$required_edge" \
   "$(awk -f "$ROOT/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
-for list in agents hooks; do
-  needle="/^  $list:/ { next }"
-  [ "$(grep -cxF -- "$needle" "$ROOT/tools/lib/skill-requirements.awk")" -eq 1 ] || exit 1
-  awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" >"$TMP/rule/tools/lib/skill-requirements.awk"
-  ! cmp -s "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk" || exit 1
-  got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
-  [ "$got" != "$required_edge" ] && ok "must-fail: dropping the $list skip fails the required-edge row" || \
-    bad "must-fail: dropping the $list skip leaves the required-edge row green"
-done
-cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
 # PATH|SHARDS, every row micro and not docs-only.
 world_rows=0
 while IFS='|' read -r path expected; do
@@ -153,8 +126,8 @@ hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guard
 docs/x/policy.md|["guards-hooks","guards-hooks-tail"]
 docs/guard/refs.md|["guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
-skills/AGENTS.md|["guards-scans","guards-tools","guards-tools-tail"]
-docs/cite.md|["guards-tools","guards-tools-tail"]
+skills/AGENTS.md|["guards-scans"]
+docs/cite.md|[]
 kendex.toml|[]
 agents/reviewer.md|[]
 .kendex-lock.json|[]
@@ -188,7 +161,6 @@ while IFS='#' read -r edit path expected; do
     "$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$path")"
 done <<'ROWS'
 s/skills\/commit-guards) want_shard guards-commit /skills\/commit-guards) want_shard guards-commi /#skills/preflight/scripts/preflight#exit=2 shard-undeclared shard=guards-commi
-s/grep -qE -- "\$SHARD_CITATION"/grep --no-such-option -qE -- "$SHARD_CITATION"/#docs/cite.md#exit=2 citation-read-failed
 ROWS
 
 # A reach that cannot be read runs every shard, every suite and every

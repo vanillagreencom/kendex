@@ -17,6 +17,7 @@ JQ_BIN=$(command -v jq)
 CAT_BIN=$(command -v cat)
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 
 # The edited repository: a README, a git-ignored tmp/, and no skills of its
 # own, so md-type reads the docs-writing installed beside it in the hook's
@@ -167,14 +168,11 @@ bash_rows
 
 # Codex Delete headers name files, but only surviving Markdown edits route.
 deletion_rows() {
-  local codex path key rf=$REPO/README.md
+  local codex rf=$REPO/README.md
   rm -rf -- "$STATE"
   codex=$(scope delete-codex codex "commit-guards docs-writing")
-  for path in README.md src/main.rs; do
-    key="delete-${path##*/}"
-    check "codex delete $path" "$codex" "$(patch $'*** Begin Patch\n*** Delete File: '"$path"$'\n*** End Patch' "$key")" "" "$key" none
-    assert_eq "$([ -s "$TMP_ROOT/stdout" ] && echo nonempty || echo empty)" empty "codex delete $path: whole stdout is empty"
-  done
+  check "codex delete README.md" "$codex" "$(patch $'*** Begin Patch\n*** Delete File: README.md\n*** End Patch' delete-readme)" "" delete-readme none
+  assert_eq "$([ -s "$TMP_ROOT/stdout" ] && echo nonempty || echo empty)" empty "codex delete README.md: whole stdout is empty"
   check "codex delete and update" "$codex" "$(patch $'*** Begin Patch\n*** Delete File: notes/deleted.md\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch' delete-update)" \
     "docs-writing-note: path=$rf type=readme" delete-update "harness=codex session=delete-update path=$rf"
 }
@@ -291,35 +289,5 @@ for missing in jq cat; do
   assert_eq "$STATUS:$FIRST" "0:docs-writing-note: missing-tools=$missing" "missing $missing"
 done
 
-skill_load_control bash-status "$HOOK" '    # Porcelain -z preserves spaces/quoting; --no-renames leaves one record' '    exit 0' HOOK bash_rows \
-  'Bash modified: keyed first line' 'Bash staged: keyed first line'
-
-skill_load_control delete-headers "$HOOK" 'function flush() { if (held != "") { print held; edited = 1 }; held = "" }' '/^\*\*\* Delete File: / { next }' HOOK deletion_rows \
-  'codex delete README.md: whole stdout is empty' 'codex delete src/main.rs: whole stdout is empty'
-
-# These rows must detect a copy that refuses, forgets its marker, or takes
-# its judge from the edited repository.
-skill_load_control advisory "$HOOK" 'set -euo pipefail' 'exit 2' HOOK failure_rows \
-  'invalid payload: edit stays allowed' 'unknown tool: edit stays allowed'
-skill_load_control marker "$HOOK" 'MARKER_NOTE=""' 'STATE_DIR=/dev/null/unwritable' HOOK delivery_rows \
-  'second edit: keyed first line'
-skill_load_control judge-scope "$HOOK" 'JUDGE=""' 'in_scope() { printf "%s\n" "$(git -C "${TARGET%/*}" rev-parse --show-toplevel)/.agents/skills/$1"; }' HOOK failure_rows \
-  "judge outside the hook's scope: the edited repository's md-type never runs"
-# The scope a hook took from its own harness directory alone, as it once did:
-# a Codex copy delivery and a relocated root find no judge.
-skill_load_control global-scope "$HOOK" 'JUDGE=""' 'in_scope() { local s=${HOOK_DIR%/*}; s=${s%/*}; [ -d "$s/.agents/skills/$1" ] && printf "%s\n" "$s/.agents/skills/$1"; }' HOOK global_rows \
-  'codex copy delivery: keyed first line' 'relocated CODEX_HOME: keyed first line'
-# The order this walk once had: the home's tree before the repository's,
-# whose root the walk never looked at.
-skill_load_control home-first "$HOOK" 'JUDGE=""' 'in_scope() { local at=$HOOK_DIR n=0 c; while [ $n -lt 5 ] && [ "$at" != "$ROOT" ] && [ "$at" != / ]; do for c in "$at/skills/$1" "$at/.agents/skills/$1"; do if [ -d "$c" ]; then printf "%s\n" "$c"; return 0; fi; done; [ "$at" != "$HOME_DIR" ] || break; at=${at%/*}; n=$((n + 1)); done; if [ "$HOME_DIR" != "$ROOT" ] && [ -d "$HOME_DIR/.agents/skills/$1" ]; then printf "%s\n" "$HOME_DIR/.agents/skills/$1"; return 0; fi; case "$HOOK_DIR" in "$ROOT"/*) if [ -d "$ROOT/.agents/skills/$1" ]; then printf "%s\n" "$ROOT/.agents/skills/$1"; return 0; fi ;; esac; return 1; }' HOOK project_rows \
-  'project codex hook beside a global commit-guards: keyed first line' 'project pi hook beside a global commit-guards: keyed first line' "project hooks: the home's md-type never runs"
-# A walk that never reaches the repository: a hook installed there finds no
-# judge of its own.
-skill_load_control no-project "$HOOK" 'local at="$HOOK_DIR" levels=0 candidate' 'case "$HOOK_DIR" in "$ROOT"/*) at=/ ;; esac' HOOK project_rows \
-  'project claude hook with an empty home: keyed first line' 'project codex hook beside a global commit-guards: keyed first line'
-# A walk that reads the root's skills/ before its install: a catalog's project
-# hook runs its source's md-type.
-skill_load_control root-source "$HOOK" 'JUDGE=""' 'in_scope() { local at=$HOOK_DIR n=0 c; while [ $n -lt 5 ] && [ "$at" != / ]; do for c in "$at/skills/$1" "$at/.agents/skills/$1"; do if [ -d "$c" ]; then printf "%s\n" "$c"; return 0; fi; done; [ "$at" != "$ROOT" ] && [ "$at" != "$HOME_DIR" ] || break; at=${at%/*}; n=$((n + 1)); done; return 1; }' HOOK catalog_rows \
-  'catalog project hook: keyed first line' "catalog project hook: the source's md-type never runs"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

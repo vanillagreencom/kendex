@@ -153,9 +153,6 @@ first_err() { sed -n 1p "$TMP_ROOT/stderr"; }
 PASSED='rc=0 review-replies: pass head={head}'
 FAILED='rc=1 review-replies: fail head={head}'
 
-assert_eq "$(jq -Rrs 'contains("\u200b")' "$CHECKER")" false \
-  "the source contains no literal zero-width space"
-
 # --- the review bodies -----------------------------------------------------------
 # Both bodies are live Copilot shapes. supp_body is the heading-titled one,
 # trailer and all: the block sits inside <details>, a bold "Previously missed

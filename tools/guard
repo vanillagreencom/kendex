@@ -2775,6 +2775,12 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     reach_tick plan "$plan_done" "$plan_total"
     # Suites construct their own install records; revisions are no suite input.
     [ "$f" != .kendex-lock.json ] || continue
+    # The Node shard runs this standalone suite above the Pi package roots.
+    case "$MODE:$f" in
+      suite-reach:pi-extensions/package-policy.test.mjs | suite-reach:skills/harness-ci/tests/lib/gh-eval.py)
+        [ ! -f pi-extensions/package-policy.test.mjs ] || preview_suites+="pi-extensions/package-policy.test.mjs"$'\n'
+        ;;
+    esac
     case "$f" in
       skills/*/* | .agents/skills/*/*)
         x="${f#.agents/}"

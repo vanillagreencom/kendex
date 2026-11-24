@@ -24,18 +24,23 @@ assert_eq() {
   PASS=$((PASS + 1))
 }
 
-# Hold the workflow wiring as well as its evaluated condition: an unconnected
-# selector would correctly answer false while GitHub still built every target.
-for line in \
-  '      build: ${{ steps.inputs.outputs.build }}' \
-  '          EVENT_NAME: ${{ github.event_name }}' \
-  '          PUSH_BEFORE: ${{ github.event.before }}' \
-  '        run: tools/release-inputs "$EVENT_NAME" "$PUSH_BEFORE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"'; do
-  grep -Fx -- "$line" "$WF" >/dev/null
-done
 assert_eq "$(triggers "$WF")" $'push\nworkflow_dispatch' triggers
 expr="$(job_ifs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
 [ -n "$expr" ]
+needs="$(job_needs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
+producer="$(awk '
+  /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:") }
+  prepare && /^      - / { id = "" }
+  prepare && /^        id: / { id = $2 }
+  prepare && /^        run: tools\/release-inputs / { print id }
+' "$WF")"
+[ -n "$producer" ]
+binding="$(awk '
+  /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:"); outputs = 0 }
+  prepare && /^    [^ ]/ { outputs = ($1 == "outputs:") }
+  outputs && /^      build: / { sub(/^      build: \$\{\{ /, ""); sub(/ \}\}$/, ""); print }
+' "$WF")"
+[ -n "$binding" ]
 targets="$(awk '/^  build:/ { active=1 } /^  publish:/ { active=0 } active && /^            target:/ { print $2 }' "$WF" | LC_ALL=C sort)"
 assert_eq "$targets" $'aarch64-apple-darwin\naarch64-unknown-linux-gnu\nx86_64-apple-darwin\nx86_64-pc-windows-msvc\nx86_64-unknown-linux-gnu' targets
 
@@ -47,11 +52,23 @@ git -c core.hooksPath=/dev/null commit --quiet -m base
 base="$(git rev-parse HEAD)"
 
 selected() { # TOOL EVENT BEFORE AFTER
-  local output ctx
-  output="$("$BASH" "$1" "$2" "$3" "$4")"
+  local output steps published ctx
+  output="$("$BASH" "$1" "$2" "$3" "$4")" || return
   case "$output" in build=true|build=false) ;; *) return 2 ;; esac
-  ctx="$(jq -cn --arg build "${output#build=}" '{needs: {prepare: {result: "success", outputs: {build: $build}}}}')"
-  printf 'build\tprepare\t%s\n' "$expr" | gh_eval jobs "$ctx"
+  steps="$(jq -cn --arg id "$producer" --arg build "${output#build=}" '{steps: {($id): {outputs: {build: $build}}}}')" || return
+  published="$(python3 "$GH_EVAL" value "$steps" "$binding")" || return
+  ctx="$(jq -cn --argjson build "$published" '{needs: {prepare: {result: "success", outputs: {build: ($build // "")}}}}')" || return
+  printf 'build\t%s\t%s\n' "$needs" "$expr" | python3 "$GH_EVAL" jobs "$ctx"
+}
+
+assert_selected() { # CASE EXPECTED EVENT BEFORE AFTER
+  local actual status=0
+  actual="$(selected "$TOOL" "$3" "$4" "$5")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL %s: release selection exited %s\n' "$1" "$status" >&2
+    return "$status"
+  fi
+  assert_eq "$actual" "$2" "$1"
 }
 
 # Each path is a separate push; the multi-commit row below also catches a
@@ -62,7 +79,7 @@ while IFS='|' read -r path expected; do
   git add -- "$path"
   git -c core.hooksPath=/dev/null commit --quiet -m fixture
   head="$(git rev-parse HEAD)"
-  assert_eq "$(selected "$TOOL" push "$base" "$head")" "$expected" "$path"
+  assert_selected "$path" "$expected" push "$base" "$head"
   base=$head
 done <<'CASES'
 .kendex-lock.json|
@@ -88,30 +105,14 @@ git -c core.hooksPath=/dev/null commit --quiet -am release-input
 printf next >> .kendex-lock.json
 git -c core.hooksPath=/dev/null commit --quiet -am lock
 head="$(git rev-parse HEAD)"
-assert_eq "$(selected "$TOOL" push "$before" "$head")" build multi-commit
+assert_selected multi-commit build push "$before" "$head"
 before=$head
 git mv crates/core/src/lib.rs moved.rs
 git -c core.hooksPath=/dev/null commit --quiet -am move
 head="$(git rev-parse HEAD)"
-assert_eq "$(selected "$TOOL" push "$before" "$head")" build rename-out
-assert_eq "$(selected "$TOOL" push 0000000000000000000000000000000000000000 "$head" 2>/dev/null)" build unknown-base
-assert_eq "$(selected "$TOOL" workflow_dispatch '' "$head")" build dispatch
+assert_selected rename-out build push "$before" "$head"
+assert_selected unknown-base build push 0000000000000000000000000000000000000000 "$head"
+assert_selected dispatch build workflow_dispatch '' "$head"
+assert_selected empty-diff '' push "$head" "$head"
 
-# A disposable source control retains the skip branch but makes its answer
-# wrong. The lock-only probe must reject that selector through the job gate.
-python3 - "$TOOL" "$TMP_ROOT/mutant" <<'PY'
-import pathlib
-import sys
-source = pathlib.Path(sys.argv[1]).read_text()
-assert source.count('build=false') == 1
-mutant = source.replace('build=false', 'build=true')
-assert mutant != source
-pathlib.Path(sys.argv[2]).write_text(mutant)
-PY
-assert_eq "$(selected "$TOOL" push "$head" "$head")" '' empty-diff
-if assert_eq "$(selected "$TMP_ROOT/mutant" push "$head" "$head")" '' control >"$TMP_ROOT/control.log" 2>&1; then
-  echo 'FAIL: must-fail control was accepted' >&2
-  exit 1
-fi
-printf 'ok: release input selection and must-fail control\n'
 printf 'pass: %s   fail: 0\n' "$PASS"

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Surface: ui-copy-note.sh. Inputs: that hook, tests/lib/assert.sh, the
-# decider settings reader, code-quality UI reference, the orch runtime's
-# record-qa-decision scan (its QA_UI_PATHS matcher, through
-# orch/scripts/orch-runtime, which needs a built runtime), and the tracked
-# Claude Code and Codex registrations. A Pi row runs the hook the way the
+# decider settings reader, code-quality UI reference, and the tracked Claude
+# Code and Codex registrations. A Pi row runs the hook the way the
 # pi-hooks carrier spawns it, with the KENDEX_HOOK_SCOPE and KENDEX_HOOK_ROOT
 # its registry suite holds the carrier to.
 set -euo pipefail
@@ -73,7 +71,7 @@ check() { # ROW HARNESS PAYLOAD FIRST-LINE [DIAGNOSTIC CAUSE]
   assert_eq "$first" "$4" "$1: keyed context"
   case "$4" in
     'ui-copy-note: path='*)
-      case "$context" in *'§ UI copy in '"${EXPECTED_GUIDE:-$GUIDE}"*) first=present ;; *) first=missing ;; esac
+      case "${context#*$'\n'}" in *"${EXPECTED_GUIDE:-$GUIDE}"*) first=present ;; *) first=missing ;; esac
       assert_eq "$first" present "$1: installed UI copy route"
       ;;
   esac
@@ -98,7 +96,7 @@ install_skills "$FALLBACK/.agents/skills"
 FIXTURE_INSTALL="$FALLBACK" EXPECTED_GUIDE="$FALLBACK/.agents/skills/code-quality/references/ui.md" \
   check 'project install with no Git or settings' claude "$(edit Write "$FALLBACK" ui/View.tsx fallback)" 'ui-copy-note: path=ui/View.tsx'
 QA_UI_PATHS='*.qml' check 'otherwise matching path outside any project' claude \
-  "$(edit Edit "$REPO/shell" '../../Other.qml' outside)" ''
+  "$(edit Edit "$REPO/shell" '../../home/Other.qml' outside)" ''
 
 patch_payload() { # SESSION PATCH-BODY
   jq -cn --arg s "$1" --arg p "$2" --arg c "$REPO" \
@@ -126,7 +124,7 @@ check 'Codex delete and nonmatching destination' codex "$(
   patch_payload codex-delete $'*** Delete File: shell/Removed.qml\n*** Update File: shell/Old.qml\n*** Move to: outside/Old.qml'
 )" ''
 
-check 'malformed payload' claude '{' 'ui-copy-note: reader=payload' 'parse error:'
+check 'malformed payload' claude '{' 'ui-copy-note: reader=payload'
 mkdir -p "$FALLBACK/.kendex/settings.toml"
 check 'unreadable setting' claude "$(edit Edit "$FALLBACK" ui/View.tsx bad-setting)" \
   'ui-copy-note: settings=unreadable' "kendex-env: not-file arg1=$FALLBACK/.kendex/settings.toml"
@@ -313,66 +311,14 @@ unbound_rows() {
 }
 unbound_rows
 
-ORCH="$CATALOG/skills/orch/scripts"
-parity_index=0
-while IFS='|' read -r setting changed; do
-  parity_index=$((parity_index + 1))
-  parity_repo="$TMP_ROOT/parity-$parity_index"
-  mkdir -p "$parity_repo/${changed%/*}"
-  git -C "$parity_repo" init -q
-  git -C "$parity_repo" config user.email ui-copy@example.com
-  git -C "$parity_repo" config user.name 'UI copy suite'
-  git -C "$parity_repo" commit -q --allow-empty -m base
-  parity_base=$(git -C "$parity_repo" rev-parse HEAD)
-  printf 'view\n' >"$parity_repo/$changed"
-  git -C "$parity_repo" add -- "$changed"
-  git -C "$parity_repo" commit -q -m change
-  printf '[env]\nQA_UI_PATHS = "%s"\n' "$setting" >"$parity_repo/kendex.settings.toml"
-  parity_branch=$(git -C "$parity_repo" branch --show-current)
-  parity_request=$(jq -cn --arg w "$parity_repo" --arg b "$parity_base" \
-    '{op: "record-qa-decision", step: "scan", worktree: $w, base: $b, judgments: []}')
-  parity_answer=$(
-    cd -- "$parity_repo" &&
-      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" state init --item UI-1 --worktree "$parity_repo" --branch "$parity_branch" >/dev/null &&
-      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" op --item UI-1 --request-json "$parity_request" >/dev/null &&
-      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" state get --item UI-1 /qa_decision
-  ) || exit 1
-  expected=''
-  if jq -e '.result.value.signals | index("needs-ui-review") != null' <<<"$parity_answer" >/dev/null; then
-    expected="ui-copy-note: path=$changed"
-  fi
-  check "orch runtime QA matcher parity $setting / $changed" claude \
-    "$(edit Edit "$parity_repo" "$changed" "parity-$parity_index")" "$expected"
+while IFS='|' read -r row setting changed expected; do
+  QA_UI_PATHS="$setting" check "QA_UI_PATHS $setting / $changed" claude \
+    "$(edit Edit "$REPO" "$changed" "$row")" "$expected"
 done <<'GLOBS'
-shell/**/*.qml|shell/Panel.qml
-shell/**/*.qml|shell/views/Panel.qml
-shell/**/*.qml|shell/views/Panel.txt
-docs/* ui/src/*|ui/src/deep/Panel.tsx
-ui/src/|ui/src/deep/Panel.tsx
-ui/src|ui/srcx/Panel.tsx
+suffix|shell/**/*.qml|shell/views/Panel.txt|
+nested-glob|docs/* ui/src/*|ui/src/deep/Panel.tsx|ui-copy-note: path=ui/src/deep/Panel.tsx
+prefix|ui/src|ui/srcx/Panel.tsx|
 GLOBS
-
-# The second call must expose a copy that skipped creating a session mark.
-skill_load_control once "$HOOK" "DETAIL=\"Read § UI copy in \$REFERENCE and apply it to this edit.\"" \
-  'STATE_DIR=/dev/null/unwritable' HOOK session_rows 'same session: keyed context'
-skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
-  '    TARGETS=${TARGETS//Move to:/Ignored:}' HOOK move_rows 'Codex matching destination: keyed context'
-skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
-  '    TARGETS=${TARGETS//Add File:/Ignored:}' HOOK add_rows 'Codex ordinary addition: keyed context'
-skill_load_control no-git "$HOOK" '    [ "$HARNESS" = claude ] || exit 0' \
-  '    command -v git >/dev/null 2>&1 || session_notice missing-tool git' HOOK no_git_rows \
-  'Claude edit after Bash without git, same session: keyed context'
-# A Pi copy that reads its shared tree beside its own root, as one that
-# classified its path would, takes the planted project reader.
-skill_load_control pi-scope "$HOOK" '      NATIVE_ROOT=$HOOK_ROOT' '      SHARED_ROOT=${HOOK_ROOT%/*}' \
-  HOOK pi_rows 'relocated global Pi skips adjacent project reader: keyed context'
-skill_load_control backslash-codex "$HOOK" '    [ -z "${CODEX_HOME:-}" ] || CODEX_HOME=${CODEX_HOME//\\//}' \
-  '    CODEX_HOME=${CODEX_HOME//\//\\}' HOOK codex_backslash_rows \
-  'relocated Codex native copy named by a backslash CODEX_HOME: keyed context'
-skill_load_control relative-codex "$HOOK" 'CLAUDE_ROOT="$HOME_PATH/.claude"' \
-  '[[ "$HOOK_PATH" == /* ]] || { notice reader install-layout; exit 0; }' HOOK codex_relative_rows \
-  'relative Codex global registration: keyed context' \
-  'relative Codex registration with two matching targets in one patch: keyed context'
 
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

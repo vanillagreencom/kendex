@@ -306,8 +306,10 @@ P_JARVIS=skills/jarvis/tests/task.test.sh
 P_MERGE=skills/github/tests/pr-merge.test.sh
 P_VIEW=skills/github/tests/pr-view.test.sh
 P_NATIVE=skills/github/tests/native-contracts.test.sh
-P_MAIN_ONLY=tools/tests/orch-shard-partition.test.sh
-UNIVERSE="$(cd "$ROOT" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
+P_MAIN_ONLY=refresh/tests/adopt-refresh.test.sh
+# Compare proof to the committed world read by the selector, including when
+# the caller has staged suite additions or deletions outside that world.
+UNIVERSE="$(cd "$PUSH_REPO" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
   ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh' | grep -v '/run-all\.sh$')"
 # The suites a group can prove: no group leg runs a declared main-only
 # suite, and MAIN_ONLY_FILTERS drops each shell one by base name.
@@ -391,8 +393,12 @@ check "push route: an owed original keeps the replacement its group proved" "$P_
 # dedicated job still runs it.
 push_select all-proved >/dev/null
 check "push route: a main-only suite the group filtered out stays selected" false "$(in_list skipped_suites "$P_MAIN_ONLY")"
-check "push route: and the dedicated job runs it" true \
-  "$(field main_suites <"$TMP/push-out" | jq --arg base "$(basename "$P_MAIN_ONLY" .sh)" 'any(.[]; .suite == $base)')"
+check "push route: only the adopter still runs in the dedicated job" '["adopt-refresh.test"]' \
+  "$(field main_suites <"$TMP/push-out" | jq -c '[.[].suite]')"
+check "push route: the group proves the restored ownership partition" true \
+  "$(in_list skipped_suites tools/tests/orch-shard-partition.test.sh)"
+check "push route: the group proves the restored deny hook" true \
+  "$(in_list skipped_suites hooks/tests/critical-path-deny.test.sh)"
 # The one-target world: the group ran orch/lib alone, so every other target
 # of both runtimes runs on the push's orch-rest leg.
 push_world one-target
@@ -577,8 +583,8 @@ while IFS='|' read -r path required forbidden build dedicated; do
   check "main dedicated reach: $path" "$dedicated" "$(sed -n 's/^main_suites=//p' "$TMP/push-out" | jq -c '[.[].suite]')"
 done <<'ROWS'
 .kendex-lock.json||rest|false|[]
-crates/core/src/lib.rs|rest|node|true|["orch-shard-partition.test","adopt-refresh.test"]
-pi-extensions/pi-agents-tmux/index.ts|node|linear|false|["orch-shard-partition.test","pi-agents-tmux"]
+crates/core/src/lib.rs|rest|node|true|["adopt-refresh.test"]
+pi-extensions/pi-agents-tmux/index.ts|node|linear|false|[]
 ROWS
 saved_after="$PUSH_AFTER"
 PUSH_AFTER=0000000000000000000000000000000000000000

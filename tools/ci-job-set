@@ -57,7 +57,7 @@
 #   CI_SELECTION   the file a class selection writes its skips and targets
 #                  to, where set
 #   PUSH_BEFORE, PUSH_AFTER  the actual main push endpoints
-#   MAIN_ONLY_SUITES  the workflow-owned dedicated declarations as JSON
+#   MAIN_ONLY_SUITES  workflow-owned dedicated declarations as JSON
 #   GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_RUN_ID  the proof lookup identity;
 #                  --runtime-publish reads GITHUB_REPOSITORY alone
 #
@@ -73,11 +73,11 @@
 # kept and whose every owning shard job completed successfully. Each group
 # must select a Rust target and every orch-rest Linux job must succeed to
 # prove that target. A failed, pending, absent or unread proof subtracts
-# nothing. A MAIN_ONLY_SUITES suite, which no group leg runs, is never
-# proved and owes no shard leg; a proved native replacement stays owed on
-# macOS wherever its original does. Lists of suites outside the reach and
-# suites proved by the group become skipped_suites and skipped_suites_macos. main_suites selects the
-# workflow-owned dedicated declarations; cache_compile selects build inputs.
+# nothing. The workflow's main-only suite owes its dedicated job, since no
+# group leg runs it. A proved native replacement stays owed on macOS wherever
+# its original does. Lists of suites outside the reach and suites proved by
+# the group become skipped_suites and skipped_suites_macos. main_suites
+# selects the dedicated declaration and cache_compile selects build inputs.
 # runtime_publish names the package runtime builds the head has no published
 # artifact for, and adds the leg that publishes them; no proof subtracts it.
 # The merge group at the head published them already: its publishing leg is
@@ -119,11 +119,10 @@
 #     macOS refuses the selection. `rust_targets=` lists the
 #     targets. A reach that cannot be read runs every shard, suite and
 #     target.
-#   - Beside the reach, four reads its text scan cannot see select a shard
+#   - Beside the reach, three reads its text scan cannot see select a shard
 #     whole: a changed hook selects `node`, whose pi-hooks suite runs hooks by
-#     name, and harness-smoke, which reads hooks/*.sh by glob; a changed file
-#     citing a shard by name in backticks selects orch-shard-partition, which
-#     holds every citation to the roster; `.bun-version` selects `node`; and
+#     name, and harness-smoke, which reads hooks/*.sh by glob;
+#     `.bun-version` selects `node`; and
 #     a build input selects the CHECKOUT_KENDEX_SHARDS whole, whose consumer
 #     rows run kendex-cli built from the checkout.
 #   - `guards-scans` runs where a path under skills/, hooks/, refresh/ or
@@ -698,8 +697,6 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # rust-reads below. Both jobs use this union, save smoke, which skill
 # Markdown selects only through a compiled input.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
-# A shard cited by name in prose: a name in backticks, then `shard`.
-SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
@@ -928,9 +925,8 @@ kept_replacements() { # KEPT
 # `skipped_suites=` value: every universe suite outside the kept set, save
 # those a shard selected whole runs. The two lists are separated by a blank.
 select_shards() { # BUILD(true|false)
-  local build="$1" path list="" shard cited kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
+  local build="$1" path list="" shard kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
   want=" "
-  set --
   while IFS= read -r path; do
     case "$path" in
       .bun-version) whole="$whole node" ;;
@@ -941,21 +937,7 @@ select_shards() { # BUILD(true|false)
 tools/tests/harness-smoke.test.sh" ;;
     esac
     case "$path" in skills/* | hooks/* | tools/* | refresh/*) whole="$whole guards-scans" ;; esac
-    [ ! -f "$path" ] || set -- "$@" "$path"
   done <<<"$paths"
-  # A changed file citing a shard by name, in the form
-  # tools/tests/orch-shard-partition.test.sh holds to the roster, runs that
-  # suite.
-  if [ "$#" -gt 0 ]; then
-    cited=0
-    grep -qE -- "$SHARD_CITATION" "$@" || cited=$?
-    case "$cited" in
-      0) kept="$kept
-tools/tests/orch-shard-partition.test.sh" ;;
-      1) ;;
-      *) die "citation-read-failed" "the changed files could not be read for shard citations" ;;
-    esac
-  fi
   [ "$build" = false ] || whole="$whole $CHECKOUT_KENDEX_SHARDS"
   if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
     whole=" $SHARDS"

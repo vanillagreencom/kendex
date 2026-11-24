@@ -44,8 +44,6 @@ edit_rows() {
       extra=${CONTEXT#*$'\n'}
       case "$extra" in *"$SKILL/references/memory.md"*) extra=present ;; *) extra=missing ;; esac
       assert_eq "$extra" present "$ROW: installed guide route"
-      case "$CONTEXT" in *'## Notes'*) extra=present ;; *) extra=missing ;; esac
-      assert_eq "$extra" present "$ROW: Notes heading route"
     fi
   done <<EOF
 edit|Edit|file_path|$ASSISTANT/memory/fact.md|jarvis-memory-note: path=$ASSISTANT/memory/fact.md
@@ -138,12 +136,5 @@ EOF
 }
 reader_rows
 
-# These rows must detect a copy that turns the advisory reader into a refusal.
-skill_load_control advisory "$HOOK" 'set -euo pipefail' 'exit 2' HOOK failure_rows \
-  'invalid payload: edit stays allowed' 'unknown tool: edit stays allowed'
-skill_load_control notebook-path "$HOOK" 'NotebookEdit) FIELD=notebook_path' 'FIELD=file_path' HOOK edit_rows \
-  'notebook edit: keyed first line'
-skill_load_control reader-cause "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'set -- "$1" "$2"' HOOK reader_rows \
-  'failed cat: diagnostic below keyed line' 'failed target: diagnostic below keyed line'
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

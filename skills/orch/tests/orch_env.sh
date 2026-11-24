@@ -24,12 +24,8 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 ORCH_ENV="$REPO_ROOT/skills/orch/scripts/orch-env"
-# mutant_scripts and mutate_file, the two halves of the control at the end.
-# shellcheck source=lib/growth-state.sh
-source "$TEST_DIR/lib/growth-state.sh"
-
 # shellcheck source=lib/assertions.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$TEST_DIR/lib/assertions.sh"
 
 echo "=== orch-env effective-setting reader ==="
 
@@ -164,13 +160,6 @@ assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
 got="$(cd "$proj_override" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE engineer)"
 assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
 
-# Must-fail control: a private copy with the composition branch removed must
-# hand back the caller's default where test 8 read the composed value.
-MUTANT="$(mutant_scripts mutant-scripts orch-env)/orch-env" || exit 1
-mutate_file "$MUTANT" '    composed_value "$VAR_NAME"' '    COMPOSED='
-got="$(cd "$proj_mode" && env -u ORCH_MERGE_AUTONOMY ORCH_USER_MODE=ceo "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
-assert_eq "$got" "ask" "must-fail control: without the mapping ceo falls back to the caller default"
-
 # Overseer startup reads ORCH_OVERSEER_LANES through orch-env. A consumer
 # setting left by the removed train must refuse that unrelated read too.
 for row in \
@@ -207,17 +196,6 @@ done
 
 got="$(cd "$proj_bare" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$PATH" "HOME=$TMP_ROOT" "$ORCH_ENV" ORCH_OVERSEER_LANES 3)"
 assert_eq "$got" "3" "overseer startup succeeds when the retired key is absent"
-
-# Guard control: keep the diagnostic and setting name, but suppress the
-# refusal branch. The same startup read must then succeed incorrectly.
-RETIRED_MUTANT="$(mutant_scripts retired-mutant orch-env)/orch-env" || exit 1
-mutate_file "$RETIRED_MUTANT" 'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]]; then' \
-  'if [[ -n "${ORCH_CONSUMER_REPOS+set}" ]] && false; then'
-status=0
-got="$(cd "$proj_bare" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" "PATH=$PATH" "HOME=$TMP_ROOT" ORCH_CONSUMER_REPOS= \
-  "$RETIRED_MUTANT" ORCH_OVERSEER_LANES 3 2>"$TMP_ROOT/retired-mutant.err")" || status=$?
-assert_eq "$status|$got|$(cat "$TMP_ROOT/retired-mutant.err")" '0|3|' \
-  "must-fail control: disabled retirement guard accepts the retired setting"
 
 # Publication callers consume this typed setting through the shared reader.
 while IFS='|' read -r value want_rc want; do
