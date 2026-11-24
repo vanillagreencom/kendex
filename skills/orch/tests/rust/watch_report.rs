@@ -5452,6 +5452,65 @@ fn report_due_counts_distinct_direct_push_items_and_preserves_a_capped_old_windo
 }
 
 #[test]
+fn report_completed_reads_the_lanes_own_repository() {
+    if !isolated_row("report_completed_reads_the_lanes_own_repository") {
+        return;
+    }
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[
+        {"item":"KEN-25","status":"done","repo":"Lane/Repo","launched_at":"2026-10-01T06:00:00Z"}
+    ]}));
+    let mut ctx = world.report_context();
+    ctx.settings.reads.connected_repos = vec!["other/repo".to_owned()];
+    let now = epoch("2026-10-01T14:00:00Z");
+    let search = |owner: &str| {
+        format!(
+            "search/issues?q=repo%3A{owner}%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-10-01T06%3A00%3A00Z&per_page=100&page=1"
+        )
+    };
+    let mut planted = json!({});
+    for owner in ["owner", "other"] {
+        planted[search(owner)] =
+            json!({"body":{"total_count":0,"incomplete_results":false,"items":[]}});
+    }
+    let lane_search = search("lane");
+    planted["repos/lane/repo/pulls/51"] = json!({"body":{
+        "number":51,"state":"closed","title":"Wire the lane","body":"",
+        "merged_at":"2026-10-01T07:00:00Z","merge_commit_sha":null,"author_association":"NONE",
+        "base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,
+        "head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-25",
+            "repo":{"full_name":"lane/repo","owner":{"login":"lane","type":"User"}}}
+    }});
+    planted[&lane_search] = json!({"body":{"total_count":1,"incomplete_results":false,
+        "items":[{"number":51,"pull_request":{}}]}});
+    world.plant("gh.json", &planted);
+    let body = report::render(&ctx, now).unwrap();
+    let completed = section(&body, "Completed");
+    assert!(
+        completed.contains(
+            "- KEN-25: Wire the lane ([lane/repo#51](https://github.com/lane/repo/pull/51))."
+        ),
+        "{completed}"
+    );
+
+    planted.as_object_mut().unwrap().remove(&lane_search);
+    world.plant("gh.json", &planted);
+    let body = report::render(&ctx, now).unwrap();
+    let completed = section(&body, "Completed");
+    assert!(
+        completed.starts_with("- Unread; source: GitHub; cause: ")
+            && completed.contains("github-read-failed")
+            && completed.contains("merged-search")
+            && completed.contains("search/issues?q=repo%3Alane%2Frepo"),
+        "{completed}"
+    );
+    assert!(
+        !completed.contains("None recorded in the window"),
+        "{completed}"
+    );
+}
+
+#[test]
 fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_merges() {
     let world = World::new();
     let root = world.path().display().to_string();
