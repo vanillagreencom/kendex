@@ -235,7 +235,7 @@ pub struct Stopped {
 }
 
 /// The item's stages, read once per transition.
-fn stages(path: &Path, doc: &Document) -> Result<Vec<Stage>> {
+pub(super) fn stages(path: &Path, doc: &Document) -> Result<Vec<Stage>> {
     Ok(ItemState::view(path, doc)?.stages)
 }
 
@@ -616,6 +616,17 @@ pub fn reuse(
     base: &str,
     declaration: &proof::Declaration,
 ) -> Option<String> {
+    reusable_run(stages, tree, base, declaration, &mut |_| None)
+}
+
+/// Publication can also follow a chain through committed base trees.
+pub(super) fn reusable_run(
+    stages: &[Stage],
+    tree: &str,
+    base: &str,
+    declaration: &proof::Declaration,
+    tree_of: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<String> {
     let read = proof::read(
         stages,
         &[],
@@ -628,7 +639,7 @@ pub fn reuse(
             exception: None,
         },
         declaration,
-        &mut |_| None,
+        tree_of,
     );
     if read.proof != proof::Verdict::Complete {
         return None;

@@ -23,7 +23,7 @@ use serde_json::{Map, Value, json};
 
 use super::admission::ScopeRange;
 use super::proof::{self, Hop};
-use super::{findings, loaded, tier};
+use super::{findings, loaded, tier, validate};
 use crate::error::{Error, Result};
 use crate::policy::{Stage, Stages};
 use crate::settings::{self, Settings};
@@ -902,6 +902,41 @@ fn slot_queue_read_only(common: &Path) -> Result<bool> {
     }
 }
 
+/// The publication can read managed rounds and the same standalone run
+/// files as `validate entry`. The item owns the outcome of a managed run.
+fn standing_validation(
+    path: &Path,
+    record: Option<&Document>,
+    worktree: &Path,
+    settings: &Settings,
+    base: &str,
+    commit: &str,
+) -> Result<bool> {
+    let mut stages = record
+        .map(|doc| validate::stages(path, doc))
+        .transpose()?
+        .unwrap_or_default();
+    let run_ids: std::collections::HashSet<_> = stages
+        .iter()
+        .filter_map(|stage| stage.run_dir.as_deref().map(super::run_id_of))
+        .collect();
+    let standalone = crate::validate::files::stages(worktree)?;
+    stages.extend(standalone.into_iter().filter(|stage| {
+        let id = stage.run_dir.as_deref().map(super::run_id_of);
+        id.is_some_and(|id| !run_ids.contains(&id))
+    }));
+    let mut tree_of = |commit: &str| {
+        let spec = format!("{commit}^{{tree}}");
+        let args = ["rev-parse", "--verify", "--end-of-options", &spec];
+        git(worktree, "rev-parse-tree", &args).ok()
+    };
+    let Some(tree) = tree_of(commit) else {
+        return Ok(false);
+    };
+    let declaration = proof::Declaration::of(&settings.validate);
+    Ok(validate::reusable_run(&stages, &tree, base, &declaration, &mut tree_of).is_some())
+}
+
 /// The publication's validation of the exact prepared head: the runtime's
 /// own detached validation entry over the range from the prepared base.
 /// The publisher waits for one follow budget. A run that has yet to pass
@@ -1173,7 +1208,16 @@ pub fn run(
             let chain_proves = tier == "micro"
                 && Stages::read(&at_worktree.roots.common, flags.private_env)?
                     .runs(Stage::GitHooks);
-            if !chain_proves {
+            if !chain_proves
+                && !standing_validation(
+                    path,
+                    record.as_ref(),
+                    &worktree,
+                    &at_worktree,
+                    base,
+                    prepared,
+                )?
+            {
                 if confined && slot_queue_read_only(&at_worktree.roots.common)? {
                     return Err(refuse(
                         "delivery-validate",

@@ -308,6 +308,89 @@ fn partial_base(row: &ProofRow) -> Option<&str> {
     (!base.is_empty()).then_some(base)
 }
 
+/// vgshell's `scripts/validate` emits this scope after it selects the
+/// affected checks for a non-ancestor base. Equal branch points keep the
+/// selection on the same branch changes. An unchanged path in the run's
+/// diff can still be a change against the publication base.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "read the two committed diffs named by the validation evidence"
+)]
+fn rebased_scope_covers(row: &ProofRow, base: &str) -> bool {
+    if row.mode != ValidateMode::Range || base.is_empty() || row.run_dir.is_empty() {
+        return false;
+    }
+    let dir = std::path::Path::new(&row.run_dir);
+    let Ok(run) = crate::validate::files::RunFile::read(dir) else {
+        return false;
+    };
+    if run.outcome() != Some(StageOutcome::Pass)
+        || run.get("validate-mode") != "range"
+        || run.get("validate-base") != row.base
+        || run.get("tree") != row.tree
+        || run.get("head") != row.head
+        || !run.selection().is_ok_and(|(lanes, selection)| {
+            lanes.is_some() && matches!(selection.as_str(), "all" | "battery")
+        })
+    {
+        return false;
+    }
+    let Ok(log) = std::fs::read_to_string(dir.join("log")) else {
+        return false;
+    };
+    let scope = format!(
+        "validate: scope=rebased base={} old-point={base} point={base}",
+        row.base
+    );
+    let mut scopes = log
+        .lines()
+        .filter(|line| line.starts_with("validate: scope="));
+    if scopes.next() != Some(scope.as_str()) || scopes.next().is_some() {
+        return false;
+    }
+    let worktree = run.get("worktree");
+    if worktree.is_empty() {
+        return false;
+    }
+    let diff = |from: &str| {
+        use agent_runtime::host::{self, Place};
+        use std::{path::Path, time::Duration};
+        let args = [
+            "diff-tree",
+            "-r",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "--end-of-options",
+            from,
+            &row.tree,
+            "--",
+        ];
+        let place = Place {
+            cwd: Some(Path::new(worktree)),
+            env: &[],
+        };
+        let out = host::run_tagged_in(
+            "proof",
+            "git",
+            Path::new("git"),
+            "diff-tree",
+            &args,
+            place,
+            Duration::from_secs(120),
+        )
+        .ok()?;
+        out.status.success().then_some(out.stdout)
+    };
+    let Some((requested, measured)) = diff(base).zip(diff(&row.base)) else {
+        return false;
+    };
+    let measured: std::collections::HashSet<_> = measured.split(|&b| b == 0).collect();
+    requested
+        .split(|&b| b == 0)
+        .all(|path| measured.contains(path))
+}
+
 /// The reader. `tree_of` reads a base commit's committed tree, the one
 /// read a chain across rounds needs; `None` is a base that cannot be read,
 /// which is never coverage.
@@ -445,7 +528,7 @@ impl Reader<'_> {
     }
 
     /// The rows that prove `tree` for a need judged from `base`: a whole
-    /// row at the tree, a partial row over the need's base, or a partial
+    /// row at the tree, a partial row covering the need's base, or a partial
     /// row whose base's committed tree is itself proven (`visited` holds
     /// the trees on the chain, so a base whose tree is already being read
     /// ends it). `None` where nothing does.
@@ -469,7 +552,7 @@ impl Reader<'_> {
             let Some(from) = partial_base(&row) else {
                 continue;
             };
-            if base == Some(from) {
+            if base.is_some_and(|base| base == from || rebased_scope_covers(&row, base)) {
                 return Some(vec![row]);
             }
             if let Some(next) = (self.tree_of)(from)

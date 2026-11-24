@@ -929,7 +929,7 @@ mod push {
 
     /// One finished range validation at the worktree's head, through the
     /// runtime's own validation entry: its run directory.
-    fn range_run(repo: &Repo) -> String {
+    fn range_run(repo: &Repo, base: &str) -> String {
         let mut command = isolated();
         for (k, v) in &repo.env {
             command.env(k, v);
@@ -940,7 +940,7 @@ mod push {
                 "--validate-mode",
                 "range",
                 "--base",
-                "origin/main",
+                base,
                 "--attached",
                 "--poll",
                 "1",
@@ -965,9 +965,9 @@ mod push {
         let repo = Repo::new("KEN-1", RANGE);
         repo.link_agents();
         repo.record(json!({}));
-        let earlier = range_run(&repo);
+        let earlier = range_run(&repo, "origin/main");
         restacked(&repo);
-        let run = range_run(&repo);
+        let run = range_run(&repo, "origin/main");
         let out = repo.push("branch");
         let reply = result(&out);
         assert_eq!(reply["stage"], run, "{reply}");
@@ -1048,7 +1048,7 @@ mod push {
         std::os::unix::fs::symlink(&repo.wt, &link).unwrap();
         repo.record(json!({"worktree": link.display().to_string()}));
         restacked(&repo);
-        let run = range_run(&repo);
+        let run = range_run(&repo, "origin/main");
         let spelled = link.join("tmp").join(Path::new(&run).file_name().unwrap());
         let mut record = repo.read();
         record["stages"] = json!([{"kind": "validate", "round_id": "r1", "start": 1, "end": 2,
@@ -1071,7 +1071,7 @@ mod push {
         repo.link_agents();
         repo.record(json!({}));
         restacked(&repo);
-        let run = range_run(&repo);
+        let run = range_run(&repo, "origin/main");
         fs::remove_file(Path::new(&run).join("paths")).ok();
         fs::create_dir_all(Path::new(&run).join("paths")).unwrap();
         let out = repo.push("branch");
@@ -1099,7 +1099,7 @@ mod push {
         repo.link_agents();
         repo.record(json!({}));
         restacked(&repo);
-        let run = range_run(&repo);
+        let run = range_run(&repo, "origin/main");
         let path = repo.planted_git("fail");
         let out = repo.op_env(
             "KEN-1",
@@ -1131,7 +1131,7 @@ mod push {
         let repo = Repo::new("KEN-1", RANGE);
         repo.link_agents();
         repo.record(json!({}));
-        range_run(&repo);
+        range_run(&repo, "origin/main");
         repo.advance("moved");
         let out = repo.push("branch");
         assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
@@ -1146,7 +1146,7 @@ mod push {
         let repo = Repo::new("KEN-1", RANGE);
         repo.link_agents();
         repo.record(json!({}));
-        let run = range_run(&repo);
+        let run = range_run(&repo, "origin/main");
         let map = format!("rebase-unmapped: {}\n", repo.head());
         fs::write(repo.map(), &map).unwrap();
         let request = |dir: &str| json!({"op": "record-push", "mode": "record-restack-validation", "worktree": repo.wt, "run_dir": dir});
@@ -1334,6 +1334,113 @@ mod push {
             "orch-runtime: delivery-validate cause=confined route=overseer-run-validation"
         );
         assert_eq!(repo.remote("main"), receipt["before"]);
+    }
+
+    #[test]
+    fn publication_reuses_a_standalone_range_pass_at_the_prepared_base() {
+        let repo = Repo::new("KEN-1", &format!("{BASE}{RANGE}"));
+        repo.link_agents();
+        repo.record(json!({}));
+        let receipt = prepared(&repo);
+        let base = receipt["before"].as_str().unwrap();
+        let run = range_run(&repo, base);
+        let reply = result(&repo.op(json!({
+            "op": "record-push", "mode": "publish", "worktree": repo.wt,
+            "base": base, "head": receipt["commit"],
+        })));
+        assert_eq!(reply["delivery"]["commit"], receipt["commit"]);
+        let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].dir, Path::new(&run));
+    }
+
+    #[test]
+    fn publication_reuses_a_range_pass_covering_the_rebased_scope() {
+        let cmd = "DEV_VALIDATE_RANGE_CMD = \"cat tmp/scope\"\nDEV_VALIDATE_CMD = \"true\"\n";
+        for (same_point, covers_paths) in [(true, true), (false, true), (true, false)] {
+            let covering = same_point && covers_paths;
+            let repo = Repo::new("KEN-1", &format!("{BASE}{cmd}"));
+            repo.link_agents();
+            repo.record(json!({}));
+            let old_head = repo.head();
+            let old_point = repo.remote("main");
+            if !same_point {
+                repo.advance("incoming");
+            }
+            let file = if covers_paths { "feature" } else { "other" };
+            commit(&repo.wt, file, "fixed\n", "fix(KEN-1): fix feature");
+            let receipt = prepared(&repo);
+            let base = receipt["before"].as_str().unwrap();
+            let head = receipt["commit"].as_str().unwrap();
+            let tree = git(&repo.wt, &["rev-parse", "HEAD^{tree}"]);
+            assert!(
+                !git(&repo.wt, &["rev-list", head])
+                    .lines()
+                    .any(|sha| sha == old_head)
+            );
+            // The validator's native scope row names the range invocation
+            // and the branch points before and after preparation folded it.
+            fs::write(
+                repo.wt.join("tmp/scope"),
+                format!("validate: scope=rebased base={old_head} old-point={old_point} point={base}\nvalidate: lanes=all selection=all\n"),
+            )
+            .unwrap();
+            let run = range_run(&repo, &old_head);
+            let recorded = result(&repo.op(json!({
+                "op": "record-push", "mode": "record-restack-validation", "worktree": repo.wt,
+                "run_dir": run,
+            })));
+            assert_eq!(recorded["stage"], run);
+
+            let proof = isolated()
+                .args(["--state-dir", repo.state.to_str().unwrap()])
+                .args([
+                    "read-proof",
+                    "--item",
+                    &repo.item,
+                    "--need",
+                    "submit",
+                    "--tree",
+                    &tree,
+                    "--head",
+                    head,
+                    "--base",
+                    base,
+                ])
+                .envs(repo.env.iter().map(|(key, value)| (key, value)))
+                .current_dir(&repo.main)
+                .output()
+                .unwrap();
+            let proof = result(&proof);
+            assert_eq!(
+                proof["proof"],
+                if covering { "complete" } else { "missing" },
+                "same_point={same_point} covers_paths={covers_paths}"
+            );
+            if covering {
+                assert_eq!(proof["rows"][0]["run_dir"], run);
+            }
+
+            read_only_slot_queue(&repo);
+            let out = repo.op_env(
+                &repo.item,
+                &json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
+                    "base": base, "head": head}),
+                &[(agent_runtime::confine::CONFINED_VAR, "1")],
+            );
+            if covering {
+                assert_eq!(result(&out)["delivery"]["commit"], head);
+                assert_eq!(repo.remote("main"), head);
+            } else {
+                assert!(
+                    refusal(&out).starts_with("orch-runtime: delivery-validate cause=confined")
+                );
+                assert_eq!(repo.remote("main"), base);
+            }
+            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].dir, Path::new(&run));
+        }
     }
 
     #[test]
