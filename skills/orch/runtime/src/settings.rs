@@ -225,9 +225,13 @@ const DEFAULT_CI_FIX_MAX_CYCLES: u64 = 6;
 /// The minutes to the account's wall, at the measured rate, the overseer
 /// hands off at; 0 is no rate mark.
 pub const OVERSEER_WALL_MINUTES_KEY: &str = "ORCH_OVERSEER_WALL_MINUTES";
-/// The percent of its cgroup's memory cap the overseer's harness process
-/// hands off at; unset is no memory mark.
+/// The percent of the memory cap of its own cgroup, or of the level
+/// `ORCH_OVERSEER_MEMORY_CGROUP` names, the overseer's harness process hands
+/// off at; unset is no memory mark.
 pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
+/// The name of the control group on the harness process's path whose cap
+/// the memory mark judges; unset judges the group the process runs in.
+pub const OVERSEER_MEMORY_CGROUP_KEY: &str = "ORCH_OVERSEER_MEMORY_CGROUP";
 /// The share of the context window a reading is due strictly past, held
 /// to the judge's ceiling.
 pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
@@ -328,6 +332,7 @@ const READ_KEYS: &[&str] = &[
     OVERSEER_DEAD_PASSES_KEY,
     OVERSEER_WALL_MINUTES_KEY,
     OVERSEER_MEMORY_PCT_KEY,
+    OVERSEER_MEMORY_CGROUP_KEY,
     HANDOFF_CONTEXT_PCT_KEY,
     HANDOFF_CONTEXT_TOKENS_KEY,
     HANDOFF_AGENT_RESERVE_KEY,
@@ -770,6 +775,9 @@ pub enum LaneOutput {
 pub struct MarkSettings {
     pub wall_minutes: Judged<u32>,
     pub memory_pct: Judged<Option<u32>>,
+    /// The named level the memory mark judges, `None` for the process's
+    /// own group. A value no group on the path carries reads unmeasured.
+    pub memory_cgroup: Option<String>,
     pub context_pct: Judged<u32>,
     pub context_tokens: Judged<u64>,
     /// A lane's account mark, the headroom it hands off at.
@@ -1046,6 +1054,7 @@ pub fn load(
                 .read
                 .map(|pct| Some(pct).filter(|&pct| pct > 0)),
         },
+        memory_cgroup: get(OVERSEER_MEMORY_CGROUP_KEY).map(str::to_owned),
         context_pct: Judged {
             read: pct(HANDOFF_CONTEXT_PCT_KEY, DEFAULT_HANDOFF_CONTEXT_PCT)
                 .read

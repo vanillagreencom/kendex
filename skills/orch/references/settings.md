@@ -263,7 +263,8 @@ The keys' rules, in the table's order:
 | `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Tokens an attached launch keeps below the context mark for returns still to come: a whole number. | `150000` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | The account headroom a lane's turn end hands off at. | `3` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Minutes to the account's wall, at the measured rate, at which the overseer hands off. `0` turns the mark off. | `20` |
-| `ORCH_OVERSEER_MEMORY_PCT` | The percent of its cgroup's memory cap at which the overseer's harness hands off. | unset: no memory mark |
+| `ORCH_OVERSEER_MEMORY_PCT` | The percent of the memory cap of its harness process's own cgroup, or of the level `ORCH_OVERSEER_MEMORY_CGROUP` names, at which the overseer hands off. A cap above that group, such as a user slice every session shares, never fires it, and an uncapped judged group takes no memory mark. | unset: no memory mark |
+| `ORCH_OVERSEER_MEMORY_CGROUP` | The name of the cgroup on the harness process's path, such as `tmux.service`, whose cap the memory mark judges: the nearest group so named. A name no group on the path carries reads the mark unmeasured. | unset: the process's own cgroup |
 | `AGENT_RUNTIME_CONTROLLER_SUCCESSION` | `on` or `off`: whether a controller may ask for its own succession. | `on` |
 | `AGENT_RUNTIME_CONTROLLER_PREFERENCE` | The `harness:model:effort` entries a succession walks for the successor. | `claude:standard:high,codex:standard:high` |
 | `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | `<account dir>=<token file>` pairs, both absolute: the file each Claude account signs in with. | unset |

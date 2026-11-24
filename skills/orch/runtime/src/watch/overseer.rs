@@ -46,7 +46,7 @@ use std::time::Duration;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::PaneState;
 use agent_runtime::observe::{self, ProcessReading, State, WallKind};
-use agent_runtime::process::{Identity, Memory};
+use agent_runtime::process::{Identity, Level, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, SessionVerdict};
 use serde::Serialize;
@@ -421,9 +421,9 @@ pub struct MarksAsk<'a> {
     /// `TOKENS:WINDOW`, the reading the native turn end took; none judges the
     /// account marks alone.
     pub context: Option<&'a str>,
-    /// The memory of the caller's harness process, read only where the
-    /// memory mark is set.
-    pub memory: &'a dyn Fn(&Identity) -> Reading<Option<Memory>>,
+    /// The cap of the level the judge picks on the caller's harness
+    /// process's path, read only where the memory mark is set.
+    pub memory: &'a dyn Fn(&Identity, Level) -> Reading<Option<Memory>>,
     pub now: u64,
 }
 
@@ -439,6 +439,13 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let context_cap = settings.marks.context_tokens.get()?;
     let wall_minutes = settings.marks.wall_minutes.get()?;
     let memory_pct = settings.marks.memory_pct.get()?;
+    // The process's own group, or the level the setting names: a cap above
+    // it, such as a user slice, holds every session's memory, so it fills
+    // whatever this session holds and a hand-over frees none of it.
+    let memory_level = match &settings.marks.memory_cgroup {
+        None => Level::Own,
+        Some(name) => Level::Named(name),
+    };
     let succession = settings.controller.succession.get()?;
     let trigger = settings.accounts.get()?.controller_headroom_pct;
     let context = match ask.context {
@@ -494,7 +501,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let memory = match (memory_pct, &ask.caller.identity) {
         (None, _) => MemoryRead::Inert,
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
-        (Some(pct), Some(identity)) => match (ask.memory)(identity) {
+        (Some(pct), Some(identity)) => match (ask.memory)(identity, memory_level) {
             Reading::Live(Some(m)) if m.max > 0 => {
                 let used = u32::try_from(m.current.saturating_mul(100) / m.max).unwrap_or(u32::MAX);
                 if used >= pct {
@@ -599,7 +606,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
 }
 
 enum MemoryRead {
-    /// No mark set, or no cap on the process's path.
+    /// No mark set, or no cap on the level judged.
     Inert,
     Below,
     Reached {
@@ -2065,11 +2072,12 @@ pub fn controller_marks(
     caller.harness = caller.harness.or(harness);
     caller.account = caller.account.or_else(|| account.map(str::to_owned));
     let host = crate::ops::Host::kernel();
-    let memory = |identity: &Identity| {
-        agent_runtime::process::memory_of(
+    let memory = |identity: &Identity, level: Level| {
+        agent_runtime::process::memory_at(
             Path::new("/proc"),
             Path::new("/sys/fs/cgroup"),
             identity.pid,
+            level,
         )
     };
     judge_marks(&MarksAsk {
@@ -2194,11 +2202,12 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         // identity reader: the marks, the overseer walk and the wall
         // route's pick, each a verdict this duty receives.
         let occupancy_host = crate::ops::Host::kernel();
-        let memory = |identity: &Identity| {
-            agent_runtime::process::memory_of(
+        let memory = |identity: &Identity, level: Level| {
+            agent_runtime::process::memory_at(
                 Path::new("/proc"),
                 Path::new("/sys/fs/cgroup"),
                 identity.pid,
+                level,
             )
         };
         let marks = |caller: &Caller, context: Option<&str>| {

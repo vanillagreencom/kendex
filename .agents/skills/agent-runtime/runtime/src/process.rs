@@ -293,9 +293,9 @@ pub fn identity(pid: u32) -> Reading<Identity> {
 
 /// A capped control group's charge and its cap. The charge counts every
 /// process under the group, so it is the figure the cap is enforced on.
-/// `oom_kill` is the OOM kills the caps on the path have made: the sum of
-/// every capped group's `memory.events` `oom_kill`, `None` where one of
-/// them could not be read, which is no count of zero.
+/// `oom_kill` is the OOM kills the caps read have made, from their
+/// `memory.events` `oom_kill`, `None` where one of them could not be read,
+/// which is no count of zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Memory {
     pub current: u64,
@@ -334,6 +334,61 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
                 ..fullest
             })
     })
+}
+
+/// The one control group on `pid`'s path whose cap a reading judges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level<'a> {
+    /// The group the process runs in.
+    Own,
+    /// The nearest group on the path, the process's own included, whose
+    /// directory carries this name, such as `tmux.service`.
+    Named(&'a str),
+}
+
+/// The cap of the one group `level` picks on the path of the control group
+/// `pid` runs in, under `cgroup_root`, read with that group's own charge
+/// and its own `memory.events` `oom_kill`. Unlike [`memory_of`], no other
+/// cap on the path is read: a parent slice every session shares fills with
+/// the others' memory, and a hand-over frees none of it. `Live(None)`
+/// where that group keeps no cap; `Gone` where `proc_root` holds no such
+/// pid; unreadable where the group, its cap or its charge could not be
+/// read or parsed, and `cgroup-level-off-path` where no group on the path
+/// carries the named level, which is never a group without a cap.
+pub fn memory_at(
+    proc_root: &Path,
+    cgroup_root: &Path,
+    pid: u32,
+    level: Level,
+) -> Reading<Option<Memory>> {
+    let path = match group_of(proc_root, pid) {
+        Reading::Live(path) => path,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let judged = match level {
+        Level::Own => Path::new(path.as_str()),
+        Level::Named(name) => match Path::new(path.as_str())
+            .ancestors()
+            .find(|group| group.file_name() == Some(OsStr::new(name)))
+        {
+            Some(group) => group,
+            None => {
+                return Reading::Unreadable {
+                    cause: "cgroup-level-off-path",
+                };
+            }
+        },
+    };
+    let dir = cgroup_root.join(judged);
+    match cap_at(&dir) {
+        Ok(Some(memory)) => Reading::Live(Some(Memory {
+            oom_kill: kills(&dir),
+            ..memory
+        })),
+        Ok(None) => Reading::Live(None),
+        Err(cause) => Reading::Unreadable { cause },
+    }
 }
 
 /// The memory a new process tree in `pid`'s control group can take now, in
@@ -387,70 +442,98 @@ fn mem_available(meminfo: &str) -> Option<u64> {
 /// their `memory.events` `oom_kill`, `None` where one of them could not be
 /// read; the readings [`memory_of`] states.
 fn caps_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<(Vec<Memory>, Option<u64>)> {
-    let unreadable = |cause: &'static str| Reading::Unreadable { cause };
-    let text = match fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
-        Err(_) => return unreadable("cgroup-unreadable"),
-    };
-    // Only the v2 tree is read (`0::/<path>`): a host on the v1 hierarchy
-    // alone reads unreadable, so a mark set there reports itself unmeasured
-    // instead of judging a figure it never read.
-    let Some(path) = text
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))
-        .map(|path| path.trim_start_matches('/'))
-    else {
-        return unreadable("cgroup-v2-absent");
+    let path = match group_of(proc_root, pid) {
+        Reading::Live(path) => path,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
     };
     let group = cgroup_root.join(path);
-    let number = |file: &Path| -> std::result::Result<Option<u64>, &'static str> {
-        match fs::read_to_string(file) {
-            Ok(text) if text.trim() == "max" => Ok(None),
-            Ok(text) => text
-                .trim()
-                .parse::<u64>()
-                .map(Some)
-                .map_err(|_| "cgroup-figure-unparsed"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err("cgroup-file-unreadable"),
-        }
-    };
-    let kills = |dir: &Path| -> Option<u64> {
-        fs::read_to_string(dir.join("memory.events"))
-            .ok()?
-            .lines()
-            .find_map(|line| line.strip_prefix("oom_kill "))?
-            .trim()
-            .parse()
-            .ok()
-    };
     let mut caps = Vec::new();
     let mut oom_kill = Some(0u64);
     let mut dir = group.as_path();
     loop {
-        match number(&dir.join("memory.max")) {
-            Ok(Some(max)) => {
-                let current = match number(&dir.join("memory.current")) {
-                    Ok(Some(current)) => current,
-                    Ok(None) => return unreadable("memory-current-unreadable"),
-                    Err(cause) => return unreadable(cause),
-                };
+        match cap_at(dir) {
+            Ok(Some(cap)) => {
                 oom_kill = oom_kill.zip(kills(dir)).map(|(sum, n)| sum + n);
-                caps.push(Memory {
-                    current,
-                    max,
-                    oom_kill: None,
-                });
+                caps.push(cap);
             }
             Ok(None) => {}
-            Err(cause) => return unreadable(cause),
+            Err(cause) => return Reading::Unreadable { cause },
         }
         match dir.parent() {
             Some(parent) if dir != cgroup_root && parent.starts_with(cgroup_root) => dir = parent,
             Some(_) | None => return Reading::Live((caps, oom_kill)),
         }
     }
+}
+
+/// The path, below the v2 root, of the control group `pid` runs in, read
+/// off `<proc_root>/<pid>/cgroup`.
+fn group_of(proc_root: &Path, pid: u32) -> Reading<String> {
+    let text = match fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "cgroup-unreadable",
+            };
+        }
+    };
+    // Only the v2 tree is read (`0::/<path>`): a host on the v1 hierarchy
+    // alone reads unreadable, so a mark set there reports itself unmeasured
+    // instead of judging a figure it never read.
+    match text
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .map(|path| path.trim_start_matches('/'))
+    {
+        Some(path) => Reading::Live(path.to_owned()),
+        None => Reading::Unreadable {
+            cause: "cgroup-v2-absent",
+        },
+    }
+}
+
+/// The cap of the group at `dir` with its charge, `oom_kill` unread;
+/// `None` where the group keeps no cap, a `memory.max` of `max` or none at
+/// all, as the root of the tree keeps none.
+fn cap_at(dir: &Path) -> std::result::Result<Option<Memory>, &'static str> {
+    let Some(max) = cgroup_figure(&dir.join("memory.max"))? else {
+        return Ok(None);
+    };
+    match cgroup_figure(&dir.join("memory.current"))? {
+        Some(current) => Ok(Some(Memory {
+            current,
+            max,
+            oom_kill: None,
+        })),
+        None => Err("memory-current-unreadable"),
+    }
+}
+
+/// One control-group figure: `None` for `max` or a file the group lacks.
+fn cgroup_figure(file: &Path) -> std::result::Result<Option<u64>, &'static str> {
+    match fs::read_to_string(file) {
+        Ok(text) if text.trim() == "max" => Ok(None),
+        Ok(text) => text
+            .trim()
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| "cgroup-figure-unparsed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("cgroup-file-unreadable"),
+    }
+}
+
+/// The group's own `memory.events` `oom_kill`, `None` where it is unread.
+fn kills(dir: &Path) -> Option<u64> {
+    fs::read_to_string(dir.join("memory.events"))
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("oom_kill "))?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// The `/proc` starttime of a pid as `ticks:<n>`. A host without `/proc`

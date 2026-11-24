@@ -9556,18 +9556,20 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
     assert_eq!(answer["reason"], json!("headroom-none"));
 }
 
-/// On fixture cgroup files: a cap on a parent of the group is the nearest
-/// cap and the charge against it reaches the mark, read with the caps' OOM
-/// kill count, each capped group's `memory.events` `oom_kill` summed and
-/// none where one is unread; a path with no cap is inert; a group whose charge cannot be read is `mark-unmeasured
-/// kind=memory`; a pid the proc tree lacks is gone; with no setting the
-/// mark is never judged.
+/// On fixture cgroup files, the death-cause reading: a cap on a parent of
+/// the group is the fullest cap, read with the caps' OOM kill count, each
+/// capped group's `memory.events` `oom_kill` summed and none where one is
+/// unread; a path with no cap is inert; a group whose charge cannot be read
+/// is unreadable; a pid the proc tree lacks is gone. On planted readings,
+/// the memory mark: a reading at the setting fires, an unreadable one is
+/// `mark-unmeasured kind=memory`, and with no setting the mark is never
+/// judged.
 #[test]
 fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
-    use agent_runtime::controller::views::{Caller, MarkKind};
-    use agent_runtime::process::{Identity, Memory, memory_of};
+    use agent_runtime::controller::views::MarkKind;
+    use agent_runtime::process::{Memory, memory_of};
     use agent_runtime::reading::Reading;
-    use orch_runtime::watch::overseer::{MarkKey, MarksAsk, judge_marks};
+    use orch_runtime::watch::overseer::MarkKey;
     let mut world = MarksWorld::new();
     world.plant(None, &[measured_account("eclaude", 10)]);
     world.write_fleet(&world.dir("eclaude"));
@@ -9623,53 +9625,8 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     std::fs::write(cgroup.join("a/memory.max"), "max\n").unwrap();
     assert_eq!(memory_of(&proc_root, &cgroup, 4242), Reading::Live(None));
     assert_eq!(memory_of(&proc_root, &cgroup, 9999), Reading::Gone);
-    let settings = |extra: &[(&str, &str)]| {
-        let roots = agent_runtime::settings::Roots {
-            project: world.path().to_path_buf(),
-            common: world.path().to_path_buf(),
-        };
-        let mut environment = world.environment();
-        environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
-        orch_runtime::settings::load(
-            &roots,
-            &environment,
-            &orch_runtime::settings::Flags {
-                state_dir: Some(world.path().to_path_buf()),
-                private_env: false,
-            },
-        )
-        .unwrap()
-    };
-    let fleet_path = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
-    let caller = Caller {
-        harness: Some(agent_runtime::harness::Harness::Claude),
-        account: Some(world.dir("eclaude")),
-        home: Some(world.dir("eclaude")),
-        model: Some("opus".to_owned()),
-        effort: None,
-        cwd: Some(world.path().display().to_string()),
-        permission: None,
-        extra_args: Vec::new(),
-        handoff: None,
-        identity: Some(Identity {
-            pid: 4242,
-            start: "ticks:1".to_owned(),
-        }),
-    };
     let judge = |extra: &[(&str, &str)], reading: Reading<Option<Memory>>| {
-        let settings = settings(extra);
-        let host = orch_runtime::ops::Host::kernel();
-        let memory = |_: &Identity| reading.clone();
-        judge_marks(&MarksAsk {
-            settings: &settings,
-            fleet_path: &fleet_path,
-            host: &host,
-            caller: &caller,
-            context: None,
-            memory: &memory,
-            now: now_secs(),
-        })
-        .unwrap()
+        judged_memory(&world, extra, &|_, _| reading.clone())
     };
     let set = [
         ("ORCH_OVERSEER_MEMORY_PCT", "80"),
@@ -9700,6 +9657,167 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
         },
     );
     assert_eq!(unset.key, MarkKey::Below, "no setting judges no memory");
+}
+
+/// The memory mark judges the cap of the harness's own group, or of the
+/// level `ORCH_OVERSEER_MEMORY_CGROUP` names, read through the kernel
+/// reader over fixture cgroup files. A full parent slice every session
+/// shares never fires it, since a hand-over frees none of its memory; an
+/// uncapped judged level takes no mark; a named level off the path is
+/// unmeasured, never a level without a cap.
+#[test]
+fn the_memory_mark_judges_its_own_group_or_named_level_never_a_shared_slice() {
+    use agent_runtime::controller::views::MarkKind;
+    use agent_runtime::process::memory_at;
+    use orch_runtime::watch::overseer::MarkKey;
+    const SCOPE: &str = "user.slice/user-1000.slice/user@1000.service/tmux.service";
+    const SHARED: &str = "user.slice/user-1000.slice";
+    const MANAGER: &str = "user.slice/user-1000.slice/user@1000.service";
+    let mut world = MarksWorld::new();
+    world.plant(None, &[measured_account("eclaude", 10)]);
+    world.write_fleet(&world.dir("eclaude"));
+    let proc_root = world.path().join("proc");
+    std::fs::create_dir_all(proc_root.join("4242")).unwrap();
+    std::fs::write(proc_root.join("4242/cgroup"), format!("0::/{SCOPE}\n")).unwrap();
+    let reached = |value: &'static str| (MarkKey::Reached(MarkKind::Memory), value);
+    let below = (MarkKey::Below, "");
+    // (case, named level, capped groups as (group, current, max), answer:
+    // the key and its value or reason)
+    type Row<'a> = (
+        &'a str,
+        Option<&'a str>,
+        &'a [(&'a str, u64, u64)],
+        (MarkKey, &'a str),
+    );
+    let rows: [Row; 8] = [
+        (
+            "a full shared slice over an uncapped scope",
+            None,
+            &[(SHARED, 990, 1000)],
+            below,
+        ),
+        (
+            "a full own scope under a fuller shared slice",
+            None,
+            &[(SCOPE, 850, 1000), (SHARED, 990, 1000)],
+            reached("85"),
+        ),
+        (
+            "an own scope below the mark under a full shared slice",
+            None,
+            &[(SCOPE, 100, 1000), (SHARED, 990, 1000)],
+            below,
+        ),
+        (
+            "a full named level over an uncapped scope",
+            Some("user@1000.service"),
+            &[(MANAGER, 900, 1000), (SHARED, 990, 1000)],
+            reached("90"),
+        ),
+        (
+            "a named level that is the own scope",
+            Some("tmux.service"),
+            &[(SCOPE, 850, 1000), (MANAGER, 100, 1000)],
+            reached("85"),
+        ),
+        (
+            "a named level judged over a full own scope",
+            Some("user@1000.service"),
+            &[(SCOPE, 990, 1000), (MANAGER, 100, 1000)],
+            below,
+        ),
+        (
+            "an uncapped named level under a full shared slice",
+            Some("user@1000.service"),
+            &[(SHARED, 990, 1000)],
+            below,
+        ),
+        (
+            "a named level off the path",
+            Some("agents.slice"),
+            &[(SCOPE, 990, 1000)],
+            (
+                MarkKey::Unmeasured(MarkKind::Memory),
+                "cgroup-level-off-path",
+            ),
+        ),
+    ];
+    for (i, (case, named, caps, (key, detail))) in rows.into_iter().enumerate() {
+        let cgroup = world.path().join(format!("cgroup-{i}"));
+        std::fs::create_dir_all(cgroup.join(SCOPE)).unwrap();
+        for (group, current, max) in caps {
+            let dir = cgroup.join(group);
+            std::fs::write(dir.join("memory.current"), format!("{current}\n")).unwrap();
+            std::fs::write(dir.join("memory.max"), format!("{max}\n")).unwrap();
+        }
+        let mut extra = vec![
+            ("ORCH_OVERSEER_MEMORY_PCT", "80"),
+            ("ORCH_OVERSEER_WALL_MINUTES", "0"),
+        ];
+        extra.extend(named.map(|name| ("ORCH_OVERSEER_MEMORY_CGROUP", name)));
+        let marks = judged_memory(&world, &extra, &|identity, level| {
+            memory_at(&proc_root, &cgroup, identity.pid, level)
+        });
+        assert_eq!(marks.key, key, "{case}");
+        match &key {
+            MarkKey::Reached(_) => assert_eq!(marks.value, detail, "{case}"),
+            MarkKey::Unmeasured(_) => assert_eq!(marks.reason, detail, "{case}"),
+            MarkKey::Below => {}
+        }
+    }
+}
+
+/// The marks judged for a Claude caller on pid 4242 under the world's
+/// settings and `extra`, with `memory` as the memory reader.
+fn judged_memory(
+    world: &MarksWorld,
+    extra: &[(&str, &str)],
+    memory: &dyn Fn(
+        &agent_runtime::process::Identity,
+        agent_runtime::process::Level,
+    ) -> agent_runtime::reading::Reading<Option<agent_runtime::process::Memory>>,
+) -> orch_runtime::watch::overseer::Marks {
+    let roots = agent_runtime::settings::Roots {
+        project: world.path().to_path_buf(),
+        common: world.path().to_path_buf(),
+    };
+    let mut environment = world.environment();
+    environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+    let settings = orch_runtime::settings::load(
+        &roots,
+        &environment,
+        &orch_runtime::settings::Flags {
+            state_dir: Some(world.path().to_path_buf()),
+            private_env: false,
+        },
+    )
+    .unwrap();
+    let caller = agent_runtime::controller::views::Caller {
+        harness: Some(agent_runtime::harness::Harness::Claude),
+        account: Some(world.dir("eclaude")),
+        home: Some(world.dir("eclaude")),
+        model: Some("opus".to_owned()),
+        effort: None,
+        cwd: Some(world.path().display().to_string()),
+        permission: None,
+        extra_args: Vec::new(),
+        handoff: None,
+        identity: Some(agent_runtime::process::Identity {
+            pid: 4242,
+            start: "ticks:1".to_owned(),
+        }),
+    };
+    let host = orch_runtime::ops::Host::kernel();
+    orch_runtime::watch::overseer::judge_marks(&orch_runtime::watch::overseer::MarksAsk {
+        settings: &settings,
+        fleet_path: &world.path().join(agent_runtime::record::FLEET_FILE_NAME),
+        host: &host,
+        caller: &caller,
+        context: None,
+        memory,
+        now: now_secs(),
+    })
+    .unwrap()
 }
 
 // ---------------------------------------------------------------------------
