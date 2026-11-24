@@ -41,34 +41,37 @@ The harness's control feeds a pattern the dialect **refuses** through the vector
 
 ## Cross-file sets
 
-**Every set of ids or predicates that appears in more than one file is either derived from one named source, or checked by a validator that reds when the copies diverge.** Neither "compare them by reading" nor "keep them in sync" counts.
+**Every set of ids or predicates that appears in more than one file is derived from one named source.** Neither "compare them by reading" nor "keep them in sync" counts.
+
+- A set still kept by hand in two files is held by a validator that reds when the copies diverge.
+- That validator is a stopgap under code-quality § Over-Engineering, not an answer: its row names the item that derives one copy from the other.
 
 **"Derived" covers two different things, and a row says which.**
 
 - *Derived, read at run time* means the generator parses that file and the set arrives as data. Exactly two files are read that way, the doctrine source and the routing table, and SKILL.md § The render inputs names both.
-- *Derived, one statement* means the file carries the single statement of the set and one implementation encodes it.
+- *Derived, one statement* means one constant in the implementation holds the set and every reader reads that constant.
 - A file carrying **text a render emits** is data.
-- A file carrying a **refusal predicate** is a specification the implementation holds in one place, where a control reds if it stops matching.
+- A spec table that states a set the implementation also encodes is a second hand-kept copy, not a derivation.
 
 Its sites, and which answer each takes:
 
-| Set | Answer |
-|-----|--------|
-| Doctrine block ids | `doctrine-routing` |
-| Which block reaches which destination, and in what order | Derived, read at run time |
-| Content refusals | Derived, one statement |
-| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Derived, one statement |
-| The marker line | Derived, one statement |
-| The routing table's own shape | `doctrine-routing` |
-| Validator test protection | § Controls |
+| Set | Answer | Deriving item |
+|-----|--------|---------------|
+| Doctrine block ids | Stopgap: `doctrine-routing` | KEN-5592 |
+| Which block reaches which destination, and in what order | Derived, read at run time | – |
+| Content refusals | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
+| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
+| The marker line | Derived, one statement | – |
+| The routing table's own shape | `doctrine-routing` | – |
+| Validator test protection | § Controls | – |
 
-- **Doctrine block ids**: the doctrine source's `###` headings against the routing table's rows, and both against the frozen id set. `doctrine-routing` holds set equality in both directions.
+- **Doctrine block ids**: the doctrine source's `###` headings and the routing table's rows are two hand-kept copies, each held against the frozen id set. `doctrine-routing` holds set equality in both directions.
 - **Which block reaches which destination**: the routing table in `renders.md` is the single source; per-surface sections cite it and state no order of their own.
 - **Content refusals**: which input string is under which refusal, and what each refusal's predicate is.
-  - The table in `repo-toml.md` § The content refusals is the single source; `toml-schema` and the Escaping paragraphs cite it.
-  - Three structures encode it: `refusals.ROWS` holds the content-class rows, `globs.check` the glob row, and `config._cadence` the `qodo_commands` row.
+  - The table in `repo-toml.md` § The content refusals states it; `toml-schema` and the Escaping paragraphs cite that table.
+  - Three structures encode it by hand: `refusals.ROWS` holds the content-class rows, `globs.check` the glob row, and `config._cadence` the `qodo_commands` row.
   - `toml-refusals.test.sh` holds the table against all three.
-- **The Qodo verbs**, and which half `qodo-parity` requires guidance for: `repo-toml.md` § `[bot-instructions.cadence]` states the set and the split; the implementation encodes the role column once and `qodo-parity` reads that.
+- **The Qodo verbs**, and which half `qodo-parity` requires guidance for: `repo-toml.md` § `[bot-instructions.cadence]` states the set and the split; `constants.QODO_VERBS` encodes the role column by hand, `qodo-parity` reads that constant, and `toml-refusals.test.sh` holds the stated table against it.
 - **The marker line**: its exact form, the prologue that may precede it, and the one field it varies by.
   - One function emits the marker and one answers ownership against its opener, which both read from one constant, so the writer and the reader cannot spell it differently and a marker an earlier copy wrote still reads as owned.
   - One function splits the prologue, and both the ownership test and the marker's insertion read it.

@@ -94,8 +94,8 @@ Every rule here serves an outcome: correct results for the user, reliability und
 - A classification of upstream text lives in one table, tested on real examples.
 - Before adding a script, background watcher, setting or rule, find and extend the existing owner.
 - If no owner exists, state that in the commit message.
-- A check that compares a declaration with its implementation checks consistency; it is not a second implementation of the decision.
-- The consistency check's expected contract stays independent of the implementation.
+- Where a declaration can drift from its implementation, derive one from the other.
+- A check that compares two hand-kept copies is a stopgap: it stays only while it names the item that derives one copy from the other, and leaves when that item lands.
 
 - A new gate, check or guard names the failure it prevents, a run that failed or a shipped producer that reaches it.
 - The new gate also names who it is against: ordinary code calling by accident, untrusted input crossing a trust boundary, or a developer bypassing it on purpose, which review holds, not the guard.
@@ -161,26 +161,28 @@ A must-fail control ([§ Tests](#tests)) proves that an instrument detects the d
 - A slow test that is the only one to catch a failure that matters is kept.
 - Make such a slow test cheaper only in a form that still catches that failure.
 - No test is admitted or required by its name or label.
-- Delete a row that re-tests a rule another layer's test holds, duplicates a sibling row, pins the test harness's own configuration or tests a dependency's own behavior.
+- Delete a row that re-tests a rule another layer's test holds, pins the test harness's own configuration or tests a dependency's own behavior.
+- A row is admitted only when it catches a failure no other row catches, whatever incident or table entry it came from.
 - The consumer tests its use of the dependency.
-- A must-fail control proves a new or changed instrument once, in its first commit.
+- A must-fail control proves a new or changed instrument once, in its first commit, and the commit message records it.
 - A bug fix ships the test that failed before the fix.
 - The control is not owed per surface, per rule or per row.
-- A control that runs from input, a fixture or an uncompiled source copy stays in the suite.
-- A control that needs a compiled-source edit is shown once and recorded in the commit message; its absence from the suite is no omission.
+- A control's absence from the suite is no omission.
+- A control stays in the suite only where a record shows the failure it catches recurred and no cheaper check catches it; without that record, remove it.
 - [§ Prove Your Guards](#prove-your-guards) holds the mechanics.
 - When no production edit can redden a test, state why and what it establishes.
 - A port keeps the original's answers on the inputs that matter: its fixtures, its incidents and the edges you name, recorded by running the original once.
 - Keep a generated differential against the executing original only for an input domain too wide to enumerate.
 - Remove the differential with the original.
 - A row asserts the guarantee, not the mechanism that provides it.
+- A row on a workflow, configuration or script runs it, or the planner that reads it, on inputs and asserts the result, never the file's literal text.
 - A row's expected values are independent of the implementation.
 - A row's result is specific to its guard: a neighbouring gate's output, a helper that produces both actual and expected values, or a truthiness check establishes nothing.
 - No test asserts human-readable wording in messages, docs, help text or comments.
 - Assert typed categories, error kinds or structured fields.
 - The exceptions are output another program parses and text the product delivers as its result: test it and name that consumer or contract.
 - No test pins a fixed count of data that grows, such as a dictionary's size, a table's row count or a catalog's member total.
-- Assert the members the contract names, or the floor the contract fixes.
+- Assert a member or a floor that a contract outside the code under test names, never a copy of the list under test.
 - Put variations of one input contract in one visible table.
 - Run the same assertions for each row, covering empty input where the contract permits it.
 - Shared fixtures define a neutral world.

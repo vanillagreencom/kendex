@@ -131,10 +131,12 @@ END
 ROWS
 bi_toml_table 'the content refusals' "$repo" "$rows"
 
-# § Cross-file sets: the content-refusal table is the single statement, and
-# four structures encode it, the fourth for the one key the table excludes.
-# Held against them here, so a row or a marked cell present on one side and
-# absent from the other reds.
+# The stopgap `validators.md` § Cross-file sets names: the content-refusal
+# table and the three structures that encode it by hand (refusals.ROWS,
+# globs.check, config._cadence) are hand-kept copies, held together here so a
+# row or a marked cell present on one side and absent from the other reds.
+# config._code_review_path encodes code_review_path, the one key the table
+# excludes.
 if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
 import os, re, sys
 PKG = sys.argv[1]
@@ -205,9 +207,9 @@ except InputError:
     pass
 else:
     sys.exit("globs.check does not enforce the glob row")
-# The verb row has its own table one section up, and its Role column is what
-# `qodo-parity` reads. Compared cell by cell: a count passes for ANY role
-# assignment.
+# The verb row has its own table one section up, a hand-kept copy of
+# constants.QODO_VERBS, which `qodo-parity` reads. Compared cell by cell: a
+# count passes for ANY role assignment.
 verbs = {}
 for ln in table.split("\n"):
     cells = [c.strip().strip("`") for c in ln.strip().strip("|").split("|")]
