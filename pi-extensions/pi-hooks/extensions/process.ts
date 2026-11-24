@@ -14,10 +14,12 @@ export interface CommandResult {
 
 /** What a run takes besides its command. `stdin` is written to the child and
  * the pipe closed; omitted, the child gets no stdin at all. `signal` stops the
- * run the way the timeout does, for work owned by a turn the person can end. */
+ * run the way the timeout does, for work owned by a turn the person can end.
+ * `env` is set over this process's environment for the child alone. */
 export interface CommandOptions {
 	stdin?: string;
 	signal?: AbortSignal;
+	env?: Record<string, string>;
 }
 
 function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { value: number }, maxBuffer: number): void {
@@ -38,7 +40,7 @@ function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { val
  * running. So a child that forks, as cargo forks rustc, is stopped whole.
  */
 export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number, options: CommandOptions = {}): Promise<CommandResult> {
-	const { stdin, signal } = options;
+	const { stdin, signal, env } = options;
 	return new Promise((resolve) => {
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
@@ -61,11 +63,13 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 			child = spawn(command, args, {
 				cwd,
 				detached,
-				// Name the live object rather than let the runtime choose an env.
-				// Bun's async spawn reads process.env today, so this is a no-op
-				// here as it is under Node. It is the guarantee a test planting a
-				// binary on PATH rests on, not a runtime default.
-				env: process.env,
+				// Name the live object, or a copy of it read at this spawn with
+				// `env` set over it, rather than let the runtime choose an env.
+				// Bun's async spawn reads process.env today, so naming it is a
+				// no-op here as it is under Node, and the copy carries the same
+				// PATH. That PATH is the guarantee a test planting a binary on it
+				// rests on, not a runtime default.
+				env: env === undefined ? process.env : { ...process.env, ...env },
 				stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
 		} catch (error) {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { registeredHooks, TOOL_CALL_LISTENER } from "../extensions/registry.ts";
 import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, renderUserStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv } from "./harness.ts";
 
@@ -195,7 +195,7 @@ describe("pi-hooks registry dispatch", () => {
 		const agentDir = process.env.PI_CODING_AGENT_DIR!;
 		const log = join(agentDir, "env-reaches.log");
 		try {
-			renderUserStub(agentDir, "audit", { exitCode: 0, log, reportEnv: "AUDIT_RULES" }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
+			renderUserStub(agentDir, "audit", { exitCode: 0, log, reportEnv: ["AUDIT_RULES"] }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
 			const handler = installToolCallHandler();
 			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
 			expect(readLog(log)).toContain("AUDIT_RULES=[crates/ui/**/*.rs=iced-rs]\n");
@@ -214,7 +214,7 @@ describe("pi-hooks registry dispatch", () => {
 		const project = initCleanRustRepo("pi-hooks-project-env-");
 		const log = join(project, "project-env.log");
 		try {
-			renderStub(project, "audit", { exitCode: 0, log, reportEnv: "AUDIT_RULES" }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
+			renderStub(project, "audit", { exitCode: 0, log, reportEnv: ["AUDIT_RULES"] }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
 			const handler = installToolCallHandler();
 			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
 			expect(readLog(log)).toContain("AUDIT_RULES=[crates/ui/**/*.rs=iced-rs]\n");
@@ -222,6 +222,30 @@ describe("pi-hooks registry dispatch", () => {
 			rmSync(project, { recursive: true, force: true });
 		}
 	});
+
+	// A hook reading its dependencies from its own install is told which
+	// registration ran it, so it never classifies its path a second time: a
+	// global root relocated into a project checkout, or reached through a
+	// symlinked folder, is still the global scope this carrier read.
+	for (const scope of ["project", "global"] as const) {
+		test(`a ${scope} registration's scope and root reach the script it runs`, async () => {
+			const project = realpathSync(initCleanRustRepo(`pi-hooks-scope-${scope}-`));
+			const agentDir = process.env.PI_CODING_AGENT_DIR!;
+			const log = join(project, "scope.log");
+			const reportEnv = ["KENDEX_HOOK_SCOPE", "KENDEX_HOOK_ROOT"];
+			try {
+				if (scope === "project") renderStub(project, "audit", { exitCode: 0, log, reportEnv });
+				else renderUserStub(agentDir, "audit", { exitCode: 0, log, reportEnv });
+				const handler = installToolCallHandler();
+				expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+				const root = scope === "project" ? project : resolve(agentDir);
+				expect(readLog(log)).toEndWith(`KENDEX_HOOK_SCOPE=[${scope}]\nKENDEX_HOOK_ROOT=[${root}]\n`);
+			} finally {
+				rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	}
 
 	// That registry is never opened, so a clone nobody has trusted cannot stop
 	// the session with a document that will not parse either.

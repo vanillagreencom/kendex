@@ -3,7 +3,9 @@
 # decider settings reader, code-quality UI reference, the orch runtime's
 # record-qa-decision scan (its QA_UI_PATHS matcher, through
 # orch/scripts/orch-runtime, which needs a built runtime), and the tracked
-# Claude Code and Codex registrations.
+# Claude Code and Codex registrations. A Pi row runs the hook the way the
+# pi-hooks carrier spawns it, with the KENDEX_HOOK_SCOPE and KENDEX_HOOK_ROOT
+# its registry suite holds the carrier to.
 set -euo pipefail
 TEST_DIR=$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)
 CATALOG=$(cd -- "$TEST_DIR/../.." && pwd -P)
@@ -15,7 +17,7 @@ TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P) || { echo 'ui-copy-note: scratch=resolve
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 . "$TEST_DIR/lib/assert.sh"
 
-unset QA_UI_PATHS QA_PERF_PATHS KENDEX_ENV_FILE ORCH_STATE_DIR CODEX_HOME
+unset QA_UI_PATHS QA_PERF_PATHS KENDEX_ENV_FILE ORCH_STATE_DIR CODEX_HOME KENDEX_HOOK_SCOPE KENDEX_HOOK_ROOT
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OPTIONAL_LOCKS COPILOT_PROJECT_DIR
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 case "$OSTYPE" in msys* | cygwin*) export MSYS=winsymlinks:nativestrict ;; esac
@@ -48,6 +50,9 @@ check() { # ROW HARNESS PAYLOAD FIRST-LINE [DIAGNOSTIC CAUSE]
   case "$2" in
     claude | codex) install_dir="${FIXTURE_INSTALL:-$INSTALL}/.$2/hooks" ;;
     codex-global) install_dir="$CODEX_HOME/hooks" ;;
+    codex-relative) install_dir="$FIXTURE_INSTALL/$CODEX_HOME/hooks" ;;
+    pi-global) install_dir="$KENDEX_HOOK_ROOT/kendex/hooks" ;;
+    pi-project) install_dir="$KENDEX_HOOK_ROOT/.pi/kendex/hooks" ;;
     claude-global) install_dir="$HOME/.claude/hooks" ;;
     unbound) install_dir="$TMP_ROOT/unbound/hooks" ;;
   esac
@@ -173,11 +178,37 @@ GIT_INDEX_FILE="$TMP_ROOT/corrupt-index" check 'Claude Bash preserves Git cause'
 BASH_EVENT=$(jq -c '.session_id = "shell-other"' <<<"$BASH_EVENT")
 check 'Codex Bash stays silent' codex "$BASH_EVENT" ''
 
+# Missing git stops only the Claude Bash branch, so an edit later in that
+# session still gets the note.
+NO_GIT_BIN="$TMP_ROOT/no-git-bin"
+mkdir -p "$NO_GIT_BIN"
+for tool in jq cat cp mkdir find; do ln -s -- "$(command -v "$tool")" "$NO_GIT_BIN/$tool"; done
+no_git_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/no-git-state-${HOOK##*/}" PATH="$NO_GIT_BIN"
+  export XDG_STATE_HOME PATH
+  check 'Claude Bash without git' claude "$(edit Bash "$REPO" '' no-git)" 'ui-copy-note: missing-tool=git'
+  check 'Claude edit after Bash without git, same session' claude \
+    "$(edit Edit "$REPO" shell/Panel.qml no-git)" 'ui-copy-note: path=shell/Panel.qml'
+}
+no_git_rows
+
 RELOCATED="$TMP_ROOT/relocated/kendex"
 install_skills "$RELOCATED/skills"
 CODEX_HOME="$RELOCATED" EXPECTED_GUIDE="$RELOCATED/skills/code-quality/references/ui.md" \
   check 'relocated Codex native copy ending in kendex' codex-global \
     "$(edit Edit "$REPO" shell/Panel.qml global-codex)" 'ui-copy-note: path=shell/Panel.qml'
+# Git Bash and Cygwin pass a native Windows CODEX_HOME on with its
+# backslashes; the hook runs as on that host, its OSTYPE included.
+codex_backslash_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/backslash-state-${HOOK##*/}" home="$TMP_ROOT/relocated/kendex" command
+  export XDG_STATE_HOME
+  printf -v command 'OSTYPE=msys CODEX_HOME=%q bash %q' "${home//\//\\}" "$home/hooks/ui-copy-note.sh"
+  CODEX_HOME="$home" FIXTURE_INSTALL="$home" FIXTURE_COMMAND="$command" \
+    EXPECTED_GUIDE="$home/skills/code-quality/references/ui.md" \
+    check 'relocated Codex native copy named by a backslash CODEX_HOME' codex-global \
+      "$(edit Edit "$REPO" shell/Panel.qml global-codex-backslash)" 'ui-copy-note: path=shell/Panel.qml'
+}
+codex_backslash_rows
 RELOCATED="$SIBLING/codex-global"
 mkdir -p "$SIBLING/.agents/skills/decider/scripts/lib"
 printf 'printf "fixture reader crossed scope\\n" >&2\nreturn 17\n' >"$SIBLING/.agents/skills/decider/scripts/lib/kendex-env.sh"
@@ -191,6 +222,60 @@ ln -s "$TMP_ROOT/dotfiles/claude-home" "$HOME/.claude"
 EXPECTED_GUIDE="$HOME/.agents/skills/code-quality/references/ui.md" \
   check 'global Claude dotfiles alias' claude-global \
     "$(edit Edit "$REPO" shell/Panel.qml global-claude)" 'ui-copy-note: path=shell/Panel.qml'
+
+# The carrier's payload has no cwd and an absolute file_path (vocab.ts).
+pi_edit() { # PATH SESSION
+  jq -cn --arg p "$1" --arg s "$2" '{tool_name:"Edit",session_id:$s,tool_input:{file_path:$p}}'
+}
+# A Pi global root moved into a checkout is spelled like that checkout's
+# project install, and its shared tree holds the planted reader.
+pi_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/pi-state-${HOOK##*/}"
+  export XDG_STATE_HOME
+  KENDEX_HOOK_SCOPE=global KENDEX_HOOK_ROOT="$SIBLING/.pi" \
+    EXPECTED_GUIDE="$HOME/.agents/skills/code-quality/references/ui.md" \
+    check 'relocated global Pi skips adjacent project reader' pi-global \
+      "$(pi_edit "$REPO/shell/Panel.qml" pi-relocated)" 'ui-copy-note: path=shell/Panel.qml'
+}
+pi_rows
+mkdir -p "$TMP_ROOT/dotfiles/pi-home/agent"
+ln -s "$TMP_ROOT/dotfiles/pi-home" "$HOME/.pi"
+[ -L "$HOME/.pi" ]
+install_skills "$HOME/.pi/agent/skills"
+KENDEX_HOOK_SCOPE=global KENDEX_HOOK_ROOT="$HOME/.pi/agent" \
+  EXPECTED_GUIDE="$HOME/.pi/agent/skills/code-quality/references/ui.md" \
+  check 'global Pi through a symlinked harness folder' pi-global \
+    "$(pi_edit "$REPO/shell/Panel.qml" pi-global-alias)" 'ui-copy-note: path=shell/Panel.qml'
+PI_PROJECT="$TMP_ROOT/pi-project"
+mkdir -p "$TMP_ROOT/physical-pi" "$PI_PROJECT"
+git -C "$PI_PROJECT" init -q
+ln -s "$TMP_ROOT/physical-pi" "$PI_PROJECT/.pi"
+[ -L "$PI_PROJECT/.pi" ]
+install_skills "$PI_PROJECT/.agents/skills"
+KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$PI_PROJECT" \
+  EXPECTED_GUIDE="$PI_PROJECT/.agents/skills/code-quality/references/ui.md" \
+  check 'project Pi through a symlinked harness folder' pi-project \
+    "$(pi_edit "$PI_PROJECT/Panel.qml" pi-project)" 'ui-copy-note: path=Panel.qml'
+
+# A relative CODEX_HOME renders the global registration as the relative
+# `bash "<path>"` engine::targets::direct_command writes, opened from the
+# hook's working directory.
+RELATIVE_BASE="$TMP_ROOT/relative"
+install_skills "$RELATIVE_BASE/rel-codex/skills"
+codex_relative_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/relative-state-${HOOK##*/}"
+  export XDG_STATE_HOME
+  CODEX_HOME=rel-codex FIXTURE_INSTALL="$RELATIVE_BASE" FIXTURE_COMMAND='bash "rel-codex/hooks/ui-copy-note.sh"' \
+    EXPECTED_GUIDE="$RELATIVE_BASE/rel-codex/skills/code-quality/references/ui.md" \
+    check 'relative Codex global registration' codex-relative \
+      "$(edit Edit "$REPO" shell/Panel.qml codex-relative)" 'ui-copy-note: path=shell/Panel.qml'
+  CODEX_HOME=rel-codex FIXTURE_INSTALL="$RELATIVE_BASE" FIXTURE_COMMAND='bash "rel-codex/hooks/ui-copy-note.sh"' \
+    EXPECTED_GUIDE="$RELATIVE_BASE/rel-codex/skills/code-quality/references/ui.md" \
+    check 'relative Codex registration with two matching targets in one patch' codex-relative \
+      "$(patch_payload codex-two $'*** Add File: shell/First.qml\n*** Update File: ui/Second.tsx')" \
+      'ui-copy-note: path=shell/First.qml'
+}
+codex_relative_rows
 
 ALIASED="$TMP_ROOT/aliased"
 install_skills "$ALIASED/.agents/skills"
@@ -208,7 +293,15 @@ for harness in claude codex; do
     check "aliased project $harness registry" "$harness" \
       "$(edit Edit "$ALIASED" Panel.qml "aliased-$harness")" 'ui-copy-note: path=Panel.qml'
 done
-check 'unbound hook path' unbound "$(edit Edit "$REPO" shell/Panel.qml unbound)" 'ui-copy-note: reader=install-layout'
+# A Pi copy run by a carrier that sets no KENDEX_HOOK_SCOPE is unbound for its
+# whole session, on every tool call.
+unbound_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/unbound-state-${HOOK##*/}"
+  export XDG_STATE_HOME
+  check 'unbound hook path' unbound "$(edit Edit "$REPO" shell/Panel.qml unbound)" 'ui-copy-note: reader=install-layout'
+  check 'unbound hook path, same session' unbound "$(edit Bash "$REPO" '' unbound)" ''
+}
+unbound_rows
 
 ORCH="$CATALOG/skills/orch/scripts"
 parity_index=0
@@ -256,6 +349,20 @@ skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice 
   '    TARGETS=${TARGETS//Move to:/Ignored:}' HOOK move_rows 'Codex matching destination: keyed context'
 skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
   '    TARGETS=${TARGETS//Add File:/Ignored:}' HOOK add_rows 'Codex ordinary addition: keyed context'
+skill_load_control no-git "$HOOK" '    [ "$HARNESS" = claude ] || exit 0' \
+  '    command -v git >/dev/null 2>&1 || session_notice missing-tool git' HOOK no_git_rows \
+  'Claude edit after Bash without git, same session: keyed context'
+# A Pi copy that reads its shared tree beside its own root, as one that
+# classified its path would, takes the planted project reader.
+skill_load_control pi-scope "$HOOK" '      NATIVE_ROOT=$HOOK_ROOT' '      SHARED_ROOT=${HOOK_ROOT%/*}' \
+  HOOK pi_rows 'relocated global Pi skips adjacent project reader: keyed context'
+skill_load_control backslash-codex "$HOOK" '    [ -z "${CODEX_HOME:-}" ] || CODEX_HOME=${CODEX_HOME//\\//}' \
+  '    CODEX_HOME=${CODEX_HOME//\//\\}' HOOK codex_backslash_rows \
+  'relocated Codex native copy named by a backslash CODEX_HOME: keyed context'
+skill_load_control relative-codex "$HOOK" 'CLAUDE_ROOT="$HOME_PATH/.claude"' \
+  '[[ "$HOOK_PATH" == /* ]] || { notice reader install-layout; exit 0; }' HOOK codex_relative_rows \
+  'relative Codex global registration: keyed context' \
+  'relative Codex registration with two matching targets in one patch: keyed context'
 
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

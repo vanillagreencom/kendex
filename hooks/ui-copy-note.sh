@@ -3,11 +3,11 @@
 # name: ui-copy-note
 # event: PostToolUse
 # matcher: Edit|MultiEdit|Write|Bash
-# description: Gives the session the installed code-quality UI copy reference after the first matching edit attempt. Successful Claude Code Bash calls check tracked changes across the checkout, including changes already present. Matches each path relative to its project against QA_UI_PATHS. When the setting is unset or empty, the fallback is *.qml *.tsx *.jsx *.vue *.svelte. Codex apply_patch renames use the destination and deletions are skipped. Not run on pi: delivery is tracked in KEN-5303. Not run on copilot: postToolUse has no measured additionalContext delivery to the model. Not run on gemini: the AfterTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it executes no edit event. Not run on antigravity: its toolCall.args payload has no reader here.
+# description: Gives the session the installed code-quality UI copy reference after the first matching edit attempt. Successful Claude Code Bash calls check tracked changes across the checkout, including changes already present. Matches each path relative to its project against QA_UI_PATHS. When the setting is unset or empty, the fallback is *.qml *.tsx *.jsx *.vue *.svelte. Codex apply_patch renames use the destination and deletions are skipped. A Pi copy reads its skills under the registration scope and root the pi-hooks carrier passes as KENDEX_HOOK_SCOPE and KENDEX_HOOK_ROOT. Not run on copilot: postToolUse has no measured additionalContext delivery to the model. Not run on gemini: the AfterTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it executes no edit event. Not run on antigravity: its toolCall.args payload has no reader here.
 # summary: Points the assistant at the UI copy rules on the first matching edit attempt or Claude Code Bash result with matching tracked changes.
 # safety: Advisory reader. The standard installed settings loader resolves the effective QA_UI_PATHS value from the process environment and the edited project's settings and private env data. Claude Code Bash calls also read tracked Git status. Writes a session marker under the XDG state directory and prunes markers older than 30 days. Reader or marker failures produce keyed context at exit 0.
 # timeout: 10
-# harnesses: [claude, codex]
+# harnesses: [claude, codex, pi]
 # requires-skills: [code-quality, decider]
 # ---
 
@@ -30,6 +30,31 @@ context() { # TEXT
 notice() { # KEY VALUE [DETAIL]
   local detail=${3:-}
   context "ui-copy-note: $1=$2${detail:+$'\n'$detail}"
+}
+
+# The exclusive create lets just one competing call speak. Prints the marker
+# diagnostic the message carries, and fails once the session is marked.
+mark_session() {
+  if [ -z "$KEY" ]; then
+    printf '%s' 'ui-copy-note: marker=no-session-id'
+  elif (umask 077 && mkdir -p -- "$STATE_DIR" && set -C && : >"$STATE_DIR/$KEY") 2>/dev/null; then
+    find "$STATE_DIR" -type f -mtime +30 -delete 2>/dev/null || printf '%s' 'ui-copy-note: marker=prune-failed'
+  elif [ -e "$STATE_DIR/$KEY" ]; then
+    return 1
+  else
+    printf '%s' 'ui-copy-note: marker=unwritable'
+  fi
+}
+
+# An install layout the hook cannot read, such as a Pi copy whose carrier sets
+# no or no known KENDEX_HOOK_SCOPE, fails every call of the session alike: say
+# it once, not on every tool call.
+session_notice() { # KEY VALUE [DETAIL]
+  local mark detail=${3:-}
+  mark=$(mark_session) || exit 0
+  detail="$detail${mark:+${detail:+$'\n'}$mark}"
+  notice "$1" "$2" "$detail"
+  exit 0
 }
 
 trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then notice reader unexpected; fi; exit 0' EXIT
@@ -65,42 +90,72 @@ TARGETS=${PAYLOAD#*$'\n'}
 TARGETS=${TARGETS%$'\037'}
 
 HOOK_PATH=${BASH_SOURCE[0]}
+HOOK_ROOT=${KENDEX_HOOK_ROOT-}
 HOME_PATH=${HOME:-/nonexistent}
 case "$OSTYPE" in
   msys* | cygwin* | win32*)
     HOME_PATH=${USERPROFILE:-$HOME_PATH}
     HOME_PATH=${HOME_PATH//\\//}
     HOOK_PATH=${HOOK_PATH//\\//}
+    HOOK_ROOT=${HOOK_ROOT//\\//}
+    [ -z "${CODEX_HOME:-}" ] || CODEX_HOME=${CODEX_HOME//\\//}
     absolute_root='^([A-Za-z]:/|//[^/]+/[^/]+)'
     ;;
   *) absolute_root='^/' ;;
 esac
-[[ "$HOOK_PATH" == /* || "$HOOK_PATH" =~ $absolute_root ]] || { notice reader install-layout; exit 0; }
 HOME_DIR=$(physical_dir "$HOME_PATH" 2>/dev/null) || HOME_DIR=''
 SHARED_ROOT=$HOME_DIR
 PROJECT_INSTALL=''
 CODEX_ROOT=${CODEX_HOME-$HOME_PATH/.codex}
+# A relative CODEX_HOME renders a relative global registration, which the
+# harness opened from this hook's working directory: the skill paths the note
+# hands the session are spelled from there.
+[[ -z "$CODEX_ROOT" || "$CODEX_ROOT" == /* || "$CODEX_ROOT" =~ $absolute_root ]] ||
+  CODEX_ROOT="$PWD/$CODEX_ROOT"
 CLAUDE_ROOT="$HOME_PATH/.claude"
 
-# Global identity takes precedence when aliases land both registrations on
-# the same script. Project ownership comes from the renderer's argv spelling.
-if [ -n "$CODEX_ROOT" ] && [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
-  NATIVE_ROOT=$CODEX_ROOT
-  HARNESS=codex
-elif [ "$HOOK_PATH" -ef "$CLAUDE_ROOT/hooks/ui-copy-note.sh" ]; then
-  NATIVE_ROOT=$CLAUDE_ROOT
-  HARNESS=claude
-else
-  case "$HOOK_PATH" in
-    */.claude/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}; HARNESS=claude ;;
-    */.codex/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}; HARNESS=codex ;;
-    *) notice reader install-layout; exit 0 ;;
-  esac
-  PROJECT_INSTALL=$(physical_dir "${PROJECT_INSTALL:-/}" 2>&1) ||
-    { notice reader install-layout "$PROJECT_INSTALL"; exit 0; }
-  NATIVE_ROOT="${PROJECT_INSTALL%/}/.$HARNESS"
-  SHARED_ROOT=$PROJECT_INSTALL
-fi
+# The Pi carrier names the registration it ran (the Hooks section of kendex's
+# docs/adapters/pi.md), so a Pi copy takes its scope and root from there and
+# never from its path: a global root relocated into a checkout is spelled like
+# a project install.
+case "${KENDEX_HOOK_SCOPE-}" in
+  global | project)
+    HARNESS=pi
+    if [ "$KENDEX_HOOK_SCOPE" = global ]; then
+      NATIVE_ROOT=$HOOK_ROOT
+    else
+      PROJECT_INSTALL=$(physical_dir "$HOOK_ROOT" 2>&1) ||
+        session_notice reader install-layout "$PROJECT_INSTALL"
+      NATIVE_ROOT="${PROJECT_INSTALL%/}/.pi"
+      SHARED_ROOT=$PROJECT_INSTALL
+    fi
+    ;;
+  '')
+    # Global identity takes precedence when aliases land both registrations
+    # on the same script. Project ownership comes from the renderer's argv
+    # spelling.
+    if [ -n "$CODEX_ROOT" ] && [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
+      NATIVE_ROOT=$CODEX_ROOT
+      HARNESS=codex
+    elif [ "$HOOK_PATH" -ef "$CLAUDE_ROOT/hooks/ui-copy-note.sh" ]; then
+      NATIVE_ROOT=$CLAUDE_ROOT
+      HARNESS=claude
+    else
+      case "$HOOK_PATH" in
+        */.claude/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}; HARNESS=claude ;;
+        */.codex/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}; HARNESS=codex ;;
+        *)
+          session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
+          ;;
+      esac
+      PROJECT_INSTALL=$(physical_dir "${PROJECT_INSTALL:-/}" 2>&1) ||
+        session_notice reader install-layout "$PROJECT_INSTALL"
+      NATIVE_ROOT="${PROJECT_INSTALL%/}/.$HARNESS"
+      SHARED_ROOT=$PROJECT_INSTALL
+    fi
+    ;;
+  *) session_notice reader install-layout "KENDEX_HOOK_SCOPE=$KENDEX_HOOK_SCOPE names no scope" ;;
+esac
 
 installed() { # SKILL FILE — only this hook's native and shared skill roots
   local relative="$1/$2"
@@ -240,15 +295,6 @@ fi
 
 REFERENCE=$(installed code-quality references/ui.md) || { notice reference missing "$ISSUES"; exit 0; }
 DETAIL="Read § UI copy in $REFERENCE and apply it to this edit."
-# The exclusive create lets just one competing edit print a reminder.
-if [ -z "$KEY" ]; then
-  DETAIL="$DETAIL"$'\n''ui-copy-note: marker=no-session-id'
-elif (umask 077 && mkdir -p -- "$STATE_DIR" && set -C && : >"$STATE_DIR/$KEY") 2>/dev/null; then
-  find "$STATE_DIR" -type f -mtime +30 -delete 2>/dev/null || DETAIL="$DETAIL"$'\n''ui-copy-note: marker=prune-failed'
-elif [ -e "$STATE_DIR/$KEY" ]; then
-  [ -z "$ISSUES" ] || context "$ISSUES"
-  exit 0
-else
-  DETAIL="$DETAIL"$'\n''ui-copy-note: marker=unwritable'
-fi
+MARK=$(mark_session) || { [ -z "$ISSUES" ] || context "$ISSUES"; exit 0; }
+DETAIL="$DETAIL${MARK:+$'\n'$MARK}"
 notice path "$MATCH" "$DETAIL${ISSUES:+$'\n'$ISSUES}"

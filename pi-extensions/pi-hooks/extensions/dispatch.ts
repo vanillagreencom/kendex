@@ -82,12 +82,17 @@ const DEFAULT_BUDGET_MS = 60_000;
  * rather than the walk its command carries. A command that sets an environment
  * for that script is run as written instead: the assignments exist only in the
  * command, so the direct spawn would run the script with none of them.
+ *
+ * Every run carries the registration's scope and root as `KENDEX_HOOK_SCOPE`
+ * and `KENDEX_HOOK_ROOT`, so a hook can take its own install from the registry
+ * this carrier read rather than work it out again from its path.
  */
 export async function runHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext): Promise<HookOutcome> {
 	if (hook.missing && hook.script !== undefined) return { ran: false, missing: hook.script };
 	const budgetMs = hook.budgetMs ?? DEFAULT_BUDGET_MS;
 	const args = hook.script === undefined || hook.assigns === true ? ["-c", hook.command] : [hook.script];
-	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, { stdin: payload });
+	const env = { KENDEX_HOOK_SCOPE: hook.scope, KENDEX_HOOK_ROOT: hook.root };
+	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, { stdin: payload, env });
 	switch (result.stoppedBy) {
 		case "timeout":
 			return { ran: false, timedOutAfterMs: budgetMs };

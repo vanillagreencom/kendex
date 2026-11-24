@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 0.19.3
+
+- Every hook the carrier runs gets its registration's scope in `KENDEX_HOOK_SCOPE`, `project` or `global`, and that scope's root in `KENDEX_HOOK_ROOT`: the project directory, or the Pi agent directory. kendex's `ui-copy-note` hook reads its skills from that root, so a global install moved into a project checkout or reached through a symlinked folder never reads the project's copy.
+
 ### 0.19.2
 
 - Stop hooks receive `pi_run_outcome` from Pi's settle event. Jarvis can count a completed brief turn with no tool call while leaving errored and aborted turns unstamped.
