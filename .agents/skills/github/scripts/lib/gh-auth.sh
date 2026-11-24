@@ -734,9 +734,13 @@ kendex_github_git() {
   # is sent ahead of any helper. An empty http.extraHeader resets git's
   # header list (git-config); at this URL scope it also outranks an inherited
   # header scoped as widely.
-  if [[ -n "${ORCH_GH_READ_TOKEN_FILE:-}" && ( "$rewrite_ssh" -eq 1 || "$read_https" -eq 1 ) ]]; then
-    git_args+=(-c http.https://github.com/.extraheader=)
+  if [[ "$rewrite_ssh" -eq 1 || "$read_https" -eq 1 ]]; then
+    if [[ -n "${ORCH_GH_READ_TOKEN_FILE:-}" ]]; then
+      git_args+=(-c http.https://github.com/.extraheader=)
+    fi
+    # Git tries askpass before the terminal when the helper refuses.
+    GIT_ASKPASS=false GIT_TERMINAL_PROMPT=0 git "${git_args[@]}" "$@"
+  else
+    git "$@"
   fi
-
-  git ${git_args[@]+"${git_args[@]}"} "$@"
 }
