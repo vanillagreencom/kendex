@@ -166,7 +166,7 @@ Load each named section with `jarvis-section` before the step that acts on it.
 ## Handoff replacement
 
 1. After the initial reads and first decision, read the predecessor's State checkpoint and the progress-log records after its covered range.
-   - For an ordinary transfer, reconcile only those later records. Use the destination writes already confirmed for the covered range, and do not write those records again.
+   - For an ordinary transfer, reconcile only those later records. For a record inside the covered range, read its destination to confirm retention and write nothing again; a destination that lacks the record is a disagreement with a source.
    - Run the full replay instead for a legacy import (a handoff from an earlier path or with no checkpoint), an interrupted write (a State entry for an unfinished operation with no receipt), missing coverage, or a record that disagrees with its source.
    - The full replay reads every section of the predecessor handoff and its progress log, including records in Owed and open, Context, Agent contact, Verify and Open requests when those sections exist.
 2. For every record outside session state that step 1 selects, write it to its home under [Homes](../references/long-session.md#homes), or confirm that its home already retains it.
