@@ -741,6 +741,14 @@ registered_worktree_git_dir() {
   return 1
 }
 
+# A registration's rebase map outlives its directory, and dropping the
+# registration deletes it: while it is not empty it is the only record of a
+# rewrite record-push has yet to reconcile, so no route may drop the
+# registration. Succeeds when the map in GIT-DIR is not empty.
+registration_holds_rebase_map() { # GIT-DIR
+  [[ -s "$1/kendex-rebase-map" ]]
+}
+
 # Git can remove registration before directory deletion fails. Missing identity
 # never authorizes a retry to delete the directory; recovery stays with its owner.
 remove_recovery_guidance() {
@@ -2756,33 +2764,43 @@ release_ended_session_lease() {
 
 # A registration whose directory is gone holds no work, yet git still lists
 # it, so the ownership scan reads it as the item's tree. Once its guard lease
-# has ended, or with no lock at all, `git worktree prune` drops it (git never
-# prunes a locked one). Anything else leaves it to the refusals below. With
-# no guard nothing is released, so the missing guard is no warning here.
+# has ended, or with no lock at all, `git worktree remove` drops this one
+# registration, never another item's (git refuses a locked one). One that
+# still holds a rebase map, or that cannot be resolved to rule one out, is
+# kept with its lease, and like anything else is left to the refusals below.
+# With no guard nothing is released, so the missing guard is no warning here.
 clear_removed_registration() {
-  local wt="$1" rc=0 err=""
+  local wt="$1" rc=0 err="" git_dir=""
   [[ -x "$SESSION_GUARD" ]] || return 0
   # Status 1 is also the answer for a path git never registered, every fresh
   # create's case, so it says nothing here.
   "$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
   case "$rc" in
-    3) ;;
-    0 | 75)
-      rc=0
-      release_ended_session_lease "$wt" || rc=$?
-      case "$rc" in
-        0) ;;
-        7 | 75)
-          # The guard's reason is the one cause the refusal below can name.
-          [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
-          return 0
-          ;;
-        *) return 0 ;;
-      esac
-      ;;
+    0 | 3 | 75) ;;
     *) return 0 ;;
   esac
-  if ! err="$(git -C "$PROJECT_ROOT" worktree prune 2>&1 >/dev/null)"; then
+  if ! git_dir="$(registered_worktree_git_dir "$wt")"; then
+    worktree_message registration-unresolved "$wt" "Warning: the registration of the removed worktree $wt could not be resolved, so an unreconciled rebase map cannot be ruled out; keeping it." >&2
+    return 0
+  fi
+  if registration_holds_rebase_map "$git_dir"; then
+    worktree_message registration-rebase-map "$git_dir/kendex-rebase-map" "Warning: the registration of the removed worktree $wt still holds an unreconciled rebase map; keeping it and its lease." >&2
+    return 0
+  fi
+  if [[ "$rc" -ne 3 ]]; then
+    rc=0
+    release_ended_session_lease "$wt" || rc=$?
+    case "$rc" in
+      0) ;;
+      7 | 75)
+        # The guard's reason is the one cause the refusal below can name.
+        [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  fi
+  if ! err="$(git -C "$PROJECT_ROOT" worktree remove "$wt" 2>&1 >/dev/null)"; then
     worktree_message registration-prune-failed "$wt" "Warning: could not prune the registration of the removed worktree $wt." >&2
     [[ -z "$err" ]] || sed 's/^/  /' <<<"$err" >&2
     return 0
@@ -4062,7 +4080,7 @@ case "${1:-}" in
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
       refuse_unidentified_worktree "$WT_PATH" "$REMOVE_RECORD_PATH" || exit 1
     fi
-    if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
+    if [[ -n "$REMOVE_GIT_DIR" ]] && registration_holds_rebase_map "$REMOVE_GIT_DIR"; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
       echo "Nothing was released, removed or pruned." >&2
       echo "Let orch's record-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2

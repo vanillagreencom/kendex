@@ -288,9 +288,10 @@ implementer.
   - A fresh worktree is unclaimed: create never claims a session-guard lease.
   - A registered tree whose directory is gone is no claim once it holds no
     lock, or its guard lease is one 'worktree-session-guard release --ended'
-    finds ended: create prunes the registration
-    (worktree-registration-pruned) and goes on. A lease the guard keeps
-    leaves the registration, which exits 75.
+    finds ended: create removes that one registration
+    (worktree-registration-pruned) and goes on. A lease the guard keeps, or
+    a non-empty rebase map (worktree-registration-rebase-map), leaves the
+    registration, which exits 75.
 
 Options:
   --no-checkout  Create the Git worktree and issue record without source files
