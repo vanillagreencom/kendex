@@ -56,7 +56,7 @@ cp -R "$ROOT/tools/lib" "$TMP/parity/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/parity/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/parity/tools/rust-reads"
 awk '
-  /any_outside "\$PROSE" && macos_shard "\$shards" && macos=true/ {
+  /\[ "\$SHELL_FULL" = false \] \|\| macos=true/ {
     print; print "  [ \"$event\" = merge_group ] || macos=false"; n++; next
   }
   { print }
@@ -189,7 +189,7 @@ case "$#:$url" in
       unread) echo 'gh: HTTP 502' >&2; exit 1 ;;
       none) echo '{"total_count":0,"artifacts":[]}' ;;
       *) jq -cn --arg name "$artifact" --arg state "$state" "$RUNS"'run($state) as $run | {total_count: 1,
-          artifacts: [{name: $name, expired: ($state == "expired"), workflow_run: {id: $run.id,
+          artifacts: [{id: ($run.id + 1000), name: $name, expired: ($state == "expired"), workflow_run: {id: $run.id,
             repository_id: $run.repository.id, head_repository_id: $run.head_repository.id,
             head_branch: $run.head_branch}}]}' ;;
     esac
@@ -212,7 +212,18 @@ case "$#:$url" in
   *) echo "gh-stub: url=$url" >&2; exit 64 ;;
 esac
 [ -f "$GH_WORLD/$file" ] || { echo 'gh: HTTP 404' >&2; exit 1; }
-cat "$GH_WORLD/$file"
+case "$file" in
+  *runs.json) key=workflow_runs ;;
+  jobs-*) key=jobs ;;
+  artifacts-*) key=artifacts ;;
+  *) cat "$GH_WORLD/$file"; exit ;;
+esac
+jq -c --arg key "$key" '
+  if (.[$key] | type) == "array" then
+    .total_count = (.fixture_total_count // (.[$key] | length))
+    | if $key == "jobs" then .jobs |= (to_entries | map(.value + {id: (.key + 1)})) else . end
+  else . end
+' "$GH_WORLD/$file"
 STUB
 chmod +x "$TMP/gh-stub/gh"
 # The recording gives the job shape and the non-shard jobs. The shard legs
@@ -280,6 +291,7 @@ push_world() { # NAME
     outage) : >"$dir/fail" ;;
     unparseable) printf 'upstream connect error\n' >"$dir/runs.json" ;;
     jobs-missing) rm "$dir/jobs-$PUSH_RUN.json" ;;
+    jobs-partial) edit_jobs '.fixture_total_count = ((.jobs | length) + 1)' ;;
     foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
@@ -374,8 +386,9 @@ other-workflow-run|$WHOLE $NO_RUN
 outage|$WHOLE $UNREAD
 unparseable|$WHOLE $UNREAD
 jobs-missing|$WHOLE $UNREAD
+jobs-partial|$WHOLE $UNREAD
 ROWS
-[ "$push_rows" -eq 20 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 # The probes: a red Linux leg owes its suites on Linux alone, and a group
 # that left a suite out proves its every other suite.
 push_select red-leg >/dev/null
@@ -546,7 +559,7 @@ while IFS='|' read -r class path states shards queue owed leg; do
     "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION" 2>/dev/null)"
 done <<ROWS
 render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|[]|["agent-runtime"]|
-trivial|$UNREAD_DOC|agent-runtime=none|["orch-state"]|[]|["agent-runtime"]|
+trivial|$UNREAD_DOC|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
 standard|.github/workflows/skill-tests.yml|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
 render|README.md|agent-runtime=queue|[]|[]|[]|
 ROWS
@@ -603,7 +616,7 @@ mkdir -p "$TMP/main-control/tools"
 cp -R "$ROOT/tools/lib" "$TMP/main-control/tools/lib"
 cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/main-control/tools/"
 cp "$ROOT/tools/guard" "$TMP/main-control/tools/"
-awk -v roster="$ROSTER" '/^  main_linux="\$\{main_linux%% \*\}"$/ { print; print "  main_linux=" sprintf("%c", 39) roster sprintf("%c", 39); n++; next } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+awk -v roster="$ROSTER" '/^  main_linux=\$SHELL_SHARDS$/ { print; print "  main_linux=" sprintf("%c", 39) roster sprintf("%c", 39); n++; next } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
 chmod +x "$TMP/main-control/tools/ci-job-set"
 git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
 printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
@@ -615,7 +628,7 @@ check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-o
 push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
 if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
 cp "$JOB_SET" "$TMP/main-control/tools/ci-job-set"
-sed '/^    \[ "\$f" != \.kendex-lock\.json \] || continue$/d' "$ROOT/tools/guard" >"$TMP/main-control/tools/guard"
+sed '/^    if \[ "\$f" = \.kendex-lock\.json \]; then$/,/^    fi$/d' "$ROOT/tools/guard" >"$TMP/main-control/tools/guard"
 ! cmp -s "$ROOT/tools/guard" "$TMP/main-control/tools/guard" || exit 1
 push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
 check 'control: install record reach runs suites that construct their own records' true "$(in_list shards node)"

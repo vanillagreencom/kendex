@@ -1700,6 +1700,12 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
+  if [ "$MODE" = suite-reach ]; then
+    [ -r "$1" ] && [ -x "$1" ] || return 2
+    for f in "$1"/scripts "$1"/tests "$1"/runtime/src; do
+      [ ! -d "$f" ] || find "$f" -type d >/dev/null || return 2
+    done
+  fi
   for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*/*.sh "$1"/tests/*/*.bash "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py \
     "$1"/runtime/* "$1"/runtime/src/*.rs "$1"/runtime/src/*/*.rs "$1"/runtime/src/*/*/*.rs "$1"/runtime/src/*/*/*/*.rs \
     "$1"/tests/rust/*.rs; do
@@ -1851,7 +1857,7 @@ PY
 # `/orch` none in `/orch-runtime`. Status 2 is a file it could not read.
 scan_load() { # DIR
   local role f files tree rel path i q kind value record cache key key_tree row
-  local scan_input="" scan_parts=() reader_patterns=() query_keys=() nl=$'\n'
+  local scan_input="" scan_parts=() reader_patterns=() query_keys=() nl=$'\n' complete=false
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
@@ -2028,6 +2034,7 @@ scan_load() { # DIR
     }
     $1 == "Q" {
       q = $2; row = $3; queries[q] = 1
+      query_count++
       for (p = 0; p < 5; p++) {
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
@@ -2084,10 +2091,12 @@ scan_load() { # DIR
           }
         }
       }
+      printf "E\t%d\t%d\n", scan_count, query_count
     }
   ' <<<"$scan_input") || return 2
   while IFS= read -r record; do
     [ -n "$record" ] || continue
+    [ "$complete" = false ] || return 2
     kind=${record%%$'\t'*}; record=${record#*$'\t'}
     i=${record%%$'\t'*}; value=${record#*$'\t'}
     case "$kind" in
@@ -2096,9 +2105,12 @@ scan_load() { # DIR
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
       W) SCAN_ROW_QUERIES[i]=$value ;;
+      E) [ "$i:$value" = "${#SCAN_PATH[@]}:${#SCAN_RELS[@]}" ] || return 2
+         complete=true ;;
       *) return 2 ;;
     esac
   done <<<"$cache"
+  [ "$complete" = true ] || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ -z "${SCAN_INPUTS[i]}" ] || SCAN_NOTED+=("$i")
   done
@@ -2695,6 +2707,11 @@ suite_scripts=()
 REACH_TARGETS=""
 runtime_reached=""
 if [ "$MODE" != default ] && lane_on shell_shards; then
+  if [ "$MODE" = suite-reach ]; then
+    for d in skills hooks tools refresh pi-extensions skills/* skills/*/runtime pi-extensions/*; do
+      [ ! -d "$d" ] || { [ -r "$d" ] && [ -x "$d" ]; } || refuse scan "$d operation=directory-read"
+    done
+  fi
   runtime_facts || { say scan runtime-manifests; RUNTIME_FACTS=$'\n'; }
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
   # it> TAB <path>`: a render reads as the source it renders. plan_rows holds
@@ -2778,7 +2795,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     plan_done=$((plan_done + 1))
     reach_tick plan "$plan_done" "$plan_total"
     # Suites construct their own install records; revisions are no suite input.
-    [ "$f" != .kendex-lock.json ] || continue
+    if [ "$f" = .kendex-lock.json ]; then
+      [ "$MODE" != suite-reach ] || note excluded-path "$f"
+      continue
+    fi
     # The Node shard runs this standalone suite above the Pi package roots.
     case "$MODE:$f" in
       suite-reach:pi-extensions/package-policy.test.mjs | suite-reach:skills/harness-ci/tests/lib/gh-eval.py)
@@ -2899,31 +2919,32 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ -f "$d/package.json" ] || continue
         # Another tree's path runs a Pi package's suites only where one of
         # its files names that path, whole or as `/<name>/<file>`.
-        pi_own=false
-        if awk -F '\t' '$2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_rows"; then pi_own=true; fi
-        if [ "$pi_own" = false ] || [ "$MODE" = suite-reach ]; then
+        pi_own=$(awk -F '\t' '$2 !~ /^\.\.\// { own = 1 } END { print own ? "true" : "false" }' <<<"$tree_rows") ||
+          { say scan "$d operation=pi-plan"; continue; }
+        if [ "$pi_own" = false ]; then
           pi_needles=()
-          while IFS='	' read -r tree rel f; do
+          while IFS='	' read -r _ rel f; do
             [[ $rel == ../* ]] || continue
             pi_needles+=(-e "${rel#../}")
             case "$rel" in ../skills/*/*) pi_needles+=(-e "/${rel#../skills/}") ;; esac
           done <<<"$tree_rows"
-          if [ "${#pi_needles[@]}" -eq 0 ]; then
-            [ "$pi_own" = true ] || continue
-          elif [ "$MODE" = suite-reach ]; then
-            # One search returns the matching lines, so each external path
-            # gets credit for its own reader even in a mixed change.
-            pi_hits=$(git grep -F -h "${pi_needles[@]}" -- "$d") || { [ "$pi_own" = true ] || continue; }
-            while IFS='	' read -r _ rel f; do
-              [[ $rel == ../* ]] || continue
-              if [[ $pi_hits == *"${rel#../}"* ]] ||
-                { [[ $rel == ../skills/*/* ]] && [[ $pi_hits == *"/${rel#../skills/}"* ]]; }; then
-                note placed-path "$f"
-              fi
-            done <<<"$tree_rows"
-          else
-            git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
-          fi
+          [ "${#pi_needles[@]}" -gt 0 ] || continue
+          # Git can report an unreadable file with status 1. Drain all
+          # matches and distinguish a silent miss from any incomplete read.
+          # A substring hit retains this suite without placing the input.
+          pi_status=0
+          pi_hits=$({
+            grep_status=0
+            grep_error=$(git grep -F -h "${pi_needles[@]}" -- "$d" 2>&1 >&3) || grep_status=$?
+            if [ -n "$grep_error" ]; then printf '%s\n' "$grep_error" >&2; exit 2; fi
+            exit "$grep_status"
+          } 3>&1) || pi_status=$?
+          case "$pi_status:$pi_hits" in
+            1:) continue ;;
+            0:?*) ;;
+            *) if [ "$MODE" = suite-reach ]; then say scan "$d operation=pi-read status=$pi_status"
+               else note suites "all reason=unreadable path=$d"; fi ;;
+          esac
         fi
         suite_selection=all
         preview_unmeasured=1
@@ -2987,7 +3008,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
               1) if [ "$scoped_only" -eq 1 ]; then continue; fi
                  if [ "$run" != all ]; then note suites "all reason=unmapped path=$f"; run=all; fi
                  [ "$MODE" = suite-reach ] || break ;;
-              2) if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; break 2; fi
+              2) if [ "$MODE" = suite-reach ]; then say scan "$d operation=suite-read path=$f"; break; fi
+                 if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; break 2; fi
                  note suites "all reason=unreadable path=$f"; run=all; break ;;
               4) note suites "all reason=unidentified path=$f"; run=all; break ;;
               *) say mapped-suites "$map_status path=$f"
@@ -3156,11 +3178,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 fi
 if [ "$MODE" = suite-reach ]; then
   reach_progress done "${trees_done:-0}" "${trees_total:-0}"
-  {
-    printf '%s' "$preview_suites" | LC_ALL=C sort -u | sed '/^$/d'
-    printf '%s' "$REACH_TARGETS" | LC_ALL=C sort -u | sed '/^$/d; s/^/target /'
-  } >&3
-  exit "$fail"
+  [ "$fail" -eq 0 ] || exit "$fail"
+  reach_rows=$(
+    printf '%s' "$preview_suites" | LC_ALL=C sort -u | sed '/^$/d' || exit 2
+    printf '%s' "$REACH_TARGETS" | LC_ALL=C sort -u | sed '/^$/d; s/^/target /' || exit 2
+  ) || refuse scan reach-output
+  [ -z "$reach_rows" ] || printf '%s\n' "$reach_rows" >&3 || exit 2
+  note reach-complete "$(count_lines "$touched") $(count_lines "$reach_rows")"
+  exit 0
 fi
 [ -n "$suite_selection" ] || suite_selection=all
 # The workflow records per-suite Linux and macOS ranges from named merge groups.

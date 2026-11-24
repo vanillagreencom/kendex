@@ -94,8 +94,7 @@
 #
 # CI projects the shell and skill runtime reach from tools/guard, and the
 # workspace Cargo selection from tools/rust-reads. Change class is a review
-# input. Shell reach failures run the complete roster; Rust read failures
-# refuse selection so the workflow runs its full fallback.
+# input. An incomplete read retains the roster it governs.
 #
 # The lanes:
 #
@@ -156,8 +155,8 @@
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
 # table does not name is one of those: the step goes red, every lane's status
 # function runs it, and the required contexts refuse the skip, which is the
-# loud way to learn a sixth class shipped. A read set tools/rust-reads could
-# not derive is another. An unread reach is no refusal: it runs everything.
+# loud way to learn a sixth class shipped. An unread reach is no refusal:
+# the governed lanes run whole.
 set -euo pipefail
 
 # --suite-list CANDIDATE... prints, one per line in argument order, the
@@ -339,6 +338,18 @@ PUBLISHED_RUN='((.event == "push" and .head_branch == "main")
 # The runtime_publish value the header states. A key that cannot be computed
 # stops the selection: the leg's build computes the same key and would fail
 # too. A listing or run record that cannot be read proves nothing published.
+# Lists that authorize a skip must account for every advertised row. A
+# successful API call with a short or repeated page is still unread.
+api_list() { # URL FIELD
+  gh api --paginate "$1" | jq -ces --arg key "$2" '
+    select(length > 0 and all(.[]; (.[$key] | type) == "array"))
+    | [.[][$key][]] as $rows
+    | select(($rows | length) < 1000 and all(.[]; .total_count == ($rows | length)))
+    | select(all($rows[]; (.id | type) == "number") and ($rows | unique_by(.id) | length) == ($rows | length))
+    | $rows
+  '
+}
+
 runtime_publish() {
   local entry name key listing runs run record status published owed=""
   for entry in $RUNTIMES; do
@@ -347,13 +358,14 @@ runtime_publish() {
       . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "${entry#*:}")" ||
       die "runtime-key-unread name=$name" "the build key of ${entry#*:} could not be computed"
     published=false
-    if listing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name-$key&per_page=100")" &&
-      runs="$(jq -rs --arg name "$name-$key" '[.[].artifacts[] | select(.name == $name and .expired == false)
+    if listing="$(api_list "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name-$key&per_page=100" artifacts)" &&
+      runs="$(jq -r --arg name "$name-$key" '[.[] | select(.name == $name and .expired == false)
         | .workflow_run.id | numbers] | unique | reverse | .[]' <<<"$listing")"; then
       for run in $runs; do
         status=0
         if record="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"; then
-          jq -e --arg path "$PROOF_WORKFLOW" "$PUBLISHED_RUN" <<<"$record" >/dev/null 2>&1 || status=$?
+          jq -es --arg path "$PROOF_WORKFLOW" --argjson id "$run" \
+            "length == 1 and (.[0] | .id == \$id and ($PUBLISHED_RUN))" <<<"$record" >/dev/null 2>&1 || status=$?
         else
           status=2
         fi
@@ -395,8 +407,8 @@ suite_map() {
     runner=ubuntu-latest
     [ "$os" = Linux ] || runner=macos-latest
     [ -n "$orch" ] || continue
-    placed="$(printf '%s\n' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)" || return 1
-    printf '%s\n' "$placed" | awk -v runner="$runner" 'NF == 2 { print runner "\t" $1 "\t" $2 }'
+    placed="$(orch_placement "$os" "$orch")" || return 1
+    printf '%s\n' "$placed" | awk -v runner="$runner" 'NF == 2 { print runner "\t" $1 "\t" $2 }' || return 1
   done
   while IFS= read -r suite; do
     case "$suite" in "" | skills/orch/tests/*) continue ;; esac
@@ -437,10 +449,10 @@ main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
   local runs ids="" id page jobs="" sels="" listing artifact sel work owed replacements
   local linux macos skipped skipped_macos rust linux_n macos_n targets_n
-  if ! runs="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100")"; then
+  if ! runs="$(api_list "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100" workflow_runs)"; then
     state=unread cause=runs-read-failed
-  elif ! ids="$(jq -rs --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
-      [.[].workflow_runs[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
+  elif ! ids="$(jq -r --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
+      [.[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
       | unique | .[]' <<<"$runs")"; then
     state=unread cause=runs-unparseable ids=""
   fi
@@ -450,9 +462,9 @@ main_proof() {
   work="$(mktemp -d)" || die proof-scratch "mktemp could not make the proof's scratch directory"
   # Each run's latest jobs, each checked for the head and run it claims.
   run_jobs() { # RUN
-    page="$(gh api --paginate "$api/runs/$1/jobs?filter=latest&per_page=100")" || { cause="jobs-read-failed run=$1"; return 1; }
-    page="$(jq -cs --arg sha "$sha" --argjson id "$1" '
-        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")" ||
+    page="$(api_list "$api/runs/$1/jobs?filter=latest&per_page=100" jobs)" || { cause="jobs-read-failed run=$1"; return 1; }
+    page="$(jq -c --arg sha "$sha" --argjson id "$1" '
+        [.[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")" ||
       { cause="jobs-unparseable run=$1"; return 1; }
   }
   for id in $ids; do
@@ -460,14 +472,15 @@ main_proof() {
     jobs="$jobs$page"
     # The run's newest unexpired selection: a rerun of its changes job
     # overwrites it, and a run that published none proves nothing.
-    if ! listing="$(gh api --paginate "$api/runs/$id/artifacts?name=$SELECTION_ARTIFACT&per_page=100")" ||
-      ! artifact="$(jq -rs --argjson id "$id" --arg name "$SELECTION_ARTIFACT" '
-          [.[].artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $id)]
+    if ! listing="$(api_list "$api/runs/$id/artifacts?name=$SELECTION_ARTIFACT&per_page=100" artifacts)" ||
+      ! artifact="$(jq -r --argjson id "$id" --arg name "$SELECTION_ARTIFACT" '
+          [.[] | select(.name == $name and .expired == false and .workflow_run.id == $id)]
           | max_by(.created_at) | .id // empty' <<<"$listing")" ||
       [ -z "$artifact" ] ||
       ! gh api "$api/artifacts/$artifact/zip" >"$work/selection.zip" ||
-      ! sel="$(unzip -p "$work/selection.zip" | jq -ce '
-          select((.skipped_suites | type) == "array" and all(.skipped_suites[]; type == "string")
+      ! sel="$(unzip -p "$work/selection.zip" | jq -ces '
+          select(length == 1) | .[0]
+          | select((.skipped_suites | type) == "array" and all(.skipped_suites[]; type == "string")
             and (.rust_targets | type) == "array" and all(.rust_targets[]; type == "string"))
           | {skipped_suites, rust_targets}')"; then
       state=unread cause="selection-unread run=$id"
@@ -476,21 +489,19 @@ main_proof() {
     sels="$sels$sel"
   done
   linux_n=0 macos_n=0 targets_n=0
-  if [ "$state" != read ]; then
-    rm -rf -- "$work"
-    main_linux="$(with_publisher "$main_linux")" || die publisher-unadded "jq could not add the publishing leg"
-    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" \
-      "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
-  else
-    jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
+  if [ "$state" = read ] && ! {
+     jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
       jq -cs '.' <<<"$sels" >"$work/selections.json" &&
       suite_map | jq -Rcs 'split("\n") | map(select(length > 0) | split("\t"))' >"$work/map.json" &&
-      runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" ||
-      die main-proof-unevaluated "the proof's inputs could not be gathered"
-    replacements="$(native_replacements)" || exit 2
+      runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" &&
+      replacements="$(native_replacements)"
+  }; then
+    state=unread cause=proof-inputs-unread
+  fi
+  if [ "$state" = read ]; then
     # Per runner the proved suites and the shards that still run one, the
     # targets left unproved and the counts, as whitespace-separated JSON.
-    owed="$(jq -rn --slurpfile jobs "$work/jobs.json" \
+    if owed="$(jq -rn --slurpfile jobs "$work/jobs.json" \
       --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" --slurpfile targets "$work/targets.json" \
       --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
       --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
@@ -545,12 +556,19 @@ main_proof() {
       | owed("ubuntu-latest"; $linux; $pl) as $ol
       | [$linux | split(" ")[] | select(. as $shard | any($ol[]; . == $shard) or ($shard == "orch-rest" and ($rust | length) > 0))] as $ol
       | owed("macos-latest"; $macos; $pm) as $om
-      | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" ||
-      die main-proof-unevaluated "jq could not subtract the proved suites and targets"
-    rm -rf -- "$work"
-    read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed"
-    linux="$(with_publisher "$linux")" || die publisher-unadded "jq could not add the publishing leg"
-    emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" \
+      | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" &&
+      read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed" && [ -n "$targets_n" ]; then
+      linux="$(with_publisher "$linux")" || die publisher-unadded "jq could not add the publishing leg"
+      emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" \
+        "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
+    else
+      state=unread cause=proof-subtraction-unread
+    fi
+  fi
+  rm -rf -- "$work"
+  if [ "$state" != read ]; then
+    main_linux="$(with_publisher "$main_linux")" || die publisher-unadded "jq could not add the publishing leg"
+    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" \
       "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
   fi
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
@@ -583,17 +601,19 @@ sel_get() { # SELECTION NAME
   printf '%s' "${rest%% *}"
 }
 
-# `grep -c` exits 1 when nothing matched, which errexit would read as a broken
-# command; the count is the answer either way.
 any() { # REGEX — is some changed path inside it?
-  local hits
-  hits="$(printf '%s\n' "$paths" | grep -Ec -- "$1")" || hits=0
-  [ "$hits" -gt 0 ]
+  local path
+  while IFS= read -r path; do
+    [[ ! $path =~ $1 ]] || return 0
+  done <<<"$paths"
+  return 1
 }
 any_outside() { # REGEX — is some changed path NOT inside it?
-  local hits
-  hits="$(printf '%s\n' "$paths" | grep -Evc -- "$1")" || hits=0
-  [ "$hits" -gt 0 ]
+  local path
+  while IFS= read -r path; do
+    [[ $path =~ $1 ]] || return 0
+  done <<<"$paths"
+  return 1
 }
 
 # Directory build rows include prose that only an explicit read can reach.
@@ -644,11 +664,17 @@ cargo_job_reads() {
 reads() {
   local rows job_reads
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
-    die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
+    return 1
+  awk -F '\t' '
+    $1 == "complete" && NF == 2 && $2 == NR - 1 { complete=NR; next }
+    $1 == "package-root" { packages++ }
+    $1 == "target-root" { targets++ }
+    END { exit !(complete && complete == NR && packages && targets) }
+  ' <<<"$rows" || return 1
   job_reads="$(cargo_job_reads)" ||
-    die "cargo-job-reads-failed" "the workflow Cargo build and setup inputs could not be read"
+    return 1
   PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
-    CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
+    EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -658,7 +684,10 @@ reads() {
       }
       n = split(ENVIRON["PLACED"], paths, "\n")
       for (i = 1; i <= n; i++) placed[paths[i]] = 1
+      n = split(ENVIRON["EXCLUDED"], paths, "\n")
+      for (i = 1; i <= n; i++) excluded[paths[i]] = 1
     }
+    $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
     function select_target(r) {
       selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
@@ -693,11 +722,12 @@ reads() {
         }
         if (!mapped) {
           unplaced = 1
+          if (!(path in excluded)) suites_unplaced = 1
           printf "ci-job-set: cargo-test-input=unplaced path=%s\n", path > "/dev/stderr"
         }
       }
       printf "build=%d\nincluded=%d\ncompiled=%d\nwindows=%d\ncheckout=%d\n", build, included, compiled, windows, checkout
-      printf "unplaced=%d\n", unplaced
+      printf "unplaced=%d\nsuites-unplaced=%d\n", unplaced, suites_unplaced
       for (test in selected) print "target " test
     }
   ' <<<"$rows"
@@ -806,11 +836,15 @@ REACH_READ=false
 REACH_SUITES=""
 REACH_TARGETS='[]'
 REACH_PLACED=""
+REACH_EXCLUDED=""
+CARGO_READ=false
 reach_notes() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       'guard-note: placed-path='*) printf 'placed %s\n' "${line#guard-note: placed-path=}" ;;
+      'guard-note: excluded-path='*) printf 'excluded %s\n' "${line#guard-note: excluded-path=}" ;;
+      'guard-note: reach-complete='*) printf 'complete %s\n' "${line#guard-note: reach-complete=}" ;;
       'guard: '* | 'guard-note: suites=all '*) printf 'ci-job-set: reach-note: %s\n' "$line" >&2 ;;
       'guard-progress: '*) printf '%s\n' "$line" >&2 ;;
     esac
@@ -822,12 +856,22 @@ reach_read() {
   # through reach_notes.
   out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
     status=$?
-  if [ "$status" -ne 0 ]; then
+  if [ "$status" -ne 0 ] || ! PATHS="$paths" awk '
+    BEGIN {
+      n = split(ENVIRON["PATHS"], paths, "\n")
+      for (i = 1; i <= n; i++) if (paths[i] != "" && !seen[paths[i]]++) count++
+    }
+    $1 == "complete" { completions++; inputs=$2; rows=$3; next }
+    $1 == "placed" || $1 == "excluded" { next }
+    NF { read++ }
+    END { exit !(completions == 1 && inputs + 0 == count && rows + 0 == read) }
+  ' <<<"$out"; then
     printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
     return 0
   fi
   REACH_PLACED="$(printf '%s\n' "$out" | sed -n 's/^placed //p')"
-  REACH_SUITES="$(printf '%s\n' "$out" | sed '/^placed /d; /^target /d; /^$/d')"
+  REACH_EXCLUDED="$(printf '%s\n' "$out" | sed -n 's/^excluded //p')"
+  REACH_SUITES="$(printf '%s\n' "$out" | sed -E '/^(placed|excluded|complete|target) /d; /^$/d')"
   while IFS= read -r target; do
     [ -z "$target" ] || list="$list,\"$target\""
   done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
@@ -835,13 +879,45 @@ reach_read() {
   REACH_READ=true
 }
 
+# Both event projections take their skip evidence here. A producer that
+# refused or stopped before completing its read authorizes no skips in its
+# roster. An unplaced path also keeps suites unless their owner excludes it.
+read_selection() {
+  reach_read
+  if read_lines="$(reads)"; then
+    CARGO_READ=true
+    if [[ $read_lines == *suites-unplaced=1* ]]; then REACH_READ=false; fi
+  else
+    printf 'ci-job-set: cargo-inputs=unread coverage=full\n' >&2
+    read_lines=""
+    REACH_READ=false
+  fi
+}
+
 # Every shell suite a shard step can hand --suite-list, one per line.
 universe() {
   local listed
   listed="$(git -c core.quotePath=false ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
-    ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh')" ||
-    die universe-unread "git could not list the shell suites a shard step runs"
+    ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh')" || {
+    printf 'ci-job-set: universe=unread\n' >&2
+    return 1
+  }
   printf '%s\n' "$listed" | awk 'NF && !/\/run-all\.sh$/'
+}
+
+# The runner owes exactly one valid placement for each requested suite.
+orch_placement() { # OS SUITES
+  local placed
+  placed="$(RUNNER_OS=$1 bash skills/orch/tests/run-all.sh --shard-of <<<"$2")" || return 1
+  EXPECTED="$2" awk -v shards=" $SHARDS " '
+    BEGIN {
+      n = split(ENVIRON["EXPECTED"], paths, "\n")
+      for (i = 1; i <= n; i++) if (paths[i] != "") owed[paths[i]]=1
+    }
+    NF != 2 || !($2 in owed) || !index(shards, " " $1 " ") { exit 1 }
+    { delete owed[$2]; print }
+    END { for (path in owed) exit 1 }
+  ' <<<"$placed"
 }
 
 # Each suite on stdin into `want` by the shards whose steps run it: orch's
@@ -868,11 +944,9 @@ project() {
   done <<<"$packages"
   [ -n "$orch" ] || return 0
   for os in Linux macOS; do
-    if ! shard="$(printf '%s' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null | cut -d' ' -f1 | sort -u)"; then
+    if ! shard="$(orch_placement "$os" "$orch" | cut -d' ' -f1 | sort -u)"; then
       printf 'ci-job-set: orch-shards=unread os=%s\n' "$os" >&2
-      # shellcheck disable=SC2086 # the list is a word list
-      want_shard $ORCH_SHARDS
-      return 0
+      return 1
     fi
     # shellcheck disable=SC2086 # one shard per word
     [ -z "$shard" ] || want_shard $shard
@@ -882,7 +956,8 @@ project() {
 # tools/macos-test-contracts.json's native_replacements, each original suite
 # to the suite macOS runs in its place, as one JSON object.
 native_replacements() {
-  jq -ce '.native_replacements | select(type == "object")' "$TOOLS_DIR/macos-test-contracts.json" ||
+  jq -ces 'select(length == 1) | .[0].native_replacements
+    | select(type == "object" and all(.[]; type == "string" and length > 0))' "$TOOLS_DIR/macos-test-contracts.json" ||
     die "replacements-unread" "tools/macos-test-contracts.json's native_replacements could not be read"
 }
 
@@ -891,8 +966,8 @@ native_replacements() {
 # replacement is skipped.
 kept_replacements() { # KEPT
   local pairs original replacement
-  pairs="$(native_replacements)" || exit 2
-  pairs="$(jq -r 'to_entries[] | "\(.key) \(.value)"' <<<"$pairs")" || exit 2
+  pairs="$(native_replacements)" || return 1
+  pairs="$(jq -r 'to_entries[] | "\(.key) \(.value)"' <<<"$pairs")" || return 1
   while IFS=' ' read -r original replacement; do
     [ -n "$original" ] || continue
     case $'\n'"$1"$'\n' in *$'\n'"$original"$'\n'*) printf '%s\n' "$replacement" ;; esac
@@ -922,10 +997,10 @@ tools/tests/harness-smoke.test.sh" ;;
   if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
     whole=" $SHARDS"
   fi
-  replacements="$(kept_replacements "$kept")" || exit 2
+  replacements="$(kept_replacements "$kept")" || return 1
   [ -z "$replacements" ] || kept="$kept
 $replacements"
-  project <<<"$kept"
+  project <<<"$kept" || return 1
   [ "$REACH_TARGETS" = '[]' ] || want_shard orch-rest
   # shellcheck disable=SC2086 # the lists are word lists
   want_shard $whole
@@ -936,7 +1011,7 @@ $replacements"
     printf '[%s] []' "${list#,}"
     return 0
   fi
-  suites="$(universe)"
+  suites="$(universe)" || return 1
   # The whole shards whose steps hand --suite-list candidates, and orch's
   # suites by shard where one is orch's.
   for shard in $whole; do
@@ -944,10 +1019,11 @@ $replacements"
   done
   case " $need " in
     *" orch-"*)
-      orch="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//')"
+      orch="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//')" || return 1
       for os in Linux macOS; do
-        orch_map="$orch_map$(printf '%s\n' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)
-" || need=" $SHARDS"
+        [ -n "$orch" ] || continue
+        orch_map="$orch_map$(orch_placement "$os" "$orch")
+" || return 1
       done ;;
   esac
   skipped=""
@@ -957,7 +1033,7 @@ $replacements"
     if [ -n "$need" ]; then
       case "$suite" in
         skills/orch/tests/*)
-          suite_shards=" $(printf '%s' "$orch_map" | awk -v suite="$suite" '$2 == suite { printf "%s ", $1 }')" ;;
+          suite_shards=" $(printf '%s' "$orch_map" | awk -v suite="$suite" '$2 == suite { printf "%s ", $1 }')" || return 1 ;;
         *)
           case "$suite" in
             skills/*) package="${suite#skills/}"; package="skills/${package%%/*}" ;;
@@ -974,6 +1050,21 @@ $replacements"
     skipped="$skipped,\"$suite\""
   done <<<"$suites"
   printf '[%s] [%s]' "${list#,}" "${skipped#,}"
+}
+
+choose_shards() { # CHECKOUT — set SHELL_SHARDS, SHELL_SKIPPED and SHELL_FULL
+  local row status=0
+  if [ "$REACH_READ" = true ]; then
+    row="$(select_shards "$1")" || status=$?
+    case "$status" in
+      0) SHELL_FULL=false; SHELL_SHARDS="${row%% *}"; SHELL_SKIPPED="${row#* }"; return 0 ;;
+      1) ;;
+      *) return "$status" ;;
+    esac
+  fi
+  SHELL_FULL=true
+  SHELL_SHARDS="[\"${SHARDS// /\",\"}\"]"
+  SHELL_SKIPPED='[]'
 }
 
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
@@ -1022,10 +1113,11 @@ select_row() { # CLASS DOCS PATHS EVENT
   case "$read_lines" in *included=1* | *build=1*) build=true ;; esac
   case "$read_lines" in *checkout=1* | *build=1*) checkout=true ;; esac
   case "$read_lines" in *windows=1* | *build=1*) windows=true ;; esac
-  shards="$(select_shards "$checkout")" || exit 2
-  skipped="${shards#* }"
-  shards="${shards%% *}"
+  choose_shards "$checkout" || exit 2
+  shards=$SHELL_SHARDS
+  skipped=$SHELL_SKIPPED
   any_outside "$PROSE" && macos_shard "$shards" && macos=true
+  [ "$SHELL_FULL" = false ] || macos=true
   rust=$REACH_TARGETS
   if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then
     rust="$(all_targets)"
@@ -1039,6 +1131,13 @@ select_row() { # CLASS DOCS PATHS EVENT
     windows=true
     macos=true
     smoke=true
+    linux=true
+    platform=true
+  elif [ "$CARGO_READ" = false ]; then
+    build=true
+    catalog=true
+    smoke=true
+    windows=true
     linux=true
     platform=true
   elif [[ $read_lines == *build=1* ]]; then
@@ -1063,9 +1162,9 @@ select_row() { # CLASS DOCS PATHS EVENT
 
 if [ "${EVENT:-}" = schedule ]; then
   nightly=true
-  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=schedule&branch=main&status=success&per_page=100")"; then
-    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
-      [.[].workflow_runs[] | select(.event == "schedule" and .head_branch == "main" and .path == $path
+  if runs="$(api_list "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=schedule&branch=main&status=success&per_page=100" workflow_runs)"; then
+    if previous="$(jq -er --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      [.[] | select(.event == "schedule" and .head_branch == "main" and .path == $path
         and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
       | sort_by(.created_at) | last | .head_sha | select(type == "string" and length > 0)' <<<"$runs")"; then
       [ "$previous" != "$GITHUB_SHA" ] || nightly=false
@@ -1078,15 +1177,16 @@ fi
 if [ "${EVENT:-}" = push ]; then
   [[ ${PUSH_BEFORE:-} =~ ^[0-9a-f]{40}$ && ${PUSH_AFTER:-} =~ ^[0-9a-f]{40}$ ]] ||
     die push-range-unread "the push event endpoints are missing or invalid"
-  paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" ||
-    die push-range-unread "the push event range could not be read"
+  git cat-file -e "$PUSH_BEFORE^{commit}" && git cat-file -e "$PUSH_AFTER^{commit}" ||
+    die push-range-unread "the push event endpoints could not be read"
   # A queued push can replace an unstarted push. Only a successful main run
   # bounds all work the newest head must catch up; the event's before alone
   # cannot prove that its preceding head was tested.
   range_read=false
-  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&per_page=100")"; then
-    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
-      [.[].workflow_runs[] | select(.event == "push" and .head_branch == "main" and .path == $path
+  if paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" &&
+    runs="$(api_list "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&per_page=100" workflow_runs)"; then
+    if previous="$(jq -er --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      [.[] | select(.event == "push" and .head_branch == "main" and .path == $path
         and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
       | sort_by(.created_at) | last | .head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$runs")" &&
       git merge-base --is-ancestor "$previous" "$PUSH_AFTER" &&
@@ -1099,12 +1199,12 @@ if [ "${EVENT:-}" = push ]; then
   REACH_READ=false
   REACH_TARGETS="$(all_targets)"
   if [ "$range_read" = true ]; then
-    reach_read
-    read_lines="$(reads)" || exit 2
+    read_selection
     main_build=false
     main_checkout=false
     case "$read_lines" in *included=1* | *build=1*) main_build=true ;; esac
     case "$read_lines" in *checkout=1* | *build=1*) main_checkout=true ;; esac
+    if [ "$CARGO_READ" = false ]; then main_build=true; main_checkout=true; fi
     if any "$LANE_SOURCES"; then
       main_build=true
       main_checkout=true
@@ -1112,9 +1212,9 @@ if [ "${EVENT:-}" = push ]; then
   else
     printf 'ci-job-set: main-range=unread coverage=full\n' >&2
   fi
-  main_linux="$(select_shards "$main_checkout")" || exit 2
-  main_skipped="${main_linux#* }"
-  main_linux="${main_linux%% *}"
+  choose_shards "$main_checkout"
+  main_linux=$SHELL_SHARDS
+  main_skipped=$SHELL_SKIPPED
   main_targets="$REACH_TARGETS"
   if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then main_targets="$(all_targets)"; fi
   main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
@@ -1150,8 +1250,7 @@ progress() { # STEP [DETAIL]
 read_lines=""
 if [ "$reach_steps" -eq 1 ]; then
   progress reach
-  reach_read
-  read_lines="$(reads)" || exit 2
+  read_selection
 fi
 progress select "event=${EVENT:-}"
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2

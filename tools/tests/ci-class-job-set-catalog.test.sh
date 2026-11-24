@@ -116,8 +116,8 @@ skills/github/scripts/lib/gh-auth.sh|["guards-scans"]
 skills/orch/scripts/lib/kendex-env.sh|["orch-rest","guards-scans"]
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
-install.sh|[]
-README.md|[]
+install.sh|$ROSTER
+README.md|$ROSTER
 crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","rest","jarvis"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
@@ -125,25 +125,33 @@ hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guard
 docs/x/policy.md|["guards-hooks","guards-hooks-tail"]
 docs/guard/refs.md|["guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
-skills/AGENTS.md|["guards-scans"]
-docs/cite.md|[]
-kendex.toml|[]
-agents/reviewer.md|[]
+skills/AGENTS.md|$ROSTER
+docs/cite.md|$ROSTER
+kendex.toml|$ROSTER
+agents/reviewer.md|$ROSTER
 .kendex-lock.json|[]
-skills/CLAUDE.md|["guards-scans"]
-refresh/runner.sh|["guards-scans"]
+skills/CLAUDE.md|$ROSTER
+refresh/runner.sh|$ROSTER
 ROWS
+# A Pi source may contain a substring without reading a path by that name.
+incidental="artifact-${TMP##*/}"
+printf 'const buildLabel = "prefix-%s-suffix";\n' "$incidental" >>"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.test.ts"
+printf 'new checkout input\n' >"$SEL_WORLD/$incidental"
+git -C "$SEL_WORLD" add -- "$incidental" pi-extensions/pi-demo/tests/demo.test.ts
+got="$(SELECT_IN="$SEL_WORLD" SELECT_CARGO_MATRIX=true selection micro false "$incidental")"
+check "an unrelated Pi substring cannot place a novel basename" "$ROSTER [] [\"orch/*\"] null" \
+  "$(field shards <<<"$got") $(field skipped_suites <<<"$got") $(field rust_targets <<<"$got") $(field cargo_linux_matrix <<<"$got")"
+
 # A Rust target of a runtime is no shell suite: a path only it reads runs
-# that target and the orch-rest leg that runs it, and a path nothing reads
-# runs neither.
+# that target and the orch-rest leg that runs it. An unplaced path keeps all.
 # PATH|SHARDS RUST TARGETS, every row micro and not docs-only.
 while IFS='|' read -r path expected; do
   world_rows=$((world_rows + 1))
   got="$(SELECT_IN="$SEL_WORLD" selection micro false "$path")"
   check "world Rust targets over '$path'" "$expected" "$(field shards <<<"$got") $(field rust_targets <<<"$got")"
-done <<'ROWS'
+done <<ROWS
 assets/rust-read.json|["orch-rest"] ["orch/rows"]
-assets/unread.json|[] []
+assets/unread.json|$ROSTER ["orch/*"]
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 

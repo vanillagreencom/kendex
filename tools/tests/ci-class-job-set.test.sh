@@ -13,13 +13,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$TEST_DIR/lib/ci-job-set-case.sh"
 
+UNPLACED_LANES="$(lanes both false false false)"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
   sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
 done <<ROWS
-trivial|true|$UNREAD_DOC|$VERIFY_LANES|[]
-trivial|true|AGENTS.md|$VERIFY_LANES|[]
+trivial|true|$UNREAD_DOC|$UNPLACED_LANES|$ROSTER
+trivial|true|AGENTS.md|$UNPLACED_LANES|$ROSTER
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
@@ -55,16 +56,16 @@ micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
 micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
-micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
-small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
-standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
-standard|true|AGENTS.md|$NONE_PROSE|[]
-standard|true|CLAUDE.md|$NONE_PROSE|[]
-standard|true|GEMINI.md|$NONE_PROSE|[]
+micro|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
+small|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
+standard|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
+standard|true|AGENTS.md|$UNPLACED_LANES|$ROSTER
+standard|true|CLAUDE.md|$UNPLACED_LANES|$ROSTER
+standard|true|GEMINI.md|$UNPLACED_LANES|$ROSTER
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|README.md|$NONE_PROSE|[]
-standard|false|$UNREAD_DOC|$NONE_PROSE|[]
+standard|false|$UNREAD_DOC|$UNPLACED_LANES|$ROSTER
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous|
 micro|false||exit=2 class-without-paths class=micro|
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
@@ -89,7 +90,7 @@ skills/mailbox/scripts/lane-mail|agent-runtime/controller
 skills/orch/tests/rust/push.rs|orch/push
 tools/ci-job-set|orch/*
 ROWS
-check "a path no target can depend on runs none" '[]' \
+check "an unplaced path keeps all skill runtimes" "$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
   "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
 
 # The shards are the reach's projection and the skips the rest. The install
@@ -197,7 +198,7 @@ done <<'ROWS'
 trivial|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
 render|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
 trivial|docs/legal/terms.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
-trivial|docs/other.md|{"include":[]}
+trivial|docs/other.md|null
 ROWS
 
 # Each declared build name is a build input. Read in the fixture checkout,
@@ -207,10 +208,11 @@ while IFS= read -r p; do
     "$(SELECT_IN="$READ_WORLD" selection micro false "$p" | sed 's/ catalog=[^ ]* smoke=[^ ]*//')"
 done <<<"$names"
 mkdir -p "$TMP/no-crates"
-check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed" \
-  "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
-check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-failed" \
-  "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
+for class in trivial micro; do
+  got="$(SELECT_IN="$TMP/no-crates" SELECT_CARGO_MATRIX=true selection "$class" true docs/a.md)"
+  check "an unread crate tree keeps workspace tests and compile lanes on $class" 'true null true true' \
+    "$(field cargo_linux <<<"$got") $(field cargo_linux_matrix <<<"$got") $(field cargo_lint <<<"$got") $(field cargo_windows_check <<<"$got")"
+done
 # A compiled include reaches the compile lane, and a runtime read does not.
 check "an included file is a build input" true \
   "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json | field cargo_lint)"

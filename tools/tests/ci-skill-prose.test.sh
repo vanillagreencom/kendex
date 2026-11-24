@@ -34,8 +34,9 @@ cargo_rows() {
     "$(field cargo_linux_matrix <<<"$selected" | jq 'type == "object" and any(.include[]; .crate == "kendex-cli" and (.targets | index("--lib") != null))')"
 
   selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$guide"$'\n'"$unplaced")"
-  check "an unplaced test file keeps all workspace targets beside known Markdown" 'true null' \
-    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected")"
+  check "an unplaced test file keeps all tests beside known Markdown" \
+    "true null $ROSTER $QUEUE_ALL [] $(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
+    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field shards <<<"$selected") $(field queue_macos_shards <<<"$selected") $(field skipped_suites <<<"$selected") $(field rust_targets <<<"$selected")"
 }
 cargo_rows
 if [ "${1-}" = --cargo-reads ]; then
@@ -43,6 +44,51 @@ if [ "${1-}" = --cargo-reads ]; then
   [ "$FAIL" -eq 0 ]
   exit
 fi
+
+# Each instrument forwards the normal tool except for one read. Two
+# produce valid-looking partial output with a successful exit status.
+FAILING_TOOLS="$TMP/failing-reads"
+mkdir -p "$FAILING_TOOLS"
+for tool in git cargo awk grep; do
+  location="$(command -v "$tool")"
+  ln -s -- "$location" "$FAILING_TOOLS/real-$tool"
+done
+cat >"$FAILING_TOOLS/wrapper" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+tool="${0##*/}"
+real="$(readlink "${0%/*}/real-$tool")"
+case "$READ_FAILURE:$tool:${1-}:${2-}" in
+  pi:git:grep:-F)
+    "$real" "$@" || :
+    printf 'error: a tracked Pi reader could not be read\n' >&2
+    exit 1 ;;
+  index:git:-c:core.quotePath=false)
+    if [ "${3-}" = ls-files ]; then printf 'skills/orch/tests/direct.sh\n'; exit 128; fi ;;
+  metadata:cargo:metadata:*) "$real" "$@" | jq -c '.packages |= .[1:]'; exit ;;
+  suite:awk:*)
+    if [[ $* == *'function scan_file('* ]]; then printf 'N\t0\t/partial\n'; exit 0; fi ;;
+  checkout:grep:-E:--)
+    if [[ ${3-} == *' shards?' ]]; then printf 'grep: incomplete checkout read\n' >&2; exit 2; fi ;;
+esac
+exec "$real" "$@"
+STUB
+chmod +x "$FAILING_TOOLS/wrapper"
+for tool in git cargo awk grep; do ln -s wrapper "$FAILING_TOOLS/$tool"; done
+
+all_runtime="$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)"
+while IFS='|' read -r fault path expected_cargo expected_runtime; do
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE="$fault" SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group \
+    selection small false "$path")"
+  check "$fault read keeps its governed roster" "$ROSTER $QUEUE_ALL [] $expected_cargo $expected_runtime" \
+    "$(field shards <<<"$got") $(field queue_macos_shards <<<"$got") $(field skipped_suites <<<"$got") $(field cargo_lint <<<"$got") $(field rust_targets <<<"$got")"
+done <<ROWS
+pi|kendex.toml|false|$all_runtime
+index|skills/orch/SKILL.md|false|[]
+metadata|skills/orch/SKILL.md|true|$all_runtime
+suite|skills/orch/SKILL.md|false|$all_runtime
+checkout|skills/orch/SKILL.md|false|[]
+ROWS
 
 # Real workspace inputs with package placement can include unresolved
 # checkout reads. They must keep the reader without compiler checks.

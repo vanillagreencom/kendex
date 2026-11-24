@@ -34,6 +34,7 @@
 #            unresolved checkout root emits "." for its executable.
 #   target-root    the metadata roster, in target row format, for job setup.
 #   package-root   the manifest directory of a package in that roster.
+#   complete       with --ci-targets, the number of preceding read rows.
 #   package-include  a compile-time include and its owning package.
 #   checkout-include  an include in the checkout CLI build scope.
 #
@@ -91,6 +92,15 @@ if [ -n "$cli_scope$targets" ]; then
   [ -z "$cli_scope" ] || metadata_reader=cli-smoke
   metadata=$(cargo metadata --format-version 1 --no-deps --locked) ||
     { printf 'rust-reads: unreadable=%s\n' "$metadata_reader" >&2; exit 2; }
+  metadata=$(jq -ces '
+    select(length == 1) | .[0]
+    | select((.packages | type) == "array" and (.workspace_members | type) == "array")
+    | select((.packages | length) > 0 and ([.packages[].id] | sort) == (.workspace_members | unique))
+    | select(all(.packages[]; (.id | type) == "string" and (.name | type) == "string"
+        and (.manifest_path | type) == "string" and (.targets | type) == "array" and (.targets | length) > 0
+        and all(.targets[]; (.src_path | type) == "string" and (.name | type) == "string"
+          and (.kind | type) == "array" and (.kind | length) > 0 and (.test | type) == "boolean")))
+  ' <<<"$metadata") || { printf 'rust-reads: unreadable=%s operation=metadata-shape\n' "$metadata_reader" >&2; exit 2; }
 fi
 if [ -n "$targets" ]; then
   target_roots=$(jq -er --arg root "$(pwd -P)/" '
@@ -254,7 +264,7 @@ if rows=$(find crates -type f -name '*.rs' |
       if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
     }
   }
-  function visit(file, modules,   line, status, text, dir, path, name, attr, count, lines, i) {
+  function visit(file, modules,   line, status, closed, text, dir, path, name, attr, count, lines, i) {
     if (file == "" || visited[target, checkout, file]++) return
     if (target == "") printf "cli-build\t%s\n", file
     else if (manifest_dir(file) == "") emit("source", file)
@@ -262,8 +272,8 @@ if rows=$(find crates -type f -name '*.rs' |
     if (file in source) text = source[file]
     else {
       while ((status = (getline line < file)) > 0) text = text line "\n"
-      close(file)
-      if (status < 0) {
+      closed = close(file)
+      if (status < 0 || closed != 0) {
         if (target == "") printf "rust-reads: unreadable=%s reader=cli-smoke\n", file > "/dev/stderr"
         else {
           split(target, reader, "\t")
@@ -301,8 +311,8 @@ if rows=$(find crates -type f -name '*.rs' |
   {
     file = $0; text = ""
     while ((status = (getline line < file)) > 0) text = text line "\n"
-    close(file)
-    if (status < 0) { printf "unreadable\t%s\n", file; failed = 1; exit }
+    closed = close(file)
+    if (status < 0 || closed != 0) { printf "unreadable\t%s\n", file; failed = 1; exit }
     source[file] = text
     scan(file, text)
   }
@@ -348,4 +358,5 @@ shared=
 if [ -n "$cli_scope" ]; then
   shared=$(awk -F '\t' '$2 != "crates" { print "cli-build\t" $2 }' <<<"$build")
 fi
-printf '%s\n%s\n%s\n' "$build" "$rows" "$shared" | grep . | LC_ALL=C sort -u
+printf '%s\n%s\n%s\n' "$build" "$rows" "$shared" | grep . | LC_ALL=C sort -u |
+  awk -v targets="$targets" '{ print } END { if (targets) printf "complete\t%d\n", NR }'
