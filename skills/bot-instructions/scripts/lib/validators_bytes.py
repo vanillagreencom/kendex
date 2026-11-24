@@ -35,8 +35,8 @@ def doctrine_routing(ctx, out):
             out.append(Finding(v, f"column {column!r} positions are {positions}, not 1..n"))
     for column in ALL_BLOCK_COLUMNS:
         for bid in sorted(b for b, cells in rows.items() if column not in cells):
-            out.append(Finding(v, f"column {column!r} omits {bid!r}. That bot reads no second "
-                                  "surface, so the block reaches it nowhere"))
+            out.append(Finding(v, f"column {column!r} omits {bid!r}. That column carries "
+                                  "every block, so the block reaches the bot reading it nowhere"))
 
 
 def coderabbit_schema(ctx, out):

@@ -151,6 +151,46 @@ BI="$added" expect_clause toml-schema '(marker refusal, [bot-instructions.repo] 
   'a row added to the content-refusal table alone refuses that input' \
   check --repo "$repo"
 
+# The tables are read as data, so a defect in one is refused rather than read
+# as a smaller set: a misspelt row label would otherwise drop every refusal of
+# that input, a cell other than `yes` or a dash would drop that predicate, and
+# a role other than `review` or `not review` would silence `qodo-parity` for
+# that verb. Each row is a copy of the package whose `schemas/repo-toml.md`
+# carries one defect, `label~old~new~value` with `\n` for a newline in `new`,
+# asserted as the `spec` refusal naming the value it acted on, over a manifest
+# the running copy passes.
+repo="$(bi_minimal_repo table-defects)"
+printf '%s' "$BI_MIN_HEAD" > "$repo/kendex.toml"
+expect_green 'the running copy reads its own tables, the pair for the rows below' \
+  check --repo "$repo"
+IFS= read -r -d '' rows <<'ROWS'
+a content-refusal row label naming no string input~| `[bot-instructions.repo] tracker` |~| `[bot-instructions.repo] trackr` |~'[bot-instructions.repo] trackr'
+a content-refusal cell neither yes nor a dash~| `[bot-instructions.tone] coderabbit` | – | – | – | – | yes | – |~| `[bot-instructions.tone] coderabbit` | – | – | – | – | Yes | – |~'Yes'
+a content-refusal column naming no predicate~| Input string | heading |~| Input string | headline |~'headline'
+a second table headed Input string~**Refusals, not escapes.**~| Input string | heading |\n|---|---|\n| x | yes |\n\n**Refusals, not escapes.**~'Input string'
+a verb role neither review nor not review~| `/review` | Merge | review |~| `/review` | Merge | Review |~'Review'
+ROWS
+n=0
+while IFS= read -r row; do
+  [ -n "$row" ] || continue
+  IFS='~' read -r label old new value <<EOF
+$row
+EOF
+  n=$((n + 1))
+  mutant="$(bi_mutant "table-defect-$n" schemas/repo-toml.md "$old" "$(printf '%b' "$new")")" ||
+    { printf 'fixture: %s\n' "$label" >&2; exit 1; }
+  BI="$mutant" bi_run check --repo "$repo"
+  got="$(bi_render)"
+  if [ "$got" = 'rc=2 out=spec' ] && bi_carries "$value"; then
+    ok "$label"
+  else
+    bad "$label" "want rc=2 out=spec naming $value; got $got: $(printf '%s' "$bi_out" | head -2 | tr '\n' ' ')"
+  fi
+done <<EOF
+$rows
+EOF
+[ "$n" -gt 0 ] || { printf 'no table-defect row was asserted\n' >&2; exit 2; }
+
 # The class holds three characters ABOVE C0, because a YAML reader breaks a
 # line on all three: U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
 # SEPARATOR. A `reason` carrying one is emitted as the comment above its

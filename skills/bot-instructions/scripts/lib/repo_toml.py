@@ -5,8 +5,9 @@ there, and arrive here as rows, so a row added to the table is the whole
 change (`validators.md` § Cross-file sets).
 
 Read from the running copy, never from `--spec`: both tables decide what this
-code accepts, and in the CI lane SKILL.md prescribes, the spec copy is the
-pull request's own, which must not loosen the checker that judges it.
+code accepts. `kendex verify` runs a trusted copy of this package from outside
+the project with `--spec` naming the copy installed inside it, so a spec-copy
+read would let the tree under judgment loosen the checker that judges it.
 """
 
 import functools

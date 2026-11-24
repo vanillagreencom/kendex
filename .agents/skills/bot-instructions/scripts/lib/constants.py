@@ -1,8 +1,8 @@
 """Literals more than one module needs, written once.
 
-A set the spec states, the content refusals, the Qodo verbs and the doctrine
-block ids, is not restated here: the code reads it from the spec, per
-`validators.md` § Cross-file sets.
+The content refusals, the Qodo verbs and the doctrine block ids are not
+restated here: the code reads each from its one source, per `validators.md`
+§ Cross-file sets.
 """
 
 PACKAGE = "bot-instructions"
@@ -116,12 +116,15 @@ ROUTING_COLUMNS = (
     "macroscope doctrine.md",
 )
 
-# The pointed file is where Codex, Copilot and CodeRabbit are all sent, and
-# Macroscope reads no second instruction surface, so a block left out of one
-# of these reaches those bots nowhere. A block the routing table has no row
-# for reaches these two and nothing else, and `doctrine-routing` reds a row
-# that leaves either out.
-ALL_BLOCK_COLUMNS = ("code-review.md", "macroscope doctrine.md")
+# The columns that carry every block, one per bot family that renders
+# doctrine: the pointed file is where Codex, Copilot and CodeRabbit are all
+# sent, `pr_agent extra` is the one string `/review` reads, and Macroscope
+# reads no second instruction surface. A manifest that renders any doctrine
+# enables Codex, Qodo or Macroscope, so a block left out of one of these
+# reaches that bot nowhere. A block the routing table has no row for reaches
+# these and nothing else, and `doctrine-routing` reds a row that leaves one
+# out.
+ALL_BLOCK_COLUMNS = ("code-review.md", "pr_agent extra", "macroscope doctrine.md")
 
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the

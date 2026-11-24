@@ -343,15 +343,12 @@ One row per input string and one column per refusal class.
 - A run that reads the table refuses a row naming no string input, a column naming no predicate, and a cell other than `yes` or a dash.
 - `toml-schema` enforces every row except `doctrine block text`. Doctrine block text lives in the spec copy, not in `[bot-instructions]`, so the render-side check below enforces it.
 
-**Two other refusals are not content classes, and each is stated in its own place.**
+**Three inputs are outside this table, and each is stated in its own place.**
 
-- The glob keys follow § The glob dialect, which `scripts/lib/globs.py` encodes.
+- The glob keys follow § The glob dialect, which `scripts/lib/globs.py` encodes. Its class admits no control character.
 - `[bot-instructions.cadence] qodo_commands` entries are verbs from the table in § `[bot-instructions.cadence]`, the generator's one statement of that set, with no whitespace and no `--`.
-
-**One input string is outside this table.**
-
 - `[bot-instructions.repo] code_review_path` is a path shape rather than a content class: `config._code_review_path` encodes it, and § `[bot-instructions.repo]` states its clauses.
-- Its refusals reach an operator as `toml-schema` findings like every row here.
+- Their refusals reach an operator as `toml-schema` findings like every row here.
 
 | Input string | heading | marker | comment-close | toml-delimiter | control | single-line |
 |--------------|---------|--------|---------------|----------------|---------|-------------|
@@ -392,7 +389,7 @@ The predicates, written once:
 
 - Every marked cell names a rejection clause.
 - Admit its test protection under `validators.md` § Controls.
-- `toml-schema` carries no list of its own: it names this table, takes every row but `doctrine block text`, and adds the one clause that is a path shape rather than a content refusal.
+- `toml-schema` carries no list of its own: it names this table, takes every row but `doctrine block text`, and adds the clauses of the three inputs outside it: the glob dialect, the verb set and `code_review_path`.
 
 Two surfaces may match the same file.
 

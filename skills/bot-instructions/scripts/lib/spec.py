@@ -10,7 +10,8 @@ content.** The input paths are interpolated into a comment that no
 structured-file validator need be in the render to catch, so they are held to
 a class that cannot close a comment. Doctrine text is trusted the way
 the rest of this package's own bytes are, and is re-checked only against the
-content refusals, which `refusals.py` owns.
+`doctrine block text` row of `repo-toml.md` § The content refusals, whose
+predicates `refusals.py` encodes.
 """
 
 import re

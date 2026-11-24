@@ -50,7 +50,7 @@ The harness's control feeds a pattern the dialect **refuses** through the vector
 
 - *Derived, read at run time* means the generator parses the source and the set arrives as data. Four sources are read that way:
   - the doctrine source and the routing table, from the spec copy SKILL.md § The render inputs names;
-  - the content-refusal table and the verb table in `repo-toml.md`, from the running copy, because they decide what the code accepts.
+  - the content-refusal table and the verb table in `repo-toml.md`, from the running copy, because they decide what the code accepts and `kendex verify` runs a trusted copy with `--spec` naming the copy inside the tree it judges.
 - *Derived, one statement* means one constant in the implementation holds the set and every reader reads that constant.
 - A file carrying **text a render emits** is data.
 - A spec table that states a set the implementation also encodes is a second hand-kept copy, not a derivation.
@@ -143,7 +143,7 @@ Its sites, and which answer each takes:
 
 - A position repeated inside a column.
 - A gap in a column's positions, which must run `1..n`.
-- A row leaving out the `code-review.md` or `macroscope doctrine.md` column. Both columns carry every block.
+- A row leaving out the `code-review.md`, `pr_agent extra` or `macroscope doctrine.md` column. Those columns carry every block.
 
 Which blocks exist is the doctrine source's alone, so this validator compares the table with no second list of ids: a row naming no block is refused where the table is read, and a block with no row takes the default route `renders.md` § Doctrine routing states.
 
@@ -183,7 +183,7 @@ A byte validator: both inputs belong to the render, from the one copy `--spec` n
 
 **Rejects, the control-class clause.** A string in the rendered document carrying a character a YAML reader breaks a line on: C0 less tab and newline, DEL, U+0085, U+2028, U+2029.
 
-- This covers the one arrival route `repo-toml.md` § The content refusals cannot: a value from a vendored-schema default or from this package's own overrides.
+- This covers the one arrival route that neither `repo-toml.md` § The content refusals nor its § The glob dialect covers: a value from a vendored-schema default or from this package's own overrides.
 - The refusal is this validator's finding rather than a raise out of the emitter.
 
 ## `exclusion-consistency`
