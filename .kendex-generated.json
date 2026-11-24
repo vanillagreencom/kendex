@@ -1272,6 +1272,7 @@
   ".pi/kendex/hooks/session-end-row.sh",
   ".pi/kendex/hooks/session-start-row.sh",
   ".pi/kendex/hooks/stop-failure-row.sh",
+  ".pi/kendex/hooks/ui-copy-note.sh",
   ".pi/kendex/hooks/worktree-session-claim.sh",
   ".pi/prompts/code-scrub.md"
 ]

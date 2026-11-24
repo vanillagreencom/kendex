@@ -408,10 +408,10 @@ export function renderUserStub(userRoot: string, name: string, opts: StubOptions
 	registerRendered(userRoot, "tool_call", "Bash", globalCommand(script, env));
 }
 
-/** `reportEnv` names an environment variable the stub appends to its log as
- * `<NAME>=[<value>]`, empty brackets where the spawn set none — for a case
- * whose subject is the environment a registration asks for. */
-export interface StubOptions { exitCode: number; stderr?: string; log: string; reportEnv?: string }
+/** `reportEnv` names environment variables the stub appends to its log, one
+ * `<NAME>=[<value>]` line each, empty brackets where the spawn set none — for
+ * a case whose subject is the environment a registration runs under. */
+export interface StubOptions { exitCode: number; stderr?: string; log: string; reportEnv?: string[] }
 
 function writeStub(path: string, opts: StubOptions): void {
 	mkdirSync(join(path, ".."), { recursive: true });
@@ -419,7 +419,7 @@ function writeStub(path: string, opts: StubOptions): void {
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
 		`cat >> ${JSON.stringify(opts.log)}`,
-		...(opts.reportEnv ? [`printf '${opts.reportEnv}=[%s]\\n' "\${${opts.reportEnv}:-}" >> ${JSON.stringify(opts.log)}`] : []),
+		...(opts.reportEnv ?? []).map((name) => `printf '${name}=[%s]\\n' "\${${name}:-}" >> ${JSON.stringify(opts.log)}`),
 		...(opts.stderr ? [`echo ${JSON.stringify(opts.stderr)} >&2`] : []),
 		`exit ${opts.exitCode}`,
 	].join("\n") + "\n");

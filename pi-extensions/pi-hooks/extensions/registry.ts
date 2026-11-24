@@ -27,8 +27,20 @@ export const STOP_FAILURE_LISTENER = "agent_before_settle";
 /** `SessionEnd`. */
 export const SESSION_END_LISTENER = "session_shutdown";
 
+/**
+ * The scope a registration was read from, and that scope's root: the project
+ * directory for `project`, the Pi agent directory `piUserDir` names for
+ * `global`. The carrier hands both to the hook it spawns, so a hook that reads
+ * its dependencies from its own install takes them from here rather than
+ * classifying its own path a second time (`docs/adapters/pi.md` § Hooks).
+ */
+export interface HookScope {
+	scope: "global" | "project";
+	root: string;
+}
+
 /** One hook the rendered registry asks the carrier to run. */
-export interface RegisteredHook {
+export interface RegisteredHook extends HookScope {
 	/** The registered command, run through a shell exactly as kendex wrote it. */
 	command: string;
 	/**
@@ -241,7 +253,7 @@ function scriptGone(script: string): boolean {
 }
 
 /** The registrations one scope root holds for a listener, in file order. */
-function readRegistry(root: string, listener: string, subject: string | undefined, anchor: string | undefined): RegistryRead {
+function readRegistry(root: string, listener: string, subject: string | undefined, anchor: string | undefined, from: HookScope): RegistryRead {
 	const path = resolve(root, "hooks.json");
 	const hooks: RegisteredHook[] = [];
 	let position = 0;
@@ -271,6 +283,7 @@ function readRegistry(root: string, listener: string, subject: string | undefine
 				const rendered = renderedCommand(hook.command, anchor);
 				const name = renderedNameOf(root, rendered.script);
 				hooks.push({
+					...from,
 					command: hook.command,
 					name,
 					label: name === "" ? `custom hook ${position} in ${path}` : name,
@@ -326,12 +339,13 @@ export function registeredHooks(listener: string, subject: string | undefined, p
 
 	const answering: RegistryRead[] = [];
 	if (project !== undefined && trusted) {
-		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, subject, project));
+		answering.push(readRegistry(resolve(project, ".pi", "kendex"), listener, subject, project, { scope: "project", root: project }));
 	}
 	// The global registry runs without a trust check, so its root must never
 	// follow the session's directory: `piUserDir` takes the default root for a
 	// blank or relative PI_CODING_AGENT_DIR rather than resolving it here.
-	answering.push(readRegistry(resolve(piUserDir(), "kendex"), listener, subject, undefined));
+	const userDir = piUserDir();
+	answering.push(readRegistry(resolve(userDir, "kendex"), listener, subject, undefined, { scope: "global", root: userDir }));
 
 	for (const read of answering) {
 		unreadable ??= read.unreadable;
