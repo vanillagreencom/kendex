@@ -64,7 +64,7 @@ The Owner column names the writer. An `op` request is `orch-runtime op --item [I
 | `first_panel`, `rereview_panel`, `verification_panel` | object | `record-panel` with `panel: first`, `rereview` or `verification` | `{agents, reason, external, external_skip?, domain_reasons?}`: distinct reviewers and a non-empty reason. |
 | `submit_cycles` | number | `state increment` from [submit-pr.md](../workflows/submit-pr.md) | Re-submit loops run. |
 | `dev_round_id`, `review_round_id`, `ci_round_id` | string | `begin-round` with `kind: dev`, `review` or `ci` | The round token, minted before each delegation and carried in it. |
-| `stages` | object[] | `begin-round`, `record-validation-admission`, `accept-result`, `reconcile-round`, `validate stop`, `record-push`, `orch-runtime validate start`, `dev-return check` | One entry per round or validation run ([§ Stages](#stages)). |
+| `stages` | object[] | `begin-round`, `record-round`, `record-route`, `record-validation-admission`, `accept-result`, `reconcile-round`, `validate stop`, `record-push`, `orch-runtime validate start`, `dev-return check` | One entry per round or validation run ([§ Stages](#stages)). |
 | `validate_rounds` | object[] | `dev-return check`, `record-push` | One `{round_id, receipt, kind, mode, seconds, lanes?, selection?}` row per schema-valid dev receipt with validation time. |
 | `round_prunes` | object | `prune-round` | Round id to `{action, used_pct, mark_pct, bytes}` for the round's Cargo cleanup. |
 | `recovery_round_id`, `round_recovery` | string, object | `orch-runtime round recover` | The round a recovery minted for a stalled round, and `{from, to, reason}`. |
@@ -166,6 +166,7 @@ The members' rules, in the table's order:
 A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `outcome` once closed. `kind` is `dev`, `review`, `implement`, `fix` or `validate`.
 
 - `begin-round {kind, body_revision?, group?, exception?}` opens a `dev` or `review` entry in the same write as the token.
+- A round records the item's `tier` at its start when set. On a `small` to `standard` route change, `record-route` preserves the source tier on the current accepted dev round if that round predates tier stamping. A first-cycle review's `record-round {step: delegated, round: review, review_range: {base, head}}` records its concrete range and `delegated_at` on that stage.
 - `begin-round` closes every earlier open entry of the kind at the new start, with `superseded: true`.
 - `body_revision` is the item body's `updatedAt` as the caller read it. The reply's `body_moved` is `true` where it is later than the kind's previous recorded revision.
 - `group` is `{n, of}`.

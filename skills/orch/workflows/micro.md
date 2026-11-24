@@ -352,6 +352,7 @@ At condition 9, a tracker item records the promised round as the review floor th
 Then set `[BRIEF]` to `small`, and relaunch as `/orch small [ISSUE_ID]`: one internal review round, then the fallback approval of [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval), with no further Copilot request.
 
 At every other condition, the item relaunches at the next class up, as [lane-launch.md](../references/lane-launch.md) § Item Tier assigns it from the branch's state. `[BRIEF]` is that answer's `brief=` word.
+The relaunched run keeps the review passes and checks already accepted on the branch. Its review runs one pass over the full branch with the reviewers the new class adds.
 
 A tracker item takes the route for where the checkout leaves it:
 

@@ -107,7 +107,7 @@ Read [references/finding-disposition.md](references/finding-disposition.md) befo
 - Capture the starting fields before reviewing.
 - Write findings as a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md).
 - Write it with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path.
-- That path must use the canonical form `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`, minted by `orch-runtime review-artifact --text path`.
+- Use the exact path minted by `orch-runtime review-artifact --text path`, including its round token when present.
 - When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
 
 ```bash

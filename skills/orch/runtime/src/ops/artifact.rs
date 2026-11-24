@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::proof;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
-use crate::state::{self, Exception, ItemState, Stage, StageKind, ValidateMode};
+use crate::state::{self, Exception, ItemState, Stage, StageKind, StageOutcome, ValidateMode};
 use crate::validate::files::{self, RunFile};
 use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
@@ -32,6 +32,16 @@ pub const DEV_RETURN: &str = "dev-return";
 pub enum DevReturn {
     Write(Box<WriteReturn>),
     Check(CheckReturn),
+    /// Read the accepted dev result when starting the standard tier after small.
+    Resume(ResumeReturn),
+}
+
+#[derive(Debug, Args)]
+pub struct ResumeReturn {
+    #[arg(long)]
+    pub worktree: PathBuf,
+    #[arg(long)]
+    pub issue: String,
 }
 
 /// The word every refusal of `round stamp|cut|recover` under `--text`, and
@@ -175,7 +185,7 @@ fn refuse(key: &'static str, cause: impl ToString) -> Error {
     }
 }
 
-fn token(value: &str) -> Result<()> {
+pub(super) fn token(value: &str) -> Result<()> {
     if value.is_empty()
         || value.contains("..")
         || !value
@@ -187,7 +197,7 @@ fn token(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn sha(value: &str) -> bool {
+pub(super) fn sha(value: &str) -> bool {
     value.len() == 40
         && value
             .bytes()
@@ -268,7 +278,7 @@ fn git_call(
     call(worktree, Path::new("git"), operation, args, &env)
 }
 
-fn git(worktree: &Path, args: &[&str]) -> Result<String> {
+pub(super) fn git(worktree: &Path, args: &[&str]) -> Result<String> {
     let out = git_call(worktree, "git", args)?;
     if !out.status.success() {
         return Err(refuse("git-failed", host::stderr_text(&out)));
@@ -1740,6 +1750,8 @@ fn check_answer(
     };
     let mut value = json!({"ok":ok,"verdict":verdict,"path":file,"reason":reason,"warning":warning,"hint":hint,"files":files});
     for k in [
+        "branch",
+        "commit",
         "validate",
         "validate_mode",
         "validate_time",
@@ -2045,6 +2057,60 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
         return Ok(emit("incomplete", None, hint, &[]));
     }
     Ok(emit("valid", warning, None, &[]))
+}
+
+pub fn resume(settings: &Settings, r: &ResumeReturn) -> Result<Answer> {
+    let emit = |value: Value| Answer {
+        text: value.to_string(),
+        value,
+        status: 0,
+    };
+    let delegate = || emit(json!({"action": "delegate"}));
+    let path = state::item_path(&settings.state_dir, &r.issue);
+    let Some(snapshot) = crate::validate::load(&path)? else {
+        return Ok(delegate());
+    };
+    if snapshot.doc.get("tier") != Some(&json!("standard")) {
+        return Ok(delegate());
+    }
+    let item = snapshot.view::<ItemState>(&path)?;
+    let Some((_, stage)) = item
+        .accepted_dev()
+        .filter(|(_, s)| s.tier.as_deref() == Some("small"))
+    else {
+        return Ok(delegate());
+    };
+    let verdict = if stage.outcome == Some(StageOutcome::PassExcused) {
+        "accept-excused"
+    } else {
+        "accept"
+    };
+    let checked = check_evaluate(
+        settings,
+        &CheckReturn {
+            file: None,
+            worktree: Some(r.worktree.clone()),
+            issue: Some(r.issue.clone()),
+            round_id: stage.round_id.clone(),
+            expect_items: None,
+            expect_items_from_round: stage.kind == StageKind::Fix,
+            wait: 0,
+            interval: 1,
+        },
+    )?
+    .value;
+    if checked["verdict"] != verdict
+        || checked["branch"] != git(&r.worktree, &["branch", "--show-current"])?
+        || checked["branch"].as_str() != snapshot.doc.get("branch").and_then(Value::as_str)
+        || checked["commit"] != git(&r.worktree, &["rev-parse", "HEAD"])?
+        || !git(&r.worktree, &["status", "--porcelain"])?.is_empty()
+    {
+        return Ok(delegate());
+    }
+    Ok(emit(
+        json!({"action": "continue", "round_id": stage.round_id,
+        "outcome": stage.outcome, "receipt": checked}),
+    ))
 }
 
 fn check_once(settings: &Settings, r: &CheckReturn) -> Result<Answer> {

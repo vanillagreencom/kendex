@@ -2010,12 +2010,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let worktree = match &op {
                 ops::artifact::DevReturn::Write(r) => Some(r.id.worktree.as_path()),
                 ops::artifact::DevReturn::Check(r) => r.worktree.as_deref(),
+                ops::artifact::DevReturn::Resume(r) => Some(r.worktree.as_path()),
             };
             let result = artifact_settings(&flags, worktree).and_then(|settings| match op {
                 ops::artifact::DevReturn::Write(r) => ops::artifact::write(&settings, &r),
                 ops::artifact::DevReturn::Check(r) => {
                     ops::artifact::check(&settings, &r, &SystemClock)
                 }
+                ops::artifact::DevReturn::Resume(r) => ops::artifact::resume(&settings, &r),
             });
             artifact_reply(result, text, ops::artifact::DEV_RETURN)
         }
@@ -2038,6 +2040,16 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             use ops::review_artifact::{self as review, ReviewArtifact};
             let result = match op {
                 ReviewArtifact::Path(r) => review::path(&r, &SystemClock),
+                ReviewArtifact::Kept(r) => {
+                    let caller = std::env::var("ORCH_STATE_DIR").ok();
+                    review::state_dir(
+                        &r.issue,
+                        &r.worktree,
+                        flags.state_dir.as_deref(),
+                        caller.as_deref(),
+                    )
+                    .and_then(|dir| review::kept(&r, &dir))
+                }
                 ReviewArtifact::Check(r) => r
                     .issue
                     .as_deref()

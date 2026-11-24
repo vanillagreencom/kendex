@@ -598,6 +598,7 @@ pub(super) fn begin_round(
         (Some(now), Some(before)) => now > before,
         (_, _) => false,
     };
+    let tier = doc.get("tier").cloned();
     record::set(doc, r.kind.field(), round_id.clone());
     let rows = record::array_mut(path, doc, "stages")?;
     let mut superseded = Vec::new();
@@ -615,6 +616,9 @@ pub(super) fn begin_round(
         "start": now,
         "end": Value::Null,
     });
+    if let Some(tier) = tier {
+        row["tier"] = tier;
+    }
     if let Some(revision) = &r.body_revision {
         row["body_revision"] = json!(revision);
     }
@@ -662,6 +666,9 @@ pub enum RecordRound {
     /// counted against the agent's quiet window.
     Delegated {
         round: RoundKind,
+        /// The concrete full-branch range of a first-cycle review.
+        #[serde(default)]
+        review_range: Option<super::ScopeRange>,
     },
     Counted {
         counter: Counter,
@@ -687,18 +694,43 @@ pub(crate) fn record_round(
             }
             Ok(json!({"step": "base", "pre_delegate_sha": head, "review_fix_round": review_fix}))
         }
-        RecordRound::Delegated { round } => {
+        RecordRound::Delegated {
+            round,
+            review_range,
+        } => {
             let minted = doc
                 .get(round.field())
                 .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty());
-            if !minted {
+                .filter(|id| !id.is_empty());
+            let Some(round_id) = minted else {
                 let word = serde_json::to_value(round)?;
                 return Err(agent_runtime::Error::refused(
                     "round-unminted",
                     &[("round", word.as_str().unwrap_or_default())],
                 )
                 .into());
+            };
+            if let Some(range) = review_range {
+                if *round != RoundKind::Review
+                    || !super::artifact::sha(&range.base)
+                    || !super::artifact::sha(&range.head)
+                {
+                    return Err(agent_runtime::Error::refused("review-range", &[]).into());
+                }
+                let index = stages(path, doc)?
+                    .into_iter()
+                    .position(|stage| {
+                        stage.round_id.as_deref() == Some(round_id)
+                            && stage.kind == StageKind::Review
+                            && stage.end.is_none()
+                    })
+                    .ok_or_else(|| Error::RoundUnknown {
+                        round_id: round_id.to_owned(),
+                    })?;
+                let rows = record::array_mut(path, doc, "stages")?;
+                let row = record::element_mut(path, rows, index, "stages")?;
+                record::set(row, "review_range", json!(range));
+                record::set(row, "delegated_at", env.now_secs);
             }
             let field = match round {
                 RoundKind::Dev | RoundKind::Ci => "dev_delegated_at",

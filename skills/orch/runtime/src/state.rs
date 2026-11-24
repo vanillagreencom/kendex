@@ -288,6 +288,12 @@ pub struct RoundGroup {
 pub struct Stage {
     pub kind: StageKind,
     #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub review_range: Option<crate::ops::ScopeRange>,
+    #[serde(default)]
+    pub delegated_at: Option<u64>,
+    #[serde(default)]
     pub round_id: Option<String>,
     pub start: u64,
     #[serde(default)]
@@ -528,6 +534,22 @@ pub struct ItemState {
     pub dev_round_id: Option<String>,
     pub review_round_id: Option<String>,
     pub stages: Vec<Stage>,
+}
+
+impl ItemState {
+    pub(crate) fn accepted_dev(&self) -> Option<(usize, &Stage)> {
+        let round = self.dev_round_id.as_deref()?;
+        self.stages.iter().enumerate().find(|(_, stage)| {
+            matches!(stage.kind, StageKind::Implement | StageKind::Fix)
+                && stage.round_id.as_deref() == Some(round)
+                && stage.end.is_some()
+                && stage.superseded != Some(true)
+                && matches!(
+                    stage.outcome,
+                    Some(StageOutcome::Pass | StageOutcome::PassExcused)
+                )
+        })
+    }
 }
 
 impl Record for ItemState {

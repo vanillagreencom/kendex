@@ -9,6 +9,8 @@ The whole item session inside its worktree: open the session, implement, publish
 
 ## 1. Open The Session
 
+Set `[TIER]` to `standard` unless the caller supplied it.
+
 1. **Write the status file.** In a lane whose brief names a status file, `tmp/lane-status-[ISSUE_ID].md`, write it before this section's first command. Rewrite it at each step change with what the brief names.
 
 2. **Resolve the item.** Take `[ISSUE_ID]` from the argument, or from the branch:
@@ -69,10 +71,10 @@ The whole item session inside its worktree: open the session, implement, publish
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","worktree":"[WORKTREE_PATH]","branch":"[BRANCH]"}'
    ```
 
-   Record the tier this session runs at, which lifts any bound a `small` run left on the record:
+   Record the caller's tier:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"standard"}'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"[TIER]"}'
    ```
 
 7. **Gate on base freshness.** Every route into a worktree reaches this step, fresh or reused, except a handoff resume (step 3):
@@ -91,6 +93,15 @@ The whole item session inside its worktree: open the session, implement, publish
    - Exit 1, or a restack that cannot complete → run `worktree restack abort [ISSUE_ID]` where it paused, report the divergence and stop. Never review on an unverified base.
 
 ## 2. Implement
+
+At the standard tier, read the result of a completed small-tier round:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime dev-return --text resume --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+```
+
+- When `action` is `continue`, carry `receipt.path`, `receipt.commit` and the stored QA labels into § 2.1. Skip steps 1–5 and leave `dev_agent` unset for the fix workflow to resolve if needed.
+- When `action` is `delegate`, or for a small-tier caller, start at step 1. A refused read stops this pass with its diagnostic.
 
 1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 2. Parse the return's `Branch`, `Commit`, `QA`, `Validate` and `Summary` lines, the fields dev-implement returns. Where the round closed `no-change` or `pass-excused`, dev-start's managed return also names that word.

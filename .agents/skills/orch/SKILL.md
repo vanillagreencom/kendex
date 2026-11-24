@@ -281,7 +281,6 @@ After compaction:
 - Read the item's workflow state; an overseer takes [takeover](workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)'s bounded resume reads.
 - Apply [Delegation](references/skill-rules.md#delegation) before re-sending by a stored ID.
 - Stall recovery follows [Stalled round](references/skill-rules.md#stalled-round).
-- Never repeat a completed action.
 
 ### Review Pipeline
 

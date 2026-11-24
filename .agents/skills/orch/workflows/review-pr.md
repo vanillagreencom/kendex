@@ -93,6 +93,8 @@ With `cycles > 0`, fill the delegation's re-review block from `fixed_items`, `es
 
 ## 2. Prepare Reviewers
 
+**Fresh first cycle.** Take this step only on a fresh entry from § 1, outside any saved review handoff or its fallback. Apply **Panel** and § 2.1 once before admission. Resolve `origin/[BASE_BRANCH]` and `HEAD` to `[BASE_SHA]` and `[HEAD_SHA]`, then run [review-cycle.md § Tier escape](../references/review-cycle.md#tier-escape) with the final panel. Keep `[AGENTS]` as the full panel for collection. Use the returned `launch` list for admission, slot sizing, reviewer classification and delegation, and carry `kept` into § 3.1. An empty launch list skips internal admission, slots and launches. Take § 2.2's token writes, any requested external review still owed, then collection. With work to launch, take the admission below, then skip the panel and policy reads already made.
+
 **Pre-panel admission.** Before you size or start attached reviewers, ask the runtime whether this session has room for their returns. Run it from `[WORKTREE_PATH]`:
 
 ```bash
@@ -214,6 +216,8 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 ### 2.2 Launch And Delegate
 
+For a fresh first cycle planned in § 2, delegate from that cycle's launch list, carrying it across its waves. Skip attached and process launch blocks when it is empty. Other entries use the launch candidates from their existing routes.
+
 **Round token.**
 
 - A fresh batch mints its review round before its first spawn or process launch.
@@ -225,13 +229,19 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"review"}'
 ```
 
+On the fresh first cycle from § 2 only, use this form instead of the delegation-time-only stamp:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"review","review_range":{"base":"[BASE_SHA]","head":"[HEAD_SHA]"}}'
+```
+
 - `[REVIEW_ROUND_ID]` is the first reply's `.result.report.round_id`.
 - The write opens a new review stage ([workflow-state.md](../schemas/workflow-state.md) `stages`), which § 3.3 closes.
 - These two writes are this batch's admission under [Record verified findings](../schemas/workflow-state.md#record-verified-findings), with state writes enabled. § 3.1 is its acceptance; § 4 is its disposition and completion.
 
 **Scope.**
 
-1. On a fresh § 1 entry, resolve `origin/[BASE_BRANCH]` and `HEAD` to commit SHAs.
+1. On the fresh first cycle from § 2, use its resolved endpoints. An ordinary fresh review after a failed handoff proof resolves `origin/[BASE_BRANCH]` and `HEAD` to commit SHAs.
 2. On a § 4 or § 7 re-entry, resolve the stored `pre_delegate_sha` and the current `HEAD`.
 3. Bind `[DIFF_RANGE]` to the concrete `[BASE_SHA]...[HEAD_SHA]`, and pass it to internal and external review alike.
 4. A missing fix boundary sends `unavailable` internally and the external default.
@@ -259,7 +269,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
    Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`. On Codex, `[OBSERVED_BUDGET]` is the `effective_cap` that `subagent room` reported. Elsewhere it is the successful spawns, plus this session, plus the `slots` reply's `live`.
 
-5. When nothing spawned:
+5. When candidates were selected for launch and none could start:
    - On Codex, an empty fresh-spawn set first takes Codex thread reuse's eligible-thread and held-thread wave routes. Report the cap blocker that rule names only when neither can run the work.
    - On every other surface, nothing spawned is a misconfiguration: report it and stop.
 6. Store the active set under canonical reviewer names. A continuation includes its kept attempted and live assignments, with their IDs and runtime types:
@@ -286,10 +296,12 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
    .agents/skills/orch/scripts/orch-runtime review-artifact --text path --worktree [WORKTREE_PATH] --agent [AGENT]
    ```
 
+   For the fresh first cycle only, add `--round-id [REVIEW_ROUND_ID]` to the mint command.
+
 2. On Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
 3. For attached review, delegate to every reviewer selected for launch in parallel, once admission gave room.
 4. For process-owned review, put the same complete role, workflow and delegation in the prompt file [codex-runtime.md § Process-owned reviewers](../references/codex-runtime.md#process-owned-reviewers) names. Pass each launch through [review-cycle.md § Process launch admission](../references/review-cycle.md#process-launch-admission). Call no collaboration spawn or follow-up for a process assignment.
-5. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, start the external review in the same batch (below). It is a shell command, not an agent session. It takes no slot, and joins only the cycle's first wave.
+5. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch and no external result was kept on this cycle, start the external review in the same batch (below). It is a shell command, not an agent session. It takes no slot, and joins only the cycle's first wave.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/review.md
@@ -316,13 +328,15 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 
 `[PRIOR_REPORT_PATH]` is that reviewer's most recent `review-[AGENT]-*.json` in state `json_paths`.
 
-**External review** (only when requested). `[RANGE_FLAG]` is `--range [DIFF_RANGE]`, with the endpoints sent internally. Only a missing fix boundary leaves it empty, which takes the script's `origin/BASE...HEAD` default. The command backgrounds itself and prints when to check:
+**External review** (only when requested). `[RANGE_FLAG]` is `--range [DIFF_RANGE]`, with the endpoints sent internally. Only a missing fix boundary leaves it empty, which takes the script's `origin/BASE...HEAD` default. For a fresh first cycle, mint `[EXTERNAL_OUTPUT]` by **Delegate** step 1 with `--agent external` and the round id, then run only the review command below. Otherwise take the timestamped output path. The command backgrounds itself and prints when to check:
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/orch/scripts/git-context timestamp compact
-.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground [RANGE_FLAG]
+.agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [EXTERNAL_OUTPUT] --foreground [RANGE_FLAG]
 ```
+
+The timestamped `[EXTERNAL_OUTPUT]` is `[WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json`.
 
 1. Run the exact command printed after `wait:`, and repeat it by its exit code (`second-opinion --help`) until it ends.
 2. Handle other reviewer events in between.
@@ -347,6 +361,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 ### 3.1 Completion
 
 - `OUTSTANDING` is the active set, plus `{external}` when requested, less the returns already accepted and the execution outcomes already resolved here.
+- In the fresh first cycle only, start collection with the returned kept results already accepted. Mark them `kept` in § 3.3 and carry their findings, repeats and measurement declarations through ordinary handling.
 - On a continuation, every required domain stays accounted for: accepted, attempted and unread, never launched and unread, or unresponsive.
 - An unread domain holds collection until its acceptance or deadline route resolves it.
 
@@ -357,7 +372,7 @@ A reviewer completes only when its on-disk artifact validates:
 .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
-Run it on every return message and every watchdog sweep.
+In the fresh first cycle only, accept the exact assigned path with `--file [ASSIGNED_ARTIFACT_PATH]` in place of `--agent [AGENT]`. Match the JSON `agent` to the canonical assignment. The agent glob remains the wake check. Run the applicable acceptance on every return and watchdog sweep.
 
 - `ok == true`: drop the agent from `OUTSTANDING`, carry the result's `repeats` to § 4, and append the path:
 
@@ -378,7 +393,7 @@ A process-owned reviewer completes by [review-cycle.md § Process-owned completi
 **Incomplete returns.** An attached agent's return:
 
 1. `ok == false` after a return, `moving_tree` included, makes the return incomplete, whatever its `File:` path or message says.
-2. Send that agent exactly one re-delegation. A continuation keeps an already spent re-delegation, and names its exact assigned path in place of a new timestamped path. A `moving_tree` refusal needs a new review from a new starting snapshot once development finishes:
+2. Send that agent exactly one re-delegation. A continuation keeps an already spent re-delegation. In the fresh first cycle or a continuation, give the exact assigned path in place of a new timestamped path. A `moving_tree` refusal needs a new review from a new starting snapshot once development finishes:
 
    > Your review return is incomplete: `orch-runtime review-artifact check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md`, then return `Verdict:` and `File:` again.
 
@@ -391,6 +406,7 @@ A process-owned reviewer's incomplete return takes [review-cycle.md § Process-o
 1. Keep a wake source armed for every incomplete agent, by [review-cycle.md § Reviewer wait](../references/review-cycle.md#reviewer-wait).
 2. On every wake, act by [review-cycle.md § Deadlines](../references/review-cycle.md#deadlines) and [§ Deadline actions](../references/review-cycle.md#deadline-actions). A process-owned domain also takes [review-cycle.md § Process liveness](../references/review-cycle.md#process-liveness).
 3. When `OUTSTANDING` is empty (`unresponsive` counts as resolved, never accepted):
+   - A fresh first cycle considers only its launch list for the steps below. Its later waves keep the existing plan and round.
    1. A never-launched required domain still unread returns to § 2 for its admission.
    2. Wave mode returns to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`. Every process-owned launch passes its own admission first, and a continuation keeps its original batch.
    3. Otherwise go to § 3.3.
@@ -409,13 +425,14 @@ A process-owned reviewer's incomplete return takes [review-cycle.md § Process-o
 
 - Evidence from one member never stands for an unread required member.
 - `[END_PATH]` is the `path` of the batch's last `ok == true` result. The runtime reads its modification time as the stage's end.
+- For the fresh first cycle, choose the accepted path from this batch with greatest modification time. Bind the first candidate, then replace it when `test [CANDIDATE_PATH] -nt [END_PATH]` succeeds.
 - Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "accept-result", "round_id": "[REVIEW_ROUND_ID]", "outcome": "[WORD]", "end": {"from_artifact": "[END_PATH]"}}` and run it:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
 ```
 
-A batch that accepted no artifact closes with its `[WORD]` and no `end`.
+A batch that accepted no artifact closes with its `[WORD]` and no `end`. The fresh first cycle excludes earlier kept paths when choosing its end.
 
 The overall verdict is `action_required` when any reviewer reported a blocker, else `pass`. An unresponsive reviewer does not change it.
 
@@ -428,7 +445,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 | Agent | Verdict | Path |
 |-------|---------|------|
 | **Overall** | `[pass\|action_required]` | |
-| [AGENT] | `[verdict\|unresponsive]` | `[path or —]` |
+| [AGENT] | `[verdict\|kept (verdict)\|unresponsive]` | `[path or —]` |
 
 </output_format>
 

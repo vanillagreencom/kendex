@@ -162,7 +162,7 @@ pub fn apply_record(
                 Record::RecordCommentLedger(r) => {
                     findings::record_comment_ledger(path, &mut doc, r)?
                 }
-                Record::RecordRoute(r) => progress::record_route(&mut doc, r)?,
+                Record::RecordRoute(r) => progress::record_route(path, &mut doc, r)?,
                 Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
                 Record::RecordPrProgress(r) => {
                     progress::record_pr_progress(path, &mut doc, env, r)?

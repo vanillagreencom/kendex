@@ -4569,6 +4569,142 @@ mod dev_artifacts {
         assert_eq!(stale["proof"], "missing", "{stale}");
     }
 
+    #[test]
+    fn a_wider_tier_launches_only_reviewers_without_a_kept_pass() {
+        for (before, after) in [("micro", "small"), ("small", "standard")] {
+            let w = World::new();
+            let base = w.head();
+            w.commit("app.txt");
+            let head = w.head();
+            let wt = w.wt.to_str().unwrap();
+            result(&w.op(json!({"op": "record-route", "tier": before})));
+            let round = w.begin_with(&json!({"op": "begin-round", "kind": "review"}));
+            let delegated = result(&w.op(
+                json!({"op": "record-round", "step": "delegated", "round": "review",
+                "review_range": {"base": base, "head": head}}),
+            ));
+            let artifact = result(&w.run(&[
+                "review-artifact",
+                "path",
+                "--worktree",
+                wt,
+                "--agent",
+                "reviewer-test",
+                "--round-id",
+                &round,
+            ]));
+            let path = artifact["path"].as_str().unwrap();
+            fs::write(
+                path,
+                json!({"agent":"reviewer-test", "head":head, "dirty_paths":[],
+                "verdict":"pass", "blockers":[], "suggestions":[]})
+                .to_string(),
+            )
+            .unwrap();
+            let checked = result(&w.run(&[
+                "review-artifact",
+                "check",
+                "--worktree",
+                wt,
+                "--file",
+                path,
+                "--delegated-at",
+                &delegated["value"].to_string(),
+            ]));
+            assert_eq!(checked["ok"], true, "{checked}");
+            result(&w.op(json!({"op":"record-agents","step":"returned","artifact":path})));
+            result(&w.op(
+                json!({"op":"accept-result","round_id":round,"outcome":"pass",
+                "end":{"from_artifact":path}}),
+            ));
+            result(&w.op(json!({"op": "record-route", "tier": after})));
+            let plan = |base: &str, agents: &str| {
+                result(&w.run(&[
+                    "review-artifact",
+                    "kept",
+                    "--worktree",
+                    wt,
+                    "--issue",
+                    "issue-8",
+                    "--base",
+                    base,
+                    "--agents",
+                    agents,
+                ]))
+            };
+            let expanded = plan(&base, "reviewer-test,reviewer-quality");
+            assert_eq!(
+                expanded["launch"],
+                json!(["reviewer-quality"]),
+                "{expanded}"
+            );
+            assert_eq!(expanded["kept"]["reviewer-test"]["path"], path);
+            assert_eq!(plan(&base, "reviewer-test")["launch"], json!([]));
+            assert_eq!(
+                plan(&head, "reviewer-test")["launch"],
+                json!(["reviewer-test"])
+            );
+            assert_eq!(w.doc()["json_paths"], json!([path]));
+            let current = w.begin_with(&json!({"op":"begin-round","kind":"review"}));
+            result(&w.op(
+                json!({"op":"record-round","step":"delegated","round":"review",
+                "review_range":{"base":base,"head":head}}),
+            ));
+            result(&w.op(json!({"op":"accept-result","round_id":current,"outcome":"pass"})));
+            assert_eq!(
+                plan(&base, "reviewer-test")["launch"],
+                json!(["reviewer-test"])
+            );
+        }
+    }
+
+    #[test]
+    fn standard_start_keeps_the_small_dev_round_at_the_clean_head() {
+        let w = World::new();
+        result(&w.op(json!({"op": "record-route", "tier": "small"})));
+        let round = w.begin_round(None);
+        w.commit("app.txt");
+        let run = w.finished_run("small-pass", "full");
+        let written = result(&w.write(
+            &round,
+            "implement",
+            "pass",
+            &["--validate-run-dir", run.to_str().unwrap()],
+        ));
+        result(&w.call(&["dev-return", "check"], &round, &[]));
+        result(&w.op(json!({"op":"accept-result","round_id":round,"outcome":"pass"})));
+        let mut legacy = w.doc();
+        let stage = legacy["stages"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|stage| stage["round_id"] == round && stage["kind"] == "implement")
+            .unwrap();
+        stage.as_object_mut().unwrap().remove("tier").unwrap();
+        fs::write(w.item(), legacy.to_string()).unwrap();
+        // The first open stops at base freshness before it checks the receipt.
+        for _ in 0..2 {
+            result(&w.op(json!({"op":"record-route","tier":"standard"})));
+        }
+        let resume = || {
+            result(&w.run(&[
+                "dev-return",
+                "resume",
+                "--worktree",
+                w.wt.to_str().unwrap(),
+                "--issue",
+                "issue-8",
+            ]))
+        };
+        let before = w.doc();
+        let resumed = resume();
+        assert_eq!(resumed["action"], "continue", "{resumed}");
+        assert_eq!(resumed["receipt"]["path"], written["path"]);
+        assert_eq!(w.doc(), before);
+        w.commit("new.txt");
+        assert_eq!(resume()["action"], "delegate");
+    }
+
     /// A round begun with an exception for known failures ends on a red
     /// run that fails only those checks: the receipt keeps its FAILING line
     /// and cites the exception, the check answers `accept-excused` with it,
@@ -4581,6 +4717,7 @@ mod dev_artifacts {
     fn an_exception_the_round_began_with_accepts_only_the_failures_it_names_and_keeps_them_visible()
     {
         let w = World::new();
+        result(&w.op(json!({"op":"record-route","tier":"small"})));
         let exception = json!({"by": "owner-directive", "id": "D-7", "excused": ["lint", "unit"]});
         let first =
             w.begin_with(&json!({"op": "begin-round", "kind": "dev", "exception": exception}));
@@ -4630,6 +4767,19 @@ mod dev_artifacts {
         );
         assert_eq!(closed["report"]["outcome"], "pass-excused", "{closed}");
         assert_eq!(w.round_stage(&round)["exception"], exception);
+        result(&w.op(json!({"op":"record-route","tier":"standard"})));
+        let resumed = result(&w.run(&[
+            "dev-return",
+            "resume",
+            "--worktree",
+            w.wt.to_str().unwrap(),
+            "--issue",
+            "issue-8",
+        ]));
+        assert_eq!(resumed["action"], "continue", "{resumed}");
+        assert_eq!(resumed["round_id"], round);
+        assert_eq!(resumed["receipt"]["path"], written["path"]);
+        assert_eq!(resumed["receipt"]["exception"], exception);
         let run = w.doc()["stages"]
             .as_array()
             .unwrap()
@@ -4793,9 +4943,10 @@ fn begin_round_mints_supersedes_and_opens_in_one_write() {
     );
     assert_eq!(
         keys(after["stages"][1].as_object().unwrap()),
-        ["kind", "round_id", "start", "end"]
+        ["kind", "round_id", "start", "end", "tier"]
     );
     assert_eq!(body.stages[1].kind, StageKind::Dev);
+    assert_eq!(body.stages[1].tier.as_deref(), Some("standard"));
     assert_eq!(body.stages[1].start, NOW_SECS);
     assert_eq!(body.stages[1].end, None);
     // A review round leaves the dev stage open.
