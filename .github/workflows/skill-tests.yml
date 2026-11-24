@@ -1850,12 +1850,13 @@ jobs:
       # latest major, so the transcript tests would validate a different major
       # than consumers install. The Pi packages and typebox are value imports
       # on the paths the suite exercises, and tsx is what the test script runs
-      # the suite under.
+      # the suite under. Pi is 1.6.0 because the native web_search session test
+      # needs a Pi whose openai provider declares tools in additional_tools.
       - name: pi-web-tools suite
         if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-web-tools
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.6.0 @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 typebox tsx 'youtube-transcript-plus@^2.0.1'
           npm test
 
       # The suite mocks every Pi module and typebox it imports with bun's

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- With `defaultProvider` set to `openai-native`, `web_search` uses OpenAI's own web search again on the newest OpenAI models, gpt-6.2-sol among them. Since Pi 1.4.0, Pi lists those models' tools in `additional_tools` input items, which the package did not read, so the model was sent the package's stand-in tool, and calling it returned a notice instead of search results.
+
 ### 4.3.0
 
 - `EXA_API_KEY` can come from the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to its absolute path. The tools keep only the file's `EXA_API_KEY` line, and use it only when the environment, the private config file, Pi settings and the project's `.env` files hold no key; a project `.env.local` key still wins. The key is never written to the process environment, so no process Pi starts inherits it. A key file with no key, one that cannot be read, or a relative path leaves the Exa tools off, and `/web-tools:doctor` names the file and the cause.

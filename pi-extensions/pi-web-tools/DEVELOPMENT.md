@@ -54,7 +54,7 @@ What it does for a consumer is [README.md](README.md). The Exa API map is [EXA.m
 
 ```bash
 cd pi-extensions/pi-web-tools
-npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
+npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.6.0 @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 typebox tsx 'youtube-transcript-plus@^2.0.1'
 npm run check
 ```
 
