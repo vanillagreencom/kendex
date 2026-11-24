@@ -405,10 +405,17 @@ fn relaunch_world(dir: &Path, server: &Server, used: u32) -> Runner {
 }
 
 /// `lane relaunch` for `item`, run from a pane of another server than the
-/// fleet's.
-fn relaunch(runner: &Runner, dir: &Path, item: &str) -> std::process::Output {
+/// fleet's, with `extra` environment.
+fn relaunch(
+    runner: &Runner,
+    dir: &Path,
+    item: &str,
+    extra: &[(&str, &str)],
+) -> std::process::Output {
     let decoy = format!("{},0,0", dir.join("decoy.sock").display());
-    runner.run_env(&["lane", "relaunch", "--fleet", item], &[("TMUX", &decoy)])
+    let mut env = vec![("TMUX", decoy.as_str())];
+    env.extend_from_slice(extra);
+    runner.run_env(&["lane", "relaunch", "--fleet", item], &env)
 }
 
 /// The key of the refusal a run printed, its exit 1.
@@ -427,8 +434,13 @@ fn refused_by(out: &std::process::Output) -> String {
 /// record's socket, where a server is started again.
 #[test]
 fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
+    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
+    // The server's socket stands in a directory of its own, which the
+    // restart empties away as `/tmp` is emptied at boot.
+    let sockets = dir.path().join("sockets");
+    std::fs::create_dir(&sockets).unwrap();
+    let server = Server::start(&sockets, "fleet");
     let runner = relaunch_world(dir.path(), &server, 5);
     let killed = tmux(&server.socket, &["kill-server"]);
     assert!(killed.status.success(), "{}", stderr(&killed));
@@ -437,12 +449,23 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
         assert!(Instant::now() < deadline, "the fleet server never ended");
         std::thread::sleep(Duration::from_millis(20));
     }
-    let out = relaunch(&runner, dir.path(), "KEN-1");
+    std::fs::remove_dir_all(&sockets).unwrap();
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
     let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
     assert_eq!(out.status.code(), Some(0), "{line} {}", stderr(&out));
     let words: Vec<&str> = line.split(' ').collect();
-    assert_eq!(words[..2], ["resumed", "item=KEN-1"], "{line}");
-    assert!(words[2].starts_with("route="), "{line}");
+    // The lane's session stands recorded under its own account, so the
+    // relaunch resumes it.
+    assert_eq!(
+        words[..3],
+        ["resumed", "item=KEN-1", "route=resume"],
+        "{line}"
+    );
+    assert_eq!(
+        std::fs::metadata(&sockets).unwrap().permissions().mode() & 0o777,
+        0o700,
+        "the socket's directory made again, private"
+    );
     assert_eq!(
         words[3],
         format!("account={}", runner.state_dir().display()),
@@ -471,9 +494,12 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
     );
 }
 
-/// What `lane relaunch` refuses before it closes anything: an item with no
-/// lane, a hosted lane, whose server is its host's, and a lane whose own
-/// account the judge reads walled. The lane stands running after each.
+/// What `lane relaunch` refuses before it closes anything: a fleet whose
+/// controller record names no server, so the caller's own server is never
+/// reached, an item with no lane, a hosted lane, whose server is its
+/// host's, a lane whose own account the launch's judge reads walled, and a
+/// launch its admission refuses, here on a setting only a launch reads.
+/// The lane stands running after each.
 #[test]
 fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     let dir = tempfile::tempdir().unwrap();
@@ -482,19 +508,51 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     let fleet = runner.fleet();
     let mut hosted = fleet.clone();
     hosted["lanes"][0]["host"] = json!("/opt/provider");
-    let rows: [(&str, &Value, &str, Option<Value>); 3] = [
-        ("KEN-9", &fleet, "lane-missing", None),
-        ("KEN-1", &hosted, "lane-hosted", None),
+    let mut unrecorded = fleet.clone();
+    unrecorded["controller"] = json!({});
+    let mut accountless = fleet.clone();
+    accountless["lanes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
+    let unadmitted = [("ORCH_LANE_OUTPUT", "bogus")];
+    // The item, the fleet record, the run's extra environment, the key and
+    // a field the refusal carries.
+    type Row<'a> = (
+        &'a str,
+        &'a Value,
+        &'a [(&'a str, &'a str)],
+        &'a str,
+        Option<Value>,
+    );
+    let rows: [Row; 5] = [
+        (
+            "KEN-1",
+            &unrecorded,
+            &[],
+            "server-socket-unrecorded",
+            Some(json!(["field", "server_socket"])),
+        ),
+        ("KEN-9", &fleet, &[], "lane-missing", None),
+        ("KEN-1", &hosted, &[], "lane-hosted", None),
         (
             "KEN-1",
             &fleet,
-            "account-unready",
-            Some(json!(["answer", "walled"])),
+            &[],
+            "account-walled",
+            Some(json!(["account", runner.state_dir().display().to_string()])),
+        ),
+        (
+            "KEN-1",
+            &accountless,
+            &unadmitted,
+            "setting-invalid",
+            Some(json!(["key", "ORCH_LANE_OUTPUT"])),
         ),
     ];
-    for (item, record, key, field) in rows {
+    for (item, record, extra, key, field) in rows {
         runner.write_fleet(record);
-        let out = relaunch(&runner, dir.path(), item);
+        let out = relaunch(&runner, dir.path(), item, extra);
         assert_eq!(refused_by(&out), key, "{item}");
         if let Some(field) = field {
             let fields = reply(&out)["refusal"]["fields"].clone();
@@ -509,6 +567,98 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
             "{key}: nothing closed"
         );
     }
+}
+
+/// A launch whose server is gone from a socket the controller record does
+/// not name, the caller's own, starts no server there: the fleet stays on
+/// its recorded server. A fleet with no controller record names none.
+#[test]
+fn a_launch_off_the_recorded_socket_starts_no_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let killed = tmux(&server.socket, &["kill-server"]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while live(server.pid) {
+        assert!(Instant::now() < deadline, "the fleet server never ended");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let elsewhere = dir.path().join("recorded.sock").display().to_string();
+    let rows = [
+        ("KEN-10", None),
+        ("KEN-12", Some(json!({"server_socket": elsewhere}))),
+    ];
+    for (item, controller) in rows {
+        if let Some(controller) = controller {
+            let mut fleet = runner.fleet();
+            fleet["controller"] = controller;
+            runner.write_fleet(&fleet);
+        }
+        let report = effect_report(&runner.op_fleet(&launch_request(item, runner.state_dir())));
+        assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        let observation = &report["intent"]["observation"];
+        assert_eq!(
+            observation["cause"], "tmux-refused",
+            "{item}: {observation}"
+        );
+        assert!(
+            std::os::unix::net::UnixStream::connect(&server.socket).is_err(),
+            "{item}: no server listens on the caller's socket"
+        );
+        assert!(
+            !runner.state_dir().join("tmux-server.runner").exists(),
+            "{item}: no server job recorded"
+        );
+    }
+}
+
+/// A started fleet server that exits at once, here on a socket its own
+/// directory will not let it bind, refuses as soon as it ended, never at
+/// the end of the bound, with the server's own last stderr line as the
+/// refusal's cause.
+#[test]
+fn a_fleet_server_that_exits_at_once_refuses_at_once_with_its_own_line() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let shut = dir.path().join("shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let socket = shut.join("tmux.sock");
+    let mut fleet = runner.fleet();
+    fleet["controller"] = json!({"server_socket": socket.display().to_string()});
+    runner.write_fleet(&fleet);
+    let bound = Duration::from_secs(60);
+    let started = Instant::now();
+    let report = effect_report(&runner.op_fleet_env(
+        &launch_request("KEN-13", runner.state_dir()),
+        &[
+            ("TMUX", &format!("{},0,0", socket.display())),
+            (
+                "AGENT_RUNTIME_TMUX_VERIFY_SECS",
+                &bound.as_secs().to_string(),
+            ),
+        ],
+    ));
+    let elapsed = started.elapsed();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(
+        observation["cause"], "tmux-server-unstarted",
+        "{observation}"
+    );
+    let said = std::fs::read_to_string(runner.state_dir().join("tmux-server.err")).unwrap();
+    assert_eq!(
+        observation["detail"].as_str(),
+        said.lines().rev().find(|l| !l.trim().is_empty()),
+        "{observation}"
+    );
+    assert!(elapsed < bound / 2, "{elapsed:?}: {observation}");
 }
 
 #[test]

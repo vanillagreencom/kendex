@@ -436,8 +436,9 @@ enum Verb {
     /// claimed runner recorded beside the fleet state. One stdout line, the
     /// effect's outcome: `controller-resumed intent=ID generation=N pane=%P
     /// session=ID socket=PATH` at exit 0, `controller-resume-failed
-    /// intent=ID note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
-    /// intent=ID` at 75 with the intent left for its reconcile. A refusal,
+    /// intent=ID note=KEY cause=CAUSE` at 3, the refusal's key and its own
+    /// cause, `controller-resume-unconfirmed intent=ID` at 75 with the
+    /// intent left for its reconcile. A refusal,
     /// with nothing started, at exit 1: `server-socket-unrecorded
     /// field=server_socket`, `session-unrecorded field=session_id`,
     /// `harness-unnamed`, `session-missing`, `watch-flags-unrecorded`.
@@ -796,18 +797,22 @@ enum LaneOp {
         caller_keep: bool,
     },
     /// Relaunch a local lane from its record once its session ended, as
-    /// after a restart: the record's own account judged as `pick
-    /// --replaces` judges it, then the close and the `launch-lane` request a
-    /// recovery relaunch composes from the record, on the start brief,
-    /// applied in order on the controller record's `server_socket`, where a
-    /// server gone from it is started again. Exit 0 prints `resumed
-    /// item=ITEM route=resume|fresh account=DIR|-`. A close that failed is
+    /// after a restart: the record's own account judged by the launch's own
+    /// judge with the lane's charge left out, and both the close and the
+    /// `launch-lane` request a recovery relaunch composes from the record,
+    /// on the start brief, admitted before the close; then both applied in
+    /// order on the controller record's `server_socket`, where a server gone
+    /// from it is started again. Exit 0 prints `resumed item=ITEM
+    /// route=resume|fresh account=DIR|-`. A close that failed is
     /// `close-failed` on stderr at exit 3, one still open `close-unconfirmed`
-    /// at 75, with nothing launched; a launch that failed is `launch-failed`
-    /// at 3, one still open `launch-unconfirmed` at 75. A refusal, with
-    /// nothing closed, at exit 1: `server-socket-unrecorded`,
-    /// `lane-missing`, `lane-hosted`, `harness-unrecorded`, `account-unready
-    /// answer=WORD`, `relaunch-unprepared cause=CAUSE`.
+    /// at 75, with nothing launched; a launch that failed or was refused
+    /// after the close is `launch-failed ... close=ID` at 3, one still open
+    /// `launch-unconfirmed ... close=ID` at 75. Every refusal at exit 1
+    /// closes nothing: `server-socket-unrecorded`, `lane-missing`,
+    /// `lane-hosted`, `harness-unrecorded`, `relaunch-unprepared
+    /// cause=CAUSE`, the launch's account refusals (`account-walled`,
+    /// `account-reserved`, `account-retired`, `account-unmeasured`,
+    /// `account-unjudged`) and its admission refusals.
     Relaunch {
         #[command(flatten)]
         target: Target,
@@ -2624,19 +2629,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             let path = target_path(&target, &settings);
             let program = watch_program(flags)?;
             if foreground {
-                let paths = watch::Paths::of(&path)?;
-                let Some(recorded) = watch::claim::read_flags(&paths)? else {
-                    return Err(orch_runtime::error::WatchError::FlagsUnrecorded {
-                        path: paths.flags,
-                    }
-                    .into());
-                };
-                let words = run_words(
-                    Some(recorded.interval),
-                    Some(recorded.max_loops),
-                    recorded.since,
-                    recorded.repos,
-                );
+                let words = recorded_run_words(&path)?;
                 let argv = effects::watch_argv(&path, &settings, &program, &words)?;
                 return Err(become_watch(&argv));
             }
@@ -2674,6 +2667,22 @@ fn watch_program(flags: &Flags) -> Result<Vec<String>> {
         program.push("--no-private-env".to_owned());
     }
     Ok(program)
+}
+
+/// `watch run`'s flag words as the last claimed runner beside the fleet
+/// state at `path` recorded them: what a restart's watch runs with.
+/// Refuses `watch-flags-unrecorded` where no runner has recorded any.
+fn recorded_run_words(path: &Path) -> Result<Vec<String>> {
+    let paths = watch::Paths::of(path)?;
+    let Some(recorded) = watch::claim::read_flags(&paths)? else {
+        return Err(orch_runtime::error::WatchError::FlagsUnrecorded { path: paths.flags }.into());
+    };
+    Ok(run_words(
+        Some(recorded.interval),
+        Some(recorded.max_loops),
+        recorded.since,
+        recorded.repos,
+    ))
 }
 
 /// `watch run`'s flag words for the values a start names, in its own
@@ -2784,66 +2793,7 @@ fn lane_verb(op: LaneOp, flags: &Flags, locking: Locking) -> Result<serde_json::
         )?),
         LaneOp::Relaunch { target, lane: item } => {
             let path = target_path(&target, &settings);
-            let settings = on_recorded_server(settings, &path)?;
-            let relaunch = effects::relaunch::composed(&settings, &path, &item, &host, now)?;
-            let closed = applied_live(&path, read_request(&relaunch.close)?, &settings, locking)?;
-            let intent = closed.intent();
-            match closed.status() {
-                0 => {}
-                3 => answered(
-                    false,
-                    &format!(
-                        "orch-runtime: close-failed item={item} intent={} {}",
-                        intent.id,
-                        observed(intent)
-                    ),
-                    3,
-                ),
-                status => answered(
-                    false,
-                    &format!(
-                        "orch-runtime: close-unconfirmed item={item} intent={}",
-                        intent.id
-                    ),
-                    status,
-                ),
-            }
-            let launched =
-                applied_live(&path, read_request(&relaunch.launch)?, &settings, locking)?;
-            let intent = launched.intent();
-            match launched.status() {
-                0 => {
-                    let route = intent
-                        .observation
-                        .as_ref()
-                        .and_then(|o| o.get("route"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("-");
-                    let account = relaunch.account.as_deref().unwrap_or("-");
-                    answered(
-                        true,
-                        &format!("resumed item={item} route={route} account={account}"),
-                        0,
-                    )
-                }
-                3 => answered(
-                    false,
-                    &format!(
-                        "orch-runtime: launch-failed item={item} intent={} {}",
-                        intent.id,
-                        observed(intent)
-                    ),
-                    3,
-                ),
-                status => answered(
-                    false,
-                    &format!(
-                        "orch-runtime: launch-unconfirmed item={item} intent={}",
-                        intent.id
-                    ),
-                    status,
-                ),
-            }
+            relaunch_lane(&path, &item, settings, &host, now, locking)
         }
         LaneOp::Charges {
             fleet: _,
@@ -3710,19 +3660,8 @@ fn resume_controller(
     let path = target_path(target, &settings);
     let settings = on_recorded_server(settings, &path)?;
     let choice = agent_runtime::controller::successor::resumed(&settings.launch, &path)?;
-    let paths = watch::Paths::of(&path)?;
-    let Some(recorded) = watch::claim::read_flags(&paths)? else {
-        return Err(orch_runtime::error::WatchError::FlagsUnrecorded { path: paths.flags }.into());
-    };
-    let mut words = watch_program(flags)?;
-    words.extend(["watch", "run", "--file"].map(str::to_owned));
-    words.push(path.display().to_string());
-    words.extend(run_words(
-        Some(recorded.interval),
-        Some(recorded.max_loops),
-        recorded.since,
-        recorded.repos,
-    ));
+    // The start's companion reach adds the mailbox and server words.
+    let words = effects::watch_words(&path, &watch_program(flags)?, &recorded_run_words(&path)?);
     let request = serde_json::from_value(serde_json::json!({
         "op": "start-controller",
         "controller": choice["successor"],
@@ -3732,7 +3671,23 @@ fn resume_controller(
         path: PathBuf::from("<resume-controller>"),
         cause: e.to_string(),
     })?;
-    let settled = applied_live(&path, request, &settings, locking)?;
+    let settled = match applied_live(
+        &path,
+        admitted(&path, request, &settings)?,
+        &settings,
+        locking,
+    ) {
+        Ok(settled) => settled,
+        Err(Error::Persisted { intent, error }) => answered(
+            true,
+            &format!(
+                "controller-resume-unconfirmed intent={intent} {}",
+                refusal_words(&error)
+            ),
+            agent_runtime::effects::UNCONFIRMED_EXIT,
+        ),
+        Err(e) => return Err(e),
+    };
     let intent = settled.intent();
     match settled.status() {
         0 => {
@@ -3777,18 +3732,36 @@ fn resume_controller(
     }
 }
 
-/// `request`, composed by the command itself, applied as `op
-/// --effect-exit` applies a request file: the intent its live effect
-/// settled as.
+/// A request the command composed itself, admitted as `op` admits a
+/// request file before its transition, with the brief it opens on held
+/// for its intent.
+struct Admitted {
+    request: Request,
+    held_brief: Option<ops::successor::HeldBrief>,
+}
+
+fn admitted(path: &Path, mut request: Request, settings: &Settings) -> Result<Admitted> {
+    ops::target_kind(path, &request)?;
+    let held_brief = prepared(&mut request, path, settings)?;
+    Ok(Admitted {
+        request,
+        held_brief,
+    })
+}
+
+/// An admitted request applied as `op --effect-exit` applies it: the
+/// intent its live effect settled as.
 fn applied_live(
     path: &Path,
-    mut request: Request,
+    admitted: Admitted,
     settings: &Settings,
     locking: Locking,
 ) -> Result<controller_run::Settled> {
-    ops::target_kind(path, &request)?;
-    let held_brief = prepared(&mut request, path, settings)?;
     let env = Env::system()?;
+    let Admitted {
+        request,
+        held_brief,
+    } = admitted;
     let answer = applied_effect(path, &request, held_brief, settings, &env, locking, true)?;
     let Some(settled) = answer.settled else {
         unreachable!("a start, close or launch runs its live effect and settles it")
@@ -3796,19 +3769,144 @@ fn applied_live(
     Ok(settled)
 }
 
+/// The local lane `item` relaunched from its record on the controller
+/// record's server: both requests composed and admitted before the close,
+/// so every refusal at exit 1 leaves the lane as it stood; then the close,
+/// and only after a confirmed close the launch. Every answer after the
+/// close names its outcome, the line printed and the process ended by its
+/// status.
+fn relaunch_lane(
+    path: &Path,
+    item: &str,
+    settings: Settings,
+    host: &ops::Host,
+    now: u64,
+    locking: Locking,
+) -> Result<serde_json::Value> {
+    let settings = on_recorded_server(settings, path)?;
+    let relaunch = effects::relaunch::composed(&settings, path, item, host, now)?;
+    let close = admitted(path, read_request(&relaunch.close)?, &settings)?;
+    let launch = admitted(path, read_request(&relaunch.launch)?, &settings)?;
+    let closed = match applied_live(path, close, &settings, locking) {
+        Ok(closed) => closed,
+        Err(Error::Persisted { intent, error }) => answered(
+            false,
+            &format!(
+                "orch-runtime: close-unconfirmed item={item} intent={intent} {}",
+                refusal_words(&error)
+            ),
+            agent_runtime::effects::UNCONFIRMED_EXIT,
+        ),
+        Err(e) => return Err(e),
+    };
+    let close_id = &closed.intent().id;
+    match closed.status() {
+        0 => {}
+        3 => answered(
+            false,
+            &format!(
+                "orch-runtime: close-failed item={item} intent={close_id} {}",
+                observed(closed.intent())
+            ),
+            3,
+        ),
+        status => answered(
+            false,
+            &format!("orch-runtime: close-unconfirmed item={item} intent={close_id}"),
+            status,
+        ),
+    }
+    // The lane is closed: a refusal of its launch from here on is a failed
+    // launch, never an exit 1 that reads as nothing done.
+    let launched = match applied_live(path, launch, &settings, locking) {
+        Ok(launched) => launched,
+        Err(Error::Persisted { intent, error }) => answered(
+            false,
+            &format!(
+                "orch-runtime: launch-unconfirmed item={item} intent={intent} close={close_id} {}",
+                refusal_words(&error)
+            ),
+            agent_runtime::effects::UNCONFIRMED_EXIT,
+        ),
+        Err(e) => answered(
+            false,
+            &format!(
+                "orch-runtime: launch-failed item={item} close={close_id} {}",
+                refusal_words(&e)
+            ),
+            3,
+        ),
+    };
+    let intent = launched.intent();
+    match launched.status() {
+        0 => {
+            let route = intent
+                .observation
+                .as_ref()
+                .and_then(|o| o.get("route"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("-");
+            let account = relaunch.account.as_deref().unwrap_or("-");
+            answered(
+                true,
+                &format!("resumed item={item} route={route} account={account}"),
+                0,
+            )
+        }
+        3 => answered(
+            false,
+            &format!(
+                "orch-runtime: launch-failed item={item} intent={} close={close_id} {}",
+                intent.id,
+                observed(intent)
+            ),
+            3,
+        ),
+        status => answered(
+            false,
+            &format!(
+                "orch-runtime: launch-unconfirmed item={item} intent={} close={close_id}",
+                intent.id
+            ),
+            status,
+        ),
+    }
+}
+
+/// A refusal's key and fields, as the keyed line spells them after the
+/// program's name.
+fn refusal_words(error: &Error) -> String {
+    let line = protocol::diagnostic_line(error);
+    let words = line.strip_prefix("orch-runtime: ").unwrap_or(&line);
+    format!("refusal={words}")
+}
+
 /// The observation's `note=` and `cause=` of a settled intent, `-` where it
-/// names none, the cause last since its text may hold spaces.
+/// names none, the text that may hold spaces last. A lane's observation
+/// keeps a refusal's key as its `cause` and the refusal's own cause as
+/// `detail`, which follows; a controller's keeps the key as `note` and the
+/// refusal's own cause under `fields`, read where no `cause` stands.
 fn observed(intent: &agent_runtime::intent::Intent) -> String {
-    let word = |key: &str| {
-        intent
-            .observation
-            .as_ref()
-            .and_then(|o| o.get(key))
+    let observation = intent.observation.as_ref();
+    let field = |key: &str| observation.and_then(|o| o.get(key));
+    let text = |value: Option<&serde_json::Value>| {
+        value
             .and_then(serde_json::Value::as_str)
             .unwrap_or("-")
             .to_owned()
     };
-    format!("note={} cause={}", word("note"), word("cause"))
+    let note = text(field("note"));
+    match field("detail") {
+        Some(detail) => format!(
+            "note={note} cause={} detail={}",
+            text(field("cause")),
+            text(Some(detail))
+        ),
+        None => {
+            let cause = field("cause").or_else(|| field("fields")?.get("cause"));
+            format!("note={note} cause={}", text(cause))
+        }
+    }
 }
 
 /// Print `line`, on stdout or stderr, and end the process with `status`.

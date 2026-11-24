@@ -5,13 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::harness::Harness;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::refused;
 use crate::error::Result;
-use crate::ops::{self, accounts};
+use crate::ops;
 use crate::settings::Settings;
 use crate::watch::lanes::{Composed, Composition, compose_relaunch};
 
@@ -28,13 +27,14 @@ pub struct Relaunch {
 }
 
 /// The relaunch of `item`'s local lane from its record: the record's own
-/// account judged first as the launch's own judge reads it (`lane pick
-/// --replaces`), so an account that cannot take the lane refuses before
-/// the close retires anything; then the record's own relaunch on that
-/// account and the start brief, which continues from the item's handoff,
-/// retiring the predecessor on the `restart-recovery` ground. A record with
-/// no account takes no pick and launches on none. A hosted lane runs where
-/// this machine's server is not its own, and refuses `lane-hosted`.
+/// account judged first by the launch's own judge, with the lane's own
+/// charge left out, so an account that cannot take the lane refuses with
+/// the launch's own key before the close retires anything; then the
+/// record's own relaunch on that account and the start brief, which
+/// continues from the item's handoff, retiring the predecessor on the
+/// `restart-recovery` ground. A record with no account is judged on none
+/// and launches on none. A hosted lane runs where this machine's server is
+/// not its own, and refuses `lane-hosted`.
 pub fn composed(
     settings: &Settings,
     path: &Path,
@@ -58,42 +58,20 @@ pub fn composed(
         .ok_or_else(|| refused("harness-unrecorded", &[("item", item)]))?;
     let account = lane.account.clone().filter(|a| !a.is_empty());
     if let Some(account) = &account {
-        let request = PickRequest {
-            model: lane.model.clone().filter(|m| !m.is_empty()),
-            lane: Some(account.clone()),
-            projected: true,
-            ..PickRequest::new(harness)
-        };
-        let lane_host = lane.host.as_deref().filter(|h| !h.is_empty());
-        let answer =
-            accounts::pick_fleet(settings, path, host, lane_host, Some(item), &request, now);
-        match &answer {
-            // No listing row names the account: the launch's judge lets it
-            // through, so a relaunch does too.
-            PickAnswer::Lane(_) | PickAnswer::NoRecord => {}
-            PickAnswer::None { .. }
-            | PickAnswer::Walled(_)
-            | PickAnswer::Reserved(_)
-            | PickAnswer::Retired { .. }
-            | PickAnswer::Excluded(_)
-            | PickAnswer::Unmeasured(_)
-            | PickAnswer::ProviderUnmeasured { .. }
-            | PickAnswer::Unbilled { .. }
-            | PickAnswer::CloudRepoUnset(_)
-            | PickAnswer::Unjudged { .. } => {
-                let reply = answer.reply();
-                let word = reply["answer"].as_str().unwrap_or_default();
-                let mut fields = vec![
-                    ("item", item),
-                    ("account", account.as_str()),
-                    ("answer", word),
-                ];
-                if let Some(cause) = reply["record"].get("cause").and_then(Value::as_str) {
-                    fields.push(("cause", cause));
-                }
-                return Err(refused("account-unready", &fields));
-            }
-        }
+        ops::lane::named_account_room(
+            settings,
+            path,
+            &ops::lane::NamedAccount {
+                item,
+                account,
+                harness,
+                model: lane.model.as_deref().filter(|m| !m.is_empty()),
+                host: lane.host.as_deref(),
+            },
+            Some(item),
+            host,
+            now,
+        )?;
     }
     let Composed { close, launch, .. } = compose_relaunch(
         &lane,

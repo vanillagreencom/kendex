@@ -33,7 +33,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 - `[DIR]` is the absolute checkout directory.
 - `[OVERSEE_STATE]` is the path `state path` prints; `[OVERSEE_STATE_DIR]` is its directory.
 - A controller opens in the first tmux session of: the request's `session`, `AGENT_RUNTIME_TMUX_SESSION`, the opener's own session, the session the fleet's lanes open in.
-- That session must already exist.
+- Where a tmux server answers on the fleet's socket, it must hold that session. Where none answers on the controller record's `server_socket`, the start starts one holding it, as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
 
 1. Resolve the fleet state. Initialize it where `.result.exists` is false.
 
@@ -115,7 +115,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 8. A start over a recorded controller refuses while that controller may still run. On `predecessor-unproven`, adopt the session from its pane instead (step 3).
 
-9. To resume a recorded native session after its pane ends, as after a restart, run the state check and `sync-base` (step 5) first, then the resume from the checkout:
+9. To resume a recorded native session after its pane ends, as after a restart, run the state check (step 1) and `sync-base` (step 5) first, then the resume from the checkout:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime resume-controller --fleet
@@ -124,6 +124,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
    - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
    - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
+   - On `controller-resume-failed`, `note` is the refusal's key and `cause` the refusal's own cause.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 

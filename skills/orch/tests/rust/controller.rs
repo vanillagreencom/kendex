@@ -8526,9 +8526,11 @@ fn a_resume_after_a_restart_opens_in_the_standing_session_or_none() {
 /// record's own session on the recorded socket, with the watch flags the
 /// last runner recorded, and answers one keyed line. A record naming no
 /// native session id, or a fleet whose runner recorded no flags, refuses
-/// naming what is missing, with the record as it stood.
+/// naming what is missing, with the record as it stood; a start that fails
+/// names its refusal's key and cause.
 #[test]
 fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() {
+    use std::os::unix::fs::PermissionsExt;
     let id = "7c1e5a2b-3d4f-4a6b-9c8d-1e2f3a4b5c6d";
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -8594,6 +8596,35 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
         .unwrap(),
     )
     .unwrap();
+
+    // A start that fails before any window answers the refusal's key and
+    // its own cause: here a recorded socket whose directory its server may
+    // not bind in. The fake manager keeps no unit's stderr, so the server
+    // runs as a `setsid` group behind a bus the manager cannot reach.
+    let unreachable = home.join("bin").join("unreachable");
+    std::fs::write(&unreachable, "").unwrap();
+    let shut = dir.path().join("shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let mut unbound = fleet.clone();
+    unbound["controller"]["server_socket"] = json!(shut.join("tmux.sock").display().to_string());
+    runner.write_fleet(&unbound);
+    let out = resume(&runner);
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_file(&unreachable).unwrap();
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    assert_eq!(out.status.code(), Some(3), "{line} {}", stderr(&out));
+    let said = std::fs::read_to_string(home.join("tmux-server.err")).unwrap();
+    let said = said
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_else(|| panic!("the server said nothing: {line}"));
+    assert!(line.starts_with("controller-resume-failed "), "{line}");
+    assert!(line.contains(" note=tmux-server-unstarted "), "{line}");
+    assert!(line.ends_with(&format!(" cause={said}")), "{line}");
+    runner.write_fleet(&fleet);
+
     let killed = tmux(&server.socket, &["kill-server"]);
     assert!(killed.status.success(), "{}", stderr(&killed));
     wait_until("the fleet server ended", secs(10), || !live(server.pid));
@@ -8603,9 +8634,13 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
         .map(str::to_owned)
         .collect();
     assert_eq!(out.status.code(), Some(0), "{lines:?} {}", stderr(&out));
+    let fleet = runner.fleet();
+    // The resumed watch is stopped before any assertion, so a failing row
+    // leaves no watch running.
+    stop_live_watch(&runner, &state);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].starts_with("controller-resumed "), "{lines:?}");
-    let overseer = runner.fleet()["controller"].clone();
+    let overseer = fleet["controller"].clone();
     assert_eq!(overseer["session_id"], id, "{overseer}");
     assert_ne!(overseer["pane"], "%99", "{overseer}");
     assert_eq!(
@@ -8618,7 +8653,6 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
         1,
         "the brief went into the session's own file"
     );
-    let fleet = runner.fleet();
     let watch: Vec<&str> = fleet["intents"]
         .as_array()
         .and_then(|intents| intents.iter().find(|i| i["op"] == "start-controller"))
@@ -8626,18 +8660,14 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
         .map(|words| words.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     for pair in [
+        ["--interval", "240"],
+        ["--max-loops", "25"],
         ["--since", "2026-01-01T00:00:00Z"],
         ["--repo", "acme/one"],
         ["--repo", "acme/two"],
     ] {
         assert!(watch.windows(2).any(|w| w == pair), "{pair:?}: {watch:?}");
     }
-    let claim = orch_runtime::watch::claim::read(&paths)
-        .unwrap()
-        .expect("the resumed controller's watch claimed the fleet state");
-    let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
-    assert!(out.status.success(), "watch stop: {}", stderr(&out));
-    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 }
 
 /// The compare-and-swap set of `record`, with no pending standing.
@@ -10748,6 +10778,18 @@ fn a_start_with_the_fleet_server_gone_starts_one_that_outlives_its_caller() {
             }
             runner.tools = Some(bin);
         }
+        // The record of a controller whose session recorded its end, on the
+        // fleet's socket: the server a start may start again is that one.
+        let mut gone = pending(runner.state_dir());
+        gone["server"] = json!("1");
+        gone["server_start"] = json!(1);
+        gone["server_socket"] = json!(server.socket.display().to_string());
+        gone["pane"] = json!("%99");
+        gone["generation"] = json!(4);
+        gone["exit"] = json!({"run": {"generation": 4}});
+        let mut fleet = runner.fleet();
+        fleet["controller"] = gone;
+        runner.write_fleet(&fleet);
         let killed = tmux(&server.socket, &["kill-server"]);
         assert!(killed.status.success(), "{route}: {}", stderr(&killed));
         wait_until("the fleet server ended", secs(10), || !live(server.pid));
@@ -10787,6 +10829,18 @@ fn a_start_with_the_fleet_server_gone_starts_one_that_outlives_its_caller() {
                     .lines()
                     .any(|l| l.starts_with("unit=orch-tmux-server-")),
                 "{record}"
+            );
+            // Every pane runs in the server's unit: one pane's OOM kill
+            // must not stop the unit and every pane with it.
+            let log = std::fs::read_to_string(dir.path().join("manager-bin/systemd.log"))
+                .unwrap_or_default();
+            let start = log
+                .lines()
+                .find(|l| l.contains("--unit=orch-tmux-server-"))
+                .unwrap_or_else(|| panic!("no server unit started: {log}"));
+            assert!(
+                start.split(' ').any(|w| w == "OOMPolicy=continue"),
+                "{start}"
             );
         }
         let identity = tmux(&server.socket, &["display-message", "-p", "#{pid}"]);
@@ -10833,6 +10887,13 @@ fn a_start_with_the_fleet_server_gone_starts_one_that_outlives_its_caller() {
             stderr(&session)
         );
         assert!(live(started), "{route}");
+        let ended = tmux(&server.socket, &["kill-session", "-t", "=fleet"]);
+        assert!(ended.status.success(), "{route}: {}", stderr(&ended));
+        wait_until(
+            "the started server ended with its last session",
+            secs(10),
+            || !live(started),
+        );
     }
 }
 

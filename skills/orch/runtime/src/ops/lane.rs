@@ -1098,31 +1098,67 @@ fn room(
     let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
         return Ok(());
     };
+    named_account_room(
+        settings,
+        path,
+        &NamedAccount {
+            item: &r.item,
+            account,
+            harness,
+            model: r.model.as_deref(),
+            host: r.host.as_deref(),
+        },
+        replaces,
+        host,
+        env.now_secs,
+    )
+}
+
+/// The named account a launch of `item` spends, and what it is judged on:
+/// the harness and model it runs, and the host the launch names.
+pub(crate) struct NamedAccount<'a> {
+    pub(crate) item: &'a str,
+    pub(crate) account: &'a str,
+    pub(crate) harness: Harness,
+    pub(crate) model: Option<&'a str>,
+    pub(crate) host: Option<&'a str>,
+}
+
+/// [`room`]'s judgement of a named account, the one a relaunch from a
+/// record also asks before it closes anything: `Ok` where the launch's own
+/// judge admits the account, else the launch's own refusal.
+pub(crate) fn named_account_room(
+    settings: &crate::settings::Settings,
+    path: &Path,
+    named: &NamedAccount,
+    replaces: Option<&str>,
+    host: &Host,
+    now: u64,
+) -> Result<()> {
+    let &NamedAccount {
+        item,
+        account,
+        harness,
+        model: named_model,
+        host: lane_host,
+    } = named;
     settings.accounts_now()?;
-    let model = r.model.clone().unwrap_or_default();
+    let model = named_model.unwrap_or_default().to_owned();
     let refused = |cause: &str| Error::AccountUnjudged {
-        item: r.item.clone(),
-        account: account.clone(),
+        item: item.to_owned(),
+        account: account.to_owned(),
         cause: cause.to_owned(),
     };
     let request = PickRequest {
-        model: r.model.clone(),
-        lane: Some(account.clone()),
+        model: named_model.map(str::to_owned),
+        lane: Some(account.to_owned()),
         projected: true,
         ..PickRequest::new(harness)
     };
     // Judged where the lane will run: the host the request names, `local`
     // included, so a cloud session meets the cloud rule on any fleet.
-    let lane_host = r.host.as_deref().filter(|h| !h.is_empty());
-    match accounts::pick_fleet(
-        settings,
-        path,
-        host,
-        lane_host,
-        replaces,
-        &request,
-        env.now_secs,
-    ) {
+    let lane_host = lane_host.filter(|h| !h.is_empty());
+    match accounts::pick_fleet(settings, path, host, lane_host, replaces, &request, now) {
         PickAnswer::Lane(_) | PickAnswer::NoRecord => Ok(()),
         PickAnswer::Walled(judged) => {
             let record = judged.record();
@@ -1137,8 +1173,8 @@ fn room(
                 return Err(refused("wall-unread"));
             };
             Err(Error::AccountWalled {
-                item: r.item.clone(),
-                account: account.clone(),
+                item: item.to_owned(),
+                account: account.to_owned(),
                 model,
                 window: Box::new(WalledWindow {
                     pct,
@@ -1160,13 +1196,13 @@ fn room(
             })
         }
         PickAnswer::Reserved(_) => Err(Error::AccountReserved {
-            item: r.item.clone(),
-            account: account.clone(),
+            item: item.to_owned(),
+            account: account.to_owned(),
             model,
         }),
         PickAnswer::Retired { ends, source, .. } => Err(Error::AccountRetired {
-            item: r.item.clone(),
-            account: account.clone(),
+            item: item.to_owned(),
+            account: account.to_owned(),
             model,
             end: Box::new(RetiredEnd {
                 ends,
@@ -1174,8 +1210,8 @@ fn room(
             }),
         }),
         PickAnswer::Unmeasured(judged) => Err(Error::AccountUnmeasured {
-            item: r.item.clone(),
-            account: account.clone(),
+            item: item.to_owned(),
+            account: account.to_owned(),
             model,
             status: judged.row.status.clone(),
             detail: judged
@@ -1194,8 +1230,8 @@ fn room(
             judged.row.config_dir
         ))),
         PickAnswer::Unbilled { .. } => Err(Error::AccountUnmeasured {
-            item: r.item.clone(),
-            account: account.clone(),
+            item: item.to_owned(),
+            account: account.to_owned(),
             model,
             status: "provider-unmeasured".to_owned(),
             detail: "none".to_owned(),
