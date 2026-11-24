@@ -417,11 +417,27 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // are, once the tracker duty has read the items they are judged by.
     if let Some((open, terminal)) = &items {
         match crate::watch::lanes::read_fleet(&ctx.path) {
-            Ok(fleet) => events.extend(ended::events(
-                &fleet,
-                &ended::Items { open, terminal },
-                tick.baseline,
-            )),
+            Ok(fleet) => {
+                let scripts = crate::watch::overseer::scripts_dir(&ctx.settings.roots.project);
+                let listed = ended::listed(&scripts, &fleet);
+                // Each host whose list did not read is said beside any
+                // other failure of the pass; its lanes keep the notice's stop.
+                for cause in listed.failed {
+                    match &mut failed {
+                        Some(said) => {
+                            said.push('\n');
+                            said.push_str(&cause);
+                        }
+                        None => failed = Some(cause),
+                    }
+                }
+                events.extend(ended::events(
+                    &fleet,
+                    &ended::Items { open, terminal },
+                    &listed.stops,
+                    tick.baseline,
+                ));
+            }
             Err(e) => {
                 failed.get_or_insert(format!("ended-lanes-unread cause={e}"));
             }

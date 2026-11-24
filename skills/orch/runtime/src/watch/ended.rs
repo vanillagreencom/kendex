@@ -8,7 +8,12 @@
 //! exited (its `lane-exited` row reads `|reported`), or where the fleet's
 //! provider stopped its sandbox after the lane's current session began. That
 //! stop comes as the provider's `sandbox-stopped` notice in the overseer's
-//! mailbox, which the mail duty keeps as a [`STOP_ROW`] row per item.
+//! mailbox, which the mail duty keeps as a [`STOP_ROW`] row per item, and as
+//! the `stop` member of the item's row in the provider's `list --json`,
+//! which the heartbeat asks of each `park=verb` host of a `running` or
+//! `stopped` record ([`listed`]). The list's member stands only while the
+//! sandbox is stopped, so it ends the current session whenever it came; a
+//! notice ends it only where it came at or after the session began.
 //!
 //! The item is open where the tracker duty's last read holds it among the
 //! team's open items, or, for a `stopped` or `parked` record, where its
@@ -23,12 +28,13 @@
 //! `unread`, never `nothing`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde_json::Value;
 
 use super::baseline::{Baseline, Change};
 use super::events::Event;
-use super::hosted::epoch_of;
+use super::hosted::{self, Hosts, ParkKind, epoch_of, host_of};
 use super::lanes::lane_name;
 use super::tracker::TerminalState;
 use crate::ops::ParkWait;
@@ -143,6 +149,98 @@ pub fn stale_stops(baseline: &Baseline, fleet: &FleetState) -> Vec<Change> {
         .collect()
 }
 
+/// The `stop` member of a `list --json` row, read as fleet's FLT-1791 lists
+/// it (recorded on KEN-5527): `{"at": UTC, "why": WORD}`, or
+/// `{"unreadable": TEXT}` for a stop label the provider could not parse,
+/// which keeps its words out of the line. Any other member is unreadable
+/// too: the provider says the sandbox stopped, whatever it could not say of
+/// the stop.
+fn listed_stop(member: &Value) -> Stop {
+    let word = |key: &str| {
+        member
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty() && !v.contains(char::is_whitespace))
+    };
+    match (word("at"), word("why")) {
+        (Some(at), Some(why)) => Stop {
+            at: at.to_owned(),
+            why: why.to_owned(),
+        },
+        (Some(_) | None, Some(_) | None) => Stop {
+            at: "unreadable".to_owned(),
+            why: "unreadable".to_owned(),
+        },
+    }
+}
+
+/// The stops the provider lists, by item, and the reads that failed, each
+/// the heartbeat's partial failure with its host.
+#[derive(Debug, Default)]
+pub struct Listed {
+    pub stops: BTreeMap<String, Stop>,
+    pub failed: Vec<String>,
+}
+
+/// One `list --json` per `park=verb` host of the latest `running` or
+/// `stopped` provider record of each item: a host of any other kind stops
+/// no sandbox with its disk kept. A row names its item by its `label`,
+/// `OWNER/REPO/ITEM` in any case, as the protocol's `list` row does. A host
+/// answering exit `2` lists no stop.
+pub fn listed(scripts: &Path, fleet: &FleetState) -> Listed {
+    let lanes: Vec<&Lane> = latest(fleet)
+        .into_values()
+        .filter(|l| matches!(l.status, LaneStatus::Running | LaneStatus::Stopped))
+        .filter(|l| l.provider_hosted())
+        .collect();
+    let hosts = Hosts::read(scripts, lanes.iter().copied());
+    let mut out = Listed::default();
+    out.failed.extend(hosts.unreadable().map(str::to_owned));
+    let mut by_host: BTreeMap<&str, Vec<&Lane>> = BTreeMap::new();
+    for lane in lanes {
+        if let Ok(caps) = hosts.of(lane)
+            && caps.park == ParkKind::Verb
+        {
+            by_host.entry(host_of(lane)).or_default().push(lane);
+        }
+    }
+    for (host, lanes) in by_host {
+        let rows = match hosted::list_rows(scripts, host) {
+            Ok(Some(rows)) => rows,
+            Ok(None) => continue,
+            Err(cause) => {
+                out.failed
+                    .push(format!("lane-list-unread host={host} cause={cause}"));
+                continue;
+            }
+        };
+        for lane in lanes {
+            let suffix = format!("/{}", lane.item.to_ascii_lowercase());
+            let member = rows
+                .iter()
+                .filter(|row| {
+                    row.get("label")
+                        .and_then(Value::as_str)
+                        .is_some_and(|l| l.to_ascii_lowercase().ends_with(&suffix))
+                })
+                .find_map(|row| row.get("stop"));
+            if let Some(member) = member {
+                out.stops.insert(lane.item.clone(), listed_stop(member));
+            }
+        }
+    }
+    out
+}
+
+/// Each item's latest record.
+fn latest(fleet: &FleetState) -> BTreeMap<&str, &Lane> {
+    let mut latest: BTreeMap<&str, &Lane> = BTreeMap::new();
+    for lane in &fleet.lanes {
+        latest.insert(lane.item.as_str(), lane);
+    }
+    latest
+}
+
 /// What the tracker duty's last read says of the lanes' items.
 pub struct Items<'a> {
     /// The team's open items, each with whether a blocker holds it.
@@ -153,22 +251,25 @@ pub struct Items<'a> {
 
 /// The `lane-ended` lines, one per item whose latest record's harness has
 /// ended while the item is open, in item order.
-pub fn events(fleet: &FleetState, items: &Items, baseline: &Baseline) -> Vec<Event> {
-    let mut latest: BTreeMap<&str, &Lane> = BTreeMap::new();
-    for lane in &fleet.lanes {
-        latest.insert(lane.item.as_str(), lane);
-    }
-    latest
+pub fn events(
+    fleet: &FleetState,
+    items: &Items,
+    listed: &BTreeMap<String, Stop>,
+    baseline: &Baseline,
+) -> Vec<Event> {
+    latest(fleet)
         .into_values()
-        .filter_map(|lane| ended(lane, items, baseline))
+        .filter_map(|lane| ended(lane, items, listed.get(&lane.item), baseline))
         .collect()
 }
 
-fn ended(lane: &Lane, items: &Items, baseline: &Baseline) -> Option<Event> {
-    let stop = baseline
-        .get(STOP_ROW, &lane.item)
-        .and_then(Stop::of_row)
-        .filter(|stop| this_session(lane, stop));
+fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline) -> Option<Event> {
+    let stop = listed.cloned().or_else(|| {
+        baseline
+            .get(STOP_ROW, &lane.item)
+            .and_then(Stop::of_row)
+            .filter(|stop| this_session(lane, stop))
+    });
     let harness_ended = match lane.status {
         LaneStatus::Stopped | LaneStatus::Parked => true,
         LaneStatus::Running => {

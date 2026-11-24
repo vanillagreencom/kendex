@@ -427,7 +427,9 @@ Each answer:
 
 - `lane=` is the record's status: `running`, `stopped` or `parked`.
 - `waits=` is `merge`, `owner`, `blocker`, `nothing` or `unread`.
-- `stop=` and `why=` appear where the provider's `sandbox-stopped` notice reported stopping the lane's sandbox in its current session. That notice's own `owner-note`, `peer-note` or `data-note` line needs nothing beyond this line.
+- `stop=` and `why=` appear where the provider stopped the lane's sandbox: its `list --json` row names the stop, or its `sandbox-stopped` notice came during the lane's current session. `stop=unreadable why=unreadable` is a stop the provider could not read back.
+- The notice's own `owner-note`, `peer-note` or `data-note` line needs nothing beyond this line.
+- A host whose list did not read is the heartbeat's `watch-step-failed` cause `lane-list-unread host=[HOST]`.
 
 Handle the line under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) in the same heartbeat pass.
 

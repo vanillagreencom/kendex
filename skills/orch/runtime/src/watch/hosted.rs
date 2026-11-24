@@ -908,6 +908,23 @@ pub fn lists_item(
     }))
 }
 
+/// The rows of the provider's `list --json` (`schemas/lane-host.md`,
+/// `list`), each a JSON object; `None` where the provider answers exit `2`,
+/// the absent verb. `Err` is a list that failed, was refused at the bound,
+/// or printed no JSON array.
+pub fn list_rows(scripts: &Path, host: &str) -> std::result::Result<Option<Vec<Value>>, String> {
+    let out = lane_host(scripts, host, &["list", "--json"])?;
+    match exit_code(&out) {
+        0 => {}
+        2 => return Ok(None),
+        _ => return Err(cause_of("list", &out)),
+    }
+    match serde_json::from_str::<Value>(&host::stdout_text(&out)) {
+        Ok(Value::Array(rows)) if rows.iter().all(Value::is_object) => Ok(Some(rows)),
+        Ok(_) | Err(_) => Err("list-json-invalid".to_owned()),
+    }
+}
+
 // --- the launch's calls --------------------------------------------------------
 
 /// The bound on `create` and `wait`: a provider clones, installs and builds

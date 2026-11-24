@@ -1102,10 +1102,14 @@ enum ItemRead {
 
 /// A lane whose harness ended while its item is open sat unnamed for
 /// weeks (KEN-4831's sandbox, 18 days). One row per case of the judge
-/// (`watch::ended`): the record's status, the evidence its harness ended,
-/// the tracker's read of its item and the wait its record names. Each row
-/// is one item's latest record; the heartbeat says one `lane-ended` line
-/// per row that names one, in item order, ahead of its own line.
+/// (`watch::ended`): the record's status, the evidence its harness ended
+/// (the lane duty's exit row, the provider's notice row, the `stop` member
+/// of its `list --json` row), the tracker's read of its item and the wait
+/// its record names. Each row is one item's latest record; the heartbeat
+/// says one `lane-ended` line per row that names one, in item order, ahead
+/// of its own line. The list is asked once of each `park=verb` host and of
+/// no other; a host whose list fails is the pass's failure and its lanes
+/// keep the notice's stop.
 #[test]
 fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
     use orch_runtime::watch::ended::STOP_ROW;
@@ -1118,6 +1122,46 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             .extend(wait.as_object().unwrap().clone());
         park
     };
+    let world = World::new();
+    // `provider-x` and `provider-z` stop sandboxes with their disk kept
+    // (`park=verb`); `provider-y` does not. The rows of `provider-x`'s list
+    // are fleet's `lane-host-daytona list --json` shape (KEN-5527).
+    let line = |park: &str| json!({"stdout": format!("kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark={park}\taccounts=none\tpool=plan\tland=lane\tpane=local\n")});
+    let row = |label: &str, stop: Option<Value>| {
+        let mut row = json!({"label": label, "repo": "repo", "item": label.rsplit('/').next().unwrap(), "state": "stopped", "age": "106m", "created_age": "385m", "name": "lane", "id": "51ff8960", "owner": "overseer", "creation": "", "accounts": []});
+        if let Some(stop) = stop {
+            row["stop"] = stop;
+        }
+        row
+    };
+    let listing = json!([
+        row("owner/repo/KEN-12", None),
+        row(
+            "OWNER/Repo/ken-21",
+            Some(json!({"at": "2026-09-20T00:00:00Z", "why": "harness-ended"}))
+        ),
+        row("owner/repo/KEN-22", None),
+        row(
+            "owner/repo/KEN-23",
+            Some(json!({"unreadable": "fleet.stopped=half a label"}))
+        ),
+    ]);
+    let mut hosts = std::collections::BTreeMap::new();
+    for name in ["provider-x", "provider-y", "provider-z"] {
+        hosts.insert(name, named_host(world.path(), name));
+    }
+    std::fs::write(
+        world.path().join("lane-host.json"),
+        json!({
+            "provider-x capabilities": line("verb"),
+            "provider-y capabilities": line("none"),
+            "provider-z capabilities": line("verb"),
+            "provider-x list --json": {"stdout": listing.to_string()},
+            "provider-z list --json": {"exit": 1, "stderr": "lane-host-fixture: list down\n"},
+        })
+        .to_string(),
+    )
+    .unwrap();
     let reported = Some(("lane-exited", "%1|reported".to_owned()));
     let stop = |at: &str| Some((STOP_ROW, format!("{at}|harness-ended")));
     /// Item, status, record members, the tracker's read, a baseline row
@@ -1286,6 +1330,51 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             None,
         ),
         ("KEN-20", "stopped", json!({}), ItemRead::Unread, None, None),
+        // The list's stop stands only while the sandbox is stopped: it ends
+        // the current session whenever it came.
+        (
+            "KEN-21",
+            "running",
+            json!({"host": "provider-x"}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=running waits=nothing stop=2026-09-20T00:00:00Z why=harness-ended"),
+        ),
+        // A row with no `stop` key lists no stop.
+        (
+            "KEN-22",
+            "running",
+            json!({"host": "provider-x"}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
+        ),
+        (
+            "KEN-23",
+            "stopped",
+            json!({"host": "provider-x"}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=stopped waits=nothing stop=unreadable why=unreadable"),
+        ),
+        // A host that keeps no disk is never asked its list.
+        (
+            "KEN-24",
+            "running",
+            json!({"host": "provider-y"}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
+        ),
+        // A list that failed leaves the notice's stop.
+        (
+            "KEN-25",
+            "running",
+            json!({"host": "provider-z"}),
+            ItemRead::Open { blocked: false },
+            stop("2026-10-02T00:00:00Z"),
+            Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
+        ),
     ];
     let mut lanes = vec![
         // An earlier stopped record of KEN-16 its running record replaced.
@@ -1300,6 +1389,9 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         lane.as_object_mut()
             .unwrap()
             .extend(members.as_object().unwrap().clone());
+        if let Some(name) = lane["host"].as_str() {
+            lane["host"] = json!(hosts[name]);
+        }
         lanes.push(lane);
         match read {
             ItemRead::Open { blocked } => {
@@ -1326,7 +1418,6 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             want.push(format!("EVENT lane-ended {item} {line}"));
         }
     }
-    let world = World::new();
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": lanes}));
     let shared = Shared::default();
     {
@@ -1360,13 +1451,31 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         clock.wall_secs(),
     )
     .unwrap();
-    assert_eq!(produced.failed, None);
+    let failed = produced.failed.clone().unwrap_or_default();
+    assert!(
+        failed.starts_with(&format!(
+            "lane-list-unread host={} cause=list exit=1",
+            hosts["provider-z"]
+        )) && !failed.contains('\n'),
+        "{failed}"
+    );
     let lines = rendered(&produced);
     let heartbeat = lines
         .iter()
         .position(|l| l.starts_with("EVENT heartbeat "))
         .unwrap_or_else(|| panic!("{lines:?}"));
     assert_eq!(lines[..heartbeat], want[..], "{lines:?}");
+    let asked: Vec<String> = crate::lines(&world.path().join("lane-host.log"))
+        .into_iter()
+        .filter(|l| l.ends_with(" list --json"))
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "ORCH_LANE_HOST=provider-x list --json",
+            "ORCH_LANE_HOST=provider-z list --json"
+        ]
+    );
     assert!(
         !lines[heartbeat..]
             .iter()
