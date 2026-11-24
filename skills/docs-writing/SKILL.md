@@ -156,6 +156,7 @@ A software implementation plan, research report, measurement or handoff is not r
 - A link sits in a sentence that says when to read its target or what the target holds.
 - Keep release and implementation narration out of agent-loaded markdown. Keep dates, attribution, source links and supersession that establish a current rule or qualify its evidence.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package. It customises the package through `kendex.toml`.
+- A repository's own file that says where a rule lives names the kendex package by its name at most, never a path, heading or line in the files kendex renders. Delete a reference that only says where a package's documentation is, with no rule behind it. A program input keeps its path: a command an agent or a program runs as written, a settings key a program reads, or a workflow that calls a script by path.
 
 ## Writing
 

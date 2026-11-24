@@ -14,7 +14,7 @@
 - `decisions check` compares the filename the cell resolves to, not the cell as written, so the record keeps its identity across branches through either form.
 - Rows are append-only, never re-sorted or removed: `next-id` allocates past the highest ID in the index and on the base branch, so a deleted row would free its ID for an unrelated choice.
 - Row format: `../templates/index-row.md`.
-- Below the table: a Format Reference section with one link to this schema and one to the bar, the decider `SKILL.md` § What warrants a decision record, and why. It copies nothing from either.
+- Below the table: a Format Reference section that names the decider package's decision format and its bar by the package's name, with no path or heading. It copies nothing from either.
 
 ## Decision document
 
