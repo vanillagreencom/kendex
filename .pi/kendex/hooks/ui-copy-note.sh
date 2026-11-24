@@ -114,9 +114,10 @@ CODEX_ROOT=${CODEX_HOME-$HOME_PATH/.codex}
   CODEX_ROOT="$PWD/$CODEX_ROOT"
 CLAUDE_ROOT="$HOME_PATH/.claude"
 
-# The Pi carrier names the registration it ran (docs/adapters/pi.md § Hooks),
-# so a Pi copy takes its scope and root from there and never from its path: a
-# global root relocated into a checkout is spelled like a project install.
+# The Pi carrier names the registration it ran (the Hooks section of kendex's
+# docs/adapters/pi.md), so a Pi copy takes its scope and root from there and
+# never from its path: a global root relocated into a checkout is spelled like
+# a project install.
 case "${KENDEX_HOOK_SCOPE-}" in
   global | project)
     HARNESS=pi
