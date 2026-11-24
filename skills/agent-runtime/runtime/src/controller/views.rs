@@ -74,10 +74,7 @@ impl Caller {
             model: text(record.raw.get("model")),
             effort: text(record.raw.get("effort")),
             cwd: text(record.raw.get("cwd")),
-            permission: record
-                .raw
-                .get("permission")
-                .and_then(|p| serde_json::from_value(p.clone()).ok()),
+            permission: permission(record.raw.get("permission")),
             extra_args: record
                 .raw
                 .get("extra_args")
@@ -372,6 +369,11 @@ pub fn text(value: Option<&Value>) -> Option<String> {
         Value::Number(n) => Some(n.to_string()),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
+}
+
+/// A member's permission posture; `None` where it names none a launch reads.
+pub fn permission(value: Option<&Value>) -> Option<Permission> {
+    value.and_then(|p| serde_json::from_value(p.clone()).ok())
 }
 
 impl Record {

@@ -4,7 +4,7 @@
 //! acting method takes a [`Standing`] token, writes `signalled` before it
 //! acts and discharges the token's key by its own answer.
 
-use crate::controller::Overseer;
+use crate::controller::{Overseer, views};
 use crate::record::Locking;
 use crate::settings::EngineSettings;
 use std::path::{Path, PathBuf};
@@ -1963,12 +1963,13 @@ fn launched_posture(harness: Harness, pid: u32) -> Option<(Permission, Vec<Strin
 /// The posture and words an adoption records, `None` keeping the record's:
 /// the pair its request states, else under [`Unnamed::Launched`] the pair
 /// `launched` reads off the harness's launch. Where those words cannot be
-/// read, a `recorded` record that already names the pane (`same`) and
-/// whose harness pid and start are `identity`, the process read in it,
-/// keeps its posture, as a heal does, since nothing read contradicts it;
-/// any other takes the harness's native defaults with no words, since
-/// nobody chose the launch setting's posture, a full bypass by default, for
-/// a session they started by hand.
+/// read, a `recorded` record that already names the pane (`same`), whose
+/// harness pid and start are `identity`, the process read in it, and that
+/// names a permission keeps its posture, as a heal does, since nothing read
+/// contradicts it; any other takes the harness's native defaults with no
+/// words, since nobody chose the launch setting's posture, a full bypass by
+/// default, for a session they started by hand, and a record with no
+/// permission would hand its successor exactly that setting.
 fn adopted_posture(
     stated: Option<(Permission, Vec<String>)>,
     unnamed: Unnamed,
@@ -1978,9 +1979,10 @@ fn adopted_posture(
     identity: &Identity,
 ) -> Option<(Permission, Vec<String>)> {
     let recorded_process = || {
-        same && recorded
-            .and_then(predecessor_identity)
-            .is_some_and(|prior| prior == *identity)
+        same && recorded.is_some_and(|recorded| {
+            views::permission(recorded.extra.get("permission")).is_some()
+                && predecessor_identity(recorded).is_some_and(|prior| prior == *identity)
+        })
     };
     match (stated, unnamed) {
         (Some(pair), _) => Some(pair),
@@ -2218,7 +2220,7 @@ mod tests {
     /// read keeps the posture recorded for that same pane and process,
     /// a full bypass included, and gives any other process its harness's
     /// native defaults with no words: a respawn in the pane, another pane,
-    /// a record with no harness identity.
+    /// a record with no harness identity, a record with no permission.
     #[test]
     fn unreadable_launch_words_keep_the_recorded_process_posture_and_default_any_other() {
         let read = Identity {
@@ -2231,10 +2233,15 @@ mod tests {
                 "permission": "bypass",
                 "extra_args": ["--dangerously-skip-permissions"],
             });
-            fields
-                .as_object_mut()
-                .unwrap()
-                .extend(extra.as_object().unwrap().clone());
+            let fields_map = fields.as_object_mut().unwrap();
+            for (key, value) in extra.as_object().unwrap() {
+                // A null member leaves the field out, as a record written
+                // before the field existed does.
+                match value {
+                    Value::Null => fields_map.remove(key),
+                    _ => fields_map.insert(key.clone(), value.clone()),
+                };
+            }
             serde_json::from_value(fields).unwrap()
         };
         let native = Some((Permission::Native, Vec::new()));
@@ -2261,6 +2268,17 @@ mod tests {
                 "same pane, no harness pid",
                 true,
                 json!({"harness_start": "ticks:100"}),
+                native.clone(),
+            ),
+            (
+                "same pane, pid and start, record with no permission",
+                true,
+                json!({
+                    "harness_pid": 4242,
+                    "harness_start": "ticks:100",
+                    "permission": null,
+                    "extra_args": null,
+                }),
                 native.clone(),
             ),
         ];
