@@ -969,23 +969,32 @@ pub(super) enum Item {
 }
 
 /// The one site of a GitHub item's repository rule: its boxes' readings
-/// are published on the issue in `issue_repo`, so a box whose `Where:` or
-/// release trigger names any other repository reads `unread` and is never
-/// read under the watch's credential, its trigger left unfired. A Linear
-/// item's boxes (`None`) read any repository.
-fn own_repository_only(boxes: &mut [Judged], issue_repo: Option<&str>) {
+/// are published on the issue in `issue_repo`, so no other repository is
+/// read under the watch's credential. A box whose `Where:` names another
+/// reads `unread`, and comes due for a reading by hand. A release trigger
+/// naming another could never fire, so it is the checklist's refusal, the
+/// cause words of a `verifying-invalid` item. A Linear item's boxes
+/// (`None`) read any repository.
+fn own_repository_only(
+    boxes: &mut [Judged],
+    issue_repo: Option<&str>,
+) -> std::result::Result<(), String> {
     let Some(own) = issue_repo else {
-        return;
+        return Ok(());
     };
     let other = |repo: &str| !repo.eq_ignore_ascii_case(own);
     for b in boxes.iter_mut() {
-        let named_other = github_locator(&b.where_).is_some_and(|(repo, _)| other(&repo))
-            || b.release.as_ref().is_some_and(|(repo, _)| other(repo));
-        if named_other {
-            b.release = None;
+        if let Some((repo, _)) = b.release.as_ref().filter(|(repo, _)| other(repo)) {
+            return Err(format!(
+                "box={} rule=release-trigger-repository repo={repo} own={own}",
+                b.number
+            ));
+        }
+        if github_locator(&b.where_).is_some_and(|(repo, _)| other(&repo)) {
             b.read = Some(Reading::Unread("no-reader"));
         }
     }
+    Ok(())
 }
 
 /// `issue_repo` is a GitHub item's repository: its merge proves its
@@ -1006,7 +1015,9 @@ pub(super) fn judge_item(
     let Some(mut boxes) = judged_boxes(&parsed, item.container, issue_repo.is_some()) else {
         return Ok(Item::Invalid { evidence });
     };
-    own_repository_only(&mut boxes, issue_repo);
+    if let Err(evidence) = own_repository_only(&mut boxes, issue_repo) {
+        return Ok(Item::Invalid { evidence });
+    }
     let reads_releases = |b: &Judged| {
         github_locator(&b.where_).is_some_and(|(_, rest)| rest.as_slice() == ["releases"])
     };
@@ -1526,11 +1537,12 @@ mod tests {
         }
     }
 
-    /// A GitHub item's box that names another repository, by its `Where:`
-    /// or its release trigger, reads `unread` and is read nowhere: its
-    /// trigger stays unfired and it owes no write. The judge runs on a gh
-    /// that cannot start, so any read would refuse the item. A Linear
-    /// item's box keeps its trigger's repository.
+    /// A GitHub item's box whose `Where:` names another repository reads
+    /// `unread`, is read nowhere and owes no write; one whose release
+    /// trigger does refuses the checklist, naming the box and the
+    /// repository. The judge runs on a gh that cannot start, so any read
+    /// would refuse the item. A Linear item's box keeps its trigger's
+    /// repository.
     #[test]
     fn a_github_items_box_reads_its_own_repository_alone() {
         let gh = PathBuf::from("gh-never-run");
@@ -1560,51 +1572,43 @@ mod tests {
             }),
             read: None,
         };
-        let rows = [
-            judged(
-                "https://github.com/Owner/Repo/releases",
-                Some("other/private"),
-            ),
-            judged("https://github.com/other/private/releases", None),
-        ];
         let merge = Merge {
             at: 50,
             oids: BTreeMap::new(),
         };
-        for row in rows {
-            let mut boxes = vec![row];
-            own_repository_only(&mut boxes, Some("owner/repo"));
-            let mut read = BTreeMap::new();
-            assert_eq!(
-                judge(&gh, &mut boxes, Some(&merge), false, 100, &mut read),
-                Ok(())
-            );
-            assert_eq!(
-                boxes[0].read,
-                Some(Reading::Unread("no-reader")),
-                "{:?}",
-                boxes[0]
-            );
-            assert!(
-                boxes[0].trigger_epoch.is_none() && read.is_empty(),
-                "{:?}",
-                boxes[0]
-            );
-            assert!(
-                boxes[0]
+        let mut boxes = vec![judged("https://github.com/other/private/releases", None)];
+        assert_eq!(own_repository_only(&mut boxes, Some("owner/repo")), Ok(()));
+        let mut read = BTreeMap::new();
+        assert_eq!(
+            judge(&gh, &mut boxes, Some(&merge), false, 100, &mut read),
+            Ok(())
+        );
+        assert_eq!(
+            (boxes[0].status, &boxes[0].read),
+            ("due", &Some(Reading::Unread("no-reader")))
+        );
+        assert!(
+            read.is_empty()
+                && boxes[0]
                     .owed("2026-10-02T00:00:00Z", Some(&merge))
                     .is_none()
-            );
-        }
-        let mut linear = vec![judged(
-            "https://github.com/owner/repo/releases",
+        );
+        let mut trigger = vec![judged(
+            "https://github.com/Owner/Repo/releases",
             Some("other/private"),
         )];
-        own_repository_only(&mut linear, None);
+        assert_eq!(
+            own_repository_only(&mut trigger, Some("owner/repo")),
+            Err(
+                "box=1 rule=release-trigger-repository repo=other/private own=owner/repo"
+                    .to_owned()
+            )
+        );
+        own_repository_only(&mut trigger, None).unwrap();
         assert_eq!(
             (
-                linear[0].release.as_ref().map(|r| r.0.as_str()),
-                &linear[0].read
+                trigger[0].release.as_ref().map(|r| r.0.as_str()),
+                &trigger[0].read
             ),
             (Some("other/private"), &None)
         );
