@@ -313,6 +313,51 @@ git -C "$RANGE" commit -qm source
 assert_eq "a range alone takes the classifier's class" "micro cause=branch-class class=micro rc=0" \
   "$(run_arm --base "$BASE" --head HEAD --repo "$RANGE")"
 
+SETTINGS_REPO="$(new_repo settings)"
+mkdir -p "$SETTINGS_REPO/.kendex" "$SETTINGS_REPO/.claude" "$SETTINGS_REPO/.gemini"
+for file in kendex.settings.toml .kendex/settings.toml; do
+  printf '[env]\nORDINARY = "old"\n' >"$SETTINGS_REPO/$file"
+done
+for file in kendex.toml kendex-local.toml; do
+  printf 'is_source_catalog = false\nname = "old"\n' >"$SETTINGS_REPO/$file"
+done
+git -C "$SETTINGS_REPO" add -A
+git -C "$SETTINGS_REPO" commit -qm base
+SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
+assert_settings_ranges() {
+  local row file before after want base
+  while IFS='|' read -r row file before after want; do
+    [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
+    git -C "$SETTINGS_REPO" checkout -q -B "$row" "$SETTINGS_BASE"
+    printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
+    git -C "$SETTINGS_REPO" add -- "$file"
+    git -C "$SETTINGS_REPO" commit -qm before --allow-empty
+    base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
+    printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
+    if [ "$row" = mixed ]; then
+      printf 'echo changed\n' >"$SETTINGS_REPO/script.sh"
+    fi
+    git -C "$SETTINGS_REPO" add -A
+    git -C "$SETTINGS_REPO" commit -qm "$row"
+    assert_eq "settings range: $row" "$want rc=0" \
+      "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
+  done <<'SETTINGS'
+ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
+local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
+manifest|kendex.toml|is_source_catalog = false\nname = "old"|is_source_catalog = false\nname = "new"|micro cause=settings-only
+local-manifest|kendex-local.toml|"name" = "old"|"name" = "new"|micro cause=settings-only
+ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
+size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORCH_SIZE_TEST_PATHS = ""|standard cause=configuration-source
+catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
+quoted-catalog|kendex.toml|"is_source_catalog" = false|"is_source_catalog" = true|standard cause=configuration-source
+mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
+claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
+gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
+standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=repository-standard-path
+SETTINGS
+}
+assert_settings_ranges
+
 # Ranges of a measured size, each a branch off one base. The MEM-460 range
 # changes 7 files under one directory, 3 new and 4 modified, with 506
 # production lines added.
@@ -375,7 +420,7 @@ SIZED_ROWS
 }
 assert_sized_ranges
 ARM_BIN="$(mutant no-range-class change-scope \
-  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"' \
+  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err" "$settings_range"' \
   '      launch_consider micro branch-class')" \
   control no-range-class assert_sized_ranges
 ARM_BIN="$(mutant narrow-unfloored change-scope '    class=micro' '    true')" \
