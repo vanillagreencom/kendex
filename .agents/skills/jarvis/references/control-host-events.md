@@ -142,7 +142,7 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
    - Never edit a footer.
    - Never delete state.
    - Never force a reset.
-   - After success, start the packaged loop through the session workflow's Monitor or `launch-job` route.
+   - After success, start the packaged loop under the [session workflow](../workflows/session.md#control-host-events).
    - Keep its state and log for every restart.
    - Record the consumer's adoption and the private reader's retirement on the consumer's tracker.
 
@@ -157,6 +157,9 @@ Unsupplied destinations and newly discovered roots start from the beginning, and
 
 A satellite is a home whose `JARVIS_MAIN_HOST` is set.
 
+- Install the standing watch loop under [README: Use from another computer](../README.md#use-from-another-computer). Preview the unit with `watch-loop install --home HOME --print`.
+- Save the main-host binding before installing. The unit reads the saved binding at startup. It keeps the installer's exported `KENDEX_ENV_FILE`, `XDG_STATE_HOME` and `JARVIS_LOG_DIR` paths. Reinstall from the same environment you use for forwarding if those paths change.
+- Read the service with `systemctl --user --property=ActiveState,SubState,Result show -- jarvis-watch.service` and its log with `journalctl --user -u jarvis-watch.service`.
 - Its loop reads only its own home's mailbox, as a registered home.
 - It runs no host pass, renews no presence and polls no `report-due`.
 - For forwarding, follow [Agent reach: Status](agent-reach.md#status).

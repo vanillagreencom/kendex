@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -182,8 +183,8 @@ class Forward(MailWorld):
         return "forward-" + hashlib.sha256(identity.encode()).hexdigest()
 
     def outbox_path(self):
-        return (self.root / ".local/state/kendex/jarvis" / hashlib.sha256(os.fsencode(str(self.satellite))).hexdigest()
-                / "forward.json")
+        state = Path(self.env.get("XDG_STATE_HOME") or self.root / ".local/state")
+        return state / "kendex/jarvis" / hashlib.sha256(os.fsencode(str(self.satellite))).hexdigest() / "forward.json"
 
     def outbox(self):
         return json.loads(self.outbox_path().read_text())
@@ -878,6 +879,140 @@ class Forward(MailWorld):
         self.retry_due()
         self.jarvis("forward-drain")
         self.assertEqual(len(self.directives()), 1)
+
+    def watch_unit(self, *options, env=None):
+        return self.command([BASH, self.scripts / "watch-loop", "install", "--home", self.satellite, *options],
+                            self.satellite, env)
+
+    def preview_unit(self):
+        preview = self.watch_unit("--print")
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        fields = dict(line.split("=", 1) for line in preview.stdout.splitlines() if "=" in line)
+        return preview.stdout, fields
+
+    @contextlib.contextmanager
+    def watch_process(self, fields, env):
+        # Apply the unit's assignments to a manager environment with different
+        # settings. The fixture still controls the other tool paths and SSH.
+        for key in fields["UnsetEnvironment"].split():
+            env.pop(key, None)
+        env.update(word.replace("%%", "%").split("=", 1) for word in shlex.split(fields["Environment"]))
+        start = [word.replace("%%", "%") for word in shlex.split(fields["ExecStart"].removeprefix(":"))]
+        loop = subprocess.Popen(start, cwd=self.satellite, env=env, start_new_session=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            yield loop
+        finally:
+            if loop.returncode is None:
+                try:
+                    os.killpg(loop.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                loop.communicate(timeout=10)
+
+    def test_watch_unit_install(self):
+        self.satellite = make_project(self.root / 'satellite $HOME %Q "space"', overseer=False)
+        log = self.root / "systemd.calls"
+        self.env.update(XDG_CONFIG_HOME=str(self.root / "config"), SYSTEMD_CALLS=str(log))
+        remember_call = '#!/bin/sh\nprintf "%s %s\\n" "${0##*/}" "$*" >> "$SYSTEMD_CALLS"\n'
+        self.executable("loginctl", remember_call)
+        self.executable("systemctl", remember_call + '''case "$2" in
+  restart) exit "${RESTART_EXIT:-0}" ;;
+  is-active) exit "${ACTIVE_EXIT:-0}" ;;
+esac
+''')
+        unit = Path(self.env["XDG_CONFIG_HOME"]) / "systemd/user/jarvis-watch.service"
+        main_host = self.env.pop("JARVIS_MAIN_HOST")
+        for value, reason in (("", "satellite-required"), ("invalid", "satellite-required"),
+                              (main_host, "main-host-not-persisted")):
+            with self.subTest(refusal=reason):
+                refused = self.watch_unit(env=dict(self.env, JARVIS_MAIN_HOST=value))
+                self.assertEqual(refused.returncode, 1, refused.stderr)
+                self.assertEqual(json.loads(refused.stderr.split("failure=", 1)[1])["key"][2], reason)
+                self.assertFalse(unit.exists())
+                self.assertFalse(log.exists())
+
+        saved = self.jarvis("main-host", "--set", main_host)
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        preview, fields = self.preview_unit()
+        self.assertFalse(unit.exists())
+        self.assertFalse(log.exists())
+        escaped_home = str(self.satellite).replace("%Q", "%%Q")
+        self.assertEqual(shlex.split(fields["ExecStart"]),
+                         [":" + str(self.scripts / "watch-loop"), "--home", escaped_home, "--satellite"])
+        self.assertEqual((fields["Type"], fields["NotifyAccess"], fields["WorkingDirectory"],
+                          fields["Restart"], fields["WantedBy"]),
+                         ("notify", "all", escaped_home + "/.", "on-failure", "default.target"))
+
+        self.executable("loginctl", "#!/bin/sh\nexit 4\n")
+        denied = self.watch_unit()
+        self.assertEqual(denied.returncode, 1, denied.stderr)
+        self.assertEqual(json.loads(denied.stderr.split("failure=", 1)[1])["key"], ["enable-linger", "exit", "4"])
+        self.assertFalse(unit.exists())
+        self.assertFalse(log.exists())
+
+        self.executable("loginctl", remember_call)
+        install = self.watch_unit()
+        self.assertEqual(install.returncode, 0, install.stderr)
+        self.assertEqual(unit.read_text(), preview)
+        self.assertEqual(log.read_text().splitlines(), [
+            "loginctl enable-linger " + str(os.getuid()), "systemctl --user daemon-reload",
+            "systemctl --user enable " + unit.name, "systemctl --user restart " + unit.name,
+            "systemctl --user is-active --quiet " + unit.name])
+
+        for key, operation in (("RESTART_EXIT", "systemctl-restart"), ("ACTIVE_EXIT", "systemctl-is-active")):
+            with self.subTest(operation=operation):
+                failed = self.watch_unit(env=dict(self.env, **{key: "1"}))
+                self.assertEqual((failed.returncode, failed.stdout), (1, ""), failed.stderr)
+                record = json.loads(failed.stderr.split("failure=", 1)[1])
+                self.assertEqual(record["key"], [operation, "exit", "1"])
+                self.assertIn(unit.name, record["detail"])
+
+        cleared = self.jarvis("main-host", "--clear")
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        with self.watch_process(fields, dict(self.env, JARVIS_MAIN_HOST=main_host)) as loop:
+            _, stderr = loop.communicate(timeout=5)
+            self.assertEqual(loop.returncode, 1, stderr)
+            self.assertEqual(json.loads(stderr.split(b"failure=", 1)[1])["key"][2], "satellite-required")
+
+    def test_standing_watch_drains_without_session(self):
+        self.satellite = make_project(self.root / "satellite service", overseer=False)
+        (self.satellite / "tmp").mkdir()
+        main_host = self.env.pop("JARVIS_MAIN_HOST")
+        watch_log = self.root / "foreground log"
+        self.env.update(KENDEX_ENV_FILE="private.env", XDG_STATE_HOME=str(self.root / "alternate state"),
+                        JARVIS_LOG_DIR=str(watch_log))
+        saved = self.jarvis("main-host", "--set", main_host)
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        session = self.jarvis("status")
+        self.assertEqual(json.loads(session.stdout)["reason"], "never-started", session.stderr)
+        self.mode.write_text("down")
+        record = self.record()
+        queued = self.forward(record)
+        self.assertEqual(queued.returncode, 75, queued.stderr)
+        self.assertEqual(self.status()["requests"][0]["state"], "queued")
+        self.assertIsNone(self.status()["checked_at"])
+        self.retry_due()
+        self.mode.write_text("up")
+
+        _, fields = self.preview_unit()
+        self.executable("systemd-notify", '#!/bin/sh\n[ "$*" = "--ready" ] && [ -s "$JARVIS_LOG_DIR/batch.json" ] && touch "$NOTIFY_SOCKET"\n')
+        manager = dict(self.env, KENDEX_ENV_FILE="other.env", JARVIS_MAIN_HOST="", XDG_STATE_HOME=str(self.root / "manager"),
+                       JARVIS_LOG_DIR=str(self.root / "manager log"), NOTIFY_SOCKET=str(self.root / "ready"))
+        with self.watch_process(fields, manager) as loop:
+            ready, _, _ = select.select([loop.stderr], [], [], 20)
+            self.assertTrue(ready, "the standing watch did not complete a collection")
+            outcome = loop.stderr.readline().decode()
+            self.assertIn("forward=reachable ", outcome)
+            self.assertTrue(Path(manager["NOTIFY_SOCKET"]).exists())
+            self.assertTrue((watch_log / "watch.lock").exists())
+            status = self.status()
+            self.assertTrue(status["reachable"])
+            self.assertEqual(status["requests"][0]["forwarded"], self.landed(record))
+            checked_at = calendar.timegm(time.strptime(status["checked_at"], "%Y-%m-%dT%H:%M:%SZ"))
+            self.assertIn(int(time.time()) - checked_at, range(61))
+            session = self.jarvis("status")
+            self.assertEqual(json.loads(session.stdout)["reason"], "never-started", session.stderr)
 
     def test_external_delivery_advances_completed_idle_pass(self):
         self.env["JARVIS_LOG_DIR"] = str(self.root / "log")

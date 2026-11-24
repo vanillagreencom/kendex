@@ -24,7 +24,7 @@ A receipt or a delivery reaction cannot prove that Jarvis read or applied the an
 
 ## A second machine
 
-Jarvis main is the computer that runs Jarvis, the main long-running session. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. The satellite's [local console session](../references/agent-reach.md#satellite) and [forwarding](../references/agent-reach.md#forward) are described separately.
+Jarvis main is the computer that runs Jarvis, the main long-running session. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite runs Jarvis Voice and the local console session, runs the standing watch loop when installed as a systemd user service, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
 
 A Jarvis satellite handles local screen, files, apps and sign-in. It forwards a request that belongs on Jarvis main and tells you whether delivery succeeded or remains queued. The request and answer appear in the owner's Slack channel. By default it forwards with no question. With `JARVIS_FORWARD_CONFIRM` on, it first asks you to say `forward` or `yes`.
 

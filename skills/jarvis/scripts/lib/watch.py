@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import selectors
 import shlex
+from string import Template
 import subprocess
 import sys
 import tempfile
@@ -193,18 +194,18 @@ def child_failure(operation, result):
                    keyed[1] if keyed else result.returncode, detail)
 
 
-def run(args, cwd=None, data=None, operation=None, timeout=60):
+def run(args, cwd=None, data=None, operation=None, timeout=60, *, env=None):
     try:
         return subprocess.run(list(map(str, args)), cwd=cwd, input=data,
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              timeout=timeout)
+                              timeout=timeout, env=env)
     except (OSError, subprocess.SubprocessError) as error:
         raise failure(operation or Path(args[0]).name, error) from error
 
 
-def checked(args, cwd=None, data=None, operation=None, timeout=60):
+def checked(args, cwd=None, data=None, operation=None, timeout=60, *, env=None):
     operation = operation or Path(args[0]).name
-    result = run(args, cwd, data, operation, timeout)
+    result = run(args, cwd, data, operation, timeout, env=env)
     if result.returncode:
         raise child_failure(operation, result)
     return result.stdout
@@ -240,8 +241,8 @@ def voice_request(row):
     return row["kind"] != "answer" and row.get("text", "").split("\n", 1)[0].startswith("voice-request: caller=")
 
 
-def config(bash, root):
-    return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
+def config(bash, root, *, env=None):
+    return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root], env=env))
 
 
 def role(settings):
@@ -1517,19 +1518,74 @@ class Watch:
         self.save()
 
 
+def unit_word(value):
+    # systemd.service(5) and systemd.exec(5) apply percent specifiers after
+    # unquoting. The unit uses ':' to disable ExecStart dollar expansion.
+    return json.dumps(value.replace("%", "%%"), ensure_ascii=False)
+
+
+def install(bash, home, settings, print_only):
+    from home import replace
+
+    if not str(home).isprintable():
+        raise Failure("watch-install", "refusal", "home-invalid", repr(str(home)))
+    # Preserve only the paths used to find saved settings, the outbox and
+    # the watch lock. Unset omitted paths so the manager cannot supply other
+    # values. Read the saved role at every start, including after main-host --clear.
+    path_keys = ("KENDEX_ENV_FILE", "XDG_STATE_HOME", "JARVIS_LOG_DIR")
+    paths = {"HOME": str(Path.home())}
+    paths.update({key: os.environ[key] for key in path_keys if key in os.environ})
+    unset = ["JARVIS_MAIN_HOST", *(key for key in path_keys if key not in paths)]
+    if "JARVIS_MAIN_HOST" in os.environ:
+        saved = config(bash, home, env={key: value for key, value in os.environ.items() if key not in unset})
+        if saved["JARVIS_MAIN_HOST"] != settings["JARVIS_MAIN_HOST"]:
+            raise Failure("watch-install", "refusal", "main-host-not-persisted",
+                          "Save the satellite binding with jarvis-session main-host --set before installing.")
+    unit = LIB.parents[1] / "systemd/jarvis-watch.service"
+    rendered = Template(unit.read_text()).substitute(
+        directory=str(home).replace("%", "%%"), launcher=unit_word(str(LIB.parent / "watch-loop")),
+        home=unit_word(str(home)), environment=" ".join(unit_word(f"{key}={value}") for key, value in paths.items()),
+        unset=" ".join(unset))
+    if print_only:
+        sys.stdout.write(rendered)
+        return
+
+    # loginctl(1): enable starts the unit with the user manager, while
+    # lingering starts the user manager at boot and keeps it after logout.
+    checked(["loginctl", "enable-linger", str(os.getuid())], operation="enable-linger")
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    target = config_dir / "systemd/user" / unit.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    replace(target, rendered)
+    for args in (("daemon-reload",), ("enable", unit.name)):
+        checked(["systemctl", "--user", *args], operation="systemctl-" + args[0])
+    # Like slack install, confirm the unit is active. Type=notify makes
+    # restart wait for initialization, so there is no fixed startup sleep.
+    try:
+        checked(["systemctl", "--user", "restart", unit.name], operation="systemctl-restart")
+        checked(["systemctl", "--user", "is-active", "--quiet", unit.name], operation="systemctl-is-active")
+    except Failure as error:
+        raise Failure(*error.record["key"], f"{error}. Read journalctl --user -u {unit.name}") from error
+    print("watch-loop: installed=" + str(target))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("loop", "pass"))
+    parser.add_argument("mode", choices=("loop", "pass", "install"))
     parser.add_argument("--bash", required=True)
     parser.add_argument("--home", default=".")
     parser.add_argument("--side", default="local")
     parser.add_argument("--cursor", default="{}")
     parser.add_argument("--presence", action="store_true")
+    parser.add_argument("--satellite", action="store_true", help="require satellite settings at service start")
+    parser.add_argument("--print", action="store_true", help="render the unit without installing it")
     parser.add_argument("--initial-pass", action="append", type=Path,
                         help="initialize fresh loop state from a reconciled public pass, then exit; repeat per destination")
     args = parser.parse_args()
     if args.initial_pass and args.mode != "loop":
         parser.error("--initial-pass requires loop mode")
+    if args.print and args.mode != "install":
+        parser.error("--print requires install mode")
     initial_passes = [path.absolute() for path in args.initial_pass] if args.initial_pass else None
     home = home_root(args.home)
     if args.mode == "pass":
@@ -1542,6 +1598,10 @@ def main():
             print(mail_pass(args.bash, home, args.side, json.loads(args.cursor)), end="")
     else:
         settings = config(args.bash, home)
+        if (args.mode == "install" or args.satellite) and role(settings).kind != "satellite":
+            raise Failure("watch-loop", "refusal", "satellite-required", str(home))
+        if args.mode == "install":
+            return install(args.bash, home, settings, args.print)
         if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_WAKE_SETTLE_SECS"]):
             raise RuntimeError("settle-invalid")
         if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_VOICE_REMIND_SECS"]):
@@ -1556,6 +1616,8 @@ def main():
             watch = Watch(home, args.bash, settings, initial_passes)
             if initial_passes is not None:
                 return
+            if args.satellite and "NOTIFY_SOCKET" in os.environ:
+                checked(["systemd-notify", "--ready"], operation="watch-ready")
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
             with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 4) as passes:
