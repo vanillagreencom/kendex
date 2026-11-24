@@ -7,7 +7,7 @@ import { createReadToolDefinition, VERSION } from "@earendil-works/pi-coding-age
 
 import { registerToolBatch } from "../tool-renderer/batch.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../tool-renderer/package-config.js";
-import { clearStackState } from "../tool-renderer/stack.js";
+import { clearStackState, registerStackEvents } from "../tool-renderer/stack.js";
 import { createReadRenderers } from "../tool-renderer/tools.js";
 
 const createdDirs: string[] = [];
@@ -38,9 +38,9 @@ function tempCwd(config: Record<string, unknown> = {}): string {
 	return cwd;
 }
 
-/** One call per directory, so expanding redraws the same call as Pi does. */
-function draw(renderers: any, result: any, cwd: string, expanded: boolean): string[] {
-	const context = { args: { path: "image.png" }, cwd, invalidate() {}, showImages: false, state: {}, toolCallId: cwd };
+/** One call per directory unless named, so expanding redraws the same call as Pi does. */
+function draw(renderers: any, result: any, cwd: string, expanded: boolean, toolCallId = cwd): string[] {
+	const context = { args: { path: "image.png" }, cwd, invalidate() {}, showImages: false, state: {}, toolCallId };
 	return renderers.renderResult(result, { expanded, isPartial: false }, theme, context).render(300);
 }
 
@@ -56,6 +56,24 @@ async function drawBatch(result: any, cwd: string, expanded: boolean): Promise<s
 function warnsAbout(lines: string[], model: string): boolean {
 	const warnings = lines.join("\n").match(/<warning>[^<]*<\/warning>/g) ?? [];
 	return warnings.some((part) => part.includes(model));
+}
+
+function warningsAbout(lines: string[], model: string): number {
+	const warnings = lines.join("\n").match(/<warning>[^<]*<\/warning>/g) ?? [];
+	return warnings.filter((part) => part.includes(model)).length;
+}
+
+/** The subset of Pi's extension API the stack registers on. */
+function fakePi() {
+	const handlers = new Map<string, Array<(event: any, ctx: any) => void>>();
+	return {
+		on(name: string, handler: (event: any, ctx: any) => void) {
+			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+		},
+		emit(name: string, event: any, ctx: any) {
+			for (const handler of handlers.get(name) ?? []) handler(event, ctx);
+		},
+	};
 }
 
 /** A row that warns about no model has no warning-colored part at all. */
@@ -113,5 +131,30 @@ describe("a read image the model cannot see", () => {
 				expect({ expanded, warns }).toEqual({ expanded, warns: row.warns });
 			}
 		});
+	}
+
+	// A stack exists for consecutive reads. Only a live batch of two reaches the
+	// row a later read draws itself and the anchor's drawing of the other reads.
+	const textRead = { content: [{ type: "text", text: "line\n" }] };
+	for (const display of ["rows", "headline", "anchor-list"]) {
+		for (const order of [["text", "image"], ["image", "text"]] as const) {
+			test(`stacked ${display}, ${order.join(" read then ")} read, draws the warning once, collapsed and expanded`, () => {
+				const cwd = tempCwd({ stackToolCalls: true, stackChildDisplay: display });
+				const pi = fakePi();
+				registerStackEvents(pi as any);
+				const calls = order.map((kind, index) => ({ id: `${cwd}:${index}`, result: kind === "image" ? recorded : textRead }));
+				pi.emit("agent_start", {}, { cwd });
+				for (const call of calls) {
+					pi.emit("tool_execution_start", { toolName: "read", toolCallId: call.id, args: { path: "image.png" } }, { cwd });
+					pi.emit("tool_execution_end", { toolName: "read", toolCallId: call.id, result: call.result, isError: false }, { cwd });
+				}
+				pi.emit("agent_end", {}, { cwd });
+				const pkg = createReadRenderers(cwd);
+				for (const expanded of [false, true]) {
+					const lines = calls.flatMap((call) => draw(pkg, call.result, cwd, expanded, call.id));
+					expect({ expanded, warnings: warningsAbout(lines, textOnlyModel.id) }).toEqual({ expanded, warnings: 1 });
+				}
+			});
+		}
 	}
 });
