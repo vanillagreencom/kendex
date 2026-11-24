@@ -30,12 +30,6 @@ ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
 SCRIPT = Path(os.environ.get("JARVIS_TEST_SCRIPT", SKILLS / "jarvis/scripts/jarvis-session"))
 HARNESS_SCRIPT = Path(__file__).with_name("fixtures") / "harness.py"
-# The Start procedure every controller is briefed with, its private
-# brief after it.
-START_BRIEF = (
-    "Read .agents/skills/jarvis/SKILL.md. Read and follow the Start section using "
-    "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md Start`."
-)
 # Independent VGS-1439 consumer contract. Each planted malformed answer below
 # must fail this validator, rather than depending on the producer's table.
 REASONS = {
@@ -935,7 +929,11 @@ print(json.dumps(session.terminal(status)))
         # Jarvis acts on the owner's desktop: its session keeps the live display.
         self.assertEqual(launched[0]["display"], ["fixture-wayland", ":fixture"])
         self.assertIn("--session-id", launched[0]["argv"])
-        self.assertEqual(self.prompts(), [START_BRIEF + " Keep notes in the progress log."])
+        (prompt,) = self.prompts()
+        self.assertIn("`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md 'Start'`", prompt)
+        self.assertTrue(prompt.startswith("Read .agents/skills/jarvis/SKILL.md."), prompt)
+        self.assertIn("Read each other named section with `jarvis-section` when its step comes", prompt)
+        self.assertTrue(prompt.endswith(" Keep notes in the progress log."), prompt)
         self.assertEqual(self.controller().get("seat"), "jarvis", "the start names the Jarvis seat")
         self.assertEqual(self.call("start")[0]["reason"], "existing")
         self.assertEqual(len(self.started()), 1, "a second launch beside the live one")
