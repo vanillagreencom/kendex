@@ -193,7 +193,12 @@ class Sources:
                 if self.closure is None:
                     self.closure = watch.package_files(watch.MAILBOX_FILES)
                 command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
-                result = watch.run(watch.host_args(target, "bash -c " + shlex.quote(command)), data=payload,
+                # The login shell parses only "bash -s": fish turns \\ inside
+                # single quotes into \, so a quoted command reaches bash
+                # changed. POSIX sh's INPUT FILES leaves a shell reading stdin
+                # directly after its command, so the closure after the
+                # command's line reaches the bootstrap unread by bash.
+                result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
                                    operation=operation, timeout=self.remaining())
             else:
                 result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, watch.LIB.parents[2] / name, *args],

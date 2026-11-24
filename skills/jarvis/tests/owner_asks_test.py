@@ -368,7 +368,9 @@ class OwnerAsksContract(unittest.TestCase):
                 if host:
                     self.assertEqual(argv[:2], ["ssh", host])
                     self.assertEqual(argv[2].startswith("sudo -n -H -u overseer -- bash -l -c "), control)
-                    self.assertEqual(json.loads(call.kwargs["data"])["files"]["mailbox/scripts/lane-mail"], caller)
+                    # The closure is the stream's last line, after the command's.
+                    payload = call.kwargs["data"].rsplit("\n", 1)[1]
+                    self.assertEqual(json.loads(payload)["files"]["mailbox/scripts/lane-mail"], caller)
                 else:
                     self.assertEqual(argv[0], BASH)
                     self.assertIn(str(packages / "mailbox/scripts/lane-mail"), argv)
@@ -425,9 +427,15 @@ class OwnerAsksContract(unittest.TestCase):
                 # A plain ssh login, the account a control host's reads took
                 # before they went through watch.host_args.
                 ("jarvis/scripts/lib/owner_asks.py",
-                 'result = watch.run(watch.host_args(target, "bash -c " + shlex.quote(command)), data=payload,',
-                 'result = watch.run(["ssh", target.host, "bash -c " + shlex.quote(command)], data=payload,',
+                 'result = watch.run(watch.host_args(target, "bash -s"), data=command + "\\n" + payload,',
+                 'result = watch.run(["ssh", target.host, "bash -s"], data=command + "\\n" + payload,',
                  "OwnerAsksContract.test_reads_run_caller_code_as_the_destination_account", "(destination='ssh:control')"),
+                # The command quoted through the host's login shell, the
+                # route a host read took before it went to bash -s.
+                ("jarvis/scripts/lib/owner_asks.py",
+                 'watch.host_args(target, "bash -s"), data=command + "\\n" + payload,',
+                 'watch.host_args(target, "bash -c " + shlex.quote(command)), data=payload,',
+                 "PublicOwnerAsks.test_remote_read_answers_alike_under_each_login_shell", "(login='fish')"),
                 # The checkout's installed lane-mail, the route a read took
                 # before Sources carried its own.
                 ("jarvis/scripts/lib/owner_asks.py", '"$BASH" "$mail" pending --item overseer',
@@ -682,6 +690,91 @@ class PublicOwnerAsks(MailWorld):
                 row, = page["rows"]
                 self.assertEqual((row["what"], row["link"]["url"]), ("Remote original", request_comment("mirror")["url"]))
                 self.assertFalse(executed.exists(), "checkout-code-executed")
+
+    # ssh HOST COMMAND, as watch.host_args spells it, with COMMAND parsed by
+    # the host's login shell LOGIN_SHELL. fish's language docs, § Quotes: in
+    # single quotes only \' and \\ are escapes; in double quotes only \", \$,
+    # \\ and a backslash-newline; fish 3.7.0 reads 'a\\b' as a\b where sh
+    # keeps both backslashes. Syntax the model leaves out exits 98, so the
+    # model never reads a command differently from fish unseen.
+    LOGIN_SSH = r'''
+import os, sys
+
+def fish_words(text):
+    words, word, quote, started, i = [], "", None, False, 0
+    while i < len(text):
+        c = text[i]
+        escapes = {"'": "\\'", '"': '\\"$'}.get(quote, "")
+        if quote is None and c in " \t\n":
+            if started:
+                words.append(word)
+            word, started = "", False
+        elif quote is None and c in "'\"":
+            quote, started = c, True
+        elif quote is None and (c.isalnum() or c in "-_./,:=@%+"):
+            word, started = word + c, True
+        elif quote is not None and c == quote:
+            quote = None
+        elif quote is not None and c == "\\" and i + 1 < len(text) and text[i + 1] in escapes:
+            word, i = word + text[i + 1], i + 1
+        elif quote == '"' and (c == "$" or text[i:i + 2] == "\\\n"):
+            sys.exit(98)
+        elif quote is not None:
+            word += c
+        else:
+            sys.exit(98)
+        i += 1
+    if quote is not None:
+        sys.exit(98)
+    return words + [word] if started else words
+
+if len(sys.argv) != 3 or sys.argv[1] != "fixture":
+    sys.exit(96)
+command = sys.argv[2]
+if command == "kendex project list --json":
+    with open(os.environ["REMOTE_REGISTRY"]) as registry:
+        sys.stdout.write(registry.read())
+    sys.exit()
+argv = ["sh", "-c", command] if os.environ["LOGIN_SHELL"] == "sh" else fish_words(command)
+os.execvp(argv[0], argv)
+'''
+
+    def test_remote_read_answers_alike_under_each_login_shell(self):
+        remote = make_project(self.root / "remote")
+        remote_registry = self.root / "remote-registry"
+        self.register(remote_registry, remote)
+        self.env.update(REMOTE_REGISTRY=str(remote_registry))
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
+        self.executable("ssh", "#!" + sys.executable + "\n" + self.LOGIN_SSH)
+        self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
+        self.tracker_api([])
+        rows = {}
+        for login in ("sh", "fish"):
+            with self.subTest(login=login):
+                self.env["LOGIN_SHELL"] = login
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                rows[login] = page["rows"]
+                self.assertEqual([row["what"] for row in rows[login]], ["Remote original"])
+                self.assertEqual(rows[login], rows["sh"])
+
+    def test_mailbox_reads_leave_their_stdin_unread(self):
+        # A host read runs them with bash -s's script stream as stdin, where
+        # a read would take the bytes after their own command.
+        ask = self.mail(self.home, "ask", "Question", "--to", "owner", "--options", "a,b", "--reserved")
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        reads = [("pending", ["--to", "owner"]), ("events", ["--box", "to-overseer"])]
+        for verb, options in reads:
+            with self.subTest(verb=verb):
+                read, write = os.pipe()
+                os.write(write, b"stream\n")
+                os.close(write)
+                with os.fdopen(read, "rb") as stream:
+                    result = subprocess.run([BASH, str(mail), verb, "--item", "overseer", "--root", str(self.home), *options],
+                                            stdin=stream, cwd=self.home, env=self.env, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(ask, result.stdout)
+                    self.assertEqual(stream.read(), b"stream\n")
 
     def test_carried_presence_preserves_root_settings_and_permission(self):
         remote = make_project(self.root / "remote ' presence;$")
