@@ -3129,6 +3129,35 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
             .unwrap_or_else(|_| panic!("no reply: {}", String::from_utf8_lossy(&out.stderr)));
         (out.status.code(), reply)
     };
+    // The same adoption by a request file naming the posture's words alone.
+    let adopt_naming_words = |words: serde_json::Value| -> (Option<i32>, serde_json::Value) {
+        let request = dir.path().join("adopt-request.json");
+        let body = json!({
+            "pane": pane.pane,
+            "socket": socket,
+            "harness": "claude",
+            "session_id": "by-hand-1",
+            "account": cwd,
+            "cwd": cwd,
+            "extra_args": words,
+        });
+        std::fs::write(&request, body.to_string()).unwrap();
+        let out = Command::new(binary())
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", dir.path())
+            .env("TMPDIR", dir.path())
+            .env("LANG", "C.UTF-8")
+            .args(["controller", "adopt", "--record"])
+            .arg(&record)
+            .arg("--request")
+            .arg(&request)
+            .output()
+            .unwrap();
+        let reply = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("no reply: {}", String::from_utf8_lossy(&out.stderr)));
+        (out.status.code(), reply)
+    };
     let fleet = || -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap()
     };
@@ -3162,8 +3191,21 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     // launch setting's posture, a full bypass when unset as here.
     assert_eq!(overseer["permission"], "native");
     assert_eq!(overseer["extra_args"], json!([]));
+    // Named words alone spell the posture, whatever the harness was
+    // launched under: never native beside a full-bypass word, which the
+    // successor's launch refuses.
+    let (code, answer) = adopt_naming_words(json!(["--dangerously-skip-permissions"]));
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"]["healed"], true, "{answer}");
+    let overseer = fleet()["controller"].clone();
+    assert_eq!(overseer["permission"], "bypass");
+    assert_eq!(
+        overseer["extra_args"],
+        json!(["--dangerously-skip-permissions"])
+    );
     // The same pane again, its harness now started under the full bypass:
-    // healed, the generation kept, the posture the one it runs under.
+    // healed, the generation kept, the posture the one it runs under where
+    // the host keeps its words (`/proc`); elsewhere its native defaults.
     std::fs::remove_file(&own_pid).unwrap();
     pane.tmux(&[
         "respawn-pane",
@@ -3184,11 +3226,13 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     assert_eq!(answer["result"]["healed"], true, "{answer}");
     let overseer = fleet()["controller"].clone();
     assert_eq!(overseer["generation"], 1);
-    assert_eq!(overseer["permission"], "bypass");
-    assert_eq!(
-        overseer["extra_args"],
-        json!(["--dangerously-skip-permissions"])
-    );
+    let (permission, words) = if cfg!(target_os = "linux") {
+        ("bypass", json!(["--dangerously-skip-permissions"]))
+    } else {
+        ("native", json!([]))
+    };
+    assert_eq!(overseer["permission"], permission);
+    assert_eq!(overseer["extra_args"], words);
     // A pane whose foreground is no harness.
     let idle = pane
         .tmux(&[
