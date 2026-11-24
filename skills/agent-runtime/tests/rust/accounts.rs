@@ -2162,6 +2162,48 @@ fn claude_body(session: Value, weekly: Value, scoped: &[(&str, Value)]) -> Value
     })
 }
 
+/// A usage 429 can serve a four-hour-old reading with a measured Opus
+/// burn. The roster takes its reset from Fable when Fable has the higher
+/// raw figure, even though both figures round to 94. A launch that names
+/// no model still accounts for that measured burn when judging freshness.
+#[test]
+fn a_model_free_launch_keeps_the_roster_rate_when_scoped_windows_round_to_a_tie() {
+    let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
+    world.plant_listing(&[measured("aclaude", 20, 50)]);
+    let dir = world.dir("aclaude");
+    let record = world.record_path("claude", "aclaude");
+    std::fs::remove_file(&record).unwrap();
+    let now = now();
+    let fable_reset = stamp(now + 60 * 3600);
+    let opus_reset = stamp(now + 60 * 3600 + 60);
+    for (age_hours, opus) in [(14, 90.0), (4, 94.1)] {
+        let mut body = claude_body(
+            json!(50),
+            json!(20),
+            &[("Fable", json!(94.4)), ("Opus", json!(opus))],
+        );
+        body["limits"][0]["resets_at"] = json!(fable_reset);
+        body["limits"][1]["resets_at"] = json!(opus_reset);
+        accounts::cache::write_figure(&record, "claude", &dir, body, now - age_hours * 3600);
+    }
+    world.plant_answer("token-aclaude", "usage", &Value::Null, Some("429 300"));
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("rate_limited"), "{row}");
+    assert_eq!(row["binding_resets_at"], json!(fable_reset), "{row}");
+    assert_eq!(row["usage_rate_pct_per_min"], json!(0.4 / 60.0), "{row}");
+    let canon = accounts::wall::canon(&dir);
+    let facts = FleetFacts {
+        charges: [(canon.clone(), 1)].into_iter().collect(),
+        started: [(canon, vec![now - 5 * 3600])].into_iter().collect(),
+        ..FleetFacts::default()
+    };
+    let answer = judged(&world, &[row], &named(&dir, claude(None)), &facts);
+    let PickAnswer::Unmeasured(answer) = answer else {
+        panic!("{answer:?}");
+    };
+    assert!(answer.usage_stale);
+}
+
 #[test]
 fn an_unreadable_percentage_reads_unmeasured_never_zero() {
     let mut world = World::new(&[]);

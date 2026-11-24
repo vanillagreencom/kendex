@@ -1135,21 +1135,20 @@ fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
 
 /// The plan windows of a measured row a lane on `model` spends, each of
 /// which can stop it: the shared windows of [`WINDOWS`] and the model
-/// windows [`model_buckets`] names. A launch with no model spends every
-/// scoped window, using the aggregate only when the reading carries no
-/// scoped figures. A named model under the floor ([`lane_binding`]) spends
-/// the reader's model window too. The launch judges the age of each window
-/// beside the binding that determines its projected room.
+/// windows [`model_buckets`] names. With no model, the launch checks every
+/// scoped window and the aggregate. A rounded tie can pair the aggregate's
+/// reset with another scope's label, so only that pair matches the roster's
+/// measured rate. A named model under the floor ([`lane_binding`]) also
+/// checks the aggregate.
 fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Binding> {
     if !row.measured() {
         return Vec::new();
     }
     let model = model.filter(|m| !m.is_empty());
-    let include_aggregate = model.map_or(row.model_buckets.is_empty(), |_| floor);
     let resets = |key: &str| row.raw.get("resets").and_then(|r| string(r, key));
     let mut windows: Vec<Binding> = WINDOWS
         .iter()
-        .filter(|w| w.bucket != MODEL || include_aggregate)
+        .filter(|w| w.bucket != MODEL || model.is_none() || floor)
         .filter_map(|w| {
             Some(Binding {
                 bucket: w.bucket.to_owned(),
