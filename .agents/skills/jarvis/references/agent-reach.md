@@ -173,7 +173,7 @@ For the saved value:
 
 ### Satellite
 
-A Jarvis satellite runs Jarvis Voice, the local console session and the standing watch loop, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
+A Jarvis satellite runs Jarvis Voice and the local console session, runs the standing watch loop when installed as a systemd user service, and forwards work that needs accounts, the fleet, the home repository or anything outside that computer to Jarvis main.
 
 A Jarvis satellite handles local voice, windows, apps, files, screen and sign-ins. Start the console through the [session command](session-command.md#session-command).
 

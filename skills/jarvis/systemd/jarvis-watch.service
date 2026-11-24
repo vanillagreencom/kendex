@@ -2,7 +2,10 @@
 Description=Jarvis satellite watch loop
 
 [Service]
-Type=exec
+Type=notify
+NotifyAccess=all
+Environment=$environment
+UnsetEnvironment=$unset
 # The suffix keeps any trailing path spaces inside the assignment.
 WorkingDirectory=$directory/.
 ExecStart=:$launcher --home $home --satellite

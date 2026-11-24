@@ -68,8 +68,10 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
 2. From the native session's own pane, run `.agents/skills/orch/scripts/orch-runtime register --fleet`.
    - The session's next native hook establishes its session binding.
    - A satellite registers only in its own home, and its loop runs as a satellite under [Control-host events: Satellite](../references/control-host-events.md#satellite).
-3. On a satellite, check `systemctl --user --property=WorkingDirectory --value show -- jarvis-watch.service` where systemd is available.
-   - If the directory resolves to HOME and `systemctl --user is-enabled --quiet jarvis-watch.service` or `systemctl --user is-active --quiet jarvis-watch.service` succeeds, use the standing service.
+3. On a satellite where systemd runs, check `systemctl --user --property=LoadState,WorkingDirectory,UnitFileState,ActiveState show -- jarvis-watch.service`.
+   - Use the harness route on platforms without systemd, when both `LoadState=not-found` and `ActiveState=inactive`, or when a loaded unit's working directory resolves to another home.
+   - For a loaded unit whose directory resolves to HOME, use the standing service if `UnitFileState` is `enabled` or `enabled-runtime`, or if `ActiveState` is `active`, `activating` or `reloading`. Use the harness route if both `UnitFileState=disabled` and `ActiveState=inactive`.
+   - If the command fails or its result leaves the service state unknown, report the result and stop this procedure before changing the wake settings or launching a loop.
 4. Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings.
    - The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME.
    - For the standing service, use `systemctl --user start jarvis-watch.service`. Otherwise use the home and harness route below.
