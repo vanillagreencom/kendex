@@ -1570,8 +1570,9 @@ for os in ubuntu-latest macos-latest; do
       bad "must-fail: $fault dedicated coverage passed on $os"
     fi
   done
-  # Mutate only the shared environment's event condition. The real push
-  # now duplicates the retained Linux shell partition.
+  # Mutate only the shared environment's event condition, named by its key
+  # since the job's steps test the same event pair. The real push now
+  # duplicates the retained Linux shell partition.
   if [[ "$os" == ubuntu-latest ]]; then
   if (
     mkdir -p "$HOME/tmp" || exit 1
@@ -1579,8 +1580,9 @@ for os in ubuntu-latest macos-latest; do
     [[ -d "$control" && ! -L "$control" ]] || exit 1
     control="$(cd -- "$control" && pwd -P)" || exit 1
     trap 'rm -rf -- "${control:?}"' EXIT
-    plant "$WORKFLOW" "github.event_name == 'merge_group' || github.event_name == 'push'" \
-      "github.event_name == 'merge_group' || github.event_name == 'schedule'" "$control/workflow.yml" skill-suites-shard
+    plant "$WORKFLOW" "MAIN_ONLY_FILTERS: \${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push')" \
+      "MAIN_ONLY_FILTERS: \${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'schedule')" \
+      "$control/workflow.yml" skill-suites-shard
     event_claims "$control/workflow.yml" push "$os" "$major" > "$control/push-claims" || exit 1
     ! cmp -s "$TMP/os-universe" "$control/push-claims" || exit 1
     duplicates="$(uniq -d "$control/push-claims")" || exit 1
