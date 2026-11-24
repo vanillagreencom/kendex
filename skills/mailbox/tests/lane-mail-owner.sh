@@ -1402,7 +1402,7 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x
 lm attach-check --attach "$LANE/elsewhere/x.md"
 assert_eq "$RC=$OUT" "0=lane-mail: attach=$LANE/elsewhere/x.md" \
   "control: without the directory rule attach-check accepts a file anywhere"
-mutant attach-check-root '  ask | notice | send | resolve | reserve | peer | compact | attach-check)' '  ask | notice | send | resolve | reserve | peer | compact)'
+mutant attach-check-root '  ask | notice | send | resolve | reserve | replace | peer | compact | attach-check)' '  ask | notice | send | resolve | reserve | replace | peer | compact)'
 attach_from_worktree
 assert_eq "$RC" 2 "control: without the main checkout's root attach-check from a worktree judges the worktree's directory"
 

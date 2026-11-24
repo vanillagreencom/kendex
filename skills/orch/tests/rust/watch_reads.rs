@@ -4937,6 +4937,9 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let (mut settings, events) = posted_owner_ask(&world);
     settings.linear_team = None;
     world.linear("issues list --assignee", json!({"body": []}));
+    // The open ask's item is off the owner list, and its question's comments
+    // are read all the same.
+    world.linear("comments bulk-list", comments(&["KEN-7"], &[]));
     world.linear("comments create", json!({"body": {"success": true}}));
     world.linear("issues update", json!({"body": {}}));
     world.linear(
