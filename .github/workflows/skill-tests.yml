@@ -1757,6 +1757,9 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # The lockfiles under .github/npm-tests hold these CI-only dependency
+      # graphs. Regenerate a lock with npm install --package-lock-only in
+      # its directory and use a clean npm ci to verify the tarballs.
       # Every peer installs at pi-qol's coding-agent peer floor. The suite
       # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
       # a peer installed at any other version.
@@ -1766,7 +1769,9 @@ jobs:
         env:
           PI_QOL_PEER_VERSION: 0.86.0
         run: |
-          npm install --save-prod --no-save --no-package-lock --ignore-scripts --no-audit --no-fund "@earendil-works/pi-agent-core@$PI_QOL_PEER_VERSION" "@earendil-works/pi-ai@$PI_QOL_PEER_VERSION" "@earendil-works/pi-coding-agent@$PI_QOL_PEER_VERSION" "@earendil-works/pi-tui@$PI_QOL_PEER_VERSION"
+          test_deps="$GITHUB_WORKSPACE/.github/npm-tests/pi-qol"
+          npm ci --prefix "$test_deps" --ignore-scripts --no-audit --no-fund
+          ln -s "$test_deps/node_modules" node_modules
           npm test
 
       - name: pi-output-policy suite
@@ -1808,7 +1813,9 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.6.0 @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 typebox 'undici@^7.29.1'
+          test_deps="$GITHUB_WORKSPACE/.github/npm-tests/pi-codex-minimal-tools"
+          npm ci --prefix "$test_deps" --ignore-scripts --no-audit --no-fund
+          ln -s "$test_deps/node_modules" node_modules
           npm run typecheck
           npm test
 
@@ -1828,7 +1835,9 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-tool-renderer
         run: |
-          npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@1.0.1 @earendil-works/pi-ai@1.0.1 @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-tui@1.0.1 @earendil-works/pi-codemode@1.0.1 @earendil-works/pi-mcp@1.0.1 @earendil-works/pi-telemetry@1.0.1
+          test_deps="$GITHUB_WORKSPACE/.github/npm-tests/pi-tool-renderer"
+          npm ci --prefix "$test_deps" --include=dev --include=peer --include=optional --ignore-scripts --no-audit --no-fund
+          ln -s "$test_deps/node_modules" node_modules
           npm test
 
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no
@@ -1862,15 +1871,16 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-skills-manager
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
+          test_deps="$GITHUB_WORKSPACE/.github/npm-tests/pi-skills-manager"
+          npm ci --prefix "$test_deps" --ignore-scripts --no-audit --no-fund
+          ln -s "$test_deps/node_modules" node_modules
           npm test
 
       # `npm ci` rather than a pinned argument list because this suite needs
       # only what the package itself declares: tsx, which its script runs the
       # suite under. It imports Pi in type position only, so nothing it needs
-      # falls outside the lockfile. The steps that pass explicit pins do so
-      # because their suites need Pi packages declared as peer dependencies,
-      # which a lockfile of theirs never resolves.
+      # falls outside the package lockfile. The CI-only locks above and below
+      # include the exact Pi peer versions their suites exercise.
       - name: pi-caveman suite
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-caveman
@@ -1889,7 +1899,9 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-web-tools
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.6.0 @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 typebox tsx 'youtube-transcript-plus@^2.0.1'
+          test_deps="$GITHUB_WORKSPACE/.github/npm-tests/pi-web-tools"
+          npm ci --prefix "$test_deps" --ignore-scripts --no-audit --no-fund
+          ln -s "$test_deps/node_modules" node_modules
           npm test
 
       # The suite mocks every Pi module and typebox it imports with bun's
