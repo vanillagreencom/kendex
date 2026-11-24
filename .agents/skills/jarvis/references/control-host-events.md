@@ -76,12 +76,15 @@ A single consumer block over the batch's 60 KiB cap reports `event-too-large`; s
 
 The loop prints one batch pointer without its body; the [session workflow](../workflows/session.md#control-host-events) reads the body.
 
-`vm-watch.sh` discovers registered projects on each machine through `kendex project list`.
+`vm-watch.sh` discovers registered projects on each machine through `kendex project list --json`.
 
 - For hosted repository discovery and the account used on the control host, see [Control host setup](agent-reach.md#control-host-setup).
-- It skips noted rows.
-- An unreachable root reports its failure once, and the other roots continue.
-- A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`.
+- It skips an entry whose `worktree` is set, and one whose `state` is neither `ok` nor `git-unclassified`.
+- A root that lists but cannot be reached reports its failure once, and the other roots continue.
+- A folder git cannot classify, `state` `git-unclassified`, such as a linked worktree whose main checkout was moved or deleted, is such a root.
+  - The mail pass reports `root-unreachable` once for it, with `root=` the folder and `cause=` the state then kendex's Git error.
+  - The presence pass renews its hold as for any other root.
+- A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`. No other listing failure does.
 
 ## Restart and destination identity
 

@@ -5,17 +5,17 @@ Read when reporting from, answering or instructing an agent in the user's kendex
 ## Route
 
 - Use the repository's own [mailbox](../../mailbox/SKILL.md), with or without a fleet. [Reachable repositories](../SKILL.md#reachable-repositories) owns the reachability probe.
-- Take candidates only from `kendex project list`.
+- Take candidates only from `kendex project list --json`.
 
 `[LANE_MAIL]` is `.agents/skills/mailbox/scripts/lane-mail` in the repository's main checkout, run with that checkout as the working directory.
 
 - The Jarvis home's mailbox and `peer send` carry another repository's note, never the user's directive.
 - Read only the repository's overseer mailbox; its overseer reads the hosted lanes' mail.
 
-A project-list row names a folder. It can carry a missing- or unreadable-folder note, or `(worktree of [MAIN])`.
+Each entry of that document names its `folder`. Its `state` is other than `ok` when the folder is missing or unreadable, and its `worktree` names the `main` checkout of a linked worktree.
 
-- Resolve that worktree to `[MAIN]`.
-- A bare `(worktree)` means kendex could not find the main checkout; resolve it before choosing the mailbox.
+- Resolve that worktree to its `main`.
+- A null `main` means kendex could not find the main checkout; resolve it before choosing the mailbox.
 
 On Jarvis main, Jarvis reaches its declared machines with `.agents/skills/jarvis/scripts/owner-note REPO FILE`, under [Control host setup](#control-host-setup). A Jarvis satellite forwards to Jarvis main under [Main and satellites](#main-and-satellites).
 
@@ -124,26 +124,29 @@ Declare alternate repository names in `[env].JARVIS_REPO_ALIASES` of the home's 
 
 The selected root's own mailbox judges whether its overseer exists. Declaring a machine grants reach, never approval of a directive.
 
-On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration.
+On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list --json`, under that SSH user's registration.
 
+- Each declared host needs kendex 1.24.0 or later, the package's kendex floor.
+  - kendex before 1.21.0 refuses `--json`, so every listing, pass and owner-note selection on that host fails.
+  - kendex 1.21.0 through 1.23.x refuses the whole listing while one registration is a folder git cannot classify, and every listing, pass and owner-note selection on that host then fails.
+- A folder git cannot classify, such as a linked worktree whose main checkout was moved or deleted, is listed with `state` `git-unclassified` and the Git error as its `cause`. owner-note refuses `registration-unclassified`, with the folder and that cause, when the route it would select is that folder, and no other machine takes the note. Such an entry counts as a matching root toward `repo-ambiguous`, whose refusal names no Git cause. Every other `REPO` selects as before.
 - When the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it. Listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`. The SSH user needs passwordless sudo to it.
-- A root qualifies only when its row has no note and its last path segment matches `REPO` or its declared alias target.
-- A worktree row never qualifies.
-- Starting or registering an overseer adds no project row.
+- A root qualifies only when its entry's `state` is `ok`, its `worktree` is null and its last path segment matches `REPO` or its declared alias target.
+- Starting or registering an overseer adds no project entry.
 
-When a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout whose recorded overseer is live. A recorded overseer that has stopped refuses before delivery, and no other machine is tried.
+When a hosted overseer has no qualifying entry, the legacy bare route can deliver to a local checkout whose recorded overseer is live. A recorded overseer that has stopped refuses before delivery, and no other machine is tried.
 
 - Report the receipt's actual side: `sent side=local` means local delivery.
-- Offer to add the intended host's row.
-- With `JARVIS_CONTROL_USER` set, run each `kendex project` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list'"`. Run as the SSH user, the command changes and shows a registry owner-note does not read.
+- Offer to add the intended host's project entry.
+- With `JARVIS_CONTROL_USER` set, run each `kendex` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list --json'"`. Run as the SSH user, the command changes and shows a registry owner-note does not read.
 
 1. Show the user the repository and `ssh [HOST] kendex project add [MAIN_CHECKOUT]`.
    - Run it only after approval, once per hosted repository.
    - It writes nothing into the checkout and refuses an already listed path.
 2. Never run `kendex project discover --register` on a parent folder.
    - It registers every project it finds, and duplicate `REPO` basenames make owner-note refuse.
-   - With approval, remove the extra row on that machine with `kendex project remove [PATH]`.
-3. Verify the main row in `ssh [HOST] kendex project list`.
+   - With approval, remove the extra entry on that machine with `kendex project remove [PATH]`.
+3. Verify that `ssh [HOST] kendex --version` prints 1.24.0 or later, then the main checkout's entry in `ssh [HOST] kendex project list --json`.
 4. Then verify that the next owner-note receipt says `sent side=host`.
 
 - Repeat on each declared remote.

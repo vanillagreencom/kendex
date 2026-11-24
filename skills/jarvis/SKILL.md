@@ -21,6 +21,7 @@ dependencies:
       purpose: Run session launch and scratch cleanup commands
     - command: kendex
       purpose: Discover projects and manage assistant packages
+      floor: "1.24.0"
     - command: jq
       purpose: Read and write session records
     - command: cat
@@ -128,11 +129,11 @@ The assistant app gives `persona.md` to its sessions. Here, a line in `AGENTS.md
 
 ### Reachable repositories
 
-At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints. Judge a `(worktree of [MAIN])` row by `[MAIN]`.
+At first load, and when the user asks which repositories Jarvis can reach, judge each `folder` that `kendex project list --json` prints. Judge an entry whose `worktree` names a `main` by that `main`.
 
 - Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position.
   - Read session messages through [Agent reach: Read](references/agent-reach.md#read).
-- Any other result means unreachable. The cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed.
+- Any other result means unreachable. The cause is the entry's `state` other than `ok`, a missing mailbox script, or the key `lane-mail` printed.
 - A folder with `.agents/skills/orch/` but no mailbox script has an orch older than the mailbox package. Its cause is "refresh needed". Offer `kendex refresh` in that folder.
 
 Report both lists in one message, with each unreachable folder's cause.

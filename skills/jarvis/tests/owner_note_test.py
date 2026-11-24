@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from mail_world import BASH, REPO, SCRIPTS, MailWorld, control_account, make_project
+from mail_world import BASH, KENDEX, REPO, SCRIPTS, MailWorld, control_account, entry, listing, make_project
 
 NOTE = "Check the release notes.\nThen report.\n"
 # The overseer's directive 1792369993-3375997-24882 fixes these exact bytes.
@@ -65,22 +65,23 @@ class OwnerNote(MailWorld):
                         'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" TMPDIR="$REMOTE_TMP" exec sh -c "$*"\n')
 
     def world(self, name, remote, local):
-        """Scratch roots per side, each (path, overseer recorded[, mailbox installed]); returns their paths."""
+        """Scratch roots per side, each (path, overseer recorded[, mailbox installed or a listed state]); returns their paths."""
         base = self.root / name
         base.mkdir()
-        sides = {}
+        sides, listed = {}, {}
         for side, rows in (("remote", remote), ("local", local)):
-            sides[side] = []
+            sides[side], listed[side] = [], []
             for path, overseer, *mailbox in rows:
                 root = make_project(base / side / path, overseer=overseer)
                 if mailbox == [False]:
                     shutil.rmtree(root / ".agents/skills/mailbox")
                 sides[side].append(root)
+                listed[side].append(entry(root, state=mailbox[0], cause="fatal:gitdir-moved")
+                                    if mailbox and isinstance(mailbox[0], str) else root)
         (base / "remote-home").mkdir()
         (base / "remote-tmp").mkdir()
-        (base / "remote-registry").write_text("".join(str(path) + "\n" for path in sides["remote"]))
-        self.registry.write_text("".join(str(path) + "\n" for path in sides["local"]) +
-                                 str(self.root / "elsewhere") + " (folder not found)\n")
+        (base / "remote-registry").write_text(listing(*listed["remote"]))
+        self.registry.write_text(listing(*listed["local"], entry(self.root / "elsewhere", state="folder-not-found")))
         return base, sides
 
     def send(self, base, host, resolve=False):
@@ -108,6 +109,9 @@ class OwnerNote(MailWorld):
                 ("host absent", True, [("app", False)], [("app", True)], 0, None, "local", "remote"),
                 ("host lists none", True, [], [("app", True)], 0, None, "local", "local"),
                 ("host mailbox missing", True, [("app", True, False)], [("app", True)], 2, "send-failed=host", None, "remote"),
+                # A root Git cannot classify refuses its own note; no other side takes it.
+                ("host unclassified", True, [("app", True, "git-unclassified")], [("app", True)], 2,
+                 "registration-unclassified={remote}", None, None),
                 ("neither", True, [("app", False)], [("app", False)], 2, "no-overseer=app", None, "remote"),
                 ("unregistered", True, [], [], 2, "no-overseer=app", None, None),
                 ("ambiguous", False, [], [("a/app", True), ("b/app", True)], 2, "repo-ambiguous=app", None, None),
@@ -115,6 +119,8 @@ class OwnerNote(MailWorld):
         for name, host, remote, local, code, key, lands, resolved in rows:
             with self.subTest(row=name):
                 base, sides = self.world(name.replace(" ", "-"), remote, local)
+                if key is not None:
+                    key = key.format(remote=sides["remote"][0] if sides["remote"] else None)
                 roots = [root for side in sides.values() for root in side]
                 before = self.mailbox_snapshot(roots)
                 resolution = self.send(base, host, resolve=True)
@@ -341,7 +347,7 @@ class OwnerNote(MailWorld):
     def test_satellite_instructs_no_overseer(self):
         base, sides = self.world("satellite", [("app", True)], [("app", True)])
         listed = self.root / "kendex.log"
-        self.executable("kendex", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$KENDEX_LOG"\ncat "$REGISTRY"\n')
+        self.executable("kendex", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$KENDEX_LOG"\n' + KENDEX.split("\n", 1)[1])
         self.env.update(KENDEX_LOG=str(listed), JARVIS_MAIN_HOST="main.example:/srv/home")
         result = self.send(base, True)
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -390,6 +396,9 @@ class OwnerNote(MailWorld):
             ("local-missing", "dot", {"dot": ".dot"}, ["--local"], [(".dot", True)], [], True, "no-overseer", None),
             ("host-missing", "dot", {"dot": ".dot"}, ["--host", "host.example"], [], [(".dot", True)], True, "no-overseer", None),
             ("host-unknown", "dot", {"dot": ".dot"}, ["--host", "unknown"], [(".dot", True)], [], True, "destination-unknown", None),
+            # A declared destination's root Git cannot classify refuses; no other side takes it.
+            ("host-unclassified", "dot", {"dot": ".dot"}, ["--host", "host.example"], [(".dot", True, "git-unclassified")],
+             [(".dot", True)], True, "registration-unclassified", None),
             ("fallback", "dot", {"dot": ".dot"}, [], [], [(".dot", True)], True, None, ("local", 0)),
             ("priority", "dot", {"dot": ".dot"}, [], [(".dot", True)], [(".dot", True)], True, None, ("remote", 0)),
         )
@@ -483,7 +492,7 @@ class OwnerNote(MailWorld):
                 base, sides = self.world(name.replace(" ", "-"), [(control, True)], [(local, True)])
                 target = make_project(base / "satellite" / satellite)
                 satellite_registry = base / "satellite-registry"
-                satellite_registry.write_text(str(target)+"\n")
+                satellite_registry.write_text(listing(target))
                 self.executable("ssh", '#!/bin/sh\n'
                     '[ "$1" != "$FAIL_ALIAS" ] || { echo "transport refused" >&2; exit 255; }\n'
                     'case "$1" in control) REGISTRY=$REMOTE_REGISTRY;; satellite) REGISTRY=$SATELLITE_REGISTRY;; *) exit 94;; esac\n'

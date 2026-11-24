@@ -66,7 +66,7 @@ def deliver(bash, repo, note, settings, host=None, local=False):
 def main():
     parser = argparse.ArgumentParser(prog="owner-note", description=(
         "Send FILE, then a blank line and the verify footer, as a directive to the overseer of REPO, "
-        "the last path segment of a root `kendex project list` prints, or a name declared in "
+        "the last path segment of a readable, non-worktree folder `kendex project list --json` names, or a name declared in "
         "JARVIS_REPO_ALIASES (see the settings example). JARVIS_REMOTE_HOSTS adds SSH aliases "
         "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
         "alias, try JARVIS_CONTROL_HOST first, then this machine. JARVIS_CONTROL_USER names the control host "
@@ -82,7 +82,8 @@ def main():
         "liveness and cannot predict a later send's overseer-absent fallback. A satellite resolves only "
         "local roots; directive sending remains main-only."), epilog=(
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
-        "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, mailbox-missing "
+        "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, "
+        "registration-unclassified (VALUE is the root Git cannot classify; its cause is kendex's Git error), mailbox-missing "
         "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
         "lane-mail has an overseer; with --resolve, no matching registered root), role-satellite "
         "(VALUE is JARVIS_MAIN_HOST: a satellite instructs no "

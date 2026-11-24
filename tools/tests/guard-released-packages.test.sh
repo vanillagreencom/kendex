@@ -24,7 +24,7 @@ cat > "$TMP/released/kendex" <<'SH'
 #!/bin/sh
 case "$1" in
   --version) echo 'kendex 1.0.0' ;;
-  project) [ "${2-}" = list ] || exit 2; printf '1.0.0 project list\n' >> "$ENGINE_LOG" ;;
+  project) [ "${2-}:${3-}" = list:--json ] || exit 2; printf '[]\n'; printf '1.0.0 project list --json\n' >> "$ENGINE_LOG" ;;
   *) exit 2 ;;
 esac
 SH
@@ -32,7 +32,7 @@ cat > "$TMP/main/kendex" <<'SH'
 #!/bin/sh
 case "$1" in
   --version) echo 'kendex 1.1.0' ;;
-  project) [ "${2-}" = list ] || exit 2; printf '1.1.0 project list\n' >> "$ENGINE_LOG" ;;
+  project) [ "${2-}:${3-}" = list:--json ] || exit 2; printf '[]\n'; printf '1.1.0 project list --json\n' >> "$ENGINE_LOG" ;;
   future-command) exit 0 ;;
   *) exit 2 ;;
 esac
@@ -162,7 +162,7 @@ prose|echo "a title (kendex#537)"|0:
 prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
 caller|skills/change-scope/tests/change-scope.test.sh|0:caller
-python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
+python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list --json
 ROWS
 
 # The existing runner owns which orch suites run alone, through its ALONE

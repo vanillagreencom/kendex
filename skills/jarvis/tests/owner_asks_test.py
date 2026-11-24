@@ -16,7 +16,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from mail_world import BASH, MailWorld, REPO, control_account, make_project
+from mail_world import BASH, MailWorld, REPO, control_account, entry, listing, make_project
 
 LIB = Path(os.environ.get("JARVIS_TEST_SKILLS", str(REPO / "skills"))) / "jarvis/scripts/lib"
 os.environ["JARVIS_BASH"] = BASH
@@ -699,16 +699,13 @@ class PublicOwnerAsks(MailWorld):
         for package in ("jarvis", "linear", "slack"):
             directory = self.home / ".agents/skills" / package
             directory.symlink_to(REPO / "skills" / package, target_is_directory=True)
-        # kendex project list --json, the registry form a program reads.
-        self.executable("kendex", '#!/bin/sh\ncase "$*" in "project list --json" | "project list") cat "$REGISTRY" ;; *) exit 97 ;; esac\n')
         self.register(self.registry, self.home)
         self.env.update(XDG_STATE_HOME=str(self.root / "runtime"))
         self.env.pop("PYTHONPATH", None)
 
     @staticmethod
     def register(registry, *folders, state="ok", main=None):
-        registry.write_text(json.dumps([{"folder": str(folder), "state": state,
-                                         "worktree": {"main": str(main)} if main else None} for folder in folders]))
+        registry.write_text(listing(*(entry(folder, state, main=main) for folder in folders)))
 
     def run_cli(self, action="list", home=None, payload=None, *args, view="active", skills=None):
         script = (skills / "jarvis/scripts" if skills else LIB.parent) / "jarvis-session"
@@ -986,7 +983,7 @@ os.execvp(argv[0], argv)
         (remote / "json.py").write_text('from pathlib import Path\nPath(' + repr(str(marker)) +
                                         ').touch()\nraise SystemExit(91)\n')
         registry = self.root / "presence-registry"
-        registry.write_text(str(remote) + "\n")
+        registry.write_text(listing(remote))
         self.env.update(REMOTE_ROOT=str(remote), REMOTE_REGISTRY=str(registry))
         self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\ncd -- "$REMOTE_ROOT"\n' +
                         'export REGISTRY="$REMOTE_REGISTRY"\nexec ' + BASH + ' -s\n')

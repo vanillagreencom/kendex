@@ -271,14 +271,13 @@ class Sources:
 
     def registered(self, target):
         """Every folder the destination's registry names; any registration not in state ok makes the list unavailable."""
-        argv = watch.host_args(target, "kendex project list --json") if target.host else ["kendex", "project", "list", "--json"]
         try:
             roots = []
-            for entry in json.loads(watch.checked(argv, operation="project-list", timeout=self.remaining())):
-                if entry["state"] != "ok":
-                    raise watch.Failure("project-list", "registration-unreadable", entry["state"], entry["folder"])
-                roots.append(entry["folder"])
-        except (ValueError, TypeError, KeyError, watch.Failure) as error:
+            for entry in watch.destination_projects(target, timeout=self.remaining()):
+                if entry.state != "ok":
+                    raise watch.Failure("project-list", "registration-unreadable", entry.state, entry.folder)
+                roots.append(entry.folder)
+        except watch.Failure as error:
             raise source_failure("project-list", target.key, error) from error
         return roots
 
