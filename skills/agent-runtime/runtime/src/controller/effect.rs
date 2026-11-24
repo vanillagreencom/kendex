@@ -1275,14 +1275,7 @@ fn succeed(
         TurnConfirm::PaneUnobservable { cause } => {
             Some(("pane-unobservable", json!({"cause": cause})))
         }
-        TurnConfirm::Refused { presses } => Some((
-            "brief-unconfirmed",
-            json!({"cause": "submit-refused", "presses": presses, "turns_before": turns_before, "file": session.file}),
-        )),
-        TurnConfirm::Pending => Some((
-            "brief-unconfirmed",
-            json!({"turns_before": turns_before, "file": session.file}),
-        )),
+        TurnConfirm::Unconfirmed { observation } => Some(("brief-unconfirmed", observation)),
     };
     if let Some((note, observation)) = unconfirmed {
         return waiting.unready(operation, Some(session.session_id), note, observation);
@@ -1714,23 +1707,14 @@ fn complete_transfer(
             by,
             json!({"cause": cause, "turns_before": turns_before, "file": session.file}),
         )),
-        TurnConfirm::Refused { presses } => Ok(unconfirmed_after_retirement(
+        TurnConfirm::Unconfirmed { observation } => Ok(unconfirmed_after_retirement(
             operation,
             opened,
             runner,
             Some(session.session_id),
             "brief-unconfirmed",
             by,
-            json!({"cause": "submit-refused", "presses": presses, "turns_before": turns_before, "file": session.file}),
-        )),
-        TurnConfirm::Pending => Ok(unconfirmed_after_retirement(
-            operation,
-            opened,
-            runner,
-            Some(session.session_id),
-            "brief-unconfirmed",
-            by,
-            json!({"turns_before": turns_before, "file": session.file}),
+            observation,
         )),
     }
 }

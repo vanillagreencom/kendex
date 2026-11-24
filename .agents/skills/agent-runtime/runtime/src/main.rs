@@ -1482,16 +1482,7 @@ fn judge_pane(
     };
     let screen = tmux::capture(pane)?;
     let state = observe::judge(&screen, harness, &reading, account_room);
-    let screen_tail: Vec<String> = screen
-        .lines()
-        .rev()
-        .filter(|l| !l.trim().is_empty())
-        .take(12)
-        .map(str::to_owned)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+    let screen_tail = observe::screen_tail(&screen);
     Ok(Judged {
         pane: Reading::Live(fields),
         reading: Some(reading),

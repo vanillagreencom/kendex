@@ -53,17 +53,13 @@ pub enum Polled {
     Unobservable { cause: &'static str },
 }
 
-/// What a wait for the runner to record the delivered turn settled on:
-/// the brief appeared in a user turn in its session file, its pane went
-/// (the harness exited), the pane could not be read, the bound passed with
-/// the harness still refusing the submit after `presses` more Enters, or
-/// the bound passed.
+/// How the wait for the delivered turn ended. An unconfirmed turn carries
+/// the verify bound, the last screen reading, and the refusal where seen.
 pub enum TurnConfirm {
     Recorded,
     PaneGone,
     PaneUnobservable { cause: String },
-    Refused { presses: u32 },
-    Pending,
+    Unconfirmed { observation: Value },
 }
 
 /// How long a refused submit stands before Enter is pressed again, and how
@@ -542,15 +538,11 @@ impl Operation<'_> {
         }
     }
 
-    /// A receipt must name the delivered brief in the runner's own session,
-    /// beyond the cursor recorded before the paste. The pane gone is
-    /// the harness exited; a pane the host does not answer for is retried and
-    /// reported past the bound; the bound passed is `Pending`. A screen
-    /// that shows the harness refused the submit, its draft held, is pressed
-    /// Enter again each [`RESUBMIT_GAP`], at most [`RESUBMITS`] times: the
-    /// brief is never typed twice, and the bound passed with the refusal
-    /// still drawn is `Refused`. The wait is a handle method, so no poll of
-    /// this loop runs outside the handle.
+    /// Confirm the brief as a user turn in the runner's own session after
+    /// the cursor recorded before delivery. Stop waiting if the pane is gone
+    /// or unreadable. When the harness refuses the submit and keeps its
+    /// draft, press Enter again each [`RESUBMIT_GAP`], up to [`RESUBMITS`]
+    /// times. At the bound, read the screen before returning to the caller.
     pub fn await_delivered_turn(
         &mut self,
         harness: Harness,
@@ -559,7 +551,8 @@ impl Operation<'_> {
         turns_before: u64,
         brief: &str,
     ) -> Result<TurnConfirm> {
-        let deadline = self.now() + self.run.settings.verify.get()?;
+        let verify = self.run.settings.verify.get()?;
+        let deadline = self.now() + verify;
         let expected = crate::session::normalize_user_text(brief);
         let mut presses = 0;
         let mut refused = false;
@@ -590,11 +583,21 @@ impl Operation<'_> {
                 }
             }
             if self.now() >= deadline {
-                return Ok(if refused {
-                    TurnConfirm::Refused { presses }
-                } else {
-                    TurnConfirm::Pending
+                let mut observation = json!({
+                    "turns_before": turns_before,
+                    "file": file,
+                    "verify_secs": verify.as_secs(),
                 });
+                if refused {
+                    observation["cause"] = json!("submit-refused");
+                    observation["presses"] = json!(presses);
+                }
+                // The caller can stop the runner as soon as the wait returns.
+                match tmux::capture(pane) {
+                    Ok(screen) => observation["screen_tail"] = json!(observe::screen_tail(&screen)),
+                    Err(error) => observation["screen_cause"] = json!(error.to_string()),
+                }
+                return Ok(TurnConfirm::Unconfirmed { observation });
             }
             self.sleep(POLL);
         }
@@ -1204,7 +1207,7 @@ mod tests {
                 );
             } else {
                 assert!(
-                    matches!(answer, TurnConfirm::Pending),
+                    matches!(answer, TurnConfirm::Unconfirmed { .. }),
                     "{texts:?} cursor={cursor}"
                 );
             }
