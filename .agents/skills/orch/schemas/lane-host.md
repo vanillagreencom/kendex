@@ -145,6 +145,10 @@ Each verb, its arguments, and its answer:
   - State `available` marks a host holding no item.
   - A provider can append fields.
   - No row for an item is a sandbox gone, and so is a row in a teardown state, `destroying` or `destroyed`, or in `exited`.
+- `list --json`, optional, asked only of a `park=verb` host.
+  - One JSON array of objects on stdout, exit `0`; exit `2` is a provider without the form.
+  - A row's `label` is `OWNER/REPO/ITEM`, the plain row's first field.
+  - A row carries `stop` only while the provider holds the sandbox stopped after the lane's harness ended: `{"at": UTC, "why": WORD}`, or `{"unreadable": TEXT}` where the provider cannot read its own record of the stop.
 - `capture --item ID`.
   - Asked only of a `pane=verb` host.
   - The harness's visible screen as plain text on stdout, exit `0`.
@@ -176,10 +180,11 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
   - It asks `capabilities`; on a relaunch, `start` for a parked lane, and for any other one on a `park=verb` host `list`, then `start` where the list names the item's sandbox; then `create`, and `wait` after an accepted create.
   - It asks `cat` and `put` for the host files of § Launch on a provider and § Launch record.
   - On a `pane=verb` host it asks `status`, `capture`, `viewer-prefix` and, after a failure, `stop`.
-- The watch asks only of lanes in flight.
+- The watch asks only of lanes in flight, apart from the heartbeat's list read below.
   - Each pass reads each host's `capabilities` once and makes one `read-many` per host for the hosted lanes' mailbox files under `<lane root>/tmp/lane-mail/<item>/`.
   - Its lane duty asks `cat`, `touch`, `status` on a `status=verb` host and `capture` on a `pane=verb` host.
   - Before a hosted relaunch it asks `stop`.
+  - Each heartbeat asks `capabilities` of each provider host of an item's latest `running` or `stopped` record whose item no tracker read answered ended, and `list --json` of each such host that declares `park=verb`.
 - The wake:
   - It asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`.
   - On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.

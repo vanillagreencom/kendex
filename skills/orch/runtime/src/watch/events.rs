@@ -16,8 +16,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use super::ended::{Stop, Wait};
 use crate::error::{Result, WatchError};
 use crate::schedule::Duty;
+use crate::state::LaneStatus;
 use agent_runtime::settings::Succession;
 
 /// Why a runner took a standing claim over.
@@ -140,6 +142,17 @@ pub enum Event {
     },
     LaneClosed {
         item: String,
+    },
+    /// A lane whose harness ended while no read says its item ended, said on
+    /// each heartbeat (`watch::ended`), with the provider's stop of its
+    /// sandbox where one ended its current session; ` tracker=unread` where
+    /// no tracker read answered for the item.
+    LaneEnded {
+        item: String,
+        lane: LaneStatus,
+        waits: Wait,
+        stop: Option<Stop>,
+        tracker_read: bool,
     },
     LaneCloseRefused {
         item: String,
@@ -567,6 +580,24 @@ impl Event {
                 format!("EVENT directive-send-unsettled item={item} cause={cause}")
             }
             Event::LaneClosed { item } => format!("EVENT lane-closed {item}"),
+            Event::LaneEnded {
+                item,
+                lane,
+                waits,
+                stop,
+                tracker_read,
+            } => {
+                let stop = stop
+                    .as_ref()
+                    .map(|s| format!(" stop={} why={}", s.at, s.why))
+                    .unwrap_or_default();
+                let tracker = if *tracker_read { "" } else { " tracker=unread" };
+                format!(
+                    "EVENT lane-ended {item} lane={} waits={}{stop}{tracker}",
+                    lane.word(),
+                    waits.word()
+                )
+            }
             Event::LaneCloseRefused { item } => format!("EVENT lane-close-refused {item}"),
             Event::ParkOwed { item, result } => format!("EVENT park-owed {item} result={result}"),
             Event::Triage { id } => format!("EVENT triage {id}"),

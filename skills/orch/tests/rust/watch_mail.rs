@@ -955,6 +955,96 @@ fn a_first_start_continues_from_the_lead_s_read_cursor_instead_of_replaying_its_
     }
 }
 
+/// The fleet provider's notice of a sandbox it stopped because its harness
+/// ended (fleet FLT-1791's `sandbox-stopped item= why= at= ...` line, sent
+/// as a directive to the lane's overseer) is kept per item for the
+/// heartbeat's `lane-ended` line only from a sender on the owner's channel:
+/// an owner directive or a program's peer envelope. One row per sender and
+/// shape: a data notice and another overseer's peer note carrying the same
+/// line keep nothing, nor does a stop dated past the turn's clock, the
+/// `stop-sandbox` verb's own `sandbox-stopped item=ID` or a notice whose
+/// `at` names no time. A full turn clears the row of an item no record
+/// holds or whose only record is done, and keeps the row of an item a
+/// record still holds.
+#[test]
+fn a_sandbox_stopped_notice_is_kept_for_its_item_and_its_row_leaves_with_the_item() {
+    let w = world_of(&hold(), 20, &["KEN-1", "KEN-2", "KEN-4"]);
+    let state = w.root.join(FLEET_FILE_NAME);
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["lanes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"item": "KEN-8", "harness": "claude", "status": "done"}));
+    std::fs::write(&state, fleet.to_string()).unwrap();
+    let at = "2026-01-29T15:10:00Z";
+    let line = |item: &str, at: &str| {
+        format!(
+            "sandbox-stopped item={item} why=harness-ended at={at} last_work={at} dirty=0 unpushed=1 disk=kept"
+        )
+    };
+    let envelope = |id: &str, from: &str, text: &str| json!({"id": id, "kind": "directive", "at": at, "from": from, "text": text});
+    // (envelope, the item whose row it sets)
+    let rows: Vec<(Value, Option<&str>)> = vec![
+        (note("s-1", &line("KEN-1", at)), Some("KEN-1")),
+        (envelope("s-2", "fleet", &line("KEN-2", at)), Some("KEN-2")),
+        (data("s-3", "mail-watch", &line("KEN-3", at)), None),
+        (
+            envelope("s-4", "overseer:other/repo", &line("KEN-5", at)),
+            None,
+        ),
+        (note("s-5", &line("KEN-6", "2026-01-29T16:00:00Z")), None),
+        (note("s-6", "sandbox-stopped item=KEN-7"), None),
+        (note("s-7", &line("KEN-10", "yesterday")), None),
+    ];
+    let mut want = vec![
+        Change::Clear {
+            kind: "sandbox-stopped".into(),
+            identity: "KEN-9".into(),
+        },
+        Change::Clear {
+            kind: "sandbox-stopped".into(),
+            identity: "KEN-8".into(),
+        },
+    ];
+    for (envelope, item) in rows {
+        w.plant("overseer", "to-lane.jsonl", &envelope);
+        if let Some(item) = item {
+            want.push(Change::Set {
+                kind: "sandbox-stopped".into(),
+                identity: item.into(),
+                value: format!("{at}|harness-ended"),
+            });
+        }
+    }
+    let clock = FakeClock::new();
+    let mut duty = w.duty();
+    let mut baseline = Baseline::default();
+    for item in ["KEN-9", "KEN-4", "KEN-8"] {
+        baseline.apply(Change::Set {
+            kind: "sandbox-stopped".into(),
+            identity: item.into(),
+            value: format!("{at}|harness-ended"),
+        });
+    }
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: Instant::now(),
+        wall: WALL,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let produced = duty.run(&tick).unwrap();
+    let stops: Vec<Change> = produced
+        .changes
+        .into_iter()
+        .filter(|c| match c {
+            Change::Set { kind, .. } | Change::Clear { kind, .. } => kind == "sandbox-stopped",
+            Change::Pass { .. } => false,
+        })
+        .collect();
+    assert_eq!(stops, want);
+}
+
 /// The owner channel on the real program: a due owner ask is closed with
 /// its recommendation before the box is read, and the close is announced
 /// from the box as the handler will read it; a reserved ask is left open.

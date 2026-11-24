@@ -321,11 +321,13 @@ pub fn host_of(lane: &Lane) -> &str {
 /// per pass: the `local` kind answers in-process; any other host through
 /// [`capabilities`]. A line that could not be read or parsed
 /// keeps its cause, and every read of a lane on that host is then
-/// unreadable with it, never judged off the local kind. The caller hands
+/// unreadable with it, never judged off the local kind. The lane duty hands
 /// the lanes the pass judges, the in-flight ones alone: a `parked`, `done`
 /// or `stopped` record keeps its host, and a provider that is gone would
 /// otherwise be asked every pass and its failure said ahead of a live
-/// lane's.
+/// lane's. The heartbeat's ended-lane read (`ended::listed`) also hands the
+/// `stopped` record of an item no tracker read answered ended, once per
+/// heartbeat.
 pub struct Hosts {
     lines: BTreeMap<String, Result<Capabilities, String>>,
 }
@@ -906,6 +908,23 @@ pub fn lists_item(
         (state != "available" && !TORN_DOWN.contains(&state) && name.ends_with(&suffix))
             .then(|| state.to_owned())
     }))
+}
+
+/// The rows of the provider's `list --json` (`schemas/lane-host.md`,
+/// `list`), each a JSON object; `None` where the provider answers exit `2`,
+/// the absent verb. `Err` is a list that failed, was refused at the bound,
+/// or printed no JSON array.
+pub fn list_rows(scripts: &Path, host: &str) -> std::result::Result<Option<Vec<Value>>, String> {
+    let out = lane_host(scripts, host, &["list", "--json"])?;
+    match exit_code(&out) {
+        0 => {}
+        2 => return Ok(None),
+        _ => return Err(cause_of("list", &out)),
+    }
+    match serde_json::from_str::<Value>(&host::stdout_text(&out)) {
+        Ok(Value::Array(rows)) if rows.iter().all(Value::is_object) => Ok(Some(rows)),
+        Ok(_) | Err(_) => Err("list-json-invalid".to_owned()),
+    }
 }
 
 // --- the launch's calls --------------------------------------------------------

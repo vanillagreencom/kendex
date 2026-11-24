@@ -51,6 +51,7 @@
 pub mod baseline;
 pub mod claim;
 pub mod context;
+pub mod ended;
 pub mod events;
 pub mod github;
 pub mod heartbeat;

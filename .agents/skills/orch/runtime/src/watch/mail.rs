@@ -36,6 +36,11 @@
 //! `watch-step-failed step=mail count=N` in the log with each refused
 //! target and its cause on stderr. No box is ever read as empty.
 //!
+//! A provider's `sandbox-stopped` notice from a sender on the owner's
+//! channel in the overseer's box is kept as its item's stop row
+//! (`watch::ended::notice`) when it is announced, and a full
+//! turn clears the row once no record of the item stands short of `done`.
+//!
 //! Between full turns the body asks to run each second and reads the
 //! overseer box alone when its byte size moved, so
 //! an owner's note waits a second rather than the mail interval.
@@ -51,6 +56,7 @@ use crate::ops::mail::MailCursor;
 use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
+use crate::watch::ended;
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
@@ -627,7 +633,7 @@ impl MailDuty {
                     if full {
                         self.resolve_due_asks(&mut turn);
                     }
-                    self.overseer_turn(tick.baseline, &mut turn);
+                    self.overseer_turn(tick.baseline, tick.wall, &mut turn);
                     // Taken before the read, so a note landing during it
                     // moves the size again and the next poll reads it; a
                     // refused read waits for the next full turn.
@@ -692,6 +698,8 @@ impl MailDuty {
     /// named and left for the next turn.
     fn lanes_turn(&self, tick: &Tick, turn: &mut Turn) -> Result<()> {
         let fleet = fleet(&self.config.fleet)?;
+        turn.changes
+            .extend(ended::stale_stops(tick.baseline, &fleet));
         let mut local = Vec::new();
         let mut hosted = Vec::new();
         for lane in &fleet.lanes {
@@ -965,7 +973,7 @@ impl MailDuty {
     /// read (announced, never acknowledged), and the wake's slot
     /// follows the lead's own cursor. One read serves both: it starts at
     /// the lower of the two cursors.
-    fn overseer_turn(&self, baseline: &Baseline, turn: &mut Turn) {
+    fn overseer_turn(&self, baseline: &Baseline, wall: u64, turn: &mut Turn) {
         let root = &self.config.common_root;
         let read = match cursor_count(&self.config.overseer_cursor()) {
             Ok(n) => n,
@@ -995,6 +1003,7 @@ impl MailDuty {
         }
         let past = |line: Option<u64>, n: u64| line.is_some_and(|l| l > n);
         let mut lines = Vec::new();
+        let mut stops = Vec::new();
         for envelope in events.envelopes.iter().filter(|e| past(e.line, announced)) {
             match classify(OVERSEER, envelope) {
                 Ok(Some(event)) => {
@@ -1004,7 +1013,11 @@ impl MailDuty {
                 Ok(None) => {}
                 Err(e) => return turn.refuse(OVERSEER_TARGET, e),
             }
+            if let Some((item, stop)) = ended::notice(envelope, wall) {
+                stops.push(ended::stop_change(&item, &stop));
+            }
         }
+        turn.changes.extend(stops);
         turn.events.extend(lines);
         // A first start's cursor past the box's lines still records the
         // count, or a line landing below that cursor would never be news.

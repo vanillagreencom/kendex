@@ -6,10 +6,17 @@
 //! last pass; the `owed` lines of the tracker duty's last pass with their
 //! wall verdicts through the accounts judge's chooser; the standing
 //! tracker quota receipt; the reducer's standing attention; and one line
-//! naming the open unblocked items no lane holds. The body reads no
-//! inventory itself: the tracker, GitHub and verification duties' slots are
-//! its inputs, and it hands back `next_due: None`, so nothing it does moves
-//! its own due time.
+//! naming the open unblocked items no lane holds. The tracker, GitHub and
+//! verification duties' slots are its inventory inputs, read from no
+//! tracker or GitHub source of its own, and it hands back `next_due: None`,
+//! so nothing it does moves its own due time.
+//!
+//! Ahead of the line stand the `lane-ended` lines of the lanes whose
+//! harness ended while no read says their item ended (`watch::ended`), over
+//! the tracker duty's open items and terminal reads. For them the body reads
+//! the fleet state file, and asks `capabilities` of each provider host of an
+//! item's latest `running` or `stopped` record and `list --json` of each
+//! such host that declares `park=verb`.
 //!
 //! A read the body could not make (the open list, the roster) is its line
 //! with `unread` in that place: the one periodic line is never dropped.
@@ -44,6 +51,7 @@ use crate::verify::wire::Pull;
 use crate::ops::Host;
 use crate::ops::accounts;
 use crate::settings::Settings;
+use crate::watch::ended;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -375,13 +383,17 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // through, as the overseer duty's walk and the `lane pick` verb
     // build it.
     let host = Host::kernel();
-    let (owed, quota, open, github) = {
+    let (owed, quota, open, github, (open_items, terminal)) = {
         let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
         (
             latest.tracker.as_ref().map(|t| t.owed.clone()),
             latest.quota.as_ref().map(|q| q.line(tick.wall)),
             latest.tracker.as_ref().map(|t| t.open_unblocked.clone()),
             latest.github.clone(),
+            (
+                latest.tracker.as_ref().map(|t| t.open.clone()),
+                latest.terminal.clone(),
+            ),
         )
     };
     // The roster, the listing under the fleet's own host (the provider
@@ -405,6 +417,33 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             )),
         ),
     };
+    // The ended lanes, ahead of the heartbeat line as the account events
+    // are. Each cause is said beside any other failure of the pass: a host
+    // whose list did not read keeps its lanes' notice stops.
+    let mut fail = |cause: String| match &mut failed {
+        Some(said) => {
+            said.push('\n');
+            said.push_str(&cause);
+        }
+        None => failed = Some(cause),
+    };
+    let items = ended::Items {
+        open: open_items.as_ref(),
+        terminal: &terminal,
+    };
+    match crate::watch::lanes::read_fleet(&ctx.path) {
+        Ok(fleet) => {
+            let scripts = crate::watch::overseer::scripts_dir(&ctx.settings.roots.project);
+            let listed = ended::listed(&scripts, &fleet, &items);
+            for cause in listed.failed {
+                fail(cause);
+            }
+            events.extend(ended::events(&fleet, &items, &listed.stops, tick.baseline));
+        }
+        Err(e) => {
+            fail(format!("ended-lanes-unread cause={e}"));
+        }
+    }
     events.push(Event::Heartbeat {
         loops: ctx.max_loops,
         interval: ctx.interval,
