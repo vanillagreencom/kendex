@@ -220,6 +220,11 @@ fn declined(dir: &Path, issue: &str) -> Result<Vec<Declined>> {
     let snapshot = state::load(&path)
         .map_err(|_| unread())?
         .ok_or_else(unread)?;
+    declined_from(&snapshot, issue)
+}
+
+fn declined_from(snapshot: &state::Snapshot, issue: &str) -> Result<Vec<Declined>> {
+    let unread = || unread_state(issue);
     let entries: Vec<&Value> = match snapshot.doc.get("declined_items") {
         None | Some(Value::Null | Value::Bool(false)) => Vec::new(),
         Some(Value::Array(items)) => items.iter().collect(),
@@ -1029,6 +1034,10 @@ pub fn kept(r: &KeptReviews, state_dir: &Path) -> Result<Answer> {
     })
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "kept-pass verification reads the accepted paths, batch scope and declined findings from one item snapshot"
+)]
 fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) -> Result<()> {
     let item_path = state::item_path(dir, &r.issue);
     let Some(snapshot) = state::load(&item_path)? else {
@@ -1063,7 +1072,7 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
     let Some(paths) = snapshot.doc.get("json_paths").and_then(Value::as_array) else {
         return Ok(());
     };
-    let declines = declined(dir, &r.issue)?;
+    let declines = declined_from(&snapshot, &r.issue)?;
     let tmp = r.worktree.join("tmp");
     // Accepted paths are shared by every batch. The minted filename binds
     // this path to its canonical assignment and to the exact reviewed range.
