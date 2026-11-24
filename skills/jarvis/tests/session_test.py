@@ -32,7 +32,10 @@ SCRIPT = Path(os.environ.get("JARVIS_TEST_SCRIPT", SKILLS / "jarvis/scripts/jarv
 HARNESS_SCRIPT = Path(__file__).with_name("fixtures") / "harness.py"
 # The Start procedure every controller is briefed with, its private
 # brief after it.
-START_BRIEF = "Read .agents/skills/jarvis/SKILL.md and follow the Start procedure in .agents/skills/jarvis/workflows/session.md."
+START_BRIEF = (
+    "Read .agents/skills/jarvis/SKILL.md. Read and follow the Start section using "
+    "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md Start`."
+)
 # Independent VGS-1439 consumer contract. Each planted malformed answer below
 # must fail this validator, rather than depending on the producer's table.
 REASONS = {

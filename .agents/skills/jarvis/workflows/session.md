@@ -11,10 +11,13 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
 
 ## Start
 
+Use `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'` to read a linked section when its step needs it. Reuse sections already loaded.
+
 1. First read the State, Sub-agents and Instructions in force sections of `state/handoff.md` with `jarvis-section`, at the path in the [home layout](../references/home-layout.md).
    - If it is absent and the user has an earlier handoff elsewhere:
      - Read those sections there.
      - Have the user move that earlier handoff once to the current path.
+   - If this is a fresh home that lacks its starting files, follow [Initialize](../references/home-layout.md#initialize).
    - For the handoff you read, at either path:
      - Read the [Handoff](../references/long-session.md#handoff) contract with `jarvis-section` before using it.
      - Apply its checkpoint, staleness and recovery rules.
@@ -27,7 +30,7 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
    - Apply its decision boundary through Authority before choosing work.
 4. Check the event registration state in the handoff's State section.
 5. Register and start the event source:
-   - For control-host events, register and start `watch-loop` through [Control-host events](#control-host-events).
+   - For control-host events, follow [Control-host events](#control-host-events) to register, start or recover `watch-loop`.
    - For another selected event source, use its supported registration and delivery interface.
 6. On a satellite, read `jarvis-session status --home HOME --main`.
    - Report each open forward that has a cause.
@@ -48,7 +51,7 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
    - Otherwise:
      - Read all open session work from the selected tracker project, through every page.
      - Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source.
-     - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes.
+     - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes. Use [Task reconciliation](tasks.md) for incoming work, including lane results.
      - Apply [State retention](../references/long-session.md#state-retention) to the State entries the predecessor left: remove each entry whose content its open tracker item supplies through the [Progress records](../references/long-session.md#progress-records) `progress-log` call with `--state-change 'remove State ID'`, and keep an entry whose source is unreadable until a readback succeeds.
        - Where the open item does not yet hold an entry's next action, record it on the item through [5. Retain the next action](tasks.md#5-retain-the-next-action) before the entry leaves State.
      - Keep a compact view of open work and due obligations for the first decision.
@@ -58,7 +61,7 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
 11. Before taking the selected action, load its sections under [Action routes](#action-routes).
 12. Follow [Handoff replacement](#handoff-replacement).
 13. Write the current handoff under the [Handoff](../references/long-session.md#handoff) contract.
-14. Enter the event loop.
+14. Enter the [Event loop](#event-loop).
 
 ## Control-host events
 
