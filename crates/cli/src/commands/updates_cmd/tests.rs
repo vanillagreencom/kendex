@@ -40,6 +40,8 @@ fn row() -> UpdateRow {
         mixed: false,
         removed_upstream: false,
         no_per_package_update: None,
+        recorded: vec![],
+        unfetched: false,
     }
 }
 
@@ -111,6 +113,7 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             edited: true,
             mixed: true,
             forked: true,
+            recorded: vec![],
         }]
     );
     let [warning] = snapshot.unreadable.as_slice() else {
@@ -260,6 +263,40 @@ fn a_warning_keeps_its_technical_cause_for_verbose() {
         [
             "warning: skill tidy: its version history could not be read",
             "    git log f7db7e89 failed: fatal: bad object f7db7e89",
+        ]
+    );
+}
+
+/// A warning's fix is the way out of it, so it is drawn under the warning
+/// in every run, ahead of the technical cause `--verbose` adds.
+#[test]
+fn a_warning_names_its_fix() {
+    let report = UpdatesReport {
+        rows: vec![],
+        warnings: vec![ItemWarning {
+            kind: ItemKind::Skill,
+            name: "tidy".into(),
+            harness: None,
+            message: "its installed version has not been fetched".into(),
+            remediation: Some("fetch its source again with kendex source refresh".into()),
+            detail: Some("git cat-file f7db7e89 failed: fatal: bad object f7db7e89".into()),
+        }],
+        unreadable: vec![],
+        last_fetched: None,
+    };
+    assert_eq!(
+        screen(&plain(), &report, false),
+        [
+            "warning: skill tidy: its installed version has not been fetched",
+            "  fix: fetch its source again with kendex source refresh",
+        ]
+    );
+    assert_eq!(
+        screen(&plain(), &report, true),
+        [
+            "warning: skill tidy: its installed version has not been fetched",
+            "  fix: fetch its source again with kendex source refresh",
+            "    git cat-file f7db7e89 failed: fatal: bad object f7db7e89",
         ]
     );
 }

@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 use crate::test_util;
+use test_util::rooted;
 
 use std::fs;
 use std::io::{Read, Seek};
@@ -1046,4 +1047,114 @@ fn a_personal_refresh_with_no_manifest_downloads_the_default_catalog() {
         said(&output)
     );
     assert!(!env.global_manifest_file().exists());
+}
+
+/// Every file under `from` written at the same place under `to`: what a
+/// pull of another clone's committed tree lands.
+#[allow(clippy::unwrap_used)]
+fn land(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            fs::create_dir_all(&target).unwrap();
+            land(&path, &target);
+        } else {
+            fs::copy(&path, &target).unwrap();
+        }
+    }
+}
+
+/// The project's check, without the background fetch that would settle
+/// the package behind the test's back.
+#[allow(clippy::unwrap_used)]
+fn checked(home: &Path, project: &Path) -> (Option<i32>, serde_json::Value) {
+    let output = kendex_with(
+        home,
+        project,
+        &["check", "--report-only", "--scope", "project", "--json"],
+        ("KENDEX_BACKGROUND_REFRESH", "off"),
+    );
+    let report = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("the report does not parse: {error}\n{}", said(&output)));
+    (output.status.code(), report)
+}
+
+/// A clone that follows another's committed record, as a satellite copy
+/// of a home folder does: after the pull, the record names a catalog
+/// commit this machine's copy of the source has not fetched. The check
+/// names the source refresh, and running it settles the package without
+/// writing anything in the project, which that clone must not commit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pulled_record_past_the_local_source_copy_settles_with_a_source_refresh() {
+    let manifest = "schema = 8\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n";
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let project = home.join("proj");
+    fs::write(project.join("kendex.toml"), manifest).unwrap();
+    let installed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+
+    let upstream = home.join("git/vanillagreencom/kendex");
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    let moved = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = rooted(&other_tmp);
+    let main = other.join("proj");
+    fs::create_dir_all(other.join(".claude")).unwrap();
+    fs::create_dir_all(main.join(".claude")).unwrap();
+    fs::write(main.join("kendex.toml"), manifest).unwrap();
+    let recorded = kendex_with(
+        &other,
+        &main,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+        ("KENDEX_GIT_BASE", &format!("file://{}/git", home.display())),
+    );
+    assert!(recorded.status.success(), "{}", said(&recorded));
+    assert!(
+        fs::read_to_string(main.join(".kendex-lock.json"))
+            .unwrap()
+            .contains(&moved),
+        "the other clone records the next commit"
+    );
+    land(&main, &project);
+    let derived = kendex(&home, &project, &["updates", "--scope", "project"]);
+    assert!(derived.status.success(), "{}", said(&derived));
+
+    let (code, report) = checked(&home, &project);
+    assert_eq!(code, Some(2), "{report}");
+    let verbs: Vec<&str> = report["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["lines"].as_array().unwrap())
+        .filter(|line| {
+            line["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("'gh'"))
+        })
+        .filter_map(|line| line["remedy"]["verb"].as_str())
+        .collect();
+    assert_eq!(verbs, ["source-refresh"], "{report}");
+
+    let before = test_util::lane::snapshot(&project);
+    let refreshed = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project"],
+    );
+    assert!(refreshed.status.success(), "{}", said(&refreshed));
+    assert_eq!(test_util::lane::snapshot(&project), before);
+    let (code, report) = checked(&home, &project);
+    assert_eq!(code, Some(0), "{report}");
 }

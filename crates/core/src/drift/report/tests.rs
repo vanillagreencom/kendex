@@ -57,6 +57,7 @@ pub(super) fn package(name: &str) -> PackageSnapshot {
         edited: false,
         mixed: false,
         forked: false,
+        recorded: Vec::new(),
     }
 }
 

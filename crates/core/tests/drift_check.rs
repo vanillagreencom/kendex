@@ -421,8 +421,16 @@ fn a_foreground_fetch_retires_missing_commit_evidence() {
                 usize::from(fetch),
                 "{case}, fetch={fetch}"
             );
+            // The fetch is the one fix a missing commit takes, and a
+            // superseded comparison is already owed one.
             assert!(
-                lines.iter().all(|line| line.remedy.is_none()),
+                lines.iter().all(|line| match line.class {
+                    Class::Settling => line.remedy.is_none(),
+                    _ => matches!(
+                        line.remedy,
+                        None | Some(drift::report::Remedy::SourceRefresh { global: false })
+                    ),
+                }),
                 "{case}, fetch={fetch}"
             );
             assert_eq!(
@@ -556,6 +564,81 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
         drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose),
         ""
     );
+}
+
+/// A pull of another clone's record moves the lock under a verdict made
+/// from the old one: the next check reads the package again instead of
+/// offering the refresh that verdict called for, and the background job
+/// it requests derives the verdict for the record now there, whether or
+/// not the pulled manifest still has a source a fetch could move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pulled_record_makes_the_next_check_read_again() {
+    // (case, the source line the pulled manifest carries, whether a fetch
+    // can still compare the package)
+    let rows: &[(&str, &str, bool)] = &[
+        ("source enabled", "", true),
+        ("only source disabled", "enabled = false\n", false),
+    ];
+    for &(case, pulled_source, compared) in rows {
+        let w = world();
+        write_skill(&w.upstream, "gh", "One.");
+        commit(&w.upstream, "one");
+        declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+        sync_and_apply(&w);
+        write_skill(&w.upstream, "gh", "Two.");
+        let second = commit(&w.upstream, "two");
+        remote::sync(&w.env, REPO, None).unwrap();
+        drift::snapshot::record(&w.env, &w.scope).unwrap();
+        let scopes = std::slice::from_ref(&w.scope);
+        let verbs = |checked: &drift::report::CheckReport| -> Vec<(drift::report::Class, Option<drift::report::Remedy>)> {
+            checked
+                .sections
+                .iter()
+                .flat_map(|section| &section.lines)
+                .filter(|line| line.text.to_string().contains("'gh'"))
+                .map(|line| (line.class, line.remedy.clone()))
+                .collect()
+        };
+        let before = drift::report::check(&w.env, scopes, drift::copies::CheckMode::ReportOnly);
+        assert_eq!(
+            verbs(&before),
+            [(
+                drift::report::Class::Drift,
+                Some(drift::report::Remedy::Refresh { global: false })
+            )],
+            "{case}"
+        );
+
+        let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+        let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+        for entry in lock.entries.values_mut() {
+            entry.source_commit = Some(second.clone());
+        }
+        kendex_core::lock::save(&lock_path, &lock).unwrap();
+        declare(&w, pulled_source, "[skills.gh]\nsource = \"cat\"\n");
+
+        let pending = (drift::report::Class::Settling, None);
+        let after = drift::report::check(&w.env, scopes, drift::copies::CheckMode::ReportOnly);
+        assert!(verbs(&after).contains(&pending), "{case}: {after:?}");
+        assert!(
+            drift::report::wants_background_refresh(&w.env, scopes, &after),
+            "{case}"
+        );
+        assert!(
+            drift::refresh::refresh_stale(&w.env, scopes).is_empty(),
+            "{case}"
+        );
+        // No line is left waiting on the pass the check requested. A
+        // disabled source keeps its own could-not-check line.
+        let settled = verbs(&drift::report::check(
+            &w.env,
+            scopes,
+            drift::copies::CheckMode::ReportOnly,
+        ));
+        assert!(!settled.contains(&pending), "{case}: {settled:?}");
+        assert!(!compared || settled.is_empty(), "{case}: {settled:?}");
+    }
 }
 
 #[test]

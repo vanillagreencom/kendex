@@ -97,17 +97,22 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         // when another lane fetched or the scope has never been evaluated.
         // A scope with no remote source has no verdict a fetch could move, and the check
         // reads its absent snapshot as nothing to say.
-        if remotes
-            && (touched
-                || match super::snapshot::load(env, scope) {
-                    super::snapshot::SnapshotFile::Current(snapshot) => {
-                        snapshot.sources_changed(env)
-                    }
-                    super::snapshot::SnapshotFile::Absent
-                    | super::snapshot::SnapshotFile::Unreadable(_) => true,
-                })
-            && let Err(error) = super::snapshot::record(env, scope)
-        {
+        // A record that moved under the verdicts is derived again with or
+        // without a remote source: the check holds its packages pending
+        // this pass, which needs no fetch to judge the record now there.
+        // A record that will not read fails the derivation too, so it
+        // moves nothing here.
+        let owed = touched
+            || match super::snapshot::load(env, scope) {
+                super::snapshot::SnapshotFile::Current(snapshot) => {
+                    (remotes && snapshot.sources_changed(env))
+                        || crate::lock::load(&crate::lock::lock_path(env, scope))
+                            .is_ok_and(|lock| snapshot.record_moved(&lock))
+                }
+                super::snapshot::SnapshotFile::Absent
+                | super::snapshot::SnapshotFile::Unreadable(_) => remotes,
+            };
+        if owed && let Err(error) = super::snapshot::record(env, scope) {
             notes.push(format!("{}: snapshot not derived ({error})", scope.label()));
         }
         // The other deep read the check owes: the plan over declarations

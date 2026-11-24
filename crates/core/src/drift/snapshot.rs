@@ -15,7 +15,7 @@ use crate::model::{ItemKind, Scope};
 
 /// Bumped when the shape changes; an older or newer snapshot reads as
 /// absent, which the check reports as not-yet-evaluated.
-pub const SNAPSHOT_SCHEMA: u32 = 4;
+pub const SNAPSHOT_SCHEMA: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -39,6 +39,10 @@ pub struct UnreadableSnapshot {
     pub kind: ItemKind,
     pub name: String,
     pub message: String,
+    /// The record names a commit the source's copy has not fetched, which
+    /// a source refresh settles.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unfetched: bool,
     /// The warning's technical cause, for `check --verbose` and `--json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -56,6 +60,14 @@ impl ScopeSnapshot {
                 .unreadable
                 .iter()
                 .any(|note| source_changed(env, &note.repo, note.refs_state.as_deref()))
+    }
+
+    /// Whether the record moved under some package since its verdict was
+    /// derived, as a pull of another clone's lock moves it.
+    pub(crate) fn record_moved(&self, lock: &crate::lock::Lock) -> bool {
+        self.packages
+            .iter()
+            .any(|package| package.record_moved(lock))
     }
 }
 
@@ -89,6 +101,18 @@ pub struct PackageSnapshot {
     pub edited: bool,
     pub mixed: bool,
     pub forked: bool,
+    /// The commits the lock recorded for the package when this verdict was
+    /// derived.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recorded: Vec<String>,
+}
+
+impl PackageSnapshot {
+    /// Whether `lock` records this package at other commits than the
+    /// verdict was derived from: the verdict is about another record.
+    pub(crate) fn record_moved(&self, lock: &crate::lock::Lock) -> bool {
+        crate::lock::recorded_commits(lock, self.kind, &self.name) != self.recorded
+    }
 }
 
 pub fn snapshot_path(env: &Env, scope: &Scope) -> PathBuf {
@@ -255,6 +279,7 @@ pub fn record_with(
             edited: row.blocked_by_local_edit,
             mixed: row.mixed,
             forked: row.forked,
+            recorded: row.recorded.clone(),
         });
     }
     let mut repos: std::collections::BTreeMap<_, _> = report
@@ -292,6 +317,11 @@ pub fn record_with(
                 kind: warning.kind,
                 name: warning.name.clone(),
                 message: warning.message.clone(),
+                // Only an evaluated row carries the fact, and the one
+                // warning that row's evaluation raised is the one it is about.
+                unfetched: report.rows.iter().any(|row| {
+                    row.unfetched && row.kind == warning.kind && row.name == warning.name
+                }),
                 detail: warning.detail.clone(),
                 refs_state: evaluated_refs(env, &repo, &mut refs_by_repo),
                 repo,

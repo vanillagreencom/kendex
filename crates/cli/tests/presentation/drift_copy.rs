@@ -1,7 +1,7 @@
 //! The session report a person reads: what they must act on or know, with
 //! the git command, the hash and what git printed behind `--verbose` and
 //! `--json`. The fixture is the 2026-09-29 one: a comparison that failed
-//! on a cached copy missing a commit, which the next fetch repairs.
+//! on a cached copy missing a commit, which a source refresh repairs.
 
 use super::*;
 use kendex_core::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot, UnreadableSnapshot};
@@ -39,7 +39,8 @@ fn failed_comparison(home: &Path, fetched_ago: u64, superseded: bool) -> PathBuf
             unreadable: vec![UnreadableSnapshot {
                 kind: ItemKind::Skill,
                 name: "gh".into(),
-                message: "kendex could not find the installed version in its source; the next source refresh tries again".into(),
+                message: "kendex could not find the installed version in its source".into(),
+                unfetched: true,
                 detail: Some(format!(
                     "git log --first-parent --format=%H {HASH} -- :(literal)skills/gh failed: fatal: bad object {HASH}"
                 )),
@@ -87,6 +88,13 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
             assert_eq!(code, Some(expected_code));
             assert_eq!(technical(&text), Vec::<&str>::new());
             assert!(!text.is_empty());
+            // A clone that must not commit is told the step that writes
+            // nothing in it; a superseded comparison names its own.
+            assert_eq!(
+                text.contains("fix: kendex source refresh"),
+                !superseded,
+                "{text}"
+            );
             let verbose = [flags, &["--verbose"]].concat();
             let (code, text) = check(&home, &project, &verbose);
             assert_eq!(code, Some(expected_code));
@@ -105,7 +113,10 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
             if superseded { "drift" } else { "unknown" }
         );
         assert!(line["detail"].as_str().unwrap().contains(HASH));
-        assert!(line["remedy"].is_null());
+        match superseded {
+            true => assert!(line["remedy"].is_null(), "{line}"),
+            false => assert_eq!(line["remedy"]["verb"], "source-refresh", "{line}"),
+        }
         assert_eq!(
             technical(line["text"].as_str().unwrap()),
             Vec::<&str>::new()

@@ -17,7 +17,8 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set: apply, replace-unmanaged,
-//! refresh, remove, add, fork, drift-hook, move-aside, findings, plan —
+//! refresh, source-refresh, remove, add, fork, drift-hook, move-aside,
+//! findings, plan —
 //! with validated identifiers or quoted paths in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
@@ -70,7 +71,8 @@ pub enum Class {
     Unevaluated,
     Unknown,
     /// Present refs prove the comparison was superseded, and its enabled
-    /// source has no recorded fetch failure. Re-evaluation is still owed.
+    /// source has no recorded fetch failure, or the record the comparison
+    /// was made from has moved. Re-evaluation is still owed.
     Settling,
 }
 
@@ -118,6 +120,13 @@ pub enum Remedy {
         global: bool,
     },
     Refresh {
+        global: bool,
+    },
+    /// Fetch the scope's sources and derive its standing again: the fix
+    /// for a record naming a commit this machine's copy of the source has
+    /// not fetched. It writes nothing in the project, so a clone that must
+    /// not commit can run it.
+    SourceRefresh {
         global: bool,
     },
     /// Compare installed packages with the current source state.
@@ -223,6 +232,7 @@ impl Remedy {
             | Remedy::ReplaceUnmanaged { global, .. }
             | Remedy::UpdatePi { global }
             | Remedy::Refresh { global }
+            | Remedy::SourceRefresh { global }
             | Remedy::Updates { global }
             | Remedy::DriftHook { global }
             | Remedy::Plan { global }
@@ -322,6 +332,7 @@ impl Remedy {
                 format!("kendex update-pi --scope project{place}")
             }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::SourceRefresh { .. } => format!("kendex source refresh{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(
                 "kendex drift-hook --yes --scope {}",
@@ -352,11 +363,12 @@ impl Remedy {
         };
         let elsewhere = match named {
             None | Some(ProjectTarget::Worktree(_)) => false,
-            // `updates` without `--apply` and the plan write nothing in the
-            // checkout, so they run from the worktree.
-            Some(ProjectTarget::MainCheckout(_)) => {
-                !matches!(self, Remedy::Plan { .. } | Remedy::Updates { .. })
-            }
+            // `updates` without `--apply`, a source refresh and the plan
+            // write nothing in the checkout, so they run from the worktree.
+            Some(ProjectTarget::MainCheckout(_)) => !matches!(
+                self,
+                Remedy::Plan { .. } | Remedy::Updates { .. } | Remedy::SourceRefresh { .. }
+            ),
         };
         Some(match elsewhere {
             true => Fix::Elsewhere(command),
@@ -450,8 +462,9 @@ pub struct CheckReport {
     /// bare spelling a command typed in the checked directory would take.
     #[serde(skip_serializing_if = "project_target_not_serializable")]
     pub project_target: Option<ProjectTarget>,
-    /// Whether a scope's plan over unrecorded copies outran the deadline
-    /// and is still owed — what sends the caller's background refresh
+    /// Whether a deep pass is still owed: a scope's plan over unrecorded
+    /// copies outran the deadline, or a package's record moved since its
+    /// verdict was derived — what sends the caller's background refresh
     /// through it. For the caller that ran the check, never for the
     /// report's readers.
     #[serde(skip)]
@@ -928,9 +941,8 @@ fn stamp_for(env: &Env, repo: &str) -> Option<super::stamps::FetchStamp> {
 /// stale mirror needs fetching, a snapshot predates another fetch, or a
 /// scope with remote sources has no
 /// snapshot (a mutation just invalidated it, or nothing ever evaluated),
-/// or the report it just produced says a plan over unrecorded copies
-/// outran the deadline and is still owed — either way the deep pass is
-/// what turns "maybe" back into verdicts.
+/// or the report it just produced says a deep pass is still owed — either
+/// way the deep pass is what turns "maybe" back into verdicts.
 pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckReport) -> bool {
     if checked.deep_pass_owed {
         return true;
