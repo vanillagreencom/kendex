@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::drift::report;
+use kendex_core::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot, UnreadableSnapshot};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
@@ -316,6 +317,55 @@ fn a_worktree_whose_manifest_will_not_load_names_itself() {
         )),
         "the manifest that would not load is the worktree's own, never the checkout it was added from"
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_worktree_without_its_manifest_rechecks_its_own_superseded_snapshot() {
+    let (_tmp, env, main, linked) = repository();
+    let linked_scope = scope(&linked);
+    declare(&env, &scope(&main));
+    fs::create_dir_all(linked.join(".claude")).unwrap();
+
+    // The local snapshot survives the branch switch that removed its manifest.
+    let repo = "owner/repo";
+    let now = kendex_core::clock::unix_now();
+    kendex_core::drift::snapshot::store(
+        &env,
+        &linked_scope,
+        &ScopeSnapshot {
+            schema: SNAPSHOT_SCHEMA,
+            taken_at: now,
+            scope: linked_scope.label(),
+            packages: Vec::new(),
+            unreadable: vec![UnreadableSnapshot {
+                kind: kendex_core::model::ItemKind::Skill,
+                name: "gh".into(),
+                message: "its version history could not be read".into(),
+                unfetched: false,
+                detail: None,
+                repo: repo.into(),
+                refs_state: Some("old-refs".into()),
+            }],
+        },
+    )
+    .unwrap();
+    let key = kendex_core::remote::cache_key(&env, repo);
+    kendex_core::drift::stamps::record_success(&env, &key, Some("new-refs".into()), now).unwrap();
+
+    let checked = report::check(
+        &env,
+        &[linked_scope],
+        kendex_core::drift::copies::CheckMode::ReportOnly,
+    );
+    assert_eq!(
+        checked.project_target,
+        Some(report::ProjectTarget::MainCheckout(
+            kendex_core::paths::canonical(&main).unwrap()
+        ))
+    );
+    let text = report::render_plain(&checked, report::Verbosity::Verbose);
+    assert!(text.contains("fix: kendex source refresh\n"), "{text}");
 }
 
 /// A kendex project can sit below the git top level, so the destination

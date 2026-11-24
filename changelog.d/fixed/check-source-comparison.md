@@ -1,1 +1,1 @@
-- When a source changed since its last comparison, `kendex check` points to `kendex updates` if the comparison needs a manual rerun. This leaves the project’s install record untouched.
+- When a source changed since its last comparison, `kendex check` offers a manual rerun when needed. The suggested command checks the same project and leaves its install record untouched.

@@ -178,7 +178,7 @@ pub(super) fn check_scope(
         Ok(crate::lock::LockFile::Absent) => Some(&empty),
         Err(_) => None,
     };
-    ctx.snapshot_lines(manifest.current(), recorded, sections, oldest_age);
+    ctx.snapshot_lines(&manifest, recorded, sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
         scan,
@@ -1502,7 +1502,7 @@ impl ScopeCheck<'_> {
     /// one with no declaration that reads has no line of its own.
     fn snapshot_lines(
         &self,
-        manifest: Option<&crate::manifest::Manifest>,
+        manifest: &ManifestRead,
         lock: Option<&crate::lock::Lock>,
         sections: &mut Sections,
         oldest_age: &mut Option<u64>,
@@ -1511,7 +1511,7 @@ impl ScopeCheck<'_> {
         let snapshot = match crate::drift::snapshot::load(self.env, self.scope) {
             crate::drift::snapshot::SnapshotFile::Current(snapshot) => snapshot,
             crate::drift::snapshot::SnapshotFile::Absent => {
-                let has_remote = manifest.is_some_and(|manifest| {
+                let has_remote = manifest.current().is_some_and(|manifest| {
                     manifest
                         .sources
                         .values()
@@ -1612,7 +1612,7 @@ impl ScopeCheck<'_> {
     #[allow(clippy::too_many_arguments)]
     fn comparison_line(
         &self,
-        manifest: Option<&crate::manifest::Manifest>,
+        manifest: &ManifestRead,
         kind: ItemKind,
         name: &str,
         repo: &str,
@@ -1635,7 +1635,7 @@ impl ScopeCheck<'_> {
         }
         let mirror = crate::remote::cache_key(self.env, repo);
         let declared =
-            manifest.and_then(|manifest| {
+            manifest.current().and_then(|manifest| {
                 manifest
                     .sources
                     .values()
@@ -1693,6 +1693,9 @@ impl ScopeCheck<'_> {
         }
         let remedy = if pending {
             None
+        } else if superseded && !self.global && matches!(manifest, ManifestRead::Absent) {
+            // Source refresh runs in this checkout and rechecks the empty project seed.
+            Some(Remedy::SourceRefresh { global: false })
         } else if superseded {
             // Updates re-evaluates the current mirror without rewriting the
             // project's install record.
