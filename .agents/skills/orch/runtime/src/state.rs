@@ -536,6 +536,22 @@ pub struct ItemState {
     pub stages: Vec<Stage>,
 }
 
+impl ItemState {
+    pub(crate) fn accepted_dev(&self) -> Option<(usize, &Stage)> {
+        let round = self.dev_round_id.as_deref()?;
+        self.stages.iter().enumerate().find(|(_, stage)| {
+            matches!(stage.kind, StageKind::Implement | StageKind::Fix)
+                && stage.round_id.as_deref() == Some(round)
+                && stage.end.is_some()
+                && stage.superseded != Some(true)
+                && matches!(
+                    stage.outcome,
+                    Some(StageOutcome::Pass | StageOutcome::PassExcused)
+                )
+        })
+    }
+}
+
 impl Record for ItemState {
     fn view(path: &Path, doc: &Document) -> Result<Self> {
         Ok(ItemState {

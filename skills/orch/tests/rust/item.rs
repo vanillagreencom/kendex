@@ -4639,6 +4639,11 @@ mod dev_artifacts {
                 "{expanded}"
             );
             assert_eq!(expanded["kept"]["reviewer-test"]["path"], path);
+            assert_eq!(expanded["kept"]["reviewer-test"]["review_round_id"], round);
+            assert_eq!(
+                expanded["kept"]["reviewer-test"]["delegated_at"],
+                delegated["value"]
+            );
             assert_eq!(plan(&base, "reviewer-test")["launch"], json!([]));
             assert_eq!(
                 plan(&head, "reviewer-test")["launch"],
@@ -4663,8 +4668,19 @@ mod dev_artifacts {
         ));
         result(&w.call(&["dev-return", "check"], &round, &[]));
         result(&w.op(json!({"op":"accept-result","round_id":round,"outcome":"pass"})));
-        let route = result(&w.op(json!({"op":"record-route","tier":"standard"})));
-        assert_eq!(route["previous_tier"], "small");
+        let mut legacy = w.doc();
+        let stage = legacy["stages"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|stage| stage["round_id"] == round && stage["kind"] == "implement")
+            .unwrap();
+        stage.as_object_mut().unwrap().remove("tier").unwrap();
+        fs::write(w.item(), legacy.to_string()).unwrap();
+        // The first open stops at base freshness before it checks the receipt.
+        for _ in 0..2 {
+            result(&w.op(json!({"op":"record-route","tier":"standard"})));
+        }
         let resume = || {
             result(&w.run(&[
                 "dev-return",
@@ -4696,6 +4712,7 @@ mod dev_artifacts {
     fn an_exception_the_round_began_with_accepts_only_the_failures_it_names_and_keeps_them_visible()
     {
         let w = World::new();
+        result(&w.op(json!({"op":"record-route","tier":"small"})));
         let exception = json!({"by": "owner-directive", "id": "D-7", "excused": ["lint", "unit"]});
         let first =
             w.begin_with(&json!({"op": "begin-round", "kind": "dev", "exception": exception}));
@@ -4745,6 +4762,19 @@ mod dev_artifacts {
         );
         assert_eq!(closed["report"]["outcome"], "pass-excused", "{closed}");
         assert_eq!(w.round_stage(&round)["exception"], exception);
+        result(&w.op(json!({"op":"record-route","tier":"standard"})));
+        let resumed = result(&w.run(&[
+            "dev-return",
+            "resume",
+            "--worktree",
+            w.wt.to_str().unwrap(),
+            "--issue",
+            "issue-8",
+        ]));
+        assert_eq!(resumed["action"], "continue", "{resumed}");
+        assert_eq!(resumed["round_id"], round);
+        assert_eq!(resumed["receipt"]["path"], written["path"]);
+        assert_eq!(resumed["receipt"]["exception"], exception);
         let run = w.doc()["stages"]
             .as_array()
             .unwrap()

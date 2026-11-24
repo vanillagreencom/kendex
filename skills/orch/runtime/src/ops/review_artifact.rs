@@ -147,18 +147,23 @@ pub fn path(r: &MintPath, clock: &dyn Clock) -> Result<Answer> {
             c => Some(c),
         })
         .collect();
-    let token = if let Some(round) = &r.round_id {
+    if let Some(round) = &r.round_id {
         super::artifact::token(round)?;
-        format!("{round}-")
-    } else {
-        String::new()
-    };
-    let path = tmp.join(format!("review-{}-{token}{stamp}.json", r.agent));
+    }
+    let prefix = artifact_prefix(&r.agent, r.round_id.as_deref());
+    let path = tmp.join(format!("{prefix}{stamp}.json"));
     Ok(Answer {
         value: json!({ "path": path }),
         text: path.display().to_string(),
         status: 0,
     })
+}
+
+fn artifact_prefix(agent: &str, round: Option<&str>) -> String {
+    match round {
+        Some(round) => format!("review-{agent}-{round}-"),
+        None => format!("review-{agent}-"),
+    }
 }
 
 /// The item records' directory by its one key: the `--state-dir` flag, else the caller's `ORCH_STATE_DIR`, else the
@@ -1061,7 +1066,7 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
     // Accepted paths are shared by every batch. The minted filename binds
     // this path to its canonical assignment and to the exact reviewed range.
     for domain in r.agents.iter().map(String::as_str).chain(["external"]) {
-        let prefix = format!("review-{domain}-{round}-");
+        let prefix = artifact_prefix(domain, Some(round));
         for file in paths.iter().rev().filter_map(Value::as_str).map(Path::new) {
             if file.parent() != Some(tmp.as_path())
                 || !file
@@ -1088,7 +1093,10 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
                     read: Some(read),
                     missing: None,
                 };
-                kept.insert(domain.to_owned(), answer(outcome, Some(&declines)).value);
+                let mut evidence = answer(outcome, Some(&declines)).value;
+                evidence["review_round_id"] = json!(round);
+                evidence["delegated_at"] = json!(boundary);
+                kept.insert(domain.to_owned(), evidence);
                 break;
             }
         }
@@ -1099,7 +1107,7 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
 /// The agent's artifacts under `tmp/`, newest first; an unreadable
 /// directory lists none, as the glob over it matched none.
 fn agent_artifacts(tmp: &Path, agent: &str) -> Vec<(PathBuf, fs::Metadata)> {
-    let prefix = format!("review-{agent}-");
+    let prefix = artifact_prefix(agent, None);
     let mut found: Vec<(PathBuf, fs::Metadata)> = fs::read_dir(tmp)
         .into_iter()
         .flatten()

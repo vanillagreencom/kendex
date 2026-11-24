@@ -42,9 +42,6 @@ pub struct ResumeReturn {
     pub worktree: PathBuf,
     #[arg(long)]
     pub issue: String,
-    /// The tier returned by record-route before this session set standard.
-    #[arg(long)]
-    pub previous_tier: Option<String>,
 }
 
 /// The word every refusal of `round stamp|cut|recover` under `--text`, and
@@ -2077,20 +2074,16 @@ pub fn resume(settings: &Settings, r: &ResumeReturn) -> Result<Answer> {
         return Ok(delegate());
     }
     let item = snapshot.view::<ItemState>(&path)?;
-    let Some(stage) = item.stages.iter().find(|s| {
-        matches!(s.kind, StageKind::Implement | StageKind::Fix)
-            && s.round_id.is_some()
-            && s.round_id == item.dev_round_id
-            && s.end.is_some()
-            && s.superseded != Some(true)
-            && s.tier.as_deref().or(r.previous_tier.as_deref()) == Some("small")
-    }) else {
+    let Some((_, stage)) = item
+        .accepted_dev()
+        .filter(|(_, s)| s.tier.as_deref() == Some("small"))
+    else {
         return Ok(delegate());
     };
-    let verdict = match stage.outcome {
-        Some(StageOutcome::Pass) => "accept",
-        Some(StageOutcome::PassExcused) => "accept-excused",
-        _ => return Ok(delegate()),
+    let verdict = if stage.outcome == Some(StageOutcome::PassExcused) {
+        "accept-excused"
+    } else {
+        "accept"
     };
     let checked = check_evaluate(
         settings,
@@ -2098,7 +2091,7 @@ pub fn resume(settings: &Settings, r: &ResumeReturn) -> Result<Answer> {
             file: None,
             worktree: Some(r.worktree.clone()),
             issue: Some(r.issue.clone()),
-            round_id: item.dev_round_id,
+            round_id: stage.round_id.clone(),
             expect_items: None,
             expect_items_from_round: stage.kind == StageKind::Fix,
             wait: 0,

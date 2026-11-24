@@ -451,7 +451,7 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"verification","agents":[PANEL_AGENTS_JSON],"reason":"pr-comments fix round: [DOMAINS]","external":false,"external_skip":"pr-comments fix pass runs no external review"}'
    ```
 
-2. Delegate and collect it as [review-pr.md](review-pr.md) § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`.
+2. Enter [review-pr.md § 2.2 Launch setup](review-pr.md#22-launch-and-delegate) as a new scoped verification. Supply the panel as `[AGENTS]`, `[PRE_SHA]` and the resolved `HEAD` as the concrete endpoints, and `EXTERNAL_REVIEW_REQUESTED=false`. Collect through its § 3.
    - Close its review stage with the `outcome` word that [review-pr.md § 3.3](review-pr.md#33-present) computes from this pass's panel and accepted artifacts.
    - Then shut its reviewers down, and clear their state with review-pr.md § 5's first write.
 3. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition as findings of this pass. What survives joins this pass's fix set, as a defect this diff introduces.

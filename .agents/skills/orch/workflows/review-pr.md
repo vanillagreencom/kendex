@@ -93,35 +93,6 @@ With `cycles > 0`, fill the delegation's re-review block from `fixed_items`, `es
 
 ## 2. Prepare Reviewers
 
-**Pre-panel admission.** Before you size or start attached reviewers, ask the runtime whether this session has room for their returns. Run it from `[WORKTREE_PATH]`:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
-```
-
-- In a lane, the command reads the session and transcript bound to its pane.
-- Outside a lane, pass the harness name and this session's native ID and transcript path as one JSON object on stdin. Copilot requires the session ID, and can read its session record without a transcript path.
-
-```bash
-jq -cn --arg harness "[HARNESS]" --arg session_id "[SESSION_ID]" --arg transcript_path "[TRANSCRIPT_PATH]" '{harness: $harness, session_id: $session_id, transcript_path: $transcript_path}' |
-  .agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
-```
-
-Route on the reply's `verdict`:
-
-- `room`: size and start the attached panel below.
-- `alternate-review`: Codex only. The attached-agent reserve refuses, while the plain mark has room.
-  1. Keep the full required panel. Run its required domains as process-owned Codex reviewers through [codex-runtime.md § Process-owned reviewers](../references/codex-runtime.md#process-owned-reviewers) and [review-cycle.md § Process-owned review](../references/review-cycle.md#process-owned-review).
-  2. Skip attached slot sizing, thread selection and spawn. Keep panel selection, the existing-assignment reads and § 2.1.
-  3. This verdict permits no attached launch and no advisory replacement.
-- `due`: hand off by [review-cycle.md § Handoff on `due`](../references/review-cycle.md#handoff-on-due).
-- A refusal at exit 2:
-  1. Start no attached panel. Report the stderr line.
-  2. If the harness cannot supply the named session input or is unsupported, ask the user to resume the review in a supported session that supplies it.
-  3. Otherwise repair the cause before re-entering § 2.
-
-**Continuation.** A successor that resumes a handed-off review applies [review-cycle.md § Original-batch continuation](../references/review-cycle.md#original-batch-continuation) after this admission. A proved continuation, in the steps below, is one that section proves.
-
 **Panel.** `[AGENTS]` is the caller's `agents` when given. Otherwise it is the first-cycle panel: the reviewers this harness exposes whose domains the whole diff, `origin/[BASE_BRANCH]...HEAD`, or the issue's Done-when touches, by [§ Bounded Re-Review](#bounded-re-review)'s scoped-panel rule.
 
 1. Read the Done-when first: `linear.sh issues get [ISSUE_ID]` `.description` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` for GitHub. A failed read, or a `pr-N` key, selects from the diff alone, and `[PANEL_REASON]` says so.
@@ -130,47 +101,6 @@ Route on the reply's `verdict`:
 4. With no reviewer available, go to § 5 with verdict `pass`.
 5. `[PANEL_REASON]` names the domains touched, or reads `caller panel` for a caller's `agents`. § 2.1 records the panel.
 6. A proved continuation keeps its original panel.
-7. On a scoped re-review, clear the first cycle's kept passes and use the scoped panel as `[LAUNCH_AGENTS]`. A later wave of the same first cycle keeps its existing launch subset and kept passes.
-
-**Reviewer slots** (attached review only). Resolve the reviewer mode per [skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
-
-```bash
-.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
-```
-
-Read the slots the open child sessions hold:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"slots"}'
-```
-
-The reply's `live` counts the open child sessions that still hold a slot. `observed` is the wave size an earlier thread-limit error proved.
-
-- **Codex MultiAgentV2.**
-  1. Apply [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), whose **Budget** reads `effective_cap` and the held threads.
-  2. `REVIEWER_SLOTS` is the eligible finished reviewer threads plus `max(0, effective_cap - held threads)`.
-  3. Bound the wave by a positive `observed`, and by a nonzero budget after the primary and other active work.
-  4. A zero-sized wave takes Codex thread reuse's held-thread wait.
-- **Every other surface.**
-  1. A positive `observed` is wave mode at that size.
-  2. Otherwise a budget of `0` is persistent mode, and a positive budget gives `REVIEWER_SLOTS` by [skill-rules.md § Reviewer persistence is budget-conditional](../references/skill-rules.md#reviewer-persistence-is-budget-conditional) step 3.
-- Use wave mode when `[AGENTS]` exceeds `REVIEWER_SLOTS`; otherwise use persistent mode.
-- Recompute at every § 2 entry.
-
-**Existing reviewers.** Read the stored reviewer state before any spawn:
-
-```bash
-STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}' <<<"$STATE_READ"
-```
-
-1. For attached review, classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed or confirmed-stuck. On a proved continuation, classify only its launch subset, and keep the attempted assignments for § 3.
-2. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree, after a name-only resume too.
-3. On Codex, retire and reuse under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
-4. Add the context-exhausted, missing, closed and confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`.
-5. Carry a reusable reviewer's runtime-type entry forward.
-6. On a re-review whose panel shrank (§ Bounded Re-Review scopes it), retire the reviewers outside the panel first.
-7. For `alternate-review`, read the process ownership facts in the lane status and in the handoff's `remaining` and `traps` prose. Keep accepted and attempted assignments, attached work included, and select only never-launched required domains for process launch.
-8. Spawn nothing yet: resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 
@@ -200,9 +130,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
    - On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once, `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]`, where `[FIX]` is each reason's remedy in the second-opinion skill's references/error-handling.md.
    - `EXTERNAL_SKIP_REASON` is `[CANDIDATE_REASONS]` on `none`, the error JSON's `error` or first stderr line on another failure, and `detect: no output` on empty output.
 
-4. **Set the launch subset and record the panel** on a fresh § 1 entry, before any spawn. Set `external` to `EXTERNAL_REVIEW_REQUESTED` and, when it is false, `external_skip` to `EXTERNAL_SKIP_REASON`. A `small` item's panel holds three reviewers at most, the external lane counted.
-   - Resolve `origin/[BASE_BRANCH]` and `HEAD` to `[BASE_SHA]` and `[HEAD_SHA]`. After sizing the full panel, apply [review-cycle.md § Tier escape](../references/review-cycle.md#tier-escape) to those endpoints and the final panel.
-   - Carry the reply's `kept` results into § 3.1 and its `launch` list as `[LAUNCH_AGENTS]`. Restrict existing assignments and `REVIEWERS_TO_LAUNCH` to that list. Keep the full `[AGENTS]` for verdict collection and the panel record. If `kept.external` stands, collect it with the other kept results.
+4. **Record the panel** on a fresh § 1 entry. Set `external` to `EXTERNAL_REVIEW_REQUESTED` and, when it is false, `external_skip` to `EXTERNAL_SKIP_REASON`. A `small` item's panel holds three reviewers at most, the external lane counted.
    1. The reason is tool output, so write the request to `[WORKTREE_PATH]/tmp/record-panel-[ISSUE_ID].json` with the harness file tool. Leave out `external_skip` when `external` is true:
 
       ```json
@@ -217,10 +145,87 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 ### 2.2 Launch And Delegate
 
+**Launch setup.** Keep the full `[AGENTS]` for collection and apply the entry that brought the review here:
+
+| Entry | Scope and launch candidates |
+|---|---|
+| First cycle from § 1 | Resolve `origin/[BASE_BRANCH]` and `HEAD` to `[BASE_SHA]` and `[HEAD_SHA]`. Run [review-cycle.md § Tier escape](../references/review-cycle.md#tier-escape) with the final panel. Carry its `kept` results to § 3.1 and its `launch` list as `[LAUNCH_AGENTS]`. |
+| New scoped verification or re-review | Use the caller's concrete range or resolve the stored `pre_delegate_sha` and current `HEAD`. Clear kept results and set `[LAUNCH_AGENTS]` to `[AGENTS]`. A missing fix boundary sends `unavailable` internally and the external default. |
+| Handoff successor | Prove the batch and recheck its accepted files by [review-cycle.md § Original-batch continuation](../references/review-cycle.md#original-batch-continuation). Keep its scope and bind `[LAUNCH_AGENTS]` to the proved never-launched subset. |
+| Later wave | Keep the current batch, accepted files and concrete scope. Bind `[LAUNCH_AGENTS]` to the remaining launch candidates. |
+
+Pass the concrete `[BASE_SHA]...[HEAD_SHA]` to internal and external reviewers alike. An empty `[LAUNCH_AGENTS]` skips launch admission, slot reads, assignment lookup and internal launches. Take **Round token**, then any new external review and § 3.
+
+**Launch admission.** With internal launch candidates, ask the runtime whether this session has room for their returns. Run it from `[WORKTREE_PATH]`:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
+```
+
+- In a lane, the command reads the session and transcript bound to its pane.
+- Outside a lane, pass the harness name and this session's native ID and transcript path as one JSON object on stdin. Copilot requires the session ID, and can read its session record without a transcript path.
+
+```bash
+jq -cn --arg harness "[HARNESS]" --arg session_id "[SESSION_ID]" --arg transcript_path "[TRANSCRIPT_PATH]" '{harness: $harness, session_id: $session_id, transcript_path: $transcript_path}' |
+  .agents/skills/orch/scripts/orch-runtime admission --item [ISSUE_ID] --attached-launch
+```
+
+Route on the reply's `verdict`:
+
+- `room`: size and start the attached panel below.
+- `alternate-review`: Codex only. The attached-agent reserve refuses, while the plain mark has room.
+  1. Keep the full required panel. Run its launch candidates as process-owned Codex reviewers through [codex-runtime.md § Process-owned reviewers](../references/codex-runtime.md#process-owned-reviewers) and [review-cycle.md § Process-owned review](../references/review-cycle.md#process-owned-review).
+  2. Skip attached slot sizing, thread selection and spawn. Keep the planned panel and existing assignments.
+  3. This verdict permits no attached launch and no advisory replacement.
+- `due`: hand off by [review-cycle.md § Handoff on `due`](../references/review-cycle.md#handoff-on-due).
+- A refusal at exit 2:
+  1. Start no attached panel. Report the stderr line.
+  2. If the harness cannot supply the named session input or is unsupported, ask the user to resume the review in a supported session that supplies it.
+   3. Otherwise repair the cause before re-entering launch admission.
+
+**Reviewer slots** (attached review only). Resolve the reviewer mode per [skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
+
+```bash
+.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
+```
+
+Read the slots the open child sessions hold:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"slots"}'
+```
+
+The reply's `live` counts the open child sessions that still hold a slot. `observed` is the wave size an earlier thread-limit error proved.
+
+- **Codex MultiAgentV2.**
+  1. Apply [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), whose **Budget** reads `effective_cap` and the held threads.
+  2. `REVIEWER_SLOTS` is the eligible finished reviewer threads plus `max(0, effective_cap - held threads)`.
+  3. Bound the wave by a positive `observed`, and by a nonzero budget after the primary and other active work.
+  4. A zero-sized wave takes Codex thread reuse's held-thread wait.
+- **Every other surface.**
+  1. A positive `observed` is wave mode at that size.
+  2. Otherwise a budget of `0` is persistent mode, and a positive budget gives `REVIEWER_SLOTS` by [skill-rules.md § Reviewer persistence is budget-conditional](../references/skill-rules.md#reviewer-persistence-is-budget-conditional) step 3.
+- Use wave mode when `[LAUNCH_AGENTS]` exceeds `REVIEWER_SLOTS`; otherwise use persistent mode.
+- Recompute for each attached wave.
+
+**Existing reviewers.** Read the stored reviewer state before any spawn:
+
+```bash
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}' <<<"$STATE_READ"
+```
+
+1. For attached review, classify each reviewer in `[LAUNCH_AGENTS]` as reusable, context-exhausted, missing, closed or confirmed-stuck. Keep the continuation's attempted assignments for § 3.
+2. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree, after a name-only resume too.
+3. On Codex, retire and reuse under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
+4. Add the context-exhausted, missing, closed and confirmed-stuck reviewers to `REVIEWERS_TO_LAUNCH`.
+5. Carry a reusable reviewer's runtime-type entry forward.
+6. On a re-review whose panel shrank (§ Bounded Re-Review scopes it), retire the reviewers outside the panel first.
+7. For `alternate-review`, read the process ownership facts in the lane status and in the handoff's `remaining` and `traps` prose. Keep accepted and attempted assignments, attached work included, and select only never-launched required domains for process launch.
+
 **Round token.**
 
-- A fresh batch mints its review round before its first spawn or process launch.
-- A proved continuation keeps its original `review_round_id` and `review_delegated_at`, and mints nothing.
+- A fresh batch mints its review round before delegation, including a first cycle with only kept returns.
+- A proved continuation or later wave keeps its current `review_round_id` and `review_delegated_at`, and skips these writes.
 - Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "review"}`, and run it:
 
 ```bash
@@ -233,7 +238,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"review","review_range":{"base":"[BASE_SHA]","head":"[HEAD_SHA]"}}'
 ```
 
-- Stamp a scoped re-review with its delegation time alone:
+- Stamp a scoped review or a § 6 QA batch with its delegation time alone:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"review"}'
@@ -243,23 +248,17 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 - The write opens a new review stage ([workflow-state.md](../schemas/workflow-state.md) `stages`), which § 3.3 closes.
 - These two writes are this batch's admission under [Record verified findings](../schemas/workflow-state.md#record-verified-findings), with state writes enabled. § 3.1 is its acceptance; § 4 is its disposition and completion.
 
-**Scope.**
-
-1. On a fresh § 1 entry, use § 2.1's resolved endpoints.
-2. On a § 4 or § 7 re-entry, resolve the stored `pre_delegate_sha` and the current `HEAD`.
-3. Bind `[DIFF_RANGE]` to the concrete `[BASE_SHA]...[HEAD_SHA]`, and pass it to internal and external review alike.
-4. A missing fix boundary sends `unavailable` internally and the external default.
-5. A proved continuation keeps its resolved endpoints.
-
 **Attached launch.**
 
-1. In wave mode, `[WAVE]` is the first `REVIEWER_SLOTS` reviewers in `[LAUNCH_AGENTS]` missing from `review_wave_done`. A continuation selects its wave from its never-launched subset. With no launch candidates, skip thread selection and spawn.
-2. On a fresh entry from § 2.1, reset the wave record. Skip the reset on a proved continuation, and when § 3.2 returns here for the next wave of the same cycle:
+Enter this block only for a nonempty attached launch subset.
+
+1. On every fresh batch, reset the wave record. Continuations and later waves retain it:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"wave-start"}'
    ```
 
+2. In wave mode, `[WAVE]` is the first `REVIEWER_SLOTS` reviewers in `[LAUNCH_AGENTS]` missing from `review_wave_done`. A continuation selects its wave from its never-launched subset.
 3. Select an eligible finished thread, or spawn each reviewer in `REVIEWERS_TO_LAUNCH`, under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
    - On Codex, spawn each canonical reviewer name by [codex-runtime.md § Spawning Codex collaboration agents](../references/codex-runtime.md#spawning-codex-collaboration-agents), and reuse an eligible finished reviewer thread with the complete delegation below.
 4. When a spawn fails with the runtime's thread-limit error:
@@ -273,7 +272,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
    Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`. On Codex, `[OBSERVED_BUDGET]` is the `effective_cap` that `subagent room` reported. Elsewhere it is the successful spawns, plus this session, plus the `slots` reply's `live`.
 
-5. When nothing spawned:
+5. When launch candidates existed but none could start:
    - On Codex, an empty fresh-spawn set first takes Codex thread reuse's eligible-thread and held-thread wave routes. Report the cap blocker that rule names only when neither can run the work.
    - On every other surface, nothing spawned is a misconfiguration: report it and stop.
 6. Store the active set under canonical reviewer names. A continuation includes its kept attempted and live assignments, with their IDs and runtime types:
@@ -364,14 +363,14 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 - On a continuation, every required domain stays accounted for: accepted, attempted and unread, never launched and unread, or unresponsive.
 - An unread domain holds collection until its acceptance or deadline route resolves it.
 
-A reviewer completes only when its on-disk artifact validates:
+An attached reviewer completes only when its exact assigned artifact validates and its JSON `agent` matches the canonical assignment. Use the batch boundary or the assignment's stricter boundary from [review-cycle.md § Wake source](../references/review-cycle.md#wake-source):
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_delegated_at
-.agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --file [ASSIGNED_ARTIFACT_PATH] --delegated-at [CHECK_BOUNDARY] --issue [ISSUE_ID]
 ```
 
-Run it on every return message and every watchdog sweep.
+Run this exact-file check on each return and watchdog sweep. The agent glob in the watchdog wakes the session.
 
 - `ok == true`: drop the agent from `OUTSTANDING`, carry the result's `repeats` to § 4, and append the path:
 
@@ -405,7 +404,7 @@ A process-owned reviewer's incomplete return takes [review-cycle.md § Process-o
 1. Keep a wake source armed for every incomplete agent, by [review-cycle.md § Reviewer wait](../references/review-cycle.md#reviewer-wait).
 2. On every wake, act by [review-cycle.md § Deadlines](../references/review-cycle.md#deadlines) and [§ Deadline actions](../references/review-cycle.md#deadline-actions). A process-owned domain also takes [review-cycle.md § Process liveness](../references/review-cycle.md#process-liveness).
 3. When `OUTSTANDING` is empty (`unresponsive` counts as resolved, never accepted):
-   1. A never-launched required domain still unread returns to § 2 for its admission.
+   1. A never-launched required domain still unread returns to § 2.2 for its next wave.
    2. Wave mode returns to § 2.2 for the next wave while any reviewer in the launch subset is missing from `review_wave_done`. Every process-owned launch passes its own admission first, and a continuation keeps its original batch.
    3. Otherwise go to § 3.3.
 
@@ -422,7 +421,7 @@ A process-owned reviewer's incomplete return takes [review-cycle.md § Process-o
 | Every required reviewer's artifact was accepted with no blocker | `pass` |
 
 - Evidence from one member never stands for an unread required member.
-- `[END_PATH]` is the `path` of the batch's last newly accepted `ok == true` result. The runtime reads its modification time as the stage's end.
+- Choose `[END_PATH]` from the batch's accepted paths by greatest modification time. Bind the first candidate, then replace it when `test [CANDIDATE_PATH] -nt [END_PATH]` succeeds. Include current-round returns the successor rechecked. The runtime reads the chosen file's modification time as the stage's end.
 - Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "accept-result", "round_id": "[REVIEW_ROUND_ID]", "outcome": "[WORD]", "end": {"from_artifact": "[END_PATH]"}}` and run it:
 
 ```bash
@@ -616,6 +615,7 @@ Issue: [ISSUE_ID]
 Tracker: [TRACKER] [OWNER/REPO]
 Branch: [BRANCH]
 Worktree: [WORKTREE_PATH]
+Artifact: [ASSIGNED_ARTIFACT_PATH]
 Trigger: [QA signal]
 
 Dev summary:
@@ -628,7 +628,7 @@ Previous review cycle context (cycle [CYCLES]):
 - Do NOT re-report the fixed, escalated or declined items listed above, unless you check a listed fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A listed fixed item you did not check, and every listed escalated or declined item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
 
-1. Each QA agent's batch is a [Record verified findings](../schemas/workflow-state.md#record-verified-findings) batch. Admit it with § 2.2's round token writes, state writes enabled.
+1. Each QA agent's batch is a [Record verified findings](../schemas/workflow-state.md#record-verified-findings) batch. Admit it with § 2.2's round token and delegation-time-only stamp, with state writes enabled. Mint its exact assignment through § 2.2 **Delegate** step 1 without `--round-id`, which keeps the QA return's filename form.
 2. Accept each return through § 3.1's check. On `ok == true`, append the artifact path to `json_paths`, and carry its `repeats` to § 7.
 3. When the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`.
 4. Post a performance QA agent's `qa_metadata.perf_qa` block as an issue comment, written to a file first: Linear through `linear.sh comments create [ISSUE_ID] --body-file`, GitHub through `gh issue comment ${ISSUE_ID#issue-} --body-file`.

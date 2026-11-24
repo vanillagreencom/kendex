@@ -79,7 +79,7 @@ Arm one check per agent:
 3. Arm with the delegation batch, and re-arm after every action, a ping included. A promised completion extends nothing until re-armed.
 4. After an artifact rejection (review-pr.md § 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's modification time.
    - On a continuation this is a stricter boundary for that assignment's check alone, never a write to the batch boundary.
-   - The glob watchdog only wakes the session. § Continuation recheck decides continuation acceptance.
+   - The glob watchdog only wakes the session. Review-pr.md § 3.1 checks the assigned file.
 
 ### Wake source replacement
 
@@ -175,7 +175,7 @@ Every process-owned launch enters here immediately before its runtime launch com
 
 ## Handoff on `due`
 
-Read when an admission answers `due`. It does so when the session is past its plain mark, compacted, or cannot prove room for the returns. review-pr.md § 2's pre-panel admission and § Process launch admission both send that verdict here.
+Read when an admission answers `due`. It does so when the session is past its plain mark, compacted, or cannot prove room for the returns. Review-pr.md § 2.2's launch admission and § Process launch admission both send that verdict here.
 
 1. Keep the returned `decision` and `source` as the handoff's `context`. An unavailable decision stays unknown. Set `REVIEWER_SLOTS=0`.
 2. Bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`.
@@ -189,18 +189,18 @@ Read when an admission answers `due`. It does so when the session is past its pl
 
 4. Compare HEAD with `[BOUND_HEAD]`. If it moved, apply [Rules reload after a rebase](../SKILL.md#the-cycle) at once, after a failed transport too.
 5. A failed checkpoint starts no panel and records no publication.
-6. Copy the batch's assignment facts into the handoff by § Original-batch continuation step 1.
-7. Record the published head in the handoff under [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
-8. Before retirement, collect the attached and external returns already available through review-pr.md § 3's checks.
+6. Before recording the handoff, collect the attached and external returns already available through review-pr.md § 3's checks.
    - Record every other return as unread, with only its known assignment, job, output path, wake, deadline and survival facts.
    - An unknown external outcome or liveness stays unread. Invent no wait target or result, and launch no duplicate job.
    - Preserve each process-owned assignment with its exact job directory, runner record, exit, log and artifact paths, deadline and known survival facts. Its existing job and artifact owners collect it on recovery.
+7. Copy the batch's assignment facts into the handoff by § Original-batch continuation step 1. If the current plan has yet to mint its batch, record its entry route so the successor can prepare the same review.
+8. Record the published head in the handoff under [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
 9. Base delivery waits for the successor's completed review.
-10. The successor re-enters review-pr.md § 2's admission, then applies § Original-batch continuation.
+10. The successor re-enters review-pr.md § 2.2 with its batch proof or the recorded entry route.
 
 ## Original-batch continuation
 
-Read step 1 when a lane hands off by § Handoff on `due`. Read the other steps when a successor resumes a handed-off review at review-pr.md § 2. A proved continuation is a successor's resumed review whose copied facts pass step 2. review-pr.md's steps name what a proved continuation keeps.
+Read step 1 when a lane hands off by § Handoff on `due`. Read the other steps when a successor resumes a handed-off review at review-pr.md § 2.2. A proved continuation is a successor's resumed review whose copied facts pass step 2.
 
 1. Before handoff, copy the owning workflow's known assignment facts into the handoff's existing `remaining` and `traps` prose:
    - item, worktree, branch and pull request;
@@ -208,6 +208,7 @@ Read step 1 when a lane hands off by § Handoff on `due`. Read the other steps w
    - the full required panel and its reason, and the external request;
    - the original `review_round_id` and `review_delegated_at`;
    - each assigned canonical domain's exact artifact path, and its accepted or attempted disposition;
+   - each tier-escape pass already kept, with its canonical domain, exact path, earlier `review_round_id` and `delegated_at` from § Tier escape;
    - the domains never launched;
    - actual first-delegation times, deadlines, ping and re-delegation history, and the existing return and wake owners.
 
@@ -218,7 +219,8 @@ Read step 1 when a lane hands off by § Handoff on `due`. Read the other steps w
    - Missing provenance, a different current batch, or a changed head or scope means no reuse. Then keep the historical evidence and run an ordinary fresh review under admission.
    - Never rebuild a range from today's symbolic base, and never attach today's round token to an old report.
 3. A proved continuation keeps its original `review_round_id`, stage and `review_delegated_at` throughout, § Continuation recheck included.
-4. Revalidate through § Continuation recheck only the exact previously accepted files assigned to this batch.
+4. Revalidate the current batch's previously accepted files through § Continuation recheck. For a tier-escape pass, rerun § Tier escape against the preserved range and panel. Match the rechecked result to the handoff's domain, exact path, earlier token and boundary.
+   - A failed match takes § Continuation recheck's failed-recheck route.
    - Keep the full required `[AGENTS]` panel apart from the launch subset.
    - Subtract revalidated accepted domains from delegation only, and carry their findings, repeats and measurement declarations into normal handling.
 5. An attempted domain keeps its job owner, deadlines, rejection and re-delegation history and execution outcome.
@@ -253,10 +255,10 @@ A proved continuation checks the preserved assigned path, under the original tok
 
 ## Tier escape
 
-When review-pr.md § 2.1 has selected the wider tier's first panel, pass its canonical domains as a comma-separated argument:
+When review-pr.md § 2.2 prepares the wider tier's first panel, pass its canonical domains as a comma-separated argument:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime review-artifact --text kept --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --base [BASE_SHA] --agents [AGENT_CSV]
 ```
 
-The command reads only exact assignments already accepted in `json_paths`. It rechecks them against the earlier full-branch round's range and evidence boundary. A changed head or base, a scoped fix review, or an unreadable artifact supplies no kept pass. A refused command stops this pass with its diagnostic.
+The command reads only exact assignments already accepted in `json_paths`. Each kept result names the original `review_round_id` and `delegated_at` used with that full-branch range. A changed head or base, a scoped fix review, or an unreadable artifact supplies no kept pass. A refused command stops this pass with its diagnostic.

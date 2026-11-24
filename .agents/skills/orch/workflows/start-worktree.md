@@ -71,7 +71,7 @@ Set `[TIER]` to `standard` unless the caller supplied it.
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","worktree":"[WORKTREE_PATH]","branch":"[BRANCH]"}'
    ```
 
-   Record the caller's tier. Keep the reply's `.result.previous_tier` as `[PREVIOUS_TIER]`, using `none` when unset:
+   Record the caller's tier:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"[TIER]"}'
@@ -97,7 +97,7 @@ Set `[TIER]` to `standard` unless the caller supplied it.
 At the standard tier, read the result of a completed small-tier round:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime dev-return --text resume --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --previous-tier [PREVIOUS_TIER]
+.agents/skills/orch/scripts/orch-runtime dev-return --text resume --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
 ```
 
 - When `action` is `continue`, carry `receipt.path`, `receipt.commit` and the stored QA labels into § 2.1. Skip steps 1–5 and leave `dev_agent` unset for the fix workflow to resolve if needed.

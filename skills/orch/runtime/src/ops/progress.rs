@@ -17,6 +17,7 @@ use super::findings::added_entries;
 use super::records::some_commit;
 use super::store::{array_at, one_value};
 use crate::error::{Error, Result};
+use crate::state::{ItemState, Record};
 use agent_runtime::journal::Env;
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
@@ -93,7 +94,7 @@ fn branch_name(value: &Value) -> std::result::Result<(), String> {
     }
 }
 
-pub(crate) fn record_route(doc: &mut Document, r: &RecordRoute) -> Result<Value> {
+pub(crate) fn record_route(path: &Path, doc: &mut Document, r: &RecordRoute) -> Result<Value> {
     let mut route = Map::new();
     if let Some(worktree) = &r.worktree {
         let value = json!(worktree.display().to_string());
@@ -116,11 +117,24 @@ pub(crate) fn record_route(doc: &mut Document, r: &RecordRoute) -> Result<Value>
     if route.is_empty() {
         return Err(refused("route-empty", &[]));
     }
-    let previous_tier = doc.get("tier").cloned();
+    if doc.get("tier").and_then(Value::as_str) == Some("small")
+        && r.tier.as_deref() == Some("standard")
+    {
+        let item = ItemState::view(path, doc)?;
+        if let Some((index, stage)) = item.accepted_dev()
+            && stage.tier.is_none()
+        {
+            // Rounds closed before tier stamping need a durable source tier
+            // even if opening the standard session stops at base freshness.
+            let rows = record::array_mut(path, doc, "stages")?;
+            let row = record::element_mut(path, rows, index, "stages")?;
+            record::set(row, "tier", "small");
+        }
+    }
     for (field, value) in &route {
         record::set(doc, field, value.clone());
     }
-    Ok(json!({"route": route, "previous_tier": previous_tier}))
+    Ok(json!({"route": route}))
 }
 
 /// What a dev round returned that the next round reads, each named field
