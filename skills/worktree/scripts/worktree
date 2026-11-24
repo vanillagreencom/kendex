@@ -3458,7 +3458,9 @@ case "${1:-}" in
     # are recognized as active work and reusable in place.
     WT_PATH="$(worktree_path_for_issue "$ISSUE")"
     validate_worktree_setup_config || exit 1
-    if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" ]]; then
+    # --reuse and --restack refuse a removed tree below, so they release and
+    # prune nothing they would not replace.
+    if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" && "$REUSE" != true && "$RESTACK" != true ]]; then
       clear_removed_registration "$WT_PATH"
     fi
 

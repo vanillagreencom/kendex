@@ -1048,15 +1048,17 @@ verb_rows main "$WORKTREE_PACKAGE_DIR/scripts"
 # mutex reaches no verdict, and the reuse names that instead of another
 # session. The create drops the removed tree's registration alone: one that
 # holds a rebase map keeps it and its lease and refuses, and another item's
-# removed tree stays registered. A row:
+# removed tree stays registered. A --reuse, which makes no tree there, keeps
+# the removed tree's lease and registration. A row:
 # label|lease edit|tree edit|guard mutex|command|rc|leading stderr records|lease after|tree|kept beside
 REUSE_ROWS='create --reuse refuses a foreign lease whose session lives and keeps the lock|-|-|-|create topic --reuse|75|worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=other;worktree-guard-lease-session-held: path=<topic> state=live|other|present|-
 create --reuse releases a foreign lease whose session is dead and reuses the tree|restart|-|-|create topic --reuse|0|worktree-lease-ended-released: <topic>|3|present|-
 create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock|restart|-|unopenable|create topic --reuse|75|worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex-worktree-session-guard.lock|other|present|-
 create over a removed tree releases its dead session'"'"'s lease and prunes the registration|restart|removed|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|-
-create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease|-|removed|-|create topic|75|worktree-guard-lease-session-held: path=<topic> state=live;worktree-worktree-owned: <topic>|other|absent|-
-create over a removed tree keeps a registration holding a rebase map, its map and its lease|restart|removed-mapped|-|create topic|75|worktree-registration-rebase-map: <main>/.git/worktrees/topic/kendex-rebase-map;worktree-worktree-owned: <topic>|other|absent|map
-create over a removed tree leaves another item'"'"'s removed tree registered|restart|removed-beside|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|aside'
+create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease|-|removed|-|create topic|75|worktree-guard-lease-session-held: path=<topic> state=live;worktree-worktree-owned: <topic>|other|absent|topic
+create over a removed tree keeps a registration holding a rebase map, its map and its lease|restart|removed-mapped|-|create topic|75|worktree-registration-rebase-map: <main>/.git/worktrees/topic/kendex-rebase-map;worktree-worktree-owned: <topic>|other|absent|map,topic
+create over a removed tree leaves another item'"'"'s removed tree registered|restart|removed-beside|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|aside
+create --reuse over a removed tree keeps its dead session'"'"'s lease and registration and refuses|restart|removed|-|create topic --reuse|1|worktree-reuse-missing: <topic>|other|absent|topic'
 reuse_rows() { # RUN SCRIPTS-DIR
   local run="$1" script="$2/worktree" label lease_edit tree_edit mutex command want_rc want_records want_lease want_tree want_kept root tree hdir rc owner status_rc records want_count kept map
   local -a argv
@@ -1091,6 +1093,7 @@ reuse_rows() { # RUN SCRIPTS-DIR
     kept=""
     [[ ! -s "$map" ]] || kept=map
     ! git -C "$root/main" worktree list --porcelain | grep -qxF "worktree $root/trees/aside" || kept="${kept:+$kept,}aside"
+    [[ -d $tree ]] || ! git -C "$root/main" worktree list --porcelain | grep -qxF "worktree $tree" || kept="${kept:+$kept,}topic"
     assert_eq "rc=$rc records=$records lease=${owner:-$status_rc} tree=$([[ -d $tree ]] && echo present || echo absent) kept=${kept:--}" \
       "rc=$want_rc records=$want_records lease=$want_lease tree=$want_tree kept=$want_kept" "$label"
     session_harness_stop "$hdir"
