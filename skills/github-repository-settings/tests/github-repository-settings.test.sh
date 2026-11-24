@@ -70,12 +70,10 @@ def launcher(root):
     return root / "catalog/github-repository-settings/scripts/github-repository-settings"
 
 
-def invoke(root, verb, *args, setting="off", location="local", library=False, extra_env=None):
+def invoke(root, verb, *args, setting="off", library=False, extra_env=None):
     env = dict(environment)
     if setting is not None:
         env["GITHUB_STANDARD_BOT_REVIEW"] = setting
-    if location is not None:
-        env["GITHUB_STANDARD_CHECK_LOCATION"] = location
     env.update(extra_env or {})
     command = ([str(root / "catalog/bot-instructions/scripts/bot-instructions")]
                if library else [bash, str(launcher(root))])
@@ -169,10 +167,7 @@ def checking(root):
 def assert_not_adopted(result):
     assert result.returncode == 0 and result.stdout == "", result
     # Command callers consume these diagnostic records, not the English line.
-    assert result.stderr.splitlines()[:2] == [
-        "github-standard-check-location=unset",
-        "github-repository-settings: not-adopted=unset",
-    ], result
+    assert result.stderr.splitlines()[0] == "github-repository-settings: not-adopted=unset", result
     assert "bot-instructions:" not in result.stderr, result
 
 
@@ -185,58 +180,54 @@ def adoption(root):
     path.write_text(original.replace(".github/instructions/code-review.md", "missing.md"))
     assert path.read_text() != original
     subprocess.run(["git", "-C", str(root), "add", "-A"], env=environment, check=True)
-    for review, location, status in ((None, None, 0), ("", "", 0),
-                                     (None, "", 0), ("", None, 0),
-                                     ("on", None, 1), ("off", None, 1),
-                                     (None, "hosted", 1), ("", "local", 1)):
+    # A leftover GITHUB_STANDARD_CHECK_LOCATION, which earlier setups
+    # required, adopts nothing.
+    leftover = {"GITHUB_STANDARD_CHECK_LOCATION": "hosted"}
+    for review, status in ((None, 0), ("", 0), ("on", 1), ("off", 1)):
         for args in ((), ("--staged",)):
             before = snapshot(root)
-            result = invoke(root, "check", "--json", *args, setting=review, location=location)
+            result = invoke(root, "check", "--json", *args, setting=review, extra_env=leftover)
             if status == 0:
                 assert_not_adopted(result)
             else:
-                assert result.returncode == status, (review, location, result)
+                assert result.returncode == status, (review, result)
             assert snapshot(root) == before
 
 
 def staged(root):
     # Expected output and exit classes are independent of the wrapper's selection.
-    for name, status, review, private, process, output, nested, location in (
-        ("clean", 0, "off", "", {}, "local", None, "hosted"),
-        ("stale", 1, "off", "", {}, "local", None, "hosted"),
-        ("incomplete", 2, "off", "", {}, "local", None, "hosted"),
-        ("absent-settings", 0, None, "", {}, "full", None, "unset"),
-        ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local", None, "hosted"),
+    for name, status, review, private, process, output, nested in (
+        ("clean", 0, "off", "", {}, "local", None),
+        ("stale", 1, "off", "", {}, "local", None),
+        ("incomplete", 2, "off", "", {}, "local", None),
+        ("absent-settings", 0, None, "", {}, "full", None),
+        ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local", None),
         ("process", 0, "off", "GITHUB_STANDARD_BOT_REVIEW=off\n",
-         {"GITHUB_STANDARD_BOT_REVIEW": "on", "GITHUB_STANDARD_CHECK_LOCATION": "hosted",
-          "KENDEX_ENV_FILE": "process.env"}, "full", None, "hosted"),
-        ("nested-tracked", 0, "off", "", {}, "full", "tracked", "local"),
-        ("nested-untracked", 0, "off", "", {}, "full", "untracked", "local"),
-        ("nested-private", 0, "off", "", {}, "local", "private", "local"),
-        ("nested-deleted", 0, "off", "", {}, "local", "deleted", "hosted"),
-        ("nested-symlink", 2, "off", "", {}, "local", "symlink", "local"),
-        ("root-symlink", 2, "on", "", {}, "local", None, "hosted"),
+         {"GITHUB_STANDARD_BOT_REVIEW": "on", "KENDEX_ENV_FILE": "process.env"}, "full", None),
+        ("nested-tracked", 0, "off", "", {}, "full", "tracked"),
+        ("nested-untracked", 0, "off", "", {}, "full", "untracked"),
+        ("nested-private", 0, "off", "", {}, "local", "private"),
+        ("nested-deleted", 0, "off", "", {}, "local", "deleted"),
+        ("nested-symlink", 2, "off", "", {}, "local", "symlink"),
+        ("root-symlink", 2, "on", "", {}, "local", None),
         ("root-symlink-explicit", 0, "on", "", {"REVIEW_GATE_SETTINGS_FILE": "explicit.toml"},
-         "local", None, "hosted"),
+         "local", None),
         ("root-symlink-defaults", 0, "on", "", {"REVIEW_GATE_SETTINGS_FILE": "/dev/null"},
-         "full", None, "unset"),
+         "full", None),
     ):
         config = root / "kendex.settings.toml"
         config.unlink(missing_ok=True)
         if review is not None:
-            config.write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "hosted"\n'
-                              f'GITHUB_STANDARD_BOT_REVIEW = "{review}"\n'
+            config.write_text(f'[env]\nGITHUB_STANDARD_BOT_REVIEW = "{review}"\n'
                               'KENDEX_ENV_FILE = "staged.env"\n')
         (root / "staged.env").write_text(private)
-        (root / "tree.env").write_text("GITHUB_STANDARD_BOT_REVIEW=on\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
-        (root / "process.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\nGITHUB_STANDARD_CHECK_LOCATION=local\n")
-        (root / "explicit.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "off"\n'
-                                           'GITHUB_STANDARD_CHECK_LOCATION = "hosted"\n')
+        (root / "tree.env").write_text("GITHUB_STANDARD_BOT_REVIEW=on\n")
+        (root / "process.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\n")
+        (root / "explicit.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "off"\n')
         nested_config = root / ".kendex/settings.toml"
         if nested is not None:
             nested_config.parent.mkdir(exist_ok=True)
             nested_config.write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "on"\n'
-                                     'GITHUB_STANDARD_CHECK_LOCATION = "local"\n'
                                      'KENDEX_ENV_FILE = "nested.env"\n')
             (root / "nested.env").write_text("GITHUB_STANDARD_BOT_REVIEW=off\n" if nested == "private" else "")
         else:
@@ -262,17 +253,14 @@ def staged(root):
                            env=environment, check=True, capture_output=True)
         elif nested is not None and nested != "symlink":
             nested_config.write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "off"\n'
-                                     'GITHUB_STANDARD_CHECK_LOCATION = "hosted"\n'
                                      'KENDEX_ENV_FILE = "tree.env"\n')
         if name == "incomplete":
             # A staged package deletion leaves the doctrine unavailable.
             subprocess.run(["git", "-C", str(root), "rm", "--cached", "catalog/bot-instructions/SKILL.md"],
                            env=environment, check=True, capture_output=True)
-        config.write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "local"\n'
-                          'GITHUB_STANDARD_BOT_REVIEW = "on"\nKENDEX_ENV_FILE = "tree.env"\n')
+        config.write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "on"\nKENDEX_ENV_FILE = "tree.env"\n')
         before = snapshot(root)
-        result = invoke(root, "check", "--staged", "--json", setting=None,
-                        location=None, extra_env=process)
+        result = invoke(root, "check", "--staged", "--json", setting=None, extra_env=process)
         if name in ("absent-settings", "root-symlink-defaults"):
             assert_not_adopted(result)
             assert snapshot(root) == before, name
@@ -287,30 +275,13 @@ def staged(root):
         assert result.returncode == expected.returncode == status, (name, result, expected)
         assert result.stdout == expected.stdout, (name, result, expected)
         # The check-report protocol is consumed by command callers.
-        assert result.stderr == f"github-standard-check-location={location}\n" + expected.stderr, (name, result)
+        assert result.stderr == expected.stderr, (name, result)
         assert snapshot(root) == before, name
     for verb, args in (("render", ()), ("adopt", ("--dry-run",))):
         before = snapshot(root)
         result = invoke(root, verb, "--staged", *args)
         assert result.returncode == 2 and "usage=--staged\n" in result.stderr, result
         assert snapshot(root) == before
-
-
-def locations(root):
-    for location, status in ((None, 2), ("hosted", 1), ("local", 1)):
-        before = snapshot(root)
-        result = invoke(root, "adopt", "--dry-run", location=location)
-        assert result.returncode == status, result
-        if location is None:
-            assert "github-repository-settings: setting=GITHUB_STANDARD_CHECK_LOCATION" in result.stderr
-        assert snapshot(root) == before
-    rendered(root)
-    for location in (None, "hosted", "local"):
-        result = invoke(root, "check", location=location)
-        assert result.returncode == 0, result
-        # This record is the wrapper's documented check-report protocol.
-        assert f"github-standard-check-location={location or 'unset'}\n" in result.stderr
-    assert not (root / ".github/workflows").exists()
 
 
 def settings(root):
@@ -322,15 +293,15 @@ def settings(root):
         assert result.returncode == status, (verb, review, result)
         if verb == "adopt" or status == 2:
             assert snapshot(root) == before
-    (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "hosted"\nGITHUB_STANDARD_BOT_REVIEW = "on"\n')
-    result = invoke(root, "render", setting=None, location=None)
+    # A leftover GITHUB_STANDARD_CHECK_LOCATION is ignored whatever it holds.
+    (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "invalid"\n'
+                                               'GITHUB_STANDARD_BOT_REVIEW = "on"\n')
+    result = invoke(root, "render", setting=None)
     assert result.returncode == 0 and (root / ".github/copilot-instructions.md").exists(), result
-    result = invoke(root, "check", setting=None, location=None)
-    assert result.returncode == 0 and "github-standard-check-location=hosted\n" in result.stderr, result
-    for key, kwargs in (("GITHUB_STANDARD_CHECK_LOCATION", {"location": "invalid"}),
-                        ("GITHUB_STANDARD_BOT_REVIEW", {"setting": "invalid"})):
-        result = invoke(root, "render", **kwargs)
-        assert result.returncode == 2 and f"setting={key}\n" in result.stderr, result
+    result = invoke(root, "check", setting=None)
+    assert result.returncode == 0 and "setting=" not in result.stderr, result
+    result = invoke(root, "render", setting="invalid")
+    assert result.returncode == 2 and "setting=GITHUB_STANDARD_BOT_REVIEW\n" in result.stderr, result
     (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = true\n')
     assert invoke(root, "render").returncode == 2
     for failure in ("syntax", "unreadable", "bot-instructions", "review-gate"):
@@ -346,7 +317,7 @@ def settings(root):
         subprocess.run(["git", "-C", str(broken), "add", "-A"], env=environment, check=True)
         for args in ((), ("--staged",)):
             before = snapshot(broken)
-            result = invoke(broken, "check", *args, setting=None, location=None)
+            result = invoke(broken, "check", *args, setting=None)
             assert result.returncode == 2, (failure, args, result)
             assert "github-repository-settings: not-adopted=" not in result.stderr, result
             assert snapshot(broken) == before
@@ -364,8 +335,6 @@ def write_boundary(root):
             assert "not-set-up=github-repository-settings" in result.stderr, result
         assert snapshot(root) == before
     # Core's declared installer may run before core records arming.
-    result = invoke(root, "setup-install", location=None)
-    assert result.returncode == 2 and "setting=GITHUB_STANDARD_CHECK_LOCATION" in result.stderr, result
     before = snapshot(root)
     result = invoke(root, "setup-install")
     assert result.returncode == 0, result
@@ -428,7 +397,7 @@ def region_bounds(root):
         supplied.write_bytes(raw)
         before = snapshot(root)
         result = invoke(root, "region-bounds", "--input", str(supplied),
-                        setting="invalid", location="invalid")
+                        setting="invalid")
         assert result.returncode == status, (name, result)
         if status == 0:
             # OwnedRegion consumes exactly this byte range protocol.
@@ -491,7 +460,7 @@ def core_cleanup(root):
     assert result.returncode == 2 and "bot-instructions: render=" in result.stderr, result
     produced = partial / ".github/copilot-instructions.md"
     assert produced.read_bytes().startswith(b"<!-- generated by bot-instructions"), result
-    result = invoke(partial, "setup-retire", setting="invalid", location="invalid")
+    result = invoke(partial, "setup-retire", setting="invalid")
     assert result.returncode == 0, result
     assert not produced.exists()
     assert personal.read_bytes() == before_personal
@@ -676,17 +645,18 @@ macroscope = false
     assert before.count(b"## Other rules") == 1
     agents.write_bytes(before.replace(b"## Other rules", b"Marked personal edit.\n\n## Other rules"))
     before_failure = review_files()
-    # An absent choice must refuse before any installer write, independently
+    # An invalid choice must refuse before any installer write, independently
     # of core's later recovery rendering.
+    (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "invalid"\n')
     refused = subprocess.run([bash, str(catalog / "github-repository-settings/scripts/github-repository-settings"),
                               "setup-install", "--repo", str(root)],
                              env=env, capture_output=True, text=True)
-    assert refused.returncode == 2 and "setting=GITHUB_STANDARD_CHECK_LOCATION" in refused.stderr, refused
+    assert refused.returncode == 2 and "setting=GITHUB_STANDARD_BOT_REVIEW" in refused.stderr, refused
     assert review_files() == before_failure
     (root / "old-render.exit").unlink()
     failed = cli("add", "cat", "--skill", "github-repository-settings", "--yes", "--leave",
                  "--allow-repo-effects", "--throwaway")
-    assert failed.returncode != 0 and "setting=GITHUB_STANDARD_CHECK_LOCATION" in failed.stderr, failed
+    assert failed.returncode != 0 and "setting=GITHUB_STANDARD_BOT_REVIEW" in failed.stderr, failed
     recovery_exit = (root / "old-render.exit").read_text()
     if recovery_exit != "0\n":
         raise RecoveryFailed(f"old recovery exit={recovery_exit!r}; {failed.stderr}")
@@ -703,8 +673,7 @@ contracts = {"arming-states": arming_states,
              "automatic-render": automatic_render, "region-bounds": region_bounds,
              "core-cleanup": core_cleanup, "write-boundary": write_boundary, "retirement": retirement, "preview": preview, "symlink": symlink, "selection": selection,
              "equality": equality, "checking": checking, "adoption": adoption,
-             "staged": staged, "locations": locations,
-             "settings": settings}
+             "staged": staged, "settings": settings}
 completed = 0
 for name, contract in contracts.items():
     contract(fixture(name))

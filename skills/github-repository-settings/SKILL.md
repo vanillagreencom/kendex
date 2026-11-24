@@ -44,8 +44,6 @@ repo-effects:
 ```
 
 - `adopt --dry-run` previews a takeover without writes.
-  - It needs `GITHUB_STANDARD_CHECK_LOCATION`, as armed `adopt` does. A process value, such as `GITHUB_STANDARD_CHECK_LOCATION=local` before the command, serves with no file write.
-  - The value does not change the preview.
 - Keep the existing [bot-instructions manifest](../bot-instructions/schemas/repo-toml.md).
 - `render` writes the selected outputs.
 - `check` compares them without writes.
@@ -58,13 +56,12 @@ repo-effects:
 
 ## Setup
 
-1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` in the `[env]` table of `kendex.settings.toml` at the repository root. It has no default. `check` reports the value. `adopt` and setup refuse while it is empty. `adopt`, `render`, `check` and setup refuse any value other than `hosted`, `local` or empty.
-2. Choose `GITHUB_STANDARD_BOT_REVIEW`: `off`, the default, selects the library's local output, and `on` selects its full output and the bots the manifest enables.
-3. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`, with kendex 1.23.0 or later.
+1. Choose `GITHUB_STANDARD_BOT_REVIEW` in the `[env]` table of `kendex.settings.toml` at the repository root: `off`, the default, selects the library's local output, and `on` selects its full output and the bots the manifest enables.
+2. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`, with kendex 1.23.0 or later.
 
 - Local output requires the manifest's `codex` flag and an installed bot-instructions package inside the checkout.
-- The [settings example](kendex.settings.toml.example) declares both settings.
-- When `GITHUB_STANDARD_CHECK_LOCATION` and `GITHUB_STANDARD_BOT_REVIEW` are both empty or absent, `check` reports not adopted and exits 0 without judging review files.
+- The [settings example](kendex.settings.toml.example) declares the setting.
+- When `GITHUB_STANDARD_BOT_REVIEW` is empty or absent, `check` reports not adopted and exits 0 without judging review files.
 - This package installs no hosted CI.
 - Core selects one owner and never falls back from an unarmed new owner, with one exception. If this package is installed only as another package's dependency, an installed bot-instructions stays the owner until this package's setup runs here or in the main checkout.
 

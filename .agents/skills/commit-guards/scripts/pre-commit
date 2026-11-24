@@ -134,12 +134,6 @@ bot_instructions_check() { # PACKAGE SKILL-DIR: both packages use the bot-instru
     return 2
   fi
   out="$("$check" check --staged 2>&1)" || status=$?
-  # The wrapper reports its settings choice on stderr before the library's
-  # stdout record. Keep that record visible without treating it as doctrine.
-  if [ "$package" = github-repository-settings ] && [[ "$out" == github-standard-check-location=* ]]; then
-    printf '%s\n' "${out%%$'\n'*}"
-    out="${out#*$'\n'}"
-  fi
   record="${out%%$'\n'*}"
   rest="${out#"$record"}"
   rest="${rest#$'\n'}"
