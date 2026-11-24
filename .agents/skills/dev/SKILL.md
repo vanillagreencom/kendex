@@ -151,11 +151,13 @@ The command routes:
 - Run the project's declared validation commands through orch's validation runner, `orch-runtime validate entry`, outside that route.
 - Never override per run the `DEV_VALIDATE_*` settings that declare those commands.
 - Run every other long command, including standalone preflight, doc-limits and mutation-control sweeps, through the orch job runner per [waiter-launch.md](../orch/references/waiter-launch.md).
+  - A dev or fix agent launches it with waiter-launch.md § Launch's form that carries no `--owner`.
+  - It holds the completion inside its turn by [waiter-launch.md § Completion](../orch/references/waiter-launch.md#completion)'s no-owner route, and never waits for a `job-end` notice, which reaches the lane session and never the agent.
 - Read each completion file, preserve nonzero exit codes, and report an interruption without a verdict as failure.
 
 Before starting, polling or resuming validation, read [long-running-validation.md](workflows/long-running-validation.md).
 
-A subagent waits with one bounded command through its harness's own wait mechanism, never a loop without a pause; orch's `references/skill-rules.md` § Subagent waits gives each harness's form.
+A subagent waits with one bounded command through its harness's own wait mechanism, or with the foreground poll its command route names. It never busy-waits: no read of `/dev/zero` or `/dev/urandom`, and no spin poll. Orch's `references/skill-rules.md` § Subagent waits gives each harness's form.
 
 ## Reflect
 
