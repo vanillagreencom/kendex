@@ -451,9 +451,7 @@ impl<'a> LaneOperation<'a> {
         &self,
         lane: &Lane,
     ) -> std::result::Result<Option<String>, String> {
-        pending_ask(&self.run.engine.reach.mail_program, lane)
-            .map(|ask| ask.map(|e| e.id().to_owned()))
-            .map_err(|unread| unread.to_string())
+        pending_ask(&self.run.engine.reach.mail_program, lane).map_err(|unread| unread.to_string())
     }
 
     /// [`last_mail`] through this run's reach's mailbox program.
@@ -882,7 +880,7 @@ fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
 /// Why a hosted lane's box did not read: the one judgement every close that
 /// reads the box acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Unread {
+pub(super) enum Unread {
     /// The provider's call pool refused the call at `step` (`mail-read`, or
     /// `list` for the presence read after it): nothing ran, and the same
     /// read asked again can answer.
@@ -952,13 +950,10 @@ impl std::fmt::Display for Unread {
 
 /// The oldest unanswered ask the lane's mailbox holds, read through the
 /// mailbox client (`lane-mail pending --item ITEM --root ROOT [--host]`): the
-/// first envelope of kind `ask`, its id and the time it was sent among it. A hosted lane's mailbox is read under its
+/// first envelope of kind `ask`. A hosted lane's mailbox is read under its
 /// record's host, never the caller's. `Err` is a read that did not answer
 /// ([`Unread::of`]), or a lane with no recorded root.
-pub(crate) fn pending_ask(
-    cli: &Path,
-    lane: &Lane,
-) -> std::result::Result<Option<crate::mailbox::Envelope>, Unread> {
+pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, Unread> {
     let Some(root) = lane.mail_root.as_deref() else {
         return Err(Unread::Failed {
             cause: "mail-root-unrecorded".to_owned(),
@@ -968,7 +963,10 @@ pub(crate) fn pending_ask(
     let envelopes = Mailbox::new(cli.to_path_buf())
         .pending(&lane.item, Path::new(root), hosted)
         .map_err(|refusal| Unread::of(&refusal))?;
-    Ok(envelopes.into_iter().find(|e| e.kind() == "ask"))
+    Ok(envelopes
+        .iter()
+        .find(|e| e.kind() == "ask")
+        .map(|e| e.id().to_owned()))
 }
 
 /// A hosted lane's box past the watch's cursor (`watch::mail::last_mail`),

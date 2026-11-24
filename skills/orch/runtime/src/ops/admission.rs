@@ -12,7 +12,7 @@
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch is judged by its branch ([`branch_changes`]) |
+//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
 //! | `done` | no holder |
 //!
 //! A holder is a record of the item's repository: a path is relative to
@@ -127,8 +127,6 @@ pub struct Clis {
     /// The orch package's scripts directory, which a provider read carries
     /// ([`crate::watch::overseer::scripts_dir`]).
     pub scripts: PathBuf,
-    /// The mailbox package's `lane-mail`, which reads a lane's open asks.
-    pub lane_mail: PathBuf,
 }
 
 /// Why a read answered nothing: the cause the refusal carries.
@@ -202,11 +200,6 @@ pub(super) struct BranchChange {
 pub(super) type BranchReader<'a> =
     Box<dyn Fn(&Clis, &Lane) -> std::result::Result<BranchChange, BranchUnread> + 'a>;
 
-/// Whether the hosted holder's worktree stands clean at the head read and
-/// the lane still waits, so its branch is all it holds.
-pub(super) type HeldReader<'a> =
-    Box<dyn Fn(&Clis, &Lane, &BranchChange) -> std::result::Result<(), BranchUnread> + 'a>;
-
 /// The repository a directory sits in, as git names it: its common
 /// directory, resolved, and the `owner/name` its `origin` names on
 /// github.com, where it names one.
@@ -246,7 +239,6 @@ pub(super) struct AdmissionReads<'a> {
     pub range_paths: RangeReader<'a>,
     pub pulls: PullsReader<'a>,
     pub branch: BranchReader<'a>,
-    pub held: HeldReader<'a>,
     pub checkout: CheckoutReader<'a>,
     pub team_key: TeamReader<'a>,
     pub tier: TierReader<'a>,
@@ -263,7 +255,6 @@ impl AdmissionReads<'static> {
             }),
             pulls: Box::new(read_open_pulls),
             branch: Box::new(read_branch_change),
-            held: Box::new(read_held_clean),
             checkout: Box::new(read_checkout),
             team_key: Box::new(read_team_key),
             tier: Box::new(read_tier),
@@ -839,22 +830,23 @@ fn unreachable(lane: &Lane) -> Option<&'static str> {
     }
 }
 
-/// Whether an unreachable holder holds a path of `touched` that the scope
-/// leaves in. A lane whose stage and mailbox are on its host takes no join.
-/// Its branch's unmerged change to such a path holds it. With no such
-/// change, the holder yields only where its worktree stood clean at that
-/// head and it still waits ([`read_held_clean`]): edits it has not committed
-/// are on its host alone. A read that fails refuses `join-unreachable`
-/// naming the branch and the cause. A cloud session's head is on its cloud,
-/// which no verb reads.
-fn branch_changes(
+/// An unreachable holder judged by its head commit's unmerged change. A
+/// lane whose stage and mailbox are on its host takes no join, and edits it
+/// has not committed are on its host alone, so it holds every path it names
+/// whatever its branch shows. Where its head changes a path of `touched`
+/// that the scope leaves in, it is judged on as any live holder. Otherwise
+/// it refuses `join-unreachable` naming the branch and the cause: a head
+/// that changes none of them is `worktree-unproved`, and a read that failed
+/// names its own cause. A cloud session's head is on its cloud, which no
+/// verb reads.
+fn branch_judged(
     lane: &Lane,
     route: &str,
     touched: &[String],
     in_scope: &[String],
     item: &str,
     host: &Host,
-) -> Result<bool> {
+) -> Result<()> {
     let refused = |unread: BranchUnread| {
         Error::from(agent_runtime::Error::refused(
             "join-unreachable",
@@ -879,11 +871,13 @@ fn branch_changes(
         .as_ref()
         .ok_or_else(|| refused(unread("admission-reads-unavailable")))?;
     let change = (reads.branch)(&reads.clis, lane).map_err(refused)?;
-    if !shared(touched, &change.files, in_scope).is_empty() {
-        return Ok(true);
+    if shared(touched, &change.files, in_scope).is_empty() {
+        return Err(refused(BranchUnread {
+            cause: format!("worktree-unproved head={}", change.head),
+            branch: Some(change.branch),
+        }));
     }
-    (reads.held)(&reads.clis, lane, &change).map_err(refused)?;
-    Ok(false)
+    Ok(())
 }
 
 /// Whether the fleet delivers straight onto its base (`ORCH_DELIVERY`), the
@@ -1191,11 +1185,8 @@ pub(super) fn judge(
             // lanes.
             Holding::Live => {
                 let first = a.checkout.is_some();
-                if first
-                    && let Some(route) = unreachable(lane)
-                    && !branch_changes(lane, route, &touched, &in_scope, a.item, host)?
-                {
-                    continue;
+                if first && let Some(route) = unreachable(lane) {
+                    branch_judged(lane, route, &touched, &in_scope, a.item, host)?;
                 }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
                 let direct = first && direct(host)?;
@@ -2011,63 +2002,6 @@ fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<BranchCha
     })
 }
 
-/// The production read that the holder's worktree holds no edit it has not
-/// committed. The lane's clean reading, the one it writes before it asks to
-/// park ([`crate::watch::hosted::clean_status`]), must name the head read
-/// and its branch with an empty status. The lane's mailbox must still hold
-/// its open ask, and the reading must be no older than that ask or the
-/// lane's latest start. The lane asks before its park steps and changes no
-/// file while it waits, so a reading from before the open ask, or before a
-/// relaunch, is no reading of the worktree now: the lane may have resumed on
-/// an earlier answer. A lane waiting on anything else gives no reading that
-/// its wait stands.
-fn read_held_clean(
-    clis: &Clis,
-    lane: &Lane,
-    change: &BranchChange,
-) -> std::result::Result<(), BranchUnread> {
-    use crate::watch::hosted::StatusUnbound;
-    let unread = |cause: String| BranchUnread {
-        branch: Some(change.branch.clone()),
-        cause,
-    };
-    let status = crate::watch::hosted::clean_status(
-        &clis.scripts,
-        crate::watch::hosted::host_of(lane),
-        &lane.item,
-        lane.mail_root.as_deref().unwrap_or(""),
-        &change.head,
-        &change.branch,
-    )
-    .map_err(|unbound| {
-        unread(match unbound {
-            StatusUnbound::Absent => "worktree-unread status=absent".to_owned(),
-            StatusUnbound::Unread(cause) => format!("worktree-unread status=unread {cause}"),
-            StatusUnbound::Invalid => "worktree-unread status=invalid".to_owned(),
-            StatusUnbound::Moved(head) => format!("worktree-unread status=moved head={head}"),
-            StatusUnbound::Dirty => "worktree-unread status=dirty".to_owned(),
-        })
-    })?;
-    let ask = match crate::effects::pending_ask(&clis.lane_mail, lane) {
-        Ok(Some(ask)) => ask,
-        Ok(None) => return Err(unread("wait-unproved ask=none".to_owned())),
-        Err(read) => return Err(unread(format!("wait-unproved {read}"))),
-    };
-    let started = lane.running_at.as_deref().or(lane.launched_at.as_deref());
-    let asked = ask.at.as_deref();
-    let epoch = |stamp: Option<&str>| stamp.and_then(agent_runtime::clock::epoch_secs);
-    match (epoch(Some(&status.at)), epoch(asked), epoch(started)) {
-        (Some(at), Some(asked), Some(started)) if at >= asked && at >= started => Ok(()),
-        _ => Err(unread(format!(
-            "worktree-unread status=stale at={} ask={} ask-at={} started={}",
-            status.at,
-            ask.id(),
-            asked.unwrap_or("unrecorded"),
-            started.unwrap_or("unrecorded")
-        ))),
-    }
-}
-
 #[allow(
     clippy::disallowed_methods,
     reason = "the rows write the brief and fleet fixtures they judge"
@@ -2116,7 +2050,6 @@ mod tests {
                     // the gh fixture.
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
                     branch: unplanted_branch(),
-                    held: unplanted_held(),
                     checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
                     team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
                     tier: as_requested(),

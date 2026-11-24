@@ -1486,18 +1486,16 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert!(inbox(&root, "KEN-H").is_empty());
 }
 
-/// A hosted holder in flight holds what its head commit changes against
-/// the default branch, as GitHub compares them, a rename's old path among
-/// them: such a change refuses `join-unreachable` as an unjudged holder did.
-/// With no shared change, it yields only where its own clean reading names
-/// that head with an empty status, no older than its latest start or its
-/// open ask, which shows it still waits. Every other reading refuses
-/// `join-unreachable` naming the branch and the cause: a failed comparison,
-/// a head GitHub does not hold, a reading that is absent, unreadable, dirty,
-/// moved or stale, and a mailbox with no ask or one that fails to read.
-/// Each refusal writes nothing.
+/// A running hosted holder of a shared path refuses `join-unreachable`
+/// whatever its branch shows, since edits it has not committed are on its
+/// host alone; the refusal names what its head commit changes against the
+/// default branch, as GitHub compares them. A shared change, a rename's old
+/// path among them, refuses as an unjudged holder did. A head that changes
+/// none refuses `worktree-unproved` naming the head. A failed comparison, a
+/// head GitHub does not hold and a comparison at GitHub's file cap each
+/// refuse naming the branch and the cause. Each refusal writes nothing.
 #[test]
-fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
+fn a_hosted_holder_refuses_a_shared_path_naming_what_its_head_changes() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     let world = fleet.dir.path().join("host");
@@ -1511,50 +1509,22 @@ fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
             fixtures().join("lane-host/provider").display(),
         ),
     );
-    // The lane's mailbox: `pending` prints the planted ask, where one is,
-    // and fails while `mail-fails` stands.
-    let ask = world.join("ask.jsonl");
-    let mail_fails = world.join("mail-fails");
-    let lane_mail = world.join("lane-mail");
-    write_executable(
-        &lane_mail,
-        format!(
-            "#!/bin/sh\n[ \"$1\" = pending ] || exit 64\n[ ! -f '{1}' ] || exit 1\n[ ! -f '{0}' ] || cat '{0}'\n",
-            ask.display(),
-            mail_fails.display()
-        ),
-    );
-    let env = [("LANE_MAIL_CLI", lane_mail.to_str().unwrap())];
-    let disk = |path: &str, text: Option<&str>| {
+    let disk = |path: &str, text: &str| {
         let at = world.join("disk").join(path.trim_start_matches('/'));
-        match text {
-            Some(text) => {
-                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-                std::fs::write(at, text).unwrap();
-            }
-            None => std::fs::remove_file(at).unwrap(),
-        }
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
     };
-    disk(
-        "/w/ken-r/.git",
-        Some("gitdir: /w/main/.git/worktrees/ken-r\n"),
-    );
+    disk("/w/ken-r/.git", "gitdir: /w/main/.git/worktrees/ken-r\n");
     disk(
         "/w/main/.git/worktrees/ken-r/HEAD",
-        Some("ref: refs/heads/ken-r\n"),
+        "ref: refs/heads/ken-r\n",
     );
-    disk("/w/main/.git/refs/heads/ken-r", Some("h1\n"));
-    let status = |head: &str, porcelain: &str, at: &str| {
-        let text =
-            json!({"head": head, "branch": "ken-r", "porcelain": porcelain, "at": at}).to_string();
-        disk("/w/ken-r/tmp/park-status.json", Some(&text));
-    };
+    disk("/w/main/.git/refs/heads/ken-r", "h1\n");
     let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
     hosted["host"] = json!(provider.display().to_string());
     hosted["kind"] = json!("ssh");
     hosted["repo"] = json!("o/r");
     hosted["mail_root"] = json!("/w/ken-r");
-    hosted["running_at"] = json!("2026-01-29T15:30:00Z");
     fleet.write_lanes(vec![hosted]);
     fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
     let mut request = launch("KEN-S", &fleet.checkout("s", None));
@@ -1573,7 +1543,7 @@ fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
     };
     let before = fleet.fleet();
     let refused = |fleet: &Fleet| {
-        let (key, fields) = refusal(&fleet.op_with(&request, &env));
+        let (key, fields) = refusal(&fleet.op(&request));
         assert_eq!(key, "join-unreachable", "{fields:?}");
         assert_eq!(fleet.fleet(), before, "nothing written");
         fields
@@ -1601,6 +1571,8 @@ fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
     ]}})));
     assert_eq!(refused(&fleet), held, "a rename away holds the old path");
 
+    fleet.gh_api(&changing(&["docs/other.md"]));
+    unread(&fleet, "worktree-unproved head=h1");
     fleet.gh_api(&compared(
         json!({"exit": 1, "stderr": "gh: HTTP 500: boom"}),
     ));
@@ -1616,44 +1588,6 @@ fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
         &many.iter().map(String::as_str).collect::<Vec<_>>(),
     ));
     unread(&fleet, "files-capped files=300");
-
-    fleet.gh_api(&changing(&["docs/other.md"]));
-    unread(&fleet, "worktree-unread status=absent");
-    let provider_answers = world.join("provider.json");
-    std::fs::write(
-        &provider_answers,
-        json!({"cat --item KEN-R /w/ken-r/tmp/park-status.json": {"exit": 3}}).to_string(),
-    )
-    .unwrap();
-    unread(&fleet, "worktree-unread status=unread ");
-    std::fs::remove_file(&provider_answers).unwrap();
-    status("h1", " M src/r.sh", "2026-01-29T16:40:00Z");
-    unread(&fleet, "worktree-unread status=dirty");
-    status("h0", "", "2026-01-29T16:40:00Z");
-    unread(&fleet, "worktree-unread status=moved head=h0");
-    status("h1", "", "2026-01-29T16:40:00Z");
-    unread(&fleet, "wait-unproved ask=none");
-    let asked = |at: &str| {
-        let envelope = json!({"id": "ask-2", "kind": "ask", "at": at, "text": "which base"});
-        std::fs::write(&ask, format!("{envelope}\n")).unwrap();
-    };
-    asked("2026-01-29T15:00:00Z");
-    std::fs::write(&mail_fails, "").unwrap();
-    unread(&fleet, "wait-unproved mail-read-failed");
-    std::fs::remove_file(&mail_fails).unwrap();
-    // A reading from before the lane's latest start, or before its open ask:
-    // the lane may have resumed on an earlier answer since.
-    status("h1", "", "2026-01-29T15:10:00Z");
-    unread(&fleet, "worktree-unread status=stale");
-    asked("2026-01-29T16:30:00Z");
-    status("h1", "", "2026-01-29T16:00:00Z");
-    unread(&fleet, "worktree-unread status=stale");
-
-    status("h1", "", "2026-01-29T16:40:00Z");
-    let out = fleet.op_with(&request, &env);
-    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    assert_eq!(fleet.lane("KEN-S")["touched"], json!(["src/r.sh"]));
-    assert_eq!(fleet.lane("KEN-R"), before["lanes"][0]);
 }
 
 /// A lane whose confinement binds its checkout read-only touches no path.

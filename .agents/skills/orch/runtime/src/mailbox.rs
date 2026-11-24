@@ -210,9 +210,6 @@ pub struct Envelope {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    /// When the mailbox wrote it, an ISO 8601 UTC stamp to the second.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

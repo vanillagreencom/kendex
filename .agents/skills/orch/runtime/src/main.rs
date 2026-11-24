@@ -3693,7 +3693,6 @@ fn kernel_host(settings: &Settings) -> ops::Host<'_> {
             scope_paths: settings.scope_paths_cli.clone(),
             resolver: orch_runtime::repo::resolver(&settings.roots.project),
             scripts: orch_runtime::watch::overseer::scripts_dir(&settings.roots.project),
-            lane_mail: settings.lane_mail_cli.clone(),
         })
         .judging(settings)
 }

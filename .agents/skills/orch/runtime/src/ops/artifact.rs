@@ -1223,7 +1223,6 @@ fn no_change<'a>(settings: &Settings, r: &'a WriteReturn, commit: &str) -> Resul
         scope_paths: settings.scope_paths_cli.clone(),
         resolver: crate::repo::resolver(&settings.roots.project),
         scripts: crate::watch::overseer::scripts_dir(&settings.roots.project),
-        lane_mail: settings.lane_mail_cli.clone(),
     };
     let item = if github {
         // The issue's repository, which the item key does not carry, is the

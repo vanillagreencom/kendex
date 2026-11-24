@@ -79,7 +79,6 @@ pub(super) fn no_clis() -> Clis {
         scope_paths: PathBuf::from("/nonexistent/harness-only"),
         resolver: PathBuf::from("/nonexistent/gh-repo.sh"),
         scripts: PathBuf::from("/nonexistent/scripts"),
-        lane_mail: PathBuf::from("/nonexistent/lane-mail"),
     }
 }
 
@@ -98,7 +97,6 @@ pub(super) fn no_reads() -> AdmissionReads<'static> {
         range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
         branch: unplanted_branch(),
-        held: unplanted_held(),
         checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
         team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
         tier: as_requested(),
@@ -114,19 +112,6 @@ pub(super) fn unplanted_branch() -> super::admission::BranchReader<'static> {
             cause: "unplanted".to_owned(),
         })
     })
-}
-
-/// A held reader that reads no worktree, so a holder whose branch changes
-/// nothing shared still refuses.
-pub(super) fn unplanted_held() -> super::admission::HeldReader<'static> {
-    Box::new(
-        |_: &Clis, _: &crate::state::Lane, _: &super::admission::BranchChange| {
-            Err(super::admission::BranchUnread {
-                branch: None,
-                cause: "unplanted".to_owned(),
-            })
-        },
-    )
 }
 
 /// A tier reader that earns no cycle past the requested one.
