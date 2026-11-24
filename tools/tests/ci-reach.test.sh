@@ -42,6 +42,10 @@ printf '%s\n' .kendex-lock.json >"$TMP/paths"
 check "an install record selects no suite shard" \
   "outside $orch_rest${nl}outside $oversee${nl}outside CI${nl}exit=0" \
   "$(reach micro "$orch_rest$nl$oversee${nl}CI")"
+printf '%s\n' skills/orch/SKILL.md .agents/skills/orch/SKILL.md >"$TMP/paths"
+check "Cargo check names follow their crate in the selected Linux matrix" \
+  "within Cargo kendex-core (Linux)${nl}outside Cargo kendex-app (Linux)${nl}exit=0" \
+  "$(reach small "Cargo kendex-core (Linux)${nl}Cargo kendex-app (Linux)")"
 printf '%s\n' skills/orch/tests/resolve-base-branch.sh >"$TMP/paths"
 check "CI outside where every other failed check is" \
   "outside $ui${nl}outside $oversee${nl}outside CI${nl}exit=0" \

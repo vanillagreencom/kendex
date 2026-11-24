@@ -17,9 +17,8 @@ catalog_bits() { # SELECTION — only the two independently selected jobs
   printf '%s\n' "$1" | tr ' ' '\n' | grep -E '^(catalog|smoke)='
 }
 
-# CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent: skill Markdown
-# with no compiled include runs no smoke, whose catalog is its own sample,
-# and a settings file beside it keeps the measured row's.
+# CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent. Catalog
+# paths alone do not affect the smoke test's own fixture.
 catalog_rows() { # SCRIPT — every row must agree on both events
   local class path selected smoke event
   while IFS='|' read -r class path selected smoke; do
@@ -39,19 +38,19 @@ micro|crates/cli/tests/integration.rs|false
 trivial|skills/orch/SKILL.md|true|false
 render|skills/orch/SKILL.md|true|false
 micro|agents/runtime.md|true|false
-standard|skills/orch/SKILL.md kendex-local.toml|true
-micro|hooks/guard.sh|true
-micro|commands/run.md|true
-micro|mcp/docs.toml|true
-micro|output-styles/plain.md|true
-micro|pi-extensions/pi-hooks/README.md|true
-micro|plugins/tool/skills/tool/SKILL.md|true
-micro|.claude-plugin/marketplace.json|true
-micro|kendex.toml|true
-micro|.gitignore|true
-micro|.gitattributes|true
-micro|.gitmodules|true
-micro|tools/catalog-release-check|true
+standard|skills/orch/SKILL.md kendex-local.toml|true|false
+micro|hooks/guard.sh|true|false
+micro|commands/run.md|true|false
+micro|mcp/docs.toml|true|false
+micro|output-styles/plain.md|true|false
+micro|pi-extensions/pi-hooks/README.md|true|false
+micro|plugins/tool/skills/tool/SKILL.md|true|false
+micro|.claude-plugin/marketplace.json|true|false
+micro|kendex.toml|true|false
+micro|.gitignore|true|false
+micro|.gitattributes|true|false
+micro|.gitmodules|true|false
+micro|tools/catalog-release-check|true|false
 micro|crates/core/src/render/agent.rs|true
 micro|crates/cli/tests/cli_smoke.rs|true
 micro|crates/test_util.rs|true
@@ -117,8 +116,8 @@ skills/github/scripts/lib/gh-auth.sh|["guards-scans"]
 skills/orch/scripts/lib/kendex-env.sh|["orch-rest","guards-scans"]
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
-install.sh|[]
-README.md|[]
+install.sh|$ROSTER
+README.md|$ROSTER
 crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","rest","jarvis"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","node"]
@@ -126,25 +125,33 @@ hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guard
 docs/x/policy.md|["guards-hooks","guards-hooks-tail"]
 docs/guard/refs.md|["guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail"]
 tools/demo-tool|["guards-scans","guards-tools","guards-tools-tail","node"]
-skills/AGENTS.md|["guards-scans"]
-docs/cite.md|[]
-kendex.toml|[]
-agents/reviewer.md|[]
+skills/AGENTS.md|$ROSTER
+docs/cite.md|$ROSTER
+kendex.toml|$ROSTER
+agents/reviewer.md|$ROSTER
 .kendex-lock.json|[]
-skills/CLAUDE.md|["guards-scans"]
-refresh/runner.sh|["guards-scans"]
+skills/CLAUDE.md|$ROSTER
+refresh/runner.sh|$ROSTER
 ROWS
+# A Pi source may contain a substring without reading a path by that name.
+incidental="artifact-${TMP##*/}"
+printf 'const buildLabel = "prefix-%s-suffix";\n' "$incidental" >>"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.test.ts"
+printf 'new checkout input\n' >"$SEL_WORLD/$incidental"
+git -C "$SEL_WORLD" add -- "$incidental" pi-extensions/pi-demo/tests/demo.test.ts
+got="$(SELECT_IN="$SEL_WORLD" SELECT_CARGO_MATRIX=true selection micro false "$incidental")"
+check "an unrelated Pi substring cannot place a novel basename" "$ROSTER [] [\"orch/*\"] null" \
+  "$(field shards <<<"$got") $(field skipped_suites <<<"$got") $(field rust_targets <<<"$got") $(field cargo_linux_matrix <<<"$got")"
+
 # A Rust target of a runtime is no shell suite: a path only it reads runs
-# that target and the orch-rest leg that runs it, and a path nothing reads
-# runs neither.
+# that target and the orch-rest leg that runs it. An unplaced path keeps all.
 # PATH|SHARDS RUST TARGETS, every row micro and not docs-only.
 while IFS='|' read -r path expected; do
   world_rows=$((world_rows + 1))
   got="$(SELECT_IN="$SEL_WORLD" selection micro false "$path")"
   check "world Rust targets over '$path'" "$expected" "$(field shards <<<"$got") $(field rust_targets <<<"$got")"
-done <<'ROWS'
+done <<ROWS
 assets/rust-read.json|["orch-rest"] ["orch/rows"]
-assets/unread.json|[] []
+assets/unread.json|$ROSTER ["orch/*"]
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 

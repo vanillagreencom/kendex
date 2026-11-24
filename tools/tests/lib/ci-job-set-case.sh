@@ -43,6 +43,11 @@ field() { # NAME — reads the selection on stdin
 }
 # One selection row: its lanes whole and its shards against the spec, or the
 # refusal key where LANES is one.
+# This table holds shell reach and UI/compile gates. Cargo test selection
+# has its own cases below and in ci-skill-prose.test.sh.
+shell_lanes() {
+  sed -E 's/ (catalog|smoke|cargo_linux|cargo_macos|cargo_windows)=[^ ]*//g'
+}
 sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
   local got
   got="$(selection "$2" "$3" "$(printf '%s\n' $4)")"
@@ -50,8 +55,8 @@ sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
     exit=*) check "$1" "$5" "$got" ;;
     # Catalog selection has its own input table below. These rows hold the
     # existing compiler, platform and shard contracts independently.
-    *) check "$1" "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"$5")|" \
-      "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"${got% shards=*}")|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
+    *) check "$1" "$(shell_lanes <<<"$5")|" \
+      "$(shell_lanes <<<"${got% shards=*}")|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
   esac
 }
 
@@ -88,8 +93,9 @@ const A: &str = include_str!("../../../docs/a.md");
 const X: &str = include_str!("../../../assets/x.json");
 fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
 fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
-fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
 RS
+git -C "$READ_WORLD" init -q
+git -C "$READ_WORLD" add -A
 READ_PROSE_ROW="$(measured none false false false '[]' '[]' true)"
 SEL_WORLD="$TMP/sel-world"
 mkdir -p "$SEL_WORLD/tools/tests" "$SEL_WORLD/hooks/tests"

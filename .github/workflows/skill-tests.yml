@@ -9,25 +9,11 @@ name: Skill Tests
 # queue. The merge-group run is the only proof of a head; a red group returns
 # the change to its lane, which pushes a fix before it queues again.
 #
-# WHAT A MERGE GROUP RUNS IS KEYED TO THE CHANGE CLASS AND THE PATHS BEHIND
-# IT. The `changes` job below reads the class once through the change-class
-# composite action, `tools/ci-job-set` turns it and the changed paths into
-# one `<lane>=true|false` line per gated lane and the list of shell shards
-# the changed packages select, and every gated `if:` in this file reads one
-# of those lines. Of the gated jobs, a `render` or `trivial` diff runs the
-# bot-instructions job alone, whose steps the bot_instructions lane entry in
-# `tools/ci-job-set` lists, and where its head owes a runtime build, the
-# orch-state leg that publishes it and runs no suite. Every other diff, and
-# a `trivial` one changing a path tools/rust-reads names, runs that job, the
-# shell shards its packages
-# select and each other lane as `tools/ci-job-set` selects it; the invariant
-# comment there is the one statement of what each lane runs. The changes job
-# publishes the suites outside the diff's reach as `skipped_suites`, and
-# each shell suite step leaves those out of its own. The changes job also
-# uploads that list and the Rust targets as the `ci-selection` artifact,
-# the record the main push reads of what this group ran. The selected
-# macOS cargo and shell legs run in the group. The two diff checks,
-# preflight and Markdown, run on every group against its base.
+# A merge group runs the checks reached by its changed files. The changes
+# job calls tools/ci-job-set once to project the shell and Cargo reach onto
+# the job matrices. Change class supplies review policy. Preflight and
+# Markdown always check the merge group's diff. The ci-selection artifact
+# records shell skips and skill runtime targets for the same-head main push.
 # `tools/ci-job-set --event-parity` holds the pull-request selection, which
 # local validation (`tools/guard --full`) reads, equal to the group's. The required
 # checks retain their names. The last job, `CI`, accepts only the skips the
@@ -188,6 +174,7 @@ jobs:
       ui: ${{ steps.select.outputs.ui }}
       bot_instructions: ${{ steps.select.outputs.bot_instructions }}
       cargo_linux: ${{ steps.select.outputs.cargo_linux }}
+      cargo_linux_matrix: ${{ steps.select.outputs.cargo_linux_matrix }}
       cargo_macos: ${{ steps.select.outputs.cargo_macos }}
       cargo_lint: ${{ steps.select.outputs.cargo_lint }}
       cargo_windows: ${{ steps.select.outputs.cargo_windows }}
@@ -593,6 +580,7 @@ jobs:
       # read the list of the suites its group proved on macOS.
       SKIPPED_SUITES: ${{ needs.changes.result == 'success' && (matrix.os == 'macos-latest' && needs.changes.outputs.skipped_suites_macos || needs.changes.outputs.skipped_suites) || '[]' }}
     steps: &skill-suite-steps
+      # The shard conditions assign suite execution and runner setup that file reach cannot infer.
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
       # the leg with none. It counts from the job's first step, whatever the
@@ -2152,8 +2140,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
     strategy:
       fail-fast: false
-      matrix:
-        crate: [kendex-core, kendex-cli, kendex-app]
+      matrix: ${{ fromJSON((needs.changes.result == 'success' && needs.changes.outputs.cargo_linux_matrix != 'null' && needs.changes.outputs.cargo_linux_matrix) || '{"crate":["kendex-core","kendex-cli","kendex-app"]}') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -2164,6 +2151,8 @@ jobs:
       # double what cargo writes.
       RUSTFLAGS: -C debuginfo=0
       CARGO_INCREMENTAL: '0'
+      CRATE: ${{ matrix.crate }}
+      CARGO_TEST_TARGETS: ${{ matrix.targets && join(matrix.targets, ' ') || '' }}
     steps:
       # The skill-suite legs' confinement read, on the Linux image a manual
       # run starts.
@@ -2186,10 +2175,10 @@ jobs:
           wf=.github/workflows/skill-tests.yml
           members="$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort -u)"
           [ -n "$members" ] || { echo "no workspace member read from cargo metadata"; exit 1; }
-          lines="$(sed -n 's/^ \{8\}crate: \[\(.*\)\]$/\1/p' "$wf")"
+          lines="$(sed -nE 's/^ {8}crate: \[(.*)\]$/\1/p; s/^ {6}matrix: .*\{"crate":\[([^]]+)\]\}.*/\1/p' "$wf")"
           [ -n "$lines" ] || { echo "no crate matrix read from $wf"; exit 1; }
           while IFS= read -r line; do
-            declared="$(printf '%s\n' "$line" | tr -d ' ' | tr ',' '\n' | sort -u)"
+            declared="$(printf '%s\n' "$line" | tr -d ' "' | tr ',' '\n' | sort -u)"
             diff <(printf '%s\n' "$members") <(printf '%s\n' "$declared") || { echo "crate matrix [$line] disagrees with the workspace: '<' a member no shard tests; '>' a name that is not a member"; exit 1; }
           done <<<"$lines"
       # Its file twin: autodiscovery is off in every crate, so a file under
@@ -2206,8 +2195,6 @@ jobs:
       # The keychain store links dbus in every crate; the app shell links
       # webkit and gtk in its own.
       - name: System dependencies
-        env:
-          CRATE: ${{ matrix.crate }}
         run: |
           set -u
           pkgs=(libdbus-1-dev)
@@ -2221,7 +2208,9 @@ jobs:
           bun-version-file: .bun-version
       - name: compile
         timeout-minutes: 20
-        run: cargo test -p ${{ matrix.crate }} --locked --no-run
+        run: |
+          read -r -a targets <<<"$CARGO_TEST_TARGETS"
+          cargo test -p "$CRATE" --locked --no-run "${targets[@]}"
       # Tests alone on a warm cache, last ten runs: kendex-cli ~150s
       # (catalog_render_lint 103s and guard_hooks 25s of it), kendex-core
       # ~20s, kendex-app ~10s. This leg is not split: 150s sits inside the
@@ -2230,7 +2219,9 @@ jobs:
       - name: test
         if: github.event_name == 'merge_group'
         timeout-minutes: 10
-        run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
+        run: |
+          read -r -a targets <<<"$CARGO_TEST_TARGETS"
+          cargo test -p "$CRATE" --locked --no-fail-fast "${targets[@]}"
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && github.token || '' }}

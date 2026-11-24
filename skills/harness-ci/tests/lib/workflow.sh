@@ -59,11 +59,12 @@ job_needs() { # WORKFLOW
   ' "$1"
 }
 
-# A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
+# A whole matrix or a matrix key's expression, the `${{ }}` stripped.
 matrix_expr() { # WORKFLOW KEY [JOB]
   local raw
   raw="$(awk -v job="${3:-skill-suites-shard}:" -v key="$2:" '
     /^  [A-Za-z0-9_-]+:/ { active = ($1 == job) }
+    active && key == "matrix:" && /^      matrix: / { sub(/^      matrix: /, ""); print }
     active && /^        [^[:space:]]/ && $1 == key { sub(/^        [^:]+: /, ""); print }
   ' "$1")"
   case "$raw" in

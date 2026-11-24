@@ -71,6 +71,9 @@ AGGREGATE="$ROOT/tools/ci-aggregate"
 step_field() { # WORKFLOW JOB ID_OR_NAME FIELD: an env expression, step/checkout input or run body
   awk -v job="$2:" -v id="$3" -v field="$4" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job); in_step = 0; in_run = 0 }
+    in_job && id == "" && $0 ~ "^      " field ": " {
+      sub(/^      [A-Z_]+: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    }
     /^      - / { in_step = (in_job && ($0 == "      - id: " id || $0 == "      - name: " id)); in_run = 0 }
     !in_step { next }
     field ~ /^[A-Z_]+$/ && $0 ~ "^          " field ": " {
@@ -189,7 +192,7 @@ gate_pairs() { # WORKFLOW
 # condition reads.
 lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
-    { matrix_expr "$1" os; matrix_expr "$1" shard; grep -E '^      SKIPPED_SUITES: |^        if: .*needs\.changes\.outputs\.' "$1"; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
+    { matrix_expr "$1" os; matrix_expr "$1" shard; grep -E '^      (matrix: |SKIPPED_SUITES: )|^        if: .*needs\.changes\.outputs\.' "$1"; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
 }
 
@@ -254,7 +257,7 @@ PUSH_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
 MAIN_DECLARATIONS="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
 PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA="$PUSH_HEAD" PUSH_BEFORE="$PUSH_HEAD" PUSH_AFTER="$PUSH_HEAD" MAIN_ONLY_SUITES="$MAIN_DECLARATIONS" SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
 case "$PUSH_SELECTION" in *" skipped_suites_macos=[] "*) ;; *) echo "a failed push read published '$PUSH_SELECTION'" >&2; exit 1 ;; esac
-PUBLISHED_BY_SCRIPT="$(printf '%s %s nightly=true' "$(selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
+PUBLISHED_BY_SCRIPT="$(printf '%s %s nightly=true' "$(SELECT_CARGO_MATRIX=true selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
   tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort -u)"
 [ "$(printf '%s\n' "$PUBLISHED_BY_SCRIPT" | grep -c .)" -gt 0 ] ||
   { echo "ci-job-set published no lane, so the extractor is broken" >&2; exit 1; }
@@ -368,11 +371,11 @@ EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux ca
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
   "$(gated_jobs "$WORKFLOW" | grep -vE '^skill-suites-(macos|main-only)$' | tr '\n' ' ' | sed 's/ $//')"
 
-one_skill="$(selection micro false 'skills/orch/SKILL.md
+one_skill="$(SELECT_CARGO_MATRIX=true selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
 # A standard diff of product code, the full battery a merge group of that
 # class runs.
-standard_code="$(selection standard false 'crates/core/src/lib.rs')"
+standard_code="$(SELECT_CARGO_MATRIX=true selection standard false 'crates/core/src/lib.rs')"
 # EVENT|SELECTION|EXPECTED JOBS. A pull request runs no gated job whatever
 # its diff; a merge group runs the class job set: a `render` group the one
 # verify job and a standard group every lane its class selects. A group
@@ -688,6 +691,52 @@ cargo-tests-windows|merge_group|yes
 cargo-tests-windows|push|no
 cargo-tests-windows|schedule|yes
 cargo-tests-windows|workflow_dispatch|yes
+ROWS
+
+# Use the real changed-path output, expanded by the workflow itself, for
+# the Linux Cargo argv. Full selection and a missing output both run the
+# whole fallback crate.
+linux_commands() { # WORKFLOW RESULT SELECTION CRATE
+  local wf="$1" ctx matrix cell expr body step crate targets field value
+  ctx="$(context_json merge_group "$2" "$3" "$TMP/published-map")" || return 1
+  expr="$(matrix_expr "$wf" matrix cargo-linux)" || return 1
+  matrix="$(gh_eval value "$ctx" "$expr")" || return 1
+  cell="$(jq -ce --arg crate "$4" '
+    if has("include") then .include[]
+    else .crate[] | {crate: .} end | select(.crate == $crate)
+  ' <<<"$matrix")" || return 1
+  ctx="$(jq -c --argjson matrix "$cell" '.matrix = $matrix' <<<"$ctx")" || return 1
+  for field in CRATE CARGO_TEST_TARGETS; do
+    expr="$(step_field "$wf" cargo-linux '' "$field")" || return 1
+    value="$(gh_eval value "$ctx" "$expr" | jq -er 'select(type == "string")')" || return 1
+    case "$field" in CRATE) crate=$value ;; CARGO_TEST_TARGETS) targets=$value ;; esac
+  done
+  for step in compile test; do
+    body="$(step_field "$wf" cargo-linux "$step" run)" || return 1
+    [ -n "$body" ] || return 1
+    (env -i "PATH=$PATH" "CRATE=$crate" "CARGO_TEST_TARGETS=$targets" "$BASH" --noprofile --norc -e -c '
+      cargo() { printf "cargo"; printf "|%s" "$@"; printf "\n"; }
+      eval "$1"
+    ' _ "$body") || return 1
+  done
+}
+linux_args="|--test|catalog_render_lint|--test|integration"
+check "Linux compile and test receive the selected CLI targets" \
+  "cargo|test|-p|kendex-cli|--locked|--no-run$linux_args
+cargo|test|-p|kendex-cli|--locked|--no-fail-fast$linux_args" \
+  "$(linux_commands "$WORKFLOW" success "$one_skill" kendex-cli)"
+case " $standard_code " in
+  *" cargo_linux_matrix=null "*) ;;
+  *) echo 'workspace build selection did not emit a null Cargo matrix' >&2; exit 1 ;;
+esac
+while IFS='|' read -r result selected; do
+  check "Linux compile and test retain the whole crate on $result" \
+    "cargo|test|-p|kendex-cli|--locked|--no-run
+cargo|test|-p|kendex-cli|--locked|--no-fail-fast" \
+    "$(linux_commands "$WORKFLOW" "$result" "$selected" kendex-cli)"
+done <<ROWS
+success|$standard_code
+failure|
 ROWS
 
 # The orch-state Linux leg stages the runtime builds the changes job owes
@@ -1053,6 +1102,9 @@ ROWS
   expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' -v j="$job" '$2 == j { print $3 }')"
   [ -n "$expr" ] || { bad "missing aggregate expression for $job"; continue; }
   while IFS='|' read -r event result path expected_lane expected_status; do
+    if [ "$job:$path" = smoke:commands/run.md ]; then
+      expected_lane=false expected_status=0
+    fi
     sel="$(SELECT_EVENT="$event" selection trivial true "$path")"
     value="$(gh_eval value "$(context_json "$event" "$result" "$sel" "$TMP/published-map")" "$expr" | jq -r 'if . == null then "" else . end')"
     RESULTS="$(jq -cn --arg job "$job" --arg result "$result" '{changes: {result: $result}} + {($job): {result: "skipped"}}')"

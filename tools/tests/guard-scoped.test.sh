@@ -239,8 +239,8 @@ for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/scripts/pytool skil
     && ok "scoped: $path selects the wrappers of the Python tests naming or importing it" \
     || bad "scoped: $path selects the wrappers of the Python tests naming or importing it" "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
 done
-# Outside a scoped run no scan reads a test program: a changed one, or a
-# changed script only a test program names, runs the whole set.
+# Normal range follows the same Python imports to the three reading
+# wrappers. The unrelated wrapper stays outside that reach.
 python_range() { # PATH: append to PATH, then run the normal range
   printf '# changed\n' >> "$R/$1"
   : > "$SUITE_LOG"
@@ -251,9 +251,9 @@ python_range() { # PATH: append to PATH, then run the normal range
 }
 for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
   python_range "$path"
-  [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod other ' ] \
-    && ok "normal range: $path runs the whole set" \
-    || bad "normal range: $path runs the whole set" "rc=$RC selected=$SELECTED out=$OUT"
+  [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod ' ] \
+    && ok "normal range: $path runs the wrappers that name it or import its reader" \
+    || bad "normal range: $path runs the wrappers that name it or import its reader" "rc=$RC selected=$SELECTED out=$OUT"
 done
 
 # kendex.settings.toml in a scoped run: each changed [env] key seeds the

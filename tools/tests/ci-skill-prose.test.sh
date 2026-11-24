@@ -14,6 +14,176 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
+
+# Compiled workspace targets and skill runtime targets have separate owners.
+# Include the tracked render in each probe, as a merge-group diff does.
+cargo_rows() {
+  local selected reads guide=$'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md'
+  local marker=.agents/skills/orch/scripts/lane-marker unplaced="test-fixtures/${TMP##*/}/orphaned.rs"
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$guide")"
+  reads="$(field cargo_linux_matrix <<<"$selected")"
+  check "skill Markdown keeps the CLI and core readers and omits the app" \
+    '{"include":[{"crate":"kendex-cli","targets":["--test","catalog_render_lint","--test","integration"]},{"crate":"kendex-core","targets":["--lib","--test","integration"]}]}' "$reads"
+  check "orch SKILL.md names in prompts reach no runtime target" '[]' "$(field rust_targets <<<"$selected")"
+  selected="$(SELECT_EVENT=merge_group selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
+  check "orch watch delivery reference reaches its reading runtime target" \
+    '["orch/watch_core"]' "$(field rust_targets <<<"$selected")"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$marker")"
+  check "the shared lane fixture keeps the CLI library in a narrowed matrix" true \
+    "$(field cargo_linux_matrix <<<"$selected" | jq 'type == "object" and any(.include[]; .crate == "kendex-cli" and (.targets | index("--lib") != null))')"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$guide"$'\n'"$unplaced")"
+  check "an unplaced test file keeps all tests beside known Markdown" \
+    "true null $ROSTER $QUEUE_ALL [] $(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
+    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field shards <<<"$selected") $(field queue_macos_shards <<<"$selected") $(field skipped_suites <<<"$selected") $(field rust_targets <<<"$selected")"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection micro false tools/apt-install)"
+  check "workflow package setup keeps its Cargo and smoke jobs" 'true null true true false' \
+    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field cargo_lint <<<"$selected") $(field smoke <<<"$selected") $(field cargo_windows_check <<<"$selected")"
+  check "workflow package setup keeps its checkout-kendex shell shards" true \
+    "$(field shards <<<"$selected" | jq '(["refresh", "orch-rest", "rest", "jarvis"] - .) == [] and index("node") == null')"
+}
+[ "${1-}" = --inventory-proof ] || cargo_rows
+if [ "${1-}" = --cargo-reads ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
+# Each instrument forwards the normal tool except for one read. Two
+# produce valid-looking partial output with a successful exit status.
+FAILING_TOOLS="$TMP/failing-reads"
+mkdir -p "$FAILING_TOOLS"
+for tool in git cargo awk sed; do
+  location="$(command -v "$tool")"
+  ln -s -- "$location" "$FAILING_TOOLS/real-$tool"
+done
+cat >"$FAILING_TOOLS/wrapper" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+tool="${0##*/}"
+real="$(readlink "${0%/*}/real-$tool")"
+case "$READ_FAILURE:$tool:${1-}:${2-}" in
+  pi:git:grep:-F)
+    "$real" "$@" || :
+    printf 'error: a tracked Pi reader could not be read\n' >&2
+    exit 1 ;;
+  index:git:-c:core.quotePath=false)
+    if [ "${3-}" = ls-files ]; then printf 'skills/orch/tests/direct.sh\n'; exit 128; fi ;;
+  metadata:cargo:metadata:*) "$real" "$@" | jq -c '.packages |= .[1:]'; exit ;;
+  target:cargo:metadata:*)
+    "$real" "$@" | jq -c '(.packages[] | select(.name == "kendex-cli").targets) |= map(select(.name != "catalog_render_lint"))'
+    exit ;;
+  suite:awk:*)
+    if [[ $* == *'function scan_file('* ]]; then printf 'N\t0\t/partial\n'; exit 0; fi ;;
+  projection:sed:-n:'s/^target //p') printf 'sed: could not project target rows\n' >&2; exit 2 ;;
+esac
+exec "$real" "$@"
+STUB
+chmod +x "$FAILING_TOOLS/wrapper"
+for tool in git cargo awk sed; do ln -s wrapper "$FAILING_TOOLS/$tool"; done
+
+inventory_rows() {
+  local world="$TMP/inventory-checkout" got
+  git clone -q --shared "$ROOT" "$world"
+  # Use actual checkout permissions. Each fault leaves the other inventories readable.
+  (
+    local blocked="$world/skills/review-gate/tests"
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
+    SELECT_IN="$world" SELECT_EVENT=merge_group selection small false refresh/kendex-refresh.yml
+  ) >"$TMP/unread-suite"
+  got="$(cat "$TMP/unread-suite")"
+  check "unread discovery keeps the tracked review-gate reader" 'true true' \
+    "$(field shards <<<"$got" | jq 'index("review-gate") != null') $(field skipped_suites <<<"$got" | jq 'index("skills/review-gate/tests/refresh-workflow.test.sh") == null')"
+
+  (
+    local blocked="$world/skills/agent-runtime/runtime"
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
+    SELECT_IN="$world" SELECT_EVENT=merge_group selection small false skills/orch/SKILL.md
+  ) >"$TMP/unread-runtime"
+  got="$(cat "$TMP/unread-runtime")"
+  check "unread fallback discovery keeps both tracked runtimes" '["agent-runtime/*","orch/*"]' \
+    "$(field rust_targets <<<"$got")"
+
+  (
+    local blocked="$world/.github/workflows" pin css
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
+    pin="$(SELECT_IN="$world" SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .bun-version)"
+    css="$(SELECT_IN="$world" SELECT_EVENT=merge_group selection small false ui/src/index.css)"
+    printf '%s %s %s\n' "$(field cargo_linux <<<"$pin")" "$(field cargo_linux_matrix <<<"$pin")" "$(field cargo_windows_check <<<"$css")"
+  ) >"$TMP/unread-workflow"
+  check "unread workflow keeps the Bun tests and Windows check" 'true null true' "$(cat "$TMP/unread-workflow")"
+
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE=target SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group \
+    selection small false $'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md')"
+  check "one omitted declared target cannot narrow the Cargo matrix" 'true null' \
+    "$(field cargo_linux <<<"$got") $(field cargo_linux_matrix <<<"$got")"
+
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE=projection SELECT_EVENT=merge_group \
+    selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
+  check "a failed completed-reach projection keeps the watch-delivery reader" true \
+    "$(field rust_targets <<<"$got" | jq 'index("orch/watch_core") != null or index("orch/*") != null')"
+}
+inventory_rows
+if [ "${1-}" = --inventory-proof ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
+all_runtime="$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)"
+while IFS='|' read -r fault path expected_cargo expected_runtime; do
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE="$fault" SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group \
+    selection small false "$path")"
+  check "$fault read keeps its governed roster" "$ROSTER $QUEUE_ALL [] $expected_cargo $expected_runtime" \
+    "$(field shards <<<"$got") $(field queue_macos_shards <<<"$got") $(field skipped_suites <<<"$got") $(field cargo_lint <<<"$got") $(field rust_targets <<<"$got")"
+done <<ROWS
+pi|kendex.toml|false|$all_runtime
+index|skills/orch/SKILL.md|true|$all_runtime
+metadata|skills/orch/SKILL.md|true|$all_runtime
+suite|skills/orch/SKILL.md|false|$all_runtime
+ROWS
+
+# Real workspace inputs with package placement can include unresolved
+# checkout reads. They must keep the reader without compiler checks.
+while IFS='|' read -r path package flag name; do
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$path")"
+  matrix="$(field cargo_linux_matrix <<<"$selected")"
+  check "$path reaches $package $flag $name" true \
+    "$(jq --arg p "$package" --arg flag "$flag" --arg name "$name" '
+      any(.include[]; .crate == $p and (.targets | (index($flag) != null and ($name == "" or index($name) != null))))
+    ' <<<"$matrix")"
+  check "$path keeps compiler-only lanes off" 'false false' \
+    "$(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected")"
+done <<'ROWS'
+kendex.settings.toml|kendex-core|--test|integration
+kendex-local.toml|kendex-core|--lib|
+packaging/homebrew/kendex-cli.rb|kendex-cli|--test|integration
+packaging/arch/kendex/PKGBUILD|kendex-cli|--test|integration
+.bun-version|kendex-core|--test|integration
+ROWS
+selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .kendex-lock.json)"
+check "the install record has no shell suite and retains the full Cargo matrix" '[] true null false false' \
+  "$(field shards <<<"$selected") $(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected")"
+selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false docs/authoring/README.md)"
+check "the embedded app guide reaches workspace lint, the app, and no unrelated build" 'true false true' \
+  "$(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected") $(field cargo_linux_matrix <<<"$selected" |
+    jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
+check "the embedded app guide does not add checkout-only shards" true \
+  "$(field shards <<<"$selected" | jq 'all(.[]; . != "refresh" and . != "jarvis" and . != "orch-rest")')"
+
+# The neutral fixture has no top-level path readers. A change to the real
+# setup step's version file selects just its crate even in that world.
+mkdir -p "$READ_WORLD/.github/workflows"
+cp "$ROOT/.github/workflows/skill-tests.yml" "$READ_WORLD/.github/workflows/skill-tests.yml"
+selected="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection micro false .bun-version)"
+check "workflow setup selects its crate even when no source reads the pin" \
+  '{"include":[{"crate":"kendex-core","targets":["--lib"]}]}' "$(field cargo_linux_matrix <<<"$selected")"
+
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
 # guide some suites' notes cover, one suite's code reads, and the rest leave
 # out.
@@ -50,13 +220,15 @@ for suite in slashed folder reader; do
   check "row: the guide runs the $suite suite" false \
     "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
 done
-# A render row has no reach, so it skips every suite, those the guide's
-# measured row runs among them.
+# Review class cannot change which checks read the guide.
 render_skipped="$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
-for suite in declared plain slashed folder reader; do
-  check "row: render skips the $suite suite" true \
-    "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$render_skipped")"
-done
+check "the render and measured classes keep the same readers" "$skipped" "$render_skipped"
+
+python_skipped="$(selection micro false skills/jarvis/tests/watch_test.py | field skipped_suites)"
+check "watch_test.py reaches its importing shell wrapper" true \
+  "$(jq 'index("skills/jarvis/tests/presence.test.sh") == null' <<<"$python_skipped")"
+check "watch_test.py leaves out the unrelated session wrapper" true \
+  "$(jq 'index("skills/jarvis/tests/session.test.sh") != null' <<<"$python_skipped")"
 
 # THE LIST: the candidates a step runs, by whole path, in argument order:
 # each one the skips do not name.

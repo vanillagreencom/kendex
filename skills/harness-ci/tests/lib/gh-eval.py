@@ -172,6 +172,11 @@ class Parser:
     def call(self, name, args):
         if name == "fromJSON":
             return json.loads(args[0])
+        if name == "join" and len(args) == 2:
+            values, separator = args
+            if isinstance(values, list):
+                return separator.join(as_string(value) for value in values)
+            return as_string(values)
         if name == "format" and args:
             return format_string(args[0], args[1:])
         if name == "always":

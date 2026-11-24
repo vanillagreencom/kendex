@@ -69,14 +69,16 @@ selected() { # KEY — the selection's value for KEY
 }
 
 answer() { # NAME — within, outside, or nothing for a name no job maps to
-  local key shard="" value
+  local key shard="" crate="" matrix value
   case "$1" in
     "Skill suites shard ("*", ubuntu-latest)")
       shard="${1#Skill suites shard (}" shard="${shard%, ubuntu-latest)}" key=shards ;;
     "Skill suites shard ("*", macos-latest)")
       shard="${1#Skill suites shard (}" shard="${shard%, macos-latest)}" key=queue_macos_shards ;;
     "Cargo lints (clippy, fmt, doc)") key=cargo_lint ;;
-    "Cargo "*" (Linux)") key=cargo_linux ;;
+    "Cargo "*" (Linux)")
+      crate="${1#Cargo }" crate="${crate% (Linux)}"
+      key=cargo_linux ;;
     "macOS cargo "*) key=cargo_macos ;;
     "Windows cargo (core and CLI targets compile)") key=cargo_windows_check ;;
     "Windows cargo (workspace tests)") key=cargo_windows ;;
@@ -86,7 +88,12 @@ answer() { # NAME — within, outside, or nothing for a name no job maps to
     "real-CLI round trip") key=smoke ;;
     *) return 0 ;;
   esac
-  value="$(selected "$key")"
+  value="$(selected "$key")" || return 2
+  if [ "$key:$value" = cargo_linux:true ]; then
+    matrix="$(selected cargo_linux_matrix)" || return 2
+    value="$(jq -r --arg crate "$crate" '. == null or any(.include[]; .crate == $crate)' <<<"$matrix")" ||
+      die cargo-matrix-unread
+  fi
   if [ -n "$shard" ]; then
     case "$value" in *"\"$shard\""*) echo within ;; *) echo outside ;; esac
     return 0

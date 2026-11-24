@@ -163,5 +163,27 @@ PATH="$SCOPE_TMP/bin:$PATH" scope_rows "$READS"
 [ "$SCOPE_RC" -eq 2 ] && grep -qFx 'rust-reads: unreadable=cli-smoke' "$SCOPE_TMP/err" &&
   ok "failed Cargo metadata refuses the scoped read" || bad "failed Cargo metadata refuses the scoped read"
 
+target_rows="$("$READS" --cli-smoke --ci-targets "$ROOT" | tr '\t' ':')" || exit 1
+grep -qxF 'package-include:docs/authoring/README.md:kendex-app' <<<"$target_rows" &&
+  ok "the embedded guide names its owning app package" || bad "the embedded guide names its owning app package"
+
+# Cargo can enumerate an explicitly declared target after its source goes
+# away. The reader must refuse with the missing source and its target.
+seed_world crates/demo/src/lib.rs 'fn sample() {}'
+printf '[workspace]\nmembers = ["crates/demo"]\nresolver = "2"\n' >"$W/Cargo.toml"
+cat >>"$W/crates/demo/Cargo.toml" <<'TOML'
+
+[[test]]
+name = "removed"
+path = "tests/removed.rs"
+TOML
+RC=0
+OUT="$("$READS" --ci-targets "$W" 2>&1)" || RC=$?
+if [ "$RC" -eq 2 ] && [ "$OUT" = 'rust-reads: unreadable=crates/demo/tests/removed.rs package=demo target=test/removed' ]; then
+  ok "metadata's missing test source names its owning Cargo target"
+else
+  bad "metadata's missing test source names its owning Cargo target" "rc=$RC out=$OUT"
+fi
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
