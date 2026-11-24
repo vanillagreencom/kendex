@@ -1,3 +1,0 @@
-- The opt-in GitHub platform report moves to github-repository-settings. The old review-gate path and settings warn through the 1.23 release window and remain supported until 2.0. The retired app, environment and secrets keys are ignored. review-gate now installs github-repository-settings; whether it or bot-instructions renders the review files depends on whether a project receives it only through review-gate or lists it directly or through a bundle, as the migration guide's table sets out.
-
-  You do: Update the report command and settings using the [GitHub platform checks migration guide](https://github.com/vanillagreencom/kendex/blob/main/skills/github-repository-settings/references/platform-checks.md#migration-from-review-gate).
