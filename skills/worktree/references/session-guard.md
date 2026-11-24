@@ -34,7 +34,8 @@ Bare `create <ID>` exits 75 on existing ownership. `create --reuse|--restack` sk
 For a lease that records no session process, staleness is heartbeat age with **no liveness check**:
 
 - The heartbeat moves only when a caller re-enters or re-claims the tree, and nothing does so on a timer.
-- Past its TTL, `release --stale` or `sweep` unlocks such a lease while its session may still work.
+- Past its TTL, `release --stale`, `release --ended` or `sweep` unlocks such a lease while its session may still work.
+- `create --reuse` over a foreign lease, and `create` over a tree whose directory is gone, run `release --ended`.
 - `worktree-session-guard refresh <path> --owner <ISSUE_ID>` holds it open.
 - Nothing runs `sweep` automatically. Confirm the owner is really gone before releasing such a lease.
 
