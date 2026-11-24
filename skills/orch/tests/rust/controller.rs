@@ -9702,9 +9702,9 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
     assert_eq!(answer["reason"], json!("headroom-none"));
 }
 
-/// On fixture cgroup files, the death-cause reading: a cap on a parent of
-/// the group is the fullest cap, read with the caps' OOM kill count, each
-/// capped group's `memory.events` `oom_kill` summed and none where one is
+/// On fixture cgroup files, the fullest cap is chosen by anonymous memory,
+/// read with the caps' OOM kill count, each group's `memory.events`
+/// `oom_kill` summed and none where one is
 /// unread; a path with no cap is inert; a group whose charge cannot be read
 /// is unreadable; a pid the proc tree lacks is gone. On planted readings,
 /// the memory mark: a reading at the setting fires, an unreadable one is
@@ -9726,40 +9726,60 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     std::fs::create_dir_all(cgroup.join("a/b")).unwrap();
     std::fs::write(cgroup.join("a/b/memory.current"), "100\n").unwrap();
     std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
+    std::fs::write(cgroup.join("a/b/memory.stat"), "anon 95\nfile 5\n").unwrap();
     std::fs::write(cgroup.join("a/memory.current"), "900\n").unwrap();
     std::fs::write(cgroup.join("a/memory.max"), "1000\n").unwrap();
-    let parent = Reading::Live(Some(Memory {
+    std::fs::write(cgroup.join("a/memory.stat"), "anon 400\nfile 500\n").unwrap();
+    let parent = Memory {
         current: 900,
+        anon: 400,
         max: 1000,
         oom_kill: None,
-    }));
-    assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
-    let kills = |oom_kill: Option<u64>| {
-        Reading::Live(Some(Memory {
-            current: 900,
-            max: 1000,
-            oom_kill,
-        }))
     };
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Live(Some(parent))
+    );
     std::fs::write(
         cgroup.join("a/memory.events"),
         "low 0\nhigh 0\nmax 4\noom 2\noom_kill 2\noom_group_kill 0\n",
     )
     .unwrap();
-    assert_eq!(memory_of(&proc_root, &cgroup, 4242), kills(Some(2)));
-    std::fs::write(cgroup.join("a/b/memory.max"), "2000\n").unwrap();
     assert_eq!(
         memory_of(&proc_root, &cgroup, 4242),
-        kills(None),
-        "a capped group whose count is unread leaves the sum unread, the charge standing"
+        Reading::Live(Some(Memory {
+            oom_kill: Some(2),
+            ..parent
+        }))
+    );
+    std::fs::write(cgroup.join("a/b/memory.max"), "200\n").unwrap();
+    let child = Memory {
+        current: 100,
+        anon: 95,
+        max: 200,
+        oom_kill: None,
+    };
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Live(Some(child)),
+        "the child has the higher anonymous share and the unread count leaves that reading standing"
     );
     std::fs::write(cgroup.join("a/b/memory.events"), "oom_kill 1\n").unwrap();
-    assert_eq!(memory_of(&proc_root, &cgroup, 4242), kills(Some(3)));
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Live(Some(Memory {
+            oom_kill: Some(3),
+            ..child
+        }))
+    );
     std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
     std::fs::remove_file(cgroup.join("a/b/memory.events")).unwrap();
     std::fs::remove_file(cgroup.join("a/memory.events")).unwrap();
     std::fs::write(cgroup.join("a/b/memory.max"), "2000\n").unwrap();
-    assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Live(Some(parent))
+    );
     std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
     std::fs::remove_file(cgroup.join("a/memory.current")).unwrap();
     assert_eq!(
@@ -9780,6 +9800,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     ];
     let capped = Reading::Live(Some(Memory {
         current: 900,
+        anon: 900,
         max: 1000,
         oom_kill: None,
     }));
@@ -9827,74 +9848,118 @@ fn the_memory_mark_judges_its_own_group_or_named_level_never_a_shared_slice() {
     std::fs::write(proc_root.join("4242/cgroup"), format!("0::/{SCOPE}\n")).unwrap();
     let reached = |value: &'static str| (MarkKey::Reached(MarkKind::Memory), value);
     let below = (MarkKey::Below, "");
-    // (case, named level, capped groups as (group, current, max), answer:
+    // (case, named level, capped groups as (group, current, max, stat), answer:
     // the key and its value or reason)
-    type Row<'a> = (
-        &'a str,
-        Option<&'a str>,
-        &'a [(&'a str, u64, u64)],
-        (MarkKey, &'a str),
-    );
-    let rows: [Row; 8] = [
+    type Cap<'a> = (&'a str, u64, u64, Option<&'a str>);
+    type Row<'a> = (&'a str, Option<&'a str>, &'a [Cap<'a>], (MarkKey, &'a str));
+    let rows: [Row; 12] = [
         (
             "a full shared slice over an uncapped scope",
             None,
-            &[(SHARED, 990, 1000)],
+            &[(SHARED, 990, 1000, Some("anon 990\n"))],
             below,
         ),
         (
             "a full own scope under a fuller shared slice",
             None,
-            &[(SCOPE, 850, 1000), (SHARED, 990, 1000)],
+            &[
+                (SCOPE, 850, 1000, Some("anon 850\n")),
+                (SHARED, 990, 1000, Some("anon 990\n")),
+            ],
             reached("85"),
         ),
         (
             "an own scope below the mark under a full shared slice",
             None,
-            &[(SCOPE, 100, 1000), (SHARED, 990, 1000)],
+            &[
+                (SCOPE, 100, 1000, Some("anon 100\n")),
+                (SHARED, 990, 1000, Some("anon 990\n")),
+            ],
             below,
         ),
         (
             "a full named level over an uncapped scope",
             Some("user@1000.service"),
-            &[(MANAGER, 900, 1000), (SHARED, 990, 1000)],
+            &[
+                (MANAGER, 900, 1000, Some("anon 900\n")),
+                (SHARED, 990, 1000, Some("anon 990\n")),
+            ],
             reached("90"),
         ),
         (
             "a named level that is the own scope",
             Some("tmux.service"),
-            &[(SCOPE, 850, 1000), (MANAGER, 100, 1000)],
+            &[
+                (SCOPE, 850, 1000, Some("anon 850\n")),
+                (MANAGER, 100, 1000, Some("anon 100\n")),
+            ],
             reached("85"),
         ),
         (
             "a named level judged over a full own scope",
             Some("user@1000.service"),
-            &[(SCOPE, 990, 1000), (MANAGER, 100, 1000)],
+            &[
+                (SCOPE, 990, 1000, Some("anon 990\n")),
+                (MANAGER, 100, 1000, Some("anon 100\n")),
+            ],
             below,
         ),
         (
             "an uncapped named level under a full shared slice",
             Some("user@1000.service"),
-            &[(SHARED, 990, 1000)],
+            &[(SHARED, 990, 1000, Some("anon 990\n"))],
             below,
         ),
         (
             "a named level off the path",
             Some("agents.slice"),
-            &[(SCOPE, 990, 1000)],
+            &[(SCOPE, 990, 1000, Some("anon 990\n"))],
             (
                 MarkKey::Unmeasured(MarkKind::Memory),
                 "cgroup-level-off-path",
+            ),
+        ),
+        (
+            "file cache alone crosses the mark",
+            None,
+            &[(SCOPE, 900, 1000, Some("file 500\nanon 400\n"))],
+            below,
+        ),
+        (
+            "anonymous memory crosses the mark",
+            None,
+            &[(SCOPE, 950, 1000, Some("anon 830\nfile 120\n"))],
+            reached("83"),
+        ),
+        (
+            "missing memory.stat under a charged cap",
+            None,
+            &[(SCOPE, 900, 1000, None)],
+            (
+                MarkKey::Unmeasured(MarkKind::Memory),
+                "memory-stat-unreadable",
+            ),
+        ),
+        (
+            "malformed anon field under a charged cap",
+            None,
+            &[(SCOPE, 900, 1000, Some("anon broken\nfile 500\n"))],
+            (
+                MarkKey::Unmeasured(MarkKind::Memory),
+                "memory-anon-unparsed",
             ),
         ),
     ];
     for (i, (case, named, caps, (key, detail))) in rows.into_iter().enumerate() {
         let cgroup = world.path().join(format!("cgroup-{i}"));
         std::fs::create_dir_all(cgroup.join(SCOPE)).unwrap();
-        for (group, current, max) in caps {
+        for (group, current, max, stat) in caps {
             let dir = cgroup.join(group);
             std::fs::write(dir.join("memory.current"), format!("{current}\n")).unwrap();
             std::fs::write(dir.join("memory.max"), format!("{max}\n")).unwrap();
+            if let Some(stat) = stat {
+                std::fs::write(dir.join("memory.stat"), stat).unwrap();
+            }
         }
         let mut extra = vec![
             ("ORCH_OVERSEER_MEMORY_PCT", "80"),

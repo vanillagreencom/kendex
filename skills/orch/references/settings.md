@@ -273,7 +273,7 @@ See [turnend/marks.rs](../runtime/src/turnend/marks.rs) for the reserve and [age
 | `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Tokens an attached launch keeps below the context mark for returns still to come: a whole number. |
 | `ORCH_HANDOFF_HEADROOM_PCT` | The account headroom a lane's turn end hands off at. |
 | `ORCH_OVERSEER_WALL_MINUTES` | Minutes to the account's wall, at the measured rate, at which the overseer hands off. `0` turns the mark off. |
-| `ORCH_OVERSEER_MEMORY_PCT` | The percent of the memory cap of its harness process's own cgroup, or of the level `ORCH_OVERSEER_MEMORY_CGROUP` names, at which the overseer hands off. A cap above that group, such as a user slice every session shares, never fires it, and an uncapped judged group takes no memory mark. |
+| `ORCH_OVERSEER_MEMORY_PCT` | The percentage of `memory.max` that anonymous memory (`anon` in `memory.stat`) must reach for the overseer to hand off. The watch reads the harness process's own cgroup or the level named by `ORCH_OVERSEER_MEMORY_CGROUP`. An uncapped group has no memory mark. If the anonymous-memory reading is unavailable, the mark is unmeasured. |
 | `ORCH_OVERSEER_MEMORY_CGROUP` | The name of the cgroup on the harness process's path, such as `tmux.service`, whose cap the memory mark judges: the nearest group so named. A name no group on the path carries reads the mark unmeasured. |
 | `AGENT_RUNTIME_CONTROLLER_SUCCESSION` | `on` or `off`: whether a controller may ask for its own succession. |
 | `AGENT_RUNTIME_CONTROLLER_PREFERENCE` | The `harness:model:effort` entries a succession walks for the successor. |
