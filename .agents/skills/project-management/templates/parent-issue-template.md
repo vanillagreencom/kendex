@@ -5,6 +5,7 @@ A parent with children is a **container**: never orchestrated directly, never it
 - Each child ships as its own PR.
 - The container closes when its last child is Done or Canceled.
 - File one only for the parts of one deliverable accepted as one thing, references/filing.md § Group by project or label, never by parent.
+- Whether one approved design is filed as a parent or as a project, and how far its children split: [filing.md](../references/filing.md) § One landing per subsystem.
 - Related items that are not one deliverable share a project or a label instead.
 - Work that ships in one PR is a leaf work item with an internal checklist, never a parent. A title marks nothing. The one exception is the review audit's in-PR bundle, whose children the reviewed issue's own PR works (orch skill-rules § Coordination).
 
