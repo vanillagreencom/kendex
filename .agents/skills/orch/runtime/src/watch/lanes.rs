@@ -16,15 +16,16 @@
 //! that process's scrollback, not its wall; the `usage-limit` row is keyed to
 //! the identity the wall was judged for, so a replayed screen from an earlier
 //! process never promotes. A Pi lane's rows wall is the harness's own current
-//! record and needs no comparison. A local Claude rate-limit row must be
-//! newer than the launch's recorded row position.
+//! record and needs no comparison. A local Claude rate-limit row needs a
+//! launch position, and that position excludes earlier auth failures too.
 //!
 //! The wall's record and route: the reset the banner names is read by the
 //! grammar ([`reset`] below) and the line is `usage-limit-passed` once
 //! the clock passes it; the account wall record and the lane record's own wall
 //! are written through `ops::wall`; the wall relaunch is the walled lane's
-//! close and its `launch-lane` on the account the walk picked, applied by the
-//! runtime's own entry, started detached through the one runner under
+//! close and its `launch-lane` on the account the walk picked for a usage wall
+//! or the lane's own account for an auth wall. The runtime's own entry applies
+//! both, started detached through the one runner under
 //! `ORCH_WALL_RELAUNCH=auto`; a window gone while that
 //! relaunch is still opening its replacement is not `window-gone`. A lane
 //! `ORCH_WATCH_LANE_AGE_SECS` past its
@@ -63,6 +64,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, PANE_DEAD, Pane, PaneFields, PaneState};
 use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
 use agent_runtime::process::Identity;
+use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::session;
@@ -82,9 +84,9 @@ use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
-use crate::state::{self, FleetState, Lane, LaneStatus};
+use crate::state::{self, CloseGround, FleetState, Lane, LaneMembers, LaneStatus};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
-use agent_runtime::intent::{Obligation, Phase};
+use agent_runtime::intent::{EffectOp, Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
@@ -266,16 +268,16 @@ impl Readers<'static> {
 }
 
 /// The relaunch the wall route starts: the walled lane's close and its
-/// `launch-lane` on the picked account, run detached in the launch's
+/// `launch-lane` with its destination credentials, run detached in the launch's
 /// checkout with its session, its output at `log`, its exit status landing
 /// beside `marker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunch {
     pub item: String,
     pub window: String,
-    /// The account picked.
+    /// The destination account, or `-` for inherited credentials.
     pub to: String,
-    /// The account the wall spent.
+    /// The predecessor's account, or `-` for inherited credentials.
     pub spent: String,
     pub cwd: PathBuf,
     pub session: String,
@@ -341,7 +343,7 @@ pub fn receipts_in(state_dir: &Path) -> Reading<Vec<String>> {
 pub enum WallSource {
     /// The banner on the pane's screen.
     Pane,
-    /// The harness's own session row (a Pi lane).
+    /// The harness's own session row.
     Rows,
 }
 
@@ -385,7 +387,7 @@ pub struct Inputs<'a> {
     pub process: Option<&'a ProcessReading>,
     pub screen: Option<&'a Result<String, String>>,
     /// The lane's rows; hosted non-Pi lanes keep their provider's pane reading.
-    pub rows: Option<&'a Reading<LaneVerdict>>,
+    pub rows: Option<&'a Reading<rows::Row>>,
     pub harness: Option<Harness>,
     /// Whether the account the lane spends was read as having room: the
     /// close's wall lift passes `Some(true)`, which judges a usage banner
@@ -478,16 +480,25 @@ pub fn classify(inputs: &Inputs) -> LaneState {
     {
         return screen_state;
     }
-    if let Some(rows) = inputs.rows {
-        match rows {
-            Reading::Live(LaneVerdict::Walled) => {
+    if let Some(reading) = inputs.rows {
+        let verdict = match reading {
+            Reading::Live(row) => rows::judge_lane(row).map(|verdict| (row, verdict)),
+            Reading::Gone => Reading::Gone,
+            Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        };
+        match verdict {
+            Reading::Live((row, LaneVerdict::Walled)) => {
                 return LaneState::Walled {
-                    kind: WallKind::Usage,
+                    kind: if auth_stop_failure(row) {
+                        WallKind::Auth
+                    } else {
+                        WallKind::Usage
+                    },
                     banner: String::new(),
                     source: WallSource::Rows,
                 };
             }
-            Reading::Live(LaneVerdict::Working) => {
+            Reading::Live((_, LaneVerdict::Working)) => {
                 if harness == Harness::Codex
                     && (matches!(&screen_state, LaneState::Idle { capacity: true, .. })
                         || matches!(&screen_state, LaneState::Idle { cause: Some(cause), .. } if cause == "api-error"))
@@ -496,15 +507,15 @@ pub fn classify(inputs: &Inputs) -> LaneState {
                 }
                 return LaneState::Working;
             }
-            Reading::Live(LaneVerdict::Idle { cause }) => {
+            Reading::Live((_, LaneVerdict::Idle { cause })) => {
                 return LaneState::Idle {
                     capacity: false,
-                    cause: cause.clone(),
+                    cause,
                 };
             }
             Reading::Unreadable { cause } => {
                 return LaneState::Unjudged {
-                    cause: (*cause).to_owned(),
+                    cause: cause.to_owned(),
                 };
             }
             Reading::Gone => {}
@@ -518,6 +529,15 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         };
     }
     screen_state
+}
+
+fn auth_stop_failure(row: &rows::Row) -> bool {
+    matches!(
+        rows::judge_session(row),
+        rows::SessionVerdict::Walled {
+            kind: WallKind::Auth
+        }
+    )
 }
 
 /// One pass's inputs beyond the readers.
@@ -573,6 +593,13 @@ struct Observed<'a> {
 impl Observed<'_> {
     fn hosted_unreadable(&self) -> bool {
         matches!(self.state, LaneState::Unreadable { .. }) && hosted::host_of(self.lane) != "local"
+    }
+
+    fn current_auth_row(&self) -> bool {
+        self.row
+            .as_ref()
+            .zip(self.lane.session_rows_at_launch)
+            .is_some_and(|(row, at)| row.position > at && auth_stop_failure(row))
     }
 }
 
@@ -708,40 +735,41 @@ fn read_lane<'a>(
             .then_some(lane.mail_root.as_deref())
             .flatten()
             .map(|root| {
-                let file =
-                    crate::marker::mailbox_path(Path::new(root), &lane.item).join(rows::LANE_FILE);
+                let file = lane_rows_file(root, &lane.item);
                 (readers.rows)(&file)
             }),
     };
-    let rows_reading = row_reading.as_ref().map(|row| match row {
-        // Without a launch position (including older records), the pane
-        // is the local Claude lane's evidence of a current rate limit.
-        Reading::Live(row)
-            if harness == Some(Harness::Claude)
-                && hosted::host_of(lane) == "local"
-                && row.harness.as_deref() == Some("claude")
-                && row.event.as_deref() == Some("StopFailure")
-                && row.error.as_deref() == Some("rate_limit")
-                && lane
-                    .session_rows_at_launch
-                    .is_none_or(|at| row.position <= at) =>
+    // A launch position excludes failures from the predecessor. Legacy
+    // records without one use the pane as evidence of a Claude rate limit.
+    let current_rows = row_reading.as_ref().filter(|reading| {
+        let Reading::Live(row) = reading else {
+            return true;
+        };
+        if harness != Some(Harness::Claude)
+            || hosted::host_of(lane) != "local"
+            || row.harness.as_deref() != Some("claude")
+            || row.event.as_deref() != Some("StopFailure")
         {
-            Reading::Gone
+            return true;
         }
-        Reading::Live(row) => rows::judge_lane(row),
-        Reading::Gone => Reading::Gone,
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        match lane.session_rows_at_launch {
+            Some(at) if row.position <= at => {
+                row.error.as_deref() != Some("rate_limit") && !auth_stop_failure(row)
+            }
+            None => row.error.as_deref() != Some("rate_limit"),
+            Some(_) => true,
+        }
     });
-    let row = row_reading.and_then(|row| match row {
-        Reading::Live(row) => Some(row),
-        Reading::Gone | Reading::Unreadable { .. } => None,
-    });
+    let live_row = |reading| match reading {
+        Some(Reading::Live(row)) => Some(row),
+        Some(Reading::Gone | Reading::Unreadable { .. }) | None => None,
+    };
     if let Some(screen) = host.screen {
         let state = classify(&Inputs {
             pane: None,
             process: Some(&ProcessReading::HarnessUp),
             screen: Some(&screen),
-            rows: rows_reading.as_ref(),
+            rows: current_rows,
             harness,
             account_room,
         });
@@ -751,7 +779,7 @@ fn read_lane<'a>(
             pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
             identity: identity.clone(),
             screen: screen.ok(),
-            row,
+            row: live_row(row_reading),
             provider_running: harness_up,
             state,
         };
@@ -780,7 +808,7 @@ fn read_lane<'a>(
                 pane_key,
                 identity,
                 screen: (readers.capture)(&kept).ok(),
-                row,
+                row: live_row(row_reading),
                 provider_running: false,
                 state: LaneState::Exited,
             };
@@ -804,7 +832,7 @@ fn read_lane<'a>(
         pane: Some(&pane),
         process: process.as_ref(),
         screen: screen.as_ref(),
-        rows: rows_reading.as_ref(),
+        rows: current_rows,
         harness,
         account_room,
     });
@@ -814,10 +842,14 @@ fn read_lane<'a>(
         pane_key,
         identity,
         screen: screen.and_then(Result::ok),
-        row,
+        row: live_row(row_reading),
         provider_running: harness_up,
         state,
     }
+}
+
+fn lane_rows_file(root: &str, item: &str) -> PathBuf {
+    marker::mailbox_path(Path::new(root), item).join(rows::LANE_FILE)
 }
 
 fn lane_refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
@@ -1687,11 +1719,6 @@ fn wall(
     out: &mut Produced,
 ) -> (LaneState, WallReading) {
     let lane = &obs.name;
-    let walled = LaneState::Walled {
-        kind,
-        banner: banner.to_owned(),
-        source,
-    };
     let unjudged = |cause: &str| {
         (
             LaneState::Unjudged {
@@ -1702,15 +1729,16 @@ fn wall(
     };
     // A rows wall carries the harness's own message; the banner judged a
     // pane wall is the screen's.
+    let row_text = obs
+        .row
+        .as_ref()
+        .and_then(|row| row.message.as_deref())
+        .unwrap_or_default();
     let text = match source {
-        WallSource::Rows => obs
-            .row
-            .as_ref()
-            .and_then(|row| row.message.clone())
-            .unwrap_or_default(),
-        WallSource::Pane => banner.to_owned(),
+        WallSource::Rows => row_text,
+        WallSource::Pane => banner,
     };
-    let hash = hash_of(&text).to_string();
+    let hash = hash_of(text).to_string();
     let prior: Vec<String> = pass
         .baseline
         .get("usage-limit", lane)
@@ -1734,33 +1762,44 @@ fn wall(
             },
         },
     };
-    match age {
-        WallAge::Current => {}
-        // The screen predates the live process: its scrollback, not its
-        // wall. The row keeps the first sighting, so the comparison holds
-        // on every later pass.
+    let auth = kind == WallKind::Auth;
+    let evidence = match age {
+        WallAge::Current => source,
+        WallAge::Older | WallAge::Unjudged { .. } if auth && obs.current_auth_row() => {
+            WallSource::Rows
+        }
         WallAge::Older => return unjudged("wall-predates-process"),
         WallAge::Unjudged { cause } => return unjudged(cause),
-    }
+    };
+    // Keep the pane's original sighting and hash for its age check,
+    // deduplication and standing pause.
     let observed = WallReading::Walled { first_seen };
+    let walled = LaneState::Walled {
+        kind,
+        banner: if evidence == WallSource::Pane {
+            banner.to_owned()
+        } else {
+            String::new()
+        },
+        source: evidence,
+    };
     let identity = identity_word(obs.identity.as_ref());
-    let auth = kind == WallKind::Auth;
     // The reset the banner states decides which event this is: pinned to the
     // first sighting, never to this pass, so a dayless clause names the day
     // the wall was seen on; a login wall has no reset.
-    let channel = match source {
+    let channel = match evidence {
         WallSource::Pane => WallChannel::Pane,
         WallSource::Rows => WallChannel::Row,
     };
     let reset_at = if auth {
         None
     } else {
-        reset::key(&text).and_then(|key| {
+        reset::key(text).and_then(|key| {
             let zone = (pass.readers.zone)(key.zone.as_deref())?;
             let at = reset::epoch(&key, first_seen, &zone)?;
             // After the printed clock has passed, its next occurrence can
             // be tomorrow. A reset beyond the named window is unproven.
-            let five_hour = account_wall::harness_own_limit(&text, channel)
+            let five_hour = account_wall::harness_own_limit(text, channel)
                 == Some(account_wall::LimitReport::FiveHour);
             (!five_hour
                 || at.saturating_sub(first_seen) <= agent_runtime::accounts::usage::FIVE_HOURS_S)
@@ -1800,7 +1839,7 @@ fn wall(
                     reset: reset_at,
                     now: pass.now,
                     first_seen,
-                    banner: text.clone(),
+                    banner: text.to_owned(),
                     channel,
                 },
             )
@@ -1811,8 +1850,8 @@ fn wall(
     if quiet && !rewalled {
         return (walled, observed);
     }
-    let lines = match source {
-        WallSource::Rows => text.lines().map(str::to_owned).collect(),
+    let lines = match evidence {
+        WallSource::Rows => row_text.lines().map(str::to_owned).collect(),
         WallSource::Pane => match banner_payload(slice, banner, cap) {
             Some(lines) => lines,
             // The judge and the payload disagree on where the banner is:
@@ -1822,7 +1861,7 @@ fn wall(
     };
     let mut notes = Vec::new();
     match reset_at.filter(|_| passed) {
-        None => match route(obs, &account, pass, out, &mut notes) {
+        None => match route(obs, kind, pass, out, &mut notes) {
             Routed::Relaunched => {
                 out.changes.push(set(
                     "usage-limit",
@@ -1831,6 +1870,7 @@ fn wall(
                 ));
                 return (walled, observed);
             }
+            Routed::Opening => return unjudged("auth-recovery-opening"),
             Routed::Left => {}
         },
         // A passed reset: the wake resumes the lane it reaches, once per
@@ -1883,14 +1923,90 @@ fn wall(
 enum Routed {
     /// The relaunch started and `lane-relaunched` is out.
     Relaunched,
+    /// A replacement's open launch still owns the outcome.
+    Opening,
     /// The wall is left to the overseer; `notes` carry the pick's answer
     /// and any refusal.
     Left,
 }
 
-/// The usage-limit route: the account walk's pick for the record's model with
-/// the spent account excluded, its answer the line under the event; under
-/// `ORCH_WALL_RELAUNCH=auto` a qualifying account takes the lane through the
+const AUTH_WALL: &str = "auth-wall";
+
+enum AuthRecovery {
+    Ready,
+    Opening,
+    AwaitingTurn,
+}
+
+/// The current launch follows a confirmed auth close in the intent journal.
+/// A subsequent launch after another disposition starts a new recovery.
+fn auth_recovery(lane: &Lane, pass: &Pass) -> Result<AuthRecovery, String> {
+    let mut transitions = pass.fleet.intents.iter().rev().filter(|intent| {
+        intent.target == lane.item
+            && intent.reconciled.is_none()
+            && ((intent.op == EffectOp::LaunchSession
+                && (intent.outcome == Outcome::Confirmed || intent.open()))
+                || (intent.op == EffectOp::CloseResources && intent.outcome == Outcome::Confirmed))
+    });
+    let (Some(launch), Some(close)) = (transitions.next(), transitions.next()) else {
+        return Ok(AuthRecovery::Ready);
+    };
+    if launch.op != EffectOp::LaunchSession
+        || lane.session_since.as_deref() != Some(launch.created_at.as_str())
+        || close.op != EffectOp::CloseResources
+    {
+        return Ok(AuthRecovery::Ready);
+    }
+    let fleet = pass.state_dir.join(agent_runtime::record::FLEET_FILE_NAME);
+    let members = LaneMembers::of(&fleet, close).map_err(|e| e.to_string())?;
+    if !matches!(members.close, Some(CloseGround::NoLanding { reason, .. }) if reason == AUTH_WALL)
+    {
+        return Ok(AuthRecovery::Ready);
+    }
+    if launch.open() {
+        return Ok(AuthRecovery::Opening);
+    }
+    Ok(if completed_turn_since_launch(lane)? {
+        AuthRecovery::Ready
+    } else {
+        AuthRecovery::AwaitingTurn
+    })
+}
+
+/// A Claude Stop follows a completed turn. Startup idleness and open-turn
+/// rows can both occur before the replacement's credentials have worked.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the wall route reads the lane's turn rows after its recorded launch position"
+)]
+fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
+    let (Some(at), Some(root)) = (lane.session_rows_at_launch, lane.mail_root.as_deref()) else {
+        return Ok(false);
+    };
+    if hosted::host_of(lane) != "local" || lane.harness.as_deref() != Some("claude") {
+        return Ok(false);
+    }
+    let file = lane_rows_file(root, &lane.item);
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("rows-unreadable path={} cause={e}", file.display())),
+    };
+    Ok(rows::rows_after_in(&text, at as u64).any(|reading| {
+        matches!(
+            reading,
+            Reading::Live(row)
+                if row.harness.as_deref() == Some("claude")
+                    && row.event.as_deref() == Some("Stop")
+                    && matches!(rows::judge_lane(&row), Reading::Live(LaneVerdict::Idle { cause: None }))
+        )
+    }))
+}
+
+/// A usage wall walks accounts for the record's model with the spent account
+/// excluded and prints the pick's answer under the event. An auth wall keeps
+/// the lane's account so a resumed harness reads its current credentials.
+/// Under `ORCH_WALL_RELAUNCH=auto` the destination takes the lane through the
 /// record's own relaunch, started detached through the one runner, its marker
 /// written first for the outcome reader. A hosted lane of any kind has its
 /// harness stopped through the provider first (its `stop --item
@@ -1900,7 +2016,7 @@ enum Routed {
 /// under the event, after the pick's line, and never asked again this pass.
 fn route(
     obs: &Observed,
-    account: &str,
+    kind: WallKind,
     pass: &Pass,
     out: &mut Produced,
     notes: &mut Vec<String>,
@@ -1910,43 +2026,62 @@ fn route(
         notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
         Routed::Left
     };
-    // A record naming no harness or model, or no account, asks no pick and
-    // leaves the wall to the overseer with the reason under the event.
     let harness = obs.lane.harness.as_deref().and_then(Harness::parse);
     let model = obs.lane.model.as_deref().unwrap_or("");
     let (Some(harness), false) = (harness, model.is_empty()) else {
         return refused(notes, "record-unnamed");
     };
-    if account.is_empty() {
-        return refused(notes, "account-unknown");
-    }
-    let to = match (pass.route.pick)(harness, model, account) {
-        Pick::Lane(to) => {
-            notes.push(format!("pick lane={to}"));
-            to
-        }
-        Pick::None => {
-            notes.push("pick none".to_owned());
-            return Routed::Left;
-        }
-        Pick::Unjudged { cause } => {
-            notes.push(format!("pick unjudged {cause}"));
-            return Routed::Left;
+    let account = obs.lane.account.as_deref();
+    let to = match kind {
+        WallKind::Auth => obs.lane.account.clone(),
+        WallKind::Usage => {
+            let Some(spent) = account.filter(|a| !a.is_empty()) else {
+                return refused(notes, "account-unknown");
+            };
+            match (pass.route.pick)(harness, model, spent) {
+                Pick::Lane(to) => {
+                    notes.push(format!("pick lane={to}"));
+                    Some(to)
+                }
+                Pick::None => {
+                    notes.push("pick none".to_owned());
+                    return Routed::Left;
+                }
+                Pick::Unjudged { cause } => {
+                    notes.push(format!("pick unjudged {cause}"));
+                    return Routed::Left;
+                }
+            }
         }
     };
-    match pass.route.relaunch {
-        WallRelaunch::Auto => {}
-        WallRelaunch::Ask => return Routed::Left,
+    let recovery = match kind {
+        WallKind::Auth => match auth_recovery(obs.lane, pass) {
+            Ok(recovery) => recovery,
+            Err(cause) => return refused(notes, &format!("auth-recovery-unread cause={cause}")),
+        },
+        WallKind::Usage => AuthRecovery::Ready,
+    };
+    match (pass.route.relaunch, recovery) {
+        (_, AuthRecovery::Opening) => return Routed::Opening,
+        (WallRelaunch::Ask, AuthRecovery::Ready | AuthRecovery::AwaitingTurn) => {
+            return Routed::Left;
+        }
+        (WallRelaunch::Auto, AuthRecovery::AwaitingTurn) => {
+            return refused(notes, "auth-recovery-unconfirmed");
+        }
+        (WallRelaunch::Auto, AuthRecovery::Ready) => {}
     }
-    // The spent account is never relaunched onto before its reset.
-    if account_wall::canon(&to) == account_wall::canon(account) {
+    if kind == WallKind::Usage
+        && let (Some(to), Some(spent)) = (to.as_deref(), account)
+        && account_wall::canon(to) == account_wall::canon(spent)
+    {
         return refused(notes, "spent-account");
     }
     let relaunch = match relaunch_request(
         obs.lane,
         harness,
-        &to,
-        account,
+        to.as_deref(),
+        kind,
         pass.state_dir,
         pass.scripts,
         pass.session,
@@ -1976,8 +2111,8 @@ fn route(
     let relaunch = Relaunch {
         item: obs.lane.item.clone(),
         window: lane.clone(),
-        to: to.clone(),
-        spent: account.to_owned(),
+        to: to.unwrap_or_else(|| "-".to_owned()),
+        spent: account.unwrap_or("-").to_owned(),
         cwd: relaunch.cwd,
         session: relaunch.session,
         args: relaunch.args,
@@ -1989,8 +2124,8 @@ fn route(
     }
     out.events.push(Event::LaneRelaunched {
         item: obs.lane.item.clone(),
-        lane: to,
-        from: account.to_owned(),
+        lane: relaunch.to,
+        from: relaunch.spent,
     });
     out.events
         .push(Event::Tail(format!("log={}", log.display())));
@@ -2146,19 +2281,20 @@ pub(crate) fn compose_relaunch(
     })
 }
 
-/// The wall's relaunch: the record's own relaunch ([`compose_relaunch`])
-/// on the picked account with the spent account excluded, the start brief
-/// and the `usage-limit` ground, run as one shell line under the watch's
-/// session.
-pub(crate) fn relaunch_request(
+/// Compose both wall relaunch requests for the watch's session.
+fn relaunch_request(
     lane: &Lane,
     harness: Harness,
-    to: &str,
-    spent: &str,
+    to: Option<&str>,
+    kind: WallKind,
     state_dir: &Path,
     scripts: &Path,
     session: Option<&str>,
 ) -> Result<Recovery, String> {
+    let (exclude, reason) = match kind {
+        WallKind::Usage => (lane.account.as_deref(), "usage-limit"),
+        WallKind::Auth => (None, AUTH_WALL),
+    };
     let Composed {
         cwd,
         close,
@@ -2168,10 +2304,10 @@ pub(crate) fn relaunch_request(
         harness,
         &Composition {
             stem: "wall-relaunch",
-            account: Some(to),
-            exclude: Some(spent),
+            account: to,
+            exclude,
             brief: start_brief,
-            ground: json!({"reason": "usage-limit", "source": "wall-route"}),
+            ground: json!({"reason": reason, "source": "wall-route"}),
         },
         state_dir,
     )?;
