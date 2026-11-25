@@ -120,6 +120,169 @@ pub fn hook_path(root: &Path, name: &str) -> PathBuf {
     root.join(hook_rel(name))
 }
 
+/// The first pi-hooks release that hands each hook its registration's scope
+/// and root, as the overlap refusal names it.
+const CARRIER_FLOOR: &str = "pi-hooks>=0.19.3";
+
+/// Give one rendered Pi hook script the registration it was rendered for.
+///
+/// From pi-hooks 0.19.3 the carrier hands every hook the scope its registry
+/// was read from in `KENDEX_HOOK_SCOPE` and that scope's root in
+/// `KENDEX_HOOK_ROOT`. pi-hooks 0.19.2 and earlier set neither, and a hook
+/// that takes its install from them would then lose its install: a
+/// project-only refresh under an older global carrier would leave its
+/// configured checks unread. Its path alone cannot say which install it is,
+/// since a global root moved into a checkout has a project install's shape.
+/// The render can: kendex writes this file for one scope, so the scope is
+/// written into it, and the root is what that scope's registry anchored the
+/// spawned path under. A carrier that sets either variable is left to say
+/// both.
+///
+/// One file can be both scopes' install, when the project's hook directory
+/// and the global one are one directory. Both registries then start the
+/// same path with the same input, so no stamp can be right for both, and
+/// the file says neither: a carrier that names no registration is refused.
+/// Both scopes judge that from the same pair of directories and render the
+/// same bytes, so neither plan rewrites the other's file, wherever the
+/// global plan can find the project: see [`shares_hook_dir`].
+///
+/// Remove this when the oldest carrier kendex supports is [`CARRIER_FLOOR`].
+pub(crate) fn stamp_hook(env: &Env, scope: &Scope, name: &str, script: &mut String) {
+    let stamp = match (scope, shares_hook_dir(env, scope)) {
+        (_, true) => overlap_stamp(name),
+        (Scope::Project { .. }, false) => {
+            registration_stamp("project", &format!("/.pi/{}", hook_rel(name)))
+        }
+        (Scope::Global, false) => registration_stamp("global", &format!("/{}", hook_rel(name))),
+    };
+    let mut at = stamp_offset(script);
+    if at > 0 && !script[..at].ends_with('\n') {
+        script.insert(at, '\n');
+        at += 1;
+    }
+    script.insert_str(at, &stamp);
+}
+
+/// Where the stamp goes: after the shebang and the header block directly
+/// below it, so the header still opens the file and the stamp runs before
+/// the script's first statement. A script with no header there takes it
+/// directly after the shebang, and one with no shebang at its top.
+fn stamp_offset(script: &str) -> usize {
+    let mut at = match script.strip_prefix("#!") {
+        Some(_) => script
+            .find('\n')
+            .map_or(script.len(), |newline| newline + 1),
+        None => return 0,
+    };
+    let after_shebang = at;
+    let mut opened = false;
+    for line in script[after_shebang..].split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('#') {
+            return after_shebang;
+        }
+        at += line.len();
+        if trimmed == "# ---" {
+            if opened {
+                return at;
+            }
+            opened = true;
+        } else if !opened {
+            return after_shebang;
+        }
+    }
+    after_shebang
+}
+
+/// Whether the project's hook directory and the global one are one
+/// directory on disk. A project scope compares its own `.pi` with the global
+/// root. The global scope compares with the project its root sits in, found
+/// by the walk the carrier makes (`discover.rs`): the layout where a carrier
+/// that names no registration starts one path from both registries. A global
+/// plan cannot find a project whose `.pi` links into a global root outside
+/// it, so in that layout the two plans stamp the file differently.
+fn shares_hook_dir(env: &Env, scope: &Scope) -> bool {
+    let global = Pi.default_global_root(env);
+    let project = match scope {
+        Scope::Project { root } => root.clone(),
+        Scope::Global => match crate::discover::project_root_from(&global, env.real_home()) {
+            Some(project) => project,
+            None => return false,
+        },
+    };
+    one_hook_dir(&project.join(".pi"), &global)
+}
+
+/// Whether two scope roots hold one hook directory. The same spelling is one
+/// directory before anything exists. Otherwise the deepest level of the hook
+/// directory's path that resolves under both roots decides, by canonical
+/// path: a level that resolves under one root alone shows two directories.
+fn one_hook_dir(a: &Path, b: &Path) -> bool {
+    if hook_dir(a) == hook_dir(b) {
+        return true;
+    }
+    for level in [hook_rel_dir(), HOOK_HOME.to_owned(), String::new()] {
+        let below = |root: &Path| crate::paths::canonical(&root.join(&level)).ok();
+        match (below(a), below(b)) {
+            (Some(a), Some(b)) => return a == b,
+            (None, None) => {}
+            (Some(_), None) | (None, Some(_)) => return false,
+        }
+    }
+    false
+}
+
+/// The stamp for a file that is one scope's install alone. The carrier
+/// spawns `<root><tail>`, the tail spelled with `/` here and with the
+/// platform's separator by a Windows carrier, so the root is the spawned
+/// path less the tail, in the carrier's own spelling. A path that does not
+/// end in the tail, or leaves no absolute root, was not started by a
+/// registry, and the stamp says nothing.
+fn registration_stamp(scope: &str, tail: &str) -> String {
+    format!(
+        r#"# kendex: rendered as the {scope} Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${{KENDEX_HOOK_SCOPE+set}}${{KENDEX_HOOK_ROOT+set}}" ]; then
+  kendex_hook_at=${{BASH_SOURCE[0]-}}
+  kendex_hook_tail={tail}
+  case ${{kendex_hook_at//\\//}} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${{kendex_hook_at:0:${{#kendex_hook_at}}-${{#kendex_hook_tail}}}}
+      case ${{kendex_hook_root//\\//}} in
+        '') kendex_hook_root=${{kendex_hook_at:0:1}} ;;
+        [A-Za-z]:) kendex_hook_root+=${{kendex_hook_at:2:1}} ;;
+      esac
+      case ${{kendex_hook_root//\\//}} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE={scope} KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
+"#,
+        tail = crate::names::quoted(tail),
+    )
+}
+
+/// The stamp for a file that is both scopes' install: a carrier that names
+/// no registration gets a refusal, the guard having no install to judge from.
+fn overlap_stamp(name: &str) -> String {
+    format!(
+        r#"# kendex: this file is both the project and the global Pi install of this
+# hook. A pi-hooks carrier before 0.19.3 starts it the same way from either
+# registry, so only a carrier that names the registration may run it.
+if [ -z "${{KENDEX_HOOK_SCOPE+set}}${{KENDEX_HOOK_ROOT+set}}" ]; then
+  printf '%s\n' {key} "${{BASH_SOURCE[0]-this hook}} is both the project and the global Pi install of this hook, and this pi-hooks carrier does not say which registration started it, so the hook cannot tell which install's skills and settings to use. Update pi-hooks to 0.19.3 or later, which passes the registration scope, or install the hook at one scope." >&2
+  exit 2
+fi
+"#,
+        key = crate::names::quoted(&format!(
+            "kendex-hook-scope-overlap: hook={} carrier={CARRIER_FLOOR}",
+            crate::names::shown(name)
+        )),
+    )
+}
+
 impl HarnessAdapter for Pi {
     fn id(&self) -> HarnessId {
         HarnessId::Pi
@@ -252,6 +415,63 @@ mod tests {
                 "Windows {value}"
             );
         }
+    }
+
+    /// What `stamp_hook` adds to a script with no body, for one scope.
+    fn stamped(env: &Env, scope: &Scope) -> String {
+        let mut script = "#!/bin/bash\n".to_owned();
+        stamp_hook(env, scope, "g", &mut script);
+        script
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn both_scopes_stamp_one_shared_hook_directory_alike() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let project = home.join("app");
+        std::fs::create_dir_all(project.join(".pi/kendex/hooks")).unwrap();
+        let in_project = Scope::Project {
+            root: project.clone(),
+        };
+        let env = Env::fake(&home, FakeOs::Linux);
+        let overlap = format!("#!/bin/bash\n{}", overlap_stamp("g"));
+
+        // Apart, each scope names itself.
+        let (own, global) = (stamped(&env, &in_project), stamped(&env, &Scope::Global));
+        assert!(own != overlap && global != overlap && own != global);
+
+        // The global root is the project's `.pi`: one registry, one file.
+        let env = env.with_var(
+            "PI_CODING_AGENT_DIR",
+            &project.join(".pi").to_string_lossy(),
+        );
+        assert_eq!(stamped(&env, &in_project), overlap);
+        assert_eq!(stamped(&env, &Scope::Global), overlap);
+
+        // The project's hook directory links into the global one.
+        let agent = home.join(".pi/agent/kendex/hooks");
+        std::fs::create_dir_all(&agent).unwrap();
+        std::fs::remove_dir(project.join(".pi/kendex/hooks")).unwrap();
+        std::os::unix::fs::symlink(&agent, project.join(".pi/kendex/hooks")).unwrap();
+        let env = Env::fake(&home, FakeOs::Linux);
+        assert_eq!(stamped(&env, &in_project), overlap);
+    }
+
+    #[test]
+    fn the_stamp_follows_the_header_so_the_header_still_reads() {
+        let env = Env::fake("/h", FakeOs::Linux);
+        let header = "#!/usr/bin/env bash\n# ---\n# name: g\n# event: PreToolUse\n# ---\n";
+        let body = "\nset -eu\nexit 0\n";
+        let mut script = format!("{header}{body}");
+        stamp_hook(&env, &Scope::Global, "g", &mut script);
+        let stamp = &script[header.len()..script.len() - body.len()];
+        assert_eq!(stamp, registration_stamp("global", "/kendex/hooks/g.sh"));
+        let hook = crate::hook::parse_hook(&script).unwrap();
+        assert_eq!(
+            (hook.name.as_str(), hook.event.as_str()),
+            ("g", "PreToolUse")
+        );
     }
 
     #[test]

@@ -10,6 +10,25 @@
 # harnesses: [claude, pi]
 # requires-skills: [jarvis]
 # ---
+# kendex: rendered as the project Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
+  kendex_hook_at=${BASH_SOURCE[0]-}
+  kendex_hook_tail='/.pi/kendex/hooks/jarvis-memory-note.sh'
+  case ${kendex_hook_at//\\//} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
+      case ${kendex_hook_root//\\//} in
+        '') kendex_hook_root=${kendex_hook_at:0:1} ;;
+        [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
+      esac
+      case ${kendex_hook_root//\\//} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
 
 set -euo pipefail
 

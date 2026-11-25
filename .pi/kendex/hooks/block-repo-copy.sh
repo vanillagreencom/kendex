@@ -7,6 +7,25 @@
 # summary: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
 # safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Every refusal opens with `block-repo-copy: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
+# kendex: rendered as the project Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
+  kendex_hook_at=${BASH_SOURCE[0]-}
+  kendex_hook_tail='/.pi/kendex/hooks/block-repo-copy.sh'
+  case ${kendex_hook_at//\\//} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
+      case ${kendex_hook_root//\\//} in
+        '') kendex_hook_root=${kendex_hook_at:0:1} ;;
+        [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
+      esac
+      case ${kendex_hook_root//\\//} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
 
 set -euo pipefail
 trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT

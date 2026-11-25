@@ -11,6 +11,25 @@
 # requires: [lane-mail-deliver, lane-mail-halt, lane-mail-prompt, session-start-row, session-end-row, stop-failure-row, critical-path-deny, lane-mail-model-switch]
 # requires-skills: [orch, mailbox, agent-runtime]
 # ---
+# kendex: rendered as the project Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
+  kendex_hook_at=${BASH_SOURCE[0]-}
+  kendex_hook_tail='/.pi/kendex/hooks/lane-mail-check.sh'
+  case ${kendex_hook_at//\\//} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
+      case ${kendex_hook_root//\\//} in
+        '') kendex_hook_root=${kendex_hook_at:0:1} ;;
+        [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
+      esac
+      case ${kendex_hook_root//\\//} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
 
 # Each line below serves one of two needs only shell meets: the harness runs
 # this file by path, so finding the install it belongs to is the file's own

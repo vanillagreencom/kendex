@@ -1,0 +1,1 @@
+- Pi hooks keep their install's scope under a pi-hooks carrier older than 0.19.3, so a project refresh no longer leaves its command checks and lane-mail holds without their installed skills. A hook file that is both the project's and the global install refuses under such a carrier and names pi-hooks 0.19.3.

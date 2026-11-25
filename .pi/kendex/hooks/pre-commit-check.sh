@@ -8,6 +8,25 @@
 # safety: Reads JSON, literal shell words and Git hook files. Executes no command from the payload and no repository script. Quoted message and file expansions are kept as single argument values without execution. Unresolved argument boundaries and unclosed quotes are reported and allowed; indirect launches are outside the literal direct-call check. The working repository alone is judged; repository-moving commits get a notice when the working directory has no readable Git hook directory. Every diagnostic starts with pre-commit-check: key=value.
 # timeout: 60
 # ---
+# kendex: rendered as the project Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
+  kendex_hook_at=${BASH_SOURCE[0]-}
+  kendex_hook_tail='/.pi/kendex/hooks/pre-commit-check.sh'
+  case ${kendex_hook_at//\\//} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
+      case ${kendex_hook_root//\\//} in
+        '') kendex_hook_root=${kendex_hook_at:0:1} ;;
+        [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
+      esac
+      case ${kendex_hook_root//\\//} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
 
 set -euo pipefail
 

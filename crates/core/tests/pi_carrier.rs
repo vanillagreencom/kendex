@@ -18,6 +18,9 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::pi_ext::carrier;
 use serde_json::Value;
 
+mod project_refresh;
+mod registration_stamp;
+
 struct World {
     _tmp: tempfile::TempDir,
     env: Env,

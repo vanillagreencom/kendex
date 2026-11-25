@@ -8,6 +8,25 @@
 # summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
 # safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the boundary parser. Masking requires one complete simple command whose words are literal: safe unquoted bytes, single-quoted text, or double-quoted text without expansions or escapes. A quoted-delimiter heredoc is data for cat with an optional literal output file. Python with a lone dash or a literal quoted -c program, with no other arguments or redirections, must also pass one closed string-program grammar: unprefixed string literals, assignments to names holding strings, string replacement with string arguments, and builtin print of a string. Only previously assigned string names may be read. Process starts, dynamic code, arbitrary calls or aliases, imports, other interpreters and all unknown Python syntax keep the original raw scan. Only whitespace may follow the command or closing delimiter. Inline or file programs with heredoc stdin, expanded words, multiple commands or heredocs, and all unproved syntax keep the original scan. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
+# kendex: rendered as the project Pi install of this hook. A pi-hooks
+# carrier before 0.19.3 names no registration, so the render names it.
+if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
+  kendex_hook_at=${BASH_SOURCE[0]-}
+  kendex_hook_tail='/.pi/kendex/hooks/block-unsafe-rm.sh'
+  case ${kendex_hook_at//\\//} in
+    *"$kendex_hook_tail")
+      kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
+      case ${kendex_hook_root//\\//} in
+        '') kendex_hook_root=${kendex_hook_at:0:1} ;;
+        [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
+      esac
+      case ${kendex_hook_root//\\//} in
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+      esac
+      ;;
+  esac
+  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+fi
 
 set -euo pipefail
 trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
