@@ -4895,7 +4895,12 @@ fn opens_with_prose(body: &str) -> bool {
         && !first.split(' ').next().unwrap_or_default().contains('=')
 }
 
-fn posted_owner_ask(world: &World, question: Option<&str>, deadline: &str) -> (Settings, PathBuf) {
+fn posted_owner_ask(
+    world: &World,
+    item: (&str, Option<&str>),
+    question: Option<&str>,
+    deadline: &str,
+) -> (Settings, PathBuf) {
     let root = std::fs::canonicalize(world.dir.path()).unwrap();
     git_checkout(&root);
     for (key, value) in [("gc.auto", "0"), ("maintenance.auto", "false")] {
@@ -4915,13 +4920,15 @@ fn posted_owner_ask(world: &World, question: Option<&str>, deadline: &str) -> (S
     let mailbox = root.join("tmp/lane-mail/overseer");
     std::fs::create_dir_all(&mailbox).unwrap();
     let events = mailbox.join("to-overseer.jsonl");
+    let (issue, uuid) = item;
+    let identity = uuid.map(|uuid| json!({"identifier": issue, "uuid": uuid}));
     let ask = json!({"id": "ask-1", "kind": "ask", "at": "2026-10-01T00:00:00Z",
-        "from": "overseer:test", "to": "owner", "issue": "KEN-7", "text": "Approve?",
+        "from": "overseer:test", "to": "owner", "issue": issue, "identity": identity, "text": "Approve?",
         "options": ["yes", "no"], "recommend": "yes", "wait": 0, "effect": "none",
         "deadline": deadline});
     let posted = json!({"id": "ask-1-tracker", "kind": "tracker-posted",
         "at": "2026-10-01T00:00:01Z", "from": "overseer:test", "re": "ask-1",
-        "issue": "KEN-7", "tracker_label": "owner-gated", "tracker_comment": question,
+        "issue": issue, "tracker_label": "owner-gated", "tracker_comment": question,
         "text": ""});
     std::fs::write(&events, format!("{ask}\n{posted}\n")).unwrap();
     let cli = isolated_program(&fixtures().join("lane-mail-hold/lane-mail"));
@@ -4939,29 +4946,33 @@ fn posted_owner_ask(world: &World, question: Option<&str>, deadline: &str) -> (S
 }
 
 /// A watch ruling leaves the active view after the Linear writer posts it
-/// under the exact question, even when the commenting account changed.
+/// under the exact question, even when the account and issue identifier changed.
 /// The Jarvis regression consumes the watch's actual argv for each form.
 #[test]
 fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
     const NAME: &str = "watch_rulings_leave_the_active_view_after_a_tracker_account_change";
     const QUESTION: &str = "01234567-89ab-4def-8123-456789abcdef";
+    const FORMER_REF: &str = "OLD-7";
+    const ITEM_UUID: &str = "KEN-7-uuid";
     if !isolated_row(NAME) {
         return;
     }
     let mut rulings = BTreeMap::new();
-    for (form, question) in [
-        ("explicit", Some(QUESTION)),
-        ("text", Some(QUESTION)),
-        ("default", Some(QUESTION)),
-        ("legacy", Some(QUESTION)),
-        ("unthreaded", None),
+    for (form, question, uuid) in [
+        ("explicit", Some(QUESTION), Some(ITEM_UUID)),
+        ("text", Some(QUESTION), Some(ITEM_UUID)),
+        ("default", Some(QUESTION), Some(ITEM_UUID)),
+        ("legacy", Some(QUESTION), Some(ITEM_UUID)),
+        ("parent-only", Some(QUESTION), None),
+        ("unthreaded", None, Some(ITEM_UUID)),
     ] {
         let mut world = World::new();
-        let (mut settings, events) = posted_owner_ask(&world, question, "2099-01-01T00:00:00Z");
+        let (mut settings, events) =
+            posted_owner_ask(&world, (FORMER_REF, uuid), question, "2099-01-01T00:00:00Z");
         settings.linear_team = None;
         world
             .linear("issues list --assignee", json!({"body": []}))
-            .linear("comments bulk-list", comments(&["KEN-7"], &[]))
+            .linear("comments bulk-list", comments(&[FORMER_REF], &[]))
             .linear("comments create", json!({"body": {"success": true}}))
             .linear("issues update", json!({"body": {}}))
             .linear(
@@ -5003,15 +5014,19 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
         pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
         let calls = world.comment_calls();
         assert_eq!(calls.len(), 1, "{form}: {calls:?}");
-        if question.is_some() {
+        let args = calls[0]["args"].as_array().unwrap();
+        if question.is_some() && uuid.is_some() {
+            assert_eq!(args[2], ITEM_UUID, "{form}: {calls:?}");
             rulings.insert(form, calls[0]["args"].clone());
         } else {
-            let args = calls[0]["args"].as_array().unwrap();
-            assert_eq!(args.len(), 5, "{calls:?}");
             assert_eq!(
                 &args[..4],
-                &["comments", "create", "KEN-7", "--body"].map(Value::from)
+                &["comments", "create", FORMER_REF, "--body"].map(Value::from)
             );
+            let expected = question.map_or_else(Vec::new, |parent| {
+                vec![Value::from("--parent"), Value::from(parent)]
+            });
+            assert_eq!(&args[5..], expected.as_slice(), "{form}: {calls:?}");
         }
     }
     let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../jarvis/tests/owner-asks.test.sh");
@@ -5030,8 +5045,12 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
 #[test]
 fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let mut world = World::new();
-    let (mut settings, events) =
-        posted_owner_ask(&world, Some("question-1"), "2026-10-01T00:00:00Z");
+    let (mut settings, events) = posted_owner_ask(
+        &world,
+        ("KEN-7", None),
+        Some("question-1"),
+        "2026-10-01T00:00:00Z",
+    );
     settings.linear_team = None;
     world.linear("issues list --assignee", json!({"body": []}));
     // The open ask's item is off the owner list, and its question's comments
@@ -5078,7 +5097,12 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
 #[test]
 fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
     let mut world = World::new();
-    let (settings, _) = posted_owner_ask(&world, Some("question-1"), "2026-10-01T00:00:00Z");
+    let (settings, _) = posted_owner_ask(
+        &world,
+        ("KEN-7", None),
+        Some("question-1"),
+        "2026-10-01T00:00:00Z",
+    );
     let candidate = item(
         "KEN-1",
         "2026-08-16T00:00:00Z",
@@ -5434,13 +5458,25 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     // the deadline; the unanswered one's is the recommendation.
     let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
     let posted = world.posted_comments();
-    for (issue, decided, ruling, question) in [
-        ("KEN-7", "owner", "OK", "question-1"),
-        ("KEN-8", "recommendation", "approve", "question-2"),
+    for (issue, uuid, decided, ruling, question) in [
+        (
+            "KEN-7",
+            "00000007-0000-4000-8000-000000000007",
+            "owner",
+            "OK",
+            "question-1",
+        ),
+        (
+            "KEN-8",
+            "00000008-0000-4000-8000-000000000008",
+            "recommendation",
+            "approve",
+            "question-2",
+        ),
     ] {
         let rulings: Vec<_> = posted
             .iter()
-            .filter(|(i, parent, _)| i == issue && parent == question)
+            .filter(|(i, parent, _)| i == uuid && parent == question)
             .map(|(_, _, body)| {
                 let fields = record_fields(body);
                 (

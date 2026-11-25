@@ -1118,7 +1118,7 @@ print(json.dumps(owner._presence('ssh:fixture')))
         # outcomes. The standalone Jarvis suite also drives the shipped writer.
         native_args = json.loads(os.environ.get("KENDEX_TEST_RULING_ARGS", "null"))
         argv_by_kind = native_args if native_args is not None else {
-            kind: ["comments", "create", issue, "--body", body, "--parent", question_id, "--owner-ruling"]
+            kind: ["comments", "create", issue + "-uuid", "--body", body, "--parent", question_id, "--owner-ruling"]
             for kind, body in bodies.items()}
         self.assertEqual(set(argv_by_kind), set(bodies))
         # Exercise the default attribution serializer without building a second

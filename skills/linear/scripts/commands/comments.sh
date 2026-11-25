@@ -51,8 +51,7 @@ Owner Requests:
                         Jarvis's canonical request projection. Uses the
                         exact-email resolver, existing issues filters and
                         complete comment reader. Preserves every distinct
-                        request mentioning that user's canonical profile URL,
-                        with the owner's ID and the discussion on each item.
+                        request mentioning that user's canonical profile URL.
                         A successful complete read defines current view
                         membership; failed reads publish no partial result.
 
@@ -108,9 +107,7 @@ def ruling_body:
   gsub("\r\n"; "\n") | sub("\\n+\\z"; "") | split("\n")
   | if .[0] == "This question closed with no answer." then length == 1
     else .[0] | IN("This question closed on its answer.", "This question closed on your answer.",
-      "This question closed at its deadline with no answer, so its recommendation stands.") end;
-def owner_ruling:
-  (.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body);'
+      "This question closed at its deadline with no answer, so its recommendation stands.") end;'
 
 read_body_file() {
     local body_file="$1"
@@ -288,7 +285,8 @@ owner_requests() {
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
       {workspace: $workspace.urlKey, owner: $owner.id,
        discussions: ($items | map({key: .uuid, value: ($comments[.id] | map({id, parent_id, user_id,
-          ruling: owner_ruling, opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
+          ruling: ((.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body)),
+          opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
        requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
@@ -452,11 +450,10 @@ create_comment() {
         result=$(graphql_query "$mutation" "{\"input\": $input_json}")
     elif ! result=$(graphql_query "$mutation" "{\"input\": $input_json}") ||
         ! jq -e --arg id "$comment_id" '.commentCreate | .success == true and .comment.id == $id' <<<"$result" >/dev/null; then
-        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id identifier } } }'
+        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id } } }'
         result=$(graphql_query "$query" "$(jq -cn --arg id "$comment_id" '{id: $id}')") || return 1
         jq -e --arg id "$comment_id" --arg item "$comment_issue_id" --arg parent "$parent_id" "$COMMENT_ATTRIBUTION_JQ$OWNER_RULING_JQ"'
-          .comment | if .id == $id and .parent.id == $parent and (.issue.id == $item or
-            (.issue.identifier | ascii_upcase) == ($item | ascii_upcase)) and (.body | unattributed | ruling_body)
+          .comment | if .id == $id and .parent.id == $parent and .issue.id == $item and (.body | unattributed | ruling_body)
           then {success: true, data: {comment: {id}}} else error("owner-ruling-unconfirmed") end' <<<"$result"
         return
     fi

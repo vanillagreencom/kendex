@@ -105,7 +105,6 @@ trap 'rm -f -- "${note:?}"' EXIT
 cat >"$note"
 (cd -- "$root" && exec "$BASH" "$mail" send --item overseer --root "$root" --file "$note" "$@")
 """
-# Project the already-read item discussions through the mailbox question rule.
 TRACKER_QUESTIONS = r"""set -euo pipefail
 . "$1"
 exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
@@ -365,9 +364,7 @@ class Sources:
         if tracker is None:
             return None
         closed, replaced = {}, {}
-        # A retained closed ask still owns its exact mirror while the
-        # tracker label/assignee write catches up. The replacement outcome
-        # can name an earlier question even after that ask was compacted.
+        # Retained evidence suppresses stale mirrors and names compacted predecessors.
         for mailbox in mailboxes:
             pending = {ask["id"] for ask in mailbox["asks"]}
             for ask in mailbox["outward"]["rows"]:
@@ -383,8 +380,7 @@ class Sources:
             route = entry.get("route", {})
             if route.get("source") == "linear":
                 item, question = route["issueUuid"], tracker_reply_parent(route)
-                # For a legacy nested reply, the saved parent can belong to
-                # a different row. A retry still targets it, without settling it.
+                # Legacy retries keep their saved parent without settling a different row.
                 payload = entry["payload"]
                 matches = payload["id"] == digest(tracker_question(tracker["workspace"], item, question))
                 replies[entry["key"]] = [item, question] if payload["action"] == "reply" and matches else None
@@ -677,7 +673,6 @@ class OwnerAsks:
             state["deltas"][key] = {"checking": True}
             entry["receipt"] = self.receipt(request, "accepted", "checking")
         else:
-            # The receipt records delivery. A fresh canonical read updates membership.
             entry["receipt"] = self.receipt(request, "accepted", self.shown(state["deltas"].get(key, {}), self.clock())[0])
         self.session.write(state)
         return entry["receipt"]
