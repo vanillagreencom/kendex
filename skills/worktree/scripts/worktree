@@ -211,33 +211,65 @@ git_with_github_https_auth() (
   fi
 )
 
-# The push wrapper selects the push-purpose credential for the deletion. The
-# live ref read and explicit lease keep a newer origin tip outside this push.
+git_with_bounded_github_https_auth() (
+  local git_program=""
+  git_program="$(type -P git)" || return 127
+  # Reuse the original shell's credential selection and bound its Git calls.
+  git() { kendex_github_run_bounded 10 "$git_program" "$@"; }
+  KENDEX_GITHUB_AUTH_TIMEOUT=10 KENDEX_GITHUB_OP_TIMEOUT=10 \
+    without_committed_settings git_with_github_https_auth "$@"
+)
+
+# Ref cleanup must prove ancestry from the stored commit graph. Replacements
+# and grafts can add a parent that the published commit never had.
+git_stored_history() {
+  GIT_GRAFT_FILE=/dev/null GIT_NO_LAZY_FETCH=1 \
+    git --no-replace-objects -c advice.graftFileDeprecated=false "$@"
+}
+
+# The push wrapper selects the push-purpose credential for the deletion.
+# Bound advisory transport so it can return the confirmed delivery receipt.
 prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
-  local wt="$1" branch="$2" delivered="$3" ref="refs/heads/$2" base_ref="refs/heads/$DEFAULT_BRANCH"
-  local url="" rows="" oid="" base_oid="" sha="" remote_ref="" output=""
+  local wt="$1" branch="$2" delivered="$3" ref="refs/heads/$2"
+  local url="" resolved="" rows="" oid="" output="" status=0
+  local endpoint="kendex-worktree-prune:$$" route=""
   [[ -n "$branch" && "$branch" != "$DEFAULT_BRANCH" && "$branch" != recovery/* ]] || return 0
-  if ! url="$(git -C "$wt" remote get-url --push --all origin)" || [[ -z "$url" || "$url" == *$'\n'* ]] ||
-     ! rows="$(git_with_github_https_auth -C "$wt" ls-remote --refs -- "$url" "$base_ref" "$ref")"; then
-    worktree_message push-base-item-read-failed "origin/$branch" "Could not verify the refs at the origin push destination. Keeping the item branch." >&2
+  if ! declare -F kendex_github_run_bounded >/dev/null; then
+    worktree_message push-base-item-read-failed "origin/$branch" "Bounded Git transport is unavailable. Keeping the origin item branch." >&2
     return 0
   fi
-  while IFS=$'\t' read -r sha remote_ref; do
-    [[ "$sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || continue
-    case "$remote_ref" in
-      "$ref") oid="$sha" ;;
-      "$base_ref") base_oid="$sha" ;;
-    esac
-  done <<<"$rows"
-  [[ -n "$oid" ]] || return 0
-  if [[ -z "$base_oid" ]] || ! git -C "$wt" merge-base --is-ancestor "$delivered" "$base_oid" ||
-     ! git -C "$wt" merge-base --is-ancestor "$oid" "$base_oid"; then
-    worktree_message push-base-item-kept "origin/$branch" "The origin item tip could not be proved reachable from the published base commit. Keeping the branch." >&2
+  # get-url returns the destination after Git's URL rewrites. Map an alias
+  # for discovery so Git never applies a second rewrite to that destination.
+  url="$(git_with_bounded_github_https_auth -C "$wt" remote get-url --push --all origin 2>/dev/null)" || status=$?
+  if [[ "$status" != 0 || -z "$url" || "$url" == *$'\n'* ]]; then
+    worktree_message push-base-item-read-failed "origin/$branch status=$status" "Could not resolve a single origin push destination. Keeping the item branch." >&2
     return 0
   fi
-  if ! output="$(without_committed_settings git_with_github_https_auth -C "$wt" push \
-    "--force-with-lease=$ref:$oid" origin ":$ref" 2>&1)"; then
-    worktree_message push-base-item-delete-failed "origin/$branch" "Published the base, but Git could not delete the origin item branch." >&2
+  route="url.$url.insteadOf=$endpoint"
+  # Reject a conflicting rewrite before using this ephemeral address.
+  if ! resolved="$(git -C "$wt" -c "$route" ls-remote --get-url -- "$endpoint")" || [[ "$resolved" != "$url" ]]; then
+    worktree_message push-base-item-read-failed "origin/$branch" "Could not bind discovery to the origin push destination. Keeping the item branch." >&2
+    return 0
+  fi
+  # Protocol v2 advertises symbolic branch aliases. A server option forces
+  # Git to refuse v0/v1, whose listing can omit the alias target.
+  rows="$(git_with_bounded_github_https_auth -C "$wt" -c "$route" \
+    -c protocol.version=2 ls-remote --refs --symref --server-option=kendex-ref-proof -- "$endpoint" "$ref" 2>&1)" || status=$?
+  if [[ "$status" != 0 ]]; then
+    worktree_message push-base-item-read-failed "origin/$branch status=$status" "Could not verify whether the origin item ref is direct. Keeping the item branch." >&2
+    return 0
+  fi
+  [[ -n "$rows" ]] || return 0
+  oid="${rows%%$'\t'*}"
+  if [[ "$rows" != "$oid"$'\t'"$ref" ]] || ! [[ "$oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+     ! git_stored_history -C "$wt" merge-base --is-ancestor "$oid" "$delivered"; then
+    worktree_message push-base-item-kept "origin/$branch" "The origin item ref is symbolic or its tip could not be proved reachable from the delivered commit. Keeping the branch." >&2
+    return 0
+  fi
+  output="$(git_with_bounded_github_https_auth -C "$wt" push \
+    "--force-with-lease=$ref:$oid" origin ":$ref" 2>&1)" || status=$?
+  if [[ "$status" != 0 ]]; then
+    worktree_message push-base-item-delete-failed "origin/$branch status=$status" "Published the base, but Git could not confirm deletion of the origin item branch." >&2
     [[ -z "$output" ]] || sed 's/^/  git: /' <<<"$output" >&2
   fi
 }
@@ -2991,6 +3023,7 @@ cleanup_enumerate_worktrees() {
 
 cleanup_prune_local_branches() { # BASE_REF BASE_OID MERGED_ROWS
   local base_ref="$1" base_oid="$2" rows="$3" oid="" ref="" symref="" dir="" deletes=""
+  local sections="" section="" status=0 failed=0
   while read -r oid ref symref; do
     [[ -n "$ref" && -z "$symref" && "$ref" != "refs/heads/$DEFAULT_BRANCH" && "$ref" != refs/heads/recovery/* ]] || continue
     [[ "$CLEANUP_CHECKED_OUT" != *$'\n'"$ref"$'\n'* ]] || continue
@@ -2998,19 +3031,37 @@ cleanup_prune_local_branches() { # BASE_REF BASE_OID MERGED_ROWS
   done <<<"$rows"
   [[ -n "$deletes" ]] || return 0
 
-  # Git can own more branches than the worktree list's HEADs during a rebase
-  # (including --update-refs) or bisect. Wait for Git to release them before
-  # using update-ref, whose expected-OID guard does not check checkout state.
+  # Git branch -d checks worktree ownership but cannot require an expected
+  # OID. Hold during rebase (including --update-refs) and bisect, which can
+  # reserve branches outside the worktree list's HEADs, before using update-ref.
   for dir in "$PROJECT_COMMON_GIT_DIR" "$PROJECT_COMMON_GIT_DIR"/worktrees/*; do
-    if [[ -d "$dir/rebase-merge" || -d "$dir/rebase-apply" || -e "$dir/BISECT_START" ]]; then
+    if restack_rebase_state_in_git_dir "$dir" >/dev/null || [[ -e "$dir/BISECT_START" ]]; then
       worktree_message cleanup-local-active-operation "$dir" "Keeping unregistered branches while a rebase or bisect is in progress." >&2
       return 0
     fi
   done
+  if ! sections="$(git -C "$PROJECT_ROOT" config --local --name-only --list | sed -n 's/^\(branch\..*\)\.[^.]*$/\1/p')"; then
+    worktree_message cleanup-local-config-unread "$PROJECT_ROOT" "Could not read local branch settings. Keeping the local refs and their settings." >&2
+    return 1
+  fi
   if ! git -C "$PROJECT_ROOT" update-ref --no-deref --stdin <<<"verify $base_ref $base_oid"$'\n'"${deletes%$'\n'}"; then
     worktree_message cleanup-local-delete-failed "$base_ref" "Could not prune merged local branches. Retry cleanup after checking Git's diagnostic." >&2
     return 1
   fi
+  while read -r _ ref _; do
+    section="branch.${ref#refs/heads/}"
+    [[ $'\n'"$sections"$'\n' == *$'\n'"$section"$'\n'* ]] || continue
+    # The ref transaction succeeded. Keep settings if a branch has since
+    # reappeared, as ref and config files cannot share a Git transaction.
+    status=0
+    git -C "$PROJECT_ROOT" show-ref --verify --quiet "$ref" || status=$?
+    [[ "$status" != 0 ]] || continue
+    if [[ "$status" != 1 ]] || ! git -C "$PROJECT_ROOT" config --local --remove-section "$section"; then
+      worktree_message cleanup-local-config-retained "$ref" "The branch was pruned but its local settings could not be retired." >&2
+      failed=1
+    fi
+  done <<<"$deletes"
+  return "$failed"
 }
 
 # `cleanup --targets-only`: the build-output prune, its flags and its lease.
@@ -4405,7 +4456,7 @@ case "${1:-}" in
     # Take the branch snapshot before the worktree list so a branch newly
     # created after the list cannot enter the set to prune.
     if ! CLEANUP_BASE_OID="$(git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_BASE_REF")" ||
-       ! CLEANUP_LOCAL_ROWS="$(git -C "$PROJECT_ROOT" for-each-ref --merged="$CLEANUP_BASE_OID" \
+       ! CLEANUP_LOCAL_ROWS="$(git_stored_history -C "$PROJECT_ROOT" for-each-ref --merged="$CLEANUP_BASE_OID" \
          --format='%(objectname) %(refname) %(symref)' refs/heads/)"; then
       CLEANUP_FAILED=true
       CLEANUP_LOCAL_ROWS=""

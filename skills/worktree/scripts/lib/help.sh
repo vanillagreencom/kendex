@@ -544,9 +544,10 @@ merge proven, cleanup asks Git to remove the intact worktree and deletes the
 local branch.
 
 cleanup also prunes unregistered local branches whose tips are ancestors of
-the same base. It keeps the default branch, branches checked out in any
-worktree, and recovery branches. A rebase or bisect pauses local branch
-pruning until Git releases the affected branches.
+the same base and retires the pruned branches' local settings. It keeps the
+default branch, branches checked out in any worktree, and recovery branches.
+A rebase or bisect pauses local branch pruning until Git releases the affected
+branches.
 
 A non-empty worktree-private 'kendex-rebase-map' keeps the worktree and branch
 until orch consumes the rewrite record. The skip starts with
@@ -703,11 +704,11 @@ and validate again after either refusal. Success prints:
   pushed-base: base=BRANCH before=BASE_OID commit=SHA at=UTC
 UTC is captured after the successful push. Neither base mode accepts
 --no-rebase, --set-upstream or the other base mode. Both need a full checkout.
-After publication, Git deletes the origin item branch if its current tip
-is reachable from the published base. A tip change during deletion keeps
-the branch. A verification or deletion failure leaves base publication
-successful and reports the retained branch on stderr. Recovery branches
-stay on origin.
+After publication, Git deletes the origin item branch if the remote proves
+it is a direct ref and its current tip is reachable from the delivered
+commit. A tip change during deletion keeps the branch. A cleanup timeout or
+other failure leaves base publication successful and reports the branch on
+stderr. Recovery branches stay on origin.
 
 Push worktree branch to remote.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to

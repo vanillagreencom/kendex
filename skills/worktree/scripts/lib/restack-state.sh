@@ -8,22 +8,18 @@
 # this library only judges them.
 
 rebase_in_progress() {
-  local wt="$1" state path
-  for state in rebase-merge rebase-apply; do
-    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
-    [[ "$path" == /* ]] || path="$wt/$path"
-    if [[ -d "$path" ]]; then
-      return 0
-    fi
-  done
-  return 1
+  restack_rebase_state_dir "$1" >/dev/null
 }
 
 restack_rebase_state_dir() {
-  local wt="$1" state="" path=""
-  for state in rebase-merge rebase-apply; do
-    path="$(git -C "$wt" rev-parse --git-path "$state" 2>/dev/null)" || continue
-    [[ "$path" == /* ]] || path="$wt/$path"
+  local git_dir=""
+  git_dir="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  restack_rebase_state_in_git_dir "$git_dir"
+}
+
+restack_rebase_state_in_git_dir() {
+  local path=""
+  for path in "$1/rebase-merge" "$1/rebase-apply"; do
     if [[ -d "$path" ]]; then
       printf '%s\n' "$path"
       return 0

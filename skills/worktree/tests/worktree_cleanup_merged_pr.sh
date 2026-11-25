@@ -451,24 +451,36 @@ while IFS='|' read -r label fixture gh command rc out err want_state; do
 done <<<"$ROWS"
 
 echo "=== cleanup prunes only unregistered ancestors of the base ==="
-build local-branches
+ROOT="$TMP_ROOT/local-branches"
+MAIN="$ROOT/main"
 make_repo
-git -C "$MAIN" branch merged-copy main
+git -C "$MAIN" branch --track merged-copy origin/main >/dev/null
 git -C "$MAIN" branch recovery/retained main
 git -C "$MAIN" worktree add -q -b registered "$ROOT/trees/registered" main
 git -C "$MAIN" switch -q -c current main
 local_base="$(git -C "$MAIN" rev-parse refs/heads/main)"
-local_only="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -p HEAD -m 'local-only work')"
+local_only="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -m 'local-only work')"
 git -C "$MAIN" branch unmerged-copy "$local_only"
 git -C "$MAIN" push -q origin merged-copy
+git -C "$MAIN" replace --graft "$local_base" "$local_only"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
 assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname:short)' refs/heads/)" \
   $'current\nmain\nrecovery/retained\nregistered\nunmerged-copy' \
   "prune removes only the merged unregistered branch and preserves the unchecked-out base and both checkouts"
 assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse refs/heads/merged-copy)" "$local_base" \
   "pruning local branches leaves their origin refs alone"
+git -C "$MAIN" branch --no-track -f merged-copy main
+assert_eq "$(git -C "$MAIN" for-each-ref --format='%(upstream)' refs/heads/merged-copy)" "" \
+  "recreating a pruned branch does not inherit its former upstream"
+git -C "$MAIN" replace -d "$local_base" >/dev/null
+git -C "$MAIN" config advice.graftFileDeprecated false
+printf '%s %s\n' "$local_base" "$local_only" >"$MAIN/.git/info/grafts"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
+assert_eq "$(git -C "$MAIN" rev-parse refs/heads/unmerged-copy)" "$local_only" \
+  "a legacy graft does not authorize deletion of an unmerged ref"
+rm -- "$MAIN/.git/info/grafts"
 
-git -C "$MAIN" branch changed-copy main
+git -C "$MAIN" branch --track changed-copy origin/main >/dev/null
 mkdir "$ROOT/ref-race"
 cat >"$ROOT/ref-race/git" <<SH
 #!/usr/bin/env bash
@@ -483,6 +495,8 @@ prune_rc=0
 assert_eq "$prune_rc" 1 "cleanup reports that a candidate changed before deletion"
 assert_eq "$(git -C "$MAIN" rev-parse refs/heads/changed-copy)" "$local_only" \
   "cleanup preserves a candidate that gained a commit after enumeration"
+assert_eq "$(git -C "$MAIN" config --local branch.changed-copy.remote)" origin \
+  "cleanup preserves configuration when the ref transaction refuses the delete"
 
 git -C "$MAIN" switch -q main
 git -C "$MAIN" commit -q --allow-empty -m 'middle base commit'
