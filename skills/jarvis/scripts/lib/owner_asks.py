@@ -22,9 +22,8 @@ import watch
 CALL_SECONDS = 14
 # A satellite keeps this share of its own deadline for the SSH connect, the
 # main's start and the answer's return, and gives the main the rest, so the
-# main answers with its own cause first. The main's list needs about 9 s at
-# the 0.42 s per tracker read measured on the main home on 2026-11-22. The
-# trip, run on 2026-11-23 through host_call to a real sshd and jarvis-session
+# main answers with its own cause first. The trip, run on 2026-11-23
+# through host_call to a real sshd and jarvis-session
 # with a near-zero main budget, took 0.42 s on loopback. Behind a proxy that
 # delayed each direction, it took 1.2 s at a 100 ms round trip and 2.8 s at
 # 300 ms. Counting the TCP handshake the proxy skips, a trip costs 0.42 s plus
@@ -44,7 +43,7 @@ DELIVERY_UNCONFIRMED = "Delivery is not confirmed; retry with the same request i
 # U+2028/U+2029 raw in strings, so each record ends at LF only.
 # Pending carries current questions and their text. The outward read carries
 # the original snapshot header and the evidence that joins an ask to its
-# tracker comment or records a replacement. Both collections compare this
+# tracker comment or records a replacement. Action rechecks compare this
 # projection, including the header's logical count and first id.
 MAILBOX_READS = r"""set -euo pipefail
 mail=$1
@@ -407,12 +406,14 @@ class Sources:
             tracker = pool.submit(self.tracker)
             reads = [pool.submit(self.destination, target) for target in targets]
             mailboxes = [mailbox for read in reads for mailbox in read.result()]
+            # Pending already carries confirmed posting IDs. Closed asks'
+            # outward evidence is still needed to suppress their mirrors.
             posted = self.posted(list(dict.fromkeys(ask["tracker_comment"] for mailbox in mailboxes
-                                                    for ask in mailbox["outward"]["rows"] if mirrored(ask))))
+                                                    for ask in mailbox["asks"] if mirrored(ask))))
             config, tracker = tracker.result()
         for mailbox in mailboxes:
             mailbox["links"] = {}
-            for ask in mailbox["outward"]["rows"]:
+            for ask in mailbox["asks"]:
                 if mirrored(ask):
                     comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
@@ -543,8 +544,7 @@ class OwnerAsks:
             raise Unavailable("The main home's owner-action record could not be read.")
         return state
 
-    def current(self, state):
-        source = self.sources.stable(state["requests"].values())
+    def current(self, state, source):
         rows, routes = source_rows(source)
         now = self.clock()
         # A complete read alone owns membership: an ask it no longer returns
@@ -576,7 +576,8 @@ class OwnerAsks:
         snapshots = state.setdefault("pageSnapshots", {})
         offset = 0
         if cursor is None:
-            rows, _, revision, now = self.current(state)
+            source = self.sources.collect(state["requests"].values())
+            rows, _, revision, now = self.current(state, source)
             ordered = sorted(rows.values(), key=lambda row: (instant(row["askedAt"]), row["id"]))
             active = [row for row in ordered if row["state"] != "snoozed"]
             snoozed = [row for row in ordered if row["state"] == "snoozed"]
@@ -637,7 +638,8 @@ class OwnerAsks:
             # A saved delivery whose outcome is unknown. Its own delivery
             # identity settles it; the revision it was sent at has moved on.
             return self.deliver(state, previous, retry=True)
-        rows, routes, revision, now = self.current(state)
+        source = self.sources.stable(state["requests"].values())
+        rows, routes, revision, now = self.current(state, source)
         row = rows.get(key)
 
         def settle(kind, shown, cause=""):

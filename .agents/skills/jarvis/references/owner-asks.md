@@ -33,7 +33,7 @@ Cross-source suppression requires confirmed tracker posting and equality of the 
 
 `scripts/lib/owner_asks.py` declares the page row and encoded byte bounds. A successful page contains `v`, `homeId`, `revision`, `observedAt`, canonical `activeCount` and `snoozedCount`, `rows`, `nextCursor` and `complete`. Each row carries its stable identity, revision, kind, request text, original author and time, HTTP conversation link or a null link, opaque thread reference, current state, snooze time and actions.
 
-The main requires two identical complete canonical evidence collections on a request without a cursor. It computes the counts and public revision from that evidence and its own action deltas. It saves the rows and metadata needed for the view's remaining pages. Those pages use that observation time and counts without reading the sources again. A changed or incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
+On a request without a cursor, the main reads each configured source in full once. It looks up tracker comment links for open mailbox asks and uses retained mailbox evidence for closed and replaced asks. It computes the counts and public revision from that observation and its action deltas. Continuation pages reuse the saved rows, observation time, revision and counts. A change during collection may appear on the next refresh. An incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
 
 Rows sort by original asked-at time, then identity. A cursor binds the home, view, refresh revision and next position. A successful refresh invalidates earlier cursors for its view and cursors in either view with a different public revision. An accepted Done or Later invalidates cursors in both views.
 
@@ -59,7 +59,7 @@ An answer to a mailbox ask closed before it arrived refuses with state `closed` 
 
 ## Receipts and Later
 
-An action receipt contains `v`, `requestId`, `kind` (`accepted` or `refused`), `state` and a plain `cause`. A stale revision refuses with the current request state. Reusing an identity with another payload refuses. An identical retry returns the saved receipt before testing its old revision.
+An action receipt contains `v`, `requestId`, `kind` (`accepted` or `refused`), `state` and a plain `cause`. A new action checks membership and revision against two matching complete collections. A stale revision refuses with the current request state. Reusing an identity with another payload refuses. An identical retry returns the saved receipt before testing its old revision.
 
 Later changes only main-owned visibility until the main clock reaches `until`. The row then returns with its original request time and link.
 
