@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
 done
 rows=""
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-  slug="${PWD//[\/.]/-}"
+  slug="${CLAUDE_CODE_PROJECT_DIR_NAME:-${PWD//[\/.]/-}}"
   mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
   rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
   printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"

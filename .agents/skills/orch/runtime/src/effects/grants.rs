@@ -13,7 +13,10 @@ use agent_runtime::confine::{self, Answer, Cause, Grants, Host, SeatMount};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
-use agent_runtime::session::{CLAUDE_PROJECTS, COPILOT_SESSION_STATE, claude_slug};
+use agent_runtime::session::{
+    CLAUDE_PROJECT_NAME_VAR, CLAUDE_PROJECTS, COPILOT_SESSION_STATE, claude_owned_key, claude_slug,
+};
+use agent_runtime::trust::CLAUDE_STATE_FILE;
 use serde_json::{Value, json};
 
 use super::refused;
@@ -122,6 +125,8 @@ pub(super) struct Granted {
     kept: Vec<PathBuf>,
     view_dirs: Vec<PathBuf>,
     view_links: Vec<(PathBuf, PathBuf)>,
+    claude_key: Option<String>,
+    implicit_claude_home: Option<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
     /// A confined lane's own runtime cache, which its line names as
@@ -324,6 +329,7 @@ impl SeatViews {
         kind: Harness,
         checkout_dirs: (&Path, &Path),
         transcript_slug: &str,
+        implicit_state: Option<&Path>,
     ) -> Result<()> {
         let mut key = DefaultHasher::new();
         seat.hash(&mut key);
@@ -342,6 +348,9 @@ impl SeatViews {
         };
         for path in seat_entries(seat)? {
             let name = path.file_name().and_then(|name| name.to_str());
+            if implicit_state.is_some() && name == Some(CLAUDE_STATE_FILE) {
+                continue;
+            }
             if kind == Harness::Claude
                 && name == Some(CLAUDE_CREDENTIALS_FILE)
                 && std::fs::symlink_metadata(&path)
@@ -368,6 +377,15 @@ impl SeatViews {
             }
             self.bind(read_only_bind(path.clone())?, path, false);
         }
+        if let Some(path) = implicit_state
+            && path.try_exists().map_err(|e| seat_read_failed(path, e))?
+        {
+            self.bind(
+                read_only_bind(path.to_path_buf())?,
+                seat.join(CLAUDE_STATE_FILE),
+                false,
+            );
+        }
         if kind == Harness::Claude {
             self.claude_projects(seat, &backing, checkout_dirs, transcript_slug)?;
         } else {
@@ -385,13 +403,15 @@ impl SeatViews {
         (cwd, repository): (&Path, &Path),
         slug: &str,
     ) -> Result<()> {
-        // The writer and observer use the physical launch cwd. Claude's
-        // default auto memory is keyed by the Git root across worktrees.
+        // The writer and observer use the owned key. The Git-root memory
+        // path remains private for review processes using Claude defaults.
         let projects = seat.join(CLAUDE_PROJECTS);
         let source = seat_folder(projects.clone(), &mut self.shared_dirs)?;
         self.bind(source.clone(), projects.clone(), false);
         let destination = projects.join(slug);
-        let project = seat_folder(source.join(slug), &mut self.shared_dirs)?;
+        let project_path = source.join(slug);
+        agent_runtime::session::check_claude_project(&project_path, cwd)?;
+        let project = seat_folder(project_path, &mut self.shared_dirs)?;
         self.bind(project.clone(), destination.clone(), true);
         let local = backing.join("memory");
         self.directories.push(local.clone());
@@ -716,13 +736,21 @@ pub(super) fn of(
         answer
     };
     let mut views = SeatViews::default();
+    let mut claude_key = None;
+    let mut implicit_claude_home = None;
     if answer == Answer::Confined && seat_views {
         let repository = if checkout.common != checkout.git_dir {
             checkout.common.parent().unwrap_or(&root)
         } else {
             &root
         };
-        let native_slug = claude_slug(mail_root);
+        let native_slug = claude_owned_key(mail_root);
+        let implicit = if harness == Harness::Claude && homes.cleared {
+            homes.sessions.as_deref()
+        } else {
+            None
+        };
+        let implicit_seat = implicit.and_then(resolved);
         for (seat, kind) in &seats {
             if uses_view(*kind) {
                 if root.starts_with(seat) {
@@ -731,13 +759,24 @@ pub(super) fn of(
                         &[("path", &seat.display().to_string())],
                     ));
                 }
+                let implicit_state = implicit
+                    .filter(|_| implicit_seat.as_ref() == Some(seat))
+                    .and_then(Path::parent)
+                    .map(|root| root.join(CLAUDE_STATE_FILE));
                 views.add(
                     &view_root,
                     seat,
                     *kind,
                     (mail_root, repository),
                     &native_slug,
+                    implicit_state.as_deref(),
                 )?;
+                if *kind == Harness::Claude {
+                    claude_key = Some(native_slug.clone());
+                    if implicit_state.is_some() {
+                        implicit_claude_home = implicit.map(Path::to_path_buf);
+                    }
+                }
             }
         }
     }
@@ -817,6 +856,8 @@ pub(super) fn of(
         item_dir,
         view_dirs: views.directories,
         view_links: views.links,
+        claude_key,
+        implicit_claude_home,
         kept,
         lane_writable,
         own_cache,
@@ -1038,18 +1079,25 @@ impl Granted {
         (!self.view_dirs.is_empty()).then(|| self.grants.file.with_file_name(SEAT_VIEWS))
     }
 
-    /// The variables the lane's launch line sets for its grants: the Pi
-    /// bridge's folder, the lane's own runtime cache and its own tool
-    /// caches.
+    /// The launch environment for the granted paths, including Claude's
+    /// project key and the explicit config path an implicit view needs.
     pub fn env(&self) -> Vec<(String, String)> {
-        [
+        let mut env: Vec<_> = [
             (PI_BRIDGE_VAR, self.pi_bridge.as_ref()),
             (RUNTIME_CACHE_VAR, self.own_cache.as_ref()),
+            (
+                Harness::Claude.home_var(),
+                self.implicit_claude_home.as_ref(),
+            ),
         ]
         .into_iter()
         .chain(self.own_caches.iter().map(|(var, dir)| (*var, Some(dir))))
         .filter_map(|(name, dir)| dir.map(|dir| (name.to_owned(), dir.display().to_string())))
-        .collect()
+        .collect();
+        if let Some(key) = &self.claude_key {
+            env.push((CLAUDE_PROJECT_NAME_VAR.to_owned(), key.clone()));
+        }
+        env
     }
 
     /// What the launch record says of the grants: the answer, the seats it

@@ -1373,13 +1373,13 @@ impl Runner {
 
 /// Claude Code's project directory for `cwd` under `home`.
 pub fn project_dir(home: &Path, cwd: &Path) -> PathBuf {
-    let slug: String = cwd
-        .display()
-        .to_string()
-        .chars()
-        .map(|c| if c == '/' || c == '.' { '-' } else { c })
-        .collect();
-    home.join("projects").join(slug)
+    let owned = agent_runtime::session::claude_owned_project(home, cwd);
+    if owned.is_dir() {
+        owned
+    } else {
+        home.join("projects")
+            .join(agent_runtime::session::claude_slug(cwd))
+    }
 }
 
 /// The user turns one Claude-shaped session file records, as lines; none

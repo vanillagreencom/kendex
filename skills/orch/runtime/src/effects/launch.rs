@@ -23,7 +23,7 @@ use agent_runtime::launch::{
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::rows;
-use agent_runtime::session::same_directory;
+use agent_runtime::session::{self, same_directory};
 use agent_runtime::trust;
 use serde_json::{Value, json};
 
@@ -195,6 +195,9 @@ const CLOUD_BOUND: Duration = Duration::from_secs(600);
 /// The bound on the worktree package and git while a launch prepares its
 /// tree: a cloud launch's create and push, a local one's reuse of a claim.
 const WORKTREE_BOUND: Duration = Duration::from_secs(900);
+const CLAUDE_LEGACY_RESUME: &str = "claude-legacy-resume";
+const FRESH_HANDOFF: &str =
+    "Set relaunch to fresh in the standing handoff and send launch-lane again.";
 
 /// The session a launch opens: the lane's bound native session resumed, or
 /// a fresh one, with why where a relaunch could not resume. The route is
@@ -360,6 +363,18 @@ fn route_of(
         match owner(harness, home, cwd, &session_id) {
             Reading::Live(None) => {}
             Reading::Live(Some(recorded)) if same_directory(&recorded, Path::new(&r.mail_root)) => {
+            }
+            Reading::Unreadable {
+                cause: session::CLAUDE_PROJECT_AMBIGUOUS,
+            } => {
+                return match handoff {
+                    Some(Relaunch::Fresh) => Route::Fresh {
+                        cause: Some("session-retired"),
+                    },
+                    _ => Route::Refuse {
+                        cause: CLAUDE_LEGACY_RESUME,
+                    },
+                };
             }
             // On a switch today's answer was always a fresh start, and a
             // fresh start on a new id overwrites nothing: every answer that
@@ -532,6 +547,37 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
+    if harness == Harness::Claude
+        && agent_runtime::confine::answer(agent_runtime::confine::Host::this(), harness)
+            == agent_runtime::confine::Answer::Confined
+        && let Route::Resume {
+            session_id,
+            home: Some(home),
+        } = route
+    {
+        let expected =
+            session::claude_owned_project(&home.home, &cwd).join(format!("{session_id}.jsonl"));
+        match session::fixed_id_file(harness, &home.home, &cwd, session_id) {
+            Reading::Live(file) if file == expected => {}
+            Reading::Live(file) => {
+                return Err(refused(
+                    CLAUDE_LEGACY_RESUME,
+                    &[
+                        ("session", session_id),
+                        ("path", &file.display().to_string()),
+                        ("recovery", FRESH_HANDOFF),
+                    ],
+                )
+                .into());
+            }
+            Reading::Gone => {
+                return Err(refused("session-missing", &[("session", session_id)]).into());
+            }
+            Reading::Unreadable { cause } => {
+                return Err(refused(cause, &[("session", session_id)]).into());
+            }
+        }
+    }
     let unrebased = reuse_claim(&settings.worktree_cli, &cwd, &r.item).map_err(Unready::Gate)?;
     let opening = opening_brief(r, lane, harness)?;
     let opening = if unrebased {
@@ -804,7 +850,12 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
     if let Route::Refuse { cause } = &route {
-        return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
+        let observation = if *cause == CLAUDE_LEGACY_RESUME {
+            json!({"cause": cause, "session": lane.session_id, "recovery": FRESH_HANDOFF})
+        } else {
+            json!({"cause": cause})
+        };
+        return Ok(operation.settle(Word::Failed, observation));
     }
     // Whether the launch re-enters a standing record, as the transition
     // judged it: the provider then reuses the worktree it holds.

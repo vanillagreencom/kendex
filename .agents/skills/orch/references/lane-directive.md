@@ -288,6 +288,7 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 
 - A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt.
 - A local Claude Code relaunch on another account resumes that session too, where the request's account's home holds it.
+- A confined Claude Code relaunch resumes from its checkout's owned project directory. If the account holds that session only in an older project directory, the launch refuses and leaves the transcript in place. Set `relaunch` to `fresh` in the standing handoff and send `launch-lane` again.
 - A switched harness, any other switched account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`.
 - A hosted relaunch always starts the harness fresh.
 

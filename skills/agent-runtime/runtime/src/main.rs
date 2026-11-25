@@ -1396,15 +1396,11 @@ enum Binding {
 /// its session from a neighbour's.
 fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
     if let Some(id) = &rec.intent.session_id {
-        let Some(file) = session::fixed_file(rec.harness, home, &rec.intent.cwd, id) else {
-            return Binding::Unbound;
+        let file = match session::fixed_id_file(rec.harness, home, &rec.intent.cwd, id) {
+            Reading::Live(file) => file,
+            Reading::Gone => return Binding::Unbound,
+            Reading::Unreadable { cause } => return Binding::Unreadable(cause),
         };
-        match std::fs::metadata(&file) {
-            Ok(meta) if meta.is_file() => {}
-            Ok(_) => return Binding::Unbound,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Binding::Unbound,
-            Err(_) => return Binding::Unreadable("session-file-unreadable"),
-        }
         return match session::identify(
             rec.harness,
             &file,

@@ -105,7 +105,7 @@ Check the answer after a launch that must run confined:
 
 An account seat:
 
-- A confined Claude Code worker shares its own project transcript directory. Other projects stay read-only. Shell snapshots and memory belong to the lane's view. In a linked worktree, Claude's default auto memory uses the Git repository's project directory.
+- A confined Claude Code worker shares its own project transcript directory. Orch sets Claude's project-folder variable to a key for the physical checkout, using the variable available from Claude Code 2.1.234. Other projects stay read-only. Shell snapshots and memory belong to the lane's view.
 - For a Copilot review seat in a confined worker, orch shares the session store the host reads.
 - For Codex and Pi, the whole home goes in `writable`. `Harness::home_writes` names the code entries that orch lists in `read_only` with the seat's settings file.
 - A Pi worker also takes the ordinary grants for the account it bills and configured review seats.

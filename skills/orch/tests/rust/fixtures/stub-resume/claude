@@ -14,7 +14,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-slug="${PWD//[\/.]/-}"
+slug="${CLAUDE_CODE_PROJECT_DIR_NAME:-${PWD//[\/.]/-}}"
 if [ -n "$resume" ]; then
   if [ ! -f "${CLAUDE_CONFIG_DIR:-/nonexistent}/projects/$slug/$resume.jsonl" ]; then
     printf 'No conversation found with session ID: %s\n' "$resume" >&2
@@ -28,7 +28,7 @@ rows=""
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
   rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
-  [ -n "$resume" ] || printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+  [ -n "$resume" ] || printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$rows"
 fi
 while IFS= read -r line; do
   [ -n "$rows" ] || continue

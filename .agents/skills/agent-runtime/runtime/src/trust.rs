@@ -518,9 +518,11 @@ fn claude(lane: &Path, dir: &Path, bypass: bool) -> Result<Prepared> {
     })
 }
 
+pub const CLAUDE_STATE_FILE: &str = ".claude.json";
+
 fn claude_trust(lane: &Path, dir: &Path) -> Result<Route> {
     let h = Harness::Claude;
-    let config = lane.join(".claude.json");
+    let config = lane.join(CLAUDE_STATE_FILE);
     let key = dir.display().to_string();
     let mut root = match present(&config) {
         Present::Absent => Value::Object(Map::new()),
