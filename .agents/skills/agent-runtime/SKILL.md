@@ -65,8 +65,9 @@ This package owns launch, account selection under the caller's policy, session i
   - `inspect` heals it as the harness comes up.
   - Pass the same file to every later verb.
 - A worker that runs outside an orch lane:
-  - Charge it to its account: start it with `agent-runtime process lead --file <root>/workers/<name> --account <config dir> -- <program>`.
-  - `<root>` is the account records root, `AGENT_RUNTIME_ACCOUNT_STATE_DIR`.
+  - Charge it to its account: start it with `agent-runtime process lead --worker <name> --account <config dir> -- <program>`.
+  - The runtime places the record in the account records' `workers` folder. `process group --worker <name>` and `process stop --worker <name>` read it.
+  - `<name>` is one path component with no leading `.`.
 
 ## Confinement
 

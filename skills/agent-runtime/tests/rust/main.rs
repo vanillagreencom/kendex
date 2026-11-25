@@ -2508,9 +2508,10 @@ fn a_lead_whose_program_cannot_run_removes_its_record_and_refuses_exec_failed() 
     assert!(!record.exists());
 }
 
-/// A lead on an account records the account beside the leader in the one
-/// folder the account picks count; a file anywhere else would leave the
-/// worker uncharged, so it refuses before anything is written or run.
+/// The retired `--file --account` lead still records the account beside the
+/// leader in the one folder the account picks count, warning `form-retired`;
+/// a file anywhere else would leave the worker uncharged, so it refuses
+/// before anything is written or run.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other() {
@@ -2537,7 +2538,7 @@ fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other()
             .current_dir(&cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap()
     };
@@ -2549,6 +2550,11 @@ fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other()
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stdout)
+    );
+    let warned = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        warned.starts_with("agent-runtime: form-retired "),
+        "{warned}"
     );
     let recorded: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
@@ -2574,6 +2580,82 @@ fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other()
         Some(state.join("workers").display().to_string())
     );
     assert!(!outside.exists() && !ran.exists());
+}
+
+/// A worker led by its name lands in the folder the account picks count
+/// under the root the runtime resolves, here named only in the private env
+/// file so a caller's own default (`~/.local/state`) would miss it; the
+/// group and stop verbs read the same record by the same name.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let state = root.join("accounts");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join(".env.local"),
+        format!("AGENT_RUNTIME_ACCOUNT_STATE_DIR={}\n", state.display()),
+    )
+    .unwrap();
+    // Only the private env file names the root: no XDG folder, the home
+    // under the scratch root, and no checkout above the project.
+    let in_world = |mut command: Command| {
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &root)
+            .env("GIT_CEILING_DIRECTORIES", &root)
+            .current_dir(&project)
+            .stdin(std::process::Stdio::null());
+        command
+    };
+    let mut lead = in_world(Command::new("setsid"));
+    let leader = lead
+        .arg(binary())
+        .args([
+            "process",
+            "lead",
+            "--worker",
+            "w",
+            "--account",
+            "/srv/.wclaude",
+        ])
+        .args(["--", "sleep", "300"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _world = GroupWorld {
+        record: state.join("workers").join("w"),
+        session: None,
+        children: vec![leader],
+    };
+    let reply = |args: &[&str]| -> serde_json::Value {
+        let mut verb = in_world(Command::new(binary()));
+        let out = verb.args(args).output().unwrap();
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while reply(&["process", "group", "--worker", "w"])["result"]["reading"] != "live" {
+        assert!(std::time::Instant::now() < deadline, "the worker never led");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let charges = || {
+        agent_runtime::group::charges(
+            &agent_runtime::group::workers_dir(&state),
+            &agent_runtime::process::still_runs,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        charges(),
+        std::collections::BTreeMap::from([("/srv/.wclaude".to_owned(), 1)])
+    );
+    let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "w"]);
+    assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
+    assert_eq!(charges(), std::collections::BTreeMap::new());
 }
 
 /// The recorded group, read and stopped: a member whose parent exited still

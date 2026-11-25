@@ -1221,44 +1221,73 @@ enum ProcessOp {
     Identity { pid: u32 },
     /// Whether an identity still runs.
     Live { pid: u32, start: String },
-    /// Become PROGRAM as the leader of a process group recorded at FILE as
+    /// Become PROGRAM as the leader of a process group recorded as
     /// `{"pid","start"}`: a new group where this process leads none and
     /// holds no terminal, the one it leads where no other process is in it.
     /// Prints nothing on success: this process is then PROGRAM. Refuses
-    /// `group-live` where FILE's group still runs (`process stop --file
-    /// FILE` ends it), `group-shared`, `group-unmade cause=terminal` and
-    /// `exec-failed` (FILE removed).
+    /// `group-live` where the recorded group still runs (`process stop`
+    /// on the same record ends it), `group-shared`, `group-unmade
+    /// cause=terminal` and `exec-failed` (the record removed).
     Lead {
-        #[arg(long)]
-        file: PathBuf,
-        /// The account config dir PROGRAM spends on, recorded in FILE as
-        /// `account`: every account pick then charges the account while the
-        /// group runs. FILE must sit in `workers/` under the account records'
-        /// root, the one folder the picks read, else `group-file-uncounted`
-        /// before anything is written or run.
+        #[command(flatten)]
+        record: GroupRecord,
+        /// The account config dir PROGRAM spends on, recorded as `account`:
+        /// every account pick then charges the account while the group runs.
+        /// With `--file`, a retired form that warns `form-retired`: FILE must
+        /// sit in `workers/` under the account records' root, else
+        /// `group-file-uncounted` before anything is written or run.
         #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
         account: Option<String>,
         /// PROGRAM and its arguments, after `--`.
         #[arg(last = true, required = true)]
         command: Vec<std::ffi::OsString>,
     },
-    /// The group FILE records: `live` with the leader and its member count,
-    /// `gone` (no FILE included) or `unreadable`; with `--member PID`,
+    /// The recorded group: `live` with the leader and its member count,
+    /// `gone` (no record included) or `unreadable`; with `--member PID`,
     /// whether PID is in that group.
     Group {
-        #[arg(long)]
-        file: PathBuf,
+        #[command(flatten)]
+        record: GroupRecord,
         #[arg(long)]
         member: Option<u32>,
     },
-    /// Stop the group FILE records, every member by its own identity: TERM,
-    /// the grace, then KILL; no FILE is a group already gone.
+    /// Stop the recorded group, every member by its own identity: TERM, the
+    /// grace, then KILL; no record is a group already gone.
     Stop {
-        #[arg(long)]
-        file: PathBuf,
+        #[command(flatten)]
+        record: GroupRecord,
         #[arg(long, default_value_t = 10)]
         grace_secs: u64,
     },
+}
+
+/// Where a process group is recorded: a file the caller names, or a
+/// worker's record in the folder the account picks count.
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+struct GroupRecord {
+    /// The record at FILE.
+    #[arg(long)]
+    file: Option<PathBuf>,
+    /// The record `workers/NAME` under the account records' root, as this
+    /// checkout's settings resolve it: one path component with no leading
+    /// `.`, else `worker-name-invalid`.
+    #[arg(long, value_name = "NAME")]
+    worker: Option<String>,
+}
+
+impl GroupRecord {
+    fn path(self) -> Result<PathBuf> {
+        match (self.file, self.worker) {
+            (Some(file), None) => Ok(file),
+            (None, Some(name)) => {
+                let loaded = AccountSettings::load()?;
+                loaded.tell_skipped();
+                agent_runtime::group::worker_file(&loaded.state.get()?, &name)
+            }
+            _ => unreachable!("clap takes exactly one of --file and --worker"),
+        }
+    }
 }
 
 /// What a launch records: the pane, the command, and the identities read
@@ -2430,16 +2459,29 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             ))
             .unwrap_or_default()),
             ProcessOp::Lead {
-                file,
+                record,
                 account,
                 command,
             } => {
                 let (program, args) = command
                     .split_first()
                     .expect("clap requires PROGRAM after --");
-                if account.is_some() {
-                    counted_worker_file(&file)?;
-                }
+                let file = match record {
+                    GroupRecord {
+                        file: Some(file), ..
+                    } if account.is_some() => {
+                        // Retired for `--worker`, which places the record
+                        // itself; it still leads until the next major
+                        // release.
+                        let _ = writeln!(
+                            std::io::stderr().lock(),
+                            "agent-runtime: form-retired form=--file+--account use=--worker+--account"
+                        );
+                        counted_worker_file(&file)?;
+                        file
+                    }
+                    record => record.path()?,
+                };
                 Err(agent_runtime::group::lead(
                     &file,
                     account.as_deref(),
@@ -2447,9 +2489,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     args,
                 ))
             }
-            ProcessOp::Group { file, member } => agent_runtime::group::reading(&file, member),
-            ProcessOp::Stop { file, grace_secs } => {
-                agent_runtime::group::stop(&file, Duration::from_secs(grace_secs))
+            ProcessOp::Group { record, member } => {
+                agent_runtime::group::reading(&record.path()?, member)
+            }
+            ProcessOp::Stop { record, grace_secs } => {
+                agent_runtime::group::stop(&record.path()?, Duration::from_secs(grace_secs))
             }
         },
         Verb::Accounts { op } => accounts_verb(op),

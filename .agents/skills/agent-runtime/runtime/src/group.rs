@@ -50,6 +50,18 @@ pub fn workers_dir(account_state: &Path) -> PathBuf {
     account_state.join("workers")
 }
 
+/// The record of the worker `name` in [`workers_dir`]. A name that is not
+/// one path component would place the record outside that folder, and one
+/// with a leading `.` is a name [`accounted`] passes over as a write's
+/// temporary file: either would leave the worker uncharged, so both refuse
+/// `worker-name-invalid`.
+pub fn worker_file(account_state: &Path, name: &str) -> Result<PathBuf> {
+    if name.is_empty() || name.contains('/') || name.starts_with('.') {
+        return Err(Error::refused("worker-name-invalid", &[("name", name)]));
+    }
+    Ok(workers_dir(account_state).join(name))
+}
+
 /// A record a lead wrote with `--account`: the leader and the account its
 /// program spends on.
 #[derive(Deserialize)]
@@ -435,6 +447,30 @@ mod tests {
                 others,
             };
             assert_eq!(judge(standing), lead, "{standing:?}");
+        }
+    }
+
+    /// A worker's name places its record in the counted folder only as one
+    /// path component the count does not pass over.
+    #[test]
+    fn a_worker_name_places_its_record_in_the_counted_folder_or_refuses() {
+        let root = Path::new("/state");
+        for (name, placed) in [
+            ("w", Some("/state/workers/w")),
+            ("lane.1", Some("/state/workers/lane.1")),
+            ("", None),
+            (".", None),
+            ("..", None),
+            (".w", None),
+            ("a/b", None),
+            ("../w", None),
+            ("/w", None),
+        ] {
+            match (worker_file(root, name), placed) {
+                (Ok(path), Some(placed)) => assert_eq!(path, Path::new(placed), "{name:?}"),
+                (Err(e), None) => assert_eq!(e.key(), "worker-name-invalid", "{name:?}"),
+                (answer, _) => panic!("{name:?}: {answer:?}"),
+            }
         }
     }
 
