@@ -33,6 +33,7 @@ pub(super) fn age_word(secs: u64) -> String {
 fn next_action(report: &CheckReport) -> Option<Sentence> {
     let mut global = false;
     let mut project = false;
+    let mut pull = false;
     for remedy in report
         .sections
         .iter()
@@ -43,12 +44,25 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
             global |= *is_global;
             project |= !*is_global;
         }
+        pull |= *remedy == Remedy::Pull;
     }
     let command =
         |global| match Remedy::render_refresh_action(global, report.project_target.as_ref()) {
             Some(Fix::Here(command) | Fix::Elsewhere(command)) => Some(format!("{command} --yes")),
             None => None,
         };
+    // A project refresh rewrites the install record, and git then refuses
+    // the pull another line names, since that pull changes the same file.
+    // So the pull leads, and the check after it names the refresh wherever
+    // a package still reads behind.
+    let project_command = || match pull {
+        true => match Remedy::Pull.render(report.project_target.as_ref()) {
+            Some(Fix::Here(command) | Fix::Elsewhere(command)) => Some(command),
+            None => None,
+        },
+        false => command(false),
+    };
+    project |= pull;
     // The main checkout's refresh belongs to its refresh owner, run there.
     let checkout = match report.project_target {
         Some(ProjectTarget::MainCheckout(_)) => " from the main checkout, as its refresh owner,",
@@ -63,17 +77,23 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
             .command(&command(true)?)
             .prose(" to refresh them."),
         (false, true) => next
-            .command(&command(false)?)
+            .command(&project_command()?)
             .prose(checkout)
-            .prose(" to refresh project packages."),
+            .prose(match pull {
+                true => " to bring origin's install record, then check again.",
+                false => " to refresh project packages.",
+            }),
         (true, true) => next
             .command("kendex check --global")
             .prose(" to list global packages; ")
             .command(&command(true)?)
             .prose(" for global packages; ")
-            .command(&command(false)?)
+            .command(&project_command()?)
             .prose(checkout)
-            .prose(" for project packages."),
+            .prose(match pull {
+                true => " for project packages, then check again.",
+                false => " for project packages.",
+            }),
     })
 }
 
@@ -87,7 +107,8 @@ pub struct Page {
     pub sections: Vec<PageSection>,
     /// `(oldest package evaluation: 5m ago)`, where anything was evaluated.
     pub age: Option<String>,
-    /// The refresh a reader runs next, where every line points at one.
+    /// The refresh a reader runs next, or the pull from origin that has
+    /// to come before it where a line names one.
     pub next: Option<Sentence>,
 }
 

@@ -89,7 +89,8 @@ pub fn recording(scope: &Scope) -> Result<Recording> {
 /// (git-read-tree(1), "Two Tree Merge") and leaves as it is where origin
 /// does not. Read from the refs and objects the clone holds; nothing is
 /// fetched. Origin's copy goes through the decoder the file on disk does,
-/// so one this build cannot read is the refusal that file would get.
+/// so one this build cannot read is refused as that file would be, as
+/// [`CoreError::OriginLockUnreadable`] naming the copy.
 pub fn pulled_record(scope: &Scope) -> Result<Option<LockFile>> {
     let Scope::Project { root } = scope.canonical() else {
         return Ok(None);
@@ -140,16 +141,39 @@ pub fn pulled_record(scope: &Scope) -> Result<Option<LockFile>> {
     if !run(&root, &status)?.is_empty() {
         return Ok(None);
     }
-    let lock = crate::env::Env::project_lock_file(&root);
-    let Some(object) = resolved(&root, &format!("{upstream}:{path}"))? else {
+    let copy = format!("{upstream}:{path}");
+    let Some(object) = resolved(&root, &copy)? else {
         return Ok(Some(LockFile::Absent));
     };
     let blob = run(&root, &["cat-file", "blob", object.as_str()])?;
-    let text = String::from_utf8(blob).map_err(|_| CoreError::LockCorrupt {
-        path: lock.clone(),
-        message: format!("the copy at {upstream} is not UTF-8"),
-    })?;
-    super::parse_text(&lock, &text).map(|lock| Some(LockFile::Current(lock)))
+    let unreadable = |reason: String| CoreError::OriginLockUnreadable {
+        copy: copy.clone(),
+        reason,
+    };
+    let text = String::from_utf8(blob).map_err(|_| unreadable("it is not UTF-8".to_owned()))?;
+    // Decoded against the local lock's path, which places the record's
+    // positions under this project as the file on disk would be, so a
+    // refusal from it names that file and the fix for it: told apart here
+    // by its kind, it names origin's copy and the decoder's reason alone.
+    let lock = crate::env::Env::project_lock_file(&root);
+    super::parse_text(&lock, &text)
+        .map(|lock| Some(LockFile::Current(lock)))
+        .map_err(|error| match error {
+            CoreError::LockCorrupt { message, .. } => unreadable(message),
+            CoreError::SchemaTooNew { found, .. } => {
+                unreadable(format!("it was written by a newer kendex (format {found})"))
+            }
+            CoreError::LegacyProjectLock { .. } => {
+                unreadable("it is a version 10 record".to_owned())
+            }
+            CoreError::LockOutsideProject { key, recorded, .. } => unreadable(format!(
+                "it records {key} at {}, outside the project",
+                recorded.display()
+            )),
+            // The read of this machine's half beside the local lock, whose
+            // fault is that local file's.
+            other => other,
+        })
 }
 
 /// The branch the record is kept on: the one the remote HEAD names.

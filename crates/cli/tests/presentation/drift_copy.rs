@@ -176,23 +176,54 @@ const A: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
 const B: &str = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
 const C: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
 
-const fn gh(commit: &'static str) -> Option<Recorded> {
-    Some(Recorded { name: "gh", commit })
-}
+const NONE: &[Recorded] = &[];
+const GH_A: &[Recorded] = &[Recorded {
+    name: "gh",
+    commit: A,
+}];
+const GH_B: &[Recorded] = &[Recorded {
+    name: "gh",
+    commit: B,
+}];
+const OTHER_B: &[Recorded] = &[Recorded {
+    name: "other",
+    commit: B,
+}];
+const GH_A_OTHER_A: &[Recorded] = &[
+    Recorded {
+        name: "gh",
+        commit: A,
+    },
+    Recorded {
+        name: "other",
+        commit: A,
+    },
+];
+const GH_B_OTHER_A: &[Recorded] = &[
+    Recorded {
+        name: "gh",
+        commit: B,
+    },
+    Recorded {
+        name: "other",
+        commit: A,
+    },
+];
 
-/// A project checkout whose one package, `gh`, reads behind its source.
-/// `head` is what the checkout's commit records, origin's commit records
-/// `upstream`, or leaves the lock as `head` has it where that is `None`,
+/// A project checkout where `gh`, and every other package the checkout
+/// records, reads behind its source. `head` is what the checkout's commit
+/// records, no lock where it is empty; origin's commit records
+/// `upstream`, or leaves the lock as `head` has it where that is `None`;
 /// and `local` is what is done to the checkout after. The project sits at
 /// the repository's root, or in a folder below it where `below`. The
-/// snapshot's verdict is about the record the checkout holds at the end,
-/// so the check reads it as it stands.
+/// snapshot's verdicts are about the record the checkout holds at the
+/// end, so the check reads them as they stand.
 #[allow(clippy::unwrap_used)]
 fn following_copy(
     home: &Path,
-    head: Option<Recorded>,
+    head: &'static [Recorded],
     origin: Origin,
-    upstream: Option<Recorded>,
+    upstream: Option<&'static [Recorded]>,
     local: Local,
     below: bool,
 ) -> PathBuf {
@@ -208,14 +239,14 @@ fn following_copy(
     )
     .unwrap();
     test_util::git(&repository, &["init", "--quiet", "-b", "main"]);
-    if let Some(record) = head {
-        write_record(&project, record);
+    if !head.is_empty() {
+        write_record(&project, head);
     }
     test_util::git(&repository, &["add", "-A"]);
     test_util::git(&repository, &["commit", "--quiet", "-m", "one"]);
     let one = test_util::git(&repository, &["rev-parse", "HEAD"]);
-    if let Some(record) = upstream {
-        write_record(&project, record);
+    if let Some(records) = upstream {
+        write_record(&project, records);
         test_util::git(&repository, &["add", "-A"]);
     }
     test_util::git(
@@ -250,12 +281,12 @@ fn following_copy(
             ],
         );
     }
-    let mut holds = head;
+    let mut holds = head.to_vec();
     match local {
         Local::Clean => {}
         Local::Untracked(commit) | Local::Rewritten(commit) => {
-            holds = gh(commit);
-            write_record(&project, holds.unwrap());
+            holds = vec![Recorded { name: "gh", commit }];
+            write_record(&project, &holds);
         }
         Local::Branch => {
             test_util::git(&repository, &["switch", "--quiet", "-c", "lane"]);
@@ -274,6 +305,10 @@ fn following_copy(
             );
         }
     }
+    let mut names: Vec<&str> = holds.iter().map(|record| record.name).collect();
+    if !names.contains(&"gh") {
+        names.push("gh");
+    }
     let env = Env::host_rooted(home);
     let scope = Scope::Project {
         root: kendex_core::paths::canonical(&project).unwrap(),
@@ -288,25 +323,28 @@ fn following_copy(
             schema: SNAPSHOT_SCHEMA,
             taken_at: now,
             scope: scope.label(),
-            packages: vec![kendex_core::drift::snapshot::PackageSnapshot {
-                kind: ItemKind::Skill,
-                name: "gh".into(),
-                source: "cat".into(),
-                repo: "owner/repo".into(),
-                refs_state: Some("refs".into()),
-                update_available: true,
-                removed_upstream: false,
-                held: false,
-                ignored: false,
-                edited: false,
-                mixed: false,
-                forked: false,
-                recorded: holds
-                    .filter(|record| record.name == "gh")
-                    .map(|record| record.commit.to_owned())
-                    .into_iter()
-                    .collect(),
-            }],
+            packages: names
+                .into_iter()
+                .map(|name| kendex_core::drift::snapshot::PackageSnapshot {
+                    kind: ItemKind::Skill,
+                    name: name.into(),
+                    source: "cat".into(),
+                    repo: "owner/repo".into(),
+                    refs_state: Some("refs".into()),
+                    update_available: true,
+                    removed_upstream: false,
+                    held: false,
+                    ignored: false,
+                    edited: false,
+                    mixed: false,
+                    forked: false,
+                    recorded: holds
+                        .iter()
+                        .filter(|record| record.name == name)
+                        .map(|record| record.commit.to_owned())
+                        .collect(),
+                })
+                .collect(),
             unreadable: vec![],
         },
     )
@@ -314,11 +352,11 @@ fn following_copy(
     project
 }
 
-/// Writes the project's install record as one skill at a source commit.
+/// Writes the project's install record as skills at source commits.
 #[allow(clippy::unwrap_used)]
-fn write_record(project: &Path, record: Recorded) {
+fn write_record(project: &Path, records: &[Recorded]) {
     let harness = kendex_core::model::HarnessId::Claude;
-    let entry = kendex_core::lock::LockEntry {
+    let entry = |record: &Recorded| kendex_core::lock::LockEntry {
         requirer_provenance: None,
         name: record.name.to_owned(),
         kind: ItemKind::Skill,
@@ -339,10 +377,15 @@ fn write_record(project: &Path, record: Recorded) {
     };
     let lock = kendex_core::lock::Lock {
         version: kendex_core::lock::LOCK_VERSION,
-        entries: std::collections::BTreeMap::from([(
-            kendex_core::lock::entry_key(ItemKind::Skill, record.name, harness),
-            entry,
-        )]),
+        entries: records
+            .iter()
+            .map(|record| {
+                (
+                    kendex_core::lock::entry_key(ItemKind::Skill, record.name, harness),
+                    entry(record),
+                )
+            })
+            .collect(),
         ..Default::default()
     };
     let path = Env::project_lock_file(project);
@@ -353,59 +396,66 @@ fn write_record(project: &Path, record: Recorded) {
     .unwrap();
 }
 
-/// A copy that follows `main` and has not pulled is told to pull only
-/// where the pull brings `gh` another record, which the next check reads
+/// A copy that follows `main` and has not pulled is told to pull for a
+/// package the pull brings another record, which the next check reads
 /// again: a refresh there would write a record the copy must not commit.
-/// Every copy the pull would leave at the same record, or that the pull
-/// would refuse or not move, keeps the refresh. A checkout git cannot
-/// answer for is offered neither, with git's answer as the detail.
+/// The report's next step is then that pull, never a project refresh,
+/// which would rewrite the lock and make git refuse the pull. Every copy
+/// the pull would leave at the same record, or that the pull would
+/// refuse or not move, keeps the refresh. A checkout git cannot answer
+/// for is offered neither, and the default text says so.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_behind_its_default_branch_is_told_to_pull_where_the_pull_moves_the_record() {
     type Row = (
         &'static str,
-        Option<Recorded>,
+        &'static [Recorded],
         Origin,
-        Option<Recorded>,
+        Option<&'static [Recorded]>,
         Local,
         bool,
         Option<&'static str>,
     );
-    let other = Some(Recorded {
-        name: "other",
-        commit: B,
-    });
-    let rows: [Row; 13] = [
+    let rows: [Row; 14] = [
         (
             "origin records gh where the checkout records nothing",
-            None,
+            NONE,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Clean,
             false,
             Some("pull"),
         ),
         (
             "origin records gh at another commit",
-            gh(A),
+            GH_A,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
+            Local::Clean,
+            false,
+            Some("pull"),
+        ),
+        (
+            "origin records gh at another commit and other as the checkout does",
+            GH_A_OTHER_A,
+            Origin::Behind,
+            Some(GH_B_OTHER_A),
             Local::Clean,
             false,
             Some("pull"),
         ),
         (
             "origin records gh where a project below the root records nothing",
-            None,
+            NONE,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Clean,
             true,
             Some("pull"),
         ),
         (
             "origin's commits leave the lock unchanged",
-            gh(A),
+            GH_A,
             Origin::Behind,
             None,
             Local::Clean,
@@ -414,43 +464,43 @@ fn a_copy_behind_its_default_branch_is_told_to_pull_where_the_pull_moves_the_rec
         ),
         (
             "origin records only another package",
-            None,
+            NONE,
             Origin::Behind,
-            other,
+            Some(OTHER_B),
             Local::Clean,
             false,
             Some("refresh"),
         ),
         (
             "an untracked local lock",
-            None,
+            NONE,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Untracked(A),
             false,
             Some("refresh"),
         ),
         (
             "a tracked lock with an uncommitted rewrite of gh",
-            gh(A),
+            GH_A,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Rewritten(C),
             false,
             Some("refresh"),
         ),
         (
             "a checkout with a commit of its own",
-            gh(A),
+            GH_A,
             Origin::Diverged,
-            gh(B),
+            Some(GH_B),
             Local::Clean,
             false,
             Some("refresh"),
         ),
         (
             "a checkout at origin's commit",
-            gh(A),
+            GH_A,
             Origin::Even,
             None,
             Local::Clean,
@@ -459,7 +509,7 @@ fn a_copy_behind_its_default_branch_is_told_to_pull_where_the_pull_moves_the_rec
         ),
         (
             "a clone that never fetched",
-            gh(A),
+            GH_A,
             Origin::Unfetched,
             None,
             Local::Clean,
@@ -468,27 +518,27 @@ fn a_copy_behind_its_default_branch_is_told_to_pull_where_the_pull_moves_the_rec
         ),
         (
             "a checkout off the default branch",
-            gh(A),
+            GH_A,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Branch,
             false,
             Some("refresh"),
         ),
         (
             "a detached HEAD",
-            gh(A),
+            GH_A,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::Detached,
             false,
             Some("refresh"),
         ),
         (
             "a remote HEAD naming no branch of origin",
-            gh(A),
+            GH_A,
             Origin::Behind,
-            gh(B),
+            Some(GH_B),
             Local::StrayRemoteHead,
             false,
             None,
@@ -515,12 +565,39 @@ fn a_copy_behind_its_default_branch_is_told_to_pull_where_the_pull_moves_the_rec
             verb.is_none(),
             "{case}: {stale}"
         );
-        let command = match verb {
-            Some("pull") => "fix: git pull --ff-only",
-            Some("refresh") => "fix: kendex refresh",
-            _ => continue,
-        };
+        // The pasteable commands the session hook hands an agent: the
+        // line's fix and the report's next step.
         let (_, text) = check(&home, &project, &[]);
-        assert!(text.contains(command), "{case}: {text}");
+        let line = text
+            .lines()
+            .find(|line| line.contains("'gh'") && line.contains("newer version"))
+            .unwrap_or_else(|| panic!("{case}: no stale gh line in {text}"));
+        let next = text.lines().find(|line| line.starts_with("Next: "));
+        match verb {
+            Some("pull") => {
+                assert!(line.contains("fix: git pull --ff-only"), "{case}: {text}");
+                assert!(
+                    next.is_some_and(|next| next.starts_with("Next: git pull --ff-only")),
+                    "{case}: {text}"
+                );
+                assert!(
+                    !text.contains("kendex refresh --scope project"),
+                    "{case}: {text}"
+                );
+            }
+            Some("refresh") => {
+                assert!(line.contains("fix: kendex refresh"), "{case}: {text}");
+                assert!(
+                    next.is_some_and(|next| next.starts_with("Next: kendex refresh")),
+                    "{case}: {text}"
+                );
+            }
+            _ => {
+                // The default text drops the detail, so the line says it
+                // could not name the fix.
+                assert!(!line.contains("fix:"), "{case}: {text}");
+                assert!(line.contains("could not tell"), "{case}: {text}");
+            }
+        }
     }
 }

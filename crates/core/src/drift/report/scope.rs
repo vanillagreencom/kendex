@@ -1846,13 +1846,20 @@ impl ScopeCheck<'_> {
                 }),
             ));
         } else if package.update_available {
-            let remedy = self.stale_remedy(package, lock, pulled);
-            sections.stale.push(Line {
-                detail: remedy.as_ref().err().map(|error| verbatim(error)),
-                ..drift(
-                    format!("{prefix}{kind} '{name}' has a newer version on its source"),
-                    remedy.ok(),
-                )
+            let stale = format!("{prefix}{kind} '{name}' has a newer version on its source");
+            sections.stale.push(match self.stale_remedy(package, lock, pulled) {
+                Ok(remedy) => drift(stale, Some(remedy)),
+                // The default text drops the detail, so the line itself
+                // says why it names no fix.
+                Err(error) => Line {
+                    detail: Some(verbatim(&error)),
+                    ..drift(
+                        format!(
+                            "{stale}; kendex could not tell whether a pull from origin or a refresh brings it"
+                        ),
+                        None,
+                    )
+                },
             });
         }
     }
