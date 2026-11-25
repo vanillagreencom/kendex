@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Inputs: tools/release-inputs .github/workflows/release.yml skills/harness-ci/tests/lib/*
-# The workflow's build condition consumes the real selector's output on real
-# git diffs. This proves selection, not execution of the five native builds.
+# Run the workflow's prepare step on real git diffs and feed its published
+# build output into the native build condition.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -16,7 +16,6 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 WF="$ROOT/.github/workflows/release.yml"
-TOOL="$ROOT/tools/release-inputs"
 PASS=0
 
 assert_eq() {
@@ -28,13 +27,17 @@ assert_eq "$(triggers "$WF")" $'push\nworkflow_dispatch' triggers
 expr="$(job_ifs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
 [ -n "$expr" ]
 needs="$(job_needs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
-producer="$(awk '
+input_step="$(awk '
   /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:") }
   prepare && /^      - / { id = "" }
   prepare && /^        id: / { id = $2 }
-  prepare && /^        run: tools\/release-inputs / { print id }
+  prepare && /^        run: tools\/release-inputs / {
+    sub(/^        run: /, "")
+    print id "\t" $0
+  }
 ' "$WF")"
-[ -n "$producer" ]
+IFS=$'\t' read -r producer step_command <<< "$input_step"
+[[ -n $producer && -n $step_command ]]
 binding="$(awk '
   /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:"); outputs = 0 }
   prepare && /^    [^ ]/ { outputs = ($1 == "outputs:") }
@@ -46,15 +49,24 @@ assert_eq "$targets" $'aarch64-apple-darwin\naarch64-unknown-linux-gnu\nx86_64-a
 
 git init --quiet "$TMP_ROOT/repo"
 cd -- "$TMP_ROOT/repo"
-printf base > seed
-git add seed
+mkdir -p tools
+cp -p "$ROOT/tools/release-inputs" tools/release-inputs
+git add tools/release-inputs
 git -c core.hooksPath=/dev/null commit --quiet -m base
 base="$(git rev-parse HEAD)"
 
-selected() { # TOOL EVENT BEFORE AFTER
-  local output steps published ctx
-  output="$("$BASH" "$1" "$2" "$3" "$4")" || return
-  case "$output" in build=true|build=false) ;; *) return 2 ;; esac
+selected() { # EVENT BEFORE AFTER
+  local output_file="$TMP_ROOT/step-output" output steps published ctx
+  # Actions reads step outputs from a fresh file.
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-output-parameter
+  : > "$output_file" || return
+  EVENT_NAME="$1" PUSH_BEFORE="$2" GITHUB_SHA="$3" GITHUB_OUTPUT="$output_file" \
+    "$BASH" --noprofile --norc -eo pipefail -c "$step_command" >&2 || return
+  output="$(<"$output_file")" || return
+  case "$output" in
+    build=true|build=false) ;;
+    *) printf 'FAIL prepare input step: expected a build flag in GITHUB_OUTPUT\n' >&2; return 2 ;;
+  esac
   steps="$(jq -cn --arg id "$producer" --arg build "${output#build=}" '{steps: {($id): {outputs: {build: $build}}}}')" || return
   published="$(python3 "$GH_EVAL" value "$steps" "$binding")" || return
   ctx="$(jq -cn --argjson build "$published" '{needs: {prepare: {result: "success", outputs: {build: ($build // "")}}}}')" || return
@@ -63,7 +75,7 @@ selected() { # TOOL EVENT BEFORE AFTER
 
 assert_selected() { # CASE EXPECTED EVENT BEFORE AFTER
   local actual status=0
-  actual="$(selected "$TOOL" "$3" "$4" "$5")" || status=$?
+  actual="$(selected "$3" "$4" "$5")" || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'FAIL %s: release selection exited %s\n' "$1" "$status" >&2
     return "$status"
@@ -75,7 +87,7 @@ assert_selected() { # CASE EXPECTED EVENT BEFORE AFTER
 # HEAD^ shortcut that would miss an earlier release-input commit in the push.
 while IFS='|' read -r path expected; do
   mkdir -p "$(dirname -- "$path")"
-  printf changed > "$path"
+  printf '\n# fixture change\n' >> "$path"
   git add -- "$path"
   git -c core.hooksPath=/dev/null commit --quiet -m fixture
   head="$(git rev-parse HEAD)"
