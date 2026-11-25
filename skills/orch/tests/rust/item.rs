@@ -899,6 +899,42 @@ mod dev_artifacts {
             ),
             "required",
         );
+        // A run a stop ended before its executor wrote the sentinel reads
+        // no verdict with no timing, so no receipt can carry it: its command
+        // names this process under a start it never had, and no runner
+        // stands.
+        let stopped = w.finished_run("stopped", "full");
+        fs::remove_file(stopped.join("exit")).unwrap();
+        let agent_runtime::reading::Reading::Live(me) =
+            agent_runtime::process::identity(std::process::id())
+        else {
+            panic!("this process reads its own identity")
+        };
+        fs::write(
+            stopped.join("command"),
+            json!({"pid": me.pid, "start": format!("{}0", me.start)}).to_string(),
+        )
+        .unwrap();
+        fs::write(stopped.join("execution"), "started\n").unwrap();
+        fs::write(stopped.join("stop"), "stop-requested\n").unwrap();
+        refused(
+            &w.write(
+                "r1",
+                "fix",
+                "no-verdict",
+                &[
+                    "--validate-run-dir",
+                    stopped.to_str().unwrap(),
+                    "--validate-note",
+                    "stopped",
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            ),
+            "timing-unreadable",
+        );
         fs::write(run.join("exit"), "guard-exit=1 at=2026-01-01T00:00:01Z\n").unwrap();
         refused(
             &w.write(

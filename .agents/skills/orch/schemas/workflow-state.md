@@ -177,6 +177,8 @@ A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `out
 - Without `run_dir`, the runtime mints the run id, and `run_dir` is `<worktree>/tmp/dev-validate-<run_id>`.
 - A repeat of `record-validation-admission` while an admitted run of the round stands open returns that run; `attempt: next` mints another.
 - `orch-runtime validate start` writes the run's `proof` and `job` on its entry before the launch.
+- `orch-runtime validate start` first closes each open entry of the round whose `job` reads gone, as `reconcile-round` closes it, and sends its end notice. That close is its own write, so it stands when the start then refuses.
+- An open entry whose `job` still runs refuses the start `run-live`, and one whose `job` cannot be read refuses it `validate-unreadable`; both stay open. A named entry that has ended refuses it `run-ended`.
 - `validate stop --item [ISSUE_ID] --run-dir [RUN_DIR]` writes `stop: {at}` before it ends the job.
 - `accept-result {round_id, outcome, run_dir?, end?, authorization?, summary_file?, attachments?}` closes the round's own entry, or with `run_dir` the run's `validate` entry.
 - `accept-result`'s `outcome` is required: `pass`, `fail`, `no-verdict`, `lost`, `stopped`, `no-change`, `handed-over` or `pass-excused`.

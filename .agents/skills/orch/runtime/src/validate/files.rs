@@ -82,24 +82,43 @@ impl RunFile {
         self.start.get(key).map(String::as_str).unwrap_or("")
     }
     pub fn outcome(&self) -> Option<StageOutcome> {
-        let outcome = self
-            .sentinel
-            .as_deref()
-            .and_then(crate::ops::validate::sentinel_outcome);
+        self.stop_word(
+            self.sentinel
+                .as_deref()
+                .and_then(crate::ops::validate::sentinel_outcome),
+        )
+    }
+    /// How the run ended, `None` while work may still hold it: its
+    /// sentinel's word, else `lost` once [`lost`] reads it so under
+    /// `past_grace`.
+    fn ending(&self, past_grace: bool) -> Result<Option<StageOutcome>> {
+        if self.sentinel.is_some() {
+            return Ok(self.outcome());
+        }
+        Ok(self.stop_word(lost(self, past_grace)?.then_some(StageOutcome::Lost)))
+    }
+    /// A stop the stop file records ended the run: its ending reads
+    /// `stopped`, as the stage's close reads it.
+    fn stop_word(&self, ended: Option<StageOutcome>) -> Option<StageOutcome> {
         if self.stopped {
-            outcome.map(|_| StageOutcome::Stopped)
+            ended.map(|_| StageOutcome::Stopped)
         } else {
-            outcome
+            ended
         }
     }
     pub fn verdict(&self) -> Result<&'static str> {
-        match (self.sentinel.is_some(), self.outcome()) {
-            (_, Some(StageOutcome::Pass)) if self.get("validate-mode") == "ci" => Ok("pending"),
-            (_, Some(StageOutcome::Pass)) => Ok("pass"),
-            (_, Some(StageOutcome::NoVerdict | StageOutcome::Stopped)) => Ok("no-verdict"),
-            (_, Some(_)) => Ok("FAILING"),
-            (false, None) => Ok("unfinished"),
-            (true, None) => Err(unreadable("sentinel-unreadable", self.dir.display())),
+        self.verdict_of(self.ending(false)?)
+    }
+    fn verdict_of(&self, ending: Option<StageOutcome>) -> Result<&'static str> {
+        match ending {
+            Some(StageOutcome::Pass) if self.get("validate-mode") == "ci" => Ok("pending"),
+            Some(StageOutcome::Pass) => Ok("pass"),
+            Some(StageOutcome::NoVerdict | StageOutcome::Stopped) => Ok("no-verdict"),
+            Some(_) => Ok("FAILING"),
+            None if self.sentinel.is_some() => {
+                Err(unreadable("sentinel-unreadable", self.dir.display()))
+            }
+            None => Ok("unfinished"),
         }
     }
     pub fn selection(&self) -> Result<(Option<String>, String)> {
@@ -201,11 +220,12 @@ impl RunFile {
     pub fn record(&self) -> Result<String> {
         let mode = mode(self.get("validate-mode"))?;
         let (lanes, selection) = self.selection()?;
+        let ending = self.ending(false)?;
+        let verdict = self.verdict_of(ending)?;
         let mut line = format!(
-            "validate-mode={} {}selection={selection} verdict={} head={} start={}",
+            "validate-mode={} {}selection={selection} verdict={verdict} head={} start={}",
             mode.word(),
             lanes.map(|s| format!("lanes={s} ")).unwrap_or_default(),
-            self.verdict()?,
             self.get("head"),
             self.get("start")
         );
@@ -236,6 +256,10 @@ impl RunFile {
         }
         if !slow.is_empty() {
             line.push_str(&format!(" slow-step={}", slow.join(",")));
+        }
+        // The run ended with no sentinel: `--wait`'s word for it.
+        if self.sentinel.is_none() && ending == Some(StageOutcome::Lost) {
+            line.push_str(" state=lost");
         }
         Ok(line)
     }
@@ -493,37 +517,70 @@ fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
             }
             continue;
         }
-        let command = super::run::command_reading(&run.dir)
-            .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
-        if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
-            return Err(unreadable(
-                "command-identity",
-                format!("{}: {cause}", run.dir.display()),
-            ));
-        }
-        if command.is_some_and(|reading| !matches!(reading, Reading::Gone)) {
-            let pid = fs::read_to_string(run.dir.join("pid"))
-                .ok()
-                .and_then(|p| p.trim().parse().ok())
-                .unwrap_or(0);
+        if let Some(pid) = holds(&run, strict)? {
             return Ok(Some((run.dir, pid)));
-        }
-        if unstarted(&run)? {
-            continue;
-        }
-        match runner_reading(&run) {
-            Reading::Live(pid) => return Ok(Some((run.dir, pid))),
-            Reading::Unreadable { cause } if strict => {
-                return Err(unreadable(
-                    "runner",
-                    format!("{}: {cause}", run.dir.display()),
-                ));
-            }
-            Reading::Unreadable { .. } => return Ok(Some((run.dir, 0))),
-            Reading::Gone => {}
         }
     }
     Ok(None)
+}
+
+/// The work that holds a run with no sentinel, by the pid it names: its
+/// command's group by the identity its executor recorded, else its runner
+/// by the launcher's record. A run whose child never ran holds nothing. An
+/// unreadable reading holds the run, or under `strict` refuses with its
+/// cause.
+fn holds(run: &RunFile, strict: bool) -> Result<Option<u32>> {
+    let command = super::run::command_reading(&run.dir)
+        .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
+    if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
+        return Err(unreadable(
+            "command-identity",
+            format!("{}: {cause}", run.dir.display()),
+        ));
+    }
+    if command.is_some_and(|reading| !matches!(reading, Reading::Gone)) {
+        let pid = fs::read_to_string(run.dir.join("pid"))
+            .ok()
+            .and_then(|p| p.trim().parse().ok())
+            .unwrap_or(0);
+        return Ok(Some(pid));
+    }
+    if unstarted(run)? {
+        return Ok(None);
+    }
+    match runner_reading(run) {
+        Reading::Live(pid) => Ok(Some(pid)),
+        Reading::Unreadable { cause } if strict => Err(unreadable(
+            "runner",
+            format!("{}: {cause}", run.dir.display()),
+        )),
+        Reading::Unreadable { .. } => Ok(Some(0)),
+        Reading::Gone => Ok(None),
+    }
+}
+
+/// Whether a run that wrote no sentinel is lost: no work holds it, no
+/// sentinel has landed since `run` was read, and its executor claimed it
+/// (`execution`) or its launch grace has passed. `--wait` and `--record`
+/// read such a run here alike; `--record` reads no clock, so a run its
+/// executor never claimed stays unfinished there.
+fn lost(run: &RunFile, past_grace: bool) -> Result<bool> {
+    if holds(run, false)?.is_some() {
+        return Ok(false);
+    }
+    // An executor that wrote its sentinel and exited after `run` was read
+    // holds nothing now: the run ended with its verdict.
+    if fs::metadata(run.dir.join("exit")).is_ok_and(|m| m.len() > 0) {
+        return Ok(false);
+    }
+    if past_grace {
+        return Ok(true);
+    }
+    match fs::symlink_metadata(run.dir.join("execution")) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(unreadable("execution", e)),
+    }
 }
 
 /// Follow the run for `budget` seconds: its state line, under the warnings
@@ -589,38 +646,20 @@ fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String,
         } else {
             String::new()
         };
-        let unstarted = unstarted(&run)?;
-        let state = if unstarted && elapsed >= poll.max(10) {
-            Some("lost")
-        } else if unstarted {
-            None
-        } else if let Ok(pid) = fs::read_to_string(run_dir.join("pid")) {
-            if pid
-                .trim()
-                .parse::<u32>()
-                .is_ok_and(|pid| matches!(process::identity(pid), Reading::Gone))
-                && matches!(runner_reading(&run), Reading::Gone)
-            {
-                Some("lost")
-            } else {
-                None
-            }
-        } else if elapsed >= poll.max(10) && matches!(runner_reading(&run), Reading::Gone) {
-            Some("lost")
-        } else {
-            None
-        };
-        if let Some(state) = state {
-            if fs::metadata(run_dir.join("exit")).is_ok_and(|m| m.len() > 0) {
-                continue;
-            }
-            return Ok((
-                format!(
-                    "state={state} elapsed-secs={elapsed} validate=FAILING run-dir={}{log}",
+        if let Some(ending) = run.ending(elapsed >= poll.max(10))? {
+            let line = match ending {
+                StageOutcome::Lost => format!(
+                    "state=lost elapsed-secs={elapsed} validate=FAILING run-dir={}{log}",
                     run_dir.display()
                 ),
-                1,
-            ));
+                StageOutcome::Stopped => format!(
+                    "state=done stopped validate=no-verdict run-dir={} log={}/log",
+                    run_dir.display(),
+                    run_dir.display()
+                ),
+                other => unreachable!("a run with no sentinel ends lost or stopped, not {other:?}"),
+            };
+            return Ok((line, 1));
         }
         if clock.now() >= call {
             return Ok((

@@ -487,7 +487,8 @@ fn apply_interleaved(
         | Request::StopModelPredecessor(_) => true,
         // An already closed or marked stage keeps the first result.
         Request::Validate(step) => match step {
-            validate::Validate::Start(_)
+            validate::Validate::Settle(_)
+            | validate::Validate::Start(_)
             | validate::Validate::Launch(_)
             | validate::Validate::End(_)
             | validate::Validate::Mark(_)

@@ -1064,9 +1064,11 @@ fn send_and_mark(
     )?;
     Ok(match marked {
         Validated::Mark(m) => m.owner,
-        Validated::Start(_) | Validated::Launch(_) | Validated::End(_) | Validated::Stop(_) => {
-            String::new()
-        }
+        Validated::Settle(_)
+        | Validated::Start(_)
+        | Validated::Launch(_)
+        | Validated::End(_)
+        | Validated::Stop(_) => String::new(),
     })
 }
 
@@ -1245,7 +1247,7 @@ pub enum JobState {
     reason = "the stop's one ask of the job launcher to end the run's job by its recorded identity, after the stop was recorded on the stage"
 )]
 fn end_job(_settings: &Settings, run_dir: &str, _job: &ValidateJob) -> Result<JobEnded> {
-    stop_files(Path::new(run_dir)).map(|answer| {
+    stop_files(Path::new(run_dir), true).map(|answer| {
         if answer.is_some() {
             JobEnded::Signalled
         } else {
@@ -1293,7 +1295,7 @@ pub fn stop_worktree(
             Ok((item, _)) if Some(item.as_str()) == keep => {
                 let (stages, index) = stage_of(&state::item_path(&settings.state_dir, &item), &rd)?;
                 if stages[index].end.is_some() || stages[index].job.is_none() {
-                    count(stop_files(&run.dir)?);
+                    count(stop_files(&run.dir, false)?);
                 }
             }
             Ok((item, _)) => match stop(settings, reach, Some(&item), &rd, env, locking) {
@@ -1324,22 +1326,37 @@ pub fn stop_worktree(
                         count(Some(&reply.runner));
                     }
                 }
-                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir)?),
+                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir, false)?),
                 Err(error) => return Err(error),
             },
-            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir)?),
+            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir, false)?),
             Err(error) => return Err(error),
         }
     }
     Ok(stopped)
 }
 
+/// End a run's command group, then its runner, by the identities its own
+/// files record. The `stop` file tells `--record` and `--wait` a stop ended
+/// the run, so they read it `stopped`: it is written before the end it
+/// records, first on a run whose stage records the stop (`staged`), since
+/// that stage's close reads `stopped` whatever the stop finds, and
+/// otherwise only where live work is found to end. A run that ended before
+/// a stop no stage records keeps the word its own ending reads.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
 )]
-pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
-    atomic(run_dir, "stop", "stop-requested\n")?;
+pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static str>> {
+    let mut marked = false;
+    let mut mark = |live: bool| -> Result<()> {
+        if live && !marked {
+            atomic(run_dir, "stop", "stop-requested\n")?;
+            marked = true;
+        }
+        Ok(())
+    };
+    mark(staged)?;
     let mut stopped = false;
     match fs::read(run_dir.join("command")) {
         Ok(bytes) => {
@@ -1347,10 +1364,15 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
             let start = record.start.ok_or_else(|| {
                 super::files::unreadable("stop-unreadable", "command identity was not recorded")
             })?;
-            stopped = agent_runtime::effects::job::stop_group(&agent_runtime::process::Identity {
+            let identity = agent_runtime::process::Identity {
                 pid: record.pid,
                 start,
-            })?;
+            };
+            mark(!matches!(
+                agent_runtime::effects::job::group_reading(&identity),
+                agent_runtime::reading::Reading::Gone
+            ))?;
+            stopped = agent_runtime::effects::job::stop_group(&identity)?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let run = super::files::RunFile::read(run_dir)?;
@@ -1404,6 +1426,10 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
     {
         return Ok(stopped.then_some("attached"));
     }
+    mark(!matches!(
+        agent_runtime::effects::job::recorded_live(&run_dir.join("runner")),
+        agent_runtime::reading::Reading::Gone
+    ))?;
     let runner = agent_runtime::effects::job::stop_recorded(&run_dir.join("runner"))?;
     Ok(runner.or(stopped.then_some("setsid")))
 }

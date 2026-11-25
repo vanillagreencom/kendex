@@ -31,6 +31,7 @@ use agent_runtime::journal::Env;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "step", rename_all = "kebab-case")]
 pub enum Validate {
+    Settle(SettleRound),
     Start(Box<RecordStart>),
     Launch(RecordLaunch),
     End(RecordEnd),
@@ -42,6 +43,7 @@ impl Validate {
     /// The step's word, for the request's name.
     pub fn step(&self) -> &'static str {
         match self {
+            Validate::Settle(_) => "settle",
             Validate::Start(_) => "start",
             Validate::Launch(_) => "launch",
             Validate::End(_) => "end",
@@ -51,12 +53,24 @@ impl Validate {
     }
 }
 
+/// Close each open started run of the round whose job will not end itself,
+/// as the round's reconcile closes it, with its end notice owed in the same
+/// write. Its own transition, before the start's: a close the start made
+/// would be undone with the start's refusal. Only started runs: the whole
+/// reconcile would close, as never started, the admission the start is for.
+/// A run still running, or one that cannot be read, stays open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SettleRound {
+    pub round_id: String,
+}
+
 /// Write the proof facts and the launcher's record path on the round's
 /// admitted run before the launcher is asked. With `run_dir` the stage the
 /// dev agent's admission named, open and not yet started; without it the
 /// round's open admitted run, or one minted here through the admission.
 /// A round with an open run that carries a job refuses `run-live`: one run
-/// at a time per round.
+/// at a time per round, a gone one closing first through [`SettleRound`].
+/// A named run that has ended refuses `run-ended`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordStart {
     pub round_id: String,
@@ -172,11 +186,19 @@ pub struct MarkNotice {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "step", rename_all = "kebab-case")]
 pub enum Validated {
+    Settle(RoundSettled),
     Start(Started),
     Launch(Launched),
     End(Ended),
     Mark(Marked),
     Stop(Stopped),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoundSettled {
+    pub round_id: String,
+    /// One row per open started run the call read, as the reconcile reports.
+    pub runs: Vec<item::RunReconciled>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +288,7 @@ fn item_of(path: &Path) -> String {
 
 pub(super) fn apply(path: &Path, doc: &mut Document, r: &Validate, env: &Env) -> Result<Validated> {
     match r {
+        Validate::Settle(r) => settle(path, doc, r, env).map(Validated::Settle),
         Validate::Start(r) => start(path, doc, r, env).map(Validated::Start),
         Validate::Launch(r) => launch(path, doc, r, env).map(Validated::Launch),
         Validate::End(r) => end(path, doc, r, env).map(Validated::End),
@@ -274,16 +297,27 @@ pub(super) fn apply(path: &Path, doc: &mut Document, r: &Validate, env: &Env) ->
     }
 }
 
+/// Whether the stage is an open run of the round that the runtime started.
+pub(crate) fn open_started(stage: &Stage, round_id: &str) -> bool {
+    stage.kind == StageKind::Validate
+        && stage.round_id.as_deref() == Some(round_id)
+        && stage.end.is_none()
+        && stage.job.is_some()
+}
+
+fn settle(path: &Path, doc: &mut Document, r: &SettleRound, env: &Env) -> Result<RoundSettled> {
+    Ok(RoundSettled {
+        round_id: r.round_id.clone(),
+        runs: item::settle_round(path, doc, |s| open_started(s, &r.round_id), env)?,
+    })
+}
+
 fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<Started> {
     let before = stages(path, doc)?;
-    // One run at a time per round: an open run with its job recorded is
-    // the round's, whether it still runs or its reconcile is still owed.
-    if let Some(open) = before.iter().find(|s| {
-        s.kind == StageKind::Validate
-            && s.round_id.as_deref() == Some(&r.round_id)
-            && s.end.is_none()
-            && s.job.is_some()
-    }) {
+    // A run its job left with no close is settled before this transition,
+    // so one still open here opened since the settle read the round, or
+    // names no run directory to read.
+    if let Some(open) = before.iter().find(|s| open_started(s, &r.round_id)) {
         return Err(Error::RunLive {
             round_id: r.round_id.clone(),
             run_dir: open.run_dir.clone().unwrap_or_default(),
@@ -291,10 +325,10 @@ fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<
     }
     if let Some(run_dir) = &r.run_dir {
         // The named run is the dev agent's admission: it stands open, or
-        // the start is of a run that already ended.
+        // it has ended and the round's next admission is owed.
         let index = stage_index(&before, &r.round_id, run_dir)?;
         if before[index].end.is_some() {
-            return Err(Error::RunUnknown {
+            return Err(Error::RunEnded {
                 round_id: r.round_id.clone(),
                 run_dir: run_dir.clone(),
             });

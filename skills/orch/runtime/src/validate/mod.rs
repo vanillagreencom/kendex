@@ -15,8 +15,10 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::ops::validate::{RecordEnd, RecordLaunch, RecordStart, Validate, Validated};
-use crate::ops::{self, Report, Request};
+use crate::ops::validate::{
+    RecordEnd, RecordLaunch, RecordStart, SettleRound, Validate, Validated,
+};
+use crate::ops::{self, Report, Request, RunState};
 use crate::settings::Settings;
 use crate::state::{
     self, ItemState, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob, ValidateMode,
@@ -1834,24 +1836,63 @@ pub fn start(
         let snapshot = load(&path)?.ok_or_else(|| {
             Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
         })?;
-        let stages = snapshot.view::<ItemState>(&path)?.stages;
+        let mut stages = snapshot.view::<ItemState>(&path)?.stages;
         if let Some((dir, _)) = files::live(&worktree)? {
             return Err(Error::RunLive {
                 round_id: round,
                 run_dir: dir.display().to_string(),
             });
         }
-        // One run at a time per round, judged before any read.
-        if let Some(open) = stages.iter().find(|s| {
-            s.kind == StageKind::Validate
-                && s.round_id.as_deref() == Some(&round)
-                && s.end.is_none()
-                && s.job.is_some()
-        }) {
-            return Err(Error::RunLive {
-                round_id: round,
-                run_dir: open.run_dir.clone().unwrap_or_default(),
-            });
+        // One run at a time per round, judged before the worktree is read.
+        // The settle reads each open started run once: a live or unreadable
+        // one refuses, and one whose job is gone closes in its own
+        // transition whatever the start then answers, its end notice sent
+        // by the owed walk before the next run launches.
+        if stages
+            .iter()
+            .any(|s| crate::ops::validate::open_started(s, &round))
+        {
+            let settled = apply(
+                &path,
+                Validate::Settle(SettleRound {
+                    round_id: round.clone(),
+                }),
+                env,
+                locking,
+            )?;
+            let Validated::Settle(settled) = settled else {
+                unreachable!("a settle reports its settle")
+            };
+            for run in settled.runs {
+                match run.state {
+                    RunState::Live { .. } | RunState::LiveUnit { .. } => {
+                        return Err(Error::RunLive {
+                            round_id: round,
+                            run_dir: run.run_dir,
+                        });
+                    }
+                    RunState::Unreadable { cause } => {
+                        return Err(Error::ValidateUnreadable {
+                            read: "run-job",
+                            cause: format!("{}: {cause}", run.run_dir),
+                        });
+                    }
+                    RunState::Closed { .. } => {}
+                }
+            }
+            run::deliver_owed(
+                settings,
+                &crate::effects::fleet_mailbox(settings),
+                &path,
+                env,
+                locking,
+            )?;
+            stages = load(&path)?
+                .ok_or_else(|| {
+                    Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+                })?
+                .view::<ItemState>(&path)?
+                .stages;
         }
         let scratch = Scratch::new(env)?;
         let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;

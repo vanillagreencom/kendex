@@ -334,6 +334,12 @@ pub enum Error {
     /// time per round.
     #[error("round {round_id}: the run {run_dir} is still open")]
     RunLive { round_id: String, run_dir: String },
+    /// The named run has ended: a new start of the round needs its next
+    /// admission.
+    #[error(
+        "round {round_id}: the run {run_dir} has ended; admit the round's next attempt (attempt: next) to start again"
+    )]
+    RunEnded { round_id: String, run_dir: String },
     /// No item records an admitted run under the directory.
     #[error("no admitted validation run names {run_dir}")]
     RunUnadmitted { run_dir: String },
@@ -534,6 +540,7 @@ impl Error {
             Error::ValidateCmdEmpty { .. } => "empty-validate-cmd",
             Error::BaseInvalid { .. } => "invalid-base",
             Error::RunLive { .. } => "run-live",
+            Error::RunEnded { .. } => "run-ended",
             Error::RunUnadmitted { .. } => "run-unadmitted",
             Error::RunUnstarted { .. } => "run-unstarted",
             Error::RunClosed { .. } => "run-closed",
@@ -812,7 +819,7 @@ impl Error {
             Error::ModeBaseRequired { mode } => vec![pair("mode", (*mode).to_owned())],
             Error::ValidateCmdEmpty { setting } => vec![pair("setting", (*setting).to_owned())],
             Error::BaseInvalid { base } => vec![pair("base", base.clone())],
-            Error::RunLive { round_id, run_dir } => vec![
+            Error::RunLive { round_id, run_dir } | Error::RunEnded { round_id, run_dir } => vec![
                 pair("round_id", round_id.clone()),
                 pair("run_dir", run_dir.clone()),
             ],

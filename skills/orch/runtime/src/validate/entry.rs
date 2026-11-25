@@ -26,9 +26,9 @@ A dev start that resolves to ci prints validate-mode=ci local-checks=targeted-on
 
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
---record reads mode, selection, verdict, identity, scope, fallback and wall time. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
+--record reads mode, selection, verdict, identity, scope, fallback and wall time. A run whose executor and command are gone with no sentinel reads verdict=FAILING state=lost there, as --wait reads it state=lost validate=FAILING; one a stop ended reads verdict=no-verdict, as --wait reads it state=done stopped validate=no-verdict. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
 
-A live or unreadable start obligation refuses a second run. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
+A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
 )]
 pub struct Args {
     #[arg(long)]

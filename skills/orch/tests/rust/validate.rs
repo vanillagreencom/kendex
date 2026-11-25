@@ -4891,6 +4891,136 @@ fn a_foreground_run_whose_executor_dies_is_held_while_its_command_runs_and_close
     assert!(!Path::new(&dir).join("exit").exists());
 }
 
+/// A foreground run of the round whose executor and command a unit stop
+/// ended together, so it left no sentinel: its run directory.
+fn gone_foreground_run(w: &World) -> String {
+    let fifo = w.root.join("hold");
+    assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+    let command = format!("exec 9<> '{}'; read -r -t 20 -u 9 answer", fifo.display());
+    let mut child = support::isolated();
+    child.args([
+        "--state-dir",
+        w.state.to_str().unwrap(),
+        "validate",
+        "start",
+        "--item",
+        ITEM_ID,
+        "--round",
+        ROUND,
+        "--foreground",
+    ]);
+    for (k, v) in w.env() {
+        child.env(k, v);
+    }
+    child
+        .env("DEV_VALIDATE_CMD", command)
+        .current_dir(&w.worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = Owned(child.spawn().unwrap());
+    until(|| recorded_run(&w.worktree).is_some());
+    let dir = recorded_run(&w.worktree).unwrap().display().to_string();
+    kill_group(&Path::new(&dir).join("pid"));
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    dir
+}
+
+/// A run with no sentinel whose work is gone reads lost in `--record` as
+/// in `--wait`. A start under its own admission is refused as ended, and
+/// the gone run's stage stays closed `lost` with its end notice sent rather
+/// than holding the round as live, so the round's next admission starts.
+#[test]
+fn a_run_whose_executor_and_command_ended_reads_lost_and_holds_no_start() {
+    let w = World::new();
+    let dir = gone_foreground_run(&w);
+
+    let record = read_record(&w, &dir);
+    assert_eq!(field(&record, "verdict"), "FAILING", "{record}");
+    assert_eq!(field(&record, "state"), "lost", "{record}");
+    let wait = w.entry(&["--wait", "--run-dir", &dir, "--budget", "1"], &[]);
+    assert_eq!(wait.status.code(), Some(1), "{}", text(&wait));
+    assert_eq!(field(&text(&wait), "state"), "lost");
+    assert_eq!(field(&text(&wait), "validate"), "FAILING");
+
+    let again = w.run(
+        &["validate", "start", "--run-dir", &dir, "--poll", "1"],
+        &[],
+    );
+    assert_eq!(refusal(&again), "run-ended");
+    let gone = w.stage(&dir);
+    assert_eq!(gone["outcome"], "lost", "{gone}");
+    assert_eq!(gone["notice"]["owner"], "sent", "{gone}");
+    let next = ok(&w.op(
+        &json!({"op": "record-validation-admission", "round_id": ROUND, "attempt": "next"}),
+        &[],
+    ));
+    let next_dir = next["report"]["run_dir"].as_str().unwrap().to_owned();
+    ok(&w.run(
+        &["validate", "start", "--run-dir", &next_dir, "--poll", "1"],
+        &[],
+    ));
+    w.wait_marked(&next_dir);
+}
+
+/// A start that names no run, past a gone one, runs a fresh run rather
+/// than the gone one's admission, and a sentinel that lands after the gone
+/// run's files were read is not taken for a loss.
+#[test]
+fn a_gone_run_frees_a_plain_start_and_reads_a_late_sentinel() {
+    let w = World::new();
+    let dir = gone_foreground_run(&w);
+    let fresh = ok(&w.start(&[], &[]))["run_dir"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(fresh, dir);
+    assert_eq!(w.stage(&dir)["outcome"], "lost");
+    w.wait_marked(&fresh);
+
+    let read = orch_runtime::validate::files::RunFile::read(Path::new(&dir)).unwrap();
+    fs::write(
+        Path::new(&dir).join("exit"),
+        format!("guard-exit=0 at={}\n", epoch_now()),
+    )
+    .unwrap();
+    assert_eq!(read.verdict().unwrap(), "unfinished");
+}
+
+/// A worktree stop of a run gone with no sentinel leaves every reader with
+/// the stage's word: a run a start already closed `lost` stays lost, and a
+/// run whose stage stood open records the stop and reads `stopped`.
+#[test]
+fn a_worktree_stop_of_a_gone_run_leaves_its_readers_with_the_stage_word() {
+    for (closed_first, outcome, verdict, wait_state, record_state) in [
+        (true, "lost", "FAILING", "lost", "lost"),
+        (false, "stopped", "no-verdict", "done", ""),
+    ] {
+        let w = World::new();
+        let dir = gone_foreground_run(&w);
+        if closed_first {
+            let fresh = ok(&w.start(&[], &[]))["run_dir"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            w.wait_marked(&fresh);
+        }
+        let stop = w.entry(&["--stop", "--worktree", w.worktree.to_str().unwrap()], &[]);
+        assert!(stop.status.success(), "{}", stderr(&stop));
+        assert_eq!(
+            w.stage(&dir)["outcome"],
+            outcome,
+            "closed_first={closed_first}"
+        );
+        let record = read_record(&w, &dir);
+        assert_eq!(field(&record, "verdict"), verdict, "{record}");
+        assert_eq!(field(&record, "state"), record_state, "{record}");
+        let wait = w.entry(&["--wait", "--run-dir", &dir, "--budget", "1"], &[]);
+        assert_eq!(field(&text(&wait), "state"), wait_state, "{}", text(&wait));
+        assert_eq!(field(&text(&wait), "validate"), verdict, "{}", text(&wait));
+    }
+}
+
 /// Ends the group a row's detached child leads, whatever the row's answer.
 struct Group(PathBuf);
 impl Drop for Group {
@@ -4940,7 +5070,6 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     assert_eq!(field(&text(&out), "state"), "lost", "{}", text(&out));
     // The same records with the job's error log the runtime's start creates
     // first: its launcher's record names no identity yet, so the run is held.
-    fs::remove_file(dir.join("stop")).unwrap();
     fs::write(dir.join("job.err"), "").unwrap();
     let live = w.entry(&["--live", "--worktree", &wt], &[]);
     assert_eq!(live.status.code(), Some(0), "{}", text(&live));
@@ -4996,6 +5125,8 @@ fn a_worktree_stop_keeps_an_admitted_unreadable_job_and_its_open_stage_owed() {
     assert!(stage["end"].is_null(), "{stage}");
     assert!(stage["stop"].is_object(), "{stage}");
     assert!(!dir.join("exit").exists());
+    assert_eq!(refusal(&w.start(&[], &[])), "validate-unreadable");
+    assert!(w.stage(dir.to_str().unwrap())["end"].is_null());
 }
 
 #[test]
