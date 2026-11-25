@@ -1,23 +1,20 @@
 # Communication modes
 
-Read when an orch session decides whether a question reaches the owner, asks the owner, reports, delivers a message to the owner, writes the overseer handoff or records a decision. This file owns the ask set: nothing outside it narrows or widens that set. A gate that cites it restates neither. For the prose, read communication's [reader modes](../../communication/references/messages.md#reader-modes) and [questions](../../communication/references/questions.md).
+Read when an orch session decides whether a question reaches the owner, asks the owner, reports, delivers a message to the owner, writes the overseer handoff or records a decision. This file owns the ask set: nothing outside it narrows or widens that set. A gate that cites it restates neither.
 
-`ORCH_USER_MODE` names who the session is talking to:
+## Presentation
+
+Read the effective Technical choice before writing the first owner message and after a setting change.
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
+.agents/skills/orch/scripts/orch-env COMMUNICATION_TECHNICAL off
 ```
 
-| Value | Meaning |
-|-------|---------|
-| `ceo` | The session owns every technical decision. The user states intent and outcomes. Only a question in § Ask set reaches the user |
-| `engineer` | Each composed key asks ([§ Composition](#composition)), with the same ask set |
-
-The overseer runs this command in [oversee.md § 3. Launch](../workflows/oversee.md#3-launch). For the unset and unrecognized cases, see `user_mode_effective` in [`orch-env`](../scripts/orch-env).
+Use that value with communication's [reader modes](../../communication/references/messages.md#reader-modes) for every owner message.
 
 ## Ask set
 
-These questions reach the user in both modes, and nothing else does. Word them with communication's [questions](../../communication/references/questions.md) for the mode.
+These questions reach the user under either autonomy mode. Word them with communication's [questions](../../communication/references/questions.md) for the Technical choice.
 
 | Question | Reached by |
 |----------|-----------|
@@ -38,7 +35,7 @@ An overseer's heartbeat audit uses [heartbeat-audit.md](heartbeat-audit.md)'s au
 
 ## Composition
 
-`scripts/orch-env` composes three keys from the mode, and no workflow derives them again. A key the settings ladder sets wins in both modes. A key the ladder leaves unset takes the mode's value, never the caller's default:
+[`orch-env`](../scripts/orch-env) composes three autonomy defaults from `ORCH_USER_MODE`. A key the settings ladder sets wins in both modes. A key the ladder leaves unset takes the mode's value.
 
 | Key | Under `ceo` | Under `engineer` |
 |-----|-------------|------------------|
@@ -50,7 +47,7 @@ An overseer's heartbeat audit uses [heartbeat-audit.md](heartbeat-audit.md)'s au
 
 An overseer's question to the owner is one owner ask through the mailbox skill's `lane-mail`. Its form, deadline and every refusal are the owner-channel part of [`lane-mail --help`](../../mailbox/scripts/lane-mail).
 
-1. Write the question with communication's [question template](../../communication/references/questions.md) for the mode, to a file with the harness file tool.
+1. Write the question with communication's [question template](../../communication/references/questions.md) for the Technical choice, to a file with the harness file tool.
    - The template's recommendation is the option the ask records as `recommend`.
    - A chat-only ask's relay renders the options, the recommendation and the deadline from the ask's fields. An item ask's comment renders them, and its relay line points at the item with the question's first line and the deadline.
    - Leave the recommendation out of the file: the CEO template's `**Recommended:**` line and the Engineer template's `with [RECOMMENDED_OPTION] recommended`. Where the template gives each option its text, give the reason for the recommended option there.
@@ -286,5 +283,3 @@ A standing instruction:
 A ruling given in a channel the overseer did not record is the overseer's miss, and the hand-over says so.
 
 The fleet log is the oversee record's `fleet_log[]`. A standalone `submit-pr`, `merge-pr` or `audit-issues` session runs without that record. Its record is what its own answering gate already writes durably: `## Merge decision` in the pull request body, or the audit's § 8 report.
-
-`engineer` records the same rows. The mode changes the wording, never what is written down.

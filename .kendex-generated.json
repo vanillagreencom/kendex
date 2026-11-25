@@ -162,6 +162,7 @@
   ".agents/skills/commit-guards/scripts/py-names",
   ".agents/skills/commit-guards/scripts/secrets",
   ".agents/skills/communication/SKILL.md",
+  ".agents/skills/communication/kendex.settings.toml.example",
   ".agents/skills/communication/references/messages.md",
   ".agents/skills/communication/references/questions.md",
   ".agents/skills/communication/references/reports.md",

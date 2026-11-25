@@ -28,10 +28,11 @@ LINEAR_TEAM_PREFIX = "KEN"
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift"
 
-# Who the overseer is talking to: "ceo" or "engineer"; what each value
-# means: skills/orch/references/communication-modes.md.
-# values: ceo | engineer
+# Defaults for decision, merge and issue-creation autonomy.
 ORCH_USER_MODE = "ceo"
+
+# Technical detail in owner messages from orch and Jarvis.
+COMMUNICATION_TECHNICAL = "off" # keep-default
 
 # The owner's quiet window, 9 pm to 8 am; the package default 0-7 sends
 # scheduled reports between 9 pm and midnight and between 7 am and 8 am.

@@ -6,6 +6,7 @@ Run a fleet: select unblocked items, launch one lane per item, and move each pul
 - Lanes merge their own pull requests.
 - The overseer reviews only the Copilot thread reads and head approvals in [copilot-head-notices.md](../references/copilot-head-notices.md).
 - It makes only the changes [lane-launch.md § Item Tier](../references/lane-launch.md#item-tier) leaves to this session.
+- Read [Presentation](../references/communication-modes.md#presentation) before writing to the owner.
 - Run unattended: resolve a blocked lane before the user notices it.
 
 ## 1. Resolve The Launch Surface
@@ -188,7 +189,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 Foreign work follows [§ 1](#1-resolve-the-launch-surface).
 
-Before the first launch, set the fleet's merge autonomy and its user mode.
+Before the first launch, set the fleet's merge autonomy.
 
 `ORCH_MERGE_AUTONOMY=ask` ([settings.md § Talking to you](../references/settings.md#talking-to-you)) makes each merge need the user's authorization. It authorizes merges, not validation.
 
@@ -198,12 +199,6 @@ Before the first launch, set the fleet's merge autonomy and its user mode.
 
 ```bash
 tmux set-environment ORCH_MERGE_AUTONOMY ask
-```
-
-Resolve `ORCH_USER_MODE` once for every question this fleet relays to the user:
-
-```bash
-.agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
 ```
 
 Launch each item through [lane-launch.md](../references/lane-launch.md), in this order:

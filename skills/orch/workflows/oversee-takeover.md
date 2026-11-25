@@ -17,7 +17,7 @@ The overseer mailbox carries owner and delegate notes, and data notices a progra
 - Peer overseers write the same mailbox; the watch reports their notes as `peer-note` ([peer-mail.md](../references/peer-mail.md)).
 - Under single passes, the lane-mail hooks hand notes over instead, as `lane-mail-check: unread=` at turn end and after tool calls ([peer-mail.md § Who reads a note](../references/peer-mail.md#who-reads-a-note)).
 - Reply with `lane-mail notice --item overseer --to owner --ref [NOTE_ID] --file [PATH]`.
-- Word the reply under communication's [message wording](../../communication/references/messages.md) and orch's [Owner delivery](../references/communication-modes.md#owner-delivery) and [Thread delivery](../references/communication-modes.md#thread-delivery).
+- Apply orch's [Presentation](../references/communication-modes.md#presentation), [Owner delivery](../references/communication-modes.md#owner-delivery) and [Thread delivery](../references/communication-modes.md#thread-delivery) to the reply.
 - Ask the owner a question under [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), never in a question dialog.
 - Read the linked communication and peer-mail sections when a note, reply or ask needs them.
 

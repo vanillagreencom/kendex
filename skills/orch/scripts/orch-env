@@ -20,9 +20,7 @@
 # is the one place that mapping is applied.
 #
 # That file defines `ceo` and `engineer` and no other mode. A ladder value
-# outside the two is `engineer` here, both for the composition and for what
-# `orch-env ORCH_USER_MODE ceo` prints, so one unrecognized spelling cannot
-# compose as one mode and be read back as another.
+# outside the two is `engineer` for both composition and direct reads.
 #
 # Retired settings: ORCH_CONSUMER_REPOS is refused when set, even empty,
 # on every settings read. Consumers refresh through their own Actions workflow.
@@ -114,9 +112,9 @@ orch_env_value() { # NAME DEFAULT: settings already loaded by the caller.
 
   local value="${!VAR_NAME-}"
   if [[ "$VAR_NAME" == ORCH_USER_MODE ]]; then
-    # What ../workflows/oversee.md § 3 Launch selects a question template from,
-    # so it is the same normalized mode the composition below tests.
     value="$USER_MODE"
+  elif [[ "$VAR_NAME" == COMMUNICATION_TECHNICAL && "$value" != off && "$value" != on ]]; then
+    value="$DEFAULT"
   elif [[ -z "$value" ]]; then
     composed_value "$VAR_NAME"
     value="$COMPOSED"

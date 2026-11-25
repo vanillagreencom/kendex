@@ -24,7 +24,7 @@
 
 ### Presentation
 
-The home's `JARVIS_TECHNICAL` and `JARVIS_STYLE` settings select communication's Technical and Style [presentation choices](../../communication/references/messages.md#reader-modes). The [settings example](../kendex.settings.toml.example) lists their values and defaults. kendex's [settings precedence](https://github.com/vanillagreencom/kendex/blob/main/docs/authoring/settings.md#where-a-value-comes-from) decides which layer a value comes from.
+The home's `COMMUNICATION_TECHNICAL` and `JARVIS_STYLE` settings select communication's Technical and Style [presentation choices](../../communication/references/messages.md#reader-modes). kendex's [settings precedence](https://github.com/vanillagreencom/kendex/blob/main/docs/authoring/settings.md#where-a-value-comes-from) decides which layer a value comes from.
 
 - Read the effective values with `.agents/skills/jarvis/scripts/lib/jarvis-env.sh config .` in the Jarvis home.
   - Another reader, such as VGS, passes the home's path in place of `.`.
@@ -38,7 +38,6 @@ The home's `JARVIS_TECHNICAL` and `JARVIS_STYLE` settings select communication's
 - After a write, read the value back with the same command.
   - A different value means a higher settings layer holds the key.
   - Report that layer to the user, and do not write there.
-- A presentation choice never writes `ORCH_USER_MODE`, and it changes no merge, issue-creation, approval or report-timing setting.
 
 ## Delivery
 

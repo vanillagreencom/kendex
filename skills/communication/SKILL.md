@@ -33,6 +33,12 @@ tags: [communication]
 | Write a report, briefing, work-item description, comment or completion summary | [reports](references/reports.md) |
 | Answer a voice request | [voice](references/voice.md) |
 
+## Settings
+
+| Key | What it changes |
+|---|---|
+| `COMMUNICATION_TECHNICAL` | The Technical choice in [Reader modes](references/messages.md#reader-modes) for orch and Jarvis. |
+
 ## User instruction
 
 For a global install, put this writing reference in the user-scope instruction file:

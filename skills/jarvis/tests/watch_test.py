@@ -59,6 +59,7 @@ class Producer(unittest.TestCase):
         self.registry.write_text(listing(self.home, self.peer))
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
+                    and key != "COMMUNICATION_TECHNICAL"
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
@@ -1766,10 +1767,10 @@ with open(sys.argv[1], "ab") as out:
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
         values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7", "JARVIS_REPO_ALIASES": "{}",
-                  "JARVIS_TECHNICAL": "on", "JARVIS_STYLE": "fun"}
+                  "COMMUNICATION_TECHNICAL": "on", "JARVIS_STYLE": "fun"}
         # The presentation choices take only listed values, so their private
         # layer holds a listed value different from the shared one.
-        overrides = {**dict.fromkeys(values, "private"), "JARVIS_TECHNICAL": "off", "JARVIS_STYLE": "friendly"}
+        overrides = {**dict.fromkeys(values, "private"), "COMMUNICATION_TECHNICAL": "off", "JARVIS_STYLE": "friendly"}
         shared.write_text("[env]\n" + "".join('%s = "%s"\n' % pair for pair in values.items()))
         with patch.dict(os.environ, self.env, clear=True):
             self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, values)
@@ -1794,11 +1795,11 @@ with open(sys.argv[1], "ab") as out:
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
             self.assertEqual(defaults["JARVIS_VOICE_REMIND_SECS"], "0")
-            for key, default in (("JARVIS_TECHNICAL", "off"), ("JARVIS_STYLE", "concise")):
-                self.assertEqual((defaults[key], shipped[key]), (default, default))
-            with patch.dict(os.environ, JARVIS_TECHNICAL="yes", JARVIS_STYLE="loud"):
+            self.assertEqual(defaults["COMMUNICATION_TECHNICAL"], "off")
+            self.assertEqual((defaults["JARVIS_STYLE"], shipped["JARVIS_STYLE"]), ("concise", "concise"))
+            with patch.dict(os.environ, COMMUNICATION_TECHNICAL="yes", JARVIS_STYLE="loud"):
                 unlisted = self.module.config(BASH, self.home)
-            self.assertEqual((unlisted["JARVIS_TECHNICAL"], unlisted["JARVIS_STYLE"]), ("off", "concise"))
+            self.assertEqual((unlisted["COMMUNICATION_TECHNICAL"], unlisted["JARVIS_STYLE"]), ("off", "concise"))
             self.assertEqual(defaults["JARVIS_LOG_DIR"], str(self.root / ".local/state/jarvis"))
             with patch.dict(os.environ, XDG_STATE_HOME=str(self.root / "xdg")):
                 self.assertEqual(self.module.config(BASH, self.home)["JARVIS_LOG_DIR"], str(self.root / "xdg/jarvis"))
@@ -1831,7 +1832,7 @@ with open(sys.argv[1], "ab") as out:
             self.assertEqual(watch.log.stat().st_size, size)
 
     def test_presentation_controls(self):
-        rows = (("technical", "JARVIS_TECHNICAL=off", "JARVIS_TECHNICAL=on"),
+        rows = (("technical", "COMMUNICATION_TECHNICAL=off", "COMMUNICATION_TECHNICAL=on"),
                 ("style", "JARVIS_STYLE=concise", "JARVIS_STYLE=fun"),
                 ("aliases", 'export JARVIS_REPO_ALIASES="${JARVIS_REPO_ALIASES:-}"', 'export JARVIS_REPO_ALIASES=""'))
         for name, old, new in rows:

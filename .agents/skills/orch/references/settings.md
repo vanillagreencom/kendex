@@ -140,7 +140,8 @@ See [orch-env](../scripts/orch-env) for the mode and its composed defaults, [age
 
 | Key | What it changes |
 |---|---|
-| `ORCH_USER_MODE` | `ceo` or `engineer`. |
+| `COMMUNICATION_TECHNICAL` | Wording for owner messages. See [Presentation](communication-modes.md#presentation). |
+| `ORCH_USER_MODE` | The [autonomy defaults](communication-modes.md#composition). |
 | `ORCH_DECISION_MODE` | `ask` presents decision points. `auto-recommended` takes the recommended one. |
 | `ORCH_MERGE_AUTONOMY` | `ask` requires authorization per merge. `auto` merges once every gate is green. |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation: project-management's README. |
@@ -152,8 +153,7 @@ See [orch-env](../scripts/orch-env) for the mode and its composed defaults, [age
 
 The keys' rules, in the table's order:
 
-- `ORCH_USER_MODE`: it composes `ORCH_DECISION_MODE`, `ORCH_MERGE_AUTONOMY` and `PM_CREATE_AUTONOMY` where they are unset: [communication-modes.md](communication-modes.md).
-- `ORCH_USER_MODE`: another value reads as `engineer`.
+- `ORCH_USER_MODE`: the default is `engineer`. An unrecognized value uses the default.
 - `AGENT_RUNTIME_QUESTION_TOOL`: a worker never keeps the dialog.
 - `ORCH_OWNER_EMAIL`: the answer read needs both this key and `ORCH_OWNER_ASK_LABEL`.
 - `ORCH_VERIFY_SCHEDULE`: it starts nothing.
