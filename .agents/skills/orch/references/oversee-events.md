@@ -468,7 +468,7 @@ Handle the line under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) 
 
 ### `stray-window`
 
-`EVENT stray-window [PANE] window=[ID] server=[PID] name=[NAME]`: a window of the fleet's tmux session that no lane record, overseer record, open intent or receipt names. The watch reports it once while it stands, and never closes or adopts it. Find what opened it, such as a person or a launch whose record was lost. Then close it or register it.
+`EVENT stray-window [PANE] window=[ID] server=[PID] name=[NAME]`: a window of the fleet's tmux session that no lane record, overseer record, open intent or receipt names. The watch judges each window against those records as it reads them after it lists the session, so a window a launch or a succession opened during the pass is not reported. If an open launch has asked for a window on that server and has not recorded its pane, the watch holds each unnamed window for one pass and reports it on the next pass that still finds it unnamed. The watch reports it once while it stands, and never closes or adopts it. Find what opened it, such as a person or a launch whose record was lost. Then close it or register it.
 
 ### `handoff`
 

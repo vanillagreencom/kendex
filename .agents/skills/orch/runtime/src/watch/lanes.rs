@@ -536,6 +536,9 @@ fn auth_stop_failure(row: &rows::Row) -> bool {
 /// One pass's inputs beyond the readers.
 pub struct Pass<'a> {
     pub fleet: &'a FleetState,
+    /// The file `fleet` was read from, read again by the stray sweep after
+    /// its listing.
+    pub fleet_path: &'a Path,
     pub readers: &'a Readers<'a>,
     pub baseline: &'a Baseline,
     pub settings: &'a WatchSettings,
@@ -854,11 +857,11 @@ fn lane_refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Err
     crate::error::Error::from(agent_runtime::Error::refused(key, fields))
 }
 
-/// The fleet state at `path` as a lane verb reads it: a snapshot, never
-/// written back; no fleet state refuses `fleet-missing`.
+/// The fleet state at `path` as a lane verb or the stray sweep reads it: a
+/// snapshot, never written back; no fleet state refuses `fleet-missing`.
 #[allow(
     clippy::disallowed_methods,
-    reason = "a lane verb's one read of the fleet state, a snapshot it judges; it acts on nothing"
+    reason = "a lane verb's or the stray sweep's one read of the fleet state, a snapshot it judges; it acts on nothing"
 )]
 pub fn read_fleet(path: &Path) -> crate::error::Result<FleetState> {
     state::load(path)?
@@ -2463,10 +2466,20 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
         .push(set("start-stalled", &name, format!("{running}|{passes}")));
 }
 
+/// The `stray-window` row of a pane first seen while an open launch's
+/// window stood asked on its server: the next pass that still finds it
+/// unnamed reports it.
+const STRAY_HELD: &str = "held";
+
 /// The stray sweep: every window of the fleet session whose pane no lane
 /// record, controller record, open intent, receipt or own pane names is
-/// reported once per pane key and never adopted or closed. An unreadable
-/// listing or receipt set reports nothing.
+/// reported once per pane key and never adopted or closed. The records are
+/// read after the listing they judge, so a window a launch or a succession
+/// opened and recorded while the pass ran its lane reads is named by them.
+/// A pane an open launch's window asked on the listed server may be, its
+/// pane not yet recorded, is held one pass: a launch records its pane
+/// before that pass, and a lost launch's window is reported then. An
+/// unreadable listing, receipt set or fleet state reports nothing.
 fn strays(session: &str, pass: &Pass, out: &mut Produced) {
     let socket = pass
         .fleet
@@ -2482,15 +2495,17 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
         Reading::Live(receipts) => receipts,
         Reading::Unreadable { cause: _ } | Reading::Gone => return,
     };
+    let Ok(fleet) = read_fleet(pass.fleet_path) else {
+        return;
+    };
     let mut known: BTreeSet<String> = receipts.into_iter().collect();
     known.extend(pass.own_panes.iter().cloned());
-    for lane in &pass.fleet.lanes {
+    for lane in &fleet.lanes {
         if let Some(pane) = lane.launch.as_ref().and_then(|l| l.pane.clone()) {
             known.insert(pane);
         }
     }
-    if let Some(pane) = pass
-        .fleet
+    if let Some(pane) = fleet
         .overseer
         .as_ref()
         .and_then(|o| o.extra.get("pane"))
@@ -2498,7 +2513,8 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
     {
         known.insert(pane.to_owned());
     }
-    for intent in pass.fleet.intents.iter().filter(|i| i.open()) {
+    let mut asked = false;
+    for intent in fleet.intents.iter().filter(|i| i.open()) {
         let pane = match &intent.phase {
             Some(Phase::Opening { opening }) => opening.pane.clone(),
             Some(
@@ -2511,20 +2527,27 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
         };
         known.extend(pane);
         // A window an effect opened with nothing typed stands in its set
-        // before any outcome or phase names it.
-        let set = intent.obligations.iter().flat_map(|set| &set.standing);
-        known.extend(set.filter_map(|held| match &held.obligation {
-            Obligation::Pane { pane, .. } => Some(pane.clone()),
-            Obligation::Process(_)
-            | Obligation::Pid { .. }
-            | Obligation::PaneUnaddressed { .. }
-            | Obligation::Window { .. }
-            | Obligation::Receipt
-            | Obligation::JobSidecar { .. }
-            | Obligation::JobUnit { .. }
-            | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. } => None,
-        }));
+        // before any outcome or phase names it; a window asked stands
+        // there until its pane is recorded.
+        for held in intent.obligations.iter().flat_map(|set| &set.standing) {
+            match &held.obligation {
+                Obligation::Pane { pane, .. } => {
+                    known.insert(pane.clone());
+                }
+                // The listing names its server by pid alone: an obligation
+                // on a dead server whose pid the live one reused holds a
+                // pane one pass at most.
+                Obligation::Window { server: on, .. } => asked |= *on == server,
+                Obligation::Process(_)
+                | Obligation::Pid { .. }
+                | Obligation::PaneUnaddressed { .. }
+                | Obligation::Receipt
+                | Obligation::JobSidecar { .. }
+                | Obligation::JobUnit { .. }
+                | Obligation::JobGroup(_)
+                | Obligation::JobPgid { .. } => {}
+            }
+        }
     }
     let mut seen = BTreeSet::new();
     for window in windows {
@@ -2533,16 +2556,24 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
         }
         let key = format!("{server} {}", window.pane);
         seen.insert(key.clone());
-        if pass.baseline.get("stray-window", &key).is_none() {
-            out.events.push(Event::StrayWindow {
-                pane: window.pane.clone(),
-                window: window.window.clone(),
-                server,
-                name: window.name.clone(),
-            });
-            out.changes
-                .push(set("stray-window", &key, "reported".to_owned()));
+        match pass.baseline.get("stray-window", &key) {
+            None if asked => {
+                out.changes
+                    .push(set("stray-window", &key, STRAY_HELD.to_owned()));
+                continue;
+            }
+            None => {}
+            Some(row) if row == STRAY_HELD => {}
+            Some(_) => continue,
         }
+        out.events.push(Event::StrayWindow {
+            pane: window.pane.clone(),
+            window: window.window.clone(),
+            server,
+            name: window.name.clone(),
+        });
+        out.changes
+            .push(set("stray-window", &key, "reported".to_owned()));
     }
     for key in pass.baseline.identities("stray-window") {
         if !seen.contains(&key) {

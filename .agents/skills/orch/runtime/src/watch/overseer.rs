@@ -2439,6 +2439,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             let copilot_home = super::lanes::copilot_home(&ctx.settings);
             let lanes = super::lanes::observe(&super::lanes::Pass {
                 fleet: &fleet,
+                fleet_path: &ctx.path,
                 readers: &readers,
                 baseline: tick.baseline,
                 settings: &watch,
