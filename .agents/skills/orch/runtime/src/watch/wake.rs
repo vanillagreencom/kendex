@@ -31,7 +31,7 @@
 //! name or [`OVERSEER_TARGET`]. The wake types the resume sentence before the inbox
 //! line once per row value: the mark keeps the value typed. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
-//! to read room, and is typed past its usage banner (`deliver
+//! to read room and for any standing halt to lift, then is typed past its usage banner (`deliver
 //! --account-room`).
 //!
 //! Hosted: a running lane whose host's line reads `launch=ssh`,
@@ -94,7 +94,7 @@ use super::lanes::LaneState;
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
-use crate::mailbox::DATA_RULE;
+use crate::mailbox::{DATA_RULE, Mailbox};
 pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{OUTCOME_LOST, ROWS_CURSOR_UNREAD, WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
@@ -848,9 +848,11 @@ impl Wake {
             let Some(target) = target_of(lane, &socket, || caps) else {
                 continue;
             };
-            // The local listing: the wake types into local lanes alone.
-            if resume.wall
-                && crate::effects::account_room(
+            if resume.wall {
+                // A wall resume reaches local lanes alone. Check the halt
+                // after the account reads room: a halt can land while this
+                // resume is already owed.
+                if crate::effects::account_room(
                     &self.settings,
                     &self.fleet,
                     "local",
@@ -858,8 +860,22 @@ impl Wake {
                     Some(target.harness),
                     tick.wall,
                 ) != "room"
-            {
-                continue;
+                {
+                    continue;
+                }
+                let mailbox =
+                    Mailbox::new(crate::effects::fleet_mailbox(&self.settings).mail_program);
+                match mailbox.lane_halted(lane) {
+                    Ok(false) => {}
+                    Ok(true) => continue,
+                    Err(cause) => {
+                        super::lanes::fail(
+                            &mut produced,
+                            format!("wall-resume {}: halt-unread cause={cause}", lane.item),
+                        );
+                        continue;
+                    }
+                }
             }
             let state = wake_unread(&unread, &target.name, marked).to_owned();
             if !resume.wall && super::verifying::is_reading_lane(&lane.item) {
