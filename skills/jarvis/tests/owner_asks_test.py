@@ -279,8 +279,8 @@ class OwnerAsksContract(unittest.TestCase):
     def test_complete_row_and_byte_paging_and_stale_cursors(self):
         self.source.data = projection(str(self.home), 70)
         first = self.page()
-        self.assertEqual(self.source.collections, 2)
         self.now += 1
+        changed = self.source.data["tracker"]["requests"].pop()
         ids = []
         pages = [first]
         for _ in range(2):
@@ -288,7 +288,7 @@ class OwnerAsksContract(unittest.TestCase):
             self.assertIsNotNone(cursor)
             pages.append(self.page(cursor=cursor, owner=self.new_owner()))
             self.assertNotEqual(pages[-1]["nextCursor"], cursor)
-        self.assertEqual(self.source.collections, 2)
+        self.assertEqual(self.source.collections, 1)
         for page in pages:
             self.assertLessEqual(len(page["rows"]), 32)
             self.assertLessEqual(len(owner_asks.encoded(page).encode()) + 1, 16 * 1024)
@@ -300,35 +300,36 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertIsNone(pages[-1]["nextCursor"])
         self.assertEqual(len(ids), 70)
         self.assertEqual(len(set(ids)), 70)
+        self.source.data["tracker"]["requests"].append(changed)
         self.assertEqual(self.page("snoozed")["revision"], first["revision"])
         self.assertEqual(self.page(cursor=first["nextCursor"]), pages[1])
-        self.assertEqual(self.source.collections, 4)
+        self.assertEqual(self.source.collections, 2)
 
         refreshed = self.page()
         self.assertEqual(refreshed["revision"], first["revision"])
-        self.assertEqual(self.source.collections, 6)
+        self.assertEqual(self.source.collections, 3)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=first["nextCursor"])
-        self.assertEqual(self.source.collections, 6)
+        self.assertEqual(self.source.collections, 3)
 
         self.source.data["tracker"]["requests"].pop()
         other_view = self.page("snoozed")
         self.assertEqual(other_view["activeCount"], 69)
         self.assertNotEqual(other_view["revision"], refreshed["revision"])
-        self.assertEqual(self.source.collections, 8)
+        self.assertEqual(self.source.collections, 4)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=refreshed["nextCursor"])
-        self.assertEqual(self.source.collections, 8)
+        self.assertEqual(self.source.collections, 4)
 
         updated = self.page()
         self.assertEqual(updated["revision"], other_view["revision"])
-        self.assertEqual(self.source.collections, 10)
+        self.assertEqual(self.source.collections, 5)
         snooze = self.later(updated["rows"][0], "hide-row", until=owner_asks.iso(self.now + 3600))
         self.assertEqual(snooze["kind"], "accepted")
-        self.assertEqual(self.source.collections, 12)
+        self.assertEqual(self.source.collections, 7)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=updated["nextCursor"])
-        self.assertEqual(self.source.collections, 12)
+        self.assertEqual(self.source.collections, 7)
 
         self.source.data = projection(str(self.home))
         self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * (16 * 1024)
@@ -460,7 +461,7 @@ class OwnerAsksContract(unittest.TestCase):
                 before = self.owner.session.path.read_bytes()
                 # The canonical reader refuses failed/incomplete traversals;
                 # neither refusal supplies an empty membership result.
-                with patch.object(self.source, "stable", side_effect=owner_asks.Unavailable("Source traversal incomplete")):
+                with patch.object(self.source, "collect", side_effect=owner_asks.Unavailable("Source traversal incomplete")):
                     with self.assertRaises(owner_asks.Unavailable):
                         self.page()
                 self.assertEqual(self.owner.session.path.read_bytes(), before)
@@ -1093,9 +1094,12 @@ print(json.dumps(owner._presence('ssh:fixture')))
                          ("jarvis-ask", "Mirrored owner ask", original["url"]))
         self.command([LIB.parents[2] / "mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask],
                      self.home).check_returncode()
+        comment_reads = Path(self.env["TRACKER_DATABASE"]).with_suffix(".comment-ids")
+        comment_reads.write_text("")
         result, page = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual((page["activeCount"], page["rows"]), (0, []))
+        self.assertEqual(comment_reads.read_text(), "")
 
     def test_tracker_asks_settle_by_exact_question_comment(self):
         (self.home / "kendex.settings.toml").write_text(
@@ -1115,15 +1119,27 @@ print(json.dumps(owner._presence('ssh:fixture')))
         wrong_item_reply = dict(request_comment("wrong-item", "Proceed"), parent_id="waiting", **owner)
         top_level_answer = dict(request_comment("top-level", "Proceed"), **owner)
         done_claim = dict(request_comment("claim", owner_asks.DONE_CLAIM + "\n\nDone evidence"), parent_id="waiting", **owner)
-        self.tracker_api([answered, replaced, waiting, unstruck, discussion, reply, nonowner_reply,
-                          quoted_mark, malformed_mark,
-                          top_level_answer, done_claim], {"KEN-2": [wrong_item_reply]}, assigned=["KEN-1", "KEN-2"])
+        database = self.tracker_api([answered, replaced, waiting, unstruck, discussion, reply, nonowner_reply,
+                                     quoted_mark, malformed_mark, top_level_answer, done_claim],
+                                    {"KEN-2": [wrong_item_reply]}, assigned=["KEN-1", "KEN-2"])
 
         result, page = self.run_cli()
 
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual({row["link"]["url"] for row in page["rows"]}, {waiting["url"], unstruck["url"]})
         self.assertEqual(page["activeCount"], 2)
+
+        displayed = next(row for row in page["rows"] if row["link"]["url"] == waiting["url"])
+        world = json.loads(database.read_text())
+        world["issues"]["KEN-1"].append(dict(request_comment("owner-answer", "Proceed"), parent_id=waiting["id"], **owner))
+        database.write_text(json.dumps(world))
+        actions = [("reply", {"text": "Proceed"}), ("done", {"text": "Evidence"}),
+                   ("later", {"until": owner_asks.iso(owner_asks.time.time() + 3600)})]
+        for action, fields in actions:
+            with self.subTest(settled_before=action):
+                result, receipt = self.act_cli(action, displayed, "settled-" + action, **fields)
+                self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "refused", None))
+        self.assertFalse(database.with_suffix(".writes").exists())
 
     def test_runtime_ruling_survives_tracker_actor_change(self):
         (self.home / "kendex.settings.toml").write_text(
@@ -1502,11 +1518,11 @@ sys.exit(result.returncode)
                 operations = log.read_text().splitlines()
                 self.assertLessEqual(len(operations), limit)
                 reads = [json.loads(line) for line in comment_reads.read_text().splitlines()]
-                self.assertEqual([read['after'] for read in reads], [None, str(comment_page_size)] * 2)
+                self.assertEqual([read['after'] for read in reads], [None, str(comment_page_size)])
                 for read in reads:
                     self.assertEqual(sorted(read['ids']), expected_ids)
                 self.assertEqual([operation for operation in operations if operation.startswith(("ListIssues", "IssueRefs"))],
-                                 ["ListIssues with comments"] * 2)
+                                 ["ListIssues with comments"])
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
