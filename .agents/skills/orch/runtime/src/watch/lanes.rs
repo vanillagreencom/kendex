@@ -62,7 +62,7 @@ use agent_runtime::clock;
 use agent_runtime::controller::model::{Check, Place, launch_of, record_model_check};
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, PANE_DEAD, Pane, PaneFields, PaneState};
-use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
+use agent_runtime::observe::{self, IdleTurn, ProcessReading, State, WallAge, WallKind};
 use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
@@ -435,19 +435,12 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             cause: "harness-unrecorded".to_owned(),
         };
     };
-    let screen_state = match observe::judge(screen, harness, process, inputs.account_room) {
-        // Codex's two turn ends that are no finished return, each by its
-        // line on the pane: the capacity refusal first, then an API error.
-        State::Idle => {
-            let slice = observe::below_last_turn(screen);
-            let codex = harness == Harness::Codex;
-            let capacity = codex && observe::codex_capacity_refused(&slice);
-            LaneState::Idle {
-                capacity,
-                cause: (!capacity && observe::pane_api_error(harness, &slice))
-                    .then(|| "api-error".to_owned()),
-            }
-        }
+    let pane = observe::observe_pane(screen, harness, process, inputs.account_room);
+    let screen_state = match pane.state {
+        State::Idle => LaneState::Idle {
+            capacity: pane.idle == Some(IdleTurn::Capacity),
+            cause: (pane.idle == Some(IdleTurn::ApiError)).then(|| "api-error".to_owned()),
+        },
         State::Working => LaneState::Working,
         State::Asking { .. } => LaneState::Asking,
         State::RateLimitSwitch => LaneState::RateLimitSwitch,
@@ -662,9 +655,13 @@ impl HostRead {
             }
             (PaneKind::Verb, Some(Ok(HostStatus::Exited) | Err(_))) | (PaneKind::Local, _) => None,
         };
-        let pi = lane.harness.as_deref().and_then(Harness::parse) == Some(Harness::Pi);
+        let row_harness = match lane.harness.as_deref().and_then(Harness::parse) {
+            Some(Harness::Pi) => true,
+            Some(Harness::Claude) => lane.session_rows_at_launch.is_some(),
+            Some(Harness::Codex | Harness::Copilot) | None => false,
+        };
         let rows = match (caps.files, &status) {
-            (Files::Verb, None | Some(Ok(HostStatus::Running))) if pi => {
+            (Files::Verb, None | Some(Ok(HostStatus::Running))) if row_harness => {
                 Some(hosted::session_rows(scripts, lane))
             }
             (Files::Verb, None | Some(Ok(HostStatus::Running)))
@@ -737,14 +734,24 @@ fn read_lane<'a>(
                 (readers.rows)(&file)
             }),
     };
-    // A launch position excludes failures from the predecessor. Legacy
-    // records without one use the pane as evidence of a Claude rate limit.
+    let hosted_claude = harness == Some(Harness::Claude) && hosted::host_of(lane) != "local";
+    // Hosted Claude adds only a provider failure proven newer than its
+    // launch. Its pane keeps the other judgments, including unread rows.
     let current_rows = row_reading.as_ref().filter(|reading| {
+        if hosted_claude {
+            return matches!(reading, Reading::Live(row)
+            if lane.session_rows_at_launch.is_some_and(|at| row.position > at)
+                && row.harness.as_deref() == Some("claude")
+                && rows::failure_cause(row).is_some_and(|cause| {
+                    wake::can_continue(Harness::Claude, cause, false)
+                }));
+        }
+        // A launch position excludes failures from the predecessor. Legacy
+        // records without one use the pane as evidence of a Claude rate limit.
         let Reading::Live(row) = reading else {
             return true;
         };
         if harness != Some(Harness::Claude)
-            || hosted::host_of(lane) != "local"
             || row.harness.as_deref() != Some("claude")
             || row.event.as_deref() != Some("StopFailure")
         {
@@ -763,9 +770,14 @@ fn read_lane<'a>(
             Some(_) => true,
         }
     });
-    let live_row = |reading| match reading {
-        Some(Reading::Live(row)) => Some(row),
+    let live_row = |reading: Option<&Reading<rows::Row>>| match reading {
+        Some(Reading::Live(row)) => Some(row.clone()),
         Some(Reading::Gone | Reading::Unreadable { .. }) | None => None,
+    };
+    let observed_row = if hosted_claude {
+        live_row(current_rows)
+    } else {
+        live_row(row_reading.as_ref())
     };
     if let Some(screen) = host.screen {
         let state = classify(&Inputs {
@@ -782,7 +794,7 @@ fn read_lane<'a>(
             pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
             identity: identity.clone(),
             screen: screen.ok(),
-            row: live_row(row_reading),
+            row: observed_row,
             provider_running: harness_up,
             state,
         };
@@ -811,7 +823,7 @@ fn read_lane<'a>(
                 pane_key,
                 identity,
                 screen: (readers.capture)(&kept).ok(),
-                row: live_row(row_reading),
+                row: observed_row,
                 provider_running: false,
                 state: LaneState::Exited,
             };
@@ -845,7 +857,7 @@ fn read_lane<'a>(
         pane_key,
         identity,
         screen: screen.and_then(Result::ok),
-        row: live_row(row_reading),
+        row: observed_row,
         provider_running: harness_up,
         state,
     }
@@ -1092,9 +1104,8 @@ pub fn observe(pass: &Pass) -> Produced {
     // Rows of lanes that left the record no longer describe an observation.
     for kind in LANE_ROWS {
         for identity in pass.baseline.identities(kind) {
-            if !names.contains(&identity)
-                && !(kind == wake::RESUME_KIND && identity == wake::OVERSEER_TARGET)
-            {
+            let controller_resume = kind == wake::RESUME_KIND && identity == wake::OVERSEER_TARGET;
+            if !(names.contains(&identity) || controller_resume) {
                 out.changes.push(clear(kind, &identity));
             }
         }

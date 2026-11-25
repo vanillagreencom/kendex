@@ -45,10 +45,10 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::PaneState;
-use agent_runtime::observe::{self, ProcessReading, State, WallKind};
+use agent_runtime::observe::{self, IdleTurn, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Level, Memory};
 use agent_runtime::reading::Reading;
-use agent_runtime::rows::{self, SessionVerdict};
+use agent_runtime::rows::{self, SessionIdle, SessionObservation, SessionVerdict};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -752,7 +752,7 @@ fn relaunch_started(launch: agent_runtime::effects::job::Launch) -> Result<(), S
 struct Reads {
     process: ProcessReading,
     screen: Result<String, String>,
-    rows: Option<Reading<rows::Row>>,
+    rows: Option<Reading<SessionObservation>>,
     /// A pane holding only shells whose harness is proven gone: its
     /// recorded process read gone, or no process recorded under a record
     /// that names a harness, the reading a start takes as `harness-gone`.
@@ -793,31 +793,32 @@ pub struct Pass<'a> {
 /// The verdict of the record's session from the reads: the login wall
 /// first, then the exit record over a bare shell, then the rows, then the
 /// pane.
-fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks>) -> Verdict {
+fn judge(
+    record: &Record,
+    reads: &Reads,
+    pane: Option<&State>,
+    marks: &mut dyn FnMut() -> Option<Marks>,
+) -> Verdict {
     let bare = matches!(reads.process, ProcessReading::ShellsOnly);
-    let screen = match &reads.screen {
-        Ok(screen) => screen.as_str(),
-        Err(cause) => {
-            return Verdict::Unreadable {
-                cause: cause.clone(),
-            };
-        }
-    };
+    if let Err(cause) = &reads.screen {
+        return Verdict::Unreadable {
+            cause: cause.clone(),
+        };
+    }
     if let ProcessReading::Unread { cause } = reads.process {
         return Verdict::Unreadable {
             cause: cause.to_owned(),
         };
     }
-    let Some(harness) = record.harness else {
+    let Some(state) = pane else {
         return Verdict::Unreadable {
             cause: "harness-unrecorded".to_owned(),
         };
     };
-    let state = observe::judge(screen, harness, &reads.process, None);
     if let State::Walled {
         kind: WallKind::Auth,
         banner,
-    } = &state
+    } = state
     {
         return Verdict::Walled {
             source: Source::Auth,
@@ -831,7 +832,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
         };
     }
     if let Some(Reading::Live(row)) = &reads.rows {
-        match rows::judge_session(row) {
+        match row.verdict {
             SessionVerdict::Ended if bare => {
                 return Verdict::Exited {
                     source: Source::Rows,
@@ -898,7 +899,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
                 Verdict::Walled {
                     source: Source::Pane,
                     kind: WallKind::Usage,
-                    text: banner,
+                    text: banner.clone(),
                 }
             } else {
                 Verdict::Live
@@ -919,48 +920,39 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
 /// A controller that can take another turn keeps the same resume row as a
 /// worker. A Claude or Pi StopFailure supplies its current row position;
 /// Codex and Copilot supply the screen below the current user turn.
-fn continue_overseer(record: &Record, reads: &Reads, baseline: &Baseline, out: &mut Produced) {
+fn continue_overseer(
+    record: &Record,
+    reads: &Reads,
+    idle: IdleTurn,
+    baseline: &Baseline,
+    out: &mut Produced,
+) {
     let (Some(harness), Ok(screen)) = (record.harness, &reads.screen) else {
         return;
     };
-    if observe::judge(screen, harness, &reads.process, None) != State::Idle {
-        return;
-    }
     let pane_key = record.pane_key();
     let target = wake::OVERSEER_TARGET;
     let prior = baseline.get(wake::RESUME_KIND, target).and_then(|row| {
         let (_, key) = row.split_once('|')?;
         key.strip_prefix(&pane_key)?.starts_with('|').then_some(row)
     });
-    let slice = observe::below_last_turn(screen);
     let row = match &reads.rows {
         Some(Reading::Live(row)) if row.harness.as_deref() == Some(harness.name()) => Some(row),
         Some(Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. }) | None => None,
     };
-    if row.is_some_and(|row| matches!(rows::judge_session(row), SessionVerdict::Walled { .. })) {
-        return;
-    }
-    let cause = match harness {
-        Harness::Claude => row
-            .filter(|row| row.event.as_deref() == Some("StopFailure"))
-            .and_then(|row| row.error.as_deref()),
-        // The Pi hook runs only on error and sends no error-kind field.
-        Harness::Pi => row
-            .filter(|row| row.event.as_deref() == Some("StopFailure"))
-            .map(|_| "error"),
-        Harness::Codex | Harness::Copilot => (observe::pane_api_error(harness, &slice)
-            && !(harness == Harness::Codex && observe::codex_capacity_refused(&slice)))
-        .then_some("api-error"),
+    let (cause, finished) = match harness {
+        Harness::Claude | Harness::Pi => match row.and_then(|row| row.idle.as_ref()) {
+            Some(SessionIdle::Failed { cause }) => (Some(cause.as_str()), false),
+            Some(SessionIdle::Returned) => (None, true),
+            None => (None, false),
+        },
+        Harness::Codex | Harness::Copilot => match idle {
+            IdleTurn::ApiError => (Some("api-error"), false),
+            IdleTurn::Ordinary { after_prompt } => (None, after_prompt),
+            IdleTurn::Capacity => (None, false),
+        },
     };
     let Some(cause) = cause.filter(|cause| wake::can_continue(harness, cause, false)) else {
-        let finished = match harness {
-            Harness::Claude | Harness::Pi => {
-                row.is_some_and(|row| row.event.as_deref() == Some("Stop"))
-            }
-            Harness::Codex | Harness::Copilot => {
-                !observe::codex_capacity_refused(&slice) && slice != *screen
-            }
-        };
         if finished && prior.is_some() {
             out.changes.push(clear(wake::RESUME_KIND, target));
         }
@@ -1118,7 +1110,10 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                     Some(Reads {
                         process,
                         screen: (pass.readers.capture)(&fields.pane),
-                        rows: record.session_rows.as_deref().map(pass.readers.rows),
+                        rows: record
+                            .session_rows
+                            .as_deref()
+                            .map(|path| (pass.readers.rows)(path).map(rows::observe_session)),
                         harness_gone,
                     }),
                     Some(fields.pid),
@@ -1154,8 +1149,21 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         marks_read.clone().flatten()
     };
+    let pane = reads.as_ref().and_then(|reads| {
+        Some(observe::observe_pane(
+            reads.screen.as_ref().ok()?,
+            record.harness?,
+            &reads.process,
+            None,
+        ))
+    });
     let mut verdict = match &reads {
-        Some(reads) => judge(&record, reads, &mut marks),
+        Some(reads) => judge(
+            &record,
+            reads,
+            pane.as_ref().map(|pane| &pane.state),
+            &mut marks,
+        ),
         None => Verdict::Exited {
             source: Source::Pane,
         },
@@ -1246,8 +1254,8 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             if let Some(pid) = pane_pid {
                 oom_baseline(&key, pid, pass, out);
             }
-            if let Some(reads) = &reads {
-                continue_overseer(&record, reads, pass.baseline, out);
+            if let (Some(reads), Some(idle)) = (&reads, pane.and_then(|pane| pane.idle)) {
+                continue_overseer(&record, reads, idle, pass.baseline, out);
             }
         }
         return judged(verdict, Some(key));

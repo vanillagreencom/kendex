@@ -345,8 +345,10 @@ impl Linear<'_> {
             body: String,
         }
         let linear = Linear { cli };
-        let comments: Vec<Comment> =
-            quota!(linear.json("verification-comments", &["comments", "list", item])?);
+        let comments: Vec<Comment> = quota!(linear.json(
+            "verification-comments",
+            &["comments", "list", item, "--format=safe"],
+        )?);
         Ok(Answered::Value(
             comments.into_iter().map(|c| c.body).collect(),
         ))

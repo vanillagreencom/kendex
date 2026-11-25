@@ -378,8 +378,9 @@ fn u64_of(value: &Value) -> Option<u64> {
 
 /// A lane as a target: its launch pane on the fleet server, its recorded
 /// harness identity, and its session under the account home, else the
-/// harness's default home (as `effects::launch` reads them; Pi's account is
-/// a provider seat, not its home). A lane with no harness, pane, server or
+/// harness's default home (as `effects::launch` reads them). Pi uses its
+/// recorded launch home because its account can be a provider seat.
+/// A lane with no harness, pane, server or
 /// directory is nobody to type into. Nor is a lane whose record names
 /// another host: its session runs there, the pane here holds the client,
 /// and no file here confirms its turn; [`hosted_target`] names such a lane
@@ -489,7 +490,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         (None, _) | (Some(_), None) => None,
     };
     let home = match harness {
-        Harness::Pi => None,
+        Harness::Pi => lane.home.as_deref().map(PathBuf::from),
         Harness::Claude | Harness::Codex | Harness::Copilot => {
             lane.account.as_deref().map(PathBuf::from)
         }

@@ -353,10 +353,51 @@ pub fn codex_api_error(slice: &str) -> bool {
         && lines.any(|line| CODEX_MARKER.is_match(line))
 }
 
-/// A provider failure in the current idle turn's pane. Copilot CLI draws
-/// the execution failure after its model retries (github/copilot-cli#2166,
-/// #875); the retry notices and tool failures alone are not turn ends.
-pub fn pane_api_error(harness: Harness, slice: &str) -> bool {
+/// The evidence for a turn whose pane the observer found idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleTurn {
+    Ordinary { after_prompt: bool },
+    Capacity,
+    ApiError,
+}
+
+/// Classify the current idle turn using the lines below the last prompt.
+fn idle_turn(harness: Harness, slice: &str, after_prompt: bool) -> IdleTurn {
+    if harness == Harness::Codex && codex_capacity_refused(slice) {
+        IdleTurn::Capacity
+    } else if pane_api_error(harness, slice) {
+        IdleTurn::ApiError
+    } else {
+        IdleTurn::Ordinary { after_prompt }
+    }
+}
+
+/// The pane state and any terminal evidence from its current idle turn.
+#[must_use]
+pub struct PaneObservation {
+    pub state: State,
+    pub idle: Option<IdleTurn>,
+}
+
+pub fn observe_pane(
+    screen: &str,
+    harness: Harness,
+    process: &ProcessReading,
+    account_room: Option<bool>,
+) -> PaneObservation {
+    let slice = below_last_turn(screen);
+    let state = judge_slice(&slice, harness, process, account_room);
+    let idle = (state == State::Idle).then(|| idle_turn(harness, &slice, slice != screen));
+    PaneObservation { state, idle }
+}
+
+/// Copilot's documented `errorOccurred` reports per-request errors,
+/// including recoverable model calls, without a terminal-turn field
+/// (https://docs.github.com/en/copilot/reference/hooks-reference#erroroccurred).
+/// The CLI emits those events during retries, so read the execution failure
+/// below the current prompt once the composer is idle (github/copilot-cli
+/// #2166 and #875).
+fn pane_api_error(harness: Harness, slice: &str) -> bool {
     match harness {
         Harness::Codex => codex_api_error(slice),
         Harness::Copilot => slice.lines().any(|line| {
@@ -579,6 +620,15 @@ pub fn judge(
     process: &ProcessReading,
     account_room: Option<bool>,
 ) -> State {
+    judge_slice(&below_last_turn(screen), harness, process, account_room)
+}
+
+fn judge_slice(
+    slice: &str,
+    harness: Harness,
+    process: &ProcessReading,
+    account_room: Option<bool>,
+) -> State {
     match process {
         ProcessReading::ShellsOnly => return State::Exited,
         ProcessReading::ForegroundShell { .. } | ProcessReading::ForegroundOther { .. } => {
@@ -590,8 +640,7 @@ pub fn judge(
         | ProcessReading::Harness { .. }
         | ProcessReading::Unread { .. } => {}
     }
-    let slice = below_last_turn(screen);
-    if let Some(banner) = limit_banner(&slice) {
+    if let Some(banner) = limit_banner(slice) {
         if is_auth_failure(&banner, None) {
             return State::Walled {
                 kind: WallKind::Auth,
@@ -608,20 +657,20 @@ pub fn judge(
             Some(true) => {}
         }
     }
-    if ASKING.is_match(&slice) {
+    if ASKING.is_match(slice) {
         if slice.lines().any(|l| RATE_LIMIT_SWITCH.is_match(l))
             && slice.lines().any(|l| DIALOG_ROW.is_match(l))
         {
             return State::RateLimitSwitch;
         }
         return State::Asking {
-            dialog: dialog(&slice),
+            dialog: dialog(slice),
         };
     }
-    if is_working(&slice) || (harness == Harness::Pi && pi_working(&slice)) {
+    if is_working(slice) || (harness == Harness::Pi && pi_working(slice)) {
         return State::Working;
     }
-    if composer_drawn(&slice, harness) {
+    if composer_drawn(slice, harness) {
         return match process {
             ProcessReading::HarnessUp | ProcessReading::Harness { .. } => State::Idle,
             // A drawn composer with the process table unread: the second

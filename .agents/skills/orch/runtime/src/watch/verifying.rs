@@ -22,7 +22,7 @@ use crate::ops::boxes;
 use crate::settings::Settings;
 use crate::state::Lane;
 use crate::verify::Answer;
-use crate::verify::wire::{IssueText, Job, Nullable, Pull, RunConclusion, RunStatus};
+use crate::verify::wire::{IssueComment, IssueText, Job, Nullable, Pull, RunConclusion, RunStatus};
 use crate::watch::github::IssueItem;
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -56,30 +56,26 @@ pub(super) fn reading_lane_has_result(
             .parse()
             .map_err(|_| "invalid reading lane GitHub issue")?;
         let endpoint = format!("repos/{repo}/issues/{issue}/comments");
-        let answer = super::github::handle(Path::new("gh"))
+        let comments = super::github::handle(Path::new("gh"))
             .tagged(TAG)
             .bounded(BOUND)
-            .run(
-                "verification-comments",
-                &["api", "--paginate", "--slurp", &endpoint],
-                None,
-            )
-            .map_err(|error| error.detail())?;
-        let stdout = match answer {
-            Answer::Printed { stdout, .. } => stdout,
-            Answer::Failed(failed) => {
-                return Err(format!("gh api {endpoint}: {}", failed.stderr.trim()));
-            }
-        };
-        #[derive(Deserialize)]
-        struct Comment {
-            body: String,
-        }
-        serde_json::from_slice::<Vec<Vec<Comment>>>(&stdout)
+            .list::<IssueComment>("verification-comments", &endpoint)
             .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("gh api {endpoint}: comments unavailable"))?;
+        comments
             .into_iter()
-            .flatten()
-            .map(|comment| comment.body)
+            // This comment can stop a worker, so require repository
+            // membership even for bots.
+            .filter(|comment| {
+                matches!(comment.user, Nullable::Present(_))
+                    && super::outside::fleet_association(
+                        comment.author_association.present().map(String::as_str),
+                    )
+            })
+            .filter_map(|comment| match comment.body {
+                crate::verify::wire::Optional::Present(body) => Some(body),
+                crate::verify::wire::Optional::Absent => None,
+            })
             .collect()
     } else {
         match super::tracker::Linear::comment_bodies(&settings.reads.tracker_cli, item)
@@ -91,18 +87,37 @@ pub(super) fn reading_lane_has_result(
     };
     let box_heading = format!("### Box {number}");
     let marker = format!("Reading lane: {}", lane.item);
-    Ok(bodies.iter().any(|body| {
-        let mut in_box = false;
-        for line in body.lines().map(str::trim) {
-            if line.starts_with("### ") {
-                in_box = line == box_heading;
-            }
-            if in_box && line.trim_start_matches("- ") == marker {
+    Ok(bodies
+        .iter()
+        .any(|body| reading_result(body, &box_heading, &marker)))
+}
+
+/// Both the reading lane marker and a result must belong to the same box
+/// of the verification comment.
+fn reading_result(body: &str, box_heading: &str, marker: &str) -> bool {
+    let mut verification = false;
+    let mut in_box = false;
+    let mut lane = false;
+    let mut result = false;
+    for line in body.lines().map(str::trim) {
+        if line.starts_with("## ") || line.starts_with("# ") {
+            verification = line == "## Verification";
+            in_box = false;
+        } else if line.starts_with("### ") {
+            in_box = verification && line == box_heading;
+            lane = false;
+            result = false;
+        } else if in_box {
+            lane |= line.trim_start_matches("- ") == marker;
+            result |= line.strip_prefix("- **Result**:").is_some_and(|value| {
+                matches!(value.trim(), "pass" | "fail" | "unread" | "waiting")
+            });
+            if lane && result {
                 return true;
             }
         }
-        false
-    }))
+    }
+    false
 }
 
 /// The baseline row kind this duty owns: `verifying-deadline <id>`, the

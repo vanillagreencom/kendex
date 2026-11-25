@@ -175,7 +175,7 @@ pub struct Opening {
     pub server_process_start: Option<String>,
     pub socket: String,
     pub since_ms: u64,
-    /// The last line position in the local Claude lane's rows at launch.
+    /// The last line position in the Claude lane's rows at launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_rows_at_launch: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

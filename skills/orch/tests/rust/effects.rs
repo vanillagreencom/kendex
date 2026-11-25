@@ -9745,6 +9745,7 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
         match expected {
             Ok(written) => {
                 assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+                assert_eq!(report["lane"]["session_rows_at_launch"], 0, "{case}");
                 assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
                 assert_eq!(
                     after.map(|bytes| serde_json::from_str::<Value>(&bytes).unwrap()),

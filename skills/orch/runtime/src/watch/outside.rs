@@ -47,6 +47,11 @@ pub(super) fn author_fleet(user: &Nullable<User>, association: Option<&str>) -> 
     {
         return true;
     }
+    fleet_association(association)
+}
+
+/// An author GitHub reports as belonging to the repository's fleet.
+pub(super) fn fleet_association(association: Option<&str>) -> bool {
     association.is_some_and(|a| matches!(a, "OWNER" | "MEMBER" | "COLLABORATOR"))
 }
 
