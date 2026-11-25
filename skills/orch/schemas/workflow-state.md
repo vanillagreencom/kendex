@@ -302,7 +302,7 @@ A cloud lane's close writes one more `close` row: `cloud lane closed; session=ID
 The writers:
 
 - A confirmed `start-controller` or `request-transfer` publishes the record at the next `generation`, from its typed `pending` controller and the identity it observed.
-- `orch-runtime register --fleet` records a hand-opened session through `adopt-controller`.
+- `orch-runtime register --fleet` reads the fleet's lane records before it records a hand-opened session through `adopt-controller`. An unreadable row leaves the fleet file unchanged.
 - Where the record names the same pane on the same server, the adoption keeps the record and its generation, replaces each launch field the request names, and drops `pending`, `exit` and `off`.
 - Otherwise the adoption writes the session's record at the next generation.
 - A succession carries no `watch` and leaves the member as it stands.
@@ -320,6 +320,8 @@ The writers:
 ### Lane records
 
 A first `launch-lane` appends the record `{item, tracker, repo, harness, window, account, host, kind, mail_root, surface, model, effort, class, class_reason, permission, session_id, session_since, launched_at, running_at, status, over_cap, allow_all, tier, tier_inputs, launch}`, with `status` `preparing`. `item` is the record's identity. [state.rs](../runtime/src/state.rs) `Lane` is the typed view; [`ops/lane.rs`](../runtime/src/ops/lane.rs) holds the writes.
+
+`register --fleet` refuses the released statuses `closed`, `handed-off` and `canceled` with `released-lane-status`. The diagnostic names the fleet file, lane row, item and status. Set the named row's `status` to `done`, then retry registration.
 
 - A relaunch keeps omitted request fields subject to the launch updates below.
 - `host` and `kind` are always the launch's own.
