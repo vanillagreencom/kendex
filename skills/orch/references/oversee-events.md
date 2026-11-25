@@ -487,7 +487,7 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 
 - Pane dialogs and walls take priority over a local lane's session rows except on Pi.
 - Codex and Copilot's current provider failure below the last prompt and above the idle composer can end a Working row.
-- Hosted Pi lanes use their own Stop rows. Hosted Claude lanes use a provider failure from a StopFailure row written after launch. Other hosted judgments use the provider's screen.
+- Hosted Pi lanes use their own Stop rows. Hosted Claude lanes use a provider failure from a StopFailure row written after launch. A running SSH Claude lane from before the upgrade uses the first readable session-row position as its boundary. Other hosted judgments use the provider's screen.
 
 Read the closing lines under the `idle-after-return` line.
 
@@ -1135,4 +1135,4 @@ Reading lane: [LANE_KEY]
 - Repeat `### Box [N]` for each box read.
 - A delegate's reading opens with `Delegate checks ([DATE]): [result and effect]` and names whose reading or ruling it is. It cites evidence another comment holds instead of copying it.
 - A first missing-evidence rewrite keeps its own line, [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence) step 1.
-- Include `Reading lane: [LANE_KEY]` for a result from a reading lane. The watch checks that line and the result under the matching `### Box [N]` heading. For a GitHub issue, the result must come from a repository owner, member or collaborator.
+- Include `Reading lane: [LANE_KEY]` for a result from a reading lane. The watch checks that line and the result under the matching `### Box [N]` heading. For a GitHub issue, the result must come from the exact fleet App bot named by the installed GitHub package.

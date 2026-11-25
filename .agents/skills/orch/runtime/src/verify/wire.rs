@@ -1353,9 +1353,6 @@ pub(crate) struct IssueComment {
     pub(crate) id: u64,
     /// Required, nullable (issues/comments, `user`: simple-user or null).
     pub(crate) user: Nullable<User>,
-    /// The commenter's relationship to the repository, used for verification results.
-    #[serde(default)]
-    pub(crate) author_association: Optional<String>,
     /// Optional (issues/comments, `body`: string, not in the required list).
     #[serde(default)]
     pub(crate) body: Optional<String>,
@@ -1893,13 +1890,8 @@ mod tests {
             ],
         );
         catalogue::<IssueComment>(
-            json!({"id": 9, "user": null, "body": "Each decline holds.", "author_association": "OWNER"}),
-            &[
-                ("id", Required),
-                ("user", Nullable),
-                ("body", Optional),
-                ("author_association", Optional),
-            ],
+            json!({"id": 9, "user": null, "body": "Each decline holds."}),
+            &[("id", Required), ("user", Nullable), ("body", Optional)],
         );
         catalogue::<GraphReply<DisarmData>>(
             json!({"data": {"repository": null}, "errors": []}),

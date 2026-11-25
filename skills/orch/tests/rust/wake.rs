@@ -1275,6 +1275,15 @@ esac
     };
 
     let fleet = Fleet::new();
+    let identity_file = fleet
+        .root
+        .join(".agents/skills/github/scripts/lib/refresh-identity.sh");
+    std::fs::create_dir_all(identity_file.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/refresh-identity.sh"),
+        &identity_file,
+    )
+    .unwrap();
     let comments = fleet.root.join("comments");
     let tracker = fleet.root.join("linear");
     write_executable(
@@ -1373,17 +1382,19 @@ done
         assert!(turns().is_empty());
         let marker = format!("## Verification\n\n### Box {box_number}\n\nReading lane: {item}\n");
         let result = format!("{marker}\n- **Result**: pass\n");
-        let github_comment = |id, association: &str, kind: &str, body: &str| {
+        let app = "vanillagreen-fleet-lanes[bot]";
+        let github_comment = |id, login: &str, association: &str, kind: &str, body: &str| {
             json!({
-                "id": id, "author_association": association, "user": {"login": "reporter", "type": kind}, "body": body
+                "id": id, "author_association": association, "user": {"login": login, "type": kind}, "body": body
             })
         };
         if is_github {
             let wrong_box = format!("{marker}\n### Box 9\n\n- **Result**: pass\n");
             let non_results = json!([
-                github_comment(1, "NONE", "Bot", &result),
-                github_comment(2, "MEMBER", "User", &marker),
-                github_comment(3, "MEMBER", "User", &wrong_box)
+                github_comment(1, "outsider[bot]", "CONTRIBUTOR", "Bot", &result),
+                github_comment(2, "member", "MEMBER", "User", &result),
+                github_comment(3, app, "CONTRIBUTOR", "Bot", &marker),
+                github_comment(4, app, "CONTRIBUTOR", "Bot", &wrong_box)
             ]);
             std::fs::write(github.join("page1"), non_results.to_string()).unwrap();
         } else {
@@ -1402,12 +1413,12 @@ done
         )));
         if is_github {
             let page: Vec<_> = (1..=100)
-                .map(|id| github_comment(id, "MEMBER", "User", "No reading here."))
+                .map(|id| github_comment(id, "member", "MEMBER", "User", "No reading here."))
                 .collect();
             std::fs::write(github.join("page1"), json!(page).to_string()).unwrap();
             std::fs::write(
                 github.join("page2"),
-                json!([github_comment(101, "MEMBER", "User", &result)]).to_string(),
+                json!([github_comment(101, app, "CONTRIBUTOR", "Bot", &result)]).to_string(),
             )
             .unwrap();
         } else {

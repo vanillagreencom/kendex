@@ -2071,50 +2071,83 @@ fn hosted_claude_continues_only_on_a_failure_after_its_launch_boundary() {
     if !isolated_row("hosted_claude_continues_only_on_a_failure_after_its_launch_boundary") {
         return;
     }
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
-    let server = Server::start(&dir, "fleet");
-    let fleet = Fleet::new(&server);
-    let pane = server.open_window("gh-1", &dir, "printf '❯ \n'; exec bash --norc --noprofile");
-    await_drawn(&server, &pane, "❯");
-    let mut record = hosted_lane(&dir, "KEN-1", "gh-1", "/remote/lane");
-    record["harness"] = json!("claude");
-    record["launch"] = json!({"pane": pane, "server": server.pid});
-    record["session_rows_at_launch"] = json!(1);
-    fleet.set_lanes(vec![record]);
-    let state = fleet.read();
-    let world = HostedWorld::new(&dir, &server, &fleet);
-    let stop = "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n";
-    let provider_reads = |text: &str| {
-        world.plant_host(&[
-            ("capabilities", ok(SSH_LINE)),
-            ("status --item KEN-1 --harness claude", ok("running\n")),
-            (
-                "cat --item KEN-1 /remote/lane/tmp/lane-mail/KEN-1/session-rows.jsonl",
-                ok(text),
-            ),
-        ]);
-    };
-    lane_driver!(server, fleet, readers, driver);
-    driver.scripts = world.scripts.clone();
-    driver.gh = world.gh();
-    provider_reads(stop);
-    driver.pass(&state);
-    assert!(
-        !event_lines(&driver.pass(&state))
-            .iter()
-            .any(|line| line.contains("server_error"))
-    );
-    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
-    provider_reads(&stop.repeat(2));
-    driver.pass(&state);
-    driver.pass(&state);
-    assert!(
-        driver
-            .baseline
-            .get("resume", "gh-1")
-            .is_some_and(|row| row.starts_with("server_error|"))
-    );
+    for checkpoint in [Some(1), None] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let pane = server.open_window("gh-1", &dir, "printf '❯ \n'; exec bash --norc --noprofile");
+        await_drawn(&server, &pane, "❯");
+        let mut record = hosted_lane(&dir, "KEN-1", "gh-1", "/remote/lane");
+        record["harness"] = json!("claude");
+        record["launch"] = json!({"pane": pane, "server": server.pid});
+        if let Some(checkpoint) = checkpoint {
+            record["session_rows_at_launch"] = json!(checkpoint);
+        }
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        let world = HostedWorld::new(&dir, &server, &fleet);
+        let stop =
+            "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n";
+        let provider_reads = |answer: Value| {
+            world.plant_host(&[
+                ("capabilities", ok(SSH_LINE)),
+                ("status --item KEN-1 --harness claude", ok("running\n")),
+                (
+                    "cat --item KEN-1 /remote/lane/tmp/lane-mail/KEN-1/session-rows.jsonl",
+                    answer,
+                ),
+            ]);
+        };
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = world.scripts.clone();
+        driver.gh = world.gh();
+        if checkpoint.is_none() {
+            provider_reads(json!({"exit": 255, "stderr": "temporarily unavailable"}));
+            driver.pass(&state);
+            assert_eq!(driver.baseline.get("hosted-claude-rows", "gh-1"), None);
+            assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+        }
+        provider_reads(ok(stop));
+        driver.pass(&state);
+        assert!(
+            !event_lines(&driver.pass(&state))
+                .iter()
+                .any(|line| line.contains("server_error"))
+        );
+        assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+        if checkpoint.is_none() {
+            let baseline = dir.join("baseline.json");
+            driver.baseline.store(&baseline).unwrap();
+            driver.baseline = Baseline::load(&baseline).unwrap();
+            assert!(
+                driver
+                    .baseline
+                    .get("hosted-claude-rows", "gh-1")
+                    .unwrap()
+                    .ends_with("|1")
+            );
+            provider_reads(json!({"exit": 255, "stderr": "temporarily unavailable"}));
+            driver.pass(&state);
+            assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+            assert!(
+                driver
+                    .baseline
+                    .get("hosted-claude-rows", "gh-1")
+                    .unwrap()
+                    .ends_with("|1")
+            );
+        }
+        provider_reads(ok(&stop.repeat(2)));
+        driver.pass(&state);
+        driver.pass(&state);
+        assert!(
+            driver
+                .baseline
+                .get("resume", "gh-1")
+                .is_some_and(|row| row.starts_with("server_error|"))
+        );
+    }
 }
 
 /// A window of the fleet session that no lane, controller record, open

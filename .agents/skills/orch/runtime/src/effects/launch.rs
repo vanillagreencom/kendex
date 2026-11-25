@@ -1107,6 +1107,12 @@ fn hosted_launch(
     let Some(harness) = Harness::parse(&r.harness) else {
         return failed(operation, "harness-unknown");
     };
+    if harness == Harness::Claude && caps.files != hosted::Files::Verb {
+        return failed(
+            operation,
+            &format!("host-session-rows-unreadable host={provider} cause=files-verb-required"),
+        );
+    }
     if let Err(cause) = gate::before_create(harness, r.model.as_deref(), provider) {
         return failed(operation, &cause);
     }
@@ -1293,11 +1299,16 @@ fn hosted_launch(
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
-    let rows_at_launch = if harness == Harness::Claude && caps.files == hosted::Files::Verb {
+    let rows_at_launch = if harness == Harness::Claude {
         match hosted::session_rows_at(&scripts, provider, &r.item, &created.path) {
             hosted::Answer::Live(text) => Some(text.lines().count()),
             hosted::Answer::Gone => Some(0),
-            hosted::Answer::Unreadable { .. } => None,
+            hosted::Answer::Unreadable { cause } => {
+                return failed(
+                    operation,
+                    &format!("host-session-rows-unreadable host={provider} cause={cause}"),
+                );
+            }
         }
     } else {
         None

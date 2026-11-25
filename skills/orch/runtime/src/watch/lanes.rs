@@ -90,7 +90,7 @@ use agent_runtime::intent::{EffectOp, Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 10] = [
+const LANE_ROWS: [&str; 11] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
@@ -101,7 +101,11 @@ const LANE_ROWS: [&str; 10] = [
     "start-stalled",
     hosted::CLOSE_PENDING_ROW,
     hosted::LEFT_ROW,
+    HOSTED_CLAUDE_ROWS,
 ];
+
+/// A pre-upgrade SSH Claude lane's first readable rows position.
+const HOSTED_CLAUDE_ROWS: &str = "hosted-claude-rows";
 
 /// Lines kept above the banner in a usage-limit block.
 const BANNER_LEAD: usize = 3;
@@ -620,14 +624,15 @@ fn identity_word(identity: Option<&Identity>) -> String {
 
 /// What a lane's host answers before its pane is read: the provider's
 /// status verb where the lane's kind declares one, its capture where the
-/// kind's pane is the provider's own (`pane=verb`), and a Pi lane's session
-/// rows where its files are the provider's (`files=verb`), the last two
+/// kind's pane is the provider's own (`pane=verb`), and Pi or Claude
+/// session rows where its files are the provider's (`files=verb`), the last two
 /// asked only where the status verb read the harness running or was not
 /// asked.
 pub(super) struct HostRead {
     status: Option<Result<HostStatus, String>>,
     screen: Option<Result<String, String>>,
     rows: Option<Answer<String>>,
+    rows_floor: Option<usize>,
 }
 
 impl HostRead {
@@ -636,10 +641,11 @@ impl HostRead {
             status: Some(Err(cause)),
             screen: None,
             rows: None,
+            rows_floor: None,
         }
     }
 
-    pub(super) fn of(scripts: &Path, lane: &Lane, caps: Capabilities) -> HostRead {
+    fn of(scripts: &Path, lane: &Lane, caps: Capabilities, learn_rows: bool) -> HostRead {
         let status = match (caps.status, lane.harness.as_deref()) {
             (Status::Verb, Some(harness)) => Some(hosted::status(
                 scripts,
@@ -657,7 +663,12 @@ impl HostRead {
         };
         let row_harness = match lane.harness.as_deref().and_then(Harness::parse) {
             Some(Harness::Pi) => true,
-            Some(Harness::Claude) => lane.session_rows_at_launch.is_some(),
+            Some(Harness::Claude) => {
+                lane.session_rows_at_launch.is_some()
+                    || (learn_rows
+                        && caps.launch == Some(hosted::Launch::Ssh)
+                        && lane.status == LaneStatus::Running)
+            }
             Some(Harness::Codex | Harness::Copilot) | None => false,
         };
         let rows = match (caps.files, &status) {
@@ -672,7 +683,53 @@ impl HostRead {
             status,
             screen,
             rows,
+            rows_floor: lane.session_rows_at_launch,
         }
+    }
+
+    /// A runner replaced in place can inherit a live SSH lane from a
+    /// version that recorded no launch position. Keep its first readable
+    /// position in the existing watch baseline, tied to this launch.
+    fn learn_claude_rows(&mut self, lane: &Lane, baseline: &Baseline, out: &mut Produced) {
+        if self.rows_floor.is_some() || lane.harness.as_deref() != Some("claude") {
+            return;
+        }
+        let (Some(launch), Some(root), Some(rows)) = (&lane.launch, &lane.mail_root, &self.rows)
+        else {
+            return;
+        };
+        if launch.server.is_none() || launch.pane.is_none() || root.is_empty() {
+            return;
+        }
+        let binding = json!([
+            lane.item,
+            hosted::host_of(lane),
+            root,
+            launch,
+            lane.running_at
+        ])
+        .to_string();
+        let name = lane_name(lane);
+        if let Some(position) = baseline
+            .get(HOSTED_CLAUDE_ROWS, &name)
+            .and_then(|saved| saved.rsplit_once('|'))
+            .filter(|(saved, _)| *saved == binding)
+            .and_then(|(_, position)| position.parse().ok())
+        {
+            self.rows_floor = Some(position);
+            return;
+        }
+        let position = match rows {
+            Answer::Live(text) => text.lines().count(),
+            Answer::Gone => 0,
+            Answer::Unreadable { .. } => return,
+        };
+        self.rows_floor = Some(position);
+        out.changes.push(set(
+            HOSTED_CLAUDE_ROWS,
+            &name,
+            format!("{binding}|{position}"),
+        ));
     }
 }
 
@@ -740,7 +797,7 @@ fn read_lane<'a>(
     let current_rows = row_reading.as_ref().filter(|reading| {
         if hosted_claude {
             return matches!(reading, Reading::Live(row)
-            if lane.session_rows_at_launch.is_some_and(|at| row.position > at)
+            if host.rows_floor.is_some_and(|at| row.position > at)
                 && row.harness.as_deref() == Some("claude")
                 && rows::failure_cause(row).is_some_and(|cause| {
                     wake::can_continue(Harness::Claude, cause, false)
@@ -916,7 +973,7 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
         Ok(caps) if caps.status == Status::None => {
             (HostRead::failed("status-none".to_owned()), Some(caps.files))
         }
-        Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
+        Ok(caps) => (HostRead::of(&scripts, lane, caps, false), Some(caps.files)),
     };
     let readers = Readers::kernel();
     let sockets = agent_runtime::effects::fleet_sockets(
@@ -975,7 +1032,7 @@ pub(crate) fn judge(
     let hosts = Hosts::read(&scripts, [lane]);
     let host = match hosts.of(lane) {
         Err(cause) => HostRead::failed(cause),
-        Ok(caps) => HostRead::of(&scripts, lane, caps),
+        Ok(caps) => HostRead::of(&scripts, lane, caps, false),
     };
     let readers = Readers::kernel();
     let sockets = agent_runtime::effects::fleet_sockets(
@@ -1122,12 +1179,13 @@ pub fn observe(pass: &Pass) -> Produced {
     let observed: Vec<Observed> = in_flight
         .iter()
         .filter_map(|lane| {
-            let host = match hosts.of(lane) {
+            let mut host = match hosts.of(lane) {
                 // This kind has no harness for this duty to judge.
                 Ok(caps) if caps.status == Status::None => return None,
-                Ok(caps) => HostRead::of(pass.scripts, lane, caps),
+                Ok(caps) => HostRead::of(pass.scripts, lane, caps, true),
                 Err(cause) => HostRead::failed(cause),
             };
+            host.learn_claude_rows(lane, pass.baseline, &mut out);
             let failed_status = matches!(host.status, Some(Err(_)));
             let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
             // The lane status verb carries this cause as unjudged. The

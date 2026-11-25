@@ -56,6 +56,7 @@ pub(super) fn reading_lane_has_result(
             .parse()
             .map_err(|_| "invalid reading lane GitHub issue")?;
         let endpoint = format!("repos/{repo}/issues/{issue}/comments");
+        let app_login = super::github::fleet_app_login(&settings.roots.project)?;
         let comments = super::github::handle(Path::new("gh"))
             .tagged(TAG)
             .bounded(BOUND)
@@ -64,13 +65,9 @@ pub(super) fn reading_lane_has_result(
             .ok_or_else(|| format!("gh api {endpoint}: comments unavailable"))?;
         comments
             .into_iter()
-            // This comment can stop a worker, so require repository
-            // membership even for bots.
             .filter(|comment| {
-                matches!(comment.user, Nullable::Present(_))
-                    && super::outside::fleet_association(
-                        comment.author_association.present().map(String::as_str),
-                    )
+                matches!(&comment.user, Nullable::Present(user)
+                    if user.kind == "Bot" && user.login == app_login)
             })
             .filter_map(|comment| match comment.body {
                 crate::verify::wire::Optional::Present(body) => Some(body),

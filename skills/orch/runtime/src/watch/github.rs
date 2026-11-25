@@ -373,6 +373,33 @@ pub(crate) fn handle(cli: &Path) -> Gh<'static> {
     Gh::with_env(cli, renewed_credential()).tagged(TAG)
 }
 
+/// The exact App identity from the installed GitHub package, shared with
+/// its refresh review route. Read the literal assignment without sourcing it.
+pub(super) fn fleet_app_login(project: &Path) -> std::result::Result<String, String> {
+    const KEY: &str = "FLEET_APP_LOGIN";
+    let path = project.join(".agents/skills/github/scripts/lib/refresh-identity.sh");
+    let keys = agent_runtime::settings::Keys {
+        read: &[],
+        load: &[KEY],
+    };
+    let data = agent_runtime::settings::private_env_file(&path, None, &keys)
+        .map_err(|error| format!("fleet-app-identity-unreadable: {error}"))?;
+    let mut values = data.values.into_iter();
+    match (values.next(), values.next()) {
+        (Some((_, login)), None)
+            if login
+                .strip_suffix("[bot]")
+                .is_some_and(|slug| !slug.is_empty()) =>
+        {
+            Ok(login)
+        }
+        _ => Err(format!(
+            "fleet-app-identity-unconfigured path={}",
+            path.display()
+        )),
+    }
+}
+
 /// The watch's reads over the one handle: GitHub's 404 is the answer
 /// `None`, every other failure the read's refusal under the duty's keys.
 impl Gh<'_> {
