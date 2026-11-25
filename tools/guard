@@ -1766,7 +1766,7 @@ reach_runtime() { # TREE
 }
 # Source language selects a reader, never suite eligibility. In particular,
 # Jarvis shell suites execute Python whose argv list calls the installed CLI.
-# Status 1 is no call (including empty source); status 2 is an unread scan.
+# Status 1 is no call (including empty source); status 2 is unread or unresolved.
 release_file_calls_kendex() { # FILE
   local f=$1 code header language=other command candidates line answer hit=0
   code=$(cat -- "$f") || return 2
@@ -1785,24 +1785,28 @@ release_file_calls_kendex() { # FILE
   esac
   case "$language" in
     python)
-      # ast owns Python syntax: comments and docstrings cannot become argv.
-      # The literal argv first element is the shape watch.py ships, including
-      # its checked() wrapper rather than a hand-kept subprocess-name table.
+      # Match literal argv at any call, including watch.py's checked() wrapper.
+      # An executable name outside that shape cannot prove the package has no caller.
       answer=$(python3 - "$f" <<'PY'
 import ast
 from pathlib import Path
 import sys
 
 tree = ast.parse(Path(sys.argv[1]).read_bytes(), filename=sys.argv[1])
-print(any(isinstance(node, ast.Call) and node.args
-          and isinstance(node.args[0], (ast.List, ast.Tuple))
-          and node.args[0].elts
-          and isinstance(node.args[0].elts[0], ast.Constant)
-          and node.args[0].elts[0].value == 'kendex'
-          for node in ast.walk(tree)))
+names = {node for node in ast.walk(tree)
+         if isinstance(node, ast.Constant) and node.value == 'kendex'}
+if not names:
+    print('absent')
+elif any(isinstance(node, ast.Call) and node.args
+         and isinstance(node.args[0], (ast.List, ast.Tuple))
+         and node.args[0].elts and node.args[0].elts[0] in names
+         for node in ast.walk(tree)):
+    print('call')
+else:
+    print('unresolved')
 PY
       ) || return 2
-      case "$answer" in True) return 0 ;; False) return 1 ;; *) return 2 ;; esac
+      case "$answer" in call) return 0 ;; absent) return 1 ;; *) return 2 ;; esac
       ;;
     shell)
       code=$(sed '/^[[:space:]]*#/d' <<<"$code") || return 2
