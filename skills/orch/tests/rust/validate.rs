@@ -3232,6 +3232,61 @@ fn an_admitted_entry_run_resolves_its_mode_from_its_base_and_an_unadmitted_id_is
     assert!(stderr(&out).contains("run-unadmitted"), "{}", stderr(&out));
 }
 
+#[test]
+fn an_admitted_entry_directs_targeted_checks_only_when_required_ci_takes_the_change() {
+    for (world, mode, verdict, lanes) in [
+        ("required", "ci", "pending", "scoped"),
+        ("context-unrequired", "full", "pass", "full"),
+    ] {
+        let w = World::new();
+        w.base_with(&[(INVENTORY, "[]\n")]);
+        w.commit("source.rs");
+        let (path, replies, log) = ci_world(&w, world);
+        let admitted = ok(&w.op(
+            &json!({"op":"record-validation-admission","round_id":ROUND}),
+            &[],
+        ));
+        let id = admitted["report"]["run_id"].as_str().unwrap();
+        let out = w.local(
+            &["--run-id", id],
+            &[
+                ("PATH", path.as_str()),
+                ("GH_FAKE_REPLIES", replies.as_str()),
+                ("GH_FAKE_LOG", log.as_str()),
+                ("GH_REPO", "o/r"),
+                ("ORCH_DELIVERY", "pr"),
+                ("DEV_VALIDATE_CI_CONTEXT", "CI"),
+                ("DEV_VALIDATE_CMD", "echo 'validate: lanes=full selection=all'"),
+                (
+                    "DEV_VALIDATE_SELECTION_CMD",
+                    "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo 'validate: lanes=scoped selection=subset'; else echo selection=subset; fi",
+                ),
+            ],
+        );
+        let output = text(&out);
+        assert!(out.status.success(), "{world}: {output} {}", stderr(&out));
+        let dir = directory(&out);
+        assert_eq!(Some(dir.as_str()), admitted["report"]["run_dir"].as_str());
+        let record = read_record(&w, &dir);
+        assert_eq!(field(&record, "validate-mode"), mode, "{world}: {record}");
+        assert_eq!(field(&record, "verdict"), verdict, "{world}: {record}");
+        assert_eq!(field(&record, "lanes"), lanes, "{world}: {record}");
+        let log = run_file(&dir, "log");
+        assert_eq!(log.contains("lanes=full"), mode == "full", "{world}: {log}");
+        // Both dev workflows consume the keyed line immediately after the start.
+        let mut advisory_rows = output
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| !field(line, "local-checks").is_empty());
+        let advisory = advisory_rows.next().map(|(index, line)| {
+            (index, field(line, "validate-mode"), field(line, "local-checks"))
+        });
+        let expected = (mode == "ci").then(|| (1, "ci".into(), "targeted-only".into()));
+        assert_eq!(advisory, expected, "{world}: {output}");
+        assert!(advisory_rows.next().is_none(), "{world}: {output}");
+    }
+}
+
 /// A detached start, ad hoc or admitted, follows its run for one call's
 /// budget and returns with the run still going, so no call outlasts a
 /// harness's foreground limit; the next `--wait` follows the same run to its

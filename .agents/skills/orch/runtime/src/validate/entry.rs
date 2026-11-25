@@ -22,6 +22,8 @@ A run has no time limit: its executor ends it as stalled only after the start's 
 
 An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Every start but --reproduce and a docs-only snapshot asks whether required CI takes the change, at an open pull request's base or, before one opens, the resolved base branch; ORCH_PR_ORDER is no input. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
 
+A dev start that resolves to ci prints validate-mode=ci local-checks=targeted-only after state=started. It skips the full local command and runs the scoped selector where declared.
+
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
 --record reads mode, selection, verdict, identity, scope, fallback and wall time. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
@@ -240,6 +242,17 @@ fn unanswered_refusal(error: Error) -> Failure {
     }
 }
 
+/// The dev validation step reads the CI answer before running local checks.
+fn write_started(line: &str, mode: ValidateMode, restack: bool) -> Result<()> {
+    let advice = if mode == ValidateMode::Ci && !restack {
+        "\nvalidate-mode=ci local-checks=targeted-only \
+         Run only targeted rows (fixtures and must-fail controls). Required CI validates this change."
+    } else {
+        ""
+    };
+    writeln!(std::io::stdout(), "{line}{advice}").map_err(|e| files::unreadable("stdout", e))
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the catalog entry owns standalone admission, and publishes the directory before waiting for its executor"
@@ -370,8 +383,7 @@ fn entry(
                 .to_string(),
         );
         let started = super::start(&settings, &req, env, locking)?;
-        writeln!(std::io::stdout(), "{}", started.started_line)
-            .map_err(|e| files::unreadable("stdout", e))?;
+        write_started(&started.started_line, started.mode, req.restack)?;
         if req.foreground && started.launched {
             run::run(
                 &settings,
@@ -464,12 +476,11 @@ fn entry(
                 )
                 .map_err(|e| files::unreadable("runner", e))?;
             }
-            writeln!(
-                std::io::stdout(),
-                "{}",
-                super::started_line(&run_dir, &resolved.proof, &memory)
-            )
-            .map_err(|e| files::unreadable("stdout", e))?;
+            write_started(
+                &super::started_line(&run_dir, &resolved.proof, &memory),
+                resolved.proof.mode,
+                req.restack,
+            )?;
             Ok((run_dir, resolved.ran_nothing.is_none()))
         })?;
     if req.foreground && run_dir.1 {
