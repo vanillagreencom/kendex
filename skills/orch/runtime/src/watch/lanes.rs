@@ -80,6 +80,7 @@ use super::overseer::{Pick, RelaunchPending, relaunch_pending};
 use super::verifying::is_reading_lane;
 use super::wake;
 use crate::effects::start_brief;
+use crate::mailbox::Refusal;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::lane::RecoveryReason;
@@ -289,13 +290,13 @@ pub struct Relaunch {
     pub log: PathBuf,
 }
 
-/// The wall route's two calls and the setting that gates the second, injected
-/// so a row plants the answers; production wires the overseer module's
-/// [`super::overseer::Judges`] reads.
+/// The wall route's calls and the setting that gates a replacement.
 pub struct WallRoute<'a> {
     pub relaunch: WallRelaunch,
     /// `agent-runtime accounts pick --harness H --native-model M --exclude-account SPENT`.
     pub pick: &'a dyn Fn(Harness, &str, &str) -> Pick,
+    /// The standing halt at the lane's mailbox.
+    pub halted: &'a dyn Fn(&Lane) -> Result<bool, Refusal>,
     /// Start the relaunch detached through the one runner; `Err` is the
     /// launcher's refusal.
     pub start: &'a dyn Fn(&Relaunch) -> Result<(), String>,
@@ -1813,6 +1814,7 @@ fn wall(
         && prior
             .get(3)
             .is_some_and(|r| *r == reported || (!passed && r == "lane-relaunched"));
+    let held = quiet && !passed && prior.get(5).is_some_and(|r| r == "held");
     // A resume asked for this wall whose screen has since moved under the
     // same banner: the resumed turn ended at the wall again, told once.
     let screen = hash_of(slice).to_string();
@@ -1843,7 +1845,7 @@ fn wall(
         })
         .err()
         .map(|e| e.to_string());
-    if quiet && !rewalled {
+    if quiet && !rewalled && !held {
         return (walled, observed);
     }
     let lines = match evidence {
@@ -1856,6 +1858,7 @@ fn wall(
         },
     };
     let mut notes = Vec::new();
+    let mut retry = "";
     match reset_at.filter(|_| passed) {
         None => match route(obs, kind, pass, out, &mut notes) {
             Routed::Relaunched => {
@@ -1867,6 +1870,8 @@ fn wall(
                 return (walled, observed);
             }
             Routed::Opening => return unjudged("auth-recovery-opening"),
+            Routed::Held if held => return (walled, observed),
+            Routed::Held => retry = "|held",
             Routed::Left => {}
         },
         // A passed reset: the wake resumes the lane it reaches, once per
@@ -1910,7 +1915,7 @@ fn wall(
     out.changes.push(set(
         "usage-limit",
         lane,
-        format!("{first_seen}|{hash}|{identity}|{reported}|{screen}"),
+        format!("{first_seen}|{hash}|{identity}|{reported}|{screen}{retry}"),
     ));
     (walled, observed)
 }
@@ -1921,6 +1926,8 @@ enum Routed {
     Relaunched,
     /// A replacement's open launch still owns the outcome.
     Opening,
+    /// The mailbox holds the relaunch. Check it again on the same wall.
+    Held,
     /// The wall is left to the overseer; `notes` carry the pick's answer
     /// and any refusal.
     Left,
@@ -2026,6 +2033,17 @@ fn route(
     let (Some(harness), false) = (harness, model.is_empty()) else {
         return refused(notes, "record-unnamed");
     };
+    if pass.route.relaunch == WallRelaunch::Auto {
+        let reason = match (pass.route.halted)(obs.lane) {
+            Ok(false) => None,
+            Ok(true) => Some("halted".to_owned()),
+            Err(cause) => Some(format!("halt-unread cause={cause}")),
+        };
+        if let Some(reason) = reason {
+            notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
+            return Routed::Held;
+        }
+    }
     let account = obs.lane.account.as_deref();
     let to = match kind {
         WallKind::Auth => obs.lane.account.clone(),

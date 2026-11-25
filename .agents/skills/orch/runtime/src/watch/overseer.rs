@@ -2410,9 +2410,12 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             let wall_pick = |harness: Harness, model: &str, spent: &str| {
                 (judges.wall_pick)(&judges.scripts, harness, model, spent)
             };
+            let mailbox = crate::mailbox::Mailbox::new(reach.mail_program);
+            let halted = |lane: &crate::state::Lane| mailbox.lane_halted(lane);
             let route = WallRoute {
                 relaunch: watch.wall_relaunch,
                 pick: &wall_pick,
+                halted: &halted,
                 start: judges.relaunch,
             };
             let wall_pauses = |request| {

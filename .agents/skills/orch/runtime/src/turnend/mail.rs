@@ -18,7 +18,7 @@ use super::identity::{Lane, Seat, shell_quoted};
 use super::payload::{Caller, Payload};
 use super::role::Binding;
 use super::{Answer, Arm, Flow, Turn, Vars};
-use crate::mailbox::{Mailbox, Noticed, Refusal};
+use crate::mailbox::{Mailbox, Noticed, Refusal, standing_halt};
 use crate::settings::{self, Flags};
 use crate::state::{self, ItemState};
 use crate::validate::files;
@@ -296,10 +296,7 @@ pub(super) fn idle_check(
         .filter(|e| e.mailbox.as_deref() == Some("to-overseer"))
         .filter(|e| matches!(e.kind(), "ask" | "notice"))
         .count();
-    let halted = events
-        .iter()
-        .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
-        .is_some_and(|e| e.halt == Some(true));
+    let halted = standing_halt(&events);
     let open = if turn.harness == Harness::Codex && !halted {
         let work = open_work(turn, vars, lane, item)
             .map_err(|cause| turn.refuse(Said::WorkflowUnreadable, &cause))?;

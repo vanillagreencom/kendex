@@ -300,6 +300,15 @@ impl Envelope {
     }
 }
 
+/// A plain directive lifts the last halt. The inbox cursor tracks delivery
+/// alone and does not enter this judgment.
+pub(crate) fn standing_halt(events: &[Envelope]) -> bool {
+    events
+        .iter()
+        .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
+        .is_some_and(|e| e.halt == Some(true))
+}
+
 /// A tracker item as the tracker identified it when an ask was made; the
 /// identifier it printed beside the UUID is not carried.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -851,17 +860,44 @@ impl Mailbox {
     /// checkout `root`: the overseer's box read by logical line, no cursor
     /// touched.
     pub fn box_events(&self, root: &Path, after: u64) -> Result<BoxEvents, Refusal> {
+        self.box_events_on("overseer", root, after, None)
+    }
+
+    /// Read the directive at the lane's recorded mailbox, including mail it
+    /// has already acknowledged. A cloud lane has no mailbox halt.
+    pub fn lane_halted(&self, lane: &Lane) -> Result<bool, Refusal> {
+        if lane.session_channel() {
+            return Ok(false);
+        }
+        let root = lane
+            .mail_root
+            .as_deref()
+            .filter(|root| !root.trim().is_empty())
+            .ok_or_else(|| Refusal::NotStarted {
+                verb: "events",
+                cause: "mail-root-unrecorded".to_owned(),
+            })?;
+        self.box_events_on(&lane.item, Path::new(root), 0, lane.mail_host())
+            .map(|events| standing_halt(&events.envelopes))
+    }
+
+    fn box_events_on(
+        &self,
+        item: &str,
+        root: &Path,
+        after: u64,
+        host: Option<&str>,
+    ) -> Result<BoxEvents, Refusal> {
         const VERB: &str = "events";
         let after = after.to_string();
         let root = root.display().to_string();
-        let stdout = self
-            .call(
-                VERB,
-                &[
-                    "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
-                ],
-            )?
-            .ok(VERB)?;
+        let mut args = vec![
+            "--item", item, "--root", &root, "--box", "to-lane", "--after", &after,
+        ];
+        if host.is_some() {
+            args.push("--host");
+        }
+        let stdout = self.call_on(VERB, &args, host, None)?.ok(VERB)?;
         let mut lines = stdout.lines();
         let (count, first) = header(VERB, lines.next().ok_or_else(|| reply(VERB, "short", ""))?)?;
         let mut envelopes = Vec::new();
