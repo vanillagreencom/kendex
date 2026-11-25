@@ -30,7 +30,8 @@ jq -c --arg kept "$KEPT_RENDER" --arg hash "$HASHED_A" \
   "$repo/$INVENTORY" >"$SANDBOX/base-inventory"
 mv "$SANDBOX/base-inventory" "$repo/$INVENTORY"
 commit_paths "$repo" baseline seed.txt runtime/kept.ts \
-  "$KEPT_RENDER" skills/orch/tests/kept.test.sh pkg/Cargo.toml Cargo.lock
+  "$KEPT_RENDER" skills/orch/tests/kept.test.sh pkg/Cargo.toml Cargo.lock \
+  nested/Cargo.toml nested/Cargo.lock other/Cargo.lock
 base="$(git -C "$repo" rev-parse HEAD)"
 
 # ROW_BASE, when set, is the base commit a row's diff is made on and judged
@@ -94,6 +95,9 @@ cargo_roster() { # base|target-removed
 # The row's edit, by name: each is the diff a real change of that kind makes.
 apply_edit() { # EDIT
   case "$1" in
+    move-lock=*)
+      git -C "$repo" mv -- "${1#*=}" pkg/Cargo.lock
+      write_lines pkg/Cargo.lock 1 ;;
     test-added)
       write_lines "$SOURCE" 30
       write_lines "$RENDER" 30
@@ -152,8 +156,29 @@ done <<'LOCK_ROWS'
 paired Cargo update|class=small measured=true cause=production-within-small subsystem=pkg|production=1 paired-lock=117|pkg/Cargo.toml=1 Cargo.lock=117
 standalone Cargo lock|class=small measured=true cause=production-within-small subsystem=Cargo.lock||Cargo.lock=117
 lock beside a different project|class=standard measured=true cause=several-subsystems production=118||pkg/Cargo.toml=1 other/Cargo.lock=117
+root lock beside independently locked manifest|class=standard measured=true cause=several-subsystems production=118||nested/Cargo.toml=1 Cargo.lock=117
+lock renamed within its changing workspace|class=small measured=true cause=production-within-small subsystem=pkg|production=1 paired-lock=1|move-lock=Cargo.lock pkg/Cargo.toml=1
+lock renamed from another workspace|class=standard measured=true cause=several-subsystems production=2|production=2 paired-lock=0|move-lock=other/Cargo.lock pkg/Cargo.toml=1
 paired update past the small ceiling|class=standard measured=true cause=production-past-small production=151|production=151 paired-lock=117|pkg/Cargo.toml=151 Cargo.lock=117
 LOCK_ROWS
+
+layout="$(plant_layout "$SANDBOX/receipt")"
+conf="$layout/change-scope/references/narrow-change.conf"
+rm -- "$conf"
+if baseline_err="$("$BASH" -c '
+  set -euo pipefail
+  . "$1"
+  fixture_base() { printf "main\n"; }
+  branch_baseline_lines "$2" fixture_base HEAD lines
+  printf "%s\n" "$lines"
+' receipt "$layout/change-scope/scripts/lib/branch-growth.sh" "$repo" 2>&1)"; then
+  baseline_exit=0
+else
+  baseline_exit=$?
+fi
+assert_eq "receipt baseline refuses an unreadable pairing list" 1 "$baseline_exit"
+assert_eq "receipt baseline reports the unreadable list on stderr" \
+  "lock-pair list unreadable: $layout/change-scope/scripts/lib/../../references/narrow-change.conf" "$baseline_err"
 
 # label | expected verdict | edits | environment
 rows=0

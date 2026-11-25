@@ -6,6 +6,8 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
+BRANCH_GROWTH_BASE_REV=""
+BRANCH_GROWTH_HEAD_REV=""
 # Reads the Expected delta estimate for orch-runtime tier. A missing header is
 # permitted, and a stated zero counts as zero; a header with malformed or no
 # text returns 1 with no numeric result and leaves the text in
@@ -79,7 +81,14 @@ branch_size_numstat() {
     return 1
   fi
   BRANCH_GROWTH_BASE_REF="$base_ref"
-  measured_numstat="$(git -C "$worktree" -c core.quotePath=false diff --numstat --no-ext-diff --find-renames "$base_ref"..."$commit" --)" \
+  # Use the documented left endpoint of a three-dot diff so the ownership
+  # reads below see exactly the same trees, even if a ref moves afterward.
+  BRANCH_GROWTH_HEAD_REV="$(git -C "$worktree" rev-parse --verify --end-of-options "${commit}^{commit}")" \
+    || branch_growth_fail "head '$commit' does not resolve to a commit in '$worktree'" || return 1
+  BRANCH_GROWTH_BASE_REV="$(git -C "$worktree" merge-base "$base_ref" "$BRANCH_GROWTH_HEAD_REV")" \
+    || branch_growth_fail "git could not find a merge base for '$base_ref' and '$commit' in '$worktree'" || return 1
+  measured_numstat="$(git -C "$worktree" -c core.quotePath=false diff --numstat --no-ext-diff --find-renames \
+    "$BRANCH_GROWTH_BASE_REV" "$BRANCH_GROWTH_HEAD_REV" --)" \
     || branch_growth_fail "git could not compare '$base_ref' with '$commit' in '$worktree'" || return 1
   printf -v "$out_name" '%s' "$measured_numstat"
 }
@@ -135,7 +144,10 @@ branch_growth_render_roots() {
 # below.
 branch_baseline_lines() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
-  branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1
+  if ! branch_size_classified "$worktree" "$base_resolver" "$commit" ""; then
+    printf '%s\n' "$BRANCH_GROWTH_ERROR" >&2
+    return 1
+  fi
   measured="$BRANCH_SIZE_BASELINE"
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
@@ -215,11 +227,26 @@ BRANCH_SIZE_BASELINE=""
 # by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
   local worktree="$1" base_resolver="$2" commit="$3" test_paths="$4" base_override="${5:-}"
-  local numstat measured
+  local numstat measured lock_pairs lock_name manifest_name base_paths="" head_paths=""
+  local conf="$BRANCH_GROWTH_LIB_DIR/../../references/narrow-change.conf"
   branch_growth_render_roots "$worktree" || return 1
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat "$base_override" || return 1
+  lock_pairs="$(sed -n 's/^lock-pair //p' "$conf" 2>/dev/null)" \
+    || branch_growth_fail "lock-pair list unreadable: $conf" || return 1
+  # The exact names and ownership are checked below. This prefilter keeps
+  # tree reads off ranges with no possible lock and manifest change.
+  while read -r lock_name manifest_name; do
+    [ -n "$lock_name" ] && [ -n "$manifest_name" ] || continue
+    case "$numstat" in *"$lock_name"*) ;; *) continue ;; esac
+    case "$numstat" in *"$manifest_name"*) ;; *) continue ;; esac
+    base_paths="$(git -C "$worktree" -c core.quotePath=false ls-tree -r --full-tree --name-only "$BRANCH_GROWTH_BASE_REV")" \
+      || branch_growth_fail "git could not list paths at '$BRANCH_GROWTH_BASE_REV' in '$worktree'" || return 1
+    head_paths="$(git -C "$worktree" -c core.quotePath=false ls-tree -r --full-tree --name-only "$BRANCH_GROWTH_HEAD_REV")" \
+      || branch_growth_fail "git could not list paths at '$BRANCH_GROWTH_HEAD_REV' in '$worktree'" || return 1
+    break
+  done <<<"$lock_pairs"
   if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
-    BRANCH_GROWTH_CONF="$BRANCH_GROWTH_LIB_DIR/../../references/narrow-change.conf" \
+    BRANCH_GROWTH_LOCK_PAIRS="$lock_pairs" \
     awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" "$BRANCH_GROWTH_AWK_PATHS"'
     # One end of a numstat path, 1 the path before a rename and 2 after it.
     # git abbreviates a shared prefix and suffix as `a/{b => c}/d`, and a side
@@ -268,27 +295,38 @@ branch_size_classified() {
       }
       return 0
     }
-    function pairs_with_manifest(p,   b, dir, m) {
-      b = base_name(p)
-      if (!(b in manifest_of)) return 0
-      dir = substr(p, 1, length(p) - length(b))
-      for (m in changed_manifest)
-        if (changed_manifest[m] == manifest_of[b] && substr(m, 1, length(dir)) == dir) return 1
-      return 0
+    function mark_manifest_lock(p, side,   name, dir, lock, candidate) {
+      name = base_name(p)
+      if (!(name in manifest_names) || !((side SUBSEP p) in exists)) return
+      for (lock in manifest_of) {
+        if (manifest_of[lock] != name) continue
+        dir = substr(p, 1, length(p) - length(name))
+        while (1) {
+          candidate = side SUBSEP (dir lock)
+          if (candidate in exists) { paired[candidate] = 1; break }
+          if (dir == "") break
+          sub(/[^/]+\/$/, "", dir)
+        }
+      }
     }
     BEGIN {
       nroots = split(roots, root, " ")
       npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
       for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
-      conf = ENVIRON["BRANCH_GROWTH_CONF"]
-      while ((got = (getline line < conf)) > 0) {
-        if (line !~ /^lock-pair /) continue
-        if (split(line, pair, " ") != 3) { failed = "malformed lock-pair in " conf; exit 2 }
-        manifest_of[pair[2]] = pair[3]
-        manifest_names[pair[3]] = 1
+      pair_count = split(ENVIRON["BRANCH_GROWTH_LOCK_PAIRS"], pairs, "\n")
+      for (i = 1; i <= pair_count; i++) {
+        if (split(pairs[i], pair, " ") != 2) { failed = "malformed lock-pair: " pairs[i]; exit 2 }
+        manifest_of[pair[1]] = pair[2]
+        manifest_names[pair[2]] = 1
       }
-      if (got < 0) { failed = "lock-pair list unreadable: " conf; exit 2 }
-      close(conf)
+      side = 1
+    }
+    /^\tHEAD$/ { side = 2; next }
+    /^\tNUMSTAT$/ { side = 0; next }
+    side {
+      name = base_name($0)
+      if ((name in manifest_of) || (name in manifest_names)) exists[side, $0] = 1
+      next
     }
     NF > 0 {
       list_if_test(rename_end($3, 1))
@@ -298,11 +336,12 @@ branch_size_classified() {
     $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = "unsupported git numstat additions/deletions"; next }
     {
       n += 1
+      before[n] = rename_end($3, 1)
       path[n] = rename_end($3, 2)
       lines[n] = $1
       changed[n] = $1 + $2
-      name = base_name(path[n])
-      if (name in manifest_names) changed_manifest[path[n]] = name
+      mark_manifest_lock(before[n], 1)
+      mark_manifest_lock(path[n], 2)
       mirror_rest[n] = render_rest(path[n])
       if (mirror_rest[n] == "") source_stem[stem_path(path[n])] = 1
     }
@@ -310,9 +349,19 @@ branch_size_classified() {
       if (failed) { print failed; exit 2 }
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
-        if (pairs_with_manifest(path[i])) {
+        old_paired = ((1 SUBSEP before[i]) in paired)
+        head_paired = ((2 SUBSEP path[i]) in paired)
+        # A surviving path takes its current owner. A deletion uses its old
+        # owner. A rename must pair on both sides to set its lines aside.
+        if (before[i] == path[i]) {
+          if (!((2 SUBSEP path[i]) in exists)) head_paired = old_paired
+          old_paired = head_paired
+        } else if (old_paired) {
+          lock_files = lock_files before[i] "\n"
+        }
+        if (head_paired) lock_files = lock_files path[i] "\n"
+        if (old_paired && head_paired) {
           paired_lock += lines[i]
-          lock_files = lock_files path[i] "\n"
           continue
         }
         baseline += changed[i]
@@ -320,7 +369,7 @@ branch_size_classified() {
       }
       printf "%d %d %d %d %d%s\n\n%s", production + 0, tests + 0, mirror + 0, baseline + 0, paired_lock + 0, test_files, lock_files
     }
-  ' <<<"$numstat")"; then
+  ' <<<"$base_paths"$'\n\tHEAD\n'"$head_paths"$'\n\tNUMSTAT\n'"$numstat")"; then
     branch_growth_fail "${measured:-awk could not measure branch growth}"
     return 1
   fi
