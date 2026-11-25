@@ -94,7 +94,7 @@ const FLEET: &str = "fleet";
 // --- the shared slot -------------------------------------------------------
 
 /// What a tracker pass hands the heartbeat and verification duties.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TrackerInventory {
     /// The epoch second of the pass that read it.
     pub read_at: u64,
@@ -102,12 +102,20 @@ pub struct TrackerInventory {
     pub owed: Vec<OwedItem>,
     /// The Verifying items and the containers whose children all ended.
     pub verifying: Vec<VerifyingItem>,
-    /// The team's open items no blocker holds (`OpenItem::blocked`) that no
-    /// lane holds and the launch queue does not name, sorted.
+    /// The team's unblocked open items that no lane holds and the launch
+    /// queue does not name, sorted.
     pub open_unblocked: Vec<String>,
-    /// Every open item of the team, with whether a blocker holds it, for
+    /// Every open item of the team, with what holds it, for
     /// the heartbeat's ended lanes (`watch::ended`).
-    pub open: BTreeMap<String, bool>,
+    pub open: BTreeMap<String, OpenHold>,
+}
+
+/// The item's own tracker hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenHold {
+    Unblocked,
+    Relation,
+    Label,
 }
 
 /// The latest results of the read duties; `None` until the first
@@ -426,13 +434,14 @@ const BLOCKED_LABEL: &str = "blocked";
 
 impl OpenItem {
     /// A relation that holds launch takes precedence over the label.
-    fn label_held(&self) -> bool {
-        self.blocked_by_launch.is_empty() && self.labels.iter().any(|l| l == BLOCKED_LABEL)
-    }
-
-    /// The item's own hold, from a launch blocker or the outside-blocker label.
-    fn blocked(&self) -> bool {
-        !self.blocked_by_launch.is_empty() || self.label_held()
+    fn hold(&self) -> OpenHold {
+        if !self.blocked_by_launch.is_empty() {
+            OpenHold::Relation
+        } else if self.labels.iter().any(|l| l == BLOCKED_LABEL) {
+            OpenHold::Label
+        } else {
+            OpenHold::Unblocked
+        }
     }
 
     fn chain_node(&self) -> admission::ChainNode {
@@ -1251,7 +1260,10 @@ fn inventory_of(
     let by_id: BTreeMap<&str, &OpenItem> = items.iter().map(|i| (i.id.as_str(), i)).collect();
     let mut owed = Vec::new();
     let mut verifying = Vec::new();
+    let mut open = BTreeMap::new();
     for item in items {
+        let hold = item.hold();
+        open.insert(item.id.clone(), hold);
         let container = containers.contains(&item.id);
         let state = if container {
             Some(OwedState::Verifying)
@@ -1274,7 +1286,7 @@ fn inventory_of(
             });
             continue;
         }
-        if fleet.launch_queue.contains(&item.id) || item.label_held() {
+        if fleet.launch_queue.contains(&item.id) || hold == OpenHold::Label {
             continue;
         }
         if state.unstarted() && !startable(item, &by_id, parents) {
@@ -1323,19 +1335,17 @@ fn inventory_of(
         .collect();
     // The rows sorted by id.
     owed.sort_by(|a, b| a.id.cmp(&b.id));
-    let open_unblocked = items
+    let open_unblocked = open
         .iter()
-        .filter(|i| !i.blocked() && !held.contains(i.id.as_str()))
-        .map(|i| i.id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .filter(|(id, hold)| **hold == OpenHold::Unblocked && !held.contains(id.as_str()))
+        .map(|(id, _)| id.clone())
         .collect();
     TrackerInventory {
         read_at,
         owed,
         verifying,
         open_unblocked,
-        open: items.iter().map(|i| (i.id.clone(), i.blocked())).collect(),
+        open,
     }
 }
 

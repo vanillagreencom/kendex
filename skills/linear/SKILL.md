@@ -188,7 +188,7 @@ For a cross-team relation:
 2. Confirm `credential: "app-token"` with `auth-check`.
 3. Check that the actor can access both teams.
 
-For a blocker tracked in Linear, `issues block --by ITEM` creates the blocking relation and posts a comment. For an external blocker such as a vendor or license, use the `blocked` label and a comment.
+For a blocker tracked in Linear, `issues block --by ITEM` requires the blocking relation and attempts to post a comment. The command can succeed if the comment fails. For an external blocker such as a vendor or license, use the `blocked` label and a comment.
 
 - Blocking relations may connect issues with the same direct parent, two top-level issues, or a blocked leaf to an issue outside its ancestors.
 - An ancestor/descendant pair is refused at any depth. Use `--related` for traceability.

@@ -37,7 +37,7 @@ Workflow Actions (composite operations for dev):
                  assignee=<name> (kept; an existing assignee is never
                  replaced), assignee-skipped cause=unset or
                  assignee-skipped cause=unknown-email email=<email> (skipped)
-  block          Block issue: add relation + comment
+  block          Block issue: require a relation, attempt to post a comment
   unblock        Unblock issue: remove label + comment
   complete       Complete issue: optional summary, then Done or post-merge Verifying
                  (--done-when-met ticks the met "## Done when" boxes in that
@@ -3310,7 +3310,7 @@ activate_issue() {
         + {assignee: $assignee}'
 }
 
-# Block an issue: create blocked-by relation and post comment
+# Block an issue: require a blocked-by relation and attempt to post a comment
 # Usage: block_issue CC-XXX --by CC-YYY [--reason "text"]
 block_issue() {
     local issue_id="$1"
