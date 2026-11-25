@@ -2330,7 +2330,7 @@ done <<CONTROLS
 no head render check admits a harness that moves the render;configured;swap $manifest_harnesses;  manifest_render_check head "\$head_rev" || return 1;-
 no head render check admits a head that deletes the manifest;configured;delete;  manifest_render_check head "\$head_rev" || return 1;-
 no base render check admits stale base outputs;stale;swap derive_render = false~derive_render = true;  manifest_render_check base "\$base_rev" || return 1;-
-the sibling as the checker admits a line the installed copy refuses;skewed;text # a line the installed copy refuses;  MANIFEST_CHECKER="\$tree/.agents/skills/bot-instructions";  MANIFEST_CHECKER="$BOT_INSTRUCTIONS_PACKAGE"
+the sibling as the checker admits a line the installed copy refuses;skewed;text # a line the installed copy refuses;  MANIFEST_CHECKER="\$tree/\$package";  MANIFEST_CHECKER="$BOT_INSTRUCTIONS_PACKAGE"
 CONTROLS
 require_rows change-scope-manifest-controls "$manifest_controls"
 

@@ -68,7 +68,7 @@ Every setting comes from the caller's environment or the commit `--base` names, 
 
 The range input takes the class the classifier answers for the range through `change_scope_read`, the reading review depth takes. The range's production lines count, so a range past `small_max_production` is `standard`. `render` and `trivial` read as `micro`. The cause is `branch-class class=C rule=R`, with the classifier's class and cause. A classifier that cannot answer reads `standard`, `measured=false`, cause `branch-class-unreadable`, and the arm repeats the classifier's stderr. A names-only inventory change under rendered roots is left to the classifier. It answers `standard` for a range that adds a catalog source, since its render proof owns no catalog source, and reads a removal by its size. A range that changes the lock is `standard` whatever the classifier answers.
 
-A range that changes only `kendex.settings.toml` or `.kendex/settings.toml` can qualify for `micro` under the settings-only rule in `change-scope --help`. A change to `kendex.toml` or `kendex-local.toml` always takes `standard` in launch.
+A settings-only range can qualify for `micro` at launch. See `change-scope --help` for the settings files and one-line manifest edits the rule admits.
 
 `HARNESS_CI_STANDARD_PATHS` comes from the main checkout of `--repo`, never from a linked worktree's own settings. stdout is `change_class=micro|small|standard`. The arm prints no `quick-proof:` line.
 
