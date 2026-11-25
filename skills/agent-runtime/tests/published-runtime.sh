@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 # shellcheck source=../../orch/tests/lib/assertions.sh
 . "$ROOT/skills/orch/tests/lib/assertions.sh"
-[ "$(uname -sm)" = 'Linux x86_64' ] || { echo 'published-runtime: CI publishes Linux x86_64 binaries'; exit 0; }
+[ "$(uname -sm)" = 'Linux x86_64' ] || { echo 'rowless: CI publishes Linux x86_64 binaries'; exit 0; }
 TMP_ROOT="$(mktemp -d)" || { echo 'published-runtime: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'published-runtime: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'published-runtime: scratch=resolve-failed' >&2; exit 1; }
@@ -116,13 +116,13 @@ BINARY
         case "$CASE" in
           probe-timeout)
             detail="$(awk '/fetch-unavailable/ { print }' "$TMP_ROOT/err")"
-            assert_eq "$detail" "$name: fetch-unavailable cause=fetch-timeout artifact=$ARTIFACT" "$name reports the probe timeout separately"
+            assert_eq "$detail" "$name-fetch: fetch-unavailable cause=fetch-timeout artifact=$ARTIFACT" "$name reports the probe timeout separately"
             ;;
           run-unread | run-invalid)
             cause='run-lookup'
             [ "$CASE" != run-invalid ] || cause='run-parse'
             detail="$(awk '/fetch-unavailable/ { print }' "$TMP_ROOT/err")"
-            assert_eq "$detail" "$name: fetch-unavailable cause=$cause artifact=$ARTIFACT run=22" "$name reports unread provenance for $CASE"
+            assert_eq "$detail" "$name-fetch: fetch-unavailable cause=$cause artifact=$ARTIFACT run=22" "$name reports unread provenance for $CASE"
             ;;
         esac
         ;;

@@ -64,8 +64,9 @@ agent_runtime_fetch() ( # BINARY
   local api="repos/vanillagreencom/kendex/actions"
   for tool in gh jq unzip timeout; do command -v "$tool" >/dev/null 2>&1 || return 1; done
   [ "$(uname -sm)" = 'Linux x86_64' ] || return 1
+  # Jarvis matches keyed runtime refusals by prefix. Fetch notices use their own.
   unavailable() {
-    printf '%s: fetch-unavailable cause=%s artifact=%s%s\n' "${name%-*}" "$1" "$name" "${2:+ run=$2}" >&2
+    printf '%s-fetch: fetch-unavailable cause=%s artifact=%s%s\n' "${name%-*}" "$1" "$name" "${2:+ run=$2}" >&2
     return 1
   }
   mkdir -p -- "${binary%/*}" || { unavailable cache-unwritable; return 1; }
@@ -113,7 +114,7 @@ agent_runtime_fetch() ( # BINARY
       1) continue ;;
       *) run_cause=run-parse unread_run="$run"; continue ;;
     esac
-    printf '%s: fetching artifact=%s run=%s\n' "${name%-*}" "$name" "$run" >&2
+    printf '%s-fetch: fetching artifact=%s run=%s\n' "${name%-*}" "$name" "$run" >&2
     if ! { api_read "$api/artifacts/$artifact/zip" >"$scratch/build.zip" &&
       unzip -p "$scratch/build.zip" "$name" >"$scratch/$name" &&
       expected="$(unzip -p "$scratch/build.zip" "$name.sha256")"; }; then
