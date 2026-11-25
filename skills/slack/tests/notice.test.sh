@@ -168,12 +168,67 @@ forward-quote|$FWD_QUOTE|[]
 forward-null|$FWD_NULL|[]
 EOF
 
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text stopped 'Session stopped.')" >/dev/null
+STOPPED="$(jq -r 'select(.text == "Session stopped.") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$STOPPED" --file "$(sk_text resumed 'Session resumed.')" >/dev/null
+sk_poll "$ROOT"
+STOPPED_TS="$(sk_state ".messages.${CH}[] | select(.text == \"Session stopped.\") | .ts")"
+assert_eq "$RC|$(sk_state "[.messages.${CH}[] | select(.text == \"Session resumed.\") | .thread_ts] | @json")" \
+  "0|[\"$STOPPED_TS\"]" "an owner notice follows its predecessor in the same thread"
+
+for timing in held late live read; do
+  HELD_ROOT="$(sk_new_root "notice-$timing")"
+  sk_bind "$HELD_ROOT"
+  HELD_CH="$(sk_channel "$HELD_ROOT")"
+  TOUCH="$HELD_ROOT/tmp/jarvis-session-live"
+  sk_poll "$HELD_ROOT"
+  touch "$TOUCH"
+  HOLD="SLACK_JARVIS_SESSION_FILE=$TOUCH"
+  sk_poll "$HELD_ROOT" "$HOLD"
+  sk_lm "$HELD_ROOT" notice --item overseer --to owner --file "$(sk_text "stopped-$timing" "Stop $timing.")" >/dev/null
+  PARENT="$(jq -r .id "$(sk_box "$HELD_ROOT")/to-overseer.jsonl")"
+  sk_lm "$HELD_ROOT" events --item overseer --box to-overseer --after 0 --mark-read >/dev/null
+  if [ "$timing" != late ]; then
+    sk_lm "$HELD_ROOT" notice --item overseer --to owner --ref "$PARENT" --file "$(sk_text "outcome-$timing" "Outcome $timing.")" >/dev/null
+  fi
+  if [ "$timing" = read ]; then
+    sk_lm "$HELD_ROOT" events --item overseer --box to-overseer --after 0 --mark-read >/dev/null
+  fi
+  sk_poll "$HELD_ROOT" "$HOLD"
+  assert_eq "$(sk_state "[(.messages.${HELD_CH} // [])[] | select(.user == \"UBOT\")] | length")" "0" "$timing: neither notice bypasses a live hold"
+  sk_age_file "$TOUCH" 600
+  if [ "$timing" = live ]; then
+    sk_recovery "$HELD_ROOT" notice-followup
+  else
+    sk_poll "$HELD_ROOT" "$HOLD"
+  fi
+  if [ "$timing" = late ]; then
+    sk_lm "$HELD_ROOT" notice --item overseer --to owner --ref "$PARENT" --file "$(sk_text "outcome-$timing" "Outcome $timing.")" >/dev/null
+    sk_poll "$HELD_ROOT" "$HOLD"
+  fi
+  PAIR="$(sk_state "[(.messages.${HELD_CH} // [])[] | select(.user == \"UBOT\")] | map(.thread_ts // .ts) | @json")"
+  if [ "$timing" = read ]; then
+    assert_eq "$PAIR" "[]" "a read follow-up keeps ordinary read suppression"
+  else
+    PARENT_TS="$(sk_state ".messages.${HELD_CH}[] | select(.text == \"Stop $timing.\") | .ts")"
+    assert_eq "$PAIR" "[\"$PARENT_TS\",\"$PARENT_TS\"]" "$timing: an unread follow-up posts with its read parent after the hold"
+  fi
+done
+
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$STOPPED_TS\"}" >/dev/null
+sk_recovery "$ROOT" poll
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$STOPPED" --file "$(sk_text after-delete 'Outcome after deletion.')" >/dev/null
+sk_poll "$ROOT"
+assert_eq "$RC|$(sk_state "[.messages.${CH}[] | select(.text == \"Outcome after deletion.\") | .thread_ts] | @json")" \
+  "0|[null]" "a deleted notice thread allows the existing channel fallback"
+assert_has "$ERR" "slack: notice-parent-unavailable=" "the relay reports the unavailable parent"
+
 sk_poll "$ROOT"
 assert_eq "$RC" "0" "a restart with suppressed replies succeeds"
 assert_eq "$(sk_state "[.messages.${CH}[] | select(.user == \"UBOT\" and (.text == \"voice reply.\" or .text == \"terminal reply.\"))] | length")" "0" "suppressed replies stay absent across relay starts"
 
 # The copied relay keeps the classifier but bypasses its posting decision.
-sk_mutant reply-medium relay.py 'if not ref or owner_ask else "skip"' 'if True or not ref or owner_ask else "skip"'
+sk_mutant reply-medium relay.py 'if not ref or owner_ask or notice_parent else "skip"' 'if True or not ref or owner_ask or notice_parent else "skip"'
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$VOICE" --file "$(sk_text control 'Control reply.')" >/dev/null
 sk_poll "$ROOT"
 assert_eq "$RC" "0" "the mutant reaches notice posting"

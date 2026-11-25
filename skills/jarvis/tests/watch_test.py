@@ -2170,9 +2170,9 @@ with open(sys.argv[1], "ab") as out:
     def controller(self, session, account, row, pane="%3", verdict=None, runtime=True, setup=True):
         """The home's live, bound controller SESSION on ACCOUNT in PANE, its
         context stamp a day old: agent-runtime's status read is planted, and
-        the real rows verdict judges ROW, an object or a raw line, as the
+        the real wall verdict judges ROW, an object or a raw line, as the
         session's last row. VERDICT is the stderr line of a runtime that
-        answers the status read and then refuses the verdict read with the
+        answers the status read while orch refuses the verdict read with the
         wrapper's exit 69; RUNTIME false leaves no runtime installed; SETUP
         false runs the real wrapper with no binary built on a PATH without
         cargo, where it builds nothing and refuses every command,
@@ -2191,11 +2191,14 @@ with open(sys.argv[1], "ab") as out:
                               + ' exec ' + wrapper + ' "$@"\n')
             script.chmod(0o755)
         elif runtime:
-            refusal = ('if [ "$1 $2" = "rows verdict" ]; then echo ' + shlex.quote(verdict) + ' >&2; exit 69; fi\n'
-                       if verdict else "")
             script.write_text('#!/bin/sh\nif [ "$1 $2" = "controller status" ]; then cat ' + shlex.quote(str(status))
-                              + '; exit 0; fi\n' + refusal + 'exec ' + wrapper + ' "$@"\n')
+                              + '; exit 0; fi\nexec ' + wrapper + ' "$@"\n')
             script.chmod(0o755)
+        if verdict:
+            refused = self.executable("wall-read-refused", "#!/bin/sh\necho " + shlex.quote(verdict) + " >&2\nexit 69\n")
+            self.module.orch_runtime = lambda: refused
+        else:
+            self.module.orch_runtime = lambda: self.packages / "orch/scripts/orch-runtime"
         status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
             "live": True, "binding": "bound", "native_match": True, "open_intents": [],
             "recorded": {"session_id": session, "account": account, "harness": "claude"}}}))
@@ -2203,7 +2206,7 @@ with open(sys.argv[1], "ab") as out:
         box.mkdir(parents=True, exist_ok=True)
         box.joinpath("context.json").write_text(json.dumps(
             {"harness": "claude", "session_id": session, "at": "1970-01-02T00:00:00Z", "pane_key": "4242 " + pane}))
-        line = json.dumps(dict(row, harness="claude", session_id=session, at=1)) if isinstance(row, dict) else row
+        line = json.dumps({"harness": "claude", "session_id": session, "at": 1, **row}) if isinstance(row, dict) else row
         box.joinpath("session-4242-" + pane[1:] + ".jsonl").write_text(line + "\n")
 
     def session_command(self, answer, code):
@@ -2217,10 +2220,13 @@ with open(sys.argv[1], "ab") as out:
             + said + '\nexit ' + str(code) + '\n')
         return log
 
-    def owner_notices(self):
+    def owner_notice_rows(self):
         path = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
         rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-        return [row["text"] for row in rows if row.get("kind") == "notice" and row.get("to") == "owner"]
+        return [row for row in rows if row.get("kind") == "notice" and row.get("to") == "owner"]
+
+    def owner_notices(self):
+        return [row["text"] for row in self.owner_notice_rows()]
 
     def age_owner_notices(self, seconds):
         """Every owner notice in the home's mailbox stamped SECONDS earlier."""
@@ -2252,7 +2258,6 @@ with open(sys.argv[1], "ab") as out:
         running = {"state": "running", "account": "/accounts/b"}, 0
         refused = {"state": "failed", "reason": "handover-failed", "detail": refusal}, 1
         auth = dict(session="s1", account="/accounts/a", row={"event": "StopFailure", "error": "authentication_failed"})
-        usage = dict(auth, row={"event": "StopFailure", "error": "rate_limit"})
         quiet = dict(auth, row={"event": "Stop"})
         signed_out = ["s1", "signed out", "/accounts/a"]
         other = dict(auth, session="s2", account="/accounts/b", pane="%4")
@@ -2267,7 +2272,6 @@ with open(sys.argv[1], "ab") as out:
         # words each names, and root-unreachable events.
         for name, (answer, code), world, steps in (
                 ("auth", running, {}, [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0)]),
-                ("usage", running, {}, [(usage, 1, [["no room", "/accounts/a", "/accounts/b"]], 0), (None, 0, [], 0)]),
                 ("refused", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0)]),
                 ("no answer", (None, 1), {}, [(auth, 1, [signed_out + ["No replacement", "launch-failed"]], 0),
                                                  (None, 0, [], 0)]),
@@ -2275,7 +2279,7 @@ with open(sys.argv[1], "ab") as out:
                 # A refused succession leaves the walled session in control;
                 # once it recovers in place, its next wall is another one.
                 ("recovered", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0),
-                                               (quiet, 0, [], 0), (usage, 1, [["no room", refusal]], 0)]),
+                                               (quiet, 0, [], 0), (auth, 1, [signed_out + [refusal]], 0)]),
                 # Two episodes of one cause on one account are two notices,
                 # and another controller's wall after them is a third.
                 ("walled twice", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (quiet, 0, [], 0),
@@ -2289,11 +2293,11 @@ with open(sys.argv[1], "ab") as out:
                 ("notice landed hours ago", running, dict(landed=0, aged=True),
                  [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0), (other, 1, [["s2"]], 0)]),
                 # A session resumed in another pane is another controller.
-                ("resumed", refused, {}, [(auth, 1, [signed_out], 0), (dict(usage, pane="%4"), 1, [["no room"]], 0)]),
+                ("resumed", refused, {}, [(auth, 1, [signed_out], 0), (dict(auth, pane="%4"), 1, [signed_out], 0)]),
                 # The successor's own wall is its own episode.
                 ("successor walled", ({"state": "running", "account": "/accounts/c"}, 0), {},
                  [(auth, 1, [signed_out + ["/accounts/c"]], 0),
-                  (dict(usage, session="s2", account="/accounts/b"), 1, [["no room", "/accounts/b", "/accounts/c"]], 0)]),
+                  (dict(other, pane="%3"), 1, [["signed out", "/accounts/b", "/accounts/c"]], 0)]),
                 ("unreadable row", running, {}, [(dict(auth, row='{"event": "StopFail'), 0, [], 1), (None, 0, [], 0)]),
                 # The wrapper with no binary for its sources refuses the
                 # status read, as after a refresh before its setup runs.
@@ -2303,7 +2307,7 @@ with open(sys.argv[1], "ab") as out:
                 # verdict read, as the wrapper does once its setup goes stale
                 # between the two.
                 ("verdict read refused", running, {},
-                 [(dict(auth, verdict="agent-runtime: setup-required key=abc run=/x/setup"), 0, [], 1),
+                 [(dict(auth, verdict="orch-runtime: setup-required key=abc run=/x/setup"), 0, [], 1),
                   (None, 0, [], 0)]),
                 ("runtime missing", running, {}, [(dict(auth, runtime=False), 0, [], 1), (None, 0, [], 0)]),
                 # A notice owed past the succession, with the successor quiet
@@ -2364,6 +2368,125 @@ with open(sys.argv[1], "ab") as out:
                                 self.assertIn(world.get("cause", ""), line)
                     finally:
                         shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+
+    def test_usage_wall_notices_at_stop_and_recovers_at_reset_or_when_an_account_opens(self):
+        # The failure row and the owner's mailbox are real. Over successive
+        # watch passes the session command returns the account decision.
+        at, reset = 1795496400, 1795496520  # 2026-11-24, 05:00 and 05:02 UTC.
+        waiting = {"state": "running", "wall_recovery": "waiting"}
+        resumed = {"state": "running", "wall_recovery": "confirmed"}
+        for name, window, ready, answer in (
+            ("five-hour", "five-hour", reset, resumed),
+            ("spent-after-reset", "five-hour", reset + 30, resumed),
+            ("weekly", "weekly", at + 60, {"state": "running", "account": "/accounts/b"}),
+        ):
+            with self.subTest(case=name), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + name)
+                banner = "5-hour" if window == "five-hour" else "weekly"
+                self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at,
+                                "message": "You've hit your " + banner + " limit · resets Nov 24, 5:02am (UTC)"})
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + name))
+                watch = self.watch()
+                self.wall_passes(watch, at, succeeding=False)
+                notices = self.owner_notice_rows()
+                self.assertEqual(len(notices), 1, notices)
+                self.assertIn(window + " limit", notices[0]["text"])
+                self.assertIn("2026-11-24 05:02:00 UTC", notices[0]["text"])
+                self.assertNotIn("ref", notices[0])
+                watch.wall_pending[1].set_result(waiting)
+                steps = [(at + 30, waiting)]
+                if ready > reset:
+                    steps.append((reset, waiting))
+                for now, result in steps + [(ready, answer), (ready + 30, answer)]:
+                    log = self.session_command(result, 0)
+                    self.wall_passes(watch, now)
+                    commands = log.read_text().splitlines() if log.exists() else []
+                    if now > ready:
+                        self.assertEqual(commands, [])
+                    else:
+                        args = ["succeed", "--home", str(self.home), "--account-walled", "--usage-wall", "s1", "4242 %3"]
+                        if now >= reset:
+                            args.append("--reset-passed")
+                        self.assertEqual(commands, [" ".join(args)])
+                    sent = self.owner_notice_rows()
+                    self.assertEqual(len(sent), 1 if now < ready else 2, sent)
+                    if now >= ready:
+                        self.assertEqual(sent[1]["ref"], notices[0]["id"])
+                        self.assertIn("resumed" if window == "five-hour" else "/accounts/b", sent[1]["text"])
+                    if now == reset and result is waiting:
+                        watch = self.watch()
+
+    def test_usage_wall_reuses_the_notice_from_before_upgrade(self):
+        at = 1795496400
+        legacy = {"session": "s1", "pane": "4242 %3", "account": "/accounts/a", "kind": "usage", "at": at,
+                  "outcome": "No replacement started.", "noticed": True}
+        text = ("Jarvis session s1 has no room left on /accounts/a (read at 2026-11-24 05:00:00 UTC): "
+                "every turn it tries fails. No replacement started.")
+        waiting = {"state": "running", "wall_recovery": "waiting"}
+        for parent in ("retained", "compacted-before-upgrade", "compacted-after-upgrade"):
+            with self.subTest(parent=parent), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + parent)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + parent))
+                self.mail(self.home, "notice", text, "--to", "owner")
+                original, = self.owner_notice_rows()
+                self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at - 1})
+                watch = self.watch()
+                watch.state["wall"] = dict(legacy)
+                watch.save()
+                if parent == "compacted-after-upgrade":
+                    self.session_command(waiting, 0)
+                    self.wall_passes(self.watch(), at + 30)
+                    self.assertEqual([row["id"] for row in self.owner_notice_rows()], [original["id"]])
+                if parent != "retained":
+                    self.age_owner_notices(60 * 86400)
+                    result = self.command([self.mail_command, "compact", "--item", "overseer"], self.home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.owner_notice_rows(), [])
+                self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+                self.wall_passes(self.watch(), at + 60)
+                if parent == "retained":
+                    root, outcome = self.owner_notice_rows()
+                    self.assertEqual(root["id"], original["id"])
+                    self.assertEqual(outcome["ref"], original["id"])
+                    continue
+                notices = self.owner_notice_rows()
+                self.assertEqual(len(notices), 1, notices)
+                outcome, = notices
+                self.assertIn("/accounts/b", outcome["text"])
+                self.assertNotIn("ref", outcome)
+                self.controller("s2", "/accounts/b", {"event": "StopFailure", "error": "rate_limit", "at": at + 70})
+                log = self.session_command(waiting, 0)
+                watch = self.watch()
+                self.wall_passes(watch, at + 90)
+                self.wall_passes(watch, at + 120)
+                self.assertTrue(log.read_text().splitlines()[0].endswith("--usage-wall s2 4242 %3"))
+                self.assertEqual([row["id"] for row in self.owner_notice_rows()][:1], [outcome["id"]])
+                self.assertEqual(len(self.owner_notice_rows()), 2)
+
+    def test_unconfirmed_usage_resume_reconciles_across_watch_restart_and_keeps_handover_eligible(self):
+        at, reset = 1795496400, 1795496520
+        receipt = {"cause": "paste-unanswered", "turns_before": 0}
+        for delivery in ("unconfirmed", "unanswered"):
+            with self.subTest(delivery=delivery), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + delivery)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + delivery))
+                self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at,
+                                "message": "You've hit your 5-hour limit · resets Nov 24, 5:02am (UTC)"})
+                watch = self.watch()
+                first = {"state": "running", "wall_recovery": "unconfirmed", "wall_resume": receipt}
+                self.session_command(first, 0) if delivery == "unconfirmed" else self.session_command(None, 1)
+                self.wall_passes(watch, reset)
+                root, = self.owner_notice_rows()
+                watch = self.watch()
+                for when, result in ((reset + 30, {"state": "running", "wall_recovery": "waiting"}),
+                                     (reset + 60, {"state": "running", "account": "/accounts/b"})):
+                    log = self.session_command(result, 0)
+                    self.wall_passes(watch, when)
+                    suffix = "--reset-passed --resume-cursor 0" if delivery == "unconfirmed" else "4242 %3"
+                    self.assertTrue(log.read_text().strip().endswith(suffix), log.read_text())
+                _, outcome = self.owner_notice_rows()
+                self.assertEqual(outcome["ref"], root["id"])
+                self.assertIn("/accounts/b", outcome["text"])
 
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
@@ -2625,7 +2748,8 @@ with open(sys.argv[1], "ab") as out:
                 (walled, 'raise Failure("controller-wall", "rows", "unreadable", rows["cause"])', "return None"),
                 (walled, 'return error if error.record["key"][1:] == ["refusal", "dependency"] else None', "return None"),
                 # An unsent notice stays owed.
-                (walled, 'failure("wall-notice", error).record)\n                return', 'failure("wall-notice", error).record)'),
+                (walled, '                return\n        if usage and not outcome_notice:',
+                 '        if usage and not outcome_notice:'),
                 # A succession with no answer tells its refusal.
                 (walled, '"No replacement started: " + answer.record["detail"][:200] + "."', '"No replacement started."'),
                 # A successor in control settles the notice its predecessor's loop owed.

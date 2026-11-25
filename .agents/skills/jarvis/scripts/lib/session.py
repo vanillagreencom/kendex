@@ -61,6 +61,10 @@ class Refusal(Exception):
         self.reason, self.detail, self.state = reason, detail, state
 
 
+class CommandNotStarted(Exception):
+    """The shared deadline elapsed or spawning the command was refused."""
+
+
 def clean(value):
     return isinstance(value, str) and all(c.isprintable() for c in value)
 
@@ -157,13 +161,27 @@ class Session:
         self.emitted = False
         self.fleet_path = None
 
-    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None):
+    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None, track_launch=False):
         remaining = self.deadline - time.monotonic() if timeout is None else timeout
         if remaining <= 0:
+            if track_launch:
+                raise CommandNotStarted("deadline")
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         try:
-            result = subprocess.run(argv, input=input, text=True, encoding=encoding, capture_output=True,
-                                    cwd=self.home, env=env or self.env, timeout=remaining)
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else None,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding=encoding,
+                                       cwd=self.home, env=env or self.env)
+        except OSError as error:
+            if track_launch:
+                raise CommandNotStarted("spawn") from error
+            raise
+        try:
+            with process:
+                try:
+                    stdout, stderr = process.communicate(input, timeout=remaining)
+                except BaseException:
+                    process.kill()
+                    raise
         except subprocess.TimeoutExpired as error:
             # A call past its deadline keeps the stderr it held, such as a
             # runtime wrapper's setup-building line for the build it waited
@@ -174,6 +192,7 @@ class Session:
             print(held.decode(errors="backslashreplace") if isinstance(held, bytes) else held, end="",
                   file=sys.stderr)
             raise
+        result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
         if check and result.returncode:
             print("jarvis-session: operation=" + " ".join(argv[:3]) + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, end="", file=sys.stderr)
@@ -190,7 +209,7 @@ class Session:
         target = ["-S", socket] if socket else ["-L", self.label]
         return self.run(["tmux", *target, *map(str, args)], check=check, encoding=encoding)
 
-    def runtime(self, *args, timeout=None):
+    def runtime(self, *args, timeout=None, track_launch=False):
         """agent-runtime's reply to ARGS: (result, status, refusal key, stderr).
 
         The caller's own environment reaches it, since its settings and its
@@ -198,7 +217,8 @@ class Session:
         published policy over it; the window a launch opens inherits the
         private server's environment instead."""
         env = dict(os.environ, **{name: self.env[name] for name in POLICY_NAMES if name in self.env})
-        result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout)
+        result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout,
+                          track_launch=track_launch)
         try:
             reply = json.loads(result.stdout.splitlines()[-1])
         except (IndexError, ValueError):
@@ -762,7 +782,7 @@ class Session:
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
-    def succeed(self, account_walled=False):
+    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
@@ -773,12 +793,89 @@ class Session:
                 return answer, 0
             if answer["state"] != "running":
                 raise Refusal("record-unreadable")
-            self.env = environment(status["recorded"].get("harness"), policy=True)
+            recorded = status["recorded"]
+            self.env = environment(recorded.get("harness"), policy=True)
+            choice = None
+            if usage_wall:
+                if usage_wall != [recorded.get("session_id"), f'{recorded["server"]} {recorded["pane"]}']:
+                    raise Refusal("record-unreadable")
+                recovery = None
+                if resume_cursor is not None:
+                    try:
+                        recovery = self.resume_wall(recorded, resume_cursor)
+                    except (Refusal, OSError, subprocess.SubprocessError) as failure:
+                        print("jarvis-session: resume-read=unavailable cause=" + type(failure).__name__, file=sys.stderr)
+                        recovery = {"wall_recovery": "pending"}
+                    if recovery["wall_recovery"] == "confirmed":
+                        return {**answer, **recovery}, 0
+                choice = self.wall_choice(recorded, "headroom", Path(self.home) / "state/handoff.md")
+                if not choice.get("successor"):
+                    if recovery is None:
+                        recovery = self.resume_wall(recorded) if reset_passed else {"wall_recovery": "waiting"}
+                    return {**answer, **recovery}, 0
             record.update(intent="succeed", failure=None, reason="new-requested")
             self.write(record)
-            return self._hand_over(record, "headroom" if account_walled else "context", status["recorded"]["server_socket"])
+            return self._hand_over(record, "headroom" if account_walled else "context", recorded["server_socket"],
+                                   choice=choice)
 
-    def _hand_over(self, record, mark, socket, posture=None):
+    def wall_choice(self, recorded, mark, handoff):
+        choice, code, refusal, errors = self.ready_successor(
+            "controller", "successor", "--record", self.fleet(), "--cwd", self.home,
+            "--predecessor", recorded["pane"], "--mark", mark, "--handoff", handoff, recorded=recorded)
+        if code:
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
+        return choice
+
+    def resume_wall(self, recorded, cursor=None):
+        if cursor is None:
+            if not recorded.get("account"):
+                return {"wall_recovery": "waiting"}
+            pick = ["accounts", "pick", "--harness", recorded["harness"], "--account", recorded["account"],
+                    "--record", self.fleet(), "--for-controller"]
+            if recorded.get("model"):
+                pick.extend(("--native-model", recorded["model"]))
+            room, code, _, errors = self.runtime(*pick)
+            if code:
+                sys.stderr.write(errors)
+                raise Refusal("record-unreadable")
+            if room.get("exit") != 0:
+                return {"wall_recovery": "waiting"}
+        args = ["deliver", "--line", "Continue your work after the usage limit reset."]
+        if cursor is None:
+            args.append("--account-room")
+        else:
+            args.extend(("--no-paste", "--turns-before", cursor, "--bound-secs", "0"))
+        for flag, field in (("harness", "harness"), ("socket", "server_socket"), ("server-pid", "server"),
+                            ("server-start", "server_start"), ("pane", "pane"), ("cwd", "cwd"),
+                            ("pid", "harness_pid"), ("start", "harness_start"), ("session-id", "session_id")):
+            if not recorded.get(field):
+                raise Refusal("record-unreadable")
+            args.extend(("--" + flag, recorded[field]))
+        if recorded.get("home"):
+            args.extend(("--home", recorded["home"]))
+        try:
+            result, code, refusal, errors = self.runtime(*args, track_launch=True)
+        except CommandNotStarted as failure:
+            print("jarvis-session: resume-not-started cause=" + str(failure), file=sys.stderr)
+            return {"wall_recovery": "waiting" if cursor is None else "pending"}
+        except (Refusal, OSError, subprocess.SubprocessError) as failure:
+            print("jarvis-session: resume-answer=unavailable cause=" + type(failure).__name__, file=sys.stderr)
+            return {"wall_recovery": "pending"}
+        if cursor is not None and (code or result.get("delivery") != "confirmed"):
+            if errors:
+                sys.stderr.write(errors)
+            return {"wall_recovery": "pending"}
+        if code or result.get("delivery") not in ("confirmed", "unconfirmed"):
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The session could not resume: " +
+                          str(refusal or (result or {}).get("cause")) + ".", "failed")
+        if result["delivery"] == "unconfirmed":
+            return {"wall_recovery": "unconfirmed",
+                    "wall_resume": {"cause": result["cause"], "turns_before": result["turns_before"]}}
+        return {"wall_recovery": "confirmed"}
+
+    def _hand_over(self, record, mark, socket, posture=None, choice=None):
         # Save the handoff, write its generation header, then choose and
         # transfer until an attempt is proved, no account is left, or the
         # outcome is not a failure on a named account. The caller holds the
@@ -818,12 +915,7 @@ class Session:
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
-                choice, code, refusal, errors = self.ready_successor("controller", "successor", "--record", self.fleet(),
-                                                             "--cwd", self.home, "--predecessor", recorded["pane"],
-                                                             "--mark", mark, "--handoff", handoff, recorded=recorded)
-                if code:
-                    sys.stderr.write(errors)
-                    raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
+                choice = choice or self.wall_choice(recorded, mark, handoff)
                 if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
@@ -838,6 +930,7 @@ class Session:
                                                "brief_file": str(brief), "session": SESSION_NAME,
                                                "cause": "walled" if mark == "headroom" else "live",
                                                **({"exclude_account": recorded["account"]} if mark == "headroom" else {})}))
+                choice = None
                 result, code, refusal, errors = self.runtime("controller", "transfer", *self.reach(socket),
                                                              "--request", request, "--effect-exit", timeout=3600)
                 print(errors, end="", file=sys.stderr)
@@ -1093,6 +1186,9 @@ def main():
             command.add_argument("--origin", choices=("app-off",))
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
+            command.add_argument("--usage-wall", nargs=2, metavar=("SESSION", "PANE"))
+            command.add_argument("--reset-passed", action="store_true")
+            command.add_argument("--resume-cursor", type=int)
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
     for action in ("list", "reply", "done", "later"):
@@ -1157,7 +1253,11 @@ def main():
         elif args.verb == "stop":
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
-            answer, code = session.succeed(args.account_walled)
+            if (args.usage_wall and not args.account_walled) or (args.reset_passed and not args.usage_wall):
+                parser.error("usage-wall")
+            if args.resume_cursor is not None and (not args.reset_passed or args.resume_cursor < 0):
+                parser.error("resume-cursor")
+            answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed, args.resume_cursor)
         elif args.verb == "update-brief":
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":

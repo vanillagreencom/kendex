@@ -338,8 +338,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               a note for the owner. --ref names the envelope it answers,
               an owner note in to-lane.jsonl, one the owner wrote and not a
               peer's line or a resolution, or an owner ask in
-              to-overseer.jsonl whose ruling it reports, so a relay puts the
-              reply where the note or the question was written. Under that
+              to-overseer.jsonl whose ruling it reports, or a previous
+              owner notice from the overseer, so a relay puts the reply in
+              the original thread. Under that
               file's mailbox lock, the notice copies the reference's
               delivery_id, when present, as re_delivery_id. This field is
               copied, never authored by a caller. --progress requires --ref
@@ -2196,6 +2197,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
+    --arg re_owner_notice "$RE_OWNER_NOTICE" \
     --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --slurpfile parent "$WORK_DIR/parent.json" \
     --argjson replaces "$REPLACES_FIELD" --argjson identity "$IDENTITY_FIELD" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -2220,6 +2222,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $delivery == "" then {} else {delivery_id: $delivery} end)
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if ($kind == "ask" or $kind == "notice") and $re_delivery != "" then {re_delivery_id: $re_delivery} else {} end)
+      + (if $re_owner_notice == "1" then {re_owner_notice: true} else {} end)
       + (if $by == "" then {} else {by: $by} end)
       + (if $kind == "answer" and $by != "" then {closes: false, answer_source: $verb} else {} end)
       + (if $draft == [] then {} else {draft: $draft[0]} end)
@@ -2230,6 +2233,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
 }
 BY=""
 RE_DELIVERY_ID=""
+RE_OWNER_NOTICE=""
 RECORD_REPLY=0 REPEAT_ID=""
 
 lm_duplicate() { # ID
@@ -2419,13 +2423,17 @@ lm_guard_close() { # FILE
 # In a lane's mailbox, it is the lane's own ask, which
 # names no audience. Returns 1 with ASK_JSON empty where no such ask stands.
 ASK_JSON=""
-lm_ask_find() { # ID
+lm_ask_find() { # ID [OUTBOUND]
   local to=""
   [ "$ITEM" != overseer ] || to=owner
   lm_fetch "$TO_OVERSEER" "$WORK_DIR/ask.raw"
   lm_terminated "$WORK_DIR/ask.raw" "$WORK_DIR/ask.jsonl"
   if ! ASK_JSON="$(lm_objects "$WORK_DIR/ask.jsonl" |
-    jq -c --arg id "$1" --arg to "$to" --arg verb "$VERB" 'select(.kind == "ask" and ($verb == "resolve" or (.to // "") == $to) and .id == $id)' | awk 'NR == 1')"; then
+    jq -c --arg id "$1" --arg to "$to" --arg verb "$VERB" --arg outbound "${2:-}" '
+      select(.id == $id and
+        ((.kind == "ask" and ($verb == "resolve" or (.to // "") == $to))
+         or ($outbound == "notice:owner" and .kind == "notice" and .to == "owner" and .from == "overseer")))' |
+    awk 'NR == 1')"; then
     refuse file-unreadable "$TO_OVERSEER"
   fi
   [ -n "$ASK_JSON" ]
@@ -2453,11 +2461,14 @@ lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]; empty CLASS accepts any line
         jq -c --arg id "$id" --arg class "$class" "$MAILBOX_CLASS_JQ"' select(.id == $id and ($class == "" or overseer_mail_class == $class))' |
         awk 'NR == 1')" || refuse file-unreadable "$path"
     else
-      lm_ask_find "$id" || ASK_JSON=""
+      lm_ask_find "$id" "$VERB:$TO" || ASK_JSON=""
       ref_json="$ASK_JSON"
     fi
     if [ -n "$ref_json" ]; then
       RE_DELIVERY_ID="$(jq -r '.delivery_id // empty' <<<"$ref_json")" || refuse file-unreadable "$path"
+      if [ "$path" != "$lane" ] && jq -e '.kind == "notice"' <<<"$ref_json" >/dev/null; then
+        RE_OWNER_NOTICE=1
+      fi
     fi
     LM_HELD_PATH=""
     exec 9<&-
@@ -2910,9 +2921,8 @@ case "$VERB" in
         *[!A-Za-z0-9._-]*) refuse ref-invalid "$REF" ;;
       esac
       # The envelope answered is an owner note in to-lane.jsonl or an owner
-      # ask in to-overseer.jsonl, the two things the owner reads a reply to;
-      # a notice of this overseer's own, a peer's line and a resolution
-      # answer nothing the owner wrote. The note is judged by the class the
+      # ask in to-overseer.jsonl. An owner notice may also follow up on an
+      # earlier owner notice in that mailbox. The note is judged by the class the
       # watch reports it under, so a line the watch calls a peer's is never
       # the owner's here.
       lm_ref_find "$REF" owner-note "$TO_LANE" "$TO_OVERSEER" || refuse ref-unknown "$REF"

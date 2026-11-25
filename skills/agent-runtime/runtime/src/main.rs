@@ -1671,6 +1671,23 @@ enum DeliveryInput<'a> {
     Digest(u32),
 }
 
+fn paste_was_unsent(error: &Error) -> bool {
+    // A tmux command can fail in its after-paste hook even after writing
+    // the text. Only failure to start or connect proves the paste unsent.
+    matches!(
+        error,
+        Error::NotStarted {
+            program: "tmux",
+            operation: "paste-buffer",
+            ..
+        }
+    ) || matches!(
+        error,
+        Error::Refused { key: "tmux-server-absent", fields }
+            if fields.iter().any(|(name, value)| name == "operation" && value == "paste-buffer")
+    )
+}
+
 /// A receipt matches text in the bound session after the cursor. Checking
 /// a receipt needs no idle composer because it types nothing.
 fn deliver(
@@ -1798,11 +1815,20 @@ fn deliver(
         file: file.clone(),
         turns_before: before,
     };
-    if pasted.is_err() {
+    if let Err(error) = pasted {
+        if paste_was_unsent(&error) {
+            return Err(Error::refused("paste-unsent", &[("cause", error.key())]));
+        }
         return Ok(unconfirmed("paste-unanswered"));
     }
     loop {
-        let rows = session::user_texts_after(harness, &file, before)?;
+        let rows = match session::user_texts_after(harness, &file, before) {
+            Ok(rows) => rows,
+            Err(_) if matches!(input, DeliveryInput::Paste(_)) => {
+                return Ok(unconfirmed("session-turns-unreadable"));
+            }
+            Err(error) => return Err(error),
+        };
         if rows.iter().any(|row| match input {
             DeliveryInput::Paste(_) | DeliveryInput::Match(_) => Some(row) == expected.as_ref(),
             DeliveryInput::Digest(digest) => session::text_digest(row) == digest,

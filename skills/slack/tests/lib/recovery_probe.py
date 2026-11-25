@@ -54,6 +54,12 @@ injected = []
 try:
     if mode == "journal":
         pass
+    elif mode == "notice-followup":
+        events = relay.mail.events()
+        # The first snapshot ends at the parent. Resume and process the
+        # later follow-up in the same relay, retaining its in-memory skips.
+        relay.resume(events[:-1])
+        relay.post_events(relay.routes(events))
     elif mode == "positions":
         original = api.get
         calls = []

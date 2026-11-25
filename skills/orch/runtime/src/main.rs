@@ -959,6 +959,11 @@ enum WatchOp {
         #[arg(long, default_value_t = 1)]
         since: u64,
     },
+    /// Read Jarvis's last session row and the reset it names.
+    Wall {
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 /// The mailbox a detached process reaches (a watch, a validation run) and
@@ -2494,6 +2499,40 @@ fn reexec_with_github_auth(settings: &Settings) -> Error {
     Error::Runtime(agent_runtime::Error::io("exec", exe, e))
 }
 
+fn watch_wall(file: &Path) -> Result<serde_json::Value> {
+    use agent_runtime::accounts::wall::{LimitReport, WallChannel, harness_own_limit};
+    use agent_runtime::observe::WallKind::Usage;
+    use agent_runtime::reading::Reading;
+    use agent_runtime::rows::{self, SessionVerdict};
+    use serde_json::json;
+    use watch::lanes::{Readers, reset};
+
+    Ok(match rows::last_row(file) {
+        Reading::Live(row) => {
+            let verdict = rows::judge_session(&row);
+            let mut fields = serde_json::to_value(&verdict)?;
+            fields["reading"] = "live".into();
+            if let SessionVerdict::Walled { kind: Usage } = verdict {
+                let text = row.message.as_deref().unwrap_or_default();
+                let report = harness_own_limit(text, WallChannel::Row);
+                let window = match report {
+                    Some(LimitReport::FiveHour | LimitReport::Session) => Some("five-hour"),
+                    Some(LimitReport::Weekly) => Some("weekly"),
+                    None => None,
+                };
+                fields["at"] = json!(row.at);
+                fields["window"] = json!(window);
+                fields["reset"] = json!(row.at.and_then(|at| {
+                    reset::reported_epoch(text, report, at, Readers::kernel().zone)
+                }));
+            }
+            fields
+        }
+        Reading::Gone => json!({"reading": "gone"}),
+        Reading::Unreadable { cause } => json!({"reading": "unreadable", "cause": cause}),
+    })
+}
+
 /// The `watch` verbs. `run` runs the credential ladder, claims as this
 /// process's identity, records the claim fields (the pane it serves, its
 /// program and directory)
@@ -2503,6 +2542,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     // A run's reach is judged before the settings are read: a start that
     // names none has asked no server and alerted no mailbox.
     let named = match &op {
+        WatchOp::Wall { file } => return watch_wall(file),
         WatchOp::Run { reach, .. } => Some(reach.named()?),
         WatchOp::Start { .. }
         | WatchOp::Status { .. }
@@ -2513,6 +2553,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     settings.reach = named;
     let clock = SystemClock;
     match op {
+        WatchOp::Wall { .. } => unreachable!("wall reads before settings"),
         WatchOp::Run {
             target,
             interval,
