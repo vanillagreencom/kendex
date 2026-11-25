@@ -1063,8 +1063,11 @@ class Session:
                 refused += 1
                 key, fields = refusal
                 words.append("cause=" + key)
-                words += [name + "=" + shlex.quote(str(value)) for name, value in fields
-                          if name not in names and name not in ("kind", "cause")]
+                # A field the line already spells keeps its value under orch_,
+                # unless it only repeats the line's own.
+                words += [("orch_" + name if name in ("kind", "cause") or name in names else name) + "="
+                          + shlex.quote(str(value)) for name, value in fields
+                          if name not in names or str(names[name]) != str(value)]
             print(" ".join(words), flush=True)
 
         self.emitted = True
@@ -1177,8 +1180,7 @@ class Session:
 # relaunch refuses `lane-live` with nothing closed, and a controller's resume
 # fails its start `overseer-live` before anything opens
 # (skills/agent-runtime/runtime/src/controller/effect.rs resolve_predecessor).
-# Nothing needs doing to it, so a rerun after a partial refusal reads it
-# resumed and can exit 0.
+# Nothing needs doing to it, so it reads resumed.
 STILL_RUNNING = {"lane": ("lane-live", ()), "overseer": ("controller-resume-failed", (("note", "overseer-live"),))}
 
 

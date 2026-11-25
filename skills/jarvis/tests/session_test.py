@@ -1338,22 +1338,29 @@ print(json.dumps(session.terminal(status)))
         # The rerun with every session still running, as orch answers a live
         # overseer (skills/orch/tests/rust/controller.rs overseer-live) and a
         # live lane (skills/orch/tests/rust/effects.rs lane-live): nothing
-        # starts and it succeeds. A checkout not mounted yet then fails it.
+        # starts and it succeeds, a linked worktree of a checkout passed over.
+        # A checkout not mounted yet then fails it, beside an overseer whose
+        # start failed for another cause.
         lane_live = lambda item: {"code": 1, "stdout": json.dumps({"protocol": "orch-runtime-v1", "ok": False, "refusal": {
             "key": "lane-live", "fields": [["item", item], ["status", "running"]]}}) + "\n"}
-        answers.write_text(json.dumps({
-            str(a) + " resume-controller --fleet": {"code": 3, "stdout": "controller-resume-failed intent=i2 "
-                                                                         "note=overseer-live cause=-\n"},
-            str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
-            str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2")}))
+        resume_failed = lambda intent, note: {"code": 3, "stdout": "controller-resume-failed intent=" + intent + " note="
+                                                                   + note + " cause=x\n"}
         live = [delegate("resumed"), ("resumed", {"kind": "overseer", "checkout": str(a)}),
                 lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2")]
         unmounted = self.root / "unmounted"
-        for listed, expected, exit in (
-                ([], live, 0),
+        for listed, overseer_answer, expected, exit in (
+                ([{"folder": str(self.root / "a-linked"), "state": "ok", "worktree": {"main": str(a)}}],
+                 resume_failed("i2", "overseer-live"), live, 0),
                 ([{"folder": str(unmounted), "state": "folder-not-found", "worktree": None}],
-                 live[:1] + [("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"})]
-                 + live[1:], 1)):
+                 resume_failed("i3", "tmux-server-unstarted"),
+                 live[:1] + [("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"}),
+                             ("refused", {"kind": "overseer", "checkout": str(a), "cause": "controller-resume-failed",
+                                          "intent": "i3", "note": "tmux-server-unstarted", "orch_cause": "x"})]
+                 + live[2:], 1)):
+            answers.write_text(json.dumps({
+                str(a) + " resume-controller --fleet": overseer_answer,
+                str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
+                str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2")}))
             registry.write_text(json.dumps([{"folder": str(folder), "state": "ok", "worktree": None}
                                             for folder in (self.home, a)] + listed))
             lines, code, err = resume()
