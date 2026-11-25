@@ -1401,15 +1401,6 @@ enum OwnerRead {
     Unread(String),
 }
 
-/// `owner_action_line` (`mailbox-append.sh`): the owner's first name,
-/// the stored action and the description with any earlier action line
-/// removed; none where the assignee has no word.
-fn owner_action_line(assignee: &str, action: &str, description: &str) -> Option<String> {
-    let name = assignee.split_whitespace().next()?;
-    let body = strip_action_line(description);
-    Some(format!("**{name}, what you do:** {action}\n\n{body}"))
-}
-
 /// The byte past the action line's `** ` where the description opens with
 /// one: `**<name>, what you do:** `.
 fn action_line_end(description: &str) -> Option<usize> {
@@ -1423,39 +1414,9 @@ fn action_line_end(description: &str) -> Option<usize> {
     Some(2 + at + marker.len())
 }
 
-/// `owner_action_body`: the description without its action line, the rest
-/// of that line and the blank line after it.
-fn strip_action_line(description: &str) -> String {
-    let Some(end) = action_line_end(description).or_else(|| {
-        // The line form without the trailing space (`[^\r\n]*` after `**`).
-        let rest = description.strip_prefix("**")?;
-        let at = rest.find(", what you do:**")?;
-        let name = &rest[..at];
-        (!name.is_empty() && !name.contains(['*', '\r', '\n']))
-            .then_some(2 + at + ", what you do:**".len())
-    }) else {
-        return description.to_owned();
-    };
-    let mut rest = &description[end..];
-    // The rest of the line, then the line's end and one blank line where
-    // both stand (`(\r?\n\r?\n)?`): a lone line end stays.
-    let line_end = rest.find(['\r', '\n']).unwrap_or(rest.len());
-    rest = &rest[line_end..];
-    let newline = |text: &str| -> Option<usize> {
-        if text.starts_with("\r\n") {
-            Some(2)
-        } else if text.starts_with('\n') {
-            Some(1)
-        } else {
-            None
-        }
-    };
-    if let Some(first) = newline(rest)
-        && let Some(second) = newline(&rest[first..])
-    {
-        rest = &rest[first + second..];
-    }
-    rest.to_owned()
+// The standalone Markdown code span written by mailbox's owner_action_line.
+fn owner_action_footer(question: &str) -> String {
+    format!("\n\n`Owner question: {question}`")
 }
 
 fn read_owner_tracker_answers(
@@ -1973,24 +1934,30 @@ fn clear_owner_item(
     let name = item.assignee.map(|a| a.name).unwrap_or_default();
     let original = item.description.unwrap_or_default();
     let mut description = original.clone();
-    let owned_body = |action: &str| match owner_action_line(&name, action, "") {
-        Some(prefix) => original.strip_prefix(&prefix),
-        None => original[action_line_end(&original)?..]
+    let owned_body = || {
+        let action = ask.action.as_deref()?;
+        let footer = owner_action_footer(ask.tracker_comment.as_deref()?);
+        let rest = original[action_line_end(&original)?..]
             .strip_prefix(action)?
-            .strip_prefix("\n\n"),
+            .strip_prefix(&footer)?;
+        rest.strip_prefix("\n\n")
+            .or_else(|| rest.is_empty().then_some(rest))
     };
-    if let Some(action) = ask.action.as_deref().filter(|d| !d.is_empty())
-        && let Some(body) = owned_body(action)
-    {
-        description = match remaining
-            .last()
-            .and_then(|next| next.action.as_deref())
-            .filter(|d| !d.is_empty())
-            .and_then(|next| owner_action_line(&name, next, ""))
-        {
-            Some(line) => format!("{line}{body}"),
-            None => body.to_owned(),
+    if let Some(body) = owned_body() {
+        let next_action = || {
+            let next = remaining.last()?;
+            let name = name.split_whitespace().next()?;
+            let action = next.action.as_deref().filter(|a| !a.is_empty())?;
+            let id = next
+                .tracker_comment
+                .as_deref()
+                .filter(|id| id.len() == 36)?;
+            Some(format!(
+                "**{name}, what you do:** {action}{}\n\n{body}",
+                owner_action_footer(id)
+            ))
         };
+        description = next_action().unwrap_or_else(|| body.to_owned());
     }
     let joined = labels.into_iter().collect::<Vec<_>>().join(",");
     let mut args = vec!["issues", "update", issue];
@@ -2009,7 +1976,9 @@ fn clear_owner_item(
     if has_gate && remaining.is_empty() {
         args.push("--clear-assignee");
     }
-    args.extend(["--description", description.as_str()]);
+    if description != original {
+        args.extend(["--description", &description]);
+    }
     quota!(linear.call("owner-ask-close", &args)?);
     Ok(Answered::Value(true))
 }
@@ -2373,39 +2342,6 @@ mod tests {
         assert!(!quota.holds(0));
         let row: Quota = serde_json::from_str(&quota.row_value()).unwrap();
         assert_eq!(row, quota);
-    }
-
-    /// `owner_action_line` and `owner_action_body` (`mailbox-append.sh`):
-    /// the first name, the action, one blank line, the body; an earlier
-    /// action line is replaced; an assignee with no word repairs nothing.
-    #[test]
-    fn the_owner_action_line_opens_the_description_and_replaces_an_earlier_one() {
-        let body = "Engineering body.\n\nKeep these bytes.\n\n";
-        let action = "Post the message. Copy its link. The link closes this ask.";
-        let line = format!("**Maya, what you do:** {action}\n\n{body}");
-        assert_eq!(
-            owner_action_line("Maya Owner", action, body),
-            Some(line.clone())
-        );
-        assert!(action_line_end(&line).is_some());
-        assert!(action_line_end(body).is_none());
-        let replaced = format!("**Previous, what you do:** Old action.\n\n{body}");
-        assert_eq!(
-            owner_action_line("Maya Owner", action, &replaced),
-            Some(line.clone())
-        );
-        // The blank line after an earlier action line goes with it only as
-        // a pair (`(\r?\n\r?\n)?`): a body on the very next line keeps its
-        // line end, and a CRLF pair is one pair.
-        assert_eq!(
-            strip_action_line("**Previous, what you do:** Old.\nbody\n"),
-            "\nbody\n"
-        );
-        assert_eq!(
-            strip_action_line("**Previous, what you do:** Old.\r\n\r\nbody"),
-            "body"
-        );
-        assert_eq!(owner_action_line("", action, body), None);
     }
 
     /// A tracker stamp with fractional seconds reads as its whole second;

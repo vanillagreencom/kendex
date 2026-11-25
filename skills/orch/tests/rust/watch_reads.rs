@@ -5403,6 +5403,7 @@ fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
 /// tracker's quota rule.
 #[test]
 fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_whole_read() {
+    const POSTED: &str = "a54c6f77-50d1-4001-8000-000000000001";
     let action = "Post the message. Copy its link. The link closes this ask.";
     let body = "Engineering body.\n\nKeep these bytes.\n\n";
     let mut world = World::new();
@@ -5495,6 +5496,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             "graphql OwnerTracker": {"body": {"issue": {"description": body, "assignee": null,
                 "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
             "issues update": {"body": {}},
+            "comments owner-questions --id": {"text": comment},
             "comments create": {"body": {"success": true, "data": {"success": true, "comment": {"id": comment}}}},
             // The saved comment read back, mentioning the owner.
             "graphql OwnerTrackerComment": {"body": {"comment": {"bodyData": json!({"type": "doc",
@@ -5540,7 +5542,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             .filter(|e| e["re"] == id && (e["kind"] == "answer" || e["kind"] == "resolution"))
             .collect()
     };
-    let answered = ask("KEN-7", "question-1");
+    let answered = ask("KEN-7", POSTED);
     let due = ask("KEN-8", "question-2");
     world.linear("statuses list", statuses());
     world.linear("issues list", json!({"body": []}));
@@ -5567,7 +5569,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     world.linear(
         "comments bulk-list",
         json!({"body": {"KEN-7": [
-            {"id": "question-1", "body": "Approve the action?", "user": "agent", "user_email": "agent@example.test", "created_at": "2026-10-01T00:00:00.000Z", "updated_at": "2026-10-01T00:00:00.000Z"},
+            {"id": POSTED, "body": "Approve the action?", "user": "agent", "user_email": "agent@example.test", "created_at": "2026-10-01T00:00:00.000Z", "updated_at": "2026-10-01T00:00:00.000Z"},
             {"id": "owner-comment", "body": "OK", "user": "maya", "user_email": "Owner@example.com", "created_at": "2026-10-02T00:00:00.001Z", "updated_at": "2026-10-02T00:00:00.001Z"},
             {"id": "other-comment", "body": "Not me", "user": "riley", "user_email": "other@example.test", "created_at": "2026-10-02T00:00:00.002Z", "updated_at": "2026-10-02T00:00:00.002Z"},
             {"id": "old-comment", "body": "Before", "user": "maya", "user_email": "owner@example.com", "created_at": "2026-09-30T00:00:00.000Z", "updated_at": "2026-09-30T00:00:00.000Z"}
@@ -5596,8 +5598,9 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         ),
         "the owner's items under the posted asks' label: {linear_log}"
     );
-    let repaired =
-        format!("issues update KEN-7 --description **Maya, what you do:** {action}\n\n{body}");
+    let repaired = format!(
+        "issues update KEN-7 --description **Maya, what you do:** {action}\n\n`Owner question: {POSTED}`\n\n{body}"
+    );
     assert_eq!(
         (
             linear_log.matches(&repaired).count(),
@@ -5672,7 +5675,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             "00000007-0000-4000-8000-000000000007",
             "owner",
             "OK",
-            "question-1",
+            POSTED,
         ),
         (
             "KEN-8",
@@ -5699,7 +5702,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
                 rulings,
                 linear_log
                     .matches(&format!(
-                        "issues update {issue} --labels skills --clear-assignee --description {body}\n"
+                        "issues update {issue} --labels skills --clear-assignee\n"
                     ))
                     .count()
             ),
@@ -5784,6 +5787,8 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
 /// until it lands.
 #[test]
 fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_they_land() {
+    const Q1: &str = "a54c6f77-50d1-4001-8000-000000000001";
+    const Q2: &str = "a54c6f77-50d1-4002-8000-000000000002";
     for quota_step in ["graphql OwnerAskItem", "issues update"] {
         let mut world = World::new();
         let root = std::fs::canonicalize(world.dir.path()).unwrap();
@@ -5826,9 +5831,9 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         std::fs::create_dir_all(&mailbox).unwrap();
         let lines = [
             ask("ask-1", "KEN-7", "Approve one."),
-            posted("ask-1", "KEN-7", "owner-gated", "question-1"),
+            posted("ask-1", "KEN-7", "owner-gated", Q1),
             ask("ask-2", "KEN-7", "Do two."),
-            posted("ask-2", "KEN-7", "owner-other", "question-2"),
+            posted("ask-2", "KEN-7", "owner-other", Q2),
             ask("ask-3", "KEN-8", "Approve three."),
             posted("ask-3", "KEN-8", "owner-gated", "question-3"),
         ];
@@ -5862,7 +5867,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         );
         world.linear(
         "issues list --assignee",
-        json!({"body": [{"id": "KEN-7", "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
+        json!({"body": [{"id": "KEN-7", "description": format!("**Maya, what you do:** Approve one.\n\n`Owner question: {Q1}`\n\n{body}"), "assignee": "Maya Owner"}]}),
     );
         world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
         world.linear(
@@ -5871,7 +5876,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         );
         world.linear(
         "graphql OwnerAskItem",
-        json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
+        json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n`Owner question: {Q1}`\n\n{body}"),
             "assignee": {"name": "Maya Owner"},
             "labels": {"pageInfo": {"hasNextPage": false},
                 "nodes": [{"name": "skills"}, {"name": "owner-gated"}, {"name": "owner-other"}]}}}}),
@@ -5931,7 +5936,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             rulings,
             [(
                 "KEN-7".to_owned(),
-                "question-1".to_owned(),
+                Q1.to_owned(),
                 Some("owner".to_owned()),
                 Some("Approved.".to_owned())
             )],
@@ -5939,7 +5944,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         );
         assert!(
         log.contains(&format!(
-            "issues update KEN-7 --labels owner-other,skills --description **Maya, what you do:** Do two.\n\n{body}"
+            "issues update KEN-7 --labels owner-other,skills --description **Maya, what you do:** Do two.\n\n`Owner question: {Q2}`\n\n{body}"
         )),
         "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
     );
@@ -5972,7 +5977,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             "a landed comment ends the retries"
         );
         resolve("ask-2");
-        let item = json!({"body": {"issue": {"description": format!("**Maya, what you do:** Do two.\n\n{body}"),
+        let item = json!({"body": {"issue": {"description": format!("**Maya, what you do:** Do two.\n\n`Owner question: {Q2}`\n\n{body}"),
         "assignee": {"name": "Maya Owner"},
         "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "owner-other"}]}}}});
         world.linear("graphql OwnerAskItem", item.clone());
@@ -6021,6 +6026,8 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
 /// replacement's `replaces` entry recorded for it.
 #[test]
 fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item_state() {
+    const Q1: &str = "a54c6f77-50d1-4001-8000-000000000001";
+    const Q2: &str = "a54c6f77-50d1-4002-8000-000000000002";
     const UUID: &str = "00000007-0000-4000-8000-000000000007";
     let identity = json!({"identifier": "KEN-7", "uuid": UUID});
     // The closed ask's item ref, and the identity its own envelope carries.
@@ -6052,7 +6059,7 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
             "from": "overseer:test", "to": "owner", "issue": "KEN-7", "do": "Do two.",
             "text": "Approve, or hold?", "options": ["yes", "hold"], "recommend": "yes", "wait": 120,
             "deadline": "2099-01-01T00:00:00Z", "identity": identity,
-            "replaces": [{"id": "ask-1", "tracker_comment": "question-1", "identity": identity}]});
+            "replaces": [{"id": "ask-1", "tracker_comment": Q1, "identity": identity}]});
         let posted = |id: &str, issue: &str, comment: &str| {
             json!({"id": format!("{id}-tracker"), "kind": "tracker-posted", "at": "2026-10-01T00:01:01Z",
             "from": "overseer:test", "re": id, "issue": issue, "tracker_label": "owner-gated",
@@ -6062,9 +6069,9 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
         std::fs::create_dir_all(&mailbox).unwrap();
         let text: String = [
             predecessor,
-            posted("ask-1", spelling, "question-1"),
+            posted("ask-1", spelling, Q1),
             replacement,
-            posted("ask-2", "KEN-7", "question-2"),
+            posted("ask-2", "KEN-7", Q2),
         ]
         .iter()
         .map(|l| format!("{l}\n"))
@@ -6080,12 +6087,12 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
         world.linear(
             "issues list --assignee",
             json!({"body": [{"id": "KEN-7", "uuid": UUID,
-                "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
+                "description": format!("**Maya, what you do:** Approve one.\n\n`Owner question: {Q1}`\n\n{body}"), "assignee": "Maya Owner"}]}),
         );
         world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
         world.linear(
             "graphql OwnerAskItem",
-            json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
+            json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n`Owner question: {Q1}`\n\n{body}"),
                 "assignee": {"name": "Maya Owner"},
                 "labels": {"pageInfo": {"hasNextPage": false},
                     "nodes": [{"name": "skills"}, {"name": "owner-gated"}]}}}}),
@@ -6122,7 +6129,7 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
         let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
         assert!(
             log.contains(&format!(
-                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two.\n\n{body}"
+                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two.\n\n`Owner question: {Q2}`\n\n{body}"
             )),
             "the open replacement keeps its label, assignee and line, recorded as {spelling}: {log}"
         );
@@ -6136,7 +6143,9 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     const FIRST: &str = "a54c6f77-50d1-4001-8000-000000000001";
     const SECOND: &str = "a54c6f77-50d1-4002-8000-000000000002";
     const LEGACY: &str = "00000007-0000-4000-8000-000000000077";
-    const ACTION: &str = "**Maya, what you do:** Approve A.\n\nBody.";
+    let marked =
+        |action, id| format!("**Maya, what you do:** {action}\n\n`Owner question: {id}`\n\nBody.");
+    let own_action = marked("Approve A.", FIRST);
     if !isolated_row(NAME) {
         return;
     }
@@ -6176,7 +6185,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
             .linear(
                 "graphql OwnerAskItem",
                 json!({"body": {"issue": {
-                    "description": if id == "ask-a" { ACTION } else { "Body." }, "assignee": {"name": "Maya Owner"},
+                    "description": if id == "ask-a" { own_action.as_str() } else { "Body." }, "assignee": {"name": "Maya Owner"},
                     "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
                 }}}),
             );
@@ -6209,11 +6218,35 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     let (mut second, mut second_watch, mut second_marks) = setup("ask-b", SECOND, false);
     first.linear("comments owner-questions", pending.clone());
     close(&first, "ask-a");
+    let description = |text| {
+        json!({"body": {"issue": {
+            "description": text, "assignee": {"name": "Maya Owner"},
+            "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+        }}})
+    };
+    let identical = marked("Approve A.", SECOND);
+    let extended = marked("Approve A.\n\nThen check the result.", SECOND);
+    let mut writes = Vec::new();
+    for (at, text) in [
+        (1240, identical.as_str()),
+        (1480, extended.as_str()),
+        (1720, "**Maya, what you do:** Approve A.\n\nBody."),
+    ] {
+        first.linear("graphql OwnerAskItem", description(text));
+        pass(&mut first_watch, &mut first_marks, &clock, SINCE_EPOCH + at).unwrap();
+        writes.push(updates(&first).len());
+    }
+    assert_eq!(
+        writes,
+        [0, 0, 0],
+        "identical and longer newer actions and unmarked text are preserved"
+    );
+    first.linear("graphql OwnerAskItem", description(&own_action));
     pass(
         &mut first_watch,
         &mut first_marks,
         &clock,
-        SINCE_EPOCH + 1240,
+        SINCE_EPOCH + 1960,
     )
     .unwrap();
     assert_eq!(
@@ -6222,22 +6255,6 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         "first close clears only its action while keeping the owner label and assignee"
     );
     assert_eq!(first.posted_comments()[0].1, FIRST);
-    first.linear(
-        "graphql OwnerAskItem",
-        json!({"body": {"issue": {
-            "description": "**Maya, what you do:** Approve B.\n\nBody.",
-            "assignee": {"name": "Maya Owner"},
-            "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
-        }}}),
-    );
-    pass(
-        &mut first_watch,
-        &mut first_marks,
-        &clock,
-        SINCE_EPOCH + 1480,
-    )
-    .unwrap();
-    assert_eq!(updates(&first).len(), 1, "a newer action is left untouched");
 
     second.linear("comments owner-questions", pending);
     second.linear(
@@ -6287,7 +6304,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     .unwrap();
     assert_eq!(
         updates(&second),
-        ["issues update KEN-7 --labels skills --clear-assignee --description Body."]
+        ["issues update KEN-7 --labels skills --clear-assignee"]
     );
     assert_eq!(
         second
@@ -6305,12 +6322,12 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         }}})
     };
     // An exact old action can survive an earlier refused action write until the other mailbox clears the assignee.
-    first.linear("graphql OwnerAskItem", snapshot(ACTION));
+    first.linear("graphql OwnerAskItem", snapshot(&own_action));
     pass(
         &mut first_watch,
         &mut first_marks,
         &clock,
-        SINCE_EPOCH + 1960,
+        SINCE_EPOCH + 2200,
     )
     .unwrap();
     assert_eq!(

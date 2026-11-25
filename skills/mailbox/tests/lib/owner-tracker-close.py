@@ -49,8 +49,8 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         "assignee": {"name": item["assignee"]} if item["assignee"] else None,
         "labels": {"pageInfo": {"hasNextPage": False},
                    "nodes": [{"name": label} for label in item["labels"]]}}}))
-elif args[:2] == ["comments", "create"]:
-    if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
+elif args[:2] in (["comments", "create"], ["comments", "owner-questions"]):
+    if args[1] == "create" and row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
         if row == "comment-edited":
             item["description"] = json.loads((root / "later-description.json").read_text())
@@ -70,6 +70,8 @@ elif args[:2] == ["comments", "create"]:
                                "HOME": str(root), "TRACKER_CASE": str(root),
                                "LINEAR_API_KEY_OVERRIDE": "stub", "KENDEX_USER_EMAIL": "",
                                "LINEAR_REQUIRE_REACH": ""})
+    if args[1] == "owner-questions" and sent.returncode == 0:
+        question_id.write_text(sent.stdout.strip())
     sys.stdout.write(sent.stdout)
     sys.stderr.write(sent.stderr)
     sys.exit(sent.returncode)
@@ -185,7 +187,9 @@ def run(source, scratch, bash):
             # A previous ask can own the opening formatted action.
             body = "The issue keeps its purpose.\r\n\r\nOriginal body.\n\n"
             original = "**Outcome, what you do:** Preserve the original purpose\n\n" + body if not posted else body
-            written = "**Owner, what you do:** Approve change\n\n" + body
+            if row == "edited":
+                original = ("**Owner, what you do:** Older action.\n\nOlder second paragraph.\n\n"
+                            "`Owner question: a54c6f77-50d1-4001-8000-000000000001`\n\n" + body)
             later = "A later edit keeps its own purpose.\r\n\r\nKeep these bytes.\n\n"
             (root / "later-description.json").write_text(json.dumps(later))
             labels = ["owner-gated", "skills"] if row in ("label-failed", "comment-preexisting") else ["skills"]
@@ -214,11 +218,14 @@ def run(source, scratch, bash):
                          "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
                          "--recommend", "approve", "--effect", "none", "--file", str(message))
             ask_id = ask.stdout.strip().split("=", 1)[1]
+            question_id = (root / "question-id").read_text()
+            written = f"**Owner, what you do:** Approve change\n\n`Owner question: {question_id}`\n\n" + body
             pending = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
             after_ask = json.loads(state.read_text())
             after_comments = json.loads(comments_path.read_text())
             if posted:
                 facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
+                facts["posted"] &= after_ask["description"] == written and pending["tracker_comment"] == question_id
                 lines = after_comments[-1].splitlines()
                 # Linear turns the profile URL into a mention of the owner.
                 facts["comment_form"] &= (len(after_comments) == 2
