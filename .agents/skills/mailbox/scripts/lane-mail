@@ -683,12 +683,13 @@ recommend-invalid, recommend-missing, recommend-required, effect-required, ask-r
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 open-invalid, source-invalid, purpose-invalid, memory-too-long,
-issue-unread, replace-unconfigured, replace-unmarkable,
-overseer-only, not-owner-ask,
+issue-unread, replace-unconfigured, replace-unmarkable, owner-action-missing,
+overseer-only, not-owner-ask, overseer-unreadable, no-reader, reader-unjudged,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
-timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
+host-peer-call, host-peer-transport, peer-envelope, timeout, item-case-variant,
+mailbox-missing, retention-invalid, archive-failed, archived,
 host-root-required, host-route-missing, state-unreadable, worktree-absent, channel-session,
 session-unrecorded, session-archived, session-send-failed, item-ask-unconfigured.
 Two keys take another separator than `=`. `duplicate`'s value follows ` id=`,
@@ -736,12 +737,19 @@ failed read: a host that does not answer is `host-unreachable` with its
 `append` verb included, is `host-append`. No write falls back to reading the
 file and putting it back, which is what loses a line.
 
-`lane-host-ssh` routes a hosted peer through `peer-append`. The receiving
-mailbox checks its controller on that host. A refusal of that check keeps
-the receiving mailbox's diagnostic and appends nothing. A transport failure
-reports `host-peer-transport`. Other call failures report `host-peer-call`.
-The legacy `append` route is used when a valid provider capability line
-declares file verbs and omits `peer-mail=verb`.
+A hosted peer send or ask reads the provider's capability line before it
+writes, and a line that does not read is `host-peer-call` with
+`verb=capabilities`. `peer-mail=verb` selects `peer-append`. A line that
+declares `files=verb` without it selects the legacy `append` route above, and
+a line with neither is `host-peer-call`. No failure switches routes. A
+`peer-append` failure reports in this order: a call the runtime refused
+because the short-call slots every overseer and checkout of this user share
+stayed full is `host-busy`, exit 69, never probed; a refusal of the receiving
+mailbox, which checks the envelope and its controller on that host, keeps
+that mailbox's diagnostic and appends nothing; a repeated envelope is
+`duplicate`; a failed SSH transport, exit 255, is `host-peer-transport`; and
+any other failure, an absent verb's exit 2 included, is `host-peer-call` with
+`verb=peer-append` and its exit status.
 USAGE
 }
 

@@ -1294,7 +1294,9 @@ capabilities prints the static ssh host kind's one capability line
     if args.verb == "capabilities":
         print(CAPABILITIES)
         return
-    # Status 2 lets a caller fall back only when the peer verb is absent.
+    # Exit 2 is the protocol's absent verb, and lane-mail reports the status
+    # in host-peer-call's exit= field, so a setup failure of this present
+    # verb exits 1.
     inventory_error = 1 if args.verb == "peer-append" else 2
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
     if not inventory:
