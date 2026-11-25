@@ -58,7 +58,7 @@ On Linux the sandbox limits a lane's writes to its checkout, its issue's own rec
 
 The sandbox is not complete. A sandboxed lane can still write:
 
-- account files and session stores in Codex and Pi seats;
+- account files and session stores in Codex and Pi seats, and session folders in Claude accounts a Pi worker bills or uses for reviews;
 - four parts of the main checkout's git folder: its hooks folder when it has none at launch, its worktree settings, its submodule stores and its attributes file;
 - the other lanes' worktree records.
 

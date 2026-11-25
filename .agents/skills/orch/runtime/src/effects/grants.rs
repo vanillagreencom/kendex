@@ -15,11 +15,9 @@ use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
 use agent_runtime::session::{CLAUDE_PROJECTS, COPILOT_SESSION_STATE, claude_slug};
 use serde_json::{Value, json};
-use unicode_normalization::UnicodeNormalization;
 
 use super::refused;
 use crate::error::Result;
-use crate::ops::LaunchLane;
 use crate::settings::Settings;
 use crate::state::Lane;
 
@@ -222,12 +220,7 @@ fn resolved(path: &Path) -> Option<PathBuf> {
 fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(&path)
-            .and_then(|target| {
-                if std::fs::metadata(&target)?.is_file() {
-                    std::fs::File::open(&target)?;
-                }
-                Ok(target)
-            })
+            .and_then(|target| std::fs::File::open(&target).map(|_| target))
             .map_err(|e| {
                 refused(
                     "grant-link-unreadable",
@@ -237,9 +230,7 @@ fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
                     ],
                 )
             }),
-        Ok(_) => Ok(path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
-        Err(e) => Err(seat_read_failed(&path, e)),
+        Ok(_) | Err(_) => Ok(path),
     }
 }
 
@@ -394,7 +385,7 @@ impl SeatViews {
         (cwd, repository): (&Path, &Path),
         slug: &str,
     ) -> Result<()> {
-        // The observer reads transcripts under the launch cwd. Claude's
+        // The writer and observer use the physical launch cwd. Claude's
         // default auto memory is keyed by the Git root across worktrees.
         let projects = seat.join(CLAUDE_PROJECTS);
         let source = seat_folder(projects.clone(), &mut self.shared_dirs)?;
@@ -470,50 +461,6 @@ impl SeatViews {
     }
 }
 
-/// The Claude bridge writes through cc-session-io's normalized project
-/// path. Native Claude lookups keep their own established path contract.
-fn pi_claude_slug(path: &Path) -> String {
-    let physical = resolved(path);
-    let path: String = physical
-        .as_deref()
-        .unwrap_or(path)
-        .to_string_lossy()
-        .nfc()
-        .collect();
-    let sanitized: String = path
-        .encode_utf16()
-        .map(|unit| {
-            u8::try_from(unit)
-                .ok()
-                .filter(u8::is_ascii_alphanumeric)
-                .map_or('-', char::from)
-        })
-        .collect();
-    const MAX: usize = 200;
-    if sanitized.len() <= MAX {
-        return sanitized;
-    }
-    let mut hash = path
-        .encode_utf16()
-        .fold(0i32, |hash, unit| {
-            hash.wrapping_mul(31).wrapping_add(i32::from(unit))
-        })
-        .unsigned_abs();
-    let mut suffix = Vec::new();
-    loop {
-        suffix.push(char::from_digit(hash % 36, 36).expect("base 36 digit"));
-        hash /= 36;
-        if hash == 0 {
-            break;
-        }
-    }
-    format!(
-        "{}-{}",
-        &sanitized[..MAX],
-        suffix.into_iter().rev().collect::<String>()
-    )
-}
-
 fn seat_entries(path: &Path) -> Result<Vec<PathBuf>> {
     std::fs::read_dir(path)
         .map_err(|e| seat_read_failed(path, e))?
@@ -537,7 +484,7 @@ fn seat_read_failed(path: &Path, e: std::io::Error) -> crate::error::Error {
 
 /// Confined launches give the lane its checkout, item records, caches and
 /// seat views. Each view projects standing entries read-only and binds the
-/// session data the host observes. Pi still takes its root's existing grants.
+/// session data the host observes. Pi workers take the ordinary seat grants.
 ///
 /// The checkout's tmp must stay inside it so its own caches and views
 /// cannot write another lane's files. Read-only lanes write only their tmp.
@@ -547,14 +494,14 @@ fn seat_read_failed(path: &Path, e: std::io::Error) -> crate::error::Error {
 )]
 pub(super) fn of(
     settings: &Settings,
-    request: &LaunchLane,
+    item: &str,
+    mail_root: &Path,
     harness: Harness,
+    account: Option<&Path>,
     homes: &LaunchHome,
     lane: &Lane,
 ) -> Result<Granted> {
-    let item = crate::marker::item_name(&request.item)?;
-    let mail_root = Path::new(&request.mail_root);
-    let account = request.account.as_deref().map(Path::new);
+    let item = crate::marker::item_name(item)?;
     // The display and the read-only checkout are the record's: a relaunch
     // or a recovery keeps what the first launch was granted.
     let desktop = lane
@@ -661,7 +608,11 @@ pub(super) fn of(
     let private = folder(&root, item);
     let view_root = private.join(SEAT_VIEWS);
     let mut seat_paths = Vec::new();
-    seats.sort_by_key(|(seat, _)| seat.components().count());
+    let seat_views = answer == Answer::Confined && harness != Harness::Pi;
+    if seat_views {
+        seats.sort_by_key(|(seat, _)| seat.components().count());
+    }
+    let uses_view = |kind| seat_views && matches!(kind, Harness::Claude | Harness::Copilot);
     seats.retain(|(seat, _)| {
         if seat_paths.contains(seat) {
             return false;
@@ -671,7 +622,7 @@ pub(super) fn of(
     });
     for (seat, kind) in &seats {
         let kind = *kind;
-        if answer == Answer::Confined && matches!(kind, Harness::Claude | Harness::Copilot) {
+        if uses_view(kind) {
             continue;
         }
         let (name, empty) = settings_file(kind);
@@ -765,35 +716,28 @@ pub(super) fn of(
         answer
     };
     let mut views = SeatViews::default();
-    if answer == Answer::Confined {
+    if answer == Answer::Confined && seat_views {
         let repository = if checkout.common != checkout.git_dir {
             checkout.common.parent().unwrap_or(&root)
         } else {
             &root
         };
-        let bridge_seat = if harness == Harness::Pi
-            && harness.billed(request.model.as_deref().unwrap_or_default()) == Some(Harness::Claude)
-        {
-            homes.account.as_deref().or(account).and_then(resolved)
-        } else {
-            None
-        };
-        let bridge_slug = bridge_seat.as_ref().map(|_| pi_claude_slug(mail_root));
         let native_slug = claude_slug(mail_root);
         for (seat, kind) in &seats {
-            if matches!(kind, Harness::Claude | Harness::Copilot) {
+            if uses_view(*kind) {
                 if root.starts_with(seat) {
                     return Err(refused(
                         "grant-seat-contains-checkout",
                         &[("path", &seat.display().to_string())],
                     ));
                 }
-                let slug = if bridge_seat.as_ref() == Some(seat) {
-                    bridge_slug.as_deref().expect("bridge seat has a slug")
-                } else {
-                    &native_slug
-                };
-                views.add(&view_root, seat, *kind, (mail_root, repository), slug)?;
+                views.add(
+                    &view_root,
+                    seat,
+                    *kind,
+                    (mail_root, repository),
+                    &native_slug,
+                )?;
             }
         }
     }
@@ -1337,16 +1281,6 @@ pub(crate) fn remove_views(mail_root: &Path, item: &str, path: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_pi_claude_slug_matches_the_writers_unicode_and_long_path_contract() {
-        assert_eq!(pi_claude_slug(Path::new("/test/e\u{301} 🙂")), "-test-----");
-        let path = format!("/long/{}/e\u{301} 💩", "a".repeat(196));
-        assert_eq!(
-            pi_claude_slug(Path::new(&path)),
-            format!("-long-{}-bmaz82", "a".repeat(194))
-        );
-    }
 
     #[test]
     fn the_review_names_the_roster_s_other_harnesses() {

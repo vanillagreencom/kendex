@@ -221,14 +221,56 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
     }
 }
 
-/// Claude Code and Pi name a project directory by its path with every `/`
-/// and `.` replaced by `-`.
+/// Whether two spellings name one directory, resolved where both resolve,
+/// or compared as spelled with trailing separators off.
+pub fn same_directory(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => {
+            let trimmed = |p: &Path| p.display().to_string().trim_end_matches('/').to_owned();
+            trimmed(a) == trimmed(b)
+        }
+    }
+}
+
+/// Claude Code encodes the physical cwd in its project directory.
+/// See https://code.claude.com/docs/en/agent-sdk/sessions and the
+/// UTF-16 rolling hash observed in Claude Code 2.1.332.
 pub fn claude_slug(cwd: &Path) -> String {
-    cwd.display()
-        .to_string()
-        .chars()
-        .map(|c| if c == '/' || c == '.' { '-' } else { c })
-        .collect()
+    const MAX: usize = 200;
+    let physical = fs::canonicalize(cwd).ok();
+    let path = physical.as_deref().unwrap_or(cwd).to_string_lossy();
+    let mut slug = String::new();
+    let mut length = 0;
+    let mut hash = 0i32;
+    for unit in path.encode_utf16() {
+        if length < MAX {
+            let ch = u8::try_from(unit)
+                .ok()
+                .filter(u8::is_ascii_alphanumeric)
+                .map_or('-', char::from);
+            slug.push(ch);
+        }
+        length += 1;
+        hash = hash.wrapping_mul(31).wrapping_add(i32::from(unit));
+    }
+    if length > MAX {
+        let mut value = hash.unsigned_abs();
+        let mut digits = Vec::new();
+        loop {
+            digits.push(char::from_digit(value % 36, 36).expect("base 36 digit"));
+            value /= 36;
+            if value == 0 {
+                break;
+            }
+        }
+        slug.push('-');
+        slug.extend(digits.into_iter().rev());
+    }
+    slug
 }
 
 /// Pi's slug keeps the path's own characters and wraps it in `--`.
@@ -306,7 +348,7 @@ pub fn identify(
             let (Some(id), Some(row_cwd)) = (id, row_cwd) else {
                 return Ok(None);
             };
-            if cwd.is_some_and(|c| c != row_cwd) {
+            if cwd.is_some_and(|c| !same_directory(c, &row_cwd)) {
                 return Ok(None);
             }
             Ok(Some(SessionRef {
@@ -1550,6 +1592,22 @@ mod tests {
             fixed_file(Harness::Codex, Path::new("/h"), Path::new("/w"), &id),
             None
         );
+    }
+
+    #[test]
+    fn claude_project_keys_match_the_native_writer() {
+        let prefix = format!("/long/{}", "a".repeat(194));
+        let long = format!("{prefix}b");
+        let short_key = format!("-long-{}", "a".repeat(194));
+        let long_key = format!("{short_key}-4qa8gu");
+        for (cwd, key) in [
+            ("/repo/The Work.Tree", "-repo-The-Work-Tree"),
+            ("/repo/e\u{301}🤖", "-repo-e---"),
+            (&prefix, &short_key),
+            (&long, &long_key),
+        ] {
+            assert_eq!(claude_slug(Path::new(cwd)), key, "{cwd}");
+        }
     }
 
     #[test]

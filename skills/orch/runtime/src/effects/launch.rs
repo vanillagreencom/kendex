@@ -23,6 +23,7 @@ use agent_runtime::launch::{
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::rows;
+use agent_runtime::session::same_directory;
 use agent_runtime::trust;
 use serde_json::{Value, json};
 
@@ -394,18 +395,6 @@ fn route_of(
     }
 }
 
-/// Whether two directory spellings name one directory: resolved where both
-/// resolve, else compared as spelled with trailing separators off.
-fn same_directory(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => {
-            let trimmed = |p: &Path| p.display().to_string().trim_end_matches('/').to_owned();
-            trimmed(a) == trimmed(b)
-        }
-    }
-}
-
 /// A worktree the package made with `create --no-checkout` is a claim: its
 /// index read from `HEAD`, no file written, marked
 /// `kendex-worktree.checkoutMode claim` in its own config. A local window
@@ -628,7 +617,15 @@ fn prepare_launch(
             session_file: None,
         });
     }
-    let granted = super::grants::of(settings, r, harness, &homes, lane)?;
+    let granted = super::grants::of(
+        settings,
+        &r.item,
+        &cwd,
+        harness,
+        r.account.as_deref().map(Path::new),
+        &homes,
+        lane,
+    )?;
     for (name, value) in granted.env() {
         intent.env.insert(name, value);
     }

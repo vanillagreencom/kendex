@@ -910,11 +910,18 @@ fn reconcile_close_on_a_start_mismatch_records_unconfirmed() {
 #[test]
 fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
     // A pid no process holds is confirmed gone, so the close completes and the
-    // lane reads done.
+    // lane reads done. The launch wrote its view before worktree repair
+    // retargeted the checkout's tmp link.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
+    let checkout = runner.state_dir().canonicalize().unwrap();
+    let backing = checkout.join("scratch-a/lane-mail/KEN-21/seat-views");
+    let current = checkout.join("scratch-b/lane-mail/KEN-21/seat-views");
+    std::fs::create_dir_all(&backing).unwrap();
+    std::fs::create_dir_all(&current).unwrap();
+    std::os::unix::fs::symlink("scratch-b", checkout.join("tmp")).unwrap();
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane(
         "KEN-21",
@@ -922,16 +929,18 @@ fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
         &runner,
         json!({"pane": "%99", "server": server.pid, "pid": GONE_PID, "start": "ticks:1"}),
     )]);
-    fleet["intents"] = json!([lane_intent(
-        "close-resources",
-        "KEN-21",
-        "unconfirmed",
-        None
-    )]);
+    let mut launch = lane_intent("launch-session", "KEN-21", "confirmed", None);
+    launch["seat_view"] = json!(backing);
+    fleet["intents"] = json!([
+        launch,
+        lane_intent("close-resources", "KEN-21", "unconfirmed", None)
+    ]);
     runner.write_fleet(&fleet);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "confirmed");
     assert_eq!(runner.fleet()["lanes"][0]["status"], "done");
+    assert!(!backing.exists(), "close removes the recorded view");
+    assert!(current.is_dir(), "the new tmp location is left intact");
 }
 
 #[test]
@@ -12786,20 +12795,42 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
     let seat = outside.join("seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
+    let other_memory = seat.join("projects/other-project/memory");
+    std::fs::create_dir_all(&other_memory).unwrap();
+    let initial = world.linked_worktree("ken-sr");
+    let base = outside.join("Work Trees");
+    std::fs::create_dir(&base).unwrap();
+    let physical = base.join("ken-sr");
+    git(
+        world.runner.state_dir(),
+        &[
+            "worktree",
+            "move",
+            initial.to_str().unwrap(),
+            physical.to_str().unwrap(),
+        ],
+    );
+    let alias = outside.join("Checkout Link");
+    std::os::unix::fs::symlink(&base, &alias).unwrap();
+    let worktree = alias.join("ken-sr");
     let link = seat.join("settings.json");
     std::os::unix::fs::symlink(&operator, &link).unwrap();
     world.probe_env(
         "PROBE_RUN",
         &format!(
             "rm -f '{s}/settings.json' 2>/dev/null; {{ echo '{{\"hooks\": {{}}}}' > '{s}/settings.json'; }} 2>/dev/null && echo replace=written || echo replace=refused\necho \"settings=$(cat '{s}/settings.json')\"\n{}",
-            folder_writes(&seat, &["projects"]),
+            folder_writes(&seat, &["projects", "projects/other-project/memory"]),
             s = seat.display()
         ),
     );
-    let mut request = launch_request("KEN-SR", world.runner.state_dir());
+    let mut request = launch_request("KEN-SR", &worktree);
     request["account"] = json!(seat.display().to_string());
-    world.launch(&request);
-    let probe = world.probe("KEN-SR", 1);
+    let launch = world.launch(&request);
+    let probe = world.probe_in(&worktree, "KEN-SR", 1);
+    assert_eq!(
+        launch["intent"]["observation"]["confinement"]["state"], "confined",
+        "{launch}"
+    );
     // The launch records its bypass consent in the settings before the
     // window, through the link.
     let settings = std::fs::read_to_string(&operator).unwrap();
@@ -12810,8 +12841,61 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
         "{probe}"
     );
     assert!(probe.contains("folder=projects refused"), "{probe}");
+    assert!(
+        probe.contains("folder=projects/other-project/memory refused"),
+        "{probe}"
+    );
     assert_eq!(std::fs::read_link(&link).unwrap(), operator);
     assert!(!seat.join("projects/probe").exists());
+    assert!(!other_memory.join("probe").exists());
+
+    let id = launch["lane"]["session_id"].as_str().unwrap();
+    let pane = launch["lane"]["launch"]["pane"].as_str().unwrap();
+    let out = tmux(
+        &world.server.socket,
+        &["send-keys", "-t", pane, "readback", "Enter"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let found = loop {
+        use agent_runtime::{Harness, reading::Reading, session};
+        match session::lead_at(Harness::Claude, &seat, &worktree, None) {
+            Reading::Live(lead) if lead.id == id => {
+                if session::user_texts_after(Harness::Claude, &lead.file, 0)
+                    .unwrap()
+                    .iter()
+                    .any(|turn| turn == "readback")
+                {
+                    assert_eq!(
+                        session::fixed_id_file(Harness::Claude, &seat, &worktree, id),
+                        Reading::Live(lead.file.clone())
+                    );
+                    break lead.file;
+                }
+            }
+            Reading::Live(lead) => panic!("unexpected session {}", lead.id),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => panic!("{cause}"),
+        }
+        assert!(Instant::now() < deadline, "{id} was not read back");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        found
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with("-Work-Trees-ken-sr")
+    );
+    let view = PathBuf::from(launch["intent"]["seat_view"].as_str().unwrap());
+    assert!(view.is_dir());
+    let close = effect_report(&world.runner.op_fleet(&terminal_close("KEN-SR")));
+    assert_eq!(close["intent"]["outcome"], "confirmed", "{close}");
+    assert!(!view.exists());
+    assert!(found.is_file());
 }
 
 /// The Copilot review seat keeps standing code read-only, isolates new
@@ -12855,25 +12939,8 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
-    std::fs::create_dir(seat.join("projects")).unwrap();
-    let initial = world.linked_worktree("ken-bridge");
-    let physical_base = outside.join("Work Trees");
-    std::fs::create_dir(&physical_base).unwrap();
-    let physical = physical_base.join("ken-bridge");
-    git(
-        world.runner.state_dir(),
-        &[
-            "worktree",
-            "move",
-            initial.to_str().unwrap(),
-            physical.to_str().unwrap(),
-        ],
-    );
-    let alias = outside.join("checkout-alias");
-    std::os::unix::fs::symlink(&physical_base, &alias).unwrap();
-    let worktree = alias.join("ken-bridge");
-    let slug = agent_runtime::session::claude_slug(&physical).replace(' ', "-");
-    let relative = format!("projects/{slug}/bridge.jsonl");
+    let review = outside.join("claude-review");
+    plant_credential(&review);
     let bin = outside.join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     write_executable(
@@ -12883,23 +12950,34 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     let probe_pi = world.runner.state_dir().join("probe-pi").join("pi");
     std::fs::create_dir_all(probe_pi.parent().unwrap()).unwrap();
     write_executable(&probe_pi, probe_script(&bin.join("pi")));
+    world.runner.env.retain(|(name, _)| {
+        name != "AGENT_RUNTIME_ACCOUNT_DIRS" && name != "SECOND_OPINION_MODELS"
+    });
     world.runner.env.extend([
         (
             "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!("pi={}", probe_pi.display()),
         ),
         ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+        (
+            "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
+            format!("{}:{}", copilot.display(), review.display()),
+        ),
+        (
+            "SECOND_OPINION_MODELS".to_owned(),
+            "claude copilot".to_owned(),
+        ),
     ]);
     world.probe_env(
         "PROBE_RUN",
         &format!(
-            "{}\nprintf 'bridge transcript\\n' > '{}/{}'",
+            "{}\n{}\n{}",
             folder_writes(&root, &["extensions", "packages", "sessions"]),
-            seat.display(),
-            relative,
+            folder_writes(&seat, &["projects"]),
+            folder_writes(&review, &["projects"]),
         ),
     );
-    let mut request = launch_request("KEN-PR", &worktree);
+    let mut request = launch_request("KEN-PR", world.runner.state_dir());
     request["harness"] = json!("pi");
     request["model"] = json!("pi-claude/fable");
     request["account"] = json!(seat.display().to_string());
@@ -12911,16 +12989,15 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
         ),
         "{report}"
     );
-    let probe = world.probe_in(&worktree, "KEN-PR", 1);
+    let probe = world.probe("KEN-PR", 1);
     for name in ["extensions", "packages"] {
         assert!(probe.contains(&format!("folder={name} refused")), "{probe}");
     }
     assert!(probe.contains("folder=sessions written"), "{probe}");
     assert!(!root.join("extensions/probe").exists());
-    assert_eq!(
-        std::fs::read_to_string(seat.join(relative)).unwrap(),
-        "bridge transcript\n"
-    );
+    assert!(report["intent"]["seat_view"].is_null(), "{report}");
+    assert!(seat.join("projects/probe").is_file());
+    assert!(review.join("projects/probe").is_file());
 }
 
 /// A confined launch makes no folder in a Pi root on the host: Pi reads an

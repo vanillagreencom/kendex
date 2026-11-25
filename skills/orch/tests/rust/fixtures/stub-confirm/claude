@@ -25,7 +25,9 @@ while [ $# -gt 0 ]; do
 done
 rows=""
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-  slug="${PWD//[\/.]/-}"
+  cwd=$(pwd -P) || exit 1
+  LC_ALL=C
+  slug="${cwd//[!a-zA-Z0-9]/-}"
   mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
   rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
   # A fresh --session-id in Claude Code 2.1.332 refuses any existing JSONL.
@@ -37,5 +39,5 @@ while IFS= read -r line; do
   escaped="${line//\\/\\\\}"
   escaped="${escaped//\"/\\\"}"
   printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
-    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$cwd" >> "$rows"
 done
