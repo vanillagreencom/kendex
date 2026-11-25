@@ -25,7 +25,7 @@ DEFECTS = (
      "HandOverBound.test_an_account_already_tried_in_the_call_ends_it"),
     # Without the wait on the job, a failed attempt reads as a hand-over.
     ("outcome", SESSION, 'code = self.settled_transfer(recorded.get("generation"))', "code = 0",
-     "test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account"),
+     "HandOverBound.test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over"),
     # A walled account is kept as a context mark keeps it.
     ("walled", SESSION, '"headroom" if account_walled else "context"', '"context"',
      "test_with_no_account_left_the_answer_names_each_unproved_account_and_jarvis_keeps_running"),

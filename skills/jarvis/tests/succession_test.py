@@ -241,9 +241,18 @@ class HandOverBound(unittest.TestCase):
     """The hand-over loop over agent-runtime's replies stood in for: the
     walk offers one account on every call and each failed attempt on it
     stamps a fresh mark, as when a mark the walk let expire during a long
-    round of attempts sends the walk back to an account already tried."""
+    round of attempts sends the walk back to an account already tried.
+    A transfer can report the failure itself or leave it for Jarvis to read."""
+
+    FINISHED_FAILURE = ({"settled": {"outcome": "failed", "observation": {"note": "successor-not-ready"}}}, 3, None, "")
 
     def test_an_account_already_tried_in_the_call_ends_it(self):
+        self.assert_failed_hand_over(self.FINISHED_FAILURE, pin_unfinished=False)
+
+    def test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over(self):
+        self.assert_failed_hand_over(self.FINISHED_FAILURE, pin_unfinished=True)
+
+    def assert_failed_hand_over(self, transfer_reply, *, pin_unfinished):
         path = session_test.SKILLS / "jarvis/scripts/lib/session.py"
         spec = importlib.util.spec_from_file_location("jarvis_session_bound", path)
         module = importlib.util.module_from_spec(spec)
@@ -254,6 +263,7 @@ class HandOverBound(unittest.TestCase):
         class World(module.Session):
             def __init__(self, home):
                 self.home, self.path, self.transfers = str(home), home / "jarvis-session.json", 0
+                self.unproved = []
 
             def fleet(self):
                 return self.path.with_name("fleet.json")
@@ -262,9 +272,8 @@ class HandOverBound(unittest.TestCase):
                 return []
 
             def status(self, reconcile=True):
-                mark = {"account": account, "note": "successor-not-ready", "at": str(self.transfers)}
                 return {"recorded": {"pane": "%1", "account": "/accounts/.aclaude", "generation": 1,
-                                     "unproved": [mark]}}
+                                     "unproved": self.unproved}}
 
             def ready_successor(self, *args, recorded=None):
                 return {"successor": {"harness": "claude", "account": account}, "expected": {}}, 0, None, ""
@@ -275,7 +284,15 @@ class HandOverBound(unittest.TestCase):
                 self.transfers += 1
                 if self.transfers > 2:
                     test.fail("the walk's offer of an account already tried relaunched onto it")
-                return {"settled": {"observation": {"note": "successor-not-ready"}}}, 3, None, ""
+                result, code, refusal, errors = transfer_reply
+                note = result["settled"]["observation"]["note"]
+                self.unproved = [{"account": account, "note": note, "at": str(self.transfers)}]
+                if pin_unfinished and self.transfers == 1 and code == 3:
+                    # agent-runtime's Settled::status can report the failed job
+                    # in this reply. Expose it as unfinished first so Jarvis
+                    # must read the settled failure from the controller status.
+                    return {"settled": {"outcome": "unconfirmed"}}, 0, refusal, errors
+                return transfer_reply
 
         with tempfile.TemporaryDirectory() as home:
             home = Path(home)
@@ -363,4 +380,5 @@ if __name__ == "__main__":
         # The session rows SuccessionContract inherits run in their own suite.
         unittest.main(defaultTest=["SuccessionContract." + name for name in vars(SuccessionContract) if name.startswith("test_")]
                       + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it",
+                         "HandOverBound.test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over",
                          "SuiteStop.test_a_suite_stopped_by_term_leaves_no_process_of_its_run"])
