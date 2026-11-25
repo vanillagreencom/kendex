@@ -463,6 +463,12 @@ local_only="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -m 'local-only work')"
 git -C "$MAIN" branch unmerged-copy "$local_only"
 git -C "$MAIN" push -q origin merged-copy
 git -C "$MAIN" replace --graft "$local_base" "$local_only"
+: >"$MAIN/.git/config.lock"
+prune_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err") || prune_rc=$?
+assert_eq "$prune_rc:$(git -C "$MAIN" rev-parse --verify refs/heads/merged-copy):$(git -C "$MAIN" config branch.merged-copy.remote)" \
+  "1:$local_base:origin" "a locked config preserves both the candidate ref and upstream for a later cleanup"
+rm -- "$MAIN/.git/config.lock"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
 assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname:short)' refs/heads/)" \
   $'current\nmain\nrecovery/retained\nregistered\nunmerged-copy' \

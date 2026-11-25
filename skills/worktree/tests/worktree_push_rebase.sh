@@ -264,15 +264,18 @@ done
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
-    item-read-timeout|item-read-v0)
+    item-read-timeout|item-read-v0|item-ancestry-unsupported)
       cat >"$ROOT/bin/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 args=()
 for arg in "\$@"; do
+  if [[ "$1" == item-ancestry-unsupported && "\$arg" == --no-lazy-fetch ]]; then
+    exit 129
+  fi
   if [[ "\$arg" == protocol.version=2 ]]; then
     [[ "$1" != item-read-timeout ]] || exit 124
-    arg=protocol.version=0
+    [[ "$1" != item-read-v0 ]] || arg=protocol.version=0
   fi
   args+=("\$arg")
 done
@@ -1266,7 +1269,7 @@ SH
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
 done
 
-for branch_case in absent landed ancestral divergent moved denied push-url rewrites alias legacy timeout grafted; do
+for branch_case in absent landed ancestral divergent moved denied push-url rewrites alias legacy timeout grafted no-local-proof; do
   build "base-item-$branch_case" pair fix
   base_item_head="$(git -C "$WT" rev-parse HEAD)"
   base_remote="$ROOT/origin.git"
@@ -1330,6 +1333,11 @@ SH
       item_after="$item_before"
       git_shim item-read-timeout
       ;;
+    no-local-proof)
+      item_before="$base_item_head"
+      item_after="$item_before"
+      git_shim item-ancestry-unsupported
+      ;;
     grafted)
       item_before="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -m 'independent remote history')"
       item_after="$item_before"
@@ -1339,6 +1347,10 @@ SH
   if [[ -n "$item_before" ]]; then
     # Push by URL so no local origin/topic tracking ref is written.
     git -C "$WT" push -q "$base_remote" "$item_before:refs/heads/topic"
+  fi
+  if ! git --no-lazy-fetch --version >/dev/null 2>&1; then
+    item_after="$(remote_oid origin)"
+    [[ "$branch_case" != alias && "$branch_case" != legacy ]] || item_after="$base_item_head"
   fi
   (cd "$MAIN" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "$WORKTREE_SCRIPT" push "$WT" --to-base "$BASE" >"$ROOT/out" 2>"$ROOT/err")
   assert_eq "$(remote_oid origin)" "$item_after" "$branch_case: origin item cleanup preserves tips absent from the base"
