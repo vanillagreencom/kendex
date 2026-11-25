@@ -5,7 +5,7 @@ Maintainer notes for the orch package: its runtime under `runtime/`, its scripts
 ## Prerequisites
 
 - What [README.md § Setup](README.md#setup) names. `orch-runtime ready` checks each and names the fix for one missing or refused.
-- The suites run on Linux, and on macOS for the subset `tools/macos-test-contracts` selects, as CI runs them. A suite that reaches `orch-runtime` before `setup` built it builds it at that call, or fails on `orch-runtime: setup-required` where no cargo is on its `PATH`.
+- The suites run on Linux, and on macOS for the subset `tools/macos-test-contracts` selects, as CI runs them. On a cache miss, `orch-runtime` uses the [agent-runtime fetch and build route](../agent-runtime/SKILL.md#build-and-run). The mail hook's `turn-end --hook-dir` entry keeps its detached setup route.
 
 ## Build
 

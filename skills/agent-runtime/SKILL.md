@@ -118,8 +118,9 @@ Inside the boundary:
 ## Build and run
 
 - `scripts/agent-runtime` runs the binary built from the sources beside it.
-- Without that binary, on a computer with cargo, it prints `agent-runtime: setup-building key=<key> run=<path to scripts/setup>` on stderr, runs `scripts/setup` with its lines on stderr, then answers. A failed build exits 69 with the setup's refusal as the last stderr line.
-- With no cargo it builds nothing. It prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69.
+- On a cache miss on Linux x86_64, the wrapper uses `gh` to look for this key's published build. It verifies the publication and checksum before installing the executable in the cache.
+- If the fetch cannot supply a binary and cargo is available, the wrapper prints `agent-runtime: setup-building key=<key> run=<path to scripts/setup>` on stderr, runs `scripts/setup` with its lines on stderr, then answers. A failed build exits 69 with the setup's refusal as the last stderr line.
+- If the binary is still missing and cargo is unavailable, the wrapper prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69.
 - A caller that must answer before a build could end, such as a harness hook, reads the key and the cache through `scripts/lib/key.sh` first. Where the binary is absent it runs `setup --detach` instead of the wrapper.
 - `setup --help` states every answer and cause of `setup` and `setup --detach`.
 - `setup --runtime DIR --name NAME` builds another skill's runtime crate that depends on this one.

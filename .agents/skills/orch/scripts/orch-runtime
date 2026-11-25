@@ -7,8 +7,9 @@
 # The binary is <cache>/bin/orch-runtime-<key>, the one scripts/setup placed
 # for these sources: the key and the cache layout are agent-runtime's
 # lib/key.sh, the required sibling beside this package, and the key covers
-# this crate's inputs and agent-runtime's. When the binary is absent and
-# cargo is on PATH, this wrapper first prints
+# this crate's inputs and agent-runtime's. When the binary is absent the
+# wrapper tries the published build, except on the mail hook's entry.
+# When setup is still owed and cargo is on PATH, this wrapper prints
 #   orch-runtime: setup-building key=<key> run=<path to scripts/setup>
 # on stderr, then runs that setup, every line of it on stderr so stdout
 # stays the binary's, then runs the binary; a build that fails leaves the
@@ -44,12 +45,11 @@ runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse runtime-mi
 cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/orch-runtime-$key"
-if [ ! -x "$binary" ] && [ "${1:-}:${2:-}" != turn-end:--hook-dir ] && command -v cargo >/dev/null 2>&1; then
-  printf 'orch-runtime: setup-building key=%s run=%s\n' "$key" "$here/setup" >&2
-  agent_runtime_run_setup "$here/setup" || exit 69
+if [ ! -x "$binary" ] && [ "${1:-}:${2:-}" != turn-end:--hook-dir ]; then
+  agent_runtime_prepare "$binary" "$here/setup" "$key" || exit 69
 fi
 if [ ! -x "$binary" ]; then
-  printf 'orch-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
+  agent_runtime_setup_required "$binary" "$here/setup" "$key"
   exit 69
 fi
 exec "$binary" "$@"
