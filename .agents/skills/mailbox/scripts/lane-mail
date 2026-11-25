@@ -453,14 +453,12 @@ Peer side, one other repository's overseer mailbox per call:
               prints, whose item is the `overseer` mailbox it wrote and never
               the repository that holds it. That mailbox has one reader, the
               session REPO's fleet record names by the `server` and `pane` of
-              its `controller` member (orch schemas/workflow-state.md). A local
+              its `controller` member (orch schemas/workflow-state.md). A local or SSH
               send, an answer included, refuses before appending where no
               overseer is recorded here: `lane-mail: overseer-absent=<root>`
               names `orch-runtime register --fleet` in the session that
-              should read that checkout's mail. For an overseer on another
-              host, send from
-              that host's checkout. The
-              owner form, `send --item overseer`, requires the same record.
+              should read that checkout's mail. The owner form,
+              `send --item overseer`, requires the same record.
               An unreadable record refuses as `overseer-unreadable`. The
               record is read through `agent-runtime controller status`, which
               this send needs beside the mailbox. Where that status reads the
@@ -468,8 +466,8 @@ Peer side, one other repository's overseer mailbox per call:
               `lane-mail: no-reader=<REPO root> live=false` with a `fix=` line
               naming `orch-runtime register --fleet`; where the status could
               not be read, `lane-mail: reader-unjudged=<REPO root> cause=C`
-              with agent-runtime's cause and its refusal, and for a hosted
-              peer `cause=hosted`. Either is a notice after the
+              with agent-runtime's cause and its refusal. A provider that
+              only appends reports `cause=hosted`. Either is a notice after the
               receipt, at exit 0: the note landed. Only ORCH_STATE_DIR is
               read from REPO's settings files, as data, to place its record,
               and no file of REPO's is sourced. An answer (--re) has no pane
@@ -500,10 +498,8 @@ Options:
                 caller's own. A value resolving to this checkout is refused as
                 `repo-self`, since both sides of an exchange in one mailbox
                 would make this repository its own peer; a note to this
-                overseer is `send --item overseer`. With --host it is a path
-                on the peer's host, taken as given, and outside that check as
-                it is outside the ownership gate: nothing here can establish
-                whose path it is
+                overseer is `send --item overseer`. With --host, pass the
+                absolute path to the peer's main checkout on its host.
   --host        read and write through `orch-runtime host`, not this disk
   --after N     drain: the read cursor, the count a previous drain printed;
                 events with --box: print only envelopes past logical line N
@@ -739,12 +735,8 @@ failed read: a host that does not answer is `host-unreachable` with its
 `append` verb included, is `host-append`. No write falls back to reading the
 file and putting it back, which is what loses a line.
 
-A hosted peer needs a provider that addresses another repository's checkout.
-The shipped `lane-host-ssh` does not: its inventory describes one repository
-and addresses that repository's lanes by item, refusing rows naming a second
-one outright, so no row can name a peer. The attempt surfaces as
-`host-unreachable` for the item, which names the probe that failed rather than
-the provider that has no row to serve.
+`lane-host-ssh` routes a hosted peer through the provider's `append --item
+overseer` verb. It checks the receiving repository's reader on that host.
 USAGE
 }
 
@@ -860,7 +852,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | attach-check | owner-answers) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | peer-reader | attach-check | owner-answers) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -1033,6 +1025,12 @@ if [ "$VERB" = peer ]; then
   # A peer ask is addressed by the verb: the record it leaves carries the
   # audience field pending filters on, written here and never typed.
   [ "$PEER_VERB" != ask ] || TO=peer
+elif [ "$VERB" = peer-reader ]; then
+  [ -n "$ROOT" ] || refuse option-required --root
+  for given in $OPTS_GIVEN; do
+    [ "$given" = --root ] || refuse option-unknown "$given"
+  done
+  ITEM=overseer
 elif [ -n "$REPO" ]; then
   refuse option-unknown --repo
 fi
@@ -1788,7 +1786,7 @@ lm_root_own() { # ROOT own|checkout
     # Compaction retains existing rows and delivers no new envelope. Cursor
     # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | peer)
+      ask | notice | send | resolve | peer | peer-reader)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
@@ -1814,6 +1812,10 @@ fi
 if [ "$VERB" = peer ]; then
   # Either peer route can append to the sender's local delivery record.
   lm_root_own "$OWN_ROOT" checkout
+elif [ "$VERB" = peer-reader ]; then
+  lm_root_own "$ROOT" checkout
+  MAIN_ROOT="$(mailbox_common_root "$ROOT" 2>/dev/null)" || refuse repo-unresolved "$ROOT"
+  [ "$MAIN_ROOT" = "$(cd -P -- "$ROOT" && pwd -P)" ] || refuse repo-unresolved "$ROOT"
 fi
 
 # The mailbox a verb reads or writes. A peer exchange moves it once: the same
@@ -2100,10 +2102,14 @@ lm_sent() {
 # alone, and a live watch there reads it itself. Whether it still runs is
 # agent-runtime's controller status, which lm_require_overseer read for this
 # root: `live: false` is nobody to read it, and its `controller-unreadable`
-# refusal is a read that failed, reported with its own cause. A hosted
-# peer's record and tmux server sit on its own host, out of this shell's
-# reach.
+# refusal is a read that failed, reported with its own cause. An SSH
+# provider can report its own `peer-reader` call after a successful append.
+LM_PEER_READER_CHECKED=0
 lm_peer_reader() {
+  if [ "$LM_PEER_READER_CHECKED" -eq 1 ]; then
+    cat -- "$WORK_DIR/append.err" >&2
+    return 0
+  fi
   if [ "$HOST" -eq 1 ]; then
     lm_reader_report reader-unjudged "$ROOT" cause=hosted
   elif [ -n "$LM_READER_CAUSE" ]; then
@@ -2135,10 +2141,9 @@ lm_overseer_path() { # full|data ROOT
 # `orch-runtime register --fleet` and the runtime's controller start or transfer
 # (`orch-runtime op --fleet`) write the checkout-local fleet record.
 # A missing record requires registration in the session that reads this
-# checkout's mail. Remote overseers send from their host's checkout because
-# this shell cannot read that host's fleet state.
+# checkout's mail.
 lm_overseer_absent() { # ROOT
-    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run orch-runtime register --fleet in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout\n' "$1" >&2
+    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run orch-runtime register --fleet in the session that should read this checkout\x27s mail\n' "$1" >&2
 }
 # The record at ROOT read through agent-runtime's controller status: no
 # document or no controller in it is overseer-absent; a status that answers
@@ -2584,11 +2589,19 @@ lm_draft() {
 # is probed like a failed read, so a host out of reach keeps its own key and
 # the state an operator acts on, and `host-append` is a host that answered.
 lm_append_host() { # FILE LINE
-  local rc=0 report=""
+  local rc=0 report="" answer
   printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
-  "$ORCH_SCRIPTS/orch-runtime" host append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
-    >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
-  [ "$rc" -ne 0 ] || return 0
+  answer="$("$ORCH_SCRIPTS/orch-runtime" host append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
+    2>"$WORK_DIR/append.err")" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    [ "$VERB:$answer" != peer:reader-checked ] || LM_PEER_READER_CHECKED=1
+    return 0
+  fi
+  if [ "$VERB:$rc" = peer:2 ]; then
+    case "$(head -n 1 -- "$WORK_DIR/append.err")" in
+      'lane-mail: '*) cat -- "$WORK_DIR/append.err" >&2; exit 2 ;;
+    esac
+  fi
   if [ "$rc" -eq 4 ]; then
     report="$(cat -- "$WORK_DIR/append.err")" || refuse file-unreadable "$WORK_DIR/append.err"
     case "$report" in
@@ -3301,6 +3314,11 @@ case "$VERB" in
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     lm_objects "$WORK_DIR/over.jsonl" to-overseer || refuse file-unreadable "$TO_OVERSEER"
     lm_objects "$WORK_DIR/lane.jsonl" to-lane || refuse file-unreadable "$TO_LANE"
+    ;;
+
+  peer-reader)
+    lm_require_overseer data "$ROOT"
+    lm_peer_reader
     ;;
 
   peer)

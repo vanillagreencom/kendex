@@ -24,6 +24,8 @@ IDENTITY_FILE = "/.git/lane-host-pid"
 # The clone's own runtimes, each built by create for the clone's sources.
 AGENT_RUNTIME = "/.agents/skills/agent-runtime/scripts/agent-runtime"
 ORCH_RUNTIME = "/.agents/skills/orch/scripts/orch-runtime"
+LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
+PEER_INBOX = "/tmp/lane-mail/overseer/to-lane.jsonl"
 # The static host kind's capability line, this provider's answer to the
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
@@ -357,7 +359,26 @@ chmod 600 "$permission_path"
 mv -f -- "$staged" "$1"''', path, str(len(data)), row["clone"], "kendex-put", "put", data=data)
 
 
-def append(row, path, data):
+def peer_root(path, data):
+    """Return the checkout named by a peer envelope's destination."""
+    if not path.endswith(PEER_INBOX):
+        return ""
+    # An owner directive can use the same inbox. The peer's sender field
+    # identifies which envelopes require the receiving controller record.
+    try:
+        envelope = json.loads(data)
+    except ValueError:
+        return ""
+    if not isinstance(envelope, dict) or not str(envelope.get("from", "")).startswith("overseer:"):
+        return ""
+    root = path[:-len(PEER_INBOX)]
+    if not root.startswith("/"):
+        notice("peer-path", path=path)
+        raise SystemExit(2)
+    return root
+
+
+def append(row, path, data, reader=""):
     """Add stdin's bytes to a remote file under a lock taken on that host.
 
     A mailbox several machines write cannot be read, changed and put back:
@@ -372,16 +393,30 @@ def append(row, path, data):
     for the keyed line and keeps the EXIT trap its lock arms where flock is
     absent from replacing the one that removes the staged file.
     """
-    result = remote(row, MAILBOX_GUARD + APPEND_LIBRARIES + STAGE_AND_COUNT + '''appended=0
+    check_reader = '''reader_report=$("$3$7" peer-reader --root "$6" </dev/null 2>&1) || {
+  printf '%s\\n' "$reader_report" >&2
+  exit 2
+}
+'''
+    append_data = '''appended=0
 report=$(mailbox_append_locked "$1" 30 "" "$staged" < "$staged" 2>&1) || appended=$?
 case "$appended" in
   0) ;;
   3) failed append "$1" lock-timeout "$report" ;;
   4) printf '%s\\n' "$report" >&2; exit 4 ;;
   *) failed append "$1" "$(write_cause "$report")" "$report" ;;
-esac''', path, str(len(data)), row["clone"], "kendex-append", "append", data=data, accept=(4,))
-    if result.returncode == 4:
-        raise SystemExit(4)
+esac
+'''
+    script = MAILBOX_GUARD + (check_reader if reader else "") + APPEND_LIBRARIES + STAGE_AND_COUNT + append_data
+    if reader:
+        script += '''if [ -n "$reader_report" ]; then printf '%s\\n' "$reader_report" >&2; fi
+printf 'reader-checked\\n'
+'''
+    result = remote(row, script, path, str(len(data)), row["clone"], "kendex-append", "append", reader, LANE_MAIL,
+                    data=data, accept=(2, 4) if reader else (4,))
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    sys.stdout.buffer.write(result.stdout)
 
 
 READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
@@ -1144,7 +1179,11 @@ mail envelope is judged under that same lock and exits 4 with duplicate id=FIRST
 on stderr, appending nothing. A clone without the repeat guard delivers with
 append-library-outdated path=LIBRARY repeat-check=skipped on stderr. A clone
 without that library predates the verb and append exits 1 naming it, so
-refresh a host created before the verb shipped. Prepare the
+refresh a host created before the verb shipped. For a peer envelope, use
+append --item overseer with the peer's absolute overseer inbox path. An
+overseer inventory row selects the target where present. Otherwise every
+row must name the same target. The selected clone's installed lane-mail
+checks the peer's reader before sending, as in schemas/lane-host.md. Prepare the
 host with Git, gh, Bash, kendex and the harness first, and npm where a linked
 node_modules has a committed package-lock.json. A Pi lane runs with the
 row's remote account directory as PI_CODING_AGENT_DIR, so install its Pi
@@ -1287,7 +1326,17 @@ capabilities prints the static ssh host kind's one capability line
             state = remote(row, 'if test -f "$1/.git/lane-host-item"; then printf hosted; else printf available; fi', row["clone"])
             print(f"{row['repo']}/{row['item']}\t{state.stdout.decode()}\t-\t{row['target']}")
         return
+    if args.verb == "append":
+        args.data = sys.stdin.buffer.read()
+        args.reader = peer_root(args.path, args.data) if args.item == "overseer" else ""
     matches = [row for row in rows if row["item"] == args.item]
+    if not matches and args.item == "overseer" and args.verb in ("append", "cat", "touch"):
+        # A peer inbox is separate from the inventory's lane checkouts. A
+        # single target is unambiguous; multiple targets need an overseer row.
+        peer = (args.verb == "touch" or (args.verb == "cat" and args.path.endswith(PEER_INBOX))
+                or (args.verb == "append" and args.reader))
+        if peer and len({r["target"] for r in rows}) == 1:
+            matches = rows
     if not matches:
         notice("item-unconfigured", item=args.item)
         raise SystemExit(2)
@@ -1313,7 +1362,7 @@ def dispatch(row, args):
     elif args.verb == "put":
         put(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "append":
-        append(row, args.path, sys.stdin.buffer.read())
+        append(row, args.path, args.data, args.reader)
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "stop":

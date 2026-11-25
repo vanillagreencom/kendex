@@ -108,6 +108,9 @@ Each verb, its arguments, and its answer:
   - A repeated mail envelope exits `4` with `duplicate id=FIRST` on stderr and adds nothing.
   - A failed append adds nothing.
   - Only append to a file several machines write; never read it and `put` it back.
+  - Static SSH accepts peer envelopes (`from` starts with `overseer:`) at `append --item overseer REPO/tmp/lane-mail/overseer/to-lane.jsonl`, with the absolute path to the peer's main checkout as `REPO`.
+  - The provider uses an `overseer` inventory row if present. Otherwise all rows must name one SSH target. The same route serves `cat` for the peer inbox and `touch` for the host probe.
+  - The selected clone's installed `lane-mail` checks the peer's controller record on the host before delivery. A refused check exits `2` with the mailbox diagnostic. A successful append prints `reader-checked` on stdout and carries any reader notice on stderr.
 - `read-many`, no arguments; stdin is a JSON array of `{"item": "ID", "path": "PATH"}` rows.
   - One JSON array on stdout, one row per request, in request order.
   - Each row holds the request's `item` and `path`, an integer `status` from `0` to `255` other than `69`, `data` with the file's bytes in padded standard base64, and an optional `error` string.

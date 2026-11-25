@@ -360,7 +360,7 @@ mutant() {
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 
-mutant consumer-route 'run orch-runtime register --fleet in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout' 'use the owner-note tool for a remote overseer'
+mutant consumer-route 'run orch-runtime register --fleet in the session that should read this checkout\x27s mail' 'use the owner-note tool for a remote overseer'
 record none
 send 'Route control.'
 route=missing

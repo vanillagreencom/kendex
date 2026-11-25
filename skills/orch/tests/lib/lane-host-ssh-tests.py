@@ -1187,6 +1187,58 @@ rc=0
         self.assertEqual(target.read_bytes(), b'{"id":"whole"}\n{"id"')
         self.script.write_text(original)
 
+    def test_peer_mail_round_trip_over_ssh(self):
+        """Peer notes and asks return to the sender through the receiver's provider."""
+        sender, peer = self.root / "control", self.root / "peer checkout's"
+        for checkout in (sender, peer):
+            checkout.mkdir()
+            for args in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+                subprocess.run([self.env["REAL_GIT"], *args], cwd=checkout, env=self.git_env, check=True)
+        mail = self.source / ".agents/skills/mailbox/scripts/lane-mail"
+        message = self.root / "message"
+
+        def call(source, *args):
+            return subprocess.run([str(mail), *args], cwd=source, env={**self.env, "ORCH_LANE_HOST": str(self.script)},
+                                  capture_output=True, timeout=15)
+
+        def send(source, target, verb, text, *args):
+            self.inventory.write_text(json.dumps([dict(self.row, target=target.name, clone=str(self.source))]))
+            message.write_text(text + "\n")
+            return call(source, "peer", verb, "--host", "--repo", str(target), "--file", str(message), *args)
+
+        def inbox(checkout):
+            return checkout / "tmp/lane-mail/overseer/to-lane.jsonl"
+
+        for checkout in (sender, peer):
+            # The real status judge finds a recorded controller with no live pane.
+            (checkout / "tmp").mkdir(exist_ok=True)
+            (checkout / "tmp/workflow-state-oversee.json").write_text('{"controller":{"window":"@1"}}')
+
+        for verb in ("send", "ask"):
+            with self.subTest(verb=verb):
+                sent = send(sender, peer, verb, f"From control by {verb}")
+                self.assertEqual(sent.returncode, 0, sent.stderr)
+                self.assertTrue(sent.stderr.startswith(f"lane-mail: no-reader={peer} live=false\n".encode()), sent.stderr)
+                envelope = json.loads(inbox(peer).read_text().splitlines()[-1])
+                self.assertIn(f"id={envelope['id']}".encode(), sent.stdout)
+                self.assertEqual((envelope["text"], envelope["kind"], envelope["from"]),
+                                 (f"From control by {verb}", "directive" if verb == "send" else "ask", "overseer:control"))
+                reply = send(peer, sender, "send", f"Reply to {verb}", "--re", envelope["id"])
+                self.assertEqual(reply.returncode, 0, reply.stderr)
+                waited = call(sender, "wait", "--item", "overseer", "--id", envelope["id"], "--timeout", "1")
+                self.assertEqual(waited.returncode, 0, waited.stderr)
+                self.assertEqual(waited.stdout, f"Reply to {verb}\n".encode())
+                answer = json.loads(inbox(sender).read_text().splitlines()[-1])
+                self.assertEqual((answer["re"], answer["kind"]), (envelope["id"], "answer"))
+                self.assertIn(f"id={answer['id']}".encode(), reply.stdout)
+
+        (peer / "tmp/workflow-state-oversee.json").unlink()
+        before = inbox(peer).read_bytes()
+        refused = send(sender, peer, "ask", "No controller")
+        self.assertEqual((refused.returncode, refused.stdout), (2, b""))
+        self.assertTrue(refused.stderr.startswith(f"lane-mail: overseer-absent={peer} ".encode()), refused.stderr)
+        self.assertEqual(inbox(peer).read_bytes(), before)
+
     # A race only ever samples one interleaving. Holding the mailbox's own lock
     # through the same orch_take_lock the library calls settles it instead.
     # The release wait is bounded too, so a case that aborts before releasing
