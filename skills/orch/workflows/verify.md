@@ -93,8 +93,7 @@ When a box's deadline arrives with no evidence and no proved defect:
    - Where an owner-reserved outcome turns on it, send one owner ask on the item.
      - Name each option with its practical consequence and give a recommendation.
      - Offer: drop the check, keep waiting with a date, or keep waiting for an event the person names.
-     - Under an overseer, use [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks); with no overseer, use § 3's tracker route.
-     - Read the comments first, so a later pass reuses an open ask.
+     - For a GitHub item, `[OWNER/REPO]#[N]`, use the [GitHub owner ask form in oversee-events.md § Verification](../references/oversee-events.md#github-owner-asks). For a Linear item, use § 3.
 
 3. **Act on the decision**, and record the decision and the changed fields on the item:
 
@@ -117,10 +116,11 @@ When a box's deadline arrives with no evidence and no proved defect:
 
 ## 3. Ask for a person's reading
 
-- With an overseer, follow [communication-modes.md § Owner-only verification](../references/communication-modes.md#owner-only-verification).
-- With no overseer, keep that reader selection. This pass takes an accessible tool reading; a delegate reading follows the delegate notice route.
+- Select the reader through [communication-modes.md § Owner-only verification](../references/communication-modes.md#owner-only-verification). With no overseer, this pass takes an accessible tool reading and a delegate reading follows the delegate notice route.
+- For an owner-only reading or § 2's ask on a GitHub item, `[OWNER/REPO]#[N]`, use the [GitHub owner ask form in oversee-events.md § Verification](../references/oversee-events.md#github-owner-asks).
+- With an overseer, read the Linear item's comments first and reuse an open ask for this box. A new ask follows [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks).
 
-  For an owner-only box, or § 2's ask, ask directly through the linear skill:
+For a Linear owner-only box or § 2's ask with no overseer, ask directly through the linear skill:
 
   1. Read the item and its comments.
      - Reuse an open verification ask for this box.

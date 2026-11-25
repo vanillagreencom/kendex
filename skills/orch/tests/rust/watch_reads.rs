@@ -4624,9 +4624,9 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
 /// again after GitHub refused it. Its release-triggered box waits, also on a
 /// later release that does not contain the merge; a release that does is
 /// met, ticked, and the issue closes as completed with it. A person's
-/// reopen of the closed issue stands, and a box the person adds and ticks
-/// by hand closes it again once it carries its Evidence line, a refused
-/// close asked again. An issue an
+/// reopen stands even before the watch sees the issue closed. A box the
+/// person adds and ticks by hand closes it again once it carries its
+/// Evidence line, a refused close asked again. An issue an
 /// outside author wrote is no item: its merge left it open, and it is said
 /// once for the overseer. A Linear item's row stands while the tracker is
 /// unread; no write reaches the tracker CLI.
@@ -4879,6 +4879,31 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     );
     let closed = written[3]["input"]["body"].as_str().unwrap().to_owned();
     assert!(closed.contains("\n- [x] Post-merge: releases"), "{closed}");
+
+    // The issue reopens between GitHub reads, so the met due row still
+    // stands from the verification pass that closed it.
+    plant_issue(&mut world, Some(&closed));
+    assert_eq!(read_github(&mut baseline, LATER + 90), 0);
+    let prior = baseline
+        .get(verifying::DEADLINE_ROW, "owner/repo#7")
+        .unwrap();
+    assert!(
+        prior.starts_with("box=3 ") && prior.ends_with(" read=met"),
+        "{prior}"
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 90,
+    )
+    .unwrap();
+    assert_eq!(
+        writes(&world).len(),
+        4,
+        "a reopen before the closed read stands"
+    );
 
     // Closed, its row goes; reopened with every box ticked, it stays open.
     plant_issue(&mut world, None);

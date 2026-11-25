@@ -1335,6 +1335,13 @@ fn reading_of(row: &str) -> (&str, &str) {
     row.rsplit_once(" read=").unwrap_or((row, ""))
 }
 
+fn prior_owes_issue_close(row: &str) -> bool {
+    // The watch can tick and close in one PATCH when just one box is open.
+    // Its lone met row can outlive that close if the issue is reopened.
+    let (deadline, reading) = reading_of(row);
+    row != "boxes=0" && (reading != "met" || deadline.contains(" read="))
+}
+
 fn box_deadline(row: &str) -> Option<(&str, &str)> {
     let (trigger, tail) = reading_of(row).0.rsplit_once(" status=")?;
     Some((trigger, tail.split_once(" deadline=")?.1))
@@ -1435,13 +1442,11 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                 held.insert(item.id.clone());
                 all_lines.extend(lines.iter().cloned());
                 // A GitHub item closes on the pass that reads its last open
-                // post-merge box gone, as one a person ticked by hand: an
-                // issue first read with none open may be one a person
-                // reopened. Its row moves only once the close is written,
-                // so a refused close is asked again.
+                // post-merge box gone if its prior row still calls for
+                // closure. Keep that row on refusal so the close is retried.
                 if let Some(issue) = issue
                     && key == "boxes=0"
-                    && prior.is_some_and(|row| row != "boxes=0")
+                    && prior.is_some_and(prior_owes_issue_close)
                 {
                     let (written, note) = settle_issue(ctx, issue, &item.description, None);
                     let _ = writeln!(
