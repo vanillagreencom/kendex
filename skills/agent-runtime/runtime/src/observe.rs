@@ -279,8 +279,14 @@ static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
+/// A login wall's line, anchored at the row start so a quoted copy is not
+/// one. Claude Code 2.1.332 draws the expired-token error under its `●`
+/// answer bullet, and a pane narrower than the line wraps it onto an
+/// indented row below: [`wrapped_auth_failure`] reads that pair. `●` opens
+/// every Claude answer, so only that whole, end-anchored line takes it: an
+/// answer that begins with another wall's words is not a wall.
 static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login|Please run /login · API Error: 401 OAuth access token has expired\. Re-authenticate to continue\.\s*$)").unwrap()
+    Regex::new(r"^[\s\u{a0}]*(?:(?:⎿[\s\u{a0}]*|■\s*|✗\s*)?(?:Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login)|(?:⎿[\s\u{a0}]*|■\s*|✗\s*|●\s*)?Please run /login · API Error: 401 OAuth access token has expired\. Re-authenticate to continue\.\s*$)").unwrap()
 });
 /// A user-turn marker: Claude's and Copilot's `❯`, Codex's `›`. A submitted
 /// turn is echoed as the marker, a space and the text; the live composer is
@@ -588,15 +594,34 @@ pub fn limit_banner(slice: &str) -> Option<String> {
     if is_working(slice) {
         return None;
     }
-    let lines: Vec<&str> = slice
-        .lines()
-        .filter(|l| USAGE_LIMIT.is_match(l) || AUTH_FAILURE.is_match(l))
-        .collect();
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
+    let rows: Vec<&str> = slice.lines().collect();
+    let mut banner = Vec::new();
+    let mut i = 0;
+    while let Some(&row) = rows.get(i) {
+        if USAGE_LIMIT.is_match(row) || AUTH_FAILURE.is_match(row) {
+            banner.push(row);
+        } else if let Some(&next) = rows.get(i + 1)
+            && wrapped_auth_failure(row, next)
+        {
+            banner.extend([row, next]);
+            i += 1;
+        }
+        i += 1;
     }
+    (!banner.is_empty()).then(|| banner.join("\n"))
+}
+
+/// Whether `row` and the `next` row under it read as one login wall's line
+/// once the space the wrap took is restored and the continuation's indent
+/// dropped. Only an adjacent pair is joined, never the screen: the composer
+/// rules read single rows (`host::tmux::capture` keeps them apart). A pair
+/// where either row is a wall's line alone is no wrap: the joined text of a
+/// blank row and a wall line under it would match, and carry the blank row
+/// into the banner.
+fn wrapped_auth_failure(row: &str, next: &str) -> bool {
+    !AUTH_FAILURE.is_match(row)
+        && !AUTH_FAILURE.is_match(next)
+        && AUTH_FAILURE.is_match(&format!("{} {}", row.trim_end(), next.trim_start()))
 }
 
 pub fn is_auth_failure(banner: &str, error_kind: Option<&str>) -> bool {
@@ -606,6 +631,10 @@ pub fn is_auth_failure(banner: &str, error_kind: Option<&str>) -> bool {
         return true;
     }
     banner.lines().any(|l| AUTH_FAILURE.is_match(l))
+        || banner
+            .lines()
+            .zip(banner.lines().skip(1))
+            .any(|(row, next)| wrapped_auth_failure(row, next))
 }
 
 /// Judge one captured pane drawn by `harness`. `process` is who holds the
@@ -741,21 +770,55 @@ mod tests {
         ));
     }
 
+    /// The expired-token banner is an auth wall carrying its rows as drawn,
+    /// on one row and wrapped onto two by an 80-column pane (the fixture,
+    /// captured from Claude Code 2.1.332 answering a stubbed 401). A quoted
+    /// copy is not, nor an answer that opens with another wall's words, and
+    /// a wrapped answer above the composer stays idle.
     #[test]
-    fn an_expired_oauth_token_banner_is_an_auth_wall() {
-        let banner = "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.";
-        let read = |line| {
-            let screen = format!("❯ work\n{line}\n❯\u{a0}");
-            judge(&screen, Harness::Claude, &ProcessReading::HarnessUp, None)
-        };
-        assert_eq!(
-            read(banner),
-            State::Walled {
-                kind: WallKind::Auth,
-                banner: banner.to_owned()
+    fn an_expired_oauth_token_banner_is_an_auth_wall_on_one_row_or_wrapped() {
+        const BANNER: &str = "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.";
+        const WRAPPED: &str = include_str!("../../tests/rust/fixtures/claude-oauth-expired-80.txt");
+        // Each screen and the banner rows its wall carries, trailing blanks
+        // aside; `None` is a screen that reads idle.
+        let rows: [(String, Option<&[&str]>); 5] = [
+            (format!("❯ work\n{BANNER}\n❯\u{a0}"), Some(&[BANNER])),
+            (format!("❯ work\n\"{BANNER}\"\n❯\u{a0}"), None),
+            (
+                WRAPPED.to_owned(),
+                Some(&[
+                    "● Please run /login · API Error: 401 OAuth access token has expired.",
+                    "  Re-authenticate to continue.",
+                ]),
+            ),
+            (
+                "❯ work\n● The banner is read across the row\n  it wraps onto.\n❯\u{a0}".to_owned(),
+                None,
+            ),
+            (
+                "❯ work\n● Your access token could not be refreshed because the stub refused it.\n❯\u{a0}"
+                    .to_owned(),
+                None,
+            ),
+        ];
+        for (screen, banner) in rows {
+            let state = judge(&screen, Harness::Claude, &ProcessReading::HarnessUp, None);
+            match (state, banner) {
+                (
+                    State::Walled {
+                        kind: WallKind::Auth,
+                        banner: drawn,
+                    },
+                    Some(banner),
+                ) => assert_eq!(
+                    drawn.lines().map(str::trim_end).collect::<Vec<_>>(),
+                    banner,
+                    "{screen}"
+                ),
+                (state, None) => assert_eq!(state, State::Idle, "{screen}"),
+                (state, Some(_)) => panic!("{state:?} is no auth wall: {screen}"),
             }
-        );
-        assert_eq!(read(&format!("\"{banner}\"")), State::Idle);
+        }
     }
 
     #[test]
