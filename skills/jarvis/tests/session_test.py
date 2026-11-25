@@ -70,7 +70,7 @@ def validate(output, code, verb, duplicate_boot=False, adopt=False):
     assert all(c.isprintable() for c in answer["detail"])
     if answer["state"] == "failed" or (answer["state"], answer["reason"]) in DETAILED:
         assert answer["detail"]
-    else:
+    elif answer["reason"] != "record-unreadable":
         assert answer["detail"] == ""
     if answer["terminal"] is not None:
         assert set(answer["terminal"]) == {"server", "session", "window", "pane"}
@@ -1206,6 +1206,60 @@ print(json.dumps(session.terminal(status)))
         answer, code = self.call("start")
         self.assertEqual((answer["reason"], code), ("record-unreadable", 1))
         self.assertEqual(self.started(), [])
+
+    def status_with_runtime(self, command, body):
+        shim = self.root / "runtime"
+        shim.write_text("#!/bin/sh\n" + body)
+        shim.chmod(0o755)
+        output, errors = io.StringIO(), io.StringIO()
+        env = self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}
+        argv = [str(SCRIPT), "status", "--home", str(self.home)]
+        with patch.dict(os.environ, env, clear=True), patch.object(sys, "argv", argv):
+            main = runpy.run_path(str(SCRIPT.parent / "lib/session.py"))["main"]
+            main.__globals__[command] = shim
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                code = main()
+        return validate(output.getvalue(), code, "status"), errors.getvalue()
+
+    def test_status_without_setup_or_record(self):
+        self.assertFalse(self.record.exists())
+        answer, stderr = self.status_with_runtime(
+            "ORCH_RUNTIME", "printf '%s\\n' 'orch-runtime: setup-required key=fixture run=setup' >&2\nexit 69\n")
+        self.assertEqual((answer["state"], answer["reason"], stderr), ("stopped", "never-started", ""), answer)
+
+    def test_status_names_runtime_that_failed(self):
+        self.record.parent.mkdir(parents=True)
+        self.record.write_text(json.dumps({"v": 2, "home": str(self.home), "origin": "manual"}))
+        with self.subTest(command="orch-runtime state path"):
+            answer, _ = self.status_with_runtime(
+                "ORCH_RUNTIME", "printf '%s\\n' 'orch-runtime: setup-required key=fixture run=setup' 'second line' >&2\nexit 69\n")
+            self.assertEqual((answer["state"], answer["reason"]), ("blocked", "record-unreadable"))
+            self.assertEqual(answer["detail"], "orch-runtime state path: orch-runtime: setup-required key=fixture run=setup")
+        with self.subTest(command="agent-runtime controller status", reply=False):
+            # The shipped wrapper reports exit 69 before it can reply in JSON.
+            diagnostic = "agent-runtime: setup-required key=fixture run=setup"
+            answer, _ = self.status_with_runtime(
+                "AGENT_RUNTIME", "printf '%s\\n' " + shlex.quote(diagnostic) + " 'second line' >&2\nexit 69\n")
+            self.assertEqual((answer["state"], answer["reason"]), ("failed", "launch-failed"))
+            self.assertEqual(answer["detail"], "agent-runtime controller status: " + diagnostic)
+        self.fleet.parent.mkdir()
+        self.fleet.write_text("{")
+        try:
+            with self.subTest(command="agent-runtime controller status"):
+                # agent-runtime gives a JSON refusal and a diagnostic; the
+                # status CLI keeps stderr silent for a structured refusal.
+                answer, _ = self.call("status")
+                self.assertEqual(self.stderr, "")
+                self.assertEqual((answer["state"], answer["reason"]), ("blocked", "record-unreadable"))
+                self.assertEqual(answer["detail"], "agent-runtime controller status: agent-runtime: json-invalid path=" + str(self.fleet))
+            with self.subTest(command="agent-runtime controller status", stderr=False):
+                agent_runtime = shlex.quote(str(SKILLS / "agent-runtime/scripts/agent-runtime"))
+                answer, stderr = self.status_with_runtime("AGENT_RUNTIME", f'exec {agent_runtime} "$@" 2>/dev/null\n')
+                self.assertEqual(stderr, "")
+                self.assertEqual((answer["state"], answer["reason"]), ("blocked", "record-unreadable"))
+                self.assertTrue(answer["detail"].startswith("agent-runtime controller status: " + str(self.fleet)), answer)
+        finally:
+            self.fleet.unlink()
 
     # Attach rows drive real tmux clients on pseudo-terminals. A client
     # outside tmux carries no TMUX; one the command runs inside sets both.

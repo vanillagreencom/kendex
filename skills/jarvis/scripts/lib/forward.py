@@ -401,11 +401,16 @@ class Forwarder:
         cause = code if category == "refusal" and code in HOST_CAUSES else fallback
         return cause, error.record["detail"].split("\n", 1)[0][:200]
 
-    def probe(self, cause, detail):
+    def probe(self, outcome, detail):
         """Hold this call's reach as the run's; only the watch-loop's `forward-drain --collection` records it."""
-        reachable = cause != UNREACHABLE
+        reachable = outcome == "ok"
         self.reach = {"reachable": reachable, "cause": None if reachable else UNREACHABLE,
                       "detail": None if reachable else detail}
+
+    def read_header(self):
+        outcome, result = self.host(HOST_READ, [HEADER_ONLY])
+        self.probe(outcome, result)
+        return outcome, result
 
     def take_cursor(self, keys):
         """Give the entries KEYS the main's current to-overseer end as their answer cursor.
@@ -414,8 +419,7 @@ class Forwarder:
         directive, so a read from there misses none of theirs. Returns None,
         or the (cause, detail) that stopped it.
         """
-        outcome, result = self.host(HOST_READ, [HEADER_ONLY])
-        self.probe(outcome, result)
+        outcome, result = self.read_header()
         if outcome != "ok":
             return outcome, result
         if result.returncode:
@@ -607,7 +611,9 @@ class Forwarder:
         else:
             self.send()
             self.read_main()
-            if collection and self.reach is not None:
+            if collection:
+                if self.reach is None:
+                    self.read_header()
                 # A forward call or a session's own drain can reach the main
                 # from an environment the loop lacks. The old `probe` key
                 # held such reach, so it is dropped, never read.
