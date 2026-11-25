@@ -1251,6 +1251,72 @@ SH
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
 done
 
+for branch_case in absent landed ancestral divergent moved denied push-url; do
+  build "base-item-$branch_case" pair fix
+  base_item_head="$(git -C "$WT" rev-parse HEAD)"
+  base_remote="$ROOT/origin.git"
+  item_before=""
+  item_after=""
+  case "$branch_case" in
+    landed)
+      item_before="$base_item_head"
+      git -C "$MAIN" update-ref refs/remotes/origin/topic "$BASE"
+      ;;
+    ancestral) item_before="$BASE" ;;
+    divergent|moved)
+      git -C "$MAIN" commit -q --allow-empty -m 'remote-only work'
+      item_after="$(git -C "$MAIN" rev-parse HEAD)"
+      if [[ "$branch_case" == divergent ]]; then
+        item_before="$item_after"
+      else
+        item_before="$base_item_head"
+        git -C "$MAIN" push -q origin "$item_after:refs/heads/other-item"
+        cat >"$MAIN/.git/hooks/pre-push" <<SH
+#!/usr/bin/env bash
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [[ "\$local_ref" == '(delete)' && "\$remote_ref" == refs/heads/topic ]]; then
+    git --git-dir="$base_remote" update-ref refs/heads/topic "$item_after" "$item_before" || exit 1
+  fi
+done
+SH
+        chmod +x "$MAIN/.git/hooks/pre-push"
+      fi
+      ;;
+    denied)
+      item_before="$base_item_head"
+      item_after="$item_before"
+      git --git-dir="$base_remote" config receive.denyDeletes true
+      ;;
+    push-url)
+      item_before="$base_item_head"
+      git init -q --bare "$ROOT/read-origin.git"
+      git -C "$MAIN" push -q "$ROOT/read-origin.git" "$BASE:refs/heads/main"
+      git -C "$MAIN" remote set-url --push origin "$base_remote"
+      git -C "$MAIN" remote set-url origin "$ROOT/read-origin.git"
+      ;;
+  esac
+  if [[ -n "$item_before" ]]; then
+    # Push by URL so no local origin/topic tracking ref is written.
+    git -C "$WT" push -q "$base_remote" "$item_before:refs/heads/topic"
+  fi
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --to-base "$BASE" >"$ROOT/out" 2>"$ROOT/err")
+  assert_eq "$(remote_oid origin)" "$item_after" "$branch_case: origin item cleanup preserves tips absent from the base"
+  assert_eq "$(git --git-dir="$base_remote" rev-parse refs/heads/main)" "$base_item_head" "$branch_case: the base contains the delivered commit"
+  assert_eq "$(sed -n 's/^pushed-base: .* commit=\([^ ]*\) .*/\1/p' "$ROOT/out")" "$base_item_head" "$branch_case: delivery keeps its success receipt"
+done
+
+for base_checkout in default detached; do
+  build "base-item-$base_checkout" pair fix
+  if [[ "$base_checkout" == detached ]]; then
+    git -C "$MAIN" switch -q --detach
+  fi
+  git -C "$MAIN" commit -q --allow-empty -m 'not an item checkout'
+  checkout_rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$MAIN" --to-base "$BASE" >"$ROOT/out" 2>"$ROOT/err") || checkout_rc=$?
+  assert_eq "$checkout_rc" 1 "$base_checkout: publishing requires an item branch"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse refs/heads/main)" "$BASE" "$base_checkout: origin base is preserved"
+done
+
 for merge_base in contained advanced control; do
   build "prepare-merge-$merge_base" pair fix
   git -C "$MAIN" switch -q -c release "$BASE"

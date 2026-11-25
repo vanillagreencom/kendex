@@ -181,11 +181,15 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
   printf 'WORKTREE_BASE_DIR="../trees"\n' >"$MAIN/.env.local"
   git init -q --bare "$ROOT/origin.git"
+  git --git-dir="$ROOT/origin.git" config gc.auto 0
+  git --git-dir="$ROOT/origin.git" config maintenance.auto false
   git -C "$MAIN" remote add origin "$ROOT/origin.git"
   git -C "$MAIN" push -q -u origin main
 }
@@ -445,6 +449,54 @@ while IFS='|' read -r label fixture gh command rc out err want_state; do
   gh_env "$gh"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+echo "=== cleanup prunes only unregistered ancestors of the base ==="
+build local-branches
+make_repo
+git -C "$MAIN" branch merged-copy main
+git -C "$MAIN" branch recovery/retained main
+git -C "$MAIN" worktree add -q -b registered "$ROOT/trees/registered" main
+git -C "$MAIN" switch -q -c current main
+local_base="$(git -C "$MAIN" rev-parse refs/heads/main)"
+local_only="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -p HEAD -m 'local-only work')"
+git -C "$MAIN" branch unmerged-copy "$local_only"
+git -C "$MAIN" push -q origin merged-copy
+(cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
+assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname:short)' refs/heads/)" \
+  $'current\nmain\nrecovery/retained\nregistered\nunmerged-copy' \
+  "prune removes only the merged unregistered branch and preserves the unchecked-out base and both checkouts"
+assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse refs/heads/merged-copy)" "$local_base" \
+  "pruning local branches leaves their origin refs alone"
+
+git -C "$MAIN" branch changed-copy main
+mkdir "$ROOT/ref-race"
+cat >"$ROOT/ref-race/git" <<SH
+#!/usr/bin/env bash
+if [[ "\${3:-}" == update-ref && "\${5:-}" == --stdin ]]; then
+  "$(command -v git)" -C "$MAIN" update-ref refs/heads/changed-copy "$local_only" "$local_base" || exit 2
+fi
+exec "$(command -v git)" "\$@"
+SH
+chmod +x "$ROOT/ref-race/git"
+prune_rc=0
+(cd "$MAIN" && PATH="$ROOT/ref-race:$PATH" "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err") || prune_rc=$?
+assert_eq "$prune_rc" 1 "cleanup reports that a candidate changed before deletion"
+assert_eq "$(git -C "$MAIN" rev-parse refs/heads/changed-copy)" "$local_only" \
+  "cleanup preserves a candidate that gained a commit after enumeration"
+
+git -C "$MAIN" switch -q main
+git -C "$MAIN" commit -q --allow-empty -m 'middle base commit'
+git -C "$MAIN" commit -q --allow-empty -m 'latest base commit'
+git -C "$MAIN" push -q origin main
+git -C "$MAIN" branch idle-copy main
+registered_tree="$ROOT/trees/registered"
+git -C "$registered_tree" bisect start main "$local_base" >/dev/null
+assert_eq "$(git -C "$registered_tree" branch --show-current)" "" "fixture: bisect has detached the registered branch"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
+assert_eq "$(git -C "$MAIN" rev-parse refs/heads/registered)" "$local_base" "cleanup keeps the active bisect branch"
+git -C "$registered_tree" bisect reset >/dev/null 2>&1
+(cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup >"$ROOT/out" 2>"$ROOT/err")
+assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname)' refs/heads/idle-copy)" "" "a retry prunes idle branches after bisect ends"
 
 # Two squash-merged trees under a stale GH_TOKEN beside a keyring login, with
 # WORKTREE_DEFAULT_BRANCH answering before any GitHub read: the credential is

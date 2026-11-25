@@ -211,6 +211,37 @@ git_with_github_https_auth() (
   fi
 )
 
+# The push wrapper selects the push-purpose credential for the deletion. The
+# live ref read and explicit lease keep a newer origin tip outside this push.
+prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
+  local wt="$1" branch="$2" delivered="$3" ref="refs/heads/$2" base_ref="refs/heads/$DEFAULT_BRANCH"
+  local url="" rows="" oid="" base_oid="" sha="" remote_ref="" output=""
+  [[ -n "$branch" && "$branch" != "$DEFAULT_BRANCH" && "$branch" != recovery/* ]] || return 0
+  if ! url="$(git -C "$wt" remote get-url --push --all origin)" || [[ -z "$url" || "$url" == *$'\n'* ]] ||
+     ! rows="$(git_with_github_https_auth -C "$wt" ls-remote --refs -- "$url" "$base_ref" "$ref")"; then
+    worktree_message push-base-item-read-failed "origin/$branch" "Could not verify the refs at the origin push destination. Keeping the item branch." >&2
+    return 0
+  fi
+  while IFS=$'\t' read -r sha remote_ref; do
+    [[ "$sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || continue
+    case "$remote_ref" in
+      "$ref") oid="$sha" ;;
+      "$base_ref") base_oid="$sha" ;;
+    esac
+  done <<<"$rows"
+  [[ -n "$oid" ]] || return 0
+  if [[ -z "$base_oid" ]] || ! git -C "$wt" merge-base --is-ancestor "$delivered" "$base_oid" ||
+     ! git -C "$wt" merge-base --is-ancestor "$oid" "$base_oid"; then
+    worktree_message push-base-item-kept "origin/$branch" "The origin item tip could not be proved reachable from the published base commit. Keeping the branch." >&2
+    return 0
+  fi
+  if ! output="$(without_committed_settings git_with_github_https_auth -C "$wt" push \
+    "--force-with-lease=$ref:$oid" origin ":$ref" 2>&1)"; then
+    worktree_message push-base-item-delete-failed "origin/$branch" "Published the base, but Git could not delete the origin item branch." >&2
+    [[ -z "$output" ]] || sed 's/^/  git: /' <<<"$output" >&2
+  fi
+}
+
 # Every gh read takes the github skill's user ladder: GH_TOKEN, then
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
 # identity and never a read credential, as gh never reads it. A token GitHub
@@ -2932,6 +2963,7 @@ cleanup_lease_permits_removal() {
 cleanup_enumerate_worktrees() {
   local list_file="" err_file="" rc=0 line="" wt=""
   CLEANUP_TREES=()
+  CLEANUP_CHECKED_OUT=$'\n'
   if ! list_file="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
     worktree_message cleanup-scratch-failed "$PROJECT_ROOT" "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
     return 1
@@ -2946,12 +2978,39 @@ cleanup_enumerate_worktrees() {
     return 1
   fi
   while IFS= read -r -d '' line; do
+    if [[ "$line" == branch\ * ]]; then
+      CLEANUP_CHECKED_OUT+="${line#branch }"$'\n'
+    fi
     [[ "$line" == worktree\ * ]] || continue
     wt="${line#worktree }"
     same_canonical_dir "$wt" "$PROJECT_ROOT" && continue
     CLEANUP_TREES+=("$wt")
   done <"$list_file"
   rm -f "$list_file" "$err_file"
+}
+
+cleanup_prune_local_branches() { # BASE_REF BASE_OID MERGED_ROWS
+  local base_ref="$1" base_oid="$2" rows="$3" oid="" ref="" symref="" dir="" deletes=""
+  while read -r oid ref symref; do
+    [[ -n "$ref" && -z "$symref" && "$ref" != "refs/heads/$DEFAULT_BRANCH" && "$ref" != refs/heads/recovery/* ]] || continue
+    [[ "$CLEANUP_CHECKED_OUT" != *$'\n'"$ref"$'\n'* ]] || continue
+    deletes+="delete $ref $oid"$'\n'
+  done <<<"$rows"
+  [[ -n "$deletes" ]] || return 0
+
+  # Git can own more branches than the worktree list's HEADs during a rebase
+  # (including --update-refs) or bisect. Wait for Git to release them before
+  # using update-ref, whose expected-OID guard does not check checkout state.
+  for dir in "$PROJECT_COMMON_GIT_DIR" "$PROJECT_COMMON_GIT_DIR"/worktrees/*; do
+    if [[ -d "$dir/rebase-merge" || -d "$dir/rebase-apply" || -e "$dir/BISECT_START" ]]; then
+      worktree_message cleanup-local-active-operation "$dir" "Keeping unregistered branches while a rebase or bisect is in progress." >&2
+      return 0
+    fi
+  done
+  if ! git -C "$PROJECT_ROOT" update-ref --no-deref --stdin <<<"verify $base_ref $base_oid"$'\n'"${deletes%$'\n'}"; then
+    worktree_message cleanup-local-delete-failed "$base_ref" "Could not prune merged local branches. Retry cleanup after checking Git's diagnostic." >&2
+    return 1
+  fi
 }
 
 # `cleanup --targets-only`: the build-output prune, its flags and its lease.
@@ -4339,7 +4398,21 @@ case "${1:-}" in
     # NOT on this chain; a tip that IS on it has no commits of its own —
     # pending work, not merged work.
     CLEANUP_MAINLINE="$(git -C "$PROJECT_ROOT" rev-list --first-parent "$CLEANUP_MERGE_TARGET" 2>/dev/null || true)"
+    CLEANUP_BASE_REF="refs/remotes/origin/$DEFAULT_BRANCH"
+    if [[ "$CLEANUP_MERGE_TARGET" == "$DEFAULT_BRANCH" ]]; then
+      CLEANUP_BASE_REF="refs/heads/$DEFAULT_BRANCH"
+    fi
+    # Take the branch snapshot before the worktree list so a branch newly
+    # created after the list cannot enter the set to prune.
+    if ! CLEANUP_BASE_OID="$(git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_BASE_REF")" ||
+       ! CLEANUP_LOCAL_ROWS="$(git -C "$PROJECT_ROOT" for-each-ref --merged="$CLEANUP_BASE_OID" \
+         --format='%(objectname) %(refname) %(symref)' refs/heads/)"; then
+      CLEANUP_FAILED=true
+      CLEANUP_LOCAL_ROWS=""
+      worktree_message cleanup-local-enumeration-failed "$CLEANUP_BASE_REF" "Could not prove which local branches are merged. Keeping every unregistered branch." >&2
+    fi
     cleanup_enumerate_worktrees || exit 1
+    cleanup_prune_local_branches "$CLEANUP_BASE_REF" "$CLEANUP_BASE_OID" "$CLEANUP_LOCAL_ROWS" || CLEANUP_FAILED=true
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       # Every arm below either removes the worktree or says on stderr why it is
       # keeping it. Nothing falls through silently: the help promises that a
@@ -4769,8 +4842,10 @@ case "${1:-}" in
         worktree_message push-base-item "$WT_PATH" "Base publication requires a clean item branch." >&2
         exit 1
       fi
+      BASE_PUSH_BRANCH="$CURRENT_BRANCH"
       BASE_PUSH_BEFORE="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")" || exit 1
-      BASE_PUSH_COUNT="$(git -C "$WT_PATH" rev-list --count "$BASE_PUSH_BEFORE..HEAD")" || exit 1
+      BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
+      BASE_PUSH_COUNT="$(git -C "$WT_PATH" rev-list --count "$BASE_PUSH_BEFORE..$BASE_PUSH_HEAD")" || exit 1
       if [[ "$BASE_PUSH_COUNT" == 0 ]]; then
         worktree_message push-base-empty "$CURRENT_BRANCH" "The item has no commit to publish." >&2
         exit 1
@@ -4857,7 +4932,6 @@ case "${1:-}" in
     if [[ -n "$PUSH_TO_BASE" ]]; then
       PUSH_UPSTREAM_ARGS=()
       PUSH_LEASE=()
-      BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
       PUSH_REF="$BASE_PUSH_HEAD:refs/heads/$DEFAULT_BRANCH"
     fi
     PUSH_OUTPUT=""
@@ -4896,6 +4970,7 @@ case "${1:-}" in
     if [[ -n "$PUSH_TO_BASE" ]]; then
       BASE_PUSH_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
       printf 'pushed-base: base=%s before=%s commit=%s at=%s\n' "$DEFAULT_BRANCH" "$BASE_PUSH_BEFORE" "$BASE_PUSH_HEAD" "$BASE_PUSH_AT"
+      prune_pushed_item_branch "$WT_PATH" "$BASE_PUSH_BRANCH" "$BASE_PUSH_HEAD"
     fi
     ;;
 
