@@ -27,23 +27,28 @@ lane_globs=()
 lane_queue=()
 lane_nightly=()
 lane_count=0
+lane_legacy=false
 declaration_note=""
 LANE_GLOB_HIT=""
 
 ci_lanes_read() { # FILE
-  local text line number=0 name raw queue nightly glob index
+  local text line comment number=0 name raw queue nightly glob index
   lane_names=() lane_globs=() lane_queue=() lane_nightly=() lane_count=0
   declaration_note=""
+  lane_legacy=false
   text="$(cat -- "$1" 2>/dev/null)" ||
     { declaration_note="cause=unreadable"; return 1; }
   while IFS= read -r line; do
     number=$((number + 1))
+    comment=""
+    case "$line" in *'#'*) comment="${line#*#}" ;; esac
     line="${line%%#*}"
     set -f
     # shellcheck disable=SC2086 # a line is blank-separated words
     set -- $line
     set +f
     [ "$#" -gt 0 ] || continue
+    [[ "$comment" =~ ^[[:space:]]*reason:[[:space:]]*[^[:space:]] ]] || lane_legacy=true
     raw="$1" name="$1"
     shift
     queue=false nightly=false

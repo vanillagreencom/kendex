@@ -14,13 +14,13 @@
 # startup with `wiring-error: cause=dependency-absent skill=change-scope`.
 #
 # --output appends lanes=true|false and lanes_cause beside the class and queue
-# verdicts. With --lanes-from it also appends a lane_verdicts multiline value
-# with lane_<name>=true|false.
+# verdicts. It also appends a lane_verdicts multiline value with the
+# lane_<name>=true|false results supported by the base workflow or declaration.
 # stderr carries each `lane: name=<name> verdict=true|false cause=<cause>`
 # record, as the composite action's class log does. The lane rules are
 # ../references/wiring.md § Per-lane verdicts.
-# --lanes-from names a separate trusted checkout with .github/ci-lanes.conf;
-# empty by default, so no lane is declared. --queue-only-default true asks
+# --lanes-from names a separate trusted checkout for legacy claims and any
+# provisioned Vitest installation. --queue-only-default true asks
 # for the queue-only default's stand-down, as the harness-ci template's
 # `queue-only-default: true` input does; false, the default, matches a
 # workflow that passes none.
@@ -517,7 +517,7 @@ if [ -n "$output" ] && [ "$output" != /dev/null ]; then
   # The lane producer reads the same evidence on the local and action routes.
   { cat -- "$work/class-log-head"; printf '%s\n%s\n%s\n' "$queue_line" "$per_push_line" "$unread_line"; } >"$work/class-log"
   change_class_lanes "$class" "$lane_docs" "$event" "$repo" "$head" \
-    "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" >&2
+    "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" "$base" >&2
   index=0
   while [ "$index" -lt "$lane_count" ]; do
     printf 'lane: name=%s verdict=%s %s\n' "${lane_names[$index]}" \

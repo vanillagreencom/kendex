@@ -47,18 +47,21 @@ unread_list_match() { # PATH GLOBS
 # reads. Positions 1 to 8 keep the meaning an older caller gives them, since
 # the merge-group run pairs this tree's action with the default branch's
 # library; a new argument is only ever appended.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT QUEUE_INPUTS
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT QUEUE_INPUTS BASE
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
   local queue_inputs="${10:-}"
+  local base="${11:-}"
   local declaration="" lanes_root="" judged_root="" per_push light
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head path index delta name claimed
   local lane_hits=() lane_changed=() render_hits=()
   local reader_missing queue_reader per_push_reader standdown_missing hit
   local reach reach_kind unclaimed_unproved
+  local derived=false reach_status=0 prereqs=() derived_causes=()
   local declared_paths=""
   local unread_globs unread_hit queue_globs
+  local legacy_warning='::warning title=Legacy lane claims::Use derived workflow lane selection and retain only exceptions with an inline reason.'
   # Older library callers do not write declaration evidence.
   if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then
     declared_paths="$(cat -- "${work:?}/declared" 2>/dev/null)" ||
@@ -158,12 +161,9 @@ if [ -n "$declaration" ]; then
   printf 'lane-declaration: state=%s path=%s%s\n' "$lane_state" \
     "$declaration" "${declaration_note:+ $declaration_note}" >&2
 fi
-case "$lane_state" in
-  absent | malformed)
-    printf '::warning title=lane declaration %s::%s %s; no lane verdict is published\n' \
-      "$lane_state" "$declaration" "${declaration_note:-}" ;;
-esac
-
+if [ "$lane_state" = read ] && [ "${lane_legacy:-false}" = true ]; then
+  printf '%s\n' "$legacy_warning" >&2
+fi
 # A consumer manifest's small class runs only the base lanes claiming a
 # changed path, through the claim pass below; with none, it runs no lane.
 # The record counts only beside the class it was printed for.
@@ -256,7 +256,109 @@ fi
 declaration_comparison=not-needed
 no_changed_paths=false
 unclaimed_path=""
-if [ "$lane_state" = read ] && [ "$lanes" = true ] && [ "$class" != render ]; then
+
+# The legacy declaration's endpoint stays as before. Derived readers use the
+# committed event base, and the classifier's resolved endpoints for the diff.
+derive_lanes() {
+  local authority compared head exact result name index changed declaration_status=0
+  [ -r "$HARNESS_CI_LIB_DIR/lane-reach.py" ] || return 3
+  case "$EVENT" in pull_request | merge_group | push) ;; *) return 3 ;; esac
+  case "$lanes_cause" in docs-only | trivial) return 3 ;; esac
+  [ -n "$base" ] && [ -s "$work/paths" ] || return 3
+  case "$lane_state:${lane_legacy:-false}" in
+    read:true) return 3 ;;
+    malformed:*) [ "$declaration_note" = "cause=no-lanes" ] || return 3 ;;
+  esac
+  authority="$(git -C "$REPO" rev-parse --verify "$base^{commit}" 2>/dev/null)" || return 3
+  compared="$(sed -n 's/^base-rev: //p' "$work/class-log" | tail -n 1)" || return 2
+  head="$(sed -n 's/^head-rev: //p' "$work/class-log" | tail -n 1)" || return 2
+  [ -n "$compared" ] && [ -n "$head" ] || return 3
+
+  exact="$work/derived-ci-lanes.conf"
+  if git -C "$REPO" cat-file blob "$authority:.github/ci-lanes.conf" >"$exact" 2>/dev/null; then
+    # Leave the working declaration intact until a derived roster succeeds.
+    (
+      if ci_lanes_read "$exact"; then
+        [ "$lane_legacy" = false ] || exit 4
+      elif [ "$declaration_note" = "cause=no-lanes" ]; then
+        exit 5
+      else
+        exit 3
+      fi
+    ) || declaration_status=$?
+    case "$declaration_status" in
+      0) ;;
+      4) printf '%s\n' "$legacy_warning" >&2; return 3 ;;
+      5) : >"$exact" || return 2 ;;
+      *) return 3 ;;
+    esac
+  elif git -C "$REPO" cat-file -e "$authority:.github/ci-lanes.conf" 2>/dev/null; then
+    return 2
+  fi
+
+  changed="$work/derived-paths"
+  git -C "$REPO" diff --no-ext-diff --no-textconv --name-only -z --no-renames \
+    "$compared" "$head" -- >"$changed" || return 2
+  (
+    if [ -s "$exact" ]; then
+      ci_lanes_read "$exact" || exit 2
+    else
+      lane_count=0
+    fi
+    while IFS= read -r -d '' path; do
+      index=0
+      while [ "$index" -lt "$lane_count" ]; do
+        ! ci_lanes_claims "$index" "$path" ||
+          printf '%s\n' "${lane_names[$index]}" || exit 2
+        index=$((index + 1))
+      done
+    done <"$changed"
+  ) >"$work/lane-exceptions" || return 2
+
+  python3 "$HARNESS_CI_LIB_DIR/lane-reach.py" "$REPO" "$authority" "$compared" "$head" \
+    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" >"$work/lane-reach" || return $?
+  [ -s "$work/lane-reach" ] || return 2
+  if [ -s "$exact" ]; then
+    ci_lanes_read "$exact" || return 2
+  else
+    lane_count=0
+  fi
+  while IFS=$'\t' read -r name result; do
+    index=0
+    while [ "$index" -lt "$lane_count" ] && [ "${lane_names[$index]}" != "$name" ]; do
+      index=$((index + 1))
+    done
+    if [ "$index" -eq "$lane_count" ]; then
+      lane_names[index]="$name" lane_queue[index]=false lane_nightly[index]=false
+      lane_count=$((lane_count + 1))
+    fi
+    derived_causes[index]="$result"
+    [ "$result" != prerequisite ] || prereqs[index]=true
+  done <"$work/lane-reach"
+  index=0
+  while [ "$index" -lt "$lane_count" ]; do
+    lane_changed[index]=false
+    case "${derived_causes[$index]:-unread}" in
+      miss) ;;
+      *) lanes=true lanes_cause=derived-reach ;;
+    esac
+    index=$((index + 1))
+  done
+}
+derive_lanes || reach_status=$?
+case "$reach_status" in
+  0) derived=true ;;
+  3)
+    case "$lane_state" in
+      absent | malformed)
+        printf '::warning title=lane declaration %s::%s %s; no lane verdict is published\n' \
+          "$lane_state" "$declaration" "${declaration_note:-}" ;;
+    esac ;;
+  *) derived=true lanes=true lanes_cause=lane-reach-unreadable
+     lane_count=0 ;;
+esac
+
+if [ "$derived" = false ] && [ "$lane_state" = read ] && [ "$lanes" = true ] && [ "$class" != render ]; then
   index=0
   while [ "$index" -lt "$lane_count" ]; do
     lane_hits[$index]="" lane_changed[$index]=false
@@ -401,12 +503,19 @@ reader_missing=unread
 unclaimed_unproved=unread
 index=0
 while [ "$index" -lt "$lane_count" ]; do
-  if [ "$class" = render ]; then
+  if [ "$derived" = true ]; then
+    hit=""
+    case "${derived_causes[$index]:-unread}" in
+      miss) ;;
+      *) hit="evidence=${derived_causes[$index]:-unread}" ;;
+    esac
+  elif [ "$class" = render ]; then
     hit="${render_hits[$index]:-}"
   else
     hit="${lane_hits[$index]:-}"
   fi
   reach="$hit" reach_kind=claimed
+  [ "$derived" = false ] || reach_kind="derived-reach"
   if [ -z "$hit" ] && [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; then
     reach="path=$unclaimed_path claim=none" reach_kind=unclaimed-path
   fi
@@ -418,6 +527,10 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
+  elif [ "$derived" = true ] && [ -n "$reach" ] &&
+    { [ "${prereqs[$index]:-false}" = true ] ||
+      ! grep -qxF -- "${lane_names[$index]}" "$work/lane-exceptions"; }; then
+    lane_values[$index]=true lane_causes[$index]="cause=$reach_kind $reach"
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]; then
     [ "$reader_missing" != unread ] || reader_missing="$(render_reader_missing "$queue_reader")"
     if [ -n "$reader_missing" ]; then
@@ -434,7 +547,7 @@ while [ "$index" -lt "$lane_count" ]; do
         lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $reach"
       fi
     fi
-  elif [ "$class" = render ]; then
+  elif [ "$class" = render ] && [ "$derived" = false ]; then
     lane_values[$index]=true lane_causes[$index]="cause=render-claim $hit"
   elif [ "$no_changed_paths" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"

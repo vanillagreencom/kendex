@@ -22,9 +22,8 @@
 #          defer, its HEAD commit is read for the harness-ci render, below
 #   CLASSIFIER  the checkout root to read the shipped scripts from; empty
 #          means this script's own tree
-#   LANES_FROM  the checkout root whose .github/ci-lanes.conf declares the
-#          workflow's base lanes and claims; never REPO.
-#          Empty means no lane is declared.
+#   LANES_FROM  a separate trusted checkout for legacy claims and the
+#          provisioned Vitest installation; never REPO.
 #   QUEUE_ONLY_DEFAULT  true where the workflow asks for the queue-only
 #          default's stand-down, which the harness-ci template passes; empty
 #          or false where it does not, so a ci.yml copied before the default
@@ -65,8 +64,8 @@
 #                      caller whose lanes answer to a tree no family names
 #                      groups it here rather than reading the diff again.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
-#                      A proved render runs none unless a default-branch
-#                      claim matches a path it changes. The render rule and
+#                      A proved render runs the lanes reached through installed
+#                      package reads or applicable claims. The render rule and
 #                      the remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
@@ -83,12 +82,12 @@
 #                      where the stand-down was asked for with no
 #                      LANES_FROM; lane-producer-unavailable when the
 #                      classifier checkout lacks the installed producer;
+#                      derived-reach where an eligible lane reads the change;
+#                      lane-reach-unreadable where the roster is inconclusive;
 #                      the class otherwise.
-#   lane_verdicts      one `lane_<name>=true|false` line per default-branch
-#                      lane, in base order, with head-only lanes appended in
-#                      head order on a valid declaration comparison. This is
-#                      the union of lane names. Empty where LANES_FROM is
-#                      empty or the base declaration is absent or malformed.
+#   lane_verdicts      one `lane_<name>=true|false` line per derived or
+#                      legacy lane. Legacy lanes follow declaration order,
+#                      with head-only lanes appended on a valid comparison.
 #
 # lanes uses the two verdicts above, render claims, the event and the
 # queue_only answer, as the installed lib/change-class.sh decides them.
@@ -201,7 +200,7 @@ esac
 if [ ! -r "$SCRIPTS/lib/change-class.sh" ] || ! . "$SCRIPTS/lib/change-class.sh"; then
   die "lane-producer-unreadable root=$scripts_root" "the installed lane producer is unavailable"
 fi
-if [ -n "${LANES_FROM:-}" ]; then
+if [ -n "${LANES_FROM:-}" ] || [ -r "$SCRIPTS/lib/lane-reach.py" ]; then
   # shellcheck source=../../../skills/harness-ci/scripts/lib/ci-lanes.sh
   if [ ! -r "$SCRIPTS/lib/ci-lanes.sh" ] || ! . "$SCRIPTS/lib/ci-lanes.sh"; then
     die "lanes-reader-unreadable root=$scripts_root" "the lane declaration reader is unavailable"
@@ -332,7 +331,7 @@ fi
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then
   change_class_lanes "$class" "$docs" "$EVENT" "$REPO" "$HEAD" \
-    "$queue_only" "$work" "${LANES_FROM:-}" "$queue_default" "$queue_inputs"
+    "$queue_only" "$work" "${LANES_FROM:-}" "$queue_default" "$queue_inputs" "${BASE:-}"
 else
   lane_count=0 lane_state=unset lane_values=() lane_causes=()
   lanes=true lanes_cause=lane-producer-unavailable

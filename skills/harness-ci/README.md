@@ -60,9 +60,17 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 - `HARNESS_CI_TRIVIAL_SETTINGS`: add key globs, or prefix a glob with `!` to remove them.
 - `HARNESS_CI_TRIVIAL_SETTINGS`: list only keys that no CI job or review gate reads.
 
-For several test groups, declare their input paths in `.github/ci-lanes.conf`.
+harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. Incomplete evidence keeps the lane eligible. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands and exceptions.
 
-- The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark, the nightly mark for platform lanes and the steps before a queue mark lands.
+### Lane file cut-over
+
+The first eligible major kendex release after at least one released minor of overlap is the hand-list removal date. A calendar date has yet to be scheduled. Until then, a reasonless claim keeps the legacy reader active and prints a warning. Reasoned exceptions stay supported.
+
+In each consumer's cut-over:
+
+1. Record the old and new line and path-claim counts for `.github/ci-lanes.conf`. Both counts must fall.
+2. Keep only claims for inputs derivation cannot see. Add `# reason: …` to each retained line and name the missing read.
+3. Change an input the lane's command reads and no line claims. Verify the lane runs. Change a proved unrelated file and verify the lane skips. Provision graph tools in the classifier job before cutting over a graph-backed lane.
 - A `:queue` mark removed while an open pull request predates it can need one step before that pull request merges: [§ The endpoint expressions](references/wiring.md#the-endpoint-expressions).
 
 Arguments, defaults and setting precedence: `harness-only --help`, `change-class --help`, `aggregate-needs --help` and, for the class and its settings, change-scope's `change-scope --help`. Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
