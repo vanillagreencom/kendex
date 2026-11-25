@@ -2209,54 +2209,35 @@ pub fn cloud_start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
 
 // --- the hosted files -------------------------------------------------------
 
-/// Where a hosted lane's files are on its host, as its record names it.
-enum Root<'a> {
-    /// The record's `mail_root`, the root its host named.
-    Host(&'a str),
-    /// A record naming no root: the lane keeps no files there.
-    Unnamed,
-    /// A `mail_root` still the checkout the launch ran from ([`root_pending`]).
-    Pending,
-}
-
-/// The cause every hosted read answers for a [`Root::Pending`] lane.
 const ROOT_PENDING: &str = "root-pending";
 
-impl<'a> Root<'a> {
-    /// The root, else what a file read under it answers: an unnamed root
-    /// holds no file, and a pending one is unread, never absent, since the
-    /// lane's files stand somewhere its record does not name.
-    fn path<T>(self) -> Result<&'a str, Answer<T>> {
-        match self {
-            Root::Host(root) => Ok(root),
-            Root::Unnamed => Err(Answer::Gone),
-            Root::Pending => Err(Answer::Unreadable {
-                cause: ROOT_PENDING.to_owned(),
-            }),
-        }
-    }
-}
-
-fn root_of(lane: &Lane) -> Root<'_> {
+/// Mail and other lane files may exist even when the record supplies no root.
+pub(crate) fn mail_root(lane: &Lane) -> Result<&str, &'static str> {
     match lane.mail_root.as_deref().filter(|r| !r.is_empty()) {
-        None => Root::Unnamed,
-        Some(_) if root_pending(lane) => Root::Pending,
-        Some(root) => Root::Host(root),
+        None => Err("mail-root-unrecorded"),
+        Some(_) if root_pending(lane) => Err(ROOT_PENDING),
+        Some(root) => Ok(root),
     }
 }
 
-/// Whether the record's `mail_root` is still the checkout the launch ran
-/// from (`checkout`), so no path under it is the host's: a launch moves it
-/// to the lane's root on its host only once the host answers, and a launch
-/// the reconcile confirmed keeps it.
+fn file_root<T>(lane: &Lane) -> Result<&str, Answer<T>> {
+    mail_root(lane).map_err(|cause| Answer::Unreadable {
+        cause: cause.to_owned(),
+    })
+}
+
+/// A checkout-shaped root without confirmation can be a launch placeholder,
+/// even on a legacy running record. A confirmed root belongs to the provider's
+/// filesystem regardless of the checkout's path text.
 pub fn root_pending(lane: &Lane) -> bool {
-    lane.mail_root.is_some()
+    !lane.mail_root_confirmed
+        && lane.mail_root.is_some()
         && lane.mail_root.as_deref() == lane.extra.get("checkout").and_then(Value::as_str)
 }
 
 /// The lane's status file through the provider, under its root on its host.
 pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
-    let root = match root_of(lane).path() {
+    let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
     };
@@ -2273,7 +2254,7 @@ pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// host has not, confirmed by `touch`, is the worktree the lane's own
 /// close-out removed.
 pub fn worktree(scripts: &Path, lane: &Lane) -> Answer<()> {
-    let root = match root_of(lane).path() {
+    let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
     };
@@ -2314,10 +2295,9 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> (Counters, R
             },
         )
     };
-    let root = match root_of(lane) {
-        Root::Host(root) => root,
-        Root::Unnamed => return (Counters::unread(), Reading::Gone),
-        Root::Pending => return unread(out, ROOT_PENDING.to_owned()),
+    let root = match mail_root(lane) {
+        Ok(root) => root,
+        Err(cause) => return unread(out, cause.to_owned()),
     };
     let host = host_of(lane);
     let runs = match fetch(
@@ -2431,7 +2411,7 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 /// same places the handoff reads. A record in either means the close-out
 /// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
-    let root = match root_of(lane).path() {
+    let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
     };
@@ -2540,11 +2520,7 @@ pub fn retained_clone(fleet: &Path, item: &str) -> Result<Option<PathBuf>, Strin
 /// [`CLONE_ROW`] where it moved.
 pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffReading, String> {
     let scripts = pass.scripts;
-    let root = match root_of(lane) {
-        Root::Host(root) => root,
-        Root::Unnamed => return Ok(HandoffReading::None),
-        Root::Pending => return Err(format!("cause={ROOT_PENDING}")),
-    };
+    let root = mail_root(lane).map_err(|cause| format!("cause={cause}"))?;
     let places =
         match configured_state_dir(scripts, lane, root).map_err(|c| format!("cause={c}"))? {
             Some((dir, clone)) => {
@@ -2582,7 +2558,7 @@ pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffRe
 /// A lane's session rows through the provider: the file the lane's hook
 /// writes under its root's mailbox on the host.
 pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
-    let root = match root_of(lane).path() {
+    let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
     };

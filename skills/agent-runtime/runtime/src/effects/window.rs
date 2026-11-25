@@ -234,6 +234,7 @@ impl Operation<'_> {
             asked: false,
             home: home.map(|h| h.display().to_string()),
             home_implicit,
+            hosted_mail_root: None,
         })
     }
 

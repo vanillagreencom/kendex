@@ -885,6 +885,9 @@ fn open_and_confirm(
             return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
         }
     };
+    if let Sessions::Hosted { mail_root } = &sessions {
+        opening.hosted_mail_root.clone_from(mail_root);
+    }
     // The relaunch has retired the predecessor. Read its last possible
     // row now, before the new window can start a hook, and keep the
     // boundary through reconciliation of this opening.
@@ -1303,7 +1306,7 @@ fn hosted_launch(
                 harness,
                 &|name| name == "ssh" || target.owns(name),
                 Sessions::Hosted {
-                    mail_root: created.path.clone(),
+                    mail_root: Some(created.path.clone()),
                 },
             )?
         }
@@ -2131,7 +2134,7 @@ enum Sessions<'a> {
         cwd: &'a Path,
     },
     Hosted {
-        mail_root: String,
+        mail_root: Option<String>,
     },
 }
 
@@ -2153,10 +2156,11 @@ fn launch_outcome(
             // bind none, noted as a succession notes them: a lane without a
             // session id never runs under a neighbour's. A hosted lane's
             // sessions are on its host and bind nothing here.
+            let hosted = matches!(&sessions, Sessions::Hosted { .. });
             let (session_id, mail_root) = match sessions {
                 Sessions::Hosted { mail_root } => {
                     observation["note"] = json!("session-hosted");
-                    (None, Some(mail_root))
+                    (None, mail_root)
                 }
                 Sessions::Store { home, cwd, .. } => {
                     let session_id = match &opened.session_id {
@@ -2208,6 +2212,19 @@ fn launch_outcome(
             // lane record and the whole set is consumed. A handle still
             // standing holds the launch at this phase.
             let wire_identity = identity.identity().clone();
+            let mut members = crate::ops::LaneOutcome {
+                tmux_session: Some(tmux_session.to_owned()),
+                mail_root,
+                home_implicit: opened.home_implicit,
+                viewer: false,
+                session_rows_at_launch: opened.session_rows_at_launch,
+            }
+            .members();
+            if hosted {
+                // A confirmation of an older phase may have no recorded
+                // host root. Clear the checkout placeholder in that case.
+                members.entry("mail_root").or_insert(Value::Null);
+            }
             match operation.publish(Published::Target, opened, &identity, observation.clone())? {
                 Ok(outcome) => outcome.with_wire(Wire {
                     launch: Some(LaunchIdentity {
@@ -2220,14 +2237,7 @@ fn launch_outcome(
                     session_id,
                     window: Some(format!("{tmux_session}:{item}")),
                     home: opened.home.clone(),
-                    members: crate::ops::LaneOutcome {
-                        tmux_session: Some(tmux_session.to_owned()),
-                        mail_root,
-                        home_implicit: opened.home_implicit,
-                        viewer: false,
-                        session_rows_at_launch: opened.session_rows_at_launch,
-                    }
-                    .members(),
+                    members,
                     ..Wire::default()
                 }),
                 Err(operation) => {
@@ -2475,7 +2485,7 @@ fn judge_opened(
             .map(PathBuf::from);
         let sessions = if hosted {
             Sessions::Hosted {
-                mail_root: cwd.display().to_string(),
+                mail_root: opened.hosted_mail_root.clone(),
             }
         } else {
             Sessions::Store {
@@ -2530,6 +2540,7 @@ mod tests {
             host: None,
             kind: None,
             mail_root: mail_root.map(|p| p.display().to_string()),
+            mail_root_confirmed: false,
             surface: None,
             model: None,
             effort: None,

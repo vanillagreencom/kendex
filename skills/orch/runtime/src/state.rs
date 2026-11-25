@@ -656,6 +656,10 @@ pub struct Lane {
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mail_root: Option<String>,
+    /// The launch recorded the root its host named. The host and the
+    /// control checkout can use the same path in separate filesystems.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mail_root_confirmed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

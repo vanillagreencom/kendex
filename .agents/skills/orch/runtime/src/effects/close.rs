@@ -204,27 +204,47 @@ fn terminal(state: TerminalState) -> Option<Terminal> {
 }
 
 /// The item's one lane record, with the tmux socket the controller record
-/// names and the record's intents.
+/// names, the record's intents and whether its mail root has a valid shape.
 #[allow(
     clippy::disallowed_methods,
     reason = "the close verb's one read of the fleet record before it acts, a snapshot it judges; the close transition re-reads under the lock"
 )]
-fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>, Vec<Intent>)> {
-    let fleet = state::load(path)?
-        .map(|snapshot| snapshot.view::<FleetState>(path))
-        .transpose()?
-        .ok_or_else(|| refused("lane-missing", &[("item", item)]))?;
-    let records: Vec<&Lane> = fleet.lanes.iter().filter(|l| l.item == item).collect();
+fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>, Vec<Intent>, bool)> {
+    let snapshot = state::load(path)?.ok_or_else(|| refused("lane-missing", &[("item", item)]))?;
+    let fleet = snapshot.view::<FleetState>(path)?;
+    let records: Vec<_> = fleet
+        .lanes
+        .iter()
+        .enumerate()
+        .filter(|(_, lane)| lane.item == item)
+        .collect();
     match records.as_slice() {
         [] => Err(refused("lane-missing", &[("item", item)])),
-        [lane] => Ok((
-            (*lane).clone(),
-            fleet
-                .overseer
-                .as_ref()
-                .and_then(agent_runtime::effects::overseer_socket),
-            fleet.intents.clone(),
-        )),
+        [(index, lane)] => {
+            // A hosted confirmation can write an explicit null. The typed view
+            // also maps an omitted member to None, so check the same snapshot.
+            let valid_mail_root = match lane.mail_root.as_deref() {
+                Some(root) => !root.is_empty(),
+                None => {
+                    lane.mail_host().is_some_and(|host| !host.is_empty())
+                        && snapshot
+                            .doc
+                            .get("lanes")
+                            .and_then(|lanes| lanes.get(*index))
+                            .and_then(|row| row.get("mail_root"))
+                            .is_some_and(Value::is_null)
+                }
+            };
+            Ok((
+                (*lane).clone(),
+                fleet
+                    .overseer
+                    .as_ref()
+                    .and_then(agent_runtime::effects::overseer_socket),
+                fleet.intents,
+                valid_mail_root,
+            ))
+        }
         many => Err(refused(
             "lane-duplicate",
             &[("item", item), ("count", &many.len().to_string())],
@@ -242,7 +262,7 @@ pub fn close_lane(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Closed> {
-    let (lane, socket, intents) = read_lane(path, &r.item)?;
+    let (lane, socket, intents, valid_mail_root) = read_lane(path, &r.item)?;
     let who = Identity::of(&lane, &r.identity)?;
     let answer = |word: Word, status: Option<LaneStatus>| Closed {
         item: r.item.clone(),
@@ -256,7 +276,7 @@ pub fn close_lane(
     if lane.status == LaneStatus::Done && r.mode != CloseMode::TerminalState {
         return Ok(answer(Word::Closed, Some(LaneStatus::Done)));
     }
-    if lane.mail_root.as_deref().is_none_or(str::is_empty) {
+    if !valid_mail_root {
         return Err(refused(
             "record-invalid",
             &[("item", &r.item), ("field", "mail_root")],

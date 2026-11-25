@@ -507,9 +507,7 @@ fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
     if lane.session_channel() {
         return Ok(None);
     }
-    let Some(root) = lane.mail_root.as_deref() else {
-        return Err(invalid(&lane.item, "mail-root-unrecorded".into()));
-    };
+    let root = super::hosted::mail_root(lane).map_err(|cause| invalid(&lane.item, cause.into()))?;
     let hosted = lane.mail_host().map(str::to_owned);
     Ok(Some((
         hosted,
