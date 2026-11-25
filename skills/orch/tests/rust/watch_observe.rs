@@ -6505,9 +6505,9 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
     use lanes::WallSource;
 
     let never_pick = |_: Harness, _: &str, _: &str| panic!("an auth wall asked for an account");
-    for (source, banner) in [
-        (WallSource::Pane, "Not logged in · Please run /login"),
-        (WallSource::Rows, "Ready for work."),
+    for (source, banner, named) in [
+        (WallSource::Pane, "Not logged in · Please run /login", true),
+        (WallSource::Rows, "Ready for work.", false),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -6547,7 +6547,12 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
         ));
         record["class"] = json!("light");
         record["effort"] = json!("high");
-        record["account"] = json!(account);
+        if named {
+            record["account"] = json!(account);
+        } else {
+            record.as_object_mut().unwrap().remove("account");
+            record["home"] = json!(account);
+        }
         record["session_id"] = json!(session);
         record["session_rows_at_launch"] = json!(0);
         fleet.set_lanes(vec![record]);
@@ -6556,19 +6561,20 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
         std::fs::create_dir_all(&scripts).unwrap();
         std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
         lane_driver!(server, fleet, readers, driver);
+        let started_before = driver.now - 1;
+        let read_started = |_: &Identity| Reading::Live(started_before);
+        driver.readers.start_epoch = &read_started;
         driver.scripts = scripts;
-        if source == WallSource::Rows {
-            let mailbox = checkout.join("tmp/lane-mail/KEN-4");
-            std::fs::create_dir_all(&mailbox).unwrap();
+        let mailbox = checkout.join("tmp/lane-mail/KEN-4");
+        std::fs::create_dir_all(&mailbox).unwrap();
+        let append = |event, at| {
             assert!(
                 rows::write_lane(
                     &mailbox,
                     &rows::LaneRow {
-                        event: rows::TurnEvent::StopFailure {
-                            error: Some("authentication_failed"),
-                        },
+                        event,
                         harness: "claude",
-                        at: driver.now,
+                        at,
                         transcript: None,
                         working_agents: None,
                     },
@@ -6576,6 +6582,15 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
                 )
                 .unwrap()
             );
+        };
+        let failure = rows::TurnEvent::StopFailure {
+            error: Some("authentication_failed"),
+        };
+        let prompt = rows::TurnEvent::Prompt { digest: None };
+        // A turn the predecessor completed supplies no proof for its replacement.
+        append(rows::TurnEvent::Stop, driver.now);
+        if source == WallSource::Rows {
+            append(failure, driver.now);
         }
         let produced = driver.pass_with_pick(&fleet.read(), &never_pick);
         assert_eq!(
@@ -6589,7 +6604,12 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
             &std::fs::read(driver.state_dir.join("wall-relaunch-KEN-4.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(request["account"], json!(account), "{source:?}");
+        let expected_account = named.then(|| json!(account));
+        assert_eq!(
+            request.get("account"),
+            expected_account.as_ref(),
+            "{source:?}"
+        );
         assert_eq!(request.get("exclude_account"), None, "{source:?}");
         let out = run_relaunch(&fleet, &relaunch);
         assert!(
@@ -6600,7 +6620,12 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
         );
         let launched = fleet.runner.fleet();
         let lane = &launched["lanes"][0];
-        assert_eq!(lane["account"], json!(account), "{source:?}");
+        assert_eq!(
+            lane["account"],
+            expected_account.unwrap_or(Value::Null),
+            "{source:?}"
+        );
+        assert_eq!(lane["home"], json!(account), "{source:?}");
         assert_eq!(lane["session_id"], session, "{source:?}");
         assert_eq!(lane.get("class_missed"), None, "{source:?}");
         assert!(
@@ -6626,6 +6651,44 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
         driver.pass_with_pick(&fleet.read(), &never_pick);
         assert_eq!(driver.relaunches.borrow().len(), 1, "{source:?}");
         assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
+
+        for starting_turn in [false, true] {
+            if starting_turn {
+                append(prompt, driver.now);
+                driver.pass_with_pick(&fleet.read(), &never_pick);
+                assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
+            }
+            append(failure, driver.now);
+            let held = driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert!(
+                lines(&held).contains(&format!(
+                    "wall-relaunch-refused lane={name} reason=auth-recovery-unconfirmed"
+                )),
+                "{source:?}: {:?}",
+                lines(&held)
+            );
+            assert_eq!(driver.relaunches.borrow().len(), 1, "{source:?}");
+            assert!(
+                server
+                    .session_panes()
+                    .iter()
+                    .any(|pane| pane == replacement)
+            );
+        }
+
+        // The watch never sees an Idle verdict for this completed turn.
+        append(prompt, driver.now);
+        append(rows::TurnEvent::Stop, driver.now);
+        append(prompt, driver.now);
+        driver.pass_with_pick(&fleet.read(), &never_pick);
+        append(failure, driver.now);
+        let after_stop = driver.pass_with_pick(&fleet.read(), &never_pick);
+        assert_eq!(
+            driver.relaunches.borrow().len(),
+            2,
+            "{source:?}: {:?}",
+            lines(&after_stop)
+        );
         effect_report(&fleet.runner.op_fleet(&json!({
             "op": "close-owned-resources",
             "item": "KEN-4",

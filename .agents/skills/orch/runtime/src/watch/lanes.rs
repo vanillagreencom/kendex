@@ -64,6 +64,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, PANE_DEAD, Pane, PaneFields, PaneState};
 use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
 use agent_runtime::process::Identity;
+use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::session;
@@ -82,9 +83,9 @@ use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
-use crate::state::{self, FleetState, Lane, LaneStatus};
+use crate::state::{self, CloseGround, FleetState, Lane, LaneMembers, LaneStatus};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
-use agent_runtime::intent::{Obligation, Phase};
+use agent_runtime::intent::{EffectOp, Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
@@ -266,16 +267,16 @@ impl Readers<'static> {
 }
 
 /// The relaunch the wall route starts: the walled lane's close and its
-/// `launch-lane` on the picked account, run detached in the launch's
+/// `launch-lane` with its destination credentials, run detached in the launch's
 /// checkout with its session, its output at `log`, its exit status landing
 /// beside `marker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunch {
     pub item: String,
     pub window: String,
-    /// The account picked.
+    /// The destination account, or `-` for inherited credentials.
     pub to: String,
-    /// The account the wall spent.
+    /// The predecessor's account, or `-` for inherited credentials.
     pub spent: String,
     pub cwd: PathBuf,
     pub session: String,
@@ -723,8 +724,7 @@ fn read_lane<'a>(
             .then_some(lane.mail_root.as_deref())
             .flatten()
             .map(|root| {
-                let file =
-                    crate::marker::mailbox_path(Path::new(root), &lane.item).join(rows::LANE_FILE);
+                let file = lane_rows_file(root, &lane.item);
                 (readers.rows)(&file)
             }),
     };
@@ -836,6 +836,10 @@ fn read_lane<'a>(
         provider_running: harness_up,
         state,
     }
+}
+
+fn lane_rows_file(root: &str, item: &str) -> PathBuf {
+    marker::mailbox_path(Path::new(root), item).join(rows::LANE_FILE)
 }
 
 fn lane_refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
@@ -1840,7 +1844,7 @@ fn wall(
     };
     let mut notes = Vec::new();
     match reset_at.filter(|_| passed) {
-        None => match route(obs, kind, &account, pass, out, &mut notes) {
+        None => match route(obs, kind, pass, out, &mut notes) {
             Routed::Relaunched => {
                 out.changes.push(set(
                     "usage-limit",
@@ -1906,6 +1910,68 @@ enum Routed {
     Left,
 }
 
+const AUTH_WALL: &str = "auth-wall";
+
+/// The current launch follows a confirmed auth close in the intent journal.
+/// A subsequent launch after another disposition starts a new recovery.
+fn auth_recovery_pending(lane: &Lane, pass: &Pass) -> Result<bool, String> {
+    let mut transitions = pass.fleet.intents.iter().rev().filter(|intent| {
+        intent.target == lane.item
+            && intent.outcome == Outcome::Confirmed
+            && intent.reconciled.is_none()
+            && matches!(
+                intent.op,
+                EffectOp::LaunchSession | EffectOp::CloseResources
+            )
+    });
+    let (Some(launch), Some(close)) = (transitions.next(), transitions.next()) else {
+        return Ok(false);
+    };
+    if launch.op != EffectOp::LaunchSession
+        || lane.session_since.as_deref() != Some(launch.created_at.as_str())
+        || close.op != EffectOp::CloseResources
+    {
+        return Ok(false);
+    }
+    let fleet = pass.state_dir.join(agent_runtime::record::FLEET_FILE_NAME);
+    let members = LaneMembers::of(&fleet, close).map_err(|e| e.to_string())?;
+    if !matches!(members.close, Some(CloseGround::NoLanding { reason, .. }) if reason == AUTH_WALL)
+    {
+        return Ok(false);
+    }
+    Ok(!completed_turn_since_launch(lane)?)
+}
+
+/// A Claude Stop follows a completed turn. Startup idleness and open-turn
+/// rows can both occur before the replacement's credentials have worked.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the wall route reads the lane's turn rows after its recorded launch position"
+)]
+fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
+    let (Some(at), Some(root)) = (lane.session_rows_at_launch, lane.mail_root.as_deref()) else {
+        return Ok(false);
+    };
+    if hosted::host_of(lane) != "local" || lane.harness.as_deref() != Some("claude") {
+        return Ok(false);
+    }
+    let file = lane_rows_file(root, &lane.item);
+    let text = match std::fs::read_to_string(&file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("rows-unreadable path={} cause={e}", file.display())),
+    };
+    Ok(rows::rows_after_in(&text, at as u64).any(|reading| {
+        matches!(
+            reading,
+            Reading::Live(row)
+                if row.harness.as_deref() == Some("claude")
+                    && row.event.as_deref() == Some("Stop")
+                    && matches!(rows::judge_lane(&row), Reading::Live(LaneVerdict::Idle { cause: None }))
+        )
+    }))
+}
+
 /// A usage wall walks accounts for the record's model with the spent account
 /// excluded and prints the pick's answer under the event. An auth wall keeps
 /// the lane's account so a resumed harness reads its current credentials.
@@ -1920,7 +1986,6 @@ enum Routed {
 fn route(
     obs: &Observed,
     kind: WallKind,
-    account: &str,
     pass: &Pass,
     out: &mut Produced,
     notes: &mut Vec<String>,
@@ -1930,45 +1995,56 @@ fn route(
         notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
         Routed::Left
     };
-    // A record naming no harness or model, or no account, asks no pick and
-    // leaves the wall to the overseer with the reason under the event.
     let harness = obs.lane.harness.as_deref().and_then(Harness::parse);
     let model = obs.lane.model.as_deref().unwrap_or("");
     let (Some(harness), false) = (harness, model.is_empty()) else {
         return refused(notes, "record-unnamed");
     };
-    if account.is_empty() {
-        return refused(notes, "account-unknown");
-    }
+    let account = obs.lane.account.as_deref();
     let to = match kind {
-        WallKind::Auth => account.to_owned(),
-        WallKind::Usage => match (pass.route.pick)(harness, model, account) {
-            Pick::Lane(to) => {
-                notes.push(format!("pick lane={to}"));
-                to
+        WallKind::Auth => obs.lane.account.clone(),
+        WallKind::Usage => {
+            let Some(spent) = account.filter(|a| !a.is_empty()) else {
+                return refused(notes, "account-unknown");
+            };
+            match (pass.route.pick)(harness, model, spent) {
+                Pick::Lane(to) => {
+                    notes.push(format!("pick lane={to}"));
+                    Some(to)
+                }
+                Pick::None => {
+                    notes.push("pick none".to_owned());
+                    return Routed::Left;
+                }
+                Pick::Unjudged { cause } => {
+                    notes.push(format!("pick unjudged {cause}"));
+                    return Routed::Left;
+                }
             }
-            Pick::None => {
-                notes.push("pick none".to_owned());
-                return Routed::Left;
-            }
-            Pick::Unjudged { cause } => {
-                notes.push(format!("pick unjudged {cause}"));
-                return Routed::Left;
-            }
-        },
+        }
     };
     match pass.route.relaunch {
         WallRelaunch::Auto => {}
         WallRelaunch::Ask => return Routed::Left,
     }
-    // The spent account is never relaunched onto before its reset.
-    if kind == WallKind::Usage && account_wall::canon(&to) == account_wall::canon(account) {
-        return refused(notes, "spent-account");
+    match kind {
+        WallKind::Auth => match auth_recovery_pending(obs.lane, pass) {
+            Ok(false) => {}
+            Ok(true) => return refused(notes, "auth-recovery-unconfirmed"),
+            Err(cause) => return refused(notes, &format!("auth-recovery-unread cause={cause}")),
+        },
+        WallKind::Usage => {
+            if let (Some(to), Some(spent)) = (to.as_deref(), account)
+                && account_wall::canon(to) == account_wall::canon(spent)
+            {
+                return refused(notes, "spent-account");
+            }
+        }
     }
     let relaunch = match relaunch_request(
         obs.lane,
         harness,
-        &to,
+        to.as_deref(),
         kind,
         pass.state_dir,
         pass.scripts,
@@ -1999,8 +2075,8 @@ fn route(
     let relaunch = Relaunch {
         item: obs.lane.item.clone(),
         window: lane.clone(),
-        to: to.clone(),
-        spent: account.to_owned(),
+        to: to.unwrap_or_else(|| "-".to_owned()),
+        spent: account.unwrap_or("-").to_owned(),
         cwd: relaunch.cwd,
         session: relaunch.session,
         args: relaunch.args,
@@ -2012,8 +2088,8 @@ fn route(
     }
     out.events.push(Event::LaneRelaunched {
         item: obs.lane.item.clone(),
-        lane: to,
-        from: account.to_owned(),
+        lane: relaunch.to,
+        from: relaunch.spent,
     });
     out.events
         .push(Event::Tail(format!("log={}", log.display())));
@@ -2170,7 +2246,7 @@ pub(crate) fn compose_relaunch(
 fn relaunch_request(
     lane: &Lane,
     harness: Harness,
-    to: &str,
+    to: Option<&str>,
     kind: WallKind,
     state_dir: &Path,
     scripts: &Path,
@@ -2178,7 +2254,7 @@ fn relaunch_request(
 ) -> Result<Recovery, String> {
     let (exclude, reason) = match kind {
         WallKind::Usage => (lane.account.as_deref(), "usage-limit"),
-        WallKind::Auth => (None, "auth-wall"),
+        WallKind::Auth => (None, AUTH_WALL),
     };
     let Composed {
         cwd,
@@ -2189,7 +2265,7 @@ fn relaunch_request(
         harness,
         &Composition {
             stem: "wall-relaunch",
-            account: Some(to),
+            account: to,
             exclude,
             brief: start_brief,
             ground: json!({"reason": reason, "source": "wall-route"}),

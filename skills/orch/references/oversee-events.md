@@ -642,7 +642,9 @@ A marker beside a lane whose record still reads open is a close the watch cannot
    - Keep the window until an account qualifies.
    - The spent account's `account` line or heartbeat roster line says which case it is.
 
-`wall_kind=auth` marks a login failure with no reset. The watch skips the account walk. Under `ORCH_WALL_RELAUNCH=auto`, it asks to resume the lane on its own account so the harness reads current credentials. For a manual recovery, follow [Recovery relaunch](lane-directive.md#recovery-relaunch) with the same account. If the sign-in still fails, ask the operator to sign in again.
+`wall_kind=auth` marks a login failure with no reset. The watch skips the account walk. Under `ORCH_WALL_RELAUNCH=auto`, it asks to resume the lane with its recorded account or inherited credentials. If the replacement hits an auth wall before a completed turn can be confirmed, `auth-recovery-unconfirmed` leaves the pane running for the overseer. Ask the operator to sign in again if the failure persists.
+
+For manual recovery, use the close and launch requests in steps 2 and 3 of [Recovery relaunch](lane-directive.md#recovery-relaunch). Set `no_landing.reason` to `auth-wall` to preserve the lane's model class. Use its recorded account or omit `account` to keep its inherited credentials.
 
 ### `lane-relaunched`
 
