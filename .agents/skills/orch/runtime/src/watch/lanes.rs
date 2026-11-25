@@ -487,14 +487,8 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         };
         match verdict {
             Reading::Live((row, LaneVerdict::Walled)) => {
-                let auth = matches!(
-                    rows::judge_session(row),
-                    rows::SessionVerdict::Walled {
-                        kind: WallKind::Auth
-                    }
-                );
                 return LaneState::Walled {
-                    kind: if auth {
+                    kind: if auth_stop_failure(row) {
                         WallKind::Auth
                     } else {
                         WallKind::Usage
@@ -534,6 +528,15 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         };
     }
     screen_state
+}
+
+fn auth_stop_failure(row: &rows::Row) -> bool {
+    matches!(
+        rows::judge_session(row),
+        rows::SessionVerdict::Walled {
+            kind: WallKind::Auth
+        }
+    )
 }
 
 /// One pass's inputs beyond the readers.
@@ -589,6 +592,13 @@ struct Observed<'a> {
 impl Observed<'_> {
     fn hosted_unreadable(&self) -> bool {
         matches!(self.state, LaneState::Unreadable { .. }) && hosted::host_of(self.lane) != "local"
+    }
+
+    fn current_auth_row(&self) -> bool {
+        self.row
+            .as_ref()
+            .zip(self.lane.session_rows_at_launch)
+            .is_some_and(|(row, at)| row.position > at && auth_stop_failure(row))
     }
 }
 
@@ -743,8 +753,7 @@ fn read_lane<'a>(
         }
         match lane.session_rows_at_launch {
             Some(at) if row.position <= at => {
-                row.error.as_deref() != Some("rate_limit")
-                    && !observe::is_auth_failure("", row.error.as_deref())
+                row.error.as_deref() != Some("rate_limit") && !auth_stop_failure(row)
             }
             None => row.error.as_deref() != Some("rate_limit"),
             Some(_) => true,
@@ -1709,11 +1718,6 @@ fn wall(
     out: &mut Produced,
 ) -> (LaneState, WallReading) {
     let lane = &obs.name;
-    let walled = LaneState::Walled {
-        kind,
-        banner: banner.to_owned(),
-        source,
-    };
     let unjudged = |cause: &str| {
         (
             LaneState::Unjudged {
@@ -1724,15 +1728,16 @@ fn wall(
     };
     // A rows wall carries the harness's own message; the banner judged a
     // pane wall is the screen's.
+    let row_text = obs
+        .row
+        .as_ref()
+        .and_then(|row| row.message.as_deref())
+        .unwrap_or_default();
     let text = match source {
-        WallSource::Rows => obs
-            .row
-            .as_ref()
-            .and_then(|row| row.message.clone())
-            .unwrap_or_default(),
-        WallSource::Pane => banner.to_owned(),
+        WallSource::Rows => row_text,
+        WallSource::Pane => banner,
     };
-    let hash = hash_of(&text).to_string();
+    let hash = hash_of(text).to_string();
     let prior: Vec<String> = pass
         .baseline
         .get("usage-limit", lane)
@@ -1756,33 +1761,44 @@ fn wall(
             },
         },
     };
-    match age {
-        WallAge::Current => {}
-        // The screen predates the live process: its scrollback, not its
-        // wall. The row keeps the first sighting, so the comparison holds
-        // on every later pass.
+    let auth = kind == WallKind::Auth;
+    let evidence = match age {
+        WallAge::Current => source,
+        WallAge::Older | WallAge::Unjudged { .. } if auth && obs.current_auth_row() => {
+            WallSource::Rows
+        }
         WallAge::Older => return unjudged("wall-predates-process"),
         WallAge::Unjudged { cause } => return unjudged(cause),
-    }
+    };
+    // Keep the pane's original sighting and hash for its age check,
+    // deduplication and standing pause.
     let observed = WallReading::Walled { first_seen };
+    let walled = LaneState::Walled {
+        kind,
+        banner: if evidence == WallSource::Pane {
+            banner.to_owned()
+        } else {
+            String::new()
+        },
+        source: evidence,
+    };
     let identity = identity_word(obs.identity.as_ref());
-    let auth = kind == WallKind::Auth;
     // The reset the banner states decides which event this is: pinned to the
     // first sighting, never to this pass, so a dayless clause names the day
     // the wall was seen on; a login wall has no reset.
-    let channel = match source {
+    let channel = match evidence {
         WallSource::Pane => WallChannel::Pane,
         WallSource::Rows => WallChannel::Row,
     };
     let reset_at = if auth {
         None
     } else {
-        reset::key(&text).and_then(|key| {
+        reset::key(text).and_then(|key| {
             let zone = (pass.readers.zone)(key.zone.as_deref())?;
             let at = reset::epoch(&key, first_seen, &zone)?;
             // After the printed clock has passed, its next occurrence can
             // be tomorrow. A reset beyond the named window is unproven.
-            let five_hour = account_wall::harness_own_limit(&text, channel)
+            let five_hour = account_wall::harness_own_limit(text, channel)
                 == Some(account_wall::LimitReport::FiveHour);
             (!five_hour
                 || at.saturating_sub(first_seen) <= agent_runtime::accounts::usage::FIVE_HOURS_S)
@@ -1822,7 +1838,7 @@ fn wall(
                     reset: reset_at,
                     now: pass.now,
                     first_seen,
-                    banner: text.clone(),
+                    banner: text.to_owned(),
                     channel,
                 },
             )
@@ -1833,8 +1849,8 @@ fn wall(
     if quiet && !rewalled {
         return (walled, observed);
     }
-    let lines = match source {
-        WallSource::Rows => text.lines().map(str::to_owned).collect(),
+    let lines = match evidence {
+        WallSource::Rows => row_text.lines().map(str::to_owned).collect(),
         WallSource::Pane => match banner_payload(slice, banner, cap) {
             Some(lines) => lines,
             // The judge and the payload disagree on where the banner is:
@@ -1853,6 +1869,7 @@ fn wall(
                 ));
                 return (walled, observed);
             }
+            Routed::Opening => return unjudged("auth-recovery-opening"),
             Routed::Left => {}
         },
         // A passed reset: the wake resumes the lane it reaches, once per
@@ -1905,6 +1922,8 @@ fn wall(
 enum Routed {
     /// The relaunch started and `lane-relaunched` is out.
     Relaunched,
+    /// A replacement's open launch still owns the outcome.
+    Opening,
     /// The wall is left to the overseer; `notes` carry the pick's answer
     /// and any refusal.
     Left,
@@ -1912,34 +1931,45 @@ enum Routed {
 
 const AUTH_WALL: &str = "auth-wall";
 
+enum AuthRecovery {
+    Ready,
+    Opening,
+    AwaitingTurn,
+}
+
 /// The current launch follows a confirmed auth close in the intent journal.
 /// A subsequent launch after another disposition starts a new recovery.
-fn auth_recovery_pending(lane: &Lane, pass: &Pass) -> Result<bool, String> {
+fn auth_recovery(lane: &Lane, pass: &Pass) -> Result<AuthRecovery, String> {
     let mut transitions = pass.fleet.intents.iter().rev().filter(|intent| {
         intent.target == lane.item
-            && intent.outcome == Outcome::Confirmed
             && intent.reconciled.is_none()
-            && matches!(
-                intent.op,
-                EffectOp::LaunchSession | EffectOp::CloseResources
-            )
+            && ((intent.op == EffectOp::LaunchSession
+                && (intent.outcome == Outcome::Confirmed || intent.open()))
+                || (intent.op == EffectOp::CloseResources && intent.outcome == Outcome::Confirmed))
     });
     let (Some(launch), Some(close)) = (transitions.next(), transitions.next()) else {
-        return Ok(false);
+        return Ok(AuthRecovery::Ready);
     };
     if launch.op != EffectOp::LaunchSession
         || lane.session_since.as_deref() != Some(launch.created_at.as_str())
         || close.op != EffectOp::CloseResources
     {
-        return Ok(false);
+        return Ok(AuthRecovery::Ready);
     }
     let fleet = pass.state_dir.join(agent_runtime::record::FLEET_FILE_NAME);
     let members = LaneMembers::of(&fleet, close).map_err(|e| e.to_string())?;
     if !matches!(members.close, Some(CloseGround::NoLanding { reason, .. }) if reason == AUTH_WALL)
     {
-        return Ok(false);
+        return Ok(AuthRecovery::Ready);
     }
-    Ok(!completed_turn_since_launch(lane)?)
+    if launch.open() {
+        return Ok(AuthRecovery::Opening);
+    }
+    Ok(if completed_turn_since_launch(lane)? {
+        AuthRecovery::Ready
+    } else {
+        AuthRecovery::AwaitingTurn
+    })
 }
 
 /// A Claude Stop follows a completed turn. Startup idleness and open-turn
@@ -2023,23 +2053,28 @@ fn route(
             }
         }
     };
-    match pass.route.relaunch {
-        WallRelaunch::Auto => {}
-        WallRelaunch::Ask => return Routed::Left,
-    }
-    match kind {
-        WallKind::Auth => match auth_recovery_pending(obs.lane, pass) {
-            Ok(false) => {}
-            Ok(true) => return refused(notes, "auth-recovery-unconfirmed"),
+    let recovery = match kind {
+        WallKind::Auth => match auth_recovery(obs.lane, pass) {
+            Ok(recovery) => recovery,
             Err(cause) => return refused(notes, &format!("auth-recovery-unread cause={cause}")),
         },
-        WallKind::Usage => {
-            if let (Some(to), Some(spent)) = (to.as_deref(), account)
-                && account_wall::canon(to) == account_wall::canon(spent)
-            {
-                return refused(notes, "spent-account");
-            }
+        WallKind::Usage => AuthRecovery::Ready,
+    };
+    match (pass.route.relaunch, recovery) {
+        (_, AuthRecovery::Opening) => return Routed::Opening,
+        (WallRelaunch::Ask, AuthRecovery::Ready | AuthRecovery::AwaitingTurn) => {
+            return Routed::Left;
         }
+        (WallRelaunch::Auto, AuthRecovery::AwaitingTurn) => {
+            return refused(notes, "auth-recovery-unconfirmed");
+        }
+        (WallRelaunch::Auto, AuthRecovery::Ready) => {}
+    }
+    if kind == WallKind::Usage
+        && let (Some(to), Some(spent)) = (to.as_deref(), account)
+        && account_wall::canon(to) == account_wall::canon(spent)
+    {
+        return refused(notes, "spent-account");
     }
     let relaunch = match relaunch_request(
         obs.lane,

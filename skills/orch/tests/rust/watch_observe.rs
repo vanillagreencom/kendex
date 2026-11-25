@@ -6511,7 +6511,7 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let fleet = Fleet::new(&server);
+        let mut fleet = Fleet::new(&server);
         let checkout = dir.path().join("checkout");
         std::fs::create_dir_all(&checkout).unwrap();
         let checkout = checkout.canonicalize().unwrap();
@@ -6562,9 +6562,21 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
         std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
         lane_driver!(server, fleet, readers, driver);
         let started_before = driver.now - 1;
-        let read_started = |_: &Identity| Reading::Live(started_before);
+        let replacement_started = driver.now + 1;
+        let predecessor = identity.pid;
+        let read_started = |id: &Identity| {
+            Reading::Live(if id.pid == predecessor {
+                started_before
+            } else {
+                replacement_started
+            })
+        };
         driver.readers.start_epoch = &read_started;
         driver.scripts = scripts;
+        let replay = |_: &Pane| Ok(wall_screen(banner));
+        if source == WallSource::Pane {
+            driver.readers.capture = &replay;
+        }
         let mailbox = checkout.join("tmp/lane-mail/KEN-4");
         std::fs::create_dir_all(&mailbox).unwrap();
         let append = |event, at| {
@@ -6611,13 +6623,48 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
             "{source:?}"
         );
         assert_eq!(request.get("exclude_account"), None, "{source:?}");
+        if source == WallSource::Rows {
+            fleet.runner.verify = Some(1);
+            fleet.runner.stub = fixtures().join("stub-late/claude");
+        }
         let out = run_relaunch(&fleet, &relaunch);
-        assert!(
-            out.status.success(),
-            "{source:?}: {}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            stderr(&out),
-        );
+        if source == WallSource::Rows {
+            assert_eq!(
+                out.status.code(),
+                Some(agent_runtime::effects::UNCONFIRMED_EXIT),
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                stderr(&out),
+            );
+            let preparing = fleet.runner.fleet();
+            let lane = &preparing["lanes"][0];
+            assert_eq!(lane["status"], "preparing");
+            assert_eq!(lane.get("session_rows_at_launch"), None);
+            let pane = lane["launch"]["pane"].as_str().unwrap();
+            await_drawn(&server, pane, "starting up, no composer yet");
+            let pass = driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert_eq!(driver.relaunches.borrow().len(), 1, "{:?}", lines(&pass));
+            assert!(
+                !pass
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::UsageLimit { .. })),
+                "{:?}",
+                lines(&pass)
+            );
+            assert!(relaunch.marker.exists());
+            std::fs::write(checkout.join(".stub-composer"), "").unwrap();
+            await_drawn(&server, pane, "? for shortcuts");
+            let settled = fleet.runner.reconcile_one();
+            assert_eq!(settled["intent"]["outcome"], "confirmed", "{settled}");
+        } else {
+            assert!(
+                out.status.success(),
+                "{source:?}: {}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                stderr(&out),
+            );
+        }
         let launched = fleet.runner.fleet();
         let lane = &launched["lanes"][0];
         assert_eq!(
@@ -6644,28 +6691,38 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
             .iter()
             .find(|intent| intent["op"] == "launch-session")
             .unwrap();
-        assert_eq!(launch["observation"]["route"], "resume", "{source:?}");
+        if source == WallSource::Pane {
+            assert_eq!(launch["observation"]["route"], "resume", "{source:?}");
+        }
 
         let replacement = lane["launch"]["pane"].as_str().unwrap();
         await_drawn(&server, replacement, "? for shortcuts");
-        driver.pass_with_pick(&fleet.read(), &never_pick);
-        assert_eq!(driver.relaunches.borrow().len(), 1, "{source:?}");
-        assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
-
-        for starting_turn in [false, true] {
-            if starting_turn {
-                append(prompt, driver.now);
-                driver.pass_with_pick(&fleet.read(), &never_pick);
-                assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
-            }
-            append(failure, driver.now);
-            let held = driver.pass_with_pick(&fleet.read(), &never_pick);
+        let auth_line = if named {
+            format!("{name} {} wall_kind=auth", account.display())
+        } else {
+            format!("{name} wall_kind=auth")
+        };
+        let assert_held = |driver: &LaneDriver<'_>, held: &Produced| {
+            let events: Vec<_> = held
+                .events
+                .iter()
+                .filter(|event| matches!(event, Event::UsageLimit { .. }))
+                .collect();
+            assert_eq!(
+                events,
+                vec![&Event::UsageLimit {
+                    passed: false,
+                    line: auth_line.clone(),
+                }],
+                "{source:?}: {:?}",
+                lines(held)
+            );
             assert!(
-                lines(&held).contains(&format!(
+                lines(held).contains(&format!(
                     "wall-relaunch-refused lane={name} reason=auth-recovery-unconfirmed"
                 )),
                 "{source:?}: {:?}",
-                lines(&held)
+                lines(held)
             );
             assert_eq!(driver.relaunches.borrow().len(), 1, "{source:?}");
             assert!(
@@ -6674,6 +6731,50 @@ fn an_auth_wall_resumes_the_bound_session_on_its_own_account() {
                     .iter()
                     .any(|pane| pane == replacement)
             );
+        };
+
+        let no_rows = |_: &Path| Reading::Gone;
+        if source == WallSource::Pane {
+            // The replacement's first pass has both the intact old banner
+            // and a failure from its own startup turn.
+            append(failure, driver.now);
+            let held = driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert_held(&driver, &held);
+            assert!(
+                !driver
+                    .pass_with_pick(&fleet.read(), &never_pick)
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::UsageLimit { .. }))
+            );
+            // The same pane without the current row is still old screen.
+            driver.readers.rows = &no_rows;
+            let replay_only = driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert!(
+                fleet.runner.fleet()["lanes"][0].get("walled").is_none(),
+                "{:?}",
+                lines(&replay_only)
+            );
+            driver.readers.rows = &lane_rows;
+            driver.readers.capture = &capture;
+        } else {
+            driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert_eq!(driver.relaunches.borrow().len(), 1, "{source:?}");
+            assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
+        }
+
+        for starting_turn in [false, true] {
+            if source == WallSource::Pane && !starting_turn {
+                continue;
+            }
+            if starting_turn {
+                append(prompt, driver.now);
+                driver.pass_with_pick(&fleet.read(), &never_pick);
+                assert_eq!(driver.baseline.get("usage-limit", name), None, "{source:?}");
+            }
+            append(failure, driver.now);
+            let held = driver.pass_with_pick(&fleet.read(), &never_pick);
+            assert_held(&driver, &held);
         }
 
         // The watch never sees an Idle verdict for this completed turn.
