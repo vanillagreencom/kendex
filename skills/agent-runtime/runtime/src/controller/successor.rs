@@ -309,7 +309,9 @@ pub fn recovery(launch: &LaunchSettings, path: &Path, predecessor: &str) -> Resu
 /// launch with no walk, the record's native id as its resume and, for Pi,
 /// which continues by file, the file that id names under its home for its
 /// working directory, which must stand (`session-missing`): the home is the
-/// one the start's launch names, the account where it is the Pi root. A start opens
+/// one the start's launch names, the account where it is the Pi root. An
+/// accountless Claude or Codex successor keeps the recorded home, a Claude
+/// one in its recorded mode. A start opens
 /// it; a record naming no native id refuses `session-unrecorded`.
 pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     let missing = || refused("record-missing", &[("path", &path.display().to_string())]);
@@ -329,6 +331,25 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
                 &[("field", "session_id"), ("pane", &record.pane)],
             )
         })?;
+    // An accountless session's store is the home its record keeps, which
+    // the variable the fleet server or the caller hands may no longer name.
+    // A Claude home resumes only with its recorded mode; one recorded with
+    // none resumes on the home a fresh launch resolves, as before modes
+    // were recorded.
+    if successor.account.is_none()
+        && let Some(home) = Caller::of(&record).home
+    {
+        match record.harness {
+            Some(Harness::Codex) => successor.home = Some(home),
+            Some(Harness::Claude) => {
+                if let Some(implicit) = record.raw.get("home_implicit").and_then(Value::as_bool) {
+                    successor.home = Some(home);
+                    successor.home_implicit = implicit;
+                }
+            }
+            Some(Harness::Copilot | Harness::Pi) | None => {}
+        }
+    }
     if record.harness == Some(Harness::Pi) {
         // The Pi root the launch runs on: the account where its variable is
         // Pi's own (a model Pi's root bills), else the home the record keeps.

@@ -182,6 +182,7 @@ impl Caller {
                 .harness
                 .filter(|h| same && h.account_var(Some(&chosen.model)) != h.home_var())
                 .and(self.home.clone()),
+            home_implicit: false,
             model: Some(chosen.model.clone()).filter(|m| !m.is_empty()),
             effort: Some(chosen.effort.clone()).filter(|e| !e.is_empty()),
             cwd: self.cwd.clone(),
@@ -438,6 +439,7 @@ impl Record {
             home: caller
                 .home
                 .filter(|_| harness.account_var(caller.model.as_deref()) != harness.home_var()),
+            home_implicit: false,
             model: caller.model,
             effort: caller.effort,
             cwd: caller.cwd,

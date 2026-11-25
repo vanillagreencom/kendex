@@ -20,6 +20,7 @@ use crate::session;
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
+use super::prepare::Kept;
 use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
@@ -1628,7 +1629,10 @@ pub enum Delivery {
 /// permission nor its words records the posture that harness was launched
 /// under ([`launched_posture`]), keeping the recorded one where those words
 /// cannot be read on the process the record names ([`adopted_posture`]);
-/// one naming either records the pair it states ([`stated_posture`]). The one
+/// one naming either records the pair it states ([`stated_posture`]). A
+/// Claude adoption records the config dir that process runs on and whether
+/// it names it ([`adopted_home`]), with a `home-unread` notice where neither
+/// that process nor the request gives one. The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
 pub fn adopt_controller(
@@ -1637,7 +1641,7 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
-    adopt_on(path, r, None, Unnamed::Launched, settings, locking)
+    adopt_on(path, r, None, Unnamed::Launched, None, settings, locking)
 }
 
 /// The posture an adoption records where its request names neither the
@@ -1653,12 +1657,15 @@ enum Unnamed {
 /// [`adopt_controller`] on `confirmed`, the server a caller already read at
 /// the request's socket through the program of the pid its record names, so
 /// the adoption reaches the server that read did; `None` reads the server at
-/// the socket afresh.
+/// the socket afresh. `vouched` is the Claude home a registration read for
+/// the process in the pane, which stands where that process's own
+/// environment cannot be read.
 fn adopt_on(
     path: &Path,
     r: &AdoptController,
     confirmed: Option<tmux::Server>,
     unnamed: Unnamed,
+    vouched: Option<Kept>,
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
@@ -1752,9 +1759,32 @@ fn adopt_on(
         }
         None => r,
     };
+    // A record's Claude home vouches for the pane's process only where that
+    // record is this process's: a heal of the pane it names, or the
+    // identity it records. A replacement in the same pane reads its own.
+    let (home, home_unread) = match harness {
+        Harness::Claude => {
+            let recorded = overseer
+                .as_ref()
+                .filter(|o| {
+                    same && match unnamed {
+                        Unnamed::Kept => true,
+                        Unnamed::Launched => predecessor_identity(o).as_ref() == Some(&identity),
+                    }
+                })
+                .and_then(recorded_home);
+            adopted_home(
+                r.home.as_deref().or(r.account.as_deref()),
+                claude_home_of(&identity),
+                vouched.or(recorded),
+            )
+        }
+        Harness::Codex | Harness::Copilot | Harness::Pi => (None, None),
+    };
     let read = Recorded {
         value: AdoptionRead {
             identity,
+            home,
             server: server.pid as u64,
             server_start: server.start,
             socket: socket.display().to_string(),
@@ -1762,7 +1792,77 @@ fn adopt_on(
             same,
         },
     };
-    super::adoption::apply_adoption(path, r, &read, &settings.account_state, locking)
+    let mut adopted =
+        super::adoption::apply_adoption(path, r, &read, &settings.account_state, locking)?;
+    if let Some(cause) = home_unread {
+        adopted
+            .notices
+            .push(format!("home-unread pane={} cause={cause}", r.pane));
+    }
+    Ok(adopted)
+}
+
+/// The Claude home a record keeps with its mode; `None` where it keeps no
+/// mode.
+fn recorded_home(overseer: &Overseer) -> Option<Kept> {
+    let home = views::text(overseer.extra.get("home"))?;
+    let implicit = overseer.extra.get("home_implicit")?.as_bool()?;
+    Some(Kept {
+        home: PathBuf::from(home),
+        named: !implicit,
+    })
+}
+
+/// The config dir the Claude process `identity` names runs on, from the
+/// environment it was started with: `CLAUDE_CONFIG_DIR`, named, else the
+/// implicit default under its own `HOME`. `Err` names why it was not read,
+/// as on a host with no `/proc`. The identity is read live after, so a
+/// reused pid never answers for another process's environment.
+fn claude_home_of(identity: &Identity) -> std::result::Result<Kept, &'static str> {
+    let kept = match process_var(identity.pid, Harness::Claude.home_var())? {
+        Some(dir) => Kept {
+            home: PathBuf::from(dir),
+            named: true,
+        },
+        None => {
+            let home = process_var(identity.pid, "HOME")?.ok_or("home-unset")?;
+            Kept {
+                home: session::default_home_at(Harness::Claude, Path::new(&home)),
+                named: false,
+            }
+        }
+    };
+    match process::still_runs(identity) {
+        Reading::Live(_) => Ok(kept),
+        Reading::Gone => Err("process-gone"),
+        Reading::Unreadable { cause } => Err(cause),
+    }
+}
+
+/// The Claude home an adoption records for the process it read, and why
+/// that process was not read where nothing else gives a home. The process's
+/// own reading stands where the request supplies no path or the same one,
+/// so equal paths keep the mode the process runs in; a supplied path it does
+/// not run on is named. Unread, the home vouched for this process stands on
+/// the same terms, then the supplied path, named.
+fn adopted_home(
+    supplied: Option<&str>,
+    observed: std::result::Result<Kept, &'static str>,
+    vouched: Option<Kept>,
+) -> (Option<Kept>, Option<&'static str>) {
+    let agrees = |kept: &Kept| supplied.is_none_or(|path| Path::new(path) == kept.home);
+    let supplied = supplied.map(|path| Kept {
+        home: PathBuf::from(path),
+        named: true,
+    });
+    match observed {
+        Ok(seen) if agrees(&seen) => (Some(seen), None),
+        Ok(_) => (supplied, None),
+        Err(cause) => match vouched.filter(|kept| agrees(kept)).or(supplied) {
+            Some(kept) => (Some(kept), None),
+            None => (None, Some(cause)),
+        },
+    }
 }
 
 /// Whether the record names `pane` on `server`, with a matching start
@@ -1854,6 +1954,7 @@ pub fn heal_controller(
         &request,
         Some(server),
         Unnamed::Kept,
+        None,
         settings,
         locking,
     )
@@ -2019,7 +2120,14 @@ fn account_of_home(harness: Harness, home: Option<String>) -> Option<String> {
 fn proc_words(pid: u32, file: &str) -> std::result::Result<Vec<String>, &'static str> {
     let bytes = match std::fs::read(format!("/proc/{pid}/{file}")) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("process-gone"),
+        // A host with no `/proc` has no entry for a live process either.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(if Path::new("/proc/self").exists() {
+                "process-gone"
+            } else {
+                "proc-absent"
+            });
+        }
         Err(_) => return Err("proc-unreadable"),
     };
     Ok(bytes
@@ -2258,6 +2366,18 @@ pub fn register_controller(
     let account = given
         .or(stated_account)
         .or_else(|| account_of_home(seat_harness, seat_var));
+    // The Claude home this registration read, the caller's environment
+    // standing in where the process's did not read.
+    let vouched = match harness {
+        Harness::Claude => match &home_var {
+            Some(dir) => Some(Kept {
+                home: PathBuf::from(dir),
+                named: true,
+            }),
+            None => session::default_home(harness).map(|home| Kept { home, named: false }),
+        },
+        Harness::Codex | Harness::Copilot | Harness::Pi => None,
+    };
     let home = match harness {
         Harness::Codex => home_var.or_else(|| account.clone()),
         Harness::Claude | Harness::Copilot | Harness::Pi if seat == harness.home_var() => {
@@ -2281,7 +2401,15 @@ pub fn register_controller(
         permission: None,
         extra_args: None,
     };
-    let adopted = adopt_controller(path, &request, settings, locking)?;
+    let adopted = adopt_on(
+        path,
+        &request,
+        None,
+        Unnamed::Launched,
+        vouched,
+        settings,
+        locking,
+    )?;
     Ok((
         json!({
             "adopted": adopted,
@@ -2320,6 +2448,111 @@ mod tests {
         assert_eq!(session_of(None, None, fallback).unwrap(), "predecessor");
         let err = session_of(None, None, None).unwrap_err();
         assert_eq!(err.key(), "tmux-session-unresolved");
+    }
+
+    /// A Claude adoption records the process's own home and mode where the
+    /// request names no path or the same one, so a named `$HOME/.claude` and
+    /// the implicit default stay apart; a path the process does not run on
+    /// is named. Where the process's environment is unread, as on a host
+    /// with no `/proc`, a home vouched for that process stands on the same
+    /// terms, then the named path; with none, nothing, and the cause.
+    #[test]
+    fn a_claude_adoption_records_the_home_and_mode_its_process_runs_on() {
+        let kept = |home: &str, named: bool| Kept {
+            home: PathBuf::from(home),
+            named,
+        };
+        let implicit = kept("/h/.claude", false);
+        let explicit = kept("/h/.claude", true);
+        type Row = (
+            &'static str,
+            Option<&'static str>,
+            std::result::Result<Kept, &'static str>,
+            Option<Kept>,
+            Option<Kept>,
+            Option<&'static str>,
+        );
+        let rows: [Row; 9] = [
+            (
+                "read, none named",
+                None,
+                Ok(implicit.clone()),
+                None,
+                Some(implicit.clone()),
+                None,
+            ),
+            (
+                "read, its default path named",
+                Some("/h/.claude"),
+                Ok(implicit.clone()),
+                None,
+                Some(implicit.clone()),
+                None,
+            ),
+            (
+                "read named, the same path named",
+                Some("/h/.claude/"),
+                Ok(explicit.clone()),
+                None,
+                Some(explicit.clone()),
+                None,
+            ),
+            (
+                "read, another path named",
+                Some("/x"),
+                Ok(implicit.clone()),
+                Some(implicit.clone()),
+                Some(kept("/x", true)),
+                None,
+            ),
+            (
+                "unread, vouched, none named",
+                None,
+                Err("proc-absent"),
+                Some(implicit.clone()),
+                Some(implicit.clone()),
+                None,
+            ),
+            (
+                "unread, vouched, its path named",
+                Some("/h/.claude"),
+                Err("proc-absent"),
+                Some(implicit.clone()),
+                Some(implicit.clone()),
+                None,
+            ),
+            (
+                "unread, vouched, another path named",
+                Some("/x"),
+                Err("proc-absent"),
+                Some(implicit.clone()),
+                Some(kept("/x", true)),
+                None,
+            ),
+            (
+                "unread, a path named",
+                Some("/x"),
+                Err("proc-absent"),
+                None,
+                Some(kept("/x", true)),
+                None,
+            ),
+            (
+                "unread, nothing named",
+                None,
+                Err("proc-absent"),
+                None,
+                None,
+                Some("proc-absent"),
+            ),
+        ];
+        for (case, supplied, observed, vouched, home, cause) in rows {
+            assert_eq!(
+                adopted_home(supplied, observed, vouched),
+                (home, cause),
+                "{case}"
+            );
+        }
     }
 
     /// An adoption request states its posture and words as one pair: named

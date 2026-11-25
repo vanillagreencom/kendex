@@ -339,7 +339,7 @@ fn unconfirmed_after_retirement(
 
 /// The home a successor keeps where no account names one, the lane
 /// launch's own rule (`launch::accountless_kept`) deciding it: the
-/// pending's `home` first, named as the pending names it, which is the Pi
+/// pending's `home` first, in the mode the pending names it, which is the Pi
 /// root a Pi successor keeps whatever account bills it, or for the other
 /// harnesses the home a resumed session stands under (the pending's own
 /// rule); `served` is the home the fleet server hands its panes. An
@@ -352,7 +352,7 @@ fn kept(
 ) -> Option<Kept> {
     let home = pending.home.as_deref().map(|home| Kept {
         home: PathBuf::from(home),
-        named: true,
+        named: !pending.home_implicit,
     });
     match (harness, pending.account.is_some()) {
         (Harness::Pi, _) => accountless_kept(&settings.inherited(), harness, home, served),
@@ -596,6 +596,17 @@ impl Successor {
         } else {
             if self.cleared {
                 intent.env_remove.push(self.harness.home_var().to_owned());
+                // The implicit default is read under `HOME`: a resumed session
+                // keeps the store and `.claude.json` it ran with, whatever
+                // `HOME` the resume's caller or the fleet server holds.
+                if self.resume.is_some() {
+                    let user_home = self.home.parent().ok_or_else(|| {
+                        refused("home-unresolved", &[("harness", self.harness.name())])
+                    })?;
+                    intent
+                        .env
+                        .insert("HOME".to_owned(), user_home.display().to_string());
+                }
             }
             if let Some(id) = &self.resume {
                 intent.resume = Some(Resume {

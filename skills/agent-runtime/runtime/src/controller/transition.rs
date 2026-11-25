@@ -21,7 +21,7 @@ use super::{
 };
 use crate::accounts::wall::canon;
 use crate::error::{Error, Result};
-use crate::intent::{EffectOp, Intent, Reconciled};
+use crate::intent::{EffectOp, Intent, Phase, Reconciled};
 use crate::journal::{
     self, ClaimIntent, Effect, Env, IntentClaimed, ProgressRecorded, RecordOutcome, RecordProgress,
     intents, new_intent, push_intent,
@@ -757,6 +757,19 @@ fn record_transfer_outcome(
             if let Some(home) = &r.home {
                 record::set(record, "home", home.as_str());
             }
+            // A Claude home's mode is the one the launch that prepared that
+            // home opened under.
+            let claude = pending.get("harness").and_then(Value::as_str)
+                == Some(crate::harness::Harness::Claude.name());
+            super::record_home_mode(
+                record,
+                intent
+                    .phase
+                    .as_ref()
+                    .and_then(Phase::opened)
+                    .filter(|opened| claude && r.home.is_some() && opened.home == r.home)
+                    .map(|opened| opened.home_implicit),
+            );
             // The handoff the successor's brief names, which the watch's
             // recoveries name again.
             if let Some(handoff) = pending.get("handoff").and_then(Value::as_str) {
