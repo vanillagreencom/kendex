@@ -805,7 +805,8 @@ def select():
         raise ValueError("add --all and catalog layout kinds disagree")
 
     changes = set(os.environ["PATHS"].splitlines())
-    entries = set(sys.stdin.read().splitlines()) | changes
+    tracked = set(sys.stdin.read().splitlines())
+    entries = tracked | changes
     skill_root = fixed.pop("Skill")[0]
     skill_dirs = set()
     inputs = {"kendex.toml", registry, ".gitattributes"}
@@ -828,9 +829,11 @@ def select():
             root in skill_dirs and path.parts[len(root)] not in excluded
             for root in (path.parts[:2], path.parts[:3]) if len(root) < len(path.parts)
         ):
-            print(name)
+            print("read", name, sep="\t")
         elif path.name == ".gitattributes" and any(path.parent in PurePosixPath(item).parents for item in inputs):
-            print(name)
+            print("read", name, sep="\t")
+        elif name in tracked:
+            print("excluded", name, sep="\t")
 
 try:
     select()
@@ -858,7 +861,7 @@ reads() {
   fi
   PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
     EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" \
-    CATALOG_READS="$catalog_inputs" awk -F '\t' '
+    CATALOG_READS="$catalog_inputs" CATALOG_SCOPE="$CATALOG_INPUTS" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -872,7 +875,10 @@ reads() {
       n = split(ENVIRON["EXCLUDED"], paths, "\n")
       for (i = 1; i <= n; i++) excluded[paths[i]] = 1
       n = split(ENVIRON["CATALOG_READS"], entries, "\n")
-      for (i = 1; i <= n; i++) catalog_input[entries[i]] = 1
+      for (i = 1; i <= n; i++) {
+        split(entries[i], entry, "\t")
+        catalog_input[entry[2]] = entry[1]
+      }
     }
     $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
@@ -900,7 +906,10 @@ reads() {
             continue
           }
           if (kind[r] == "target-catalog") {
-            if (path in catalog_input) { select_target(r); mapped = 1 }
+            if (catalog_input[path] == "read") { select_target(r); mapped = 1 }
+            # An excluded tracked catalog path is placed even when the
+            # render lint does not read it. Other target rows still apply.
+            if (catalog_input[path] == "excluded" && path ~ ENVIRON["CATALOG_SCOPE"]) mapped = 1
             continue
           }
           if (read[r] == ".") {

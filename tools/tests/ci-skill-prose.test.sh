@@ -40,6 +40,8 @@ ROWS
 
 catalog_rows() {
   local path expected selected
+  # Construct the path so this guard is not itself discovered as its reader.
+  local pi_maintainer="pi-extensions/AGENTS"".md"
   while IFS='|' read -r path expected; do
     selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "${path// /$'\n'}")"
     check "catalog render lint selects $path only if it reads it" "$expected" \
@@ -47,11 +49,12 @@ catalog_rows() {
         if type != "object" then "unproved" else
           any(.include[]; .crate == "kendex-cli" and (.targets | index("catalog_render_lint") != null))
         end')"
-  done <<'ROWS'
-skills/orch/SKILL.md|true
+  done <<ROWS
+skills/orch/references/watch-delivery.md|true
 skills/orch/DEVELOPMENT.md|false
 docs/architecture/engine.md|false
 skills/AGENTS.md hooks/README.md hooks/tests/fixtures/marks-replies.json pi-extensions/pi-agents-tmux/README.md|false
+$pi_maintainer|false
 .gitattributes|true
 ROWS
 }
