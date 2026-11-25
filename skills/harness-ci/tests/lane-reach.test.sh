@@ -193,6 +193,83 @@ for name in ('.kendex-generated.json', '.kendex-lock.json', 'web/check.test.mjs'
 PY
 git -C "$repo" commit -qam 'Vitest reads a module from a Copilot copy-mode skill'
 vitest_copilot_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-disabled "$vitest_copilot_base"
+git -C "$repo" mv -- .github/skills/math/SKILL.md .github/skills/math/SKILL.md.disabled
+python3 - "$repo" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+inventory = root / '.kendex-generated.json'
+paths = json.loads(inventory.read_text())
+paths[paths.index('.github/skills/math/SKILL.md')] += '.disabled'
+inventory.write_text(json.dumps(paths) + '\n')
+lock = root / '.kendex-lock.json'
+record = json.loads(lock.read_text())
+record['entries']['skill:math:copilot']['enabled'] = False
+lock.write_text(json.dumps(record) + '\n')
+PY
+git -C "$repo" commit -qam 'the Copilot copy of the skill is switched off'
+vitest_disabled_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-unowned "$vitest_disabled_base"
+printf '%s\n' '{"entries":[]}' >"$repo/.kendex-lock.json"
+git -C "$repo" commit -qam 'an install record the reader cannot use'
+vitest_unowned_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-agent-pair "$static_base"
+mkdir -p "$repo/.codex/agents" "$repo/.github/agents"
+printf 'name = "auditor"\n' >"$repo/.codex/agents/auditor.toml"
+printf 'auditor\n' >"$repo/.github/agents/auditor.agent.md"
+printf '%s\n' 'cat ./.github/agents/auditor.agent.md' >"$repo/tools/check.sh"
+python3 - "$repo" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+renders = {'codex': '.codex/agents/auditor.toml', 'copilot': '.github/agents/auditor.agent.md'}
+inventory = root / '.kendex-generated.json'
+inventory.write_text(json.dumps(json.loads(inventory.read_text()) + list(renders.values())) + '\n')
+lock = root / '.kendex-lock.json'
+record = json.loads(lock.read_text())
+for harness, path in renders.items():
+    record['entries'][f'agent:auditor:{harness}'] = {
+        'enabled': True, 'sourceRepo': 'example/catalog',
+        'emitted': {'kind': 'agent', 'name': 'auditor', 'paths': [path]},
+    }
+lock.write_text(json.dumps(record) + '\n')
+PY
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a shell lane reads the Copilot render of an agent package'
+agent_pair_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-command-pair "$static_base"
+mkdir -p "$repo/.claude/commands" "$repo/.agents/skills/audit"
+printf 'audit\n' >"$repo/.claude/commands/audit.md.disabled"
+printf 'audit\n' >"$repo/.agents/skills/audit/SKILL.md.disabled"
+printf '%s\n' 'cat ./.agents/skills/audit/SKILL.md.disabled' >"$repo/tools/check.sh"
+python3 - "$repo" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+# kendex emits a Codex command as a skill tree and parks both renders.
+renders = {
+    'claude': ('command', '.claude/commands/audit.md.disabled', '.claude/commands/audit.md.disabled'),
+    'codex': ('skill', '.agents/skills/audit/SKILL.md.disabled', '.agents/skills/audit'),
+}
+inventory = root / '.kendex-generated.json'
+inventory.write_text(json.dumps(json.loads(inventory.read_text()) +
+                                [path for _, path, _ in renders.values()]) + '\n')
+lock = root / '.kendex-lock.json'
+record = json.loads(lock.read_text())
+for harness, (kind, _, position) in renders.items():
+    record['entries'][f'command:audit:{harness}'] = {
+        'enabled': False, 'sourceRepo': 'example/catalog',
+        'emitted': {'kind': kind, 'name': 'audit', 'paths': [position]},
+    }
+lock.write_text(json.dumps(record) + '\n')
+PY
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a shell lane reads the Codex render of a switched-off command'
+command_pair_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-deleted-workdir "$static_base"
 write_workflow deleted-workdir >"$repo/.github/workflows/ci.yml"
 mkdir -p "$repo/check-cwd"
@@ -210,6 +287,14 @@ printf 'cat ./link/../input.txt\n' >"$repo/tools/check.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'shell input through a symlink and parent component'
 symlink_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-parent-hop "$static_base"
+mkdir -p "$repo/tools/cache"
+printf 'only\n' >"$repo/tools/cache/only.txt"
+printf 'input\n' >"$repo/tools/input.txt"
+printf 'cat ./tools/cache/../input.txt\n' >"$repo/tools/check.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'shell input through a tracked directory and a parent component'
+parent_hop_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
 cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
 #[path = "../../spare/src/mod.rs"]
@@ -247,6 +332,26 @@ printf '42\n' >"$repo/cargo/spare/src/input.txt"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a linked child reads an input outside its target source tree'
 cargo_linked_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-cargo-parent-hop "$opted_base"
+mkdir -p "$repo/cargo/spare/cache"
+printf 'only\n' >"$repo/cargo/spare/cache/only.txt"
+for input in cargo/spare/hop.txt cargo/spare/input.txt cargo/bridge/hop.txt; do
+  printf '42\n' >"$repo/$input"
+done
+cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
+#[test]
+fn reads_through_directories() {
+    assert_eq!(include_str!("../../spare/cache/../hop.txt").trim(), "42");
+    assert_eq!(include_str!("../../bridge/src/../hop.txt").trim(), "42");
+    assert_eq!(bridge::INPUT.trim(), "42");
+}
+RS
+printf '%s\n' 'pub fn value() -> u8 { 42 }' \
+  'pub const INPUT: &str = include_str!("../../spare/input.txt");' >"$repo/cargo/bridge/src/lib.rs"
+printf '%s\n' 'cat ./cargo/spare/input.txt' >>"$repo/tools/check.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Rust includes pass through a member directory and a dependency source tree'
+cargo_parent_hop_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-queue-prerequisite "$static_base"
 write_workflow queue-prerequisite >"$repo/.github/workflows/ci.yml"
 printf '%s\n' 'shell:queue shared.mjs # reason: the queue also checks the shared module' \
@@ -685,11 +790,17 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
       base="$static_base" ;;
     vitest-package-sibling) base="$vitest_package_base" ;;
     vitest-copilot-sibling) base="$vitest_copilot_base" ;;
+    vitest-disabled-sibling) base="$vitest_disabled_base" ;;
+    vitest-unowned-disabled) base="$vitest_unowned_base" ;;
+    agent-pair) base="$agent_pair_base" ;;
+    command-pair) base="$command_pair_base" ;;
+    shell-parent-hop) base="$parent_hop_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
     cargo-external-child) base="$cargo_child_base" ;;
     cargo-linked-child) base="$cargo_linked_base" ;;
+    cargo-parent-hop|cargo-passed-dependency) base="$cargo_parent_hop_base" ;;
     queue-prerequisite) base="$queue_prereq_base" ;;
     runtime-only) base="$runtime_base" ;;
     computed-import) base="$computed_base" ;;
@@ -714,7 +825,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   git -C "$trusted" checkout -q --detach "$base"
   git -C "$repo" checkout -q -B row "$base"
   case "$label" in
-    removed-source|deleted-workdir) git -C "$repo" rm -q -- "$path" ;;
+    removed-source|deleted-workdir|shell-parent-hop|cargo-parent-hop) git -C "$repo" rm -q -- "$path" ;;
+    # The shell lane reads the second file, which Cargo reads only through the dependency.
+    cargo-passed-dependency) printf '\n' >>"$repo/$path"; printf '\n' >>"$repo/cargo/spare/input.txt" ;;
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
@@ -749,12 +862,18 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the base directory" 0 "$base_status"
     assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
+  shell-parent-hop)
+    base_status=0 head_status=0
+    (cd "$trusted" && bash ./tools/check.sh) >/dev/null 2>&1 || base_status=$?
+    (cd "$repo" && bash ./tools/check.sh) >/dev/null 2>&1 || head_status=$?
+    assert_eq "$label reads its input through the base directory" 0 "$base_status"
+    assert_eq "$label cannot pass through the removed directory" 1 "$head_status" ;;
   dispatch-helper)
     for member in check-scans check-lane-host; do
       assert_eq "$label $member reads the helper at runtime" "$(cat "$repo/$fixture_helper")" \
         "$(cd "$repo" && bin/check --lane "$member")"
     done ;;
-  cargo-external-child|cargo-linked-child)
+  cargo-external-child|cargo-linked-child|cargo-parent-hop)
     base_status=0 head_status=0
     (cd "$trusted/cargo" && CARGO_TARGET_DIR="$SANDBOX/base-cargo-target" cargo test --offline --locked -p primary) \
       >"$SANDBOX/base-cargo-log" 2>&1 || base_status=$?
@@ -839,6 +958,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         esac
       done ;;
   esac
+  if [ "$label" = vitest-disabled-sibling ]; then
+    # Package ownership selects the reader; the unowned-marker fallback
+    # would keep the lane as unread instead.
+    for log in action-log local-log; do
+      assert_eq "$label $log web evidence" hit \
+        "$(sed -n 's/^lane: name=web verdict=true .* evidence=\([a-z]*\)$/\1/p' "$SANDBOX/$log")"
+    done
+  fi
   if [ "$label" = queue-prerequisite ]; then
     assert_eq "$label has queue proof" queue_only=true "$(sed -n '/^queue_only=/p' "$SANDBOX/action")"
   fi
@@ -856,14 +983,21 @@ shared-gate|tools/peer.sh|true||false|false
 shell-workdir|tools/other/context.sh|true||false|false
 shell-symlink|other/input.txt|true||false|false
 deleted-workdir|check-cwd/only.txt|true||false|false
+shell-parent-hop|tools/cache/only.txt|true||false|false
+agent-pair|.codex/agents/auditor.toml|true||false|false
+command-pair|.claude/commands/audit.md.disabled|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
 cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
 cargo-external-child|cargo/spare/src/child.rs|false|true|false|false
 cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
+cargo-parent-hop|cargo/spare/cache/only.txt|false|true|false|false
+cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 vitest-import|web/café.mjs|false||true|false
 vitest-package-sibling|.codex/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
 vitest-copilot-sibling|.github/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
+vitest-disabled-sibling|.github/skills/math/sibling.mjs|||true|
+vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
