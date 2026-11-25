@@ -71,6 +71,8 @@ UNREACHABLE = "main-unreachable"
 # The main printed its reached line and had not answered by the deadline.
 MAIN_SLOW = "main-slow"
 SESSION_ID = re.compile(r"vgs-voice:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.ASCII)
+STANDING_KEY = re.compile(r"fleet\.forward:[0-9a-f]{64}")
+STANDING_SETTING = "vgs.jarvis.alwaysAllow"
 BOOT_ID = None
 
 
@@ -104,7 +106,7 @@ def checked_record(path, confirm):
     """The caller's record at PATH after its shape and order checks; the first failure refuses.
 
     CONFIRM requires a confirmation object. Without it a record may omit one,
-    but a session record keeps its confirmation, the grant its lease bounds.
+    but a scoped record always keeps its confirmation and grant bounds.
     """
     try:
         with open(path, "rb") as source:
@@ -130,15 +132,21 @@ def checked_record(path, confirm):
     confirmation = record.get("confirmation")
     form = "method" if isinstance(confirmation, dict) and "method" in confirmation else "words"
     caller = ("caller",) if isinstance(confirmation, dict) and "caller" in confirmation else ()
+    standing = confirm and isinstance(confirmation, dict) and confirmation.get("scope") == "standing"
+    scope = ("scope", "key", "setting") if standing else ("scope",) if scoped else ()
     fields = {"request": ("ref", "at", "text")}
     if confirmed:
-        fields["confirmation"] = ("ref", "at", form, *caller, *(("scope",) if scoped else ()))
+        fields["confirmation"] = ("ref", "at", form, *caller, *scope)
     for part, keys in fields.items():
         invalid(part, isinstance(record[part], dict) and set(record[part]) == set(keys))
         for key in keys:
             invalid(part + "." + key, isinstance(record[part][key], str))
     invalid("confirmation.caller", not confirmed or confirmation.get("caller", "unproved") == "unproved")
     invalid("confirmation.method", form == "words" or confirmation["method"] in METHODS)
+    if standing:
+        invalid("confirmation.scope", not scoped and form == "method")
+        invalid("confirmation.key", STANDING_KEY.fullmatch(confirmation["key"]))
+        invalid("confirmation.setting", confirmation["setting"] == STANDING_SETTING)
     if scoped:
         session = record["session"]
         invalid("session", isinstance(session, dict) and set(session) == {"id", "name", "main", "lease"})
@@ -160,11 +168,42 @@ def checked_record(path, confirm):
         return record
     invalid("confirmation.words", form == "method" or confirmation["words"].strip())
     # One record row may hold both turns, so the references may match and the times be equal.
-    if not scoped and nanoseconds(confirmation["at"]) < nanoseconds(record["request"]["at"]):
+    if not (scoped or standing) and nanoseconds(confirmation["at"]) < nanoseconds(record["request"]["at"]):
         raise Refusal("confirmation-early", "")
     if form == "words" and not confirms(confirmation["words"]):
         raise Refusal("confirmation-unclear", "")
     return record
+
+
+def standing_settings():
+    """VGS's user layer, as set by shell/Commons/Paths.qml and shell/Core/Config.qml."""
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return Path(os.path.abspath(config)) / "vgshell/shell.json" if config.is_absolute() else None
+
+
+def saved_standing(path, confirmation):
+    """Read the existing shell setting even when VGS is down. The saved confirmation binds one grant."""
+    try:
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), encoding="utf-8") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                return False
+            config = json.load(source)
+    except (OSError, ValueError, RecursionError):
+        return False
+    plugins = config.get("plugins") if isinstance(config, dict) else None
+    if not isinstance(plugins, list):
+        return False
+    jarvis = [plugin for plugin in plugins if isinstance(plugin, dict) and plugin.get("id") == "vgs.jarvis"]
+    grants = jarvis[0].get("alwaysAllow") if len(jarvis) == 1 else None
+    if not isinstance(grants, list):
+        return False
+    rows = [row for row in grants if isinstance(row, dict) and row.get("grant") == confirmation["key"]]
+    if len(rows) != 1 or not isinstance(rows[0].get("label"), str):
+        return False
+    saved = rows[0].get("confirmation")
+    return (isinstance(saved, dict) and set(saved) == {"ref", "at", "method"}
+            and saved["ref"] == confirmation["ref"] and saved["method"] == confirmation["method"]
+            and isinstance(saved["at"], str) and nanoseconds(saved["at"]) == nanoseconds(confirmation["at"]))
 
 
 def live_session(session, main):
@@ -339,6 +378,17 @@ class Forwarder:
         if self.role.kind == "main":
             raise Refusal("role-main", "")
 
+    def active_standing(self, grant):
+        """Verify the current saved grant against this home, destination and settings file."""
+        if self.settings["JARVIS_FORWARD_CONFIRM"] != "on":
+            return False
+        path = standing_settings()
+        scope = (self.home + "\n" + self.settings["JARVIS_MAIN_HOST"]).encode()
+        key = "fleet.forward:" + hashlib.sha256(scope).hexdigest()
+        confirmation = grant["confirmation"]
+        return (path is not None and str(path) == grant["path"] and confirmation["key"] == key
+                and saved_standing(path, confirmation))
+
     def host(self, script, args, data=None):
         """One call on the main: ("ok", result), or (cause, first diagnostic line)."""
         return host_call(self.role, self.deadline, script, args, data)
@@ -392,15 +442,16 @@ class Forwarder:
         stopped = self.take_cursor(fresh) if fresh else None
         unreachable = False
         for entry in queued:
-            if entry.get("session") and not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"]):
+            if ((entry.get("session") and not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"]))
+                    or (entry.get("standing") and not self.active_standing(entry["standing"]))):
                 with self.outbox.locked() as state:
                     current = find(state, entry["key"])
                     if current is not None and entry_state(current) == "queued":
                         close(current, watch.epoch(), "stop")
                 continue
             # Cursor failure and an earlier unreachable send must not bypass
-            # revocation of any later entry. Each lease is checked once, here
-            # at its own send boundary, after any blocking cursor read.
+            # revocation of any later entry. Consent is checked here at each
+            # send boundary, after any blocking cursor read.
             if stopped is not None:
                 self.record([entry], *stopped)
                 continue
@@ -575,6 +626,11 @@ class Forwarder:
             raise Refusal("setting-invalid", "JARVIS_FORWARD_CONFIRM")
         record = checked_record(path, self.settings["JARVIS_FORWARD_CONFIRM"] == "on")
         request, confirmation = record["request"], record.get("confirmation")
+        standing = None
+        if confirmation and confirmation.get("scope") == "standing":
+            standing = {"path": str(standing_settings()), "confirmation": confirmation}
+            if not self.active_standing(standing):
+                raise Refusal("stop", request["ref"])
         # A forward with no confirmation turn cites none: `null` is no
         # reference or time a record can hold, and `none` no method.
         cited = confirmation or {"ref": "null", "at": "null", "method": "none"}
@@ -616,6 +672,8 @@ class Forwarder:
                     "delivered_at": None, "read": False, "after": None, "closed_at": None})
                 if "session" in record:
                     state["entries"][-1]["session"] = record["session"]
+                if standing is not None:
+                    state["entries"][-1]["standing"] = standing
         self.send([key])
         entry = find(self.outbox.read(), key)
         if entry_state(entry) == "closed":
