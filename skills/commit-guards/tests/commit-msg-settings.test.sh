@@ -40,6 +40,8 @@ new_repo() { # NAME — fresh fixture repo in $R, cwd unchanged
   R="$ROOT/$1"
   mkdir -p "$R"
   git -C "$R" -c init.defaultBranch=main init -q
+  git -C "$R" config gc.auto 0
+  git -C "$R" config maintenance.auto false
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
 }
@@ -95,6 +97,13 @@ required_toml "$ROOT/outside-settings.toml" "build/*"
 fx_untracked() { new_repo "$1"; required_toml "$R/kendex.settings.toml" "docs/*"; stage_changes; }
 fx_dotenv() { new_repo "$1"; printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=docs/*\n' >"$R/.env"; stage_changes; }
 fx_dotenv_local() { new_repo "$1"; printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=chore/*\n' >"$R/.env.local"; stage_changes; }
+fx_staged_dotenv_local() { # NAME — stage the docs rule, then loosen the worktree copy
+  new_repo "$1"
+  printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=docs/*\n' >"$R/.env.local"
+  git -C "$R" add -- .env.local
+  printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=\n' >"$R/.env.local"
+  stage_changes
+}
 fx_committed() { # NAME — the docs list committed
   new_repo "$1"
   required_toml "$R/kendex.settings.toml" "docs/*"
@@ -127,6 +136,7 @@ rows=(
   "an untracked kendex.settings.toml is the worktree copy, and its list answers|fx_untracked untracked-1|||feat: base type|rc=1 $DOCS_ONLY"
   "a .env list is read by nothing: the built-in setting, off, decides|fx_dotenv dotenv|||feat: base type|rc=0"
   "control: .env.local sets the list|fx_dotenv_local dotenv-local-1|||feat: base type|rc=1 $(owed chore/c.txt)"
+  "a tracked .env.local governs over a loosened worktree copy|fx_staged_dotenv_local dotenv-local-staged|||feat: base type|rc=1 $DOCS_ONLY"
   "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0"
   "control: the committed list answers|fx_committed committed-1|||feat: base type|rc=1 $DOCS_ONLY"
   "a failing index probe is exit 2, never a fall back to the built-in list|fx_committed committed-2|$ROOT/git-shim-ls-files||feat: base type|rc=2 $LS_FILES"
