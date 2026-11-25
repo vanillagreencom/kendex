@@ -60,6 +60,72 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
+BASH_SHEBANGS = [["#!/usr/bin/env bash"], ["#!/bin/bash"]]
+STRICT_MODE = [["set -euo pipefail"], ["set -eu"]]
+LANE_TABLE_DISPATCH = """case ${1-} in
+--lane) run=$2 ;;
+*) exit 2 ;;
+esac
+for entry in "${lane_table[@]}"; do
+name=${entry%%:*}
+[ "$name" = "$run" ] || continue
+for member in ${entry#*:}; do
+case $member in
+@*|+host|+isolated) ;;
+*) "step_${member//-/_}" ;;
+esac
+done
+done""".splitlines()
+SHELL_KEYWORDS = {
+    "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for",
+    "function", "if", "in", "select", "then", "time", "until", "while",
+}
+FORWARD_VERDICTS = re.compile(r'''printf '%s\\n' "\$LANE_VERDICTS"[ \t]*>>[ \t]*"\$GITHUB_OUTPUT"''')
+OUTPUT_ID = r"[A-Za-z_][A-Za-z0-9_-]*"
+NARROWED_LANES = re.compile(
+    rf"\$\{{\{{ steps\.({OUTPUT_ID})\.outputs\.({OUTPUT_ID}) == 'true' && 'false' \|\| "
+    rf"steps\.({OUTPUT_ID})\.outputs\.lanes \}}\}}"
+)
+QUEUE_NARROWING = re.compile(
+    r'''(?P<deferred>[A-Za-z_]\w*)=false\n'''
+    r'''if \[ "\$[A-Za-z_]\w*" = pull_request \] && \[ "\$(?P<queue>[A-Za-z_]\w*)" = true \] && '''
+    + re.escape('''grep -q '^lane_[a-z0-9_-]*=false$' <<<"$LANE_VERDICTS"; then''')
+    + rf'''\n(?P=deferred)=true\n(?:echo 'lane_{LANE_ID}=false'[ \t]*>>[ \t]*"\$GITHUB_OUTPUT"\n)+'''
+    r'''fi\necho "queue_deferred=\$(?P=deferred)"[ \t]*>>[ \t]*"\$GITHUB_OUTPUT"'''
+)
+
+
+def lane_table(lines, lane):
+    end = len(lines) - len(LANE_TABLE_DISPATCH)
+    require(end > 0 and lines[end:] == LANE_TABLE_DISPATCH and
+            lines[0] == "lane_table=(", "unsupported-runner-dispatch")
+    index = 1
+    members = {}
+    while index < end and lines[index] != ")":
+        entry = re.fullmatch(rf'"({LANE_ID}):', lines[index])
+        require(entry and entry[1] not in members, "unsupported-runner-table")
+        close = lines.index('"', index + 1, end)
+        selected = []
+        for row in lines[index + 1:close]:
+            if re.fullmatch(r"@[A-Za-z0-9_./+*?-]+|\+(?:host|isolated)", row):
+                continue
+            require(re.fullmatch(LANE_ID, row), "unsupported-runner-member")
+            selected.append(row)
+        members[entry[1]] = selected
+        index = close + 1
+    require(index < end and lane in members and members[lane], "runner-lane-unresolved")
+    index += 1
+    functions = {}
+    while index < end:
+        definition = re.fullmatch(r"(step_[a-z0-9_]+)\(\) \{", lines[index])
+        require(definition and definition[1] not in functions, "unsupported-runner-function")
+        close = lines.index("}", index + 1, end)
+        body = [args for line in lines[index + 1:close] if (args := words(line))]
+        require(body and all(args[0] not in SHELL_KEYWORDS for args in body),
+                "unsupported-runner-body")
+        functions[definition[1]] = body
+        index = close + 1
+    return members[lane], functions
 
 
 class Evidence:
@@ -159,15 +225,42 @@ class Evidence:
             if args:
                 self.shell_command(args, directory, reads, visited)
 
+    def lane_dispatch(self, args, directory, reads, visited):
+        name, _, lane = args
+        try:
+            script = self.resolve(directory, name)
+            invocation = (script, directory, lane)
+            if invocation in visited:
+                return
+            visited.add(invocation)
+            body = self.blob(script).split("\n")
+            require(self.files[script] == "100755" and body[:1] in BASH_SHEBANGS,
+                    "unsupported-runner-interpreter")
+            lines = [line.strip(" \t") for line in body[1:] if line.strip(" \t")]
+            if lines[:1] in STRICT_MODE:
+                lines = lines[1:]
+            members, functions = lane_table(lines, lane)
+            reads.add(script)
+            for member in members:
+                step = "step_" + member.replace("-", "_")
+                require(step in functions, f"runner-step-unresolved step={step}")
+                for command in functions[step]:
+                    self.shell_command(command, directory, reads, visited)
+        except UNAVAILABLE as error:
+            raise Unreadable(f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}") from error
+
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         if name in {"source", ".", "bash"} and len(operands) == 1:
             require(name == "bash" or "/" in operands[0], "shell-source-uses-path")
             self.shell_reads(self.resolve(directory, operands[0]), directory, reads, visited)
+        elif len(operands) == 2 and operands[0] == "--lane" and "/" in name:
+            require(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
+            self.lane_dispatch(args, directory, reads, visited)
         elif name.startswith("./") and not operands:
             script = self.resolve(directory, name)
             require(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
-                    in [["#!/usr/bin/env bash"], ["#!/bin/bash"], ["#!/bin/sh"]],
+                    in [*BASH_SHEBANGS, ["#!/bin/sh"]],
                     "unsupported-script-interpreter")
             self.shell_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
@@ -492,24 +585,49 @@ def publishes_lanes(job):
     )
 
 
+def forwards_verdicts(row, classifier):
+    env = row.get("env", {})
+    if not references(env, "LANE_VERDICTS", classifier, "lane_verdicts"):
+        return False
+    lines = [line.strip() for line in row.get("run", "").strip().splitlines()]
+    if not lines or not FORWARD_VERDICTS.fullmatch(lines[0]):
+        return False
+    narrowing = QUEUE_NARROWING.fullmatch("\n".join(lines[1:]))
+    return len(lines) == 1 or (narrowing and references(env, narrowing["queue"],
+                                                         classifier, "queue_only"))
+
+
 def roster(jobs, classifier, step):
     require(not os.environ.get("GITHUB_JOB") or os.environ["GITHUB_JOB"] == classifier,
             "workflow-classifier-mismatch")
     control = jobs[classifier]
     outputs = control["outputs"]
     step_id = step["id"]
-    require(references(outputs, "lanes", step_id, "lanes"), "unmapped-lanes-output")
-    emitters = [
-        row["id"] for row in control["steps"]
-        if row.get("run", "").strip() == """printf '%s\\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT" """
-        .strip() and references(row.get("env", {}), "LANE_VERDICTS", step_id, "lane_verdicts")
-    ]
+    narrowed = NARROWED_LANES.fullmatch(" ".join(outputs.get("lanes", "").split()))
+    require(references(outputs, "lanes", step_id, "lanes") or (
+        narrowed and narrowed[3] == step_id and
+        any(row.get("id") == narrowed[1] for row in control["steps"])
+    ), "unmapped-lanes-output")
+    emitters = [row["id"] for row in control["steps"] if forwards_verdicts(row, step_id)]
     require(len(emitters) == 1, "unsupported-lanes-emitter")
     prefix = "needs." + classifier
-    gate = re.compile(re.escape(
-        "${{ !cancelled() && (" + prefix + ".result != 'success' || (" + prefix +
-        ".outputs.lanes != 'false' && " + prefix + ".outputs.lane_"
-    ) + f"({LANE_ID})" + re.escape(" != 'false')) }}"))
+    fallback = re.escape("${{ !cancelled() && (" + prefix + ".result != 'success' || ")
+    read_output = re.escape(prefix + ".outputs.")
+    lane_output = read_output + f"lane_({LANE_ID})" + re.escape(" != 'false'")
+    gates = [re.compile(fallback + r"\(" + read_output + "lanes != 'false' && " +
+                        lane_output + r"\)\) \}\}")]
+    if narrowed and references(outputs, "change_class", step_id, "change_class") and references(
+        outputs, "queue_deferred", emitters[0], "queue_deferred",
+    ):
+        flags = [key for key in outputs if re.fullmatch(OUTPUT_ID, key) and
+                 references(outputs, key, narrowed[1], narrowed[2])]
+        if len(flags) == 1:
+            flag_output = prefix + ".outputs." + flags[0]
+            gates.append(re.compile(fallback + re.escape(
+                f"({flag_output} == 'true' && github.event_name == 'merge_group') || "
+                f"({flag_output} != 'true' && (({prefix}.outputs.change_class != 'render' && "
+                f"{prefix}.outputs.queue_deferred != 'true') || "
+            ) + lane_output + r"\)\)\) \}\}"))
     lane_by_job = {}
     needs_by_job = {}
     for name, job in jobs.items():
@@ -519,7 +637,7 @@ def roster(jobs, classifier, step):
         require(isinstance(needs, list) and set(needs) <= jobs.keys(), "invalid-job-needs")
         needs_by_job[name] = needs
         condition = " ".join(job.get("if", "").split())
-        match = gate.fullmatch(condition)
+        match = next((match for gate in gates if (match := gate.fullmatch(condition))), None)
         if match:
             lane = match[1]
             require(classifier in needs and references(outputs, "lane_" + lane,
@@ -542,15 +660,16 @@ def job_reads(evidence, job):
     ordinary = set()
     visited = set()
     readers = []
+    opaque_action = None
     default = job.get("defaults", {}).get("run", {})
     require(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
     for step in job["steps"]:
         require(set(step) <= {"id", "name", "uses", "run", "working-directory",
                              "shell", "with", "timeout-minutes"}, "opaque-step")
         if "uses" in step:
-            require(re.fullmatch(CHECKOUT, step["uses"]) and
-                    set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"},
-                    "opaque-action")
+            if not (re.fullmatch(CHECKOUT, step["uses"]) and
+                    set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"}):
+                opaque_action = step["uses"]
             continue
         require(step.get("shell", default.get("shell", "bash")) == "bash",
                 "unsupported-shell")
@@ -571,6 +690,7 @@ def job_reads(evidence, job):
                 readers.append(evidence.vitest_reads(directory))
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
+    require(opaque_action is None, f"opaque-action action={opaque_action}")
     return ordinary, readers
 
 
@@ -639,6 +759,7 @@ def derived(evidence, exceptions, settings):
                 packages.add(evidence.proved_head_ownership[name])
 
     first_reader = {}
+    shared_input = False
     outcomes = dict.fromkeys(lane_by_job.values(), "miss")
     for name, lane in lane_by_job.items():
         try:
@@ -657,12 +778,13 @@ def derived(evidence, exceptions, settings):
             # The legacy claim pass gives us lane names across the diff.
             hits = evidence.changed
         if any(first_reader.setdefault(path, lane) != lane for path in hits | unresolved):
-            return keep_prerequisites(retain_all)
+            # Later jobs can still supply the cause of an unresolved dispatch.
+            shared_input = True
         if unresolved:
             outcomes[lane] = "unread"
         elif hits and outcomes[lane] == "miss":
             outcomes[lane] = "hit"
-    return keep_prerequisites(outcomes)
+    return keep_prerequisites(retain_all if shared_input else outcomes)
 
 
 def trusted_push(authority, head):
