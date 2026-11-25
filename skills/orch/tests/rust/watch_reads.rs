@@ -7155,3 +7155,132 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         "{calls}"
     );
 }
+
+/// Replace this process's claim with a runner over `world` whose tracker
+/// stamp is 10 s old and whose heartbeat is overdue, as at an in-place
+/// replacement inside one interval of the last tracker pass, and run it
+/// past the tracker's due time; the log.
+fn first_heartbeat_after_replacement(world: &World) -> Vec<String> {
+    let settings = world.settings(&[]);
+    let clock = FakeClock::new();
+    let paths = Paths::of(&world.fleet_path()).unwrap();
+    let identity = me();
+    std::fs::write(
+        &paths.pid,
+        format!(
+            "pid={}\nstate={}\npane=%1\norigin=hand\nscript=/x\ncwd=/x\nstart={}\n",
+            identity.pid,
+            paths.state.display(),
+            identity.start
+        ),
+    )
+    .unwrap();
+    let wall = clock.wall_secs();
+    let mut baseline = Baseline::default();
+    baseline.passes.insert(Duty::Tracker, wall - 10);
+    baseline.passes.insert(Duty::Heartbeat, wall - 6000);
+    baseline.store(&paths.baseline).unwrap();
+    let flags = Flags {
+        interval: secs(240),
+        max_loops: 25,
+        since: None,
+        repos: Vec::new(),
+        fresh: false,
+    };
+    let recorded = Recorded {
+        pane: "none".into(),
+        script: "/w/orch-runtime".into(),
+        cwd: "/w".into(),
+    };
+    let mut runner = Runner::new(
+        paths.clone(),
+        &clock,
+        &settings,
+        flags,
+        identity.clone(),
+        recorded,
+    )
+    .unwrap();
+    let ctx = world.context(settings.clone(), None);
+    let shared = ctx.shared.clone();
+    runner.register(Duty::Tracker, tracker::body(ctx));
+    runner.register(
+        Duty::Heartbeat,
+        heartbeat::body(heartbeat::Context {
+            settings,
+            path: world.fleet_path(),
+            max_loops: 25,
+            interval: secs(240),
+            since: None,
+            repos: Vec::new(),
+            gh: world.dir.path().join("gh"),
+            shared,
+            verifying: verifying::Lines::default(),
+            locking: Locking::FLOCK,
+            nonce: 7,
+            owner: None,
+        }),
+    );
+    let ended = run_driven(runner, &clock, &paths, &identity, || {
+        clock.await_sleepers(1);
+        clock.pass(secs(240));
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    lines(&paths.log)
+}
+
+/// A replacement's first heartbeat comes due before its tracker pass, and
+/// its tracker slot is empty until that pass: the heartbeat waits for the
+/// pass and reads the stub queue, and `unread` stands only for a tracker
+/// read that failed, its `watch-step-failed step=tracker` line before it.
+#[test]
+fn a_replacements_first_heartbeat_reads_the_trackers_first_pass() {
+    let mut world = World::new();
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": triage_items()}));
+    let nodes: Vec<Value> = triage_items()
+        .iter()
+        .map(|i| json!({"identifier": i["id"], "state": {"type": i["state_type"]}, "children": {"nodes": []}}))
+        .collect();
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": nodes}}}),
+    );
+    world.linear(
+        "comments bulk-list",
+        comments(&["KEN-1", "KEN-3", "KEN-4", "KEN-5"], &[]),
+    );
+    let log = first_heartbeat_after_replacement(&world);
+    let heartbeat = log
+        .iter()
+        .position(|l| l.starts_with("EVENT heartbeat "))
+        .unwrap_or_else(|| panic!("{log:?}"));
+    assert!(
+        !log.iter()
+            .any(|l| l == "owed unread" || l.starts_with("open-unblocked count=unread")),
+        "{log:?}"
+    );
+    assert!(
+        log[heartbeat..].iter().any(
+            |l| l.starts_with("open-unblocked count=") && l != "open-unblocked count=0 items=-"
+        ),
+        "{log:?}"
+    );
+
+    let mut world = World::new();
+    world.linear("statuses list", statuses());
+    let log = first_heartbeat_after_replacement(&world);
+    let failed = log
+        .iter()
+        .position(|l| l.starts_with("EVENT watch-step-failed step=tracker "))
+        .unwrap_or_else(|| panic!("{log:?}"));
+    let heartbeat = log
+        .iter()
+        .position(|l| l.starts_with("EVENT heartbeat "))
+        .unwrap_or_else(|| panic!("{log:?}"));
+    assert!(failed < heartbeat, "{log:?}");
+    assert!(
+        log[heartbeat..].iter().any(|l| l == "owed unread"),
+        "{log:?}"
+    );
+}

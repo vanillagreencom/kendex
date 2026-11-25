@@ -466,6 +466,15 @@ impl<'a> Runner<'a> {
                 schedule.set_due(duty, due_from_row(now, wall, last, every, first));
             }
         }
+        // A new process's tracker slot is empty until its first tracker
+        // pass, so its first heartbeat waits for that pass; the tie order
+        // runs the tracker first. `unread` then means a failed or held read.
+        if shared_duties.contains(&Duty::Tracker) && shared_duties.contains(&Duty::Heartbeat) {
+            let tracker = shared.due(Duty::Tracker);
+            if shared.due(Duty::Heartbeat) < tracker {
+                shared.set_due(Duty::Heartbeat, tracker);
+            }
+        }
         let store = Mutex::new(Store {
             log,
             baseline,
