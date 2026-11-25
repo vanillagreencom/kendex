@@ -30,12 +30,24 @@ What it does for a consumer is [README.md](README.md). Mechanics live as doc com
 
 ## Tests
 
-1. Install the Pi peers in this directory with the command the `pi-qol regression suite` step of `.github/workflows/skill-tests.yml` runs, with `PI_QOL_PEER_VERSION` exported as the Pi version to test.
-2. Run the suite:
+1. From this directory, replace `0.86.0` with the Pi version you want to test and install all four peers at that version.
 
-```bash
-bun test ./tests
-```
+   ```bash
+   export PI_QOL_PEER_VERSION=0.86.0
+   npm install --save-prod --no-save --no-package-lock --ignore-scripts --no-audit --no-fund \
+     "@earendil-works/pi-agent-core@$PI_QOL_PEER_VERSION" \
+     "@earendil-works/pi-ai@$PI_QOL_PEER_VERSION" \
+     "@earendil-works/pi-coding-agent@$PI_QOL_PEER_VERSION" \
+     "@earendil-works/pi-tui@$PI_QOL_PEER_VERSION"
+   ```
+
+2. Run the suite.
+
+   ```bash
+   bun test ./tests
+   ```
+
+Skill Tests installs its fixed peers from `.github/npm-tests/pi-qol/package-lock.json`.
 
 `bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers.
 

@@ -26,4 +26,4 @@ npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @e
 npm run check
 ```
 
-`npm run check` is `typecheck` then `test`; `.github/workflows/skill-tests.yml` runs the same install, then `typecheck` and `test`. Provider suites stub `fetch` and assert the request bodies and streamed responses.
+`npm run check` is `typecheck` then `test`. Skill Tests installs the same pinned Pi peers from `.github/npm-tests/pi-codex-minimal-tools/package-lock.json` before running `typecheck` and `test`. Provider suites stub `fetch` and assert the request bodies and streamed responses.

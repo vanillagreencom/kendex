@@ -1,0 +1,14 @@
+{
+  "name": "pi-codex-minimal-tools-ci",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-tui": "1.6.0",
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typebox": "*",
+    "typescript": "^5.9.3",
+    "undici": "^7.29.1"
+  }
+}
