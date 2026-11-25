@@ -5,7 +5,7 @@
 # matcher: Edit|MultiEdit|Write
 # description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. Claude Code Bash edits are detected after successful tool calls by the companion docs-writing-bash-note, from tracked Markdown changes in git, including changes already dirty when the call began. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update, Move and Delete headers, excluding deleted files and taking a moved file by its destination; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
 # summary: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Deleted files need no reminder, and every edit remains allowed.
-# safety: Advisory reader. Reads the tool payload. After Bash, reads tracked Markdown status from git; a call with none costs one git read, and an existing session marker costs none. Runs `git rev-parse` in the session's directory to bound its install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
+# safety: Advisory reader. Reads the tool payload. After Bash, reads tracked Markdown status from git; a call with none costs one git read, and an existing session marker costs none. Uses the Pi carrier's registration for its install or runs `git rev-parse` in the session's directory to bound the other harnesses' install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
 # timeout: 10
 # harnesses: [claude, codex, pi]
 # requires-skills: [docs-writing]
@@ -213,33 +213,52 @@ while IFS= read -r candidate; do
 done <<<"$TARGETS"
 [ -n "$TARGET" ] || exit 0
 
-# The harness this copy was installed for, from where kendex renders it,
-# for the marker.
-HOOK_DIR=$(cd -- "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P) || HOOK_DIR=""
-case "$HOOK_DIR" in
-  */.claude/hooks) HARNESS=claude ;;
-  */.codex/hooks | "${CODEX_HOME:-/nonexistent}/hooks") HARNESS=codex ;;
-  */.pi/agent/kendex/hooks | */.pi/kendex/hooks | "${PI_CODING_AGENT_DIR:-/nonexistent}/kendex/hooks") HARNESS=pi ;;
-  "") HARNESS=unknown ;;
-  *) HARNESS=source ;;
+# Pi's registration names its own skills. The parent of a global Pi root
+# can be an unrelated checkout and cannot supply skills to that install.
+HOOK_DIR=${BASH_SOURCE[0]%/*}
+NATIVE_ROOT=""
+SHARED_ROOT=""
+case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
+  global:* | project:*)
+    HARNESS=pi
+    pi_root=${KENDEX_HOOK_ROOT:-}
+    if [ -n "$pi_root" ]; then
+      if [ "$KENDEX_HOOK_SCOPE" = project ]; then
+        NATIVE_ROOT="$pi_root/.pi"
+        SHARED_ROOT="$pi_root"
+      else
+        NATIVE_ROOT="$pi_root"
+        SHARED_ROOT=${HOME:-}
+      fi
+    fi
+    ;;
+  *:*/kendex/hooks | *:kendex/hooks) HARNESS=pi ;; # An older Pi carrier supplies no install.
+  *)
+    # Other harnesses name the marker by the install directory. Their skill
+    # walk stops at the repository or home and never uses catalog sources
+    # from the repository root.
+    HOOK_DIR=$(cd -- "$HOOK_DIR" 2>/dev/null && pwd -P) || HOOK_DIR=""
+    case "$HOOK_DIR" in
+      */.claude/hooks) HARNESS=claude ;;
+      */.codex/hooks | "${CODEX_HOME:-/nonexistent}/hooks") HARNESS=codex ;;
+      "") HARNESS=unknown ;;
+      *) HARNESS=source ;;
+    esac
+    HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
+    [ -n "$ROOT" ] || ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
+    ;;
 esac
-# The skills come from this hook's own install, never from the edited path,
-# which a clone or another project controls. The walk goes from the hook's
-# physical directory up five levels, each level's `skills/` and shared
-# `.agents/skills/` tree, which reaches a harness's own copy delivery such as
-# ~/.codex/skills, stopping after the open repository's root and after the
-# home directory; then the home's shared tree, for a harness root CODEX_HOME
-# or PI_CODING_AGENT_DIR moved out of the home. At the root only
-# `.agents/skills/` is read: a repository's own `skills/` is a catalog's
-# source tree, not an install (docs/adapters/README.md). This departs from
-# hooks/lane-mail-check.sh's reader walk, which stops before the root and
-# reads the root's `.agents/skills/` last, after the home's tree: here a hook
-# installed in the repository takes the repository's install before any
-# global one, while a global hook never reaches that root.
-HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
-[ -n "$ROOT" ] || ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 in_scope() { # SKILL — the skill's directory in this hook's install; 1 when none
   local at="$HOOK_DIR" levels=0 candidate
+  if [ "$HARNESS" = pi ]; then
+    for candidate in "${NATIVE_ROOT:+$NATIVE_ROOT/skills/$1}" "${SHARED_ROOT:+$SHARED_ROOT/.agents/skills/$1}"; do
+      if [ -d "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    return 1
+  fi
   [ -n "$at" ] || return 1
   while [ "$levels" -lt 5 ] && [ "$at" != / ]; do
     for candidate in "$at/skills/$1" "$at/.agents/skills/$1"; do

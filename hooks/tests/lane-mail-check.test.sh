@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lane-mail-check, the turn-end entry: it finds its install's mailbox reader
-# by walking up from its own directory, runs that install's `orch-runtime
+# by the Pi registration or its own directory, runs that install's `orch-runtime
 # turn-end` through the shipped wrapper, which checks the key for its
 # sources once. When the key is unbuilt the entry starts the build with
 # the install's `scripts/setup --detach`, holding a turn end while the
@@ -224,6 +224,25 @@ row_unlocatable() {
     "an install whose walk finds no mailbox reader is reported and passes, never held"
 }
 
+row_relocated_pi() {
+  built
+  lane pi-relocated
+  direct "rebase onto main"
+  local checkout="$TMP_ROOT/adjacent" pi_hooks="$TMP_ROOT/adjacent/.pi/kendex/hooks"
+  # An inert directory passes the old reader's -x check. There is no
+  # adjacent launcher, so the old lookup executes nothing from the checkout.
+  mkdir -p "$pi_hooks" "$checkout/.agents/skills/mailbox/scripts/lane-mail"
+  git -C "$checkout" init -q
+  git -C "$checkout" config gc.auto 0
+  git -C "$checkout" config maintenance.auto false
+  install_packages "$ROW_HOME/.agents/skills"
+  cp -- "$HOOK" "$pi_hooks/lane-mail-check.sh"
+  ROW_ENV=(KENDEX_HOOK_SCOPE=global "KENDEX_HOOK_ROOT=$checkout/.pi")
+  run "$pi_hooks/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
+  assert_eq "RC=$RC first=$(first_line)" "RC=2 first=lane-mail-check: unread=1" \
+    "relocated global Pi reads mail through the installed home runtime"
+}
+
 row_launcherless() {
   built
   lane launcherless
@@ -357,7 +376,7 @@ row_key() {
   done
 }
 
-ROWS="mail arm copilot global unlocatable launcherless building failed boxless key legacy"
+ROWS="mail arm copilot global relocated_pi unlocatable launcherless building failed boxless key legacy"
 for name in ${ENTRY_ROW:-$ROWS}; do "row_$name"; done
 
 # The must-fail controls, each a copy of the entry with one whole line

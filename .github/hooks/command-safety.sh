@@ -3153,54 +3153,51 @@ if [ "$root_status" -ne 0 ]; then
   root=$cwd
 fi
 
-hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
-# The support library is the hook's own install's, found from where the hook
-# sits and never from a directory the payload names, so a command cannot
-# choose the code this hook sources. The harness root holding hooks/, or
-# kendex/hooks/ for Pi, may keep native skills/ beside it. A registered
-# project layout names the install scope whose shared .agents/skills come
-# next: <scope>/.claude, .codex, .github or .gemini /hooks, or
-# <scope>/.pi/kendex/hooks. HOME's shared .agents/skills come last, which is
-# where a global install keeps them: a harness root in no such form, such
-# as ~/.copilot or ~/.pi/agent, and a registered one whose scope is HOME
-# itself, such as ~/.claude/hooks. A harness home that CODEX_HOME,
-# COPILOT_HOME or PI_CODING_AGENT_DIR moves is a global root even where its
-# name is a project layout's, such as CODEX_HOME=/data/.codex, so a hook in
-# that home's hooks directory reads no scope. Codex and the Pi carrier run
-# the hook with the variable they found it by. Without it, such a hook looks
-# like a project install, and a scope holding no loader still reaches HOME's.
-scope=""
-case "$hook_dir" in
-  */.pi/kendex/hooks) scope=${hook_dir%/.pi/kendex/hooks} ;;
-  */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
-esac
-[ "$scope" != "${HOME:-}" ] || scope=""
-# Pi's own reading of its variable: trimmed, a leading ~ expanded against
-# HOME, used only when absolute (pi_global_root, crates/core/src/harness/pi.rs).
-pi_root=${PI_CODING_AGENT_DIR:-}
-pi_root=${pi_root#"${pi_root%%[![:space:]]*}"}
-pi_root=${pi_root%"${pi_root##*[![:space:]]}"}
-case "$pi_root" in \~ | \~/*) pi_root=${HOME:+$HOME${pi_root#\~}} ;; esac
-case "$pi_root" in /*) ;; *) pi_root="" ;; esac
-hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
-for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}" "${pi_root:+$pi_root/kendex/hooks}"; do
-  if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+hook_dir=${BASH_SOURCE[0]%/*}
+# The Pi carrier's registration names the install so a global Pi root
+# relocated inside a checkout cannot use that checkout's support library.
+shared_root=${HOME:+$HOME/.agents}
+install_roots=()
+case "${KENDEX_HOOK_SCOPE:-}:$hook_dir" in
+  global:* | project:*)
+    pi_root=${KENDEX_HOOK_ROOT:-}
+    [ -n "$pi_root" ] || refuse settings no-loader
+    if [ "$KENDEX_HOOK_SCOPE" = project ]; then
+      install_roots=("$pi_root/.pi")
+      shared_root="$pi_root/.agents"
+    else
+      install_roots=("$pi_root")
+    fi
+    ;;
+  *:*/kendex/hooks | *:kendex/hooks) refuse settings no-loader ;; # An older Pi carrier supplies no install.
+  *)
+    # Other harnesses can keep native skills alongside hooks and shared
+    # skills in the registered project. A relocated harness home remains
+    # global even where its path looks like a project install.
+    hook_dir="$(cd -- "$hook_dir" && pwd)" || refuse hook unlocatable
     scope=""
-    break
-  fi
-done
-install_roots=("${hook_dir%/hooks}")
-case "$hook_dir" in */kendex/hooks) install_roots[1]=${hook_dir%/kendex/hooks} ;; esac
-[ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
+    case "$hook_dir" in
+      */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
+    esac
+    [ "$scope" != "${HOME:-}" ] || scope=""
+    hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
+    for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}"; do
+      if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+        scope=""
+        break
+      fi
+    done
+    install_roots=("${hook_dir%/hooks}")
+    [ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
+    ;;
+esac
+[ -z "$shared_root" ] || install_roots[${#install_roots[@]}]="$shared_root"
 lib=""
 for at in "${install_roots[@]}"; do
   candidate="$at/skills/commit-guards/scripts/lib"
   if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then lib=$candidate; break; fi
 done
-if [ -z "$lib" ]; then
-  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
-fi
-[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
+[ -n "$lib" ] || refuse settings no-loader
 GG_CHECK=command-safety
 # Keep nested support reads under errexit. A source on the left of || would
 # continue past a failed nested import. EXIT owns the advisory outcome, and

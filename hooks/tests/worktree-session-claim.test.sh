@@ -173,6 +173,21 @@ claim_rows() {
 echo "=== worktree-session-claim ==="
 claim_rows
 
+relocated_pi_row() {
+  release_all
+  install_world installed
+  WORLD_HOOKS="$MAIN/.pi/kendex/hooks"
+  # The old lookup accepts the searchable directory as a guard, but
+  # cannot execute it. Only the installed home guard can claim the lease.
+  mkdir -p "$WORLD_HOOKS" "$MAIN/.agents/skills/worktree/scripts/worktree-session-guard"
+  cp -- "$HOOK" "$WORLD_HOOKS/worktree-session-claim.sh"
+  local rc=0
+  run_hook_in "$TREE" USER=alice KENDEX_HOOK_SCOPE=global "KENDEX_HOOK_ROOT=$MAIN/.pi" || rc=$?
+  assert_eq "rc=$rc first=$(first_line) owner=$(lease_owner "$TREE")" "rc=0 first=- owner=alice" \
+    "relocated global Pi claims through the installed home guard"
+}
+relocated_pi_row
+
 # Git's trace diagnostics must not change the repository data the hook reads.
 trace_rows() {
   local mode rc

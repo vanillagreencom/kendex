@@ -118,7 +118,8 @@ delivery_rows() {
   check "codex move of markdown" "$codex" "$(patch $'*** Begin Patch\n*** Update File: skills/x/references/settings.md\n*** Move to: skills/x/README.md\n*** End Patch' c5)" \
     "docs-writing-note: path=$REPO/skills/x/README.md type=readme" c5 "harness=codex session=c5 path=$REPO/skills/x/README.md"
   check "codex patch of code" "$codex" "$(patch $'*** Begin Patch\n*** Update File: src/main.rs\n*** End Patch' c4)" "" c4 none
-  check "pi write" "$pi" "$(edit Write "$rf" p1)" "docs-writing-note: path=$rf type=readme" p1 "harness=pi session=p1 path=$rf"
+  KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="${pi%/.pi/kendex/hooks/docs-writing-note.sh}" \
+    check "pi write" "$pi" "$(edit Write "$rf" p1)" "docs-writing-note: path=$rf type=readme" p1 "harness=pi session=p1 path=$rf"
 }
 delivery_rows
 
@@ -190,17 +191,33 @@ global_rows() {
   FIRE_HOME="$home" CODEX_HOME="$at/codex-moved/opt/codex" check "relocated CODEX_HOME" "$hook" "$(edit Write "$rf" g2)" \
     "docs-writing-note: path=$rf type=readme" g2 "harness=codex session=g2 path=$rf"
   assert_eq "$(has "$CONTEXT" "$home/.agents/skills/docs-writing/references/readme.md")" present "relocated CODEX_HOME: the home's shared tree"
-  hook=$(layout pi-moved opt/pi/kendex/hooks home/.agents/skills "commit-guards docs-writing")
-  FIRE_HOME="$at/pi-moved/home" PI_CODING_AGENT_DIR="$at/pi-moved/opt/pi" check "relocated PI_CODING_AGENT_DIR" "$hook" "$(edit Write "$rf" g3)" \
-    "docs-writing-note: path=$rf type=readme" g3 "harness=pi session=g3 path=$rf"
 }
 global_rows
+
+relocated_pi_row() {
+  local hook home="$TMP_ROOT/layouts/pi-moved/home" checkout="$TMP_ROOT/layouts/pi-moved/checkout"
+  local target="$REPO/README.md"
+  hook=$(layout pi-moved checkout/.pi/kendex/hooks home/.agents/skills "commit-guards docs-writing")
+  # The adjacent checkout has a guide and a commit-guards directory
+  # without a route script, so the old lookup cites the adjacent guide.
+  mkdir -p "$checkout/.agents/skills/docs-writing" "$checkout/.agents/skills/commit-guards"
+  : >"$checkout/.agents/skills/docs-writing/SKILL.md"
+  git -C "$checkout" init -q
+  git -C "$checkout" config gc.auto 0
+  git -C "$checkout" config maintenance.auto false
+  FIRE_HOME="$home" KENDEX_HOOK_SCOPE=global KENDEX_HOOK_ROOT="$checkout/.pi" \
+    check "relocated global Pi" "$hook" "$(edit Write "$target" g3)" \
+      "docs-writing-note: path=$target type=readme" g3 "harness=pi session=g3 path=$target"
+  assert_eq "$(has "$CONTEXT" "$home/.agents/skills/docs-writing/references/readme.md")" present \
+    "relocated global Pi cites the installed home guide"
+}
+relocated_pi_row
 
 # Hooks installed inside the edited repository beside its own skills, on a
 # host whose home holds a commit-guards that writes a sentinel if anything
 # runs it: the repository's copy is the one installed with the hook.
 project_rows() {
-  local REPO="$TMP_ROOT/project" home="$TMP_ROOT/project-home" rf hook harness hooks
+  local REPO="$TMP_ROOT/project" home="$TMP_ROOT/project-home" rf hook harness hooks pi_scope pi_root
   rf="$REPO/README.md"
   rm -rf -- "$STATE" "${TMP_ROOT:?}/project" "${TMP_ROOT:?}/project-home" "${TMP_ROOT:?}/home-sentinel"
   mkdir -p "$REPO/.agents/skills" "$home/.agents/skills/commit-guards/scripts"
@@ -223,7 +240,10 @@ project_rows() {
       check "project claude hook with an empty home" "$hook" "$(edit Write "$rf" "pj-$harness")" \
         "docs-writing-note: path=$rf type=readme" "pj-$harness" "harness=$harness session=pj-$harness path=$rf"
     else
-      FIRE_HOME="$home" check "project $harness hook beside a global commit-guards" "$hook" "$(edit Write "$rf" "pj-$harness")" \
+      pi_scope=""; pi_root=""
+      if [ "$harness" = pi ]; then pi_scope=project; pi_root=$REPO; fi
+      FIRE_HOME="$home" KENDEX_HOOK_SCOPE="$pi_scope" KENDEX_HOOK_ROOT="$pi_root" \
+        check "project $harness hook beside a global commit-guards" "$hook" "$(edit Write "$rf" "pj-$harness")" \
         "docs-writing-note: path=$rf type=readme" "pj-$harness" "harness=$harness session=pj-$harness path=$rf"
       assert_eq "$(has "$CONTEXT" "$REPO/.agents/skills/docs-writing/references/readme.md")" present "project $harness hook: the repository's docs-writing"
     fi
