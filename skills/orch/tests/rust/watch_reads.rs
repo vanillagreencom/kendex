@@ -36,7 +36,7 @@ use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::github;
 use orch_runtime::watch::heartbeat;
-use orch_runtime::watch::tracker::{self, Context, OwedState, Shared, TerminalState};
+use orch_runtime::watch::tracker::{self, Context, OpenHold, OwedState, Shared, TerminalState};
 use orch_runtime::watch::verifying;
 use orch_runtime::watch::{
     self, Baseline, Change, Event, Flags, Paths, Produced, Recorded, Runner, Tick,
@@ -2118,7 +2118,14 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
         inventory.open,
         ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5"]
             .into_iter()
-            .map(|id| (id.to_owned(), id == "KEN-2"))
+            .map(|id| {
+                let hold = if id == "KEN-2" {
+                    OpenHold::Relation
+                } else {
+                    OpenHold::Unblocked
+                };
+                (id.to_owned(), hold)
+            })
             .collect::<BTreeMap<_, _>>(),
         "every open item, whatever lane or queue holds it, with KEN-2 held by its blocker"
     );
@@ -2129,18 +2136,14 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     );
 }
 
-/// Which open items the heartbeat owes, with an empty queue and no lane: a
-/// Todo or Backlog item only where the launch's container and chain-blocker
-/// rules pass and neither hold of selection alone applies (the `blocked`
-/// label with no blocking relation, an open in-PR bundle root ancestor); a
-/// started one whatever blocks or parents it. One row per case of the
-/// owner (`tracker::inventory_of`): the state, by type for work not yet
-/// begun; the blocker, launch-held or not; the `blocked` label, alone or
-/// beside a relation whose blocker ended; a container by children or
-/// `agent:multi`, and an in-PR bundle root; an ancestor held one and two
-/// levels up. The last column is the `open-unblocked` membership.
+/// The heartbeat owes Todo and Backlog items that can start. It owes
+/// started items unless the label holds them or a live lane has them.
+/// A stopped lane with a label and a completed relation waits on the
+/// blocker. A parked lane's saved ask takes effect again when the label
+/// clears, or when a relation holds launch. The last column is the
+/// `open-unblocked` membership.
 #[test]
-fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
+fn the_heartbeat_applies_selection_holds_and_reports_the_stopped_blocker() {
     let mut world = World::new();
     // id, state, state type, priority, then the row's other fields; the
     // `owed` line expected, or none; whether `open-unblocked` lists it.
@@ -2201,15 +2204,15 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             None,
             false,
         ),
-        // The label `issues block` left beside a relation whose blocker ended.
+        // A completed relation leaves the label in force.
         (
             "KEN-6",
             "Backlog",
             "backlog",
             json!(2),
             json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
-            Some("state=backlog priority=2"),
-            true,
+            None,
+            false,
         ),
         // A Verifying blocker holds no launch.
         (
@@ -2291,7 +2294,7 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             "In Progress",
             "started",
             json!(2),
-            json!({"blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
             Some("state=in-progress priority=2"),
             false,
         ),
@@ -2323,8 +2326,64 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             None,
             true,
         ),
+        (
+            "KEN-19",
+            "Todo",
+            "unstarted",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            None,
+            false,
+        ),
+        // The same completed relation without the outside blocker.
+        (
+            "KEN-20",
+            "Backlog",
+            "backlog",
+            json!(2),
+            json!({"blocked_by": ["KEN-99"]}),
+            Some("state=backlog priority=2"),
+            true,
+        ),
+        (
+            "KEN-21",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
+            None,
+            false,
+        ),
+        // Verifying is open for verification but holds no launch.
+        (
+            "KEN-22",
+            "Todo",
+            "unstarted",
+            json!(3),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-98"], "blocked_by": ["KEN-98"]}),
+            None,
+            false,
+        ),
+        (
+            "KEN-23",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
+            None,
+            false,
+        ),
+        (
+            "KEN-24",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            None,
+            false,
+        ),
     ];
-    let items: Vec<Value> = rows
+    let mut items: Vec<Value> = rows
         .iter()
         .map(|(id, state, kind, priority, fields, _, _)| {
             let mut row = item(
@@ -2359,11 +2418,21 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
         .unwrap()
         .push(json!({"name": "Ready", "type": "unstarted"}));
     world.linear("statuses list", statuses);
-    world.linear("issues list", json!({"body": items}));
+    world.linear("issues list", json!({"body": &items}));
     world.linear(
         "issues bulk-get",
         json!({"body": {"issues": {"nodes": nodes}}}),
     );
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [
+            {"item": "KEN-21", "tracker": "linear", "status": "stopped"},
+            {"item": "KEN-23", "tracker": "linear", "status": "parked",
+             "parked": {"head": "abc", "repo": "owner/repo", "at": SINCE, "ask": "a-23"}},
+            {"item": "KEN-24", "tracker": "linear", "status": "parked",
+             "parked": {"head": "abc", "repo": "owner/repo", "at": SINCE, "ask": "a-24"}}
+        ]
+    }));
     quiet_github(&mut world);
     let clock = FakeClock::new();
     let ctx = world.context(world.settings(&[]), None);
@@ -2394,6 +2463,13 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
     )
     .unwrap();
     let lines = rendered(&produced);
+    assert_eq!(
+        lines
+            .iter()
+            .find(|line| line.starts_with("EVENT lane-ended KEN-21 "))
+            .map(String::as_str),
+        Some("EVENT lane-ended KEN-21 lane=stopped waits=blocker"),
+    );
     let owed: Vec<&str> = lines
         .iter()
         .map(String::as_str)
@@ -2416,6 +2492,39 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
         unblocked.join(",")
     );
     assert!(lines.contains(&line), "{line}: {lines:?}");
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "EVENT lane-ended KEN-23 lane=parked waits=blocker"),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "EVENT lane-ended KEN-24 lane=parked waits=owner"),
+        "{lines:?}"
+    );
+
+    // Only the fresh tracker read changes. The same parked record still holds its ask.
+    items.iter_mut().find(|row| row["id"] == "KEN-23").unwrap()["labels"] = json!([]);
+    world.linear("issues list", json!({"body": items}));
+    pass(&mut tracker_body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    let produced = pass_as(
+        Duty::Heartbeat,
+        &mut heartbeat_body,
+        &mut baseline,
+        &clock,
+        SINCE_EPOCH + 1240,
+    )
+    .unwrap();
+    let lines = rendered(&produced);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "EVENT lane-ended KEN-23 lane=parked waits=owner"),
+        "{lines:?}"
+    );
 }
 
 /// The terminal state read of a GitHub-tracked item and a container's

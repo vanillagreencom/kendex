@@ -37,7 +37,7 @@ Workflow Actions (composite operations for dev):
                  assignee=<name> (kept; an existing assignee is never
                  replaced), assignee-skipped cause=unset or
                  assignee-skipped cause=unknown-email email=<email> (skipped)
-  block          Block issue: add label + relation + comment
+  block          Block issue: require a relation, attempt to post a comment
   unblock        Unblock issue: remove label + comment
   complete       Complete issue: optional summary, then Done or post-merge Verifying
                  (--done-when-met ticks the met "## Done when" boxes in that
@@ -191,7 +191,7 @@ Create Options:
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
-  bulk-update --labels, activate and block refuse a label it does not declare,
+  bulk-update --labels and activate refuse a label it does not declare,
   naming the label and the taxonomy file. The taxonomy check does not refuse
   an undeclared label the issue already carries. Create also refuses a
   declared label Linear does not have, where with no taxonomy it skips that
@@ -462,7 +462,7 @@ Examples:
   # Workflow actions (dev shortcuts)
   issues.sh activate PROJ-42 --agent rust        # In Progress + agent:rust label
   issues.sh block PROJ-42 --by PROJ-41 --reason "Need market data types first"
-  issues.sh unblock PROJ-42                      # Resume after blocker resolved
+  issues.sh unblock PROJ-43                      # Clear an external blocker
   issues.sh complete PROJ-42                     # Mark done
   issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
   issues.sh complete PROJ-42 --done-when-met all --evidence-file proof.txt
@@ -2430,9 +2430,8 @@ write_issue_update() {
             jq -cn --arg issue "$issue_id" '{error: ("Issue team missing: " + $issue)}' >&2
             return 1
         fi
-        # Activation, block and unblock reach here too: activation and block
-        # rebuild the set from the issue's own labels plus the one they apply,
-        # and unblock rebuilds it without the label it removes.
+        # Activation and unblock reach here too. Both rebuild the set from
+        # the issue's own labels, keeping labels they do not apply or remove.
         local kept_labels
         kept_labels=$(jq -c '[.issue.labels.nodes[]?.name]' <<<"$issue_result") || return 1
         linear_require_declared_labels "$labels" "$kept_labels" || return 1
@@ -3309,7 +3308,7 @@ activate_issue() {
         + {assignee: $assignee}'
 }
 
-# Block an issue: add blocked label, create blocked-by relation, post comment
+# Block an issue: require a blocked-by relation and attempt to post a comment
 # Usage: block_issue CC-XXX --by CC-YYY [--reason "text"]
 block_issue() {
     local issue_id="$1"
@@ -3345,51 +3344,11 @@ block_issue() {
     fi
     linear_guard_issue_team block "$issue_id" || return 1
 
-    # Get current labels and add "blocked"
-    local issue_result
-    issue_result=$(get_issue "$issue_id" --format=raw)
-    local current_labels
-    current_labels=$(echo "$issue_result" | jq -r '[.issue.labels.nodes[].name] | join(",")')
+    local issue_result identifier
+    issue_result=$(issue_read 'query GetIssue($id: String!) { issue(id: $id) { id identifier } }' "$issue_id") || return 1
+    identifier=$(jq -er '.issue.identifier | strings | select(length > 0)' <<<"$issue_result") || return 1
 
-    # Exact membership: a substring test skipped the label whenever the issue
-    # already carried an unrelated name containing it (`unblocked`,
-    # `blocked-by-design`), and `block` then reported success having applied none.
-    local has_blocked_label="false" existing_label
-    IFS=',' read -ra _existing_labels <<<"$current_labels"
-    for existing_label in ${_existing_labels[@]+"${_existing_labels[@]}"}; do
-        [ "$existing_label" = "blocked" ] && has_blocked_label="true"
-    done
-    if [ "$has_blocked_label" != "true" ]; then
-        if [ -n "$current_labels" ]; then
-            current_labels="${current_labels},blocked"
-        else
-            current_labels="blocked"
-        fi
-    fi
-
-    # Update labels
-    local update_result
-    update_result=$(update_issue "$issue_id" --labels "$current_labels")
-    local update_success
-    update_success=$(echo "$update_result" | jq -r '.success // false')
-
-    if [ "$update_success" != "true" ]; then
-        echo "$update_result"
-        return 1
-    fi
-
-    # Add blocked-by relation. A rejected relation is not a successful block.
-    # The label applied above stays on the issue.
-    local relation_result
-    if ! relation_result=$(add_relation "$issue_id" --blocked-by "$blocker"); then
-        jq -cn --arg id "$issue_id" --arg blocker "$blocker" \
-            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied; no blocking relation to " + $blocker + " was created")}' >&2
-        return 1
-    fi
-    if [ "$(echo "$relation_result" | jq -r '.success // .already_exists // false')" != "true" ]; then
-        echo "$relation_result" | jq -c --arg blocker "$blocker" '{error: ("Blocking relation was rejected - the blocked label was applied; no blocking relation to " + $blocker + " was created"), data: .}' >&2
-        return 1
-    fi
+    add_relation "$issue_id" --blocked-by "$blocker" >/dev/null || return 1
 
     # Post blocking comment
     local comment_body="BLOCKED: Waiting for $blocker."
@@ -3398,10 +3357,8 @@ block_issue() {
     # Comment is secondary - don't fail the whole operation if it fails
     "$BASH" "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true
 
-    # Return combined result
-    local identifier
-    identifier=$(echo "$update_result" | jq -r '.identifier // empty')
-    echo "{\"success\": true, \"identifier\": \"$identifier\", \"action\": \"blocked\", \"blocked_by\": \"$blocker\"}"
+    jq -cn --arg identifier "$identifier" --arg blocker "$blocker" \
+        '{success: true, identifier: $identifier, action: "blocked", blocked_by: $blocker}'
 }
 
 # Unblock an issue: remove blocked label, post comment

@@ -1464,7 +1464,12 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         lanes.push(lane);
         match read {
             ItemRead::Open { blocked } => {
-                open.insert(item.to_owned(), blocked);
+                let hold = if blocked {
+                    tracker::OpenHold::Relation
+                } else {
+                    tracker::OpenHold::Unblocked
+                };
+                open.insert(item.to_owned(), hold);
             }
             ItemRead::Terminal(state) => {
                 terminal.insert(item.to_owned(), state);

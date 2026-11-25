@@ -5,7 +5,7 @@
 # with one app token that Linear lets write in every team, so the guard in
 # linear.sh is what keeps a lane out of another team's issues.
 #
-# One table. A row names the configured team, the command, and what it left
+# Each guard row names the configured team, the command, and what it left
 # behind, rendered as one line: the exit status, `calls=0` where nothing may
 # be sent, the mutations sent in order, and the guard's first stderr line, `-`
 # for none.
@@ -67,7 +67,9 @@ jq -cj --arg alias_team "${ALIAS_TEAM:?}" '
        branchName: "b", state: {name: "Todo", type: "unstarted"}, assignee: null, project: null,
        projectMilestone: null, cycle: null, parent: null, team: $i.team, priority: 3, estimate: null,
        sortOrder: 1.0, createdAt: "2026-10-05T00:00:00Z", updatedAt: "2026-10-05T00:00:00Z",
-       archivedAt: null, trashed: null, labels: page([]), children: page([]), comments: page([]),
+       archivedAt: null, trashed: null,
+       labels: page(if $i.identifier == "KEN-1" then [{name: "skills"}] else [] end),
+       children: page([]), comments: page([]),
        relations: page([{id: "a7b6c5d4-e3f2-4a1b-9c0d-8e7f6a5b4c3d", type: "related",
          relatedIssue: {id: "x", identifier: (if $i.identifier == "KEN-1" then "VGS-1" else "KEN-1" end),
            title: "t", state: {name: "Todo", type: "unstarted"}}}]),
@@ -167,7 +169,6 @@ bulk-update of a repeated identifier writes each time|KEN|-|issues bulk-update K
 archive of an own team issue passes|KEN|-|issues archive KEN-1|0|issueArchive|-
 trash of an own team issue passes|KEN|-|issues trash KEN-1|0|issueDelete|-
 create under the own team by another spelling passes|kendex|-|issues create --team KEN --title t|0|issueCreate|-
-block of an own team issue by another team issue passes|KEN|-|issues block KEN-1 --by VGS-1|0|issueUpdate,issueRelationCreate,commentCreate|-
 comments create on another team issue passes|KEN|-|comments create VGS-1 --body hello|0|commentCreate|-
 add-relation from another team issue passes|KEN|-|issues add-relation VGS-1 --related KEN-1|0|issueRelationCreate|-
 remove-relation from another team issue passes|KEN|-|issues remove-relation VGS-1 --related KEN-1|0|issueRelationDelete|-
@@ -204,3 +205,15 @@ while IFS='|' read -r label team calls args rc writes guard alias_team; do
   assert_eq "$label" "$(run "$team" "$calls" "$alias_team" "${argv[@]}")" "$expected"
   [[ -z "$cause" ]] || assert_file_contains "$label" "$TMP_ROOT/err" "$cause"
 done <<<"$ROWS"
+
+assert_eq "blocking writes only a relation and a comment, preserving labels" \
+  "$(run KEN - OTHER issues block "$KEN_UUID" --by VGS-1)" \
+  'rc=0 calls=- writes=issueRelationCreate,commentCreate guard=-'
+assert "blocking attaches the relation and comment to the dependent" \
+  jq -se --arg dependent "$KEN_UUID" --arg blocker "$VGS_UUID" '
+    any(.[]; (.query | contains("issueRelationCreate")) and
+      .variables.input == {type: "blocks", issueId: $blocker, relatedIssueId: $dependent}) and
+    any(.[]; (.query | contains("commentCreate")) and .variables.input.issueId == $dependent)
+  ' "$CURL_LOG"
+assert_jq "blocking reports the canonical identifier" "$(cat "$TMP_ROOT/out")" \
+  '. == {success: true, identifier: "KEN-1", action: "blocked", blocked_by: "VGS-1"}'

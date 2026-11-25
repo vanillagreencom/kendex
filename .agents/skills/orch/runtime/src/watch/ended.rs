@@ -27,12 +27,11 @@
 //! not named; an unread one is named with `tracker=unread`, never taken as
 //! ended.
 //!
-//! What the lane waits for is its record's recorded wait (the park, the park
-//! it owes, or the pull request a relaunch carried from its park), then the
-//! tracker's blocker: a pull request of the lane's own is a merge, an ask an
-//! owner answer, a hold, a dependency's pull request, a blocking item or the
-//! `blocked` label a blocker. A wait record that does not parse is
-//! `unread`; no recorded wait on an item whose blockers no read answered
+//! An active `blocked` label holds the lane until it clears. Otherwise the
+//! record's saved wait takes precedence over a blocking relation: a pull
+//! request of the lane's own is a merge, an ask an owner answer, and a hold
+//! or a dependency's pull request a blocker. A wait record that does not
+//! parse is `unread`; no recorded wait on an item whose blockers no read answered
 //! (an unread item, or one a terminal read alone holds open) is `unknown`;
 //! neither is ever `nothing`.
 
@@ -45,7 +44,7 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Hosts, ParkKind, epoch_of, host_of};
 use super::lanes::lane_name;
-use super::tracker::TerminalState;
+use super::tracker::{OpenHold, TerminalState};
 use crate::mailbox::Envelope;
 use crate::ops::ParkWait;
 use crate::state::{FleetState, Lane, LaneStatus, PARK_OWED};
@@ -287,9 +286,9 @@ fn latest(fleet: &FleetState) -> BTreeMap<&str, &Lane> {
 
 /// What the tracker duty's last read says of the lanes' items.
 pub struct Items<'a> {
-    /// The team's open items, each with whether a blocker holds it; `None`
+    /// The team's open items, each with what holds it; `None`
     /// before the tracker duty's first team read.
-    pub open: Option<&'a BTreeMap<String, bool>>,
+    pub open: Option<&'a BTreeMap<String, OpenHold>>,
     /// The terminal reads of the `stopped` and `parked` records' items.
     pub terminal: &'a BTreeMap<String, TerminalState>,
 }
@@ -297,10 +296,8 @@ pub struct Items<'a> {
 /// What the tracker's reads say of one item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemRead {
-    /// Among the team's open items, with whether a blocker holds it.
-    Open {
-        blocked: bool,
-    },
+    /// Among the team's open items, with what holds it.
+    Open(OpenHold),
     /// Open by a terminal read alone, which reads no blocker.
     OpenUnjudged,
     Ended,
@@ -311,8 +308,8 @@ impl Items<'_> {
     /// The one answer for `item`: the team's open list first, then the
     /// terminal read.
     pub fn read(&self, item: &str) -> ItemRead {
-        if let Some(blocked) = self.open.and_then(|open| open.get(item)) {
-            return ItemRead::Open { blocked: *blocked };
+        if let Some(hold) = self.open.and_then(|open| open.get(item)) {
+            return ItemRead::Open(*hold);
         }
         match self.terminal.get(item) {
             Some(TerminalState::Open) => ItemRead::OpenUnjudged,
@@ -356,20 +353,21 @@ fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline)
     if !harness_ended {
         return None;
     }
-    // The tracker's blocker, where the record names no wait of its own.
-    let (blocker, tracker_read) = match items.read(&lane.item) {
-        ItemRead::Open { blocked: true } => (Wait::Blocker, true),
-        ItemRead::Open { blocked: false } => (Wait::Nothing, true),
-        ItemRead::OpenUnjudged => (Wait::Unknown, true),
+    let read = items.read(&lane.item);
+    let saved = || recorded_wait(lane);
+    let waits = match read {
+        ItemRead::Open(OpenHold::Label) => Wait::Blocker,
+        ItemRead::Open(OpenHold::Relation) => saved().unwrap_or(Wait::Blocker),
+        ItemRead::Open(OpenHold::Unblocked) => saved().unwrap_or(Wait::Nothing),
+        ItemRead::OpenUnjudged | ItemRead::Unread => saved().unwrap_or(Wait::Unknown),
         ItemRead::Ended => return None,
-        ItemRead::Unread => (Wait::Unknown, false),
     };
     Some(Event::LaneEnded {
         item: lane.item.clone(),
         lane: lane.status,
-        waits: recorded_wait(lane).unwrap_or(blocker),
+        waits,
         stop,
-        tracker_read,
+        tracker_read: read != ItemRead::Unread,
     })
 }
 

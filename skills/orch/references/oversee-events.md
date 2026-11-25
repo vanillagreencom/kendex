@@ -331,15 +331,17 @@ When the fleet's last item completes:
 
 ### `parked-merged`
 
-`EVENT parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a parked item waited on merged, and the item has work left. A dependency park waits on `parked.until_pr`, a queue park on `parked.pr`. The watch repeats the line before each heartbeat while the record reads parked.
+`EVENT parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a parked item waited on merged, and the item has work left. A dependency park waits on `parked.until_pr`, a queue park on `parked.pr`. On a fleet with a Linear team, the watch reports the merge once. On a fleet with no Linear team, the watch repeats the report while the record reads parked.
 
 Read the item's live tracker state before any relaunch or close, including when `parked-merged` arrives before a `tracker=unread` line on a fleet with no Linear team, and follow [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) to decide whether to close the lane or continue below.
+
+While the `blocked` label holds the item, keep the lane parked. Check the saved pull request once the hold clears under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes).
 
 1. Relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The relaunch starts the harness fresh on the kept disk, and the item's handoff record carries its context.
 2. A dependency park: the lane rebases and continues the held step. Record no cycle for the dependency's merge.
 3. A queue park: the lane finishes `merge-pr.md` § 5 steps 2 to 6 and § 6, and its close records the item's cycle.
 
-Report a capacity refusal and act on the next repeat.
+Report a capacity refusal and retry the relaunch when capacity is available.
 
 ### `parked-closed`
 
@@ -855,7 +857,7 @@ A refused `write`:
 3. The `account-roster` lines are the fleet's capacity as the account judge reads it. Route them per § `account`. `account-roster unread` means the watch read no account, never that none has room.
 4. Each `owed [ITEM] state=[STATE] priority=[N] lane=[LANE] verdict=[VERDICT]` line is an item the tracker holds as owed work. It has no running, preparing or parked record, and `launch_queue` lacks it. `priority=-` ranks after every number. A parked item with work left over its merged pull request takes its `parked-merged` line instead.
    - A `backlog` or `todo` line names only an item the holds of [oversee.md § 2](../workflows/oversee.md#2-select-work) step 1 leave startable.
-   - An `in-progress` or `in-review` line names its item whatever holds it. The `verdict=queue` gate below judges it.
+   - An `in-progress` or `in-review` item held by the `blocked` label has no owed line. For other started items, the `verdict=queue` gate below judges what holds launch.
    - `verdict=queue`: gate it as [oversee.md § 2](../workflows/oversee.md#2-select-work) does. One that passes joins `launch_queue` at its priority's position. Where `lane=` names a record, relaunch it per [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). Tell the owner of one that fails, with the reason it cannot run, in the chat and in the next report's summary.
    - `verdict=merged [DELIVERY]`: the record carries the cycle of that merge while the tracker still holds the item open. Where the merge finished the item, complete it in the tracker. Where the item went back to work after it, queue it as for `queue`.
    - `verdict=dated harness=[H] until=[UTC]`: every account for the record's harness and model is walled. Launch and queue nothing. When first judged so, name the item with its `until=` in the chat and in that summary. Each heartbeat judges it again.

@@ -312,7 +312,7 @@ A container is never orchestrated and never gets a PR.
 Dispatch requires two things: the item's own `state_type` is non-terminal, and the union of its `blocked_by_launch` with every container ancestor's `blocked_by_launch` is empty.
 
 - This field leaves out completed, canceled and post-merge Verifying blockers. In Progress and Backlog blockers still hold dispatch.
-- Selection reads the same field: an item whose only blockers are Verifying or Done is unblocked, its relations kept. The safe `issues list` carries it, and the heartbeat's `open-unblocked` line judges by each item's own `blocked_by_launch`.
+- The safe `issues list` carries `blocked_by_launch`. [Oversee selection](../workflows/oversee.md#2-select-work) also applies the `blocked` label rule. The heartbeat's `open-unblocked` line uses those same relation and label rules on the item itself.
 - Other readers keep `blocked_by_open`, among them the unblocked and blocked split of `issues list --with-relations --format=raw`.
 - A dependent that needs a blocker's proven outcome, not only its merged code, states that need in its body. The overseer's queue order holds that dependent through verification.
 

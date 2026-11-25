@@ -34,16 +34,18 @@ A line with `tracker=unread` comes first, even when the watch also prints `parke
 - `nothing`: nothing holds the lane.
   1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
   2. Where the relaunch refuses, close it in this pass through § Lane close, and tell the owner the relaunch's refusal.
-- `merge` on `lane=parked`: the lane waits on a pull request, and its `parked-merged` line resumes it.
+- `merge` on `lane=parked`: follow its [`parked-merged`](oversee-events.md#parked-merged) line, or check the saved pull request below after a tracker hold clears.
 - `merge` on `lane=stopped` with a park owed: its `park-owed` line drives the park ([oversee-events.md § `park-owed`](oversee-events.md#park-owed)).
 - `merge` on any other `running` or `stopped` record: the lane carried a pull request when its harness ended.
   1. Where the pull request has not merged, relaunch the lane in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) to finish [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge).
   2. Where it merged, take the post-merge route of [oversee-events.md § `idle-after-return`](oversee-events.md#idle-after-return): send `merge-pr [PR_NUMBER]` as a directive, then relaunch under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 - `owner`: the lane waits on the owner's answer to its ask. Relaunch it once the answer arrives ([oversee-lanes.md § What ends a park](oversee-lanes.md#what-ends-a-park)).
-- `blocker`: a hold park, a blocking item or the `blocked` label holds it. Relaunch it once the blocker ends. Only a hand relaunch ends a hold park.
+- `blocker`: a hold park, a blocking item, the `blocked` label or a saved dependency pull request holds it. When the label clears, use the next `lane-ended` line to judge any saved wait. Only a hand relaunch ends a hold park.
 - A dependency wait, a recorded `until_pr` with no pull request of the lane's own, reads `blocker`.
 - `unread`: the record's wait did not parse. Correct the record against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state), and judge the lane again at the next line.
 - `unknown`: the record names no wait and no tracker read answered for the item's blockers. Judge the item's blockers in its tracker, then act as `blocker` or `nothing` says.
+
+Once the tracker hold clears, check the saved pull request's live state on GitHub even if the watch already reported its merge. For a dependency park, read `parked.until_pr` in `parked.until_repo`, using `parked.repo` when `until_repo` is absent. For a queue park, read `parked.pr` in `parked.repo`. If GitHub reports `MERGED`, use [Recovery relaunch](lane-directive.md#recovery-relaunch) and follow the continuation for that park in [`parked-merged`](oversee-events.md#parked-merged).
 
 ## Mail the wake cannot deliver
 
