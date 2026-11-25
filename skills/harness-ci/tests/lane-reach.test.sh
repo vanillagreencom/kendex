@@ -530,7 +530,7 @@ YAML
       check-lane-host:opaque-prefix)
         cat <<'YAML'
       - run: |
-          sudo apt-get update -q >/dev/null
+          printf '%s\n' ready >/dev/null
           bin/check --lane check-lane-host
 YAML
         continue ;;
