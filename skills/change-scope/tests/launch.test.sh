@@ -343,6 +343,11 @@ assert_settings_ranges() {
       printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
       git -C "$SETTINGS_REPO" add -- kendex.toml
     fi
+    if [ "$row" = installed-map ]; then
+      mkdir -p "$SETTINGS_REPO/.agents/skills"
+      cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$SETTINGS_REPO/.agents/skills/bot-instructions"
+      git -C "$SETTINGS_REPO" add -- .agents/skills/bot-instructions
+    fi
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
@@ -358,7 +363,10 @@ assert_settings_ranges() {
     fi
     assert_eq "settings range: $row" "$want rc=0" \
       "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
-    if [ "$row" = standalone-consumer ]; then
+    if [ "$row" = installed-map ]; then
+      ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/manifest-ci.err")"
+      assert_eq "the installed checker keeps the consumer manifest CI floor" "change_class=small" "$ci_class"
+    elif [ "$row" = standalone-consumer ]; then
       ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/standalone-ci.err")"
       ci_note="$(sed -n 's/^manifest-admission: admitted=false //p' "$SANDBOX/standalone-ci.err")"
       assert_eq "standalone consumer CI refuses an absent checker" \
@@ -372,6 +380,14 @@ uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_L
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
 standalone-consumer|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
 local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+map-entry-added|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
+map-entry-removed|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|schema = 8\n[skill-instructions]\nall = "Be concise."|micro cause=settings-only
+local-map|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = 'Use the project map.'|schema = 8\n[skill-instructions]\nproject-management = 'Use the updated project map.'|micro cause=settings-only
+installed-map|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
+multiline-heading|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React conventions\n'''|standard cause=configuration-source
+multiline-assignment|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "old"\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "new"\n'''|standard cause=configuration-source
+multiline-array|kendex.toml|schema = 8\n[install]\nharnesses = [\n  "codex",\n]|schema = 8\n[install]\nharnesses = [\n  "claude",\n]|standard cause=configuration-source
+unplaced-header|kendex.toml|schema = 8\n["skill-instructions"]\nall = "Be concise."|schema = 8\n["skill-instructions"]\nall = "Use plain language."|standard cause=configuration-source
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
 size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
 at-ceiling|kendex.settings.toml|||micro cause=settings-only
