@@ -61,7 +61,13 @@ impl World {
         let dir = tempfile::tempdir().unwrap();
         let world = World {
             dir,
-            linear_replies: BTreeMap::new(),
+            linear_replies: BTreeMap::from([
+                ("comments owner-questions".to_owned(), json!({"body": []})),
+                (
+                    "comments owner-questions --prefix".to_owned(),
+                    json!({"body": "a54c6f77-50d1-"}),
+                ),
+            ]),
             gh_replies: BTreeMap::new(),
         };
         world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
@@ -5220,6 +5226,7 @@ fn opens_with_prose(body: &str) -> bool {
 
 fn posted_owner_ask(
     world: &World,
+    id: &str,
     item: (&str, Option<&str>),
     question: Option<&str>,
     deadline: &str,
@@ -5245,12 +5252,12 @@ fn posted_owner_ask(
     let events = mailbox.join("to-overseer.jsonl");
     let (issue, uuid) = item;
     let identity = uuid.map(|uuid| json!({"identifier": issue, "uuid": uuid}));
-    let ask = json!({"id": "ask-1", "kind": "ask", "at": "2026-10-01T00:00:00Z",
+    let ask = json!({"id": id, "kind": "ask", "at": "2026-10-01T00:00:00Z",
         "from": "overseer:test", "to": "owner", "issue": issue, "identity": identity, "text": "Approve?",
         "options": ["yes", "no"], "recommend": "yes", "wait": 0, "effect": "none",
         "deadline": deadline});
-    let posted = json!({"id": "ask-1-tracker", "kind": "tracker-posted",
-        "at": "2026-10-01T00:00:01Z", "from": "overseer:test", "re": "ask-1",
+    let posted = json!({"id": format!("{id}-tracker"), "kind": "tracker-posted",
+        "at": "2026-10-01T00:00:01Z", "from": "overseer:test", "re": id,
         "issue": issue, "tracker_label": "owner-gated", "tracker_comment": question,
         "text": ""});
     std::fs::write(&events, format!("{ask}\n{posted}\n")).unwrap();
@@ -5290,8 +5297,13 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
         ("unthreaded", None, Some(ITEM_UUID)),
     ] {
         let mut world = World::new();
-        let (mut settings, events) =
-            posted_owner_ask(&world, (FORMER_REF, uuid), question, "2099-01-01T00:00:00Z");
+        let (mut settings, events) = posted_owner_ask(
+            &world,
+            "ask-1",
+            (FORMER_REF, uuid),
+            question,
+            "2099-01-01T00:00:00Z",
+        );
         settings.linear_team = None;
         world
             .linear("issues list --assignee", json!({"body": []}))
@@ -5370,6 +5382,7 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let mut world = World::new();
     let (mut settings, events) = posted_owner_ask(
         &world,
+        "ask-1",
         ("KEN-7", None),
         Some("question-1"),
         "2026-10-01T00:00:00Z",
@@ -5422,6 +5435,7 @@ fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
     let mut world = World::new();
     let (settings, _) = posted_owner_ask(
         &world,
+        "ask-1",
         ("KEN-7", None),
         Some("question-1"),
         "2026-10-01T00:00:00Z",
@@ -5981,6 +5995,10 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
     );
         world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
         world.linear(
+            "comments owner-questions KEN-8",
+            json!({"exit": 1, "stderr": "issue purged"}),
+        );
+        world.linear(
         "graphql OwnerAskItem",
         json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
             "assignee": {"name": "Maya Owner"},
@@ -6055,8 +6073,10 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
     );
         assert!(
-            !log.contains("KEN-8"),
-            "the floor's ask is never written: {log}"
+            !log.lines()
+                .any(|line| line.starts_with("issues update KEN-8 ")
+                    || line.starts_with("comments create KEN-8 ")),
+            "the legacy floor's ask is never written: {log}"
         );
         assert_eq!(marks(&log), (1, 1));
         let third = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
@@ -6130,6 +6150,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
 /// replacement's `replaces` entry recorded for it.
 #[test]
 fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item_state() {
+    const OPEN_QUESTION: &str = "a54c6f77-50d1-4002-8000-000000000002";
     const UUID: &str = "00000007-0000-4000-8000-000000000007";
     let identity = json!({"identifier": "KEN-7", "uuid": UUID});
     // The closed ask's item ref, and the identity its own envelope carries.
@@ -6173,7 +6194,7 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
             predecessor,
             posted("ask-1", spelling, "question-1"),
             replacement,
-            posted("ask-2", "KEN-7", "question-2"),
+            posted("ask-2", "KEN-7", OPEN_QUESTION),
         ]
         .iter()
         .map(|l| format!("{l}\n"))
@@ -6192,6 +6213,12 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
                 "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
         );
         world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
+        world.linear(
+            "comments owner-questions",
+            json!({"body": [
+                {"id": OPEN_QUESTION, "reserved": true, "legacy_asks": []}
+            ]}),
+        );
         world.linear(
             "graphql OwnerAskItem",
             json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
@@ -6236,6 +6263,199 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
             "the open replacement keeps its label, assignee and line, recorded as {spelling}: {log}"
         );
     }
+}
+
+#[test]
+fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
+    const NAME: &str = "two_mailboxes_keep_the_item_gated_until_both_rulings_land";
+    const UUID: &str = "00000007-0000-4000-8000-000000000007";
+    const FIRST: &str = "a54c6f77-50d1-4001-8000-000000000001";
+    const SECOND: &str = "a54c6f77-50d1-4002-8000-000000000002";
+    const LEGACY: &str = "00000007-0000-4000-8000-000000000077";
+    const ACTION: &str = "**Maya, what you do:** Approve A.\n\nBody.";
+    if !isolated_row(NAME) {
+        return;
+    }
+    let clock = FakeClock::new();
+    let setup = |id, comment, started| {
+        let mut world = World::new();
+        let (mut settings, events) = posted_owner_ask(
+            &world,
+            id,
+            ("KEN-7", Some(UUID)),
+            Some(comment),
+            "2099-01-01T00:00:00Z",
+        );
+        let outward = events.with_file_name("to-overseer.jsonl");
+        let rows = std::fs::read_to_string(&outward).unwrap();
+        let staged = if id == "ask-a" {
+            let mut envelopes: Vec<Value> = rows
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            envelopes[0]["do"] = json!("Approve A.");
+            envelopes.iter().map(|event| format!("{event}\n")).collect()
+        } else {
+            format!(
+                "{}{}",
+                rows.replace(id, "legacy-ask").replace(comment, LEGACY),
+                rows
+            )
+        };
+        std::fs::write(outward, staged).unwrap();
+        settings.linear_team = None;
+        world
+            .linear("issues list --assignee", json!({"body": []}))
+            .linear("comments bulk-list", comments(&["KEN-7"], &[]))
+            .linear("comments create", json!({"body": {"success": true}}))
+            .linear("issues update", json!({"body": {}}))
+            .linear(
+                "graphql OwnerAskItem",
+                json!({"body": {"issue": {
+                    "description": if id == "ask-a" { ACTION } else { "Body." }, "assignee": {"name": "Maya Owner"},
+                    "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+                }}}),
+            );
+        let mut body = tracker::body(world.context(settings, None));
+        let mut baseline = Baseline::default();
+        if started {
+            pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        }
+        (world, body, baseline)
+    };
+    let close = |world: &World, id| {
+        let out = program(lane_mail())
+            .args(["resolve", "--item", "overseer", "--id", id])
+            .current_dir(world.dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    };
+    let updates = |world: &World| {
+        world
+            .linear_calls()
+            .into_iter()
+            .filter(|line| line.starts_with("issues update "))
+            .collect::<Vec<_>>()
+    };
+    let legacy = json!({"id": LEGACY, "reserved": false, "ruled": false, "legacy_asks": []});
+    let pending =
+        json!({"body": [{"id": SECOND, "reserved": true, "ruled": false, "legacy_asks": []}]});
+    let (mut first, mut first_watch, mut first_marks) = setup("ask-a", FIRST, true);
+    let (mut second, mut second_watch, mut second_marks) = setup("ask-b", SECOND, false);
+    first.linear("comments owner-questions", pending.clone());
+    close(&first, "ask-a");
+    pass(
+        &mut first_watch,
+        &mut first_marks,
+        &clock,
+        SINCE_EPOCH + 1240,
+    )
+    .unwrap();
+    assert!(
+        updates(&first).is_empty(),
+        "a foreign open question keeps labels, assignee, and the whole description"
+    );
+    assert_eq!(first.posted_comments()[0].1, FIRST);
+    first.linear(
+        "graphql OwnerAskItem",
+        json!({"body": {"issue": {
+            "description": "**Maya, what you do:** Approve B.\n\nBody.",
+            "assignee": {"name": "Maya Owner"},
+            "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+        }}}),
+    );
+    pass(
+        &mut first_watch,
+        &mut first_marks,
+        &clock,
+        SINCE_EPOCH + 1480,
+    )
+    .unwrap();
+    assert!(
+        updates(&first).is_empty(),
+        "a newer action is left untouched"
+    );
+
+    second.linear("comments owner-questions", pending);
+    second.linear(
+        "comments create",
+        json!({"exit": 1, "stderr": "linear: request-failed status=500"}),
+    );
+    close(&second, "ask-b");
+    close(&second, "legacy-ask");
+    pass(
+        &mut second_watch,
+        &mut second_marks,
+        &clock,
+        SINCE_EPOCH + 1240,
+    )
+    .unwrap();
+    assert!(
+        updates(&second).is_empty(),
+        "the delayed second ruling keeps the gate"
+    );
+
+    second.linear("comments create", json!({"body": {"success": true}}));
+    second.linear(
+        "comments owner-questions",
+        json!({"body": [
+            legacy, {"id": "unknown-legacy-comment", "reserved": false, "ruled": false, "legacy_asks": []}
+        ]}),
+    );
+    pass(
+        &mut second_watch,
+        &mut second_marks,
+        &clock,
+        SINCE_EPOCH + 1480,
+    )
+    .unwrap();
+    assert!(
+        updates(&second).is_empty(),
+        "the unmarked legacy owner mention keeps the gate"
+    );
+
+    second.linear("comments owner-questions", json!({"body": [legacy]}));
+    pass(
+        &mut second_watch,
+        &mut second_marks,
+        &clock,
+        SINCE_EPOCH + 1720,
+    )
+    .unwrap();
+    assert_eq!(
+        updates(&second),
+        ["issues update KEN-7 --labels skills --clear-assignee"]
+    );
+    assert_eq!(
+        second
+            .posted_comments()
+            .iter()
+            .map(|c| c.1.as_str())
+            .collect::<Vec<_>>(),
+        [SECOND, SECOND]
+    );
+
+    first.linear("comments owner-questions", json!({"body": []}));
+    let snapshot = |description| {
+        json!({"body": {"issue": {
+            "description": description, "assignee": null, "labels": {"nodes": [{"name": "skills"}]}
+        }}})
+    };
+    // Once the other mailbox clears the assignee, the watch lacks the name on the action line.
+    first.linear("graphql OwnerAskItem", snapshot(ACTION));
+    pass(
+        &mut first_watch,
+        &mut first_marks,
+        &clock,
+        SINCE_EPOCH + 1960,
+    )
+    .unwrap();
+    assert_eq!(
+        updates(&first),
+        ["issues update KEN-7 --labels skills"],
+        "field-only cleanup preserves the original description after the other mailbox clears the assignee"
+    );
 }
 
 /// This test process's own identity, the one a runner in it claims with.

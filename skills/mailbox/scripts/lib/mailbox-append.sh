@@ -349,12 +349,14 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace mentioned
+  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue
   local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
+  ask_id="$(jq -er '.id | strings | select(length > 0)' <<<"$envelope")" || return 1
+  comment_issue="$(jq -r '.identity.uuid // .issue' <<<"$envelope")" || return 1
   owner="$("$tracker" users list --max --format=safe 2>"$work/tracker.err" | jq -ce --arg email "$OWNER_TRACKER_EMAIL" '
     [.[] | select((.email | ascii_downcase) == ($email | ascii_downcase))]
     | if length == 1 then .[0] | select(.id != "" and (.name | test("\\S")) and (.display_name // "" | test("\\S")))
@@ -395,7 +397,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   comment_error="$work/tracker-comment.err"
   comment_id=""
   # No attribution line, so the comment opens with the owner's mention.
-  if "$tracker" comments create "$issue" --no-attribution --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
+  if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
     if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
       # The ask is posted only once the saved comment shows the mention that
       # tells the owner it is there.
