@@ -211,6 +211,66 @@ git_with_github_https_auth() (
   fi
 )
 
+git_with_bounded_github_https_auth() (
+  local git_program=""
+  git_program="$(type -P git)" || return 127
+  # Reuse the original shell's credential selection and bound its Git calls.
+  git() { kendex_github_run_bounded 10 "$git_program" "$@"; }
+  KENDEX_GITHUB_AUTH_TIMEOUT=10 KENDEX_GITHUB_OP_TIMEOUT=10 \
+    without_committed_settings git_with_github_https_auth "$@"
+)
+
+# Ref cleanup must prove ancestry from the stored commit graph. Replacements
+# and grafts can add a parent that the published commit never had.
+git_stored_history() {
+  local -a runner=(git)
+  [[ "$1" != --no-lazy-fetch ]] || runner=(kendex_github_run_bounded 10 git)
+  GIT_GRAFT_FILE=/dev/null GIT_NO_LAZY_FETCH=1 \
+    "${runner[@]}" --no-replace-objects -c advice.graftFileDeprecated=false "$@"
+}
+
+# The push wrapper selects the push-purpose credential for the deletion.
+# Bound advisory transport so it can return the confirmed delivery receipt.
+prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
+  local wt="$1" branch="$2" delivered="$3" ref="refs/heads/$2"
+  local url="" resolved="" rows="" oid="" output="" status=0
+  local endpoint="kendex-worktree-prune:$$"
+  [[ -n "$branch" && "$branch" != "$DEFAULT_BRANCH" && "$branch" != recovery/* ]] || return 0
+  if ! declare -F kendex_github_run_bounded >/dev/null; then
+    worktree_message push-base-item-read-failed "origin/$branch" "Bounded Git transport is unavailable. Keeping the origin item branch." >&2
+    return 0
+  fi
+  # get-url returns the destination after Git's URL rewrites. Map an alias
+  # for discovery so Git never applies a second rewrite to that destination.
+  if ! url="$(git_with_bounded_github_https_auth -C "$wt" remote get-url --push --all origin)" ||
+     [[ -z "$url" || "$url" == *$'\n'* ]] ||
+     ! resolved="$(git -C "$wt" -c "url.$url.insteadOf=$endpoint" ls-remote --get-url -- "$endpoint")" || [[ "$resolved" != "$url" ]]; then
+    worktree_message push-base-item-read-failed "origin/$branch" "Could not bind discovery to one origin push destination. Keeping the item branch." >&2
+    return 0
+  fi
+  # Protocol v2 advertises symbolic branch aliases. A server option forces
+  # Git to refuse v0/v1, whose listing can omit the alias target.
+  rows="$(git_with_bounded_github_https_auth -C "$wt" -c "url.$url.insteadOf=$endpoint" \
+    -c protocol.version=2 ls-remote --refs --symref --server-option=kendex-ref-proof -- "$endpoint" "$ref" 2>&1)" || status=$?
+  if [[ "$status" != 0 ]]; then
+    worktree_message push-base-item-read-failed "origin/$branch status=$status" "Could not verify whether the origin item ref is direct. Keeping the item branch." >&2
+    return 0
+  fi
+  [[ -n "$rows" ]] || return 0
+  oid="${rows%%$'\t'*}"
+  if [[ "$rows" != "$oid"$'\t'"$ref" ]] || ! [[ "$oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+     ! git_stored_history --no-lazy-fetch -C "$wt" merge-base --is-ancestor "$oid" "$delivered" 2>/dev/null; then
+    worktree_message push-base-item-kept "origin/$branch" "The origin item ref is symbolic or its tip could not be proved reachable from the delivered commit. Keeping the branch." >&2
+    return 0
+  fi
+  output="$(git_with_bounded_github_https_auth -C "$wt" push \
+    "--force-with-lease=$ref:$oid" origin ":$ref" 2>&1)" || status=$?
+  if [[ "$status" != 0 ]]; then
+    worktree_message push-base-item-delete-failed "origin/$branch status=$status" "Published the base, but Git could not confirm deletion of the origin item branch." >&2
+    [[ -z "$output" ]] || sed 's/^/  git: /' <<<"$output" >&2
+  fi
+}
+
 # Every gh read takes the github skill's user ladder: GH_TOKEN, then
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
 # identity and never a read credential, as gh never reads it. A token GitHub
@@ -286,7 +346,9 @@ github_read() { # COMMAND...
 
 restack_state_get() {
   local wt="$1" key="$2"
-  git -C "$wt" config --worktree --get "kendex-restack.$key" 2>/dev/null || true
+  if ! git -C "$wt" config --worktree --get "kendex-restack.$key" 2>/dev/null; then
+    return 0
+  fi
 }
 
 clear_restack_push_authorization() {
@@ -4769,8 +4831,10 @@ case "${1:-}" in
         worktree_message push-base-item "$WT_PATH" "Base publication requires a clean item branch." >&2
         exit 1
       fi
+      BASE_PUSH_BRANCH="$CURRENT_BRANCH"
       BASE_PUSH_BEFORE="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")" || exit 1
-      BASE_PUSH_COUNT="$(git -C "$WT_PATH" rev-list --count "$BASE_PUSH_BEFORE..HEAD")" || exit 1
+      BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
+      BASE_PUSH_COUNT="$(git -C "$WT_PATH" rev-list --count "$BASE_PUSH_BEFORE..$BASE_PUSH_HEAD")" || exit 1
       if [[ "$BASE_PUSH_COUNT" == 0 ]]; then
         worktree_message push-base-empty "$CURRENT_BRANCH" "The item has no commit to publish." >&2
         exit 1
@@ -4857,7 +4921,6 @@ case "${1:-}" in
     if [[ -n "$PUSH_TO_BASE" ]]; then
       PUSH_UPSTREAM_ARGS=()
       PUSH_LEASE=()
-      BASE_PUSH_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)" || exit 1
       PUSH_REF="$BASE_PUSH_HEAD:refs/heads/$DEFAULT_BRANCH"
     fi
     PUSH_OUTPUT=""
@@ -4896,6 +4959,7 @@ case "${1:-}" in
     if [[ -n "$PUSH_TO_BASE" ]]; then
       BASE_PUSH_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
       printf 'pushed-base: base=%s before=%s commit=%s at=%s\n' "$DEFAULT_BRANCH" "$BASE_PUSH_BEFORE" "$BASE_PUSH_HEAD" "$BASE_PUSH_AT"
+      prune_pushed_item_branch "$WT_PATH" "$BASE_PUSH_BRANCH" "$BASE_PUSH_HEAD"
     fi
     ;;
 

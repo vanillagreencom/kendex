@@ -264,6 +264,24 @@ done
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
+    item-read-timeout|item-read-v0|item-ancestry-unsupported)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+for arg in "\$@"; do
+  if [[ "$1" == item-ancestry-unsupported && "\$arg" == --no-lazy-fetch ]]; then
+    exit 129
+  fi
+  if [[ "\$arg" == protocol.version=2 ]]; then
+    [[ "$1" != item-read-timeout ]] || exit 124
+    [[ "$1" != item-read-v0 ]] || arg=protocol.version=0
+  fi
+  args+=("\$arg")
+done
+exec "$REAL_GIT" "\${args[@]}"
+EOF
+      ;;
     # A git that cannot reach origin for the default branch: the fetch of
     # refs/heads/main fails as an unreachable or rate-limited remote does,
     # leaving origin/main wherever it last was.
@@ -1249,6 +1267,111 @@ SH
   assert_eq "$(git -C "$WT" rev-parse HEAD)" "$prepared_head" "$race: transport does not rebase after validation"
   assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$(git -C "$MAIN" rev-parse HEAD)" "$race: remote update is preserved"
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
+done
+
+for branch_case in absent landed ancestral divergent moved denied push-url rewrites alias legacy timeout grafted no-local-proof; do
+  build "base-item-$branch_case" pair fix
+  base_item_head="$(git -C "$WT" rev-parse HEAD)"
+  base_remote="$ROOT/origin.git"
+  item_before=""
+  item_after=""
+  case "$branch_case" in
+    landed)
+      item_before="$base_item_head"
+      git -C "$MAIN" update-ref refs/remotes/origin/topic "$BASE"
+      ;;
+    ancestral) item_before="$BASE" ;;
+    divergent|moved)
+      git -C "$MAIN" commit -q --allow-empty -m 'remote-only work'
+      item_after="$(git -C "$MAIN" rev-parse HEAD)"
+      if [[ "$branch_case" == divergent ]]; then
+        item_before="$item_after"
+      else
+        item_before="$base_item_head"
+        git -C "$MAIN" push -q origin "$item_after:refs/heads/other-item"
+        cat >"$MAIN/.git/hooks/pre-push" <<SH
+#!/usr/bin/env bash
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [[ "\$local_ref" == '(delete)' && "\$remote_ref" == refs/heads/topic ]]; then
+    git --git-dir="$base_remote" update-ref refs/heads/topic "$item_after" "$item_before" || exit 1
+  fi
+done
+SH
+        chmod +x "$MAIN/.git/hooks/pre-push"
+      fi
+      ;;
+    denied)
+      item_before="$base_item_head"
+      item_after="$item_before"
+      git --git-dir="$base_remote" config receive.denyDeletes true
+      ;;
+    push-url)
+      item_before="$base_item_head"
+      git init -q --bare "$ROOT/read-origin.git"
+      git -C "$MAIN" push -q "$ROOT/read-origin.git" "$BASE:refs/heads/main"
+      git -C "$MAIN" remote set-url --push origin "$base_remote"
+      git -C "$MAIN" remote set-url origin "$ROOT/read-origin.git"
+      ;;
+    rewrites)
+      git -C "$WT" push -q "$base_remote" "$base_item_head:refs/heads/topic"
+      git init -q --bare "$ROOT/other-origin.git"
+      git -C "$MAIN" remote set-url --push origin item-fixture:origin
+      git -C "$MAIN" config "url.$base_remote.insteadOf" item-fixture:origin
+      git -C "$MAIN" config "url.$ROOT/other-origin.git.insteadOf" "$base_remote"
+      git -C "$MAIN" remote set-url origin "$ROOT/read-origin.git"
+      git clone -q --bare "$MAIN" "$ROOT/read-origin.git"
+      ;;
+    alias|legacy)
+      git --git-dir="$base_remote" symbolic-ref refs/heads/topic refs/heads/main
+      item_after="$base_item_head"
+      if [[ "$branch_case" == legacy ]]; then
+        git_shim item-read-v0
+      fi
+      ;;
+    timeout)
+      item_before="$base_item_head"
+      item_after="$item_before"
+      git_shim item-read-timeout
+      ;;
+    no-local-proof)
+      item_before="$base_item_head"
+      item_after="$item_before"
+      git_shim item-ancestry-unsupported
+      ;;
+    grafted)
+      item_before="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -m 'independent remote history')"
+      item_after="$item_before"
+      git -C "$MAIN" replace --graft "$BASE" "$item_before"
+      ;;
+  esac
+  if [[ -n "$item_before" ]]; then
+    # Push by URL so no local origin/topic tracking ref is written.
+    git -C "$WT" push -q "$base_remote" "$item_before:refs/heads/topic"
+  fi
+  if ! git --no-lazy-fetch --version >/dev/null 2>&1; then
+    item_after="$(remote_oid origin)"
+    [[ "$branch_case" != alias && "$branch_case" != legacy ]] || item_after="$base_item_head"
+  fi
+  (cd "$MAIN" && PATH="${ROW_PATH:+$ROW_PATH:}$PATH" "$WORKTREE_SCRIPT" push "$WT" --to-base "$BASE" >"$ROOT/out" 2>"$ROOT/err")
+  assert_eq "$(remote_oid origin)" "$item_after" "$branch_case: origin item cleanup preserves tips absent from the base"
+  assert_eq "$(git --git-dir="$base_remote" rev-parse refs/heads/main)" "$base_item_head" "$branch_case: the base contains the delivered commit"
+  assert_eq "$(sed -n 's/^pushed-base: .* commit=\([^ ]*\) .*/\1/p' "$ROOT/out")" "$base_item_head" "$branch_case: delivery keeps its success receipt"
+  if [[ "$branch_case" == timeout ]]; then
+    assert_eq "$(grep '^worktree-push-base-item-read-failed:' "$ROOT/err")" \
+      'worktree-push-base-item-read-failed: origin/topic status=124' 'cleanup timeout is reported apart from delivery'
+  fi
+done
+
+for base_checkout in default detached; do
+  build "base-item-$base_checkout" pair fix
+  if [[ "$base_checkout" == detached ]]; then
+    git -C "$MAIN" switch -q --detach
+  fi
+  git -C "$MAIN" commit -q --allow-empty -m 'not an item checkout'
+  checkout_rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$MAIN" --to-base "$BASE" >"$ROOT/out" 2>"$ROOT/err") || checkout_rc=$?
+  assert_eq "$checkout_rc" 1 "$base_checkout: publishing requires an item branch"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse refs/heads/main)" "$BASE" "$base_checkout: origin base is preserved"
 done
 
 for merge_base in contained advanced control; do

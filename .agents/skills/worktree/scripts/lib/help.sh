@@ -698,6 +698,12 @@ and validate again after either refusal. Success prints:
   pushed-base: base=BRANCH before=BASE_OID commit=SHA at=UTC
 UTC is captured after the successful push. Neither base mode accepts
 --no-rebase, --set-upstream or the other base mode. Both need a full checkout.
+After publication, Git deletes the origin item branch if the remote proves
+it is a direct ref and its current tip is reachable from the delivered
+commit without fetching missing objects. Git without --no-lazy-fetch support
+keeps the branch. A tip change also keeps the branch. A cleanup timeout or
+other failure reports the branch on stderr and leaves publication successful.
+Recovery branches stay on origin.
 
 Push worktree branch to remote.
 Uses BOT_REMOTE_NAME from project config if set, otherwise falls back to
