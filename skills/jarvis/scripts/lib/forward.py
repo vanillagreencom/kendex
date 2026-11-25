@@ -370,6 +370,8 @@ class Forwarder:
         self.bash, self.home = bash, home
         self.settings = watch.config(bash, home)
         self.role = watch.role(self.settings)
+        confirmation = self.settings["JARVIS_FORWARD_CONFIRM"]
+        self.forward_confirm = confirmation if confirmation in ("off", "on") else "invalid"
         self.outbox = Outbox(home, directory)
         self.deadline = time.monotonic() + DRAIN_SECONDS
         self.reach = None
@@ -380,7 +382,7 @@ class Forwarder:
 
     def active_standing(self, grant):
         """Verify the grant in the shell settings file selected by its originating forward."""
-        if self.settings["JARVIS_FORWARD_CONFIRM"] != "on":
+        if self.forward_confirm != "on":
             return False
         scope = (self.home + "\n" + self.settings["JARVIS_MAIN_HOST"]).encode()
         key = "fleet.forward:" + hashlib.sha256(scope).hexdigest()
@@ -618,11 +620,11 @@ class Forwarder:
         self.satellite()
         if self.role.kind == "invalid":
             raise Refusal("setting-invalid", "JARVIS_MAIN_HOST")
-        if self.settings["JARVIS_FORWARD_CONFIRM"] not in ("off", "on"):
+        if self.forward_confirm == "invalid":
             # The setting asks for the owner's step before a send, so a value
             # it cannot read sends nothing rather than dropping the step.
             raise Refusal("setting-invalid", "JARVIS_FORWARD_CONFIRM")
-        record = checked_record(path, self.settings["JARVIS_FORWARD_CONFIRM"] == "on")
+        record = checked_record(path, self.forward_confirm == "on")
         request, confirmation = record["request"], record.get("confirmation")
         standing = None
         if confirmation and confirmation.get("scope") == "standing":
@@ -696,7 +698,7 @@ class Forwarder:
         answers = sorted((entry["answer"] for entry in state["entries"]
                           if entry.get("answer") and kept(entry, watch.epoch())),
                          key=lambda answer: (answer["closed_at"], answer["key"]))
-        return {"v": 1, "role": "satellite", "main": self.role.dest,
+        return {"v": 1, "role": "satellite", "main": self.role.dest, "forward_confirm": self.forward_confirm,
                 "reachable": reach.get("reachable"), "checked_at": iso(reach.get("at")),
                 "cause": "setting-invalid" if self.role.kind == "invalid" else reach.get("cause"),
                 "last_answer": state.get("last_answer"), "requests": requests, "answers": answers}
