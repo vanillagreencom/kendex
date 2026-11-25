@@ -17,7 +17,7 @@ Actions:
   bulk-list  List the comments of several issues in one read
   bulk-get   Read comment URLs by comment ID
   owner-requests  Complete owner-mentioned requests in the assigned, labelled view
-  owner-questions ISSUE --email EMAIL  Read reserved and possible legacy questions with ruling state
+  owner-questions ISSUE --email EMAIL  Read possible questions awaiting a ruling
   create     Create a new comment
   update  Update an existing comment
   delete  Delete a comment
@@ -99,8 +99,7 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
-# Question UUIDs reserve this prefix. Rulings flip the question's high bit,
-# placing rulings for reserved questions outside that prefix.
+# Ruling UUIDs flip the high bit, outside this reserved question prefix.
 readonly OWNER_QUESTION_PREFIX=a54c6f77-50d1
 readonly OWNER_RULING_JQ='def comment_uuid:
   type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\z");
@@ -321,6 +320,7 @@ owner_requests() {
 }
 
 owner_questions() {
+    if [[ "$#" -eq 1 && "$1" == --prefix ]]; then jq -n --arg prefix "$OWNER_QUESTION_PREFIX-" '$prefix'; return; fi
     if [[ "$#" -ne 3 || "$2" != --email || -z "$3" ]]; then
         echo '{"error":"owner-questions requires ISSUE --email EMAIL"}' >&2; return 1
     fi
@@ -331,11 +331,10 @@ owner_questions() {
     jq -ce --arg prefix "$OWNER_QUESTION_PREFIX-" --arg profile "$profile" "$OWNER_RULING_JQ"'
         if type == "array" and all(.[]; (.id | type) == "string") then . else error("invalid-owner-comments") end
         | [.[] | select(owner_ruling) | .parent_id] as $ruled
-        | [.[] | select(.parent_id == null)
+        | [.[] | select(.parent_id == null and (.id as $id | $ruled | index($id) == null))
           | (.id | comment_uuid and startswith($prefix)) as $reserved
           | select($reserved or (.body | mentions($profile)))
-          | {id, reserved: $reserved, ruled: (.id as $id | $ruled | index($id) != null),
-             legacy_asks: [.body | split("\n")[] | select(startswith("ask=")) | ltrimstr("ask=")]}]' <<<"$comments"
+          | {id, reserved: $reserved, legacy_asks: [.body | split("\n")[] | select(startswith("ask=")) | ltrimstr("ask=")]}]' <<<"$comments"
 }
 
 # The line a new comment opens with, naming who posts it, read once per post

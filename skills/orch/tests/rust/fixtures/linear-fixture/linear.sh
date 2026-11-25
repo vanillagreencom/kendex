@@ -94,6 +94,10 @@ fi
 # The owner-tracker read's `issues list --assignee …` is keyed apart from
 # the team's open-items list, which shares its first two words.
 [ "${3:-}" != --assignee ] || key="issues list --assignee"
+if [ "$key" = 'comments owner-questions' ] &&
+   jq -e --arg name "$key ${3:-}" 'has($name)' "$LINEAR_FAKE_REPLIES" >/dev/null; then
+  key="$key ${3:-}"
+fi
 reply=$(jq -c --arg k "$key" '.[$k] // empty' -- "$LINEAR_FAKE_REPLIES") || { echo "linear-fake: replies-unreadable" >&2; exit 65; }
 if [ -z "$reply" ]; then
   echo "linear-fake: no reply for [$key]" >&2

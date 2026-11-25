@@ -61,10 +61,13 @@ impl World {
         let dir = tempfile::tempdir().unwrap();
         let world = World {
             dir,
-            linear_replies: BTreeMap::from([(
-                "comments owner-questions".to_owned(),
-                json!({"body": []}),
-            )]),
+            linear_replies: BTreeMap::from([
+                ("comments owner-questions".to_owned(), json!({"body": []})),
+                (
+                    "comments owner-questions --prefix".to_owned(),
+                    json!({"body": "a54c6f77-50d1-"}),
+                ),
+            ]),
             gh_replies: BTreeMap::new(),
         };
         world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
@@ -5863,6 +5866,10 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
     );
         world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
         world.linear(
+            "comments owner-questions KEN-8",
+            json!({"exit": 1, "stderr": "issue purged"}),
+        );
+        world.linear(
         "graphql OwnerAskItem",
         json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
             "assignee": {"name": "Maya Owner"},
@@ -6128,19 +6135,38 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     const UUID: &str = "00000007-0000-4000-8000-000000000007";
     const FIRST: &str = "a54c6f77-50d1-4001-8000-000000000001";
     const SECOND: &str = "a54c6f77-50d1-4002-8000-000000000002";
+    const LEGACY: &str = "00000007-0000-4000-8000-000000000077";
+    const ACTION: &str = "**Maya, what you do:** Approve A.\n\nBody.";
     if !isolated_row(NAME) {
         return;
     }
     let clock = FakeClock::new();
     let setup = |id, comment, started| {
         let mut world = World::new();
-        let (mut settings, _) = posted_owner_ask(
+        let (mut settings, events) = posted_owner_ask(
             &world,
             id,
             ("KEN-7", Some(UUID)),
             Some(comment),
             "2099-01-01T00:00:00Z",
         );
+        let outward = events.with_file_name("to-overseer.jsonl");
+        let rows = std::fs::read_to_string(&outward).unwrap();
+        let staged = if id == "ask-a" {
+            let mut envelopes: Vec<Value> = rows
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            envelopes[0]["do"] = json!("Approve A.");
+            envelopes.iter().map(|event| format!("{event}\n")).collect()
+        } else {
+            format!(
+                "{}{}",
+                rows.replace(id, "legacy-ask").replace(comment, LEGACY),
+                rows
+            )
+        };
+        std::fs::write(outward, staged).unwrap();
         settings.linear_team = None;
         world
             .linear("issues list --assignee", json!({"body": []}))
@@ -6150,7 +6176,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
             .linear(
                 "graphql OwnerAskItem",
                 json!({"body": {"issue": {
-                    "description": "Body.", "assignee": {"name": "Maya Owner"},
+                    "description": if id == "ask-a" { ACTION } else { "Body." }, "assignee": {"name": "Maya Owner"},
                     "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
                 }}}),
             );
@@ -6176,6 +6202,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
             .filter(|line| line.starts_with("issues update "))
             .collect::<Vec<_>>()
     };
+    let legacy = json!({"id": LEGACY, "reserved": false, "ruled": false, "legacy_asks": []});
     let pending =
         json!({"body": [{"id": SECOND, "reserved": true, "ruled": false, "legacy_asks": []}]});
     let (mut first, mut first_watch, mut first_marks) = setup("ask-a", FIRST, true);
@@ -6189,11 +6216,28 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         SINCE_EPOCH + 1240,
     )
     .unwrap();
-    assert!(
-        updates(&first).is_empty(),
-        "first close keeps the owner label and assignee"
+    assert_eq!(
+        updates(&first),
+        ["issues update KEN-7 --description Body."],
+        "first close clears only its action while keeping the owner label and assignee"
     );
     assert_eq!(first.posted_comments()[0].1, FIRST);
+    first.linear(
+        "graphql OwnerAskItem",
+        json!({"body": {"issue": {
+            "description": "**Maya, what you do:** Approve B.\n\nBody.",
+            "assignee": {"name": "Maya Owner"},
+            "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+        }}}),
+    );
+    pass(
+        &mut first_watch,
+        &mut first_marks,
+        &clock,
+        SINCE_EPOCH + 1480,
+    )
+    .unwrap();
+    assert_eq!(updates(&first).len(), 1, "a newer action is left untouched");
 
     second.linear("comments owner-questions", pending);
     second.linear(
@@ -6201,6 +6245,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         json!({"exit": 1, "stderr": "linear: request-failed status=500"}),
     );
     close(&second, "ask-b");
+    close(&second, "legacy-ask");
     pass(
         &mut second_watch,
         &mut second_marks,
@@ -6217,7 +6262,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     second.linear(
         "comments owner-questions",
         json!({"body": [
-            {"id": "legacy-comment", "reserved": false, "ruled": false, "legacy_asks": []}
+            legacy, {"id": "unknown-legacy-comment", "reserved": false, "ruled": false, "legacy_asks": []}
         ]}),
     );
     pass(
@@ -6232,7 +6277,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         "the unmarked legacy owner mention keeps the gate"
     );
 
-    second.linear("comments owner-questions", json!({"body": []}));
+    second.linear("comments owner-questions", json!({"body": [legacy]}));
     pass(
         &mut second_watch,
         &mut second_marks,
@@ -6251,6 +6296,27 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
             .map(|c| c.1.as_str())
             .collect::<Vec<_>>(),
         [SECOND, SECOND]
+    );
+
+    first.linear("comments owner-questions", json!({"body": []}));
+    let snapshot = |description| {
+        json!({"body": {"issue": {
+            "description": description, "assignee": null, "labels": {"nodes": [{"name": "skills"}]}
+        }}})
+    };
+    // An exact old action can survive an earlier refused action write until the other mailbox clears the assignee.
+    first.linear("graphql OwnerAskItem", snapshot(ACTION));
+    pass(
+        &mut first_watch,
+        &mut first_marks,
+        &clock,
+        SINCE_EPOCH + 1960,
+    )
+    .unwrap();
+    assert_eq!(
+        updates(&first).last().unwrap(),
+        "issues update KEN-7 --labels skills --description Body.",
+        "another mailbox clearing the assignee does not strand the closed action"
     );
 }
 

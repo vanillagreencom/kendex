@@ -155,13 +155,15 @@ run_comment question-replayed create KEN-1 --owner-question ask-1 --no-attributi
 assert_eq "the same ask confirms its first write under the same ID" "$RC $(jq -r '.data.comment.id' <<<"$OUT")" "0 $QUESTION"
 run_comment question-create create KEN-1 --owner-question ask-2 --no-attribution --body 'Same question'
 assert_not "another ask gets another ID" test "$(jq -r '.data.comment.id' <<<"$OUT")" = "$QUESTION"
+run_comment questions-open owner-questions --prefix
+assert_jq "the offline namespace recognizes the written question" "$OUT" "type == \"string\" and (. as \$prefix | \"$QUESTION\" | startswith(\$prefix))"
 run_comment questions-open owner-questions KEN-1 --email owner@example.test
 assert_eq "question read succeeds" "$RC" 0
 assert_jq "reserved and unruled legacy top-level questions stay open" "$OUT" \
-    "all(.[]; .ruled | not) and (map(select(.reserved))[0].id == \"$QUESTION\") and (map(select(.reserved | not) | .id) == [\"legacy\"])"
+    "(map(select(.reserved))[0].id == \"$QUESTION\") and (map(select(.reserved | not) | .id) == [\"legacy\"])"
 run_comment questions-ruled owner-questions KEN-1 --email owner@example.test
 assert_jq "the exact ruling closes only its parent question" "$OUT" \
-    'map([.reserved, .ruled]) == [[true,true],[false,false]]'
+    '[.[].id] == ["legacy"]'
 run_comment failed-comments owner-questions KEN-1 --email owner@example.test
 assert_not "an unread question source fails" test "$RC" -eq 0
 assert_eq "an unread question source publishes no empty set" "$OUT" ''
