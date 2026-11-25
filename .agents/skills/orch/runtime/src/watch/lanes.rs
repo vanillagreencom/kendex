@@ -1794,17 +1794,8 @@ fn wall(
     let reset_at = if auth {
         None
     } else {
-        reset::key(text).and_then(|key| {
-            let zone = (pass.readers.zone)(key.zone.as_deref())?;
-            let at = reset::epoch(&key, first_seen, &zone)?;
-            // After the printed clock has passed, its next occurrence can
-            // be tomorrow. A reset beyond the named window is unproven.
-            let five_hour = account_wall::harness_own_limit(text, channel)
-                == Some(account_wall::LimitReport::FiveHour);
-            (!five_hour
-                || at.saturating_sub(first_seen) <= agent_runtime::accounts::usage::FIVE_HOURS_S)
-                .then_some(at)
-        })
+        let report = account_wall::harness_own_limit(text, channel);
+        reset::reported_epoch(text, report, first_seen, pass.readers.zone)
     };
     let passed = reset_at.is_some_and(|at| at <= pass.now);
     let reported = format!(
@@ -3379,6 +3370,7 @@ fn shared_cause_key(a: &Value, b: &Value) -> bool {
 /// clock (`resets 9:50am (America/Los_Angeles)`, `resets 21:00`); a duration,
 /// a weekday with no clock and a bare number name no instant.
 pub mod reset {
+    use agent_runtime::accounts::{usage::FIVE_HOURS_S, wall::LimitReport};
     use jiff::civil::{Date, DateTime};
     use jiff::tz::{AmbiguousOffset, TimeZone};
     use jiff::{Span, Timestamp};
@@ -3651,6 +3643,20 @@ pub mod reset {
             });
         }
         None
+    }
+
+    /// The reset at the banner's first sighting, bounded by an explicit five-hour report.
+    pub fn reported_epoch(
+        text: &str,
+        report: Option<LimitReport>,
+        first_seen: u64,
+        zone: &dyn Fn(Option<&str>) -> Option<TimeZone>,
+    ) -> Option<u64> {
+        let key = key(text)?;
+        let at = epoch(&key, first_seen, &zone(key.zone.as_deref())?)?;
+        // The printed clock may next occur tomorrow, beyond the named window.
+        (report != Some(LimitReport::FiveHour) || at.saturating_sub(first_seen) <= FIVE_HOURS_S)
+            .then_some(at)
     }
 
     /// The UTC instants a wall clock names on `date` in `zone`, ascending:

@@ -1110,8 +1110,10 @@ class RootRelay:
             # a root that quotes the request, posted with its first answer.
             delivery_id = str(reference.get("delivery_id", ""))
             citation = forwarded(reference) if owner and kind == "notice" else None
+            notice_parent = (reference.get("kind") == "notice" and reference.get("box") == "to-overseer"
+                             and reference.get("from") == "overseer" and reference.get("to") == "owner")
             reply = owner and kind == "notice" and bool(
-                citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                notice_parent or citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
                 or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
             if (owner and kind in ("notice", "ask") and not reply
                     and envelope["line"] is not None and envelope["line"] <= seen):
@@ -1139,6 +1141,8 @@ class RootRelay:
                 record = by_id.get(str(envelope.get("re", "")), {})
             elif route == "reply" and citation is not None:
                 record = dict(reference, citation=citation)
+            elif route == "reply" and notice_parent:
+                record = reference
             else:
                 record = {}
             routed.append((envelope, route, record))
@@ -1334,6 +1338,8 @@ class RootRelay:
             return
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
+        if record and record.get("kind") == "notice" and thread_ts is None:
+            return
         attach = str(envelope.get("attach") or "")
         landed = self._send(envelope, "notice", envelope.get("text", ""), thread_ts, attach)
         if landed is None:

@@ -30,11 +30,23 @@ class SuccessionContract(SessionContract):
         argv = [str(session_test.SCRIPT), "succeed", "--home", str(self.home)]
         if kwargs.get("account_walled"):
             argv.append("--account-walled")
+        before = kwargs.get("usage_wall")
+        if before:
+            argv += ["--usage-wall", before["session_id"], f'{before["server"]} {before["pane"]}']
+            if kwargs.get("reset_passed"):
+                argv.append("--reset-passed")
         result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=300)
         self.stderr = result.stderr
         try:
-            answer = session_test.validate(result.stdout, result.returncode, "succeed")
-        except AssertionError:
+            output, recovery = result.stdout, None
+            if before:
+                fields = json.loads(output)
+                recovery = fields.pop("wall_recovery", None)
+                output = json.dumps(fields)
+            answer = session_test.validate(output, result.returncode, "succeed")
+            if recovery is not None:
+                answer["wall_recovery"] = recovery
+        except (AssertionError, ValueError):
             self.fail("succeed exit=" + str(result.returncode) + " answered " + result.stdout + result.stderr
                       + "\n" + self.diagnostics())
         return answer, result.returncode
@@ -78,6 +90,25 @@ class SuccessionContract(SessionContract):
                          [START_BRIEF + " Watch the release."], "the successor missed the updated private brief")
         archived = list((self.home / "state/archive").glob("handoff-*.md"))
         self.assertEqual([path.read_text() for path in archived], ["# Handoff\nWhere the work stands.\n"])
+
+    def test_usage_wall_with_no_alternative_resumes_the_same_session_after_reset(self):
+        before = self.running()
+        self.assertEqual(len(self.started()), 1)
+        prompts = self.prompts()
+        for reset_passed, expected in ((False, "waiting"), (True, "confirmed")):
+            answer, code = self.succeed(account_walled=True, usage_wall=before, reset_passed=reset_passed)
+            self.assertEqual((answer.get("wall_recovery"), code), (expected, 0), self.stderr + self.diagnostics())
+            self.assertEqual(self.controller()["session_id"], before["session_id"])
+            self.assertEqual(len(self.started()), 1)
+            self.assertEqual(len(self.prompts()), len(prompts) + int(reset_passed))
+            self.assertEqual(list((self.home / "state/archive").glob("handoff-*.md")), [])
+
+    def test_usage_wall_hands_over_to_a_free_account_before_reset(self):
+        alternative = self.plant_account("claude-b", 20)
+        before = self.running()
+        answer, code = self.succeed(account_walled=True, usage_wall=before)
+        self.assertEqual((answer["state"], answer["account"], code), ("running", str(alternative), 0), self.stderr)
+        self.assertNotEqual(self.handed_over(before)["session_id"], before["session_id"])
 
     def test_live_window_stays_in_front_through_handover(self):
         before = self.running()

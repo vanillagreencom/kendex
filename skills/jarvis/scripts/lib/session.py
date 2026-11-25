@@ -762,7 +762,7 @@ class Session:
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
-    def succeed(self, account_walled=False):
+    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
@@ -773,12 +773,60 @@ class Session:
                 return answer, 0
             if answer["state"] != "running":
                 raise Refusal("record-unreadable")
-            self.env = environment(status["recorded"].get("harness"), policy=True)
+            recorded = status["recorded"]
+            self.env = environment(recorded.get("harness"), policy=True)
+            choice = None
+            if usage_wall:
+                if usage_wall != [recorded.get("session_id"), f'{recorded["server"]} {recorded["pane"]}']:
+                    raise Refusal("record-unreadable")
+                choice = self.wall_choice(recorded, "headroom", Path(self.home) / "state/handoff.md")
+                if not choice.get("successor"):
+                    recovery = self.resume_wall(recorded) if reset_passed else "waiting"
+                    return {**answer, "wall_recovery": recovery}, 0
             record.update(intent="succeed", failure=None, reason="new-requested")
             self.write(record)
-            return self._hand_over(record, "headroom" if account_walled else "context", status["recorded"]["server_socket"])
+            return self._hand_over(record, "headroom" if account_walled else "context", recorded["server_socket"],
+                                   choice=choice)
 
-    def _hand_over(self, record, mark, socket, posture=None):
+    def wall_choice(self, recorded, mark, handoff):
+        choice, code, refusal, errors = self.ready_successor(
+            "controller", "successor", "--record", self.fleet(), "--cwd", self.home,
+            "--predecessor", recorded["pane"], "--mark", mark, "--handoff", handoff, recorded=recorded)
+        if code:
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
+        return choice
+
+    def resume_wall(self, recorded):
+        if not recorded.get("account"):
+            return "waiting"
+        pick = ["accounts", "pick", "--harness", recorded["harness"], "--account", recorded["account"],
+                "--record", self.fleet(), "--for-controller"]
+        if recorded.get("model"):
+            pick.extend(("--native-model", recorded["model"]))
+        room, code, _, errors = self.runtime(*pick)
+        if code:
+            sys.stderr.write(errors)
+            raise Refusal("record-unreadable")
+        if room.get("exit") != 0:
+            return "waiting"
+        args = ["deliver", "--account-room", "--line", "Continue your work after the usage limit reset."]
+        for flag, field in (("harness", "harness"), ("socket", "server_socket"), ("server-pid", "server"),
+                            ("server-start", "server_start"), ("pane", "pane"), ("cwd", "cwd"),
+                            ("pid", "harness_pid"), ("start", "harness_start"), ("session-id", "session_id")):
+            if not recorded.get(field):
+                raise Refusal("record-unreadable")
+            args.extend(("--" + flag, recorded[field]))
+        if recorded.get("home"):
+            args.extend(("--home", recorded["home"]))
+        result, code, refusal, errors = self.runtime(*args)
+        if code or result.get("delivery") not in ("confirmed", "unconfirmed"):
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The session could not resume: " +
+                          str(refusal or (result or {}).get("cause")) + ".", "failed")
+        return result["delivery"]
+
+    def _hand_over(self, record, mark, socket, posture=None, choice=None):
         # Save the handoff, write its generation header, then choose and
         # transfer until an attempt is proved, no account is left, or the
         # outcome is not a failure on a named account. The caller holds the
@@ -818,12 +866,7 @@ class Session:
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
-                choice, code, refusal, errors = self.ready_successor("controller", "successor", "--record", self.fleet(),
-                                                             "--cwd", self.home, "--predecessor", recorded["pane"],
-                                                             "--mark", mark, "--handoff", handoff, recorded=recorded)
-                if code:
-                    sys.stderr.write(errors)
-                    raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
+                choice = choice or self.wall_choice(recorded, mark, handoff)
                 if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
@@ -838,6 +881,7 @@ class Session:
                                                "brief_file": str(brief), "session": SESSION_NAME,
                                                "cause": "walled" if mark == "headroom" else "live",
                                                **({"exclude_account": recorded["account"]} if mark == "headroom" else {})}))
+                choice = None
                 result, code, refusal, errors = self.runtime("controller", "transfer", *self.reach(socket),
                                                              "--request", request, "--effect-exit", timeout=3600)
                 print(errors, end="", file=sys.stderr)
@@ -1093,6 +1137,8 @@ def main():
             command.add_argument("--origin", choices=("app-off",))
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
+            command.add_argument("--usage-wall", nargs=2, metavar=("SESSION", "PANE"))
+            command.add_argument("--reset-passed", action="store_true")
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
     for action in ("list", "reply", "done", "later"):
@@ -1157,7 +1203,9 @@ def main():
         elif args.verb == "stop":
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
-            answer, code = session.succeed(args.account_walled)
+            if (args.usage_wall and not args.account_walled) or (args.reset_passed and not args.usage_wall):
+                parser.error("usage-wall")
+            answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed)
         elif args.verb == "update-brief":
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":

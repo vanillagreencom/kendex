@@ -168,6 +168,14 @@ forward-quote|$FWD_QUOTE|[]
 forward-null|$FWD_NULL|[]
 EOF
 
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text stopped 'Session stopped.')" >/dev/null
+STOPPED="$(jq -r 'select(.text == "Session stopped.") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$STOPPED" --file "$(sk_text resumed 'Session resumed.')" >/dev/null
+sk_poll "$ROOT"
+STOPPED_TS="$(sk_state ".messages.${CH}[] | select(.text == \"Session stopped.\") | .ts")"
+assert_eq "$RC|$(sk_state "[.messages.${CH}[] | select(.text == \"Session resumed.\") | .thread_ts] | @json")" \
+  "0|[\"$STOPPED_TS\"]" "an owner notice follows its predecessor in the same thread"
+
 sk_poll "$ROOT"
 assert_eq "$RC" "0" "a restart with suppressed replies succeeds"
 assert_eq "$(sk_state "[.messages.${CH}[] | select(.user == \"UBOT\" and (.text == \"voice reply.\" or .text == \"terminal reply.\"))] | length")" "0" "suppressed replies stay absent across relay starts"
