@@ -169,16 +169,18 @@ BRANCH_GROWTH_AWK_PATHS='
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
+BRANCH_SIZE_PAIRED_LOCK=""
+BRANCH_SIZE_PAIRED_LOCK_FILES=""
 # Every changed path the test rule names, by itself or past a render root,
 # one per line, from every numstat row, a binary file's included. A paired
 # render mirror's lines count as mirror lines, listed or not; every other row
 # counts as test lines exactly when its path is listed. Each rename end is
 # listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
-# Every counted row's additions plus deletions, render mirrors left out, for
-# the implement receipt. This shares CI's render classification.
+# Every counted row's additions plus deletions, render mirrors and paired
+# dependency locks left out, for the implement receipt.
 BRANCH_SIZE_BASELINE=""
-# Split added lines into production, test and mandated render mirror lines
+# Split added lines into production, test, render mirrors and paired locks
 # for CI classification. The receipt also reads additions plus deletions.
 #
 # The render-mirror roots come from branch_growth_render_roots, not from an
@@ -217,6 +219,7 @@ branch_size_classified() {
   branch_growth_render_roots "$worktree" || return 1
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat "$base_override" || return 1
   if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
+    BRANCH_GROWTH_CONF="$BRANCH_GROWTH_LIB_DIR/../../references/narrow-change.conf" \
     awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" "$BRANCH_GROWTH_AWK_PATHS"'
     # One end of a numstat path, 1 the path before a rename and 2 after it.
     # git abbreviates a shared prefix and suffix as `a/{b => c}/d`, and a side
@@ -265,39 +268,67 @@ branch_size_classified() {
       }
       return 0
     }
+    function pairs_with_manifest(p,   b, dir, m) {
+      b = base_name(p)
+      if (!(b in manifest_of)) return 0
+      dir = substr(p, 1, length(p) - length(b))
+      for (m in changed_manifest)
+        if (changed_manifest[m] == manifest_of[b] && substr(m, 1, length(dir)) == dir) return 1
+      return 0
+    }
     BEGIN {
       nroots = split(roots, root, " ")
       npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
       for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
+      conf = ENVIRON["BRANCH_GROWTH_CONF"]
+      while ((got = (getline line < conf)) > 0) {
+        if (line !~ /^lock-pair /) continue
+        if (split(line, pair, " ") != 3) { failed = "malformed lock-pair in " conf; exit 2 }
+        manifest_of[pair[2]] = pair[3]
+        manifest_names[pair[3]] = 1
+      }
+      if (got < 0) { failed = "lock-pair list unreadable: " conf; exit 2 }
+      close(conf)
     }
     NF > 0 {
       list_if_test(rename_end($3, 1))
       if (index($3, " => ")) list_if_test(rename_end($3, 2))
     }
     NF == 0 || ($1 == "-" && $2 == "-") { next }
-    $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = 1; next }
+    $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = "unsupported git numstat additions/deletions"; next }
     {
       n += 1
       path[n] = rename_end($3, 2)
       lines[n] = $1
       changed[n] = $1 + $2
+      name = base_name(path[n])
+      if (name in manifest_names) changed_manifest[path[n]] = name
       mirror_rest[n] = render_rest(path[n])
       if (mirror_rest[n] == "") source_stem[stem_path(path[n])] = 1
     }
     END {
-      if (failed) exit 2
+      if (failed) { print failed; exit 2 }
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
+        if (pairs_with_manifest(path[i])) {
+          paired_lock += lines[i]
+          lock_files = lock_files path[i] "\n"
+          continue
+        }
         baseline += changed[i]
         if (path[i] in listed) tests += lines[i]; else production += lines[i]
       }
-      printf "%d %d %d %d%s", production + 0, tests + 0, mirror + 0, baseline + 0, test_files
+      printf "%d %d %d %d %d%s\n\n%s", production + 0, tests + 0, mirror + 0, baseline + 0, paired_lock + 0, test_files, lock_files
     }
   ' <<<"$numstat")"; then
-    branch_growth_fail "git numstat returned an unsupported additions/deletions shape"
+    branch_growth_fail "${measured:-awk could not measure branch growth}"
     return 1
   fi
-  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR BRANCH_SIZE_BASELINE <<<"$measured"
+  BRANCH_SIZE_PAIRED_LOCK_FILES=""
+  case "$measured" in
+    *$'\n\n'*) BRANCH_SIZE_PAIRED_LOCK_FILES="${measured#*$'\n\n'}"; measured="${measured%%$'\n\n'*}" ;;
+  esac
+  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR BRANCH_SIZE_BASELINE BRANCH_SIZE_PAIRED_LOCK <<<"$measured"
   BRANCH_SIZE_TEST_FILES=""
   case "$measured" in
     *$'\n'*) BRANCH_SIZE_TEST_FILES="${measured#*$'\n'}" ;;

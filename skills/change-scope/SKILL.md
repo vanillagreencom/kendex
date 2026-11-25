@@ -44,7 +44,7 @@ The classes, narrowest first, are `render`, `trivial`, `micro`, `small` and `sta
 - `small`: one subsystem, production additions within `small_max_production`. A path's subsystem is its first directory, after a leading render root is removed. The render roots are `ORCH_SIZE_RENDER_ROOTS`, by default `.agents`, `.claude`, `.codex` and `.pi`. So `skills/orch/SKILL.md`, `.agents/skills/orch/SKILL.md` and `skills/reviewer/scripts/review-depth` are all subsystem `skills`. Test, fixture and docs-set paths belong to no subsystem.
 - `standard`: everything else, and every diff the classifier cannot read.
 
-`scripts/lib/branch-growth.sh` measures production, test and render-mirror lines over the range. It sets test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`. `references/narrow-change.conf` holds the path rules that refuse the narrow classes, the `instruction` globs, the protection markers and the two ceilings. `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions.
+`scripts/lib/branch-growth.sh` measures production, test, render-mirror and paired dependency lock lines over the range. It sets test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`. `references/narrow-change.conf` holds the path rules, including the lock pairing that sends a diff through the `small` size and subsystem checks. `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions.
 
 Three floors lift a diff that earns `trivial` or `micro` to `small`:
 

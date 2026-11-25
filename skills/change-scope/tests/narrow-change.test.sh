@@ -21,8 +21,8 @@ SOURCE=skills/orch/tests/added.test.sh
 HASHED_A="sha256:$(printf 'a%.0s' $(seq 64))"
 HASHED_B="sha256:$(printf 'b%.0s' $(seq 64))"
 
-# The base holds a render and its source, a product file, and an inventory
-# with one templated entry, so a row can move a name, a hash, or neither.
+# The base holds a render and its source, a product file, a Cargo workspace
+# manifest and lock, and an inventory with one templated entry.
 KEPT_RENDER=.agents/skills/orch/tests/kept.test.sh
 repo="$(new_repo narrow-change)"
 jq -c --arg kept "$KEPT_RENDER" --arg hash "$HASHED_A" \
@@ -30,7 +30,7 @@ jq -c --arg kept "$KEPT_RENDER" --arg hash "$HASHED_A" \
   "$repo/$INVENTORY" >"$SANDBOX/base-inventory"
 mv "$SANDBOX/base-inventory" "$repo/$INVENTORY"
 commit_paths "$repo" baseline seed.txt runtime/kept.ts \
-  "$KEPT_RENDER" skills/orch/tests/kept.test.sh
+  "$KEPT_RENDER" skills/orch/tests/kept.test.sh pkg/Cargo.toml Cargo.lock
 base="$(git -C "$repo" rev-parse HEAD)"
 
 # ROW_BASE, when set, is the base commit a row's diff is made on and judged
@@ -140,6 +140,20 @@ run_row() { # CLASSIFIER EDITS...
   env ${ROW_ENV:+"$ROW_ENV"} "$classifier" --repo "$repo" --event pull_request \
     --base "${ROW_BASE:-$base}" --head HEAD 2>&1 >/dev/null
 }
+
+# A Cargo update pairs the lock with a changed manifest under its directory.
+# The final class also proves the paired lock left the subsystem set.
+while IFS='|' read -r label expected sizes edits; do
+  # shellcheck disable=SC2086
+  row_err="$(run_row "$CHANGE_SCOPE" $edits)"
+  assert_eq "$label" "$expected" "$(sed -n 's/^class: //p' <<<"$row_err")"
+  assert_eq "$label measurement" "$sizes" "$(sed -n 's/^size: //p' <<<"$row_err")"
+done <<'LOCK_ROWS'
+paired Cargo update|class=small measured=true cause=production-within-small subsystem=pkg|production=1 paired-lock=117|pkg/Cargo.toml=1 Cargo.lock=117
+standalone Cargo lock|class=small measured=true cause=production-within-small subsystem=Cargo.lock||Cargo.lock=117
+lock beside a different project|class=standard measured=true cause=several-subsystems production=118||pkg/Cargo.toml=1 other/Cargo.lock=117
+paired update past the small ceiling|class=standard measured=true cause=production-past-small production=151|production=151 paired-lock=117|pkg/Cargo.toml=151 Cargo.lock=117
+LOCK_ROWS
 
 # label | expected verdict | edits | environment
 rows=0

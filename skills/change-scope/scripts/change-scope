@@ -148,6 +148,9 @@
 #            built-in rule or ORCH_SIZE_TEST_PATHS, belongs to no subsystem.
 #            A path in harness-only's docs set also belongs to no subsystem;
 #            its lines still count toward the production ceiling.
+#            A dependency lock paired by references/narrow-change.conf adds
+#            no subsystem and its lines are reported separately. A paired
+#            change goes through the small class's size and subsystem checks.
 #            An agent instruction file, an `instruction` line of this
 #            package's references/narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
 #            micro answers small instead, cause=instruction-file: it changes
@@ -1692,7 +1695,7 @@ if path_class_matches narrow standard; then
 fi
 
 # Every measured class shares the branch growth reader in lib/, which owns
-# the production/test split and render-mirror pairing for CI classification.
+# the production/test split and the render-mirror and lock pairing.
 # It is handed the base endpoint this call named, so the lines are counted
 # over the range the paths came from.
 production=""
@@ -1724,6 +1727,9 @@ measure() {
   total="$BRANCH_SIZE_BASELINE"
 }
 measure || answer standard "$MEASURE_CAUSE"
+if [ -n "$BRANCH_SIZE_PAIRED_LOCK_FILES" ]; then
+  printf 'size: production=%s paired-lock=%s\n' "$production" "$BRANCH_SIZE_PAIRED_LOCK" >&2
+fi
 
 # harness-only owns the docs set. Use its non-doc paths for the subsystem
 # rule as well as its verdict for trivial, without changing the measured size
@@ -1790,6 +1796,7 @@ if [ -n "$SETTINGS_ADMITTED" ]; then
   fi
   settings_cause="$SETTINGS_CAUSE $SETTINGS_ADMITTED"
 fi
+[ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ] || within_trivial=false
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$within_trivial" = true ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
@@ -1811,8 +1818,9 @@ if ! { micro_max="$(ceiling micro_max_production)" &&
   answer standard "cause=narrow-change-ceilings-missing"
 fi
 
-[ "$production" -gt "$micro_max" ] ||
+if [ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ] && [ "$production" -le "$micro_max" ]; then
   answer_narrow micro "cause=production-within-micro production=$production"
+fi
 
 # Micro needs only the independent size proof above, not docs membership.
 # Small needs completed docs discovery. harness-only emits false with an
@@ -1829,18 +1837,17 @@ non_docs=$'\n'"$non_docs"$'\n'
 
 # The render roots are the measurement's own list, so a source and the render
 # mirroring it reduce to one subsystem. A path the measurement counted as a
-# test is left out, read off its list rather than judged again here: a script
-# and the fixture it needs are one change wherever the fixture lives.
+# test or paired lock is left out using the measurement's path lists.
 # Documentation is left out using harness-only's set, not another path rule.
 set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
 render_roots=("${GLOB_LIST[@]}")
 subsystem=""
 one_subsystem=true
-test_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'
+excluded_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'"$BRANCH_SIZE_PAIRED_LOCK_FILES"$'\n'
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$non_docs" in *$'\n'"$path"$'\n'*) ;; *) continue ;; esac
-  case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
+  case "$excluded_files" in *$'\n'"$path"$'\n'*) continue ;; esac
   for root in ${render_roots[@]+"${render_roots[@]}"}; do
     case "$path" in "$root"/*) path="${path#"$root"/}"; break ;; esac
   done
