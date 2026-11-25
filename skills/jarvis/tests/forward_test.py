@@ -1,6 +1,7 @@
 """A satellite's forward, outbox drain and main status against a real main mailbox over an ssh shim."""
 import calendar
 import contextlib
+import errno
 import hashlib
 from concurrent.futures import Future
 import importlib.util
@@ -152,19 +153,28 @@ class Forward(MailWorld):
         self.assertEqual(self.ssh_calls(), [])
         self.assertIsNone(self.status()["checked_at"])
 
-        for calls, (mode, reachable, cause) in enumerate(
-            (("up", True, None), ("down", False, "main-unreachable")), start=1
-        ):
+        no_ssh = self.root / "no-ssh"
+        no_ssh.mkdir()
+        (no_ssh / "python3").symlink_to(sys.executable)
+        (no_ssh / "date").symlink_to(shutil.which("date"))
+        rows = (("up", self.env, True, None, 1),
+                ("down", self.env, False, "main-unreachable", 2),
+                ("missing-ssh", self.env | {"PATH": str(no_ssh)}, False, "main-unreachable", 2))
+        for mode, env, reachable, cause, calls in rows:
             with self.subTest(mode=mode):
                 self.mode.write_text(mode)
                 started = int(time.time())
-                drain = self.jarvis("forward-drain", "--collection")
+                drain = self.jarvis("forward-drain", "--collection", env=env)
                 self.assertEqual(drain.returncode, 0, drain.stderr)
                 status = self.status()
                 self.assertEqual((status["reachable"], status["cause"]), (reachable, cause))
                 self.assertGreaterEqual(calendar.timegm(time.strptime(status["checked_at"], "%Y-%m-%dT%H:%M:%SZ")), started)
                 self.assertEqual(len(self.ssh_calls()), calls)
                 self.assertEqual(self.outbox()["entries"], [])
+                if mode == "missing-ssh":
+                    error = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "ssh")
+                    self.assertEqual(self.outbox()["collection"]["detail"], str(error))
+                    self.assertEqual(drain.stdout.splitlines()[0], "EVENT forward-unreachable cause=main-unreachable")
 
     def drain_failures(self):
         """Existing failure tests inspect failure blocks; answer delivery has its own rows below."""
@@ -1377,7 +1387,7 @@ esac
              'state["collection"] = dict(self.reach, at=watch.epoch())', 'pass'),
             # A session's own drain records reach.
             ("test_collection_reports_its_own_reach", "lib/forward.py",
-             'if collection and self.reach is not None:', 'if self.reach is not None:'),
+             '            if collection:\n', '            if collection or self.reach is not None:\n'),
             # Status reads a legacy probe as the loop's reach.
             ("test_collection_reports_its_own_reach", "lib/forward.py",
              'reach = state.get("collection") or {}', 'reach = state.get("collection") or state.get("probe") or {}'),

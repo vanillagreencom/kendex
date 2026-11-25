@@ -401,9 +401,9 @@ class Forwarder:
         cause = code if category == "refusal" and code in HOST_CAUSES else fallback
         return cause, error.record["detail"].split("\n", 1)[0][:200]
 
-    def probe(self, cause, detail):
+    def probe(self, outcome, detail):
         """Hold this call's reach as the run's; only the watch-loop's `forward-drain --collection` records it."""
-        reachable = cause != UNREACHABLE
+        reachable = outcome == "ok"
         self.reach = {"reachable": reachable, "cause": None if reachable else UNREACHABLE,
                       "detail": None if reachable else detail}
 

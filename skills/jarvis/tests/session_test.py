@@ -1235,6 +1235,13 @@ print(json.dumps(session.terminal(status)))
                 "ORCH_RUNTIME", "printf '%s\\n' 'orch-runtime: setup-required key=fixture run=setup' 'second line' >&2\nexit 69\n")
             self.assertEqual((answer["state"], answer["reason"]), ("blocked", "record-unreadable"))
             self.assertEqual(answer["detail"], "orch-runtime state path: orch-runtime: setup-required key=fixture run=setup")
+        with self.subTest(command="agent-runtime controller status", reply=False):
+            # The shipped wrapper reports exit 69 before it can reply in JSON.
+            diagnostic = "agent-runtime: setup-required key=fixture run=setup"
+            answer, _ = self.status_with_runtime(
+                "AGENT_RUNTIME", "printf '%s\\n' " + shlex.quote(diagnostic) + " 'second line' >&2\nexit 69\n")
+            self.assertEqual((answer["state"], answer["reason"]), ("failed", "launch-failed"))
+            self.assertEqual(answer["detail"], "agent-runtime controller status: " + diagnostic)
         self.fleet.parent.mkdir()
         self.fleet.write_text("{")
         try:

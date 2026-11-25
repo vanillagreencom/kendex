@@ -74,11 +74,15 @@ def short(text):
     return "".join(c for c in text if c.isprintable())[:200]
 
 
-def failed_read(operation, diagnostic, fallback):
+def read_detail(operation, diagnostic, fallback):
     if isinstance(diagnostic, bytes):
         diagnostic = diagnostic.decode(errors="replace")
     first = (diagnostic or "").strip().splitlines()
-    return Refusal("record-unreadable", short(operation + ": " + (first[0] if first else fallback)))
+    return short(operation + ": " + (first[0] if first else fallback))
+
+
+def failed_read(operation, diagnostic, fallback):
+    return Refusal("record-unreadable", read_detail(operation, diagnostic, fallback))
 
 
 def start_brief(private):
@@ -239,7 +243,8 @@ class Session:
             print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, end="", file=sys.stderr)
             if reading_status:
-                raise failed_read(operation, result.stderr, "exit=" + str(result.returncode))
+                detail = read_detail(operation, result.stderr, "exit=" + str(result.returncode))
+                raise Refusal("launch-failed", detail, "failed")
             raise Refusal("launch-failed", "agent-runtime did not answer. Check the Jarvis session log.", "failed")
         refusal = reply.get("refusal") or {}
         diagnostic = result.stderr
