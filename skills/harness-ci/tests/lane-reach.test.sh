@@ -438,7 +438,7 @@ paths.append(sys.argv[2])
 inventory.write_text(json.dumps(paths) + "\n")
 PY
 write_dispatch_workflow() {
-  local gate="$1" setup="${2:-}" lane
+  local gate="$1" shape="${2:-}" lane needs
   cat <<YAML
 name: CI
 on: [pull_request, merge_group]
@@ -476,6 +476,11 @@ YAML
         env:
           QUEUE_ONLY: ${{ steps.classify.outputs.queue_only }}
           LANE_VERDICTS: ${{ steps.classify.outputs.lane_verdicts }}
+YAML
+  if [ "$shape" = wrong-event ]; then
+    printf '%s\n' '          EVENT: pull_request'
+  fi
+  cat <<'YAML'
         run: |
           printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
           deferred=false
@@ -486,9 +491,13 @@ YAML
           echo "queue_deferred=$deferred" >>"$GITHUB_OUTPUT"
 YAML
   for lane in check-scans check-other check-lane-host; do
+    needs=changes
+    if [ "$lane:$shape" = check-scans:scan-prerequisite ]; then
+      needs='[changes, check-other]'
+    fi
     cat <<YAML
   $lane:
-    needs: changes
+    needs: $needs
 YAML
     if [ "$lane" = check-scans ]; then
       cat <<'YAML'
@@ -504,12 +513,27 @@ YAML
     steps:
       - uses: actions/checkout@v7
 YAML
-    if [ "$lane:$setup" = check-lane-host:local-action ]; then
-      printf '%s\n' '      - uses: ./.github/actions/package-runtimes'
-    fi
-    cat <<YAML
-      - run: bin/check --lane $lane
+    case "$lane:$shape" in
+      check-lane-host:local-action)
+        printf '%s\n' '      - uses: ./.github/actions/package-runtimes' ;;
+      check-lane-host:opaque-host)
+        printf '%s\n' '      - run: bin/check-opaque --lane check-lane-host'
+        continue ;;
+      check-scans:opaque-prefix)
+        cat <<'YAML'
+      - if: needs.changes.outputs.markdown_only == 'true'
+        run: bin/check --markdown-merge
 YAML
+        ;;
+      check-lane-host:opaque-prefix)
+        cat <<'YAML'
+      - run: |
+          sudo apt-get update -q >/dev/null
+          bin/check --lane check-lane-host
+YAML
+        continue ;;
+    esac
+    printf '      - run: bin/check --lane %s\n' "$lane"
   done
 }
 write_dispatch_workflow classify >"$repo/.github/workflows/ci.yml"
@@ -528,6 +552,25 @@ SH
 write_dispatch_workflow classify local-action >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'the runner computes the script name'
 dispatch_opaque_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-scan-prerequisite "$dispatch_base"
+write_dispatch_workflow classify scan-prerequisite >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the scan gate depends on a standard gated job'
+dispatch_scan_prereq_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-opaque-prefix "$dispatch_base"
+write_dispatch_workflow classify opaque-prefix >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'opaque steps before literal runner calls'
+dispatch_opaque_prefix_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-opaque-host "$dispatch_base"
+git -C "$repo" show "$dispatch_opaque_base:bin/check" >"$repo/bin/check-opaque"
+chmod +x "$repo/bin/check-opaque"
+write_dispatch_workflow classify opaque-host >"$repo/.github/workflows/ci.yml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a single opaque lane runner beside resolved peers'
+dispatch_opaque_host_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-wrong-event "$dispatch_base"
+write_dispatch_workflow classify wrong-event >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'a step shadows the job event with a pull request constant'
+dispatch_wrong_event_base="$(git -C "$repo" rev-parse HEAD)"
 git clone --quiet "$repo" "$trusted"
 if [ -x "$root/ui/node_modules/.bin/vitest" ]; then
   modules="$root/ui/node_modules"
@@ -584,6 +627,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-helper|dispatch-host-source|dispatch-unrelated) base="$dispatch_base" ;;
     dispatch-unmapped) base="$dispatch_unmapped_base" ;;
     dispatch-unresolved) base="$dispatch_opaque_base" ;;
+    dispatch-scan-prerequisite) base="$dispatch_scan_prereq_base" ;;
+    dispatch-opaque-prefix) base="$dispatch_opaque_prefix_base" ;;
+    dispatch-opaque-host) base="$dispatch_opaque_host_base" ;;
+    dispatch-wrong-event) base="$dispatch_wrong_event_base" ;;
     queued-render-push) base="$queue_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
@@ -687,10 +734,22 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
           dispatch-unmapped)
             assert_eq "$label $implementation diagnostic" unmapped-lanes-output \
               "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
-          dispatch-unresolved)
+          dispatch-wrong-event)
+            assert_eq "$label $implementation diagnostic" unsupported-lanes-emitter \
+              "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
+          dispatch-unresolved|dispatch-opaque-host)
+            runner=bin/check
+            if [ "$label" = dispatch-opaque-host ]; then runner=bin/check-opaque; fi
             assert_eq "$label $implementation diagnostic" \
-              'job=check-lane-host cause=unresolved-lane-dispatch command=bin/check --lane check-lane-host' \
+              "job=check-lane-host cause=unresolved-lane-dispatch command=$runner --lane check-lane-host" \
               "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=unresolved-lane-dispatch command=.*\) reason=.*/\1/p' "$log")" ;;
+          dispatch-opaque-prefix)
+            assert_eq "$label $implementation conditional step diagnostic" \
+              'job=check-scans cause=opaque-step command=bin/check --lane check-scans' \
+              "$(sed -n 's/^lane-reach: \(job=check-scans cause=opaque-step.*\)/\1/p' "$log")"
+            assert_eq "$label $implementation unsupported setup diagnostic" \
+              'job=check-lane-host cause=computed-command command=bin/check --lane check-lane-host' \
+              "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=computed-command.*\)/\1/p' "$log")" ;;
         esac
       done ;;
   esac
@@ -746,6 +805,10 @@ dispatch-host-source|bin/markdown.sh|||||||false|true|false|derived-reach
 dispatch-unrelated|bin/other.txt|||||||false|false|true|derived-reach
 dispatch-unmapped|bin/other.txt||||||||||lane-reach-unreadable
 dispatch-unresolved|bin/other.txt|||||||true|true|true|derived-reach
+dispatch-scan-prerequisite|bin/markdown.sh|||||||false|true|true|derived-reach
+dispatch-opaque-prefix|bin/other.txt|||||||true|true|true|derived-reach
+dispatch-opaque-host|bin/unplaced.txt|||||||false|true|false|derived-reach
+dispatch-wrong-event|bin/other.txt||||||||||lane-reach-unreadable
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"

@@ -16,6 +16,10 @@ class Unreadable(Exception):
     pass
 
 
+class UnresolvedDispatch(Unreadable):
+    pass
+
+
 def require(condition, cause):
     if not condition:
         raise Unreadable(cause)
@@ -43,6 +47,10 @@ def words(line):
     tokens = shlex.split(line)
     require(all(literal(word) or word == ":" for word in tokens), "computed-command")
     return tokens
+
+
+def lane_invocation(args):
+    return len(args) == 3 and args[1] == "--lane" and "/" in args[0]
 
 
 ACTIONS = r"vanillagreencom/kendex/\.github/actions/change-class@[^\s]+"
@@ -88,7 +96,7 @@ NARROWED_LANES = re.compile(
 )
 QUEUE_NARROWING = re.compile(
     r'''(?P<deferred>[A-Za-z_]\w*)=false\n'''
-    r'''if \[ "\$[A-Za-z_]\w*" = pull_request \] && \[ "\$(?P<queue>[A-Za-z_]\w*)" = true \] && '''
+    r'''if \[ "\$(?P<event>[A-Za-z_]\w*)" = pull_request \] && \[ "\$(?P<queue>[A-Za-z_]\w*)" = true \] && '''
     + re.escape('''grep -q '^lane_[a-z0-9_-]*=false$' <<<"$LANE_VERDICTS"; then''')
     + rf'''\n(?P=deferred)=true\n(?:echo 'lane_{LANE_ID}=false'[ \t]*>>[ \t]*"\$GITHUB_OUTPUT"\n)+'''
     r'''fi\necho "queue_deferred=\$(?P=deferred)"[ \t]*>>[ \t]*"\$GITHUB_OUTPUT"'''
@@ -247,14 +255,16 @@ class Evidence:
                 for command in functions[step]:
                     self.shell_command(command, directory, reads, visited)
         except UNAVAILABLE as error:
-            raise Unreadable(f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}") from error
+            raise UnresolvedDispatch(
+                f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}"
+            ) from error
 
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         if name in {"source", ".", "bash"} and len(operands) == 1:
             require(name == "bash" or "/" in operands[0], "shell-source-uses-path")
             self.shell_reads(self.resolve(directory, operands[0]), directory, reads, visited)
-        elif len(operands) == 2 and operands[0] == "--lane" and "/" in name:
+        elif lane_invocation(args):
             require(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
             self.lane_dispatch(args, directory, reads, visited)
         elif name.startswith("./") and not operands:
@@ -585,16 +595,18 @@ def publishes_lanes(job):
     )
 
 
-def forwards_verdicts(row, classifier):
+def forwards_verdicts(row, classifier, job_env):
     env = row.get("env", {})
     if not references(env, "LANE_VERDICTS", classifier, "lane_verdicts"):
         return False
     lines = [line.strip() for line in row.get("run", "").strip().splitlines()]
     if not lines or not FORWARD_VERDICTS.fullmatch(lines[0]):
         return False
+    if len(lines) == 1:
+        return True
     narrowing = QUEUE_NARROWING.fullmatch("\n".join(lines[1:]))
-    return len(lines) == 1 or (narrowing and references(env, narrowing["queue"],
-                                                         classifier, "queue_only"))
+    return bool(narrowing and references(env, narrowing["queue"], classifier, "queue_only") and
+                env.get(narrowing["event"], job_env.get(narrowing["event"])) == "${{ github.event_name }}")
 
 
 def roster(jobs, classifier, step):
@@ -608,14 +620,16 @@ def roster(jobs, classifier, step):
         narrowed and narrowed[3] == step_id and
         any(row.get("id") == narrowed[1] for row in control["steps"])
     ), "unmapped-lanes-output")
-    emitters = [row["id"] for row in control["steps"] if forwards_verdicts(row, step_id)]
+    emitters = [row["id"] for row in control["steps"]
+                if forwards_verdicts(row, step_id, control.get("env", {}))]
     require(len(emitters) == 1, "unsupported-lanes-emitter")
     prefix = "needs." + classifier
     fallback = re.escape("${{ !cancelled() && (" + prefix + ".result != 'success' || ")
     read_output = re.escape(prefix + ".outputs.")
     lane_output = read_output + f"lane_({LANE_ID})" + re.escape(" != 'false'")
-    gates = [re.compile(fallback + r"\(" + read_output + "lanes != 'false' && " +
-                        lane_output + r"\)\) \}\}")]
+    gate = re.compile(fallback + r"\(" + read_output + "lanes != 'false' && " +
+                      lane_output + r"\)\) \}\}")
+    scan_gate = None
     if narrowed and references(outputs, "change_class", step_id, "change_class") and references(
         outputs, "queue_deferred", emitters[0], "queue_deferred",
     ):
@@ -623,13 +637,14 @@ def roster(jobs, classifier, step):
                  references(outputs, key, narrowed[1], narrowed[2])]
         if len(flags) == 1:
             flag_output = prefix + ".outputs." + flags[0]
-            gates.append(re.compile(fallback + re.escape(
+            scan_gate = re.compile(fallback + re.escape(
                 f"({flag_output} == 'true' && github.event_name == 'merge_group') || "
                 f"({flag_output} != 'true' && (({prefix}.outputs.change_class != 'render' && "
                 f"{prefix}.outputs.queue_deferred != 'true') || "
-            ) + lane_output + r"\)\)\) \}\}"))
+            ) + lane_output + r"\)\)\) \}\}")
     lane_by_job = {}
     needs_by_job = {}
+    scan_jobs = set()
     for name, job in jobs.items():
         needs = job.get("needs", [])
         if isinstance(needs, str):
@@ -637,7 +652,11 @@ def roster(jobs, classifier, step):
         require(isinstance(needs, list) and set(needs) <= jobs.keys(), "invalid-job-needs")
         needs_by_job[name] = needs
         condition = " ".join(job.get("if", "").split())
-        match = next((match for gate in gates if (match := gate.fullmatch(condition))), None)
+        match = gate.fullmatch(condition)
+        if not match and scan_gate:
+            match = scan_gate.fullmatch(condition)
+            if match:
+                scan_jobs.add(name)
         if match:
             lane = match[1]
             require(classifier in needs and references(outputs, "lane_" + lane,
@@ -651,7 +670,20 @@ def roster(jobs, classifier, step):
         ):
             raise Unreadable("unsupported-lane-gate")
     require(lane_by_job, "derived-lanes-absent")
-    return lane_by_job, needs_by_job
+    return lane_by_job, needs_by_job, scan_jobs
+
+
+def literal_job_dispatches(job):
+    commands = set()
+    for step in job.get("steps", []):
+        for line in step.get("run", "").splitlines():
+            try:
+                args = words(line)
+            except (Unreadable, ValueError):
+                continue
+            if lane_invocation(args) and re.fullmatch(LANE_ID, args[2]):
+                commands.add(shlex.join(args))
+    return sorted(commands)
 
 
 def job_reads(evidence, job):
@@ -705,12 +737,12 @@ def derived(evidence, exceptions, settings):
     require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
-    lane_by_job, needs_by_job = roster(jobs, classifier, step)
+    lane_by_job, needs_by_job, scan_jobs = roster(jobs, classifier, step)
 
     def keep_prerequisites(outcomes):
         # A shared lane runs its entire group. Keep each running job's gated
         # ancestors, including dependencies through jobs without gates.
-        selected = {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
+        selected = scan_jobs | {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
         selected.update(name for name in jobs if name not in lane_by_job
                         and jobs[name].get("if", "") not in {"always()", "${{ always() }}"})
         visited = set()
@@ -772,7 +804,11 @@ def derived(evidence, exceptions, settings):
             }
             unresolved = set().union(*(evidence.changed - covered for _, covered in readers))
         except UNAVAILABLE as error:
-            print(f"lane-reach: job={name} cause={str(error).splitlines()[0]}", file=sys.stderr)
+            cause = str(error).splitlines()
+            diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
+            if not isinstance(error, UnresolvedDispatch):
+                diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
+            print(diagnostic, file=sys.stderr)
             hits, unresolved = set(), evidence.changed
         if lane in exceptions:
             # The legacy claim pass gives us lane names across the diff.

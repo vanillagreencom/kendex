@@ -368,7 +368,7 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
   - It is `true` on every other diff.
   - `lanes_cause` uses `derived-reach` when derived evidence keeps an eligible lane and `lane-reach-unreadable` when the roster is inconclusive. Other causes are `render`, `trivial`, `docs-only`, `manifest` or `queue-only` where it is `false`; `manifest-claim` where a declared lane claims the manifest's changed path, and `manifest-declaration-unreadable` where the declaration cannot be read; `full-run` on the nightly run; `render-claim` where a declared lane claims a path a render changes; `declared-text` where changed declared product text keeps its protecting checks; `queue-only-reader-absent` where a render lacks the stand-down's reader; `queue-only-lanes-from-unset` where the default was asked for with no `lanes-from`; or the class otherwise.
   - The classify step also prints both on a `lanes:` line in its log.
-  - A workflow gates its lanes on `lanes` and its aggregate's waiver on `lanes == 'false'`, and names no class. A per-lane workflow also reads each verdict as [§ Per-lane verdicts](#per-lane-verdicts) sets out.
+  - Standard job gates read `lanes` and any per-lane verdict, and the aggregate waiver reads `lanes == 'false'`. The repository-wide scan gate in [§ Per-lane verdicts](#per-lane-verdicts) also reads the class to preserve coverage for Markdown merge groups and non-render changes without queue deferral.
   - The shared rules live in the installed `scripts/lib/change-class.sh`, read from the selected classifier checkout.
   - A refused step publishes no `lanes`, and the Shape 1 status function then runs every lane.
 - **An older classifier can lack the shared lane producer.** The action sets `lanes=true`, `lanes_cause=lane-producer-unavailable` and an empty `lane_verdicts`, regardless of the class or docs verdict.
@@ -496,7 +496,7 @@ check         fixtures/* # reason: the binary reads fixture names at runtime
           run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
   ```
 
-- **Each lane reads `lanes` and its own verdict, and runs unless either is `false`.** A lane with no verdict, because no declaration was read or the job output misspells its name, is decided by `lanes` alone:
+- **The standard gate reads `lanes` and its own verdict.** After a successful classifier it runs when neither output is `false`. A lane with no verdict, because no declaration was read or the job output misspells its name, is decided by `lanes` alone. Use the [repository-wide scan gate](#per-lane-verdicts) to retain the Markdown merge-group and non-render exceptions.
 
   ```yaml
     check:
