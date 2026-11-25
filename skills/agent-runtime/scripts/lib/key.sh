@@ -56,6 +56,78 @@ agent_runtime_cache() {
   printf '%s\n' "${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
 }
 
+# The publisher in skill-tests.yml builds on Linux x86_64. Its executable
+# can still require libraries the host lacks, so probe it before placement.
+agent_runtime_fetch() ( # BINARY
+  local binary="$1" name="${1##*/}" tool scratch candidates artifact run record expected actual
+  local api="repos/vanillagreencom/kendex/actions"
+  for tool in gh jq unzip timeout; do command -v "$tool" >/dev/null 2>&1 || return 1; done
+  [ "$(uname -sm)" = 'Linux x86_64' ] || return 1
+  unavailable() { printf '%s: fetch-unavailable cause=%s artifact=%s\n' "${name%-*}" "$1" "$name" >&2; return 1; }
+  mkdir -p -- "${binary%/*}" || { unavailable cache-unwritable; return 1; }
+  scratch="$(mktemp -d -- "${binary%/*}/.fetch.XXXXXXXX")" || { unavailable cache-unwritable; return 1; }
+  trap 'rm -rf -- "${scratch:?}"' EXIT
+  # One network budget covers pagination, provenance checks and the ZIP.
+  SECONDS=0
+  api_read() {
+    local left=$((10 - SECONDS))
+    [ "$left" -gt 0 ] || return 1
+    GH_PROMPT_DISABLED=1 timeout "${left}s" gh api --hostname github.com "$@" </dev/null
+  }
+  candidates="$(api_read --paginate "$api/artifacts?name=$name&per_page=100" |
+    jq -rs --arg name "$name" '
+      if length == 0 or any(.[]; (.artifacts | type) != "array") then error("artifact listing") else
+        [.[] .artifacts[] | select(.name == $name and .expired == false)
+          | [.id, .workflow_run.id] | select(all(.[]; type == "number" and . > 0 and floor == .))]
+        | unique | reverse[] | @tsv
+      end')" || { unavailable listing; return 1; }
+  while read -r artifact run; do
+    [ -n "$artifact" ] || break
+    record="$(api_read "$api/runs/$run")" || continue
+    # The installed wrapper has no repo-local tools/ci-job-set. Its
+    # PUBLISHED_RUN contract takes provenance from the run record because
+    # GitHub's artifact listing omits the event and workflow.
+    jq -es --argjson run "$run" 'length == 1 and (.[0] | .id == $run
+      and .repository.full_name == "vanillagreencom/kendex"
+      and (.repository.id | type) == "number" and .head_repository.id == .repository.id
+      and .path == ".github/workflows/skill-tests.yml"
+      and ((.event == "push" and .head_branch == "main")
+        or (.event == "merge_group" and (.head_branch | startswith("gh-readonly-queue/main/")))))' \
+      <<<"$record" >/dev/null || continue
+    printf '%s: fetching artifact=%s run=%s\n' "${name%-*}" "$name" "$run" >&2
+    if ! { api_read "$api/artifacts/$artifact/zip" >"$scratch/build.zip" &&
+      unzip -p "$scratch/build.zip" "$name" >"$scratch/$name" &&
+      expected="$(unzip -p "$scratch/build.zip" "$name.sha256")"; }; then
+      unavailable download
+      return 1
+    fi
+    actual="$(agent_runtime_digest <"$scratch/$name")" &&
+      [ "$expected" = "$actual  $name" ] || { unavailable checksum; return 1; }
+    chmod -- 755 "$scratch/$name" || { unavailable placement; return 1; }
+    timeout 2s "$scratch/$name" --version </dev/null >/dev/null || { unavailable incompatible; return 1; }
+    # Both paths are in bin/, so even concurrent installers expose the
+    # whole executable in one rename.
+    mv -fT -- "$scratch/$name" "$binary" || { unavailable placement; return 1; }
+    return 0
+  done <<<"$candidates"
+  unavailable no-published-artifact
+)
+
+agent_runtime_prepare() { # BINARY SETUP_PATH KEY
+  local binary="$1" setup="$2" key="$3" fetch_log name="${1##*/}"
+  if fetch_log="$(agent_runtime_fetch "$binary" 2>&1)"; then
+    [ -z "$fetch_log" ] || printf '%s\n' "$fetch_log" >&2
+    return 0
+  fi
+  if [ ! -x "$binary" ] && command -v cargo >/dev/null 2>&1; then
+    printf '%s: setup-building key=%s run=%s\n' "${name%-*}" "$key" "$setup" >&2
+    [ -z "$fetch_log" ] || printf '%s\n' "$fetch_log" >&2
+    agent_runtime_run_setup "$setup"
+  else
+    [ -z "$fetch_log" ] || printf '%s\n' "$fetch_log" >&2
+  fi
+}
+
 # The setup job has its own process group, so it survives a caller's
 # group timeout. Relay both streams to the caller's stderr while it reads.
 # If that pipe closes, keep draining so setup never writes to a broken pipe.

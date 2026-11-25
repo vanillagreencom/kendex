@@ -33,6 +33,13 @@ printf 'fake cargo: resuming build\n' >&2
 exec "$SUITE_CARGO" "$@"
 """)
 cargo.chmod(0o755)
+# An empty publication makes this fixture exercise the build on hosts
+# where GitHub already has an artifact for the checkout's key.
+gh = gate_bin / "gh"
+gh.write_text("""#!/bin/sh
+echo '{"total_count":0,"artifacts":[]}'
+""")
+gh.chmod(0o755)
 ready, started = os.pipe()
 released, release = os.pipe()
 os.environ.update(
