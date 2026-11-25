@@ -5097,6 +5097,166 @@ fn assert_released(report: &Value, wt: &Path) {
     assert!(!wt.exists(), "the worktree was not removed");
 }
 
+#[test]
+fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
+    for (unlanded, archived) in [(false, false), (true, false), (false, true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(runner.state_dir());
+        std::fs::create_dir_all(repo.join(".agents")).unwrap();
+        let skills = Path::new(&worktree_cli())
+            .ancestors()
+            .nth(3)
+            .unwrap()
+            .to_path_buf();
+        std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
+        std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
+        let origin = dir.path().join("origin.git");
+        git(
+            dir.path(),
+            &["init", "-q", "--bare", origin.to_str().unwrap()],
+        );
+        git(
+            &repo,
+            &["remote", "set-url", "origin", origin.to_str().unwrap()],
+        );
+        git(&repo, &["config", "gc.auto", "0"]);
+        git(&repo, &["config", "maintenance.auto", "false"]);
+        git(&repo, &["push", "-q", "origin", "main"]);
+        git(&repo, &["checkout", "-qb", "develop"]);
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // GitHub's default moved while origin/HEAD stayed stale. The
+        // inherited token is refused, but the saved sign-in can read it.
+        write_executable(
+            &bin.join("gh"),
+            r#"#!/bin/sh
+case "$1 $2" in
+    'repo view') echo o/repo ;;
+    'api user') printf 'HTTP/2.0 401 Unauthorized\n\n'; exit 1 ;;
+    'auth status') [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] ;;
+    'api repos/o/repo')
+        [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || exit 1
+        echo develop ;;
+    *) exit 1 ;;
+esac
+"#,
+        );
+        let path = tool_path(&[&bin]);
+        let advance_base = || {
+            git(&repo, &["commit", "-qm", "base advances", "--allow-empty"]);
+            git(&repo, &["push", "-q", "origin", "develop"]);
+            git(&repo, &["rev-parse", "develop"])
+        };
+        let worktree_push = |args: &[&str]| {
+            let out = program(worktree_cli())
+                .arg("push")
+                .args(args)
+                .env("PATH", &path)
+                .current_dir(&wt)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "push {args:?}: {}", stderr(&out));
+        };
+        std::fs::write(wt.join("landed"), "landed\n").unwrap();
+        git(&wt, &["add", "landed"]);
+        commit(&wt, "work to land");
+        let original = git(&wt, &["rev-parse", "HEAD"]);
+        let base = advance_base();
+        worktree_push(&["--prepare-base"]);
+        worktree_push(&["--to-base", &base]);
+        let delivered = git(&wt, &["rev-parse", "HEAD"]);
+        assert_ne!(original, delivered);
+        assert_eq!(git(&repo, &["rev-parse", "origin/develop"]), delivered);
+        assert_eq!(
+            git(
+                &repo,
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+            ),
+            "origin/main"
+        );
+        let map = PathBuf::from(git(
+            &wt,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "kendex-rebase-map",
+            ],
+        ));
+        if unlanded {
+            git(&repo, &["merge", "-q", "--ff-only", "origin/develop"]);
+            std::fs::write(wt.join("unlanded"), "unlanded\n").unwrap();
+            git(&wt, &["add", "unlanded"]);
+            commit(&wt, "work for another landing");
+            advance_base();
+            worktree_push(&["--prepare-base"]);
+            assert_ne!(git(&wt, &["rev-parse", "HEAD"]), delivered);
+            git(&wt, &["reset", "-q", "--hard", &delivered]);
+        }
+        let map_before = std::fs::read(&map).unwrap();
+        let record = item_record(runner.state_dir(), "KEN-M");
+        let restack_landing = json!({"original": original, "at": 1, "round": null});
+        if !archived {
+            std::fs::write(
+                &record,
+                json!({
+                    "issue_id": "KEN-M", "worktree": wt, "branch": "lane", "fixed_items": [{"commit": original}],
+                    "restacks": 2, "restack_landing": restack_landing,
+                }).to_string(),
+            ).unwrap();
+        }
+        let mut fleet = runner.fleet();
+        let mut lane = worktree_lane("KEN-M", &runner, &wt);
+        lane["status"] = json!("stopped");
+        fleet["lanes"] = json!([lane]);
+        runner.write_fleet(&fleet);
+        let answer = reply(&runner.op_fleet_in(
+            &repo,
+            &json!({"op": "close-lane", "item": "KEN-M", "delivery": {"commit": {"commit": delivered}}}),
+            &[("WORKTREE_CLI", &worktree_cli()), ("PATH", &path), ("GH_TOKEN", "expired-fixture-token")],
+        ));
+        assert_eq!(answer["result"]["word"], "closed", "{answer}");
+        let lane = &runner.fleet()["lanes"][0];
+        let branch = git(&repo, &["branch", "--list", "lane"]);
+        if unlanded || archived {
+            assert_eq!(
+                answer["result"]["observation"]["worktree"], "kept",
+                "{answer}"
+            );
+            assert!(
+                lane["kept"]
+                    .as_str()
+                    .unwrap()
+                    .contains("worktree-remove-rebase-map: "),
+                "{lane}"
+            );
+            assert_eq!(branch, "+ lane");
+            assert_eq!(std::fs::read(&map).unwrap(), map_before);
+        } else {
+            assert_eq!(
+                answer["result"]["observation"]["worktree"], "released",
+                "{answer}"
+            );
+            assert!(!wt.exists());
+            assert_eq!(branch, "");
+        }
+        if archived {
+            assert!(!record.exists());
+        } else {
+            let saved: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+            assert_eq!(
+                saved["fixed_items"][0]["commit"],
+                if unlanded { original } else { delivered }
+            );
+            assert_eq!(saved["restacks"], 2);
+            assert_eq!(saved["restack_landing"], restack_landing);
+        }
+    }
+}
+
 /// The report of `item`'s terminal close with the worktree package at
 /// `cli` as `WORKTREE_CLI`, run from `checkout`, the repository whose
 /// linked worktree the lane holds: the overseer runs in the checkout its

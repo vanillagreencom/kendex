@@ -55,6 +55,10 @@ pub fn of(resolver: &Path, dir: &Path) -> Result<String, Unread> {
     resolve(resolver, dir, "kendex_github_resolve_gh_repo")
 }
 
+pub(crate) fn publication_base(project: &Path, dir: &Path) -> Result<String, Unread> {
+    resolve(&resolver(project), dir, "kendex_github_default_branch")
+}
+
 /// The repository a lane works in: the one its record names, else the
 /// fleet's own, the checkout at `project`. A hosted lane's worktree is on
 /// the provider's disk, so a lane's repository is never read from it.
@@ -93,7 +97,17 @@ fn resolve(resolver: &Path, dir: &Path, function: &'static str) -> Result<String
         function,
         &[
             "-c",
-            "source \"$1\" || exit 3; \"$2\" \"$3\"",
+            r#"source "$1" || exit 3
+                if [ "$2" = kendex_github_default_branch ]; then
+                    lib=${1%/*}
+                    source "$lib/repo-settings.sh" && source "$lib/kendex-env.sh" && source "$lib/gh-auth.sh" || exit 3
+                    kendex_load_project_env "$3" -- WORKTREE_DEFAULT_BRANCH || exit 3
+                    [ -n "${WORKTREE_DEFAULT_BRANCH:-}" ] || kendex_github_sanitize_gh_env
+                    branch=$("$2" "$3") || exec git symbolic-ref refs/remotes/origin/HEAD
+                    printf 'refs/remotes/origin/%s\n' "$branch"
+                else
+                    "$2" "$3"
+                fi"#,
             "repo",
             &library,
             function,

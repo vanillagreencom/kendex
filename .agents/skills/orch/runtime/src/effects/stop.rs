@@ -539,14 +539,22 @@ impl Close<'_> {
         remove_local_gh_token(self.lane)?;
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
-        if self.ground.is_some_and(CloseGround::ends_item) {
-            match operation.close_out_files(self.item)? {
-                Ok(archive) => {
+        let ends_item = self.ground.is_some_and(CloseGround::ends_item);
+        let delivered = self
+            .cycle
+            .and_then(|cycle| cycle["commit"].as_str())
+            .filter(|sha| {
+                !self.no_landing() && sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
+            });
+        if ends_item || delivered.is_some() {
+            match operation.close_out_files(self.lane, ends_item, delivered)? {
+                Ok(archive) if ends_item => {
                     observation["item_files"] = json!("removed");
                     if let Some(archive) = archive {
                         observation["archive"] = json!(archive.display().to_string());
                     }
                 }
+                Ok(_) => {}
                 Err(cause) => {
                     observation["item_files"] = json!("failed");
                     observation["cause"] = json!(cause);

@@ -536,6 +536,16 @@ impl<'a> LaneOperation<'a> {
         self.discharge_read(LaneDischarge::Validation(ValidationEnd::LaneMoved))
     }
 
+    fn checkout_common(&self, lane: &Lane) -> PathBuf {
+        lane.extra
+            .get(ops::lane::CHECKOUT_COMMON)
+            .and_then(Value::as_str)
+            .map_or_else(
+                || self.run.settings.roots.common.join(".git"),
+                PathBuf::from,
+            )
+    }
+
     /// Release the lane's worktree the set records, or keep it with its
     /// reason, by this operation's own reads: the path gone discharges
     /// `worktree-gone`; a linked worktree (its `.git` a file,
@@ -559,14 +569,7 @@ impl<'a> LaneOperation<'a> {
         let Some(path) = self.lane.worktree() else {
             return Ok(None);
         };
-        let common = lane
-            .extra
-            .get(ops::lane::CHECKOUT_COMMON)
-            .and_then(Value::as_str)
-            .map_or_else(
-                || self.run.settings.roots.common.join(".git"),
-                PathBuf::from,
-            );
+        let common = self.checkout_common(lane);
         let release = match worktree::plan(&path, &common) {
             worktree::Plan::Answered(release) => {
                 self.discharge_read(LaneDischarge::Worktree {
@@ -612,15 +615,33 @@ impl<'a> LaneOperation<'a> {
     /// removal that fails is the cause, and nothing past it runs.
     pub(super) fn close_out_files(
         &mut self,
-        item: &str,
+        lane: &Lane,
+        archive: bool,
+        delivered: Option<&str>,
     ) -> Result<std::result::Result<Option<PathBuf>, String>> {
         let _signalled = self.engine.signal()?;
         let settings = self.run.settings;
+        if lane.host.is_none()
+            && let Some((path, commit)) = self.lane.worktree().zip(delivered)
+            && let Err(cause) = worktree::reconcile_landed_map(
+                &path,
+                &self.checkout_common(lane),
+                commit,
+                &lane.item,
+                settings,
+                self.run.engine.locking,
+            )
+        {
+            return Ok(Err(cause));
+        }
+        if !archive {
+            return Ok(Ok(None));
+        }
         Ok(crate::archive::close_out(
             &settings.archive_root,
             &settings.roots.project,
             &settings.state_dir,
-            item,
+            &lane.item,
             &[],
             self.run.engine.locking,
             self.run.engine.env.now_secs,
