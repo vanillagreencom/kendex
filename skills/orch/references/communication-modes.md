@@ -151,7 +151,9 @@ Route each due or overdue post-merge box by who can read its evidence:
 |---|---|
 | A tool on the operator machine | The overseer reads the evidence and records the result on the item. |
 | Jarvis, the owner's delegate | The box's `Where:` names "Jarvis, the owner's delegate". Send Jarvis a notice naming the item, box, check, Where and deadline. The delegate's reading is recorded on the item in the [verification comment](oversee-events.md#verification-comment) form. |
-| The owner alone | Send one owner ask on the same item, naming the box, check, Where and deadline. The owner answers with one comment under § Owner asks. Record the reading before closing the ask. |
+| The owner alone | Ask on the same item. Use the tracker route below. |
+
+For a GitHub item, `[OWNER/REPO]#[N]`, use the [GitHub owner ask form in oversee-events.md § Verification](oversee-events.md#github-owner-asks). For a Linear item, use § Owner asks and name the box, check, Where and deadline. Record the reading before closing the ask.
 
 A delegate notice creates no owner ask. Each overseer owns its verification ask through its close.
 

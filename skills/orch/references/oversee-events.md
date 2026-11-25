@@ -1079,8 +1079,8 @@ The watch itself completes a box that reads `met`, with its Evidence line. It co
 A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue the fleet wrote, whose own merged pull request left it open with a post-merge box. One an outside author wrote takes [`verifying-unjudged`](#verifying-unjudged) instead. The watch judges a GitHub item by the same rule and writes on the issue itself. No `linear.sh` tracker read or write runs on it ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)):
 
 - The watch ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
-- It closes the issue as completed on the pass that reads its last open post-merge box gone, a box a person ticked by hand included. It raises no `boxes=0` event for the item, and its `boxes=0` line takes no completion step.
-- An issue it first reads with no open box, such as one a person reopened, stays open.
+- When the last box reads `met`, the watch ticks the box and closes the issue as completed in one write. It also closes when it sees the last owed box was ticked by hand. It raises no `boxes=0` event for the item, and its `boxes=0` line takes no completion step.
+- An issue first read with no open box stays open. An issue reopened after the watch completed its last box stays open even if the watch still holds the prior met row.
 - Its open branch boxes hold nothing: no completion ticks them in a GitHub body.
 - A box whose `Where:` names another repository reads `unread`. A box whose release trigger names another repository makes the item `verifying-invalid`, its cause `rule=release-trigger-repository`: a trigger the watch never reads cannot fire.
 - A box a person proves takes step 1's evidence comment, posted with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`. Its tick replaces steps 2 and 3: the box ticked in the issue body with an indented `Evidence:` line citing that comment.
@@ -1110,6 +1110,15 @@ For each proved box:
    - Its holder completes it with `linear.sh issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
    - Remove the box from the parent. The open child keeps the parent open.
 6. After either route sets the item Done, close its parent through [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 2, and repeat for container ancestors. Record the closures and diagnostics in the evidence comment.
+
+#### GitHub owner asks
+
+For an owner-only reading or a missing-evidence decision on `[OWNER/REPO]#[N]`, keep the question and answer on that GitHub issue.
+
+1. Read the issue's comments with `gh api --paginate repos/[OWNER/REPO]/issues/[N]/comments`. Reuse an open ask for this box. If another box has an open owner ask, leave this box pending until that ask closes.
+2. If the owner's GitHub login is unknown, have the owner confirm it in the existing trusted owner conversation before posting. Address the question to that login. Save it to a file and name the box, check, `Where:` and deadline. Ask for one answer on the issue. Post with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
+3. On the next pass, read the same issue's comments for an answer from the confirmed login after the question. If the answer or the owner's identity is unread, keep the ask open.
+4. For a reading, use the acceptance words in [communication-modes.md § Answers](communication-modes.md#answers). For missing evidence, act on the owner's chosen option. Record the answer on the issue before completing the check or editing the box.
 
 ### Verification comment
 
