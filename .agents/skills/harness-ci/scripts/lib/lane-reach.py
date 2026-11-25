@@ -56,6 +56,8 @@ def lane_invocation(args):
 ACTIONS = r"vanillagreencom/kendex/\.github/actions/change-class@[^\s]+"
 LANE_ID = r"[a-z0-9][a-z0-9_-]*"
 RENDER = (".agents/", ".claude/", ".codex/", ".pi/")
+# kendex parks a switched-off skill's SKILL.md under the second name.
+SKILL_MARKERS = ("SKILL.md", "SKILL.md.disabled")
 MODULE = re.compile(r"\.(?:[cm]?[jt]s|[jt]sx)$")
 JS_TRIVIA = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
 JS_REFERENCE = re.compile(r"\b(?:import\b" + JS_TRIVIA + r"(\(" + JS_TRIVIA +
@@ -192,17 +194,15 @@ class Evidence:
                 row if isinstance(row, str) else row["path"] for row in inventory
             }
             owners = defaultdict(set)
+            # A switched-off installation keeps its files on disk, so its
+            # record still owns them.
             for entry in entries.values():
-                if not entry["enabled"]:
-                    continue
                 emitted = entry.get("emitted")
                 if emitted is None:
                     continue
                 package = (entry["sourceRepo"], emitted["kind"], emitted["name"])
                 for path in inventory:
-                    if (emitted["kind"] == "skill" or path.startswith(RENDER)) and any(
-                        under(path, position) for position in emitted["paths"]
-                    ):
+                    if any(under(path, position) for position in emitted["paths"]):
                         owners[path].add(package)
             return {path: next(iter(packages)) for path, packages in owners.items()
                     if len(packages) == 1}
@@ -219,7 +219,8 @@ class Evidence:
     def package_path(self, path):
         # A skill's marker keeps it a candidate when its ownership is unreadable.
         return path.startswith(RENDER) or self.owner(path) is not None or any(
-            (parent / "SKILL.md").as_posix() in self.files for parent in Path(path).parents
+            (parent / name).as_posix() in self.files
+            for parent in Path(path).parents for name in SKILL_MARKERS
         )
 
     def shell_reads(self, script, directory, reads, visited):
@@ -236,7 +237,7 @@ class Evidence:
     def lane_dispatch(self, args, directory, reads, visited):
         name, _, lane = args
         try:
-            script = self.resolve(directory, name)
+            script = self.resolve(directory, name, reads)
             invocation = (script, directory, lane)
             if invocation in visited:
                 return
@@ -263,23 +264,23 @@ class Evidence:
         name, *operands = args
         if name in {"source", ".", "bash"} and len(operands) == 1:
             require(name == "bash" or "/" in operands[0], "shell-source-uses-path")
-            self.shell_reads(self.resolve(directory, operands[0]), directory, reads, visited)
+            self.shell_reads(self.resolve(directory, operands[0], reads), directory, reads, visited)
         elif lane_invocation(args):
             require(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
             self.lane_dispatch(args, directory, reads, visited)
         elif name.startswith("./") and not operands:
-            script = self.resolve(directory, name)
+            script = self.resolve(directory, name, reads)
             require(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
                     in [*BASH_SHEBANGS, ["#!/bin/sh"]],
                     "unsupported-script-interpreter")
             self.shell_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
-                reads.add(self.resolve(directory, path))
+                reads.add(self.resolve(directory, path, reads))
         elif name == "test":
             require(len(operands) == 2 and operands[0] in {"-f", "-r", "-e"},
                     "unsupported-shell-test")
-            path = self.resolve(directory, operands[1])
+            path = self.resolve(directory, operands[1], reads)
             reads.add(path)
             reads.update(name for name in self.changed if under(name, path))
         elif name == "set" and operands in [["-euo", "pipefail"], ["-eu"]]:
@@ -287,18 +288,24 @@ class Evidence:
         else:
             require(name in {":", "true", "false"} and not operands, "opaque-shell-command")
 
-    def resolve(self, directory, path):
+    def resolve(self, directory, path, reads):
         require(literal(path) and not path.startswith("-"), "computed-path")
-        return self.checkout_path(directory, path)
+        return self.checkout_path(directory, path, reads)
 
-    def checkout_path(self, directory, path):
+    def checkout_path(self, directory, path, reads):
         original = Path(directory) / path
+        prefixes = [os.path.normpath(prefix) for prefix in original.parents]
         # Check each original prefix before a later '..' can hide a link.
-        for prefix in (original, *original.parents):
-            require(self.files.get(os.path.normpath(prefix)) not in {"120000", "160000"},
-                    "indirect-path")
+        for prefix in (os.path.normpath(original), *prefixes):
+            require(self.files.get(prefix) not in {"120000", "160000"}, "indirect-path")
         result = os.path.normpath(original)
         require(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
+        # The walk must enter each directory the path names before a later
+        # '..' leaves it, and the result's own existence does not prove that
+        # directory exists. The starting directory has its own evidence.
+        for prefix in prefixes[:len(Path(path).parts) - 1]:
+            if not under(result, prefix):
+                reads.update(name for name in self.changed if under(name, prefix))
         return result
 
     def cargo_reads(self, args, directory):
@@ -378,6 +385,9 @@ class Evidence:
                 require(isinstance(local, str), "cargo-external-dependency")
                 pending.append(self.relative(Path(local) / "Cargo.toml"))
             sources = set()
+            # Kept apart until the scan ends: a source already in reads is
+            # never scanned.
+            passed = set()
             require(entry["targets"], "cargo-targets-unreadable")
             for target in entry["targets"]:
                 require(not ({"custom-build", "proc-macro"} & set(target["kind"])),
@@ -396,7 +406,7 @@ class Evidence:
                 # Literal includes and #[path] modules can leave the package tree.
                 includes = r'\b(?:(include(?:_str|_bytes)?)\s*!\s*\(\s*|path\s*=\s*)"([^"\\]+)"'
                 for macro, target in re.findall(includes, rust):
-                    edge = self.resolve(Path(source).parent.as_posix(), target)
+                    edge = self.resolve(Path(source).parent.as_posix(), target, passed)
                     if macro in {"", "include"}:
                         require(under(edge, scope), "cargo-external-module")
                         require(edge in target_sources, "cargo-opaque-source")
@@ -410,6 +420,7 @@ class Evidence:
                     r"|\b(?:fs|process|File|Path|PathBuf|Command|extern|unsafe)\b",
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
+            reads.update(passed)
             reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
         covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
@@ -428,6 +439,7 @@ class Evidence:
         pending = {path for path in members if MODULE.search(path)}
         scanned = set()
         package_imports = set()
+        passed = set()
         config_dirs = {Path(directory), *Path(directory).parents}
         while pending:
             path = pending.pop()
@@ -462,7 +474,7 @@ class Evidence:
                     continue
                 require(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
                         "vitest-opaque-import")
-                imported = self.checkout_path(parent.as_posix(), target)
+                imported = self.checkout_path(parent.as_posix(), target, passed)
                 require(imported in self.files and MODULE.search(imported), "vitest-module-unresolved")
                 if self.package_path(imported):
                     package_imports.add(imported)
@@ -491,7 +503,7 @@ class Evidence:
         }
         paths -= reads
         # Package ownership also needs imports outside Vitest's changed graph.
-        reads.update(package_imports)
+        reads.update(package_imports | passed)
         if not paths:
             return reads, self.changed
 
@@ -717,7 +729,7 @@ def job_reads(evidence, job):
                 "unsupported-shell")
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
-            directory = evidence.resolve(".", directory)
+            directory = evidence.resolve(".", directory, ordinary)
             # A checkout materializes directories through their tracked entries.
             require(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"),
                     "working-directory-unproved")
