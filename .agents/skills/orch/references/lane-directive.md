@@ -240,7 +240,7 @@ For a local lane, run the relaunch from the checkout with the item alone:
 - Exit 0 prints `resumed item=[ITEM_KEY] route=resume|fresh account=[DIR|-]`.
 - A failed close prints `close-failed` on stderr at exit 3, and an open one `close-unconfirmed` at exit 75. Nothing is launched after either.
 - A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
-- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
+- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
 
 Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 

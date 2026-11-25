@@ -26,10 +26,13 @@ pub struct Relaunch {
     pub account: Option<String>,
 }
 
-/// The relaunch of `item`'s local lane from its record: the record's own
-/// account judged first by the launch's own judge, with the lane's own
-/// charge left out, so an account that cannot take the lane refuses with
-/// the launch's own key before the close retires anything; then the
+/// The relaunch of `item`'s local lane from its record, once its session
+/// reads ended as a close with no stated ground needs it: a live session
+/// refuses `lane-live`, since the `restart-recovery` close would retire a
+/// live idle lane. Then the record's own account judged by the launch's
+/// own judge, with the lane's own charge left out, so an account that
+/// cannot take the lane refuses with the launch's own key before the close
+/// retires anything; then the
 /// record's own relaunch on that account and the start brief, which
 /// continues from the item's handoff, retiring the predecessor on the
 /// `restart-recovery` ground. A record with no account is judged on none
@@ -51,6 +54,7 @@ pub fn composed(
     {
         return Err(refused("lane-hosted", &[("item", item), ("host", at)]));
     }
+    ops::lane::ended(&lane, host)?;
     let harness = lane
         .harness
         .as_deref()

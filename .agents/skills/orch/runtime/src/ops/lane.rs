@@ -1696,19 +1696,12 @@ pub(super) fn launch_lane(
 
 /// The ground a close request stands on, judged on the
 /// lane's recorded harness through the one identity reader. Without a
-/// stated ground the harness must read gone; a recorded pane with no
-/// identity is a lane not known exited, unless that pane is a viewer's,
-/// which holds no harness: a hosted viewer's harness is its provider's,
-/// which the effect reads gone before it acts. A `no-landing` disposition
-/// needs a readable harness, idle or gone; the idle proof is the effect's,
-/// where the screen is read.
+/// stated ground the session must read ended ([`ended`]): a hosted
+/// viewer's harness is its provider's, which the effect reads gone before
+/// it acts. A `no-landing` disposition needs a readable harness, idle or
+/// gone; the idle proof is the effect's, where the screen is read.
 fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<CloseGround> {
     let reading = recorded_harness(lane, host);
-    let unreadable = |cause: &str| Error::HarnessUnreadable {
-        item: lane.item.clone(),
-        pid: lane.launch.as_ref().and_then(|l| l.pid).unwrap_or(0),
-        cause: cause.to_owned(),
-    };
     let grounds = [
         r.terminal.is_some(),
         r.no_landing.is_some(),
@@ -1733,7 +1726,7 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
             source: terminal.source.clone(),
         }),
         (None, Some(disposition)) => match reading {
-            Some(Reading::Unreadable { cause }) => Err(unreadable(cause)),
+            Some(Reading::Unreadable { cause }) => Err(unreadable(lane, cause)),
             None | Some(Reading::Live(_) | Reading::Gone) => Ok(CloseGround::NoLanding {
                 reason: disposition.reason.clone(),
                 source: disposition.source.clone(),
@@ -1741,26 +1734,41 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
                 park: disposition.park.clone(),
             }),
         },
-        (None, None) => match reading {
-            Some(Reading::Gone) => Ok(CloseGround::Exited),
-            Some(Reading::Live(_)) => Err(Error::LaneLive {
-                item: lane.item.clone(),
-                status: lane.status,
-            }),
-            Some(Reading::Unreadable { cause }) => Err(unreadable(cause)),
-            None => {
-                let pane_recorded =
-                    !lane.viewer() && lane.launch.as_ref().is_some_and(|l| l.pane.is_some());
-                if pane_recorded {
-                    Err(Error::LaneLive {
-                        item: lane.item.clone(),
-                        status: lane.status,
-                    })
-                } else {
-                    Ok(CloseGround::Exited)
-                }
-            }
-        },
+        (None, None) => session_ended(lane, reading.as_ref()).map(|()| CloseGround::Exited),
+    }
+}
+
+/// The lane's recorded session read ended, as a close with no stated
+/// ground and a restart's relaunch both need it: its harness read gone, or
+/// no harness recorded and no pane either; a recorded pane with no identity
+/// is a lane not known exited, unless that pane is a viewer's, which holds
+/// no harness. A live harness refuses `lane-live`, an unreadable one
+/// `harness-unreadable`.
+pub(crate) fn ended(lane: &Lane, host: &Host) -> Result<()> {
+    session_ended(lane, recorded_harness(lane, host).as_ref())
+}
+
+fn session_ended(lane: &Lane, reading: Option<&Reading<Identity>>) -> Result<()> {
+    let live = || Error::LaneLive {
+        item: lane.item.clone(),
+        status: lane.status,
+    };
+    match reading {
+        Some(Reading::Gone) => Ok(()),
+        Some(Reading::Live(_)) => Err(live()),
+        Some(Reading::Unreadable { cause }) => Err(unreadable(lane, cause)),
+        None if !lane.viewer() && lane.launch.as_ref().is_some_and(|l| l.pane.is_some()) => {
+            Err(live())
+        }
+        None => Ok(()),
+    }
+}
+
+fn unreadable(lane: &Lane, cause: &str) -> Error {
+    Error::HarnessUnreadable {
+        item: lane.item.clone(),
+        pid: lane.launch.as_ref().and_then(|l| l.pid).unwrap_or(0),
+        cause: cause.to_owned(),
     }
 }
 

@@ -811,7 +811,8 @@ enum LaneOp {
     /// after the close is `launch-failed ... close=ID` at 3, one still open
     /// `launch-unconfirmed ... close=ID` at 75. Every refusal at exit 1
     /// closes nothing: `server-socket-unrecorded`, `lane-missing`,
-    /// `lane-hosted`, `harness-unrecorded`, `relaunch-unprepared
+    /// `lane-hosted`, `lane-live` where the lane's session still runs,
+    /// `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared
     /// cause=CAUSE`, the launch's account refusals (`account-walled`,
     /// `account-reserved`, `account-retired`, `account-unmeasured`,
     /// `account-unjudged`) and its admission refusals.
