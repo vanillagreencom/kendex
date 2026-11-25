@@ -63,6 +63,15 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - An app that turns Jarvis off uses `--origin app-off`.
   - Only `start --origin app-on` clears that Off.
   - A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
+- After a machine restart, or once the home's tmux server is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
+  - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.
+  - It then resumes the overseer of each checkout `kendex project list --json` registers, through `orch-runtime resume-controller --fleet` run from that checkout. It skips the home's own controller, which is the delegate, and a controller stopped on purpose.
+  - It then relaunches each lane whose record reads `running`, through `orch-runtime lane relaunch --fleet ITEM` run from its checkout. It leaves a lane hosted on another machine as it is.
+  - Each session starts only after the one before it ends, so the command runs past the 60-second bound an app gives Start.
+  - It prints one line per session on stdout: `resumed kind=delegate|overseer|lane checkout=PATH`, with `item=KEY` for a lane, or `refused` with the same fields, then `cause=KEY` and the refusal's own fields.
+  - A delegate's cause is the reason Start answers, such as `new-no-record`, `existing`, `app-off` or `launch-failed`. An overseer's or a lane's is orch's refusal key, or the key that leads orch's outcome line where a close or launch failed.
+  - A registry it cannot read prints `refused kind=projects cause=project-list-unread`. A checkout whose fleet it cannot read prints `refused kind=fleet`.
+  - It exits 0 when every line reads `resumed`, and 1 otherwise.
 
 ## Task command
 
