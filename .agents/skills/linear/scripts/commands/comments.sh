@@ -98,6 +98,17 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
+# The watch's ruling UUID is its exact question UUID with the high bit flipped.
+readonly OWNER_RULING_JQ='def ruling_id:
+  if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\z") then
+    .[0:1] as $first | ("0123456789abcdef" | index($first)) as $at | "89abcdef01234567"[$at:$at+1] + .[1:]
+  else null end;
+def ruling_body:
+  gsub("\r\n"; "\n") | sub("\\n+\\z"; "") | split("\n")
+  | if .[0] == "This question closed with no answer." then length == 1
+    else .[0] | IN("This question closed on its answer.", "This question closed on your answer.",
+      "This question closed at its deadline with no answer, so its recommendation stands.") end;'
+
 read_body_file() {
     local body_file="$1"
     if [[ -z "$body_file" ]]; then
@@ -269,10 +280,13 @@ owner_requests() {
     while IFS= read -r ref; do [[ -z "$ref" ]] || refs+=("$ref"); done <<<"$identifiers"
     comments='{}'
     if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments --format=safe "${refs[@]}") || return 1; fi
-    jq -cs '
+    jq -cs "$OWNER_RULING_JQ"'
       .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
-      {workspace: $workspace.urlKey,
+      {workspace: $workspace.urlKey, owner: $owner.id,
+       discussions: ($items | map({key: .uuid, value: ($comments[.id] | map({id, parent_id, user_id,
+          ruling: ((.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body)),
+          opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
        requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
@@ -318,7 +332,7 @@ create_comment() {
     local body_file=""
     local parent_id=""
     local attributed=1
-    local comment_id=""
+    local comment_id="" owner_ruling=0
     local attach_paths=()
 
     while [[ $# -gt 0 ]]; do
@@ -328,6 +342,7 @@ create_comment() {
             --parent) parent_id="$2"; shift 2 ;;
             --no-attribution) attributed=0; shift ;;
             --id) comment_id="$2"; shift 2 ;;
+            --owner-ruling) owner_ruling=1; shift ;;
             --attach)
                 if [ -z "${2-}" ]; then
                     echo '{"error": "--attach requires a path argument"}' >&2
@@ -349,6 +364,11 @@ create_comment() {
     fi
     if [[ -n "$body_file" ]]; then
         read_body_file "$body_file"
+    fi
+    if [[ "$owner_ruling" -eq 1 ]]; then
+        [[ -z "$comment_id" ]] && comment_id=$(jq -ern --arg parent "$parent_id" "$OWNER_RULING_JQ"' $parent | ruling_id') || {
+            echo '{"error":"invalid-owner-ruling-identity"}' >&2; return 1;
+        }
     fi
 
     local comment_issue_id="$issue_id"
@@ -426,7 +446,17 @@ create_comment() {
     }'
 
     local result
-    result=$(graphql_query "$mutation" "{\"input\": $input_json}")
+    if [[ "$owner_ruling" -eq 0 ]]; then
+        result=$(graphql_query "$mutation" "{\"input\": $input_json}")
+    elif ! result=$(graphql_query "$mutation" "{\"input\": $input_json}") ||
+        ! jq -e --arg id "$comment_id" '.commentCreate | .success == true and .comment.id == $id' <<<"$result" >/dev/null; then
+        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id } } }'
+        result=$(graphql_query "$query" "$(jq -cn --arg id "$comment_id" '{id: $id}')") || return 1
+        jq -e --arg id "$comment_id" --arg item "$comment_issue_id" --arg parent "$parent_id" "$COMMENT_ATTRIBUTION_JQ$OWNER_RULING_JQ"'
+          .comment | if .id == $id and .parent.id == $parent and .issue.id == $item and (.body | unattributed | ruling_body)
+          then {success: true, data: {comment: {id}}} else error("owner-ruling-unconfirmed") end' <<<"$result"
+        return
+    fi
     normalize_mutation_response "$result" "commentCreate" "comment"
 }
 

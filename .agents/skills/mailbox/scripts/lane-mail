@@ -1462,17 +1462,12 @@ owner_answers() {
               else .issue == $q.issue and (.row.body | split("\n") | index("ask=" + $q.ask)) != null end)) // null) as $at
           | select($at != null) | $q + {id: $at.row.id, issue: $at.issue, at: $at.row.created_at}] as $open
       | $items | to_entries[] | .key as $issue | (.value | sort_by(.created_at)) as $rows
-      # The open question a comment answers: the one its thread reaches,
-      # parent by parent through earlier comments, so the walk ends.
-      | def question:
-          . as $row | ($row.parent_id // "") as $parent
-          | if $parent == "" then [$open[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
-            else (first($open[] | select(.id == $parent)) // null) as $under
-            | if $under != null then $under
-              else (first($rows[] | select(.id == $parent and .created_at < $row.created_at)) // null)
-              | if . == null or (.parent_id // "") == "" then null else question end end end;
-      $rows[] | select(owned) | . as $row | select(all($open[]; .id != $row.id))
-      | question as $q | select($q != null)
+      | ([$open[] | select(.issue == $issue)] | INDEX(.id)) as $on_item
+      | ($rows | INDEX(.id)) as $by_id
+      | $rows[] | select(owned) | . as $row | select(all($open[]; .id != $row.id))
+      | (if (.parent_id // "") == "" then [$open[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
+         else owner_question_parent($by_id; $on_item; true) as $id
+         | if $id == null then null else $on_item[$id] end end) as $q | select($q != null)
       | {ask: $q.ask, issue: $issue, comment: $row, replaced: $q.replaced, under: (($row.parent_id // "") != "")}' \
     >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=comments-format' >&2; return 0

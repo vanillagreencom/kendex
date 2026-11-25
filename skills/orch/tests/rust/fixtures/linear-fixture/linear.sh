@@ -16,7 +16,7 @@
 # path this was invoked as: a row symlinks the fixture into its own world
 # under that name, so no wrapper is written while another row's child is
 # between fork and exec (ETXTBSY). Every `comments create` also appends
-# {issue, parent, body} as one JSON line to $LINEAR_FAKE_COMMENTS,
+# {issue, parent, body, args} as one JSON line to $LINEAR_FAKE_COMMENTS,
 # `linear-comments.jsonl` beside the log by default, its body whole from
 # --body or from the file --body-file names, which the runtime removes
 # with its run directory once the call returns.
@@ -42,6 +42,7 @@ printf '%s\n' "$*" >> "$LINEAR_FAKE_LOG"
 : "${LINEAR_FAKE_COMMENTS:=$(dirname "$LINEAR_FAKE_LOG")/linear-comments.jsonl}"
 fake_comment() {
   local issue="$3" parent="" body="" file=""
+  local args=("$@")
   shift 3
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -52,11 +53,11 @@ fake_comment() {
     shift
   done
   if [ -n "$file" ]; then
-    jq -cn --arg issue "$issue" --arg parent "$parent" --rawfile body "$file" \
-      '{issue: $issue, parent: $parent, body: $body}'
+    jq -cn --arg issue "$issue" --arg parent "$parent" --rawfile body "$file" --args \
+      '{issue: $issue, parent: $parent, body: $body, args: $ARGS.positional}' -- "${args[@]}"
   else
-    jq -cn --arg issue "$issue" --arg parent "$parent" --arg body "$body" \
-      '{issue: $issue, parent: $parent, body: $body}'
+    jq -cn --arg issue "$issue" --arg parent "$parent" --arg body "$body" --args \
+      '{issue: $issue, parent: $parent, body: $body, args: $ARGS.positional}' -- "${args[@]}"
   fi >> "$LINEAR_FAKE_COMMENTS"
 }
 if [ "${1:-} ${2:-}" = 'comments create' ] && [ $# -ge 3 ]; then
