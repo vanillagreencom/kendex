@@ -494,12 +494,21 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         // num_retries in --write-out needs curl 8.9.0. Apple curl 7.64.1
         // instead exposes retries through warnings, enabled by --no-silent.
-        // Each warning precedes one retry; the final failure adds one attempt.
+        // Count the warning starts from curl's src/tool_operate.c (7.64.1
+        // and later). The warning formatter can wrap the retry text.
         let attempts = if output.status.code() == Some(2) {
             // Curl's initialization failure precedes any transfer.
             0
         } else {
-            diagnostics.matches("Will retry in ").count() + 1
+            // Curl's progress meter can also delimit lines with carriage returns.
+            diagnostics
+                .split(['\r', '\n'])
+                .filter(|line| {
+                    line.starts_with("Warning: Transient problem: ")
+                        || line.starts_with("Warning: Problem ")
+                })
+                .count()
+                + 1
         };
         return Err(format!(
             "fetching {url} failed after {attempts} attempts: {}",

@@ -67,9 +67,20 @@ while :; do
     exit 37
   fi
   [ "$attempt" -le "$retries" ] || break
-  # Both modern and legacy curl expose one warning before each retry.
   if [ "$silent" = no ]; then
-    printf 'Warning: Transient problem: HTTP error Will retry in 2 seconds. %s retries left.\n' "$((retries - attempt + 1))" >&2
+    # Retry warnings from curl's src/tool_operate.c in 7.64.1, 8.5.0 and 8.23.0.
+    remaining=$((retries - attempt + 1))
+    case "$KENDEX_TEST_CURL_POLICY" in
+      legacy)
+        printf 'Warning: Transient problem: HTTP error Will retry in 2 seconds. %s retries left.\n' "$remaining" >&2 ;;
+      previous)
+        printf 'Warning: Problem : HTTP error. Will retry in 2 seconds. %s retries left.\n' "$remaining" >&2 ;;
+      modern)
+        retry_word=retries
+        if [ "$remaining" -eq 1 ]; then retry_word=retry; fi
+        # curl can wrap between "Retrying" and "in", repeating the prefix.
+        printf 'Warning: Problem : HTTP error. Retrying \nWarning: in 2 seconds. %s %s left.\n' "$remaining" "$retry_word" >&2 ;;
+    esac
   fi
   attempt=$((attempt + 1))
 done
@@ -148,7 +159,7 @@ fn download_retry_returns_third_attempt_and_names_exhaustion() {
     let scratch = root.join("downloads");
     std::fs::create_dir(&scratch).unwrap();
     let path = root.to_str().unwrap();
-    for policy in ["modern", "legacy", "broken"] {
+    for policy in ["legacy", "previous", "modern", "broken"] {
         std::fs::write(root.join("probes"), "").unwrap();
         let output = reexecute_test(
             module_path!(),
