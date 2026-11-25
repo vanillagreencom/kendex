@@ -227,9 +227,11 @@ The validation gate is this complete list:
 - Start `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] [--run-id [RUN_ID]]` against the round's final worktree contents as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. Include `--run-id` exactly when the admission step above ran.
   - The agent never chooses a class or a narrower command.
   - A run that needs `DEV_VALIDATE_CMD` refuses an empty declaration before starting: a validation failure, never a fallback. Run nothing in its place.
-- Read the entry's output before starting local checks. When it prints `validate-mode=ci local-checks=targeted-only`, run only the fixture rows and must-fail controls the change needs, including any delegated verification that fits that scope. Leave full lanes to required CI. Follow project policy for gates required independently of dev validation.
-  - Where the project sets `DEV_VALIDATE_SELECTION_CMD`, the entry invokes that selector once, scoped, at the round's final contents. The project owns what the selector runs, and a red scoped run is a failing `validate=` value like any other.
-  - This route records required CI as pending. Submit's existing § 5 wait proves the required checks on the exact published head.
+- Run the delegation's required verification commands and follow the Visual QA rule below. Before choosing local verification commands, read the entry's startup output.
+  - `validate-mode=ci local-checks=targeted-only` limits local verification to the fixture rows and must-fail controls the change needs, including delegated verification that fits that scope. Required CI runs the full lanes. The independent gates in this step still apply.
+  - When resuming this round's own run without its startup output, read `.agents/skills/orch/scripts/orch-runtime validate entry --record --run-dir [RUN_DIR]`. Use the same targeted scope if the record says `validate-mode=ci`. If the read fails or the mode is missing or unrecognized, record a validation failure with its cause and stop before choosing verification commands.
+  - Where the project sets `DEV_VALIDATE_SELECTION_CMD`, the entry previews selection and runs the selector scoped for an admitted CI run. The project owns what the selector runs, and a red scoped run is a failing `validate=` value like any other.
+  - A successful CI run records required CI as pending. The [accepted CI receipt route](../../orch/workflows/submit-pr.md#11-preflight) assigns downstream proof.
 - Run the must-fail controls [code-quality § Tests](../../code-quality/SKILL.md#tests) requires, each scoped as [§ Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) sets. A changed test file takes no run of its own: the runner's result covers it, locally or through required CI.
 - A project whose own policy forbids orch's validation runner and requires its validation entry point in the foreground runs that entry point here, in the foreground as the policy sets out, in place of the runner. It takes these steps:
   1. Record the run in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]`. A recovery attempt below records itself in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]-recovery` and preserves the original record.
@@ -265,8 +267,8 @@ A start the validation entry refuses as `run-live`, with exit 2, ran nothing: an
 - Its line names that run, `validate: run-live run-dir=[RUN_DIR] pid=[PID]` for a start without `--run-id` and `validate: run-live round_id=[ROUND] run_dir=[RUN_DIR]` for an admitted one.
 - It is no verdict on the change, never a validation failure, and does not end the round.
 - Wait for that run with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]`, polled as a cut-off start is, or end it with `.agents/skills/orch/scripts/orch-runtime validate entry --stop --worktree [WORKTREE_PATH]` where it belongs to an abandoned round.
-- Then start the run again, under the same `--run-id` where the delegation carries an admission: the admission names the same run before its first start.
-- The verdict of a run that refusal named is this round's only where this round started that run.
+- If this round started the named run, continue with its verdict and recover its recorded mode as above if needed.
+- Otherwise start this round's run, under the same `--run-id` where the delegation carries an admission. The admission names the same run before its first start.
 
 For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load, as an investigation run under [dev SKILL.md § Validation](../SKILL.md#validation). Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
 
@@ -297,7 +299,7 @@ A stopped round whose failed receipt already exists uses the same qualification 
 
 For this validation gate, run no proof, rerun, receipt, isolation step, or approval step outside this list. Investigation runs follow [dev SKILL.md § Validation](../SKILL.md#validation). If an agent believes the list misses a rule, it records the proposal once under `### Proposed Rules` in the completion summary and in the matching return line. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
 
-Where `orch-runtime validate policy --stage git-hooks`, with `--base-checkout` naming the main checkout, answers `run`, and `.agents/skills/commit-guards/scripts/install-git-hooks --check --repo [WORKTREE_PATH]` exits 0, the round's commit through those hooks runs preflight and doc-limits. Otherwise use the two standalone stage routes below for rounds that validate locally.
+Where `orch-runtime validate policy --stage git-hooks`, with `--base-checkout` naming the main checkout, answers `run`, and `.agents/skills/commit-guards/scripts/install-git-hooks --check --repo [WORKTREE_PATH]` exits 0, the round's commit through those hooks runs preflight and doc-limits. Otherwise use the two standalone stage routes below, including for CI rounds.
 
 Where `orch-runtime validate policy --stage preflight`, with `--base-checkout` naming the main checkout, answers `run`, run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`) through the orch job runner per [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Where it answers `skip`, run no preflight:
 
@@ -313,8 +315,9 @@ Where `orch-runtime validate policy --stage doc-limits`, with `--base-checkout` 
 
 Run the gate in this order:
 
-1. On the runner route, start `orch-runtime validate entry` and read its output before the applicable verification commands and must-fail controls. On the project foreground route, run the required verification commands and must-fail controls before the project's entry point. Run the commands and controls through their route in [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation).
-2. Record the validation result in the completion artifact for submit to reuse on the same contents.
+1. On the runner route, wait for the entry's verdict before running the required verification commands and must-fail controls under the scope above. On the project foreground route, run those commands and controls before the project's entry point. Use [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) to run the checks.
+2. If a check fails after the runner starts, use the bounded recovery sequence above for any in-scope repair. An earlier verdict cannot prove the repaired contents.
+3. Record the validation result in the completion artifact for submit to reuse on the same contents.
 
 A script written only to produce a number for the issue is not committed; report its result in the return for the orchestrator to put in the PR body. An uncommitted measurement is not a check the change adds or modifies.
 
