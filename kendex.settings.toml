@@ -71,7 +71,7 @@ AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
 
 # The owner's overseer policy: medium effort for launch, restart, recovery
 # and succession.
-AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:gpt-6.2-sol:medium"
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium"
 
 # This repository runs the read-only GitHub ruleset and CI report.
 GITHUB_STANDARD_PLATFORM_CHECKS = "true"
