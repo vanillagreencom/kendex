@@ -17,4 +17,5 @@ control_replace scripts/commands/comments.sh 1 \
 
 control_expect "large-comments complete document succeeds"
 control_replace scripts/commands/comments.sh 1 \
-    "    jq -cs '" "    jq -cs --argjson carried \"\$comments\" '"
+    "    jq -cs \"\$OWNER_RULING_JQ\"'" \
+    "    jq -cs --argjson carried \"\$comments\" \"\$OWNER_RULING_JQ\"'"
