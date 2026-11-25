@@ -119,6 +119,11 @@ fn harness_list(harnesses: &BTreeSet<crate::model::HarnessId>) -> String {
         .join(", ")
 }
 
+/// Origin's record a pull would bring the scope, read at most once per
+/// check of it: `Ok(None)` where no pull applies, and git's failure as the
+/// text a line carries as its detail.
+type Pulled = std::cell::OnceCell<std::result::Result<Option<crate::lock::Lock>, String>>;
+
 /// One scope's lines, and what the caller still needs from it.
 pub(super) fn check_scope(
     ctx: &ScopeCheck,
@@ -1538,6 +1543,7 @@ impl ScopeCheck<'_> {
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
         let unreadable = notes_by_package(&snapshot);
+        let pulled = Pulled::new();
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
             // Holds and ignores do not suppress independent unreadable evidence.
@@ -1577,7 +1583,7 @@ impl ScopeCheck<'_> {
                     }
                 }
             } else {
-                self.package_line(package, sections);
+                self.package_line(package, lock, &pulled, sections);
             }
         }
         for (key, notes) in unreadable {
@@ -1760,12 +1766,51 @@ impl ScopeCheck<'_> {
         }
     }
 
+    /// The fix for a package with a newer version on its source. The pull
+    /// is the fix only where it brings this package another record
+    /// ([`crate::lock::branch::pulled_record`]), which the next check then
+    /// reads again; a pull that leaves the record as it is leaves the newer
+    /// version where it was, and the refresh with it. `lock` is the record
+    /// the verdict was derived from, since a package whose record moved
+    /// reads again before it reaches here; with no readable record there
+    /// is nothing to tell a pulled one apart from. Origin's record is read
+    /// once per scope, and only for a package that reaches here. A
+    /// checkout git cannot answer for is offered neither, its cause the
+    /// line's detail, since the refresh is the wrong fix exactly where the
+    /// pull is the right one.
+    fn stale_remedy(
+        &self,
+        package: &crate::drift::snapshot::PackageSnapshot,
+        lock: Option<&crate::lock::Lock>,
+        pulled: &Pulled,
+    ) -> std::result::Result<Remedy, String> {
+        let refresh = Remedy::Refresh {
+            global: self.global,
+        };
+        if self.global || lock.is_none() {
+            return Ok(refresh);
+        }
+        let pulled = pulled.get_or_init(|| match crate::lock::branch::pulled_record(self.scope) {
+            Ok(None) => Ok(None),
+            Ok(Some(crate::lock::LockFile::Current(lock))) => Ok(Some(lock)),
+            Ok(Some(crate::lock::LockFile::Absent)) => Ok(Some(crate::lock::Lock::default())),
+            Err(error) => Err(error.to_string()),
+        });
+        match pulled {
+            Ok(Some(pulled)) if package.record_moved(pulled) => Ok(Remedy::Pull),
+            Ok(_) => Ok(refresh),
+            Err(error) => Err(error.clone()),
+        }
+    }
+
     /// One package's dominant classification. An edited package's update is
     /// blocked by the edit, so the edit is the line; the others follow the
     /// same "what must be decided first" order.
     fn package_line(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,
+        lock: Option<&crate::lock::Lock>,
+        pulled: &Pulled,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
@@ -1801,12 +1846,14 @@ impl ScopeCheck<'_> {
                 }),
             ));
         } else if package.update_available {
-            sections.stale.push(drift(
-                format!("{prefix}{kind} '{name}' has a newer version on its source"),
-                Some(Remedy::Refresh {
-                    global: self.global,
-                }),
-            ));
+            let remedy = self.stale_remedy(package, lock, pulled);
+            sections.stale.push(Line {
+                detail: remedy.as_ref().err().map(|error| verbatim(error)),
+                ..drift(
+                    format!("{prefix}{kind} '{name}' has a newer version on its source"),
+                    remedy.ok(),
+                )
+            });
         }
     }
 

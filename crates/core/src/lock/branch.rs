@@ -9,9 +9,14 @@
 //! (D001) runs only where this answers [`Recording::Here`]. The rule keys
 //! on the branch the checkout has checked out, never on whether it is a
 //! linked worktree, so a standalone clone on a branch is covered too.
+//!
+//! The same reading of the default branch answers what record a pull of
+//! origin's copy would bring a checkout on it, which decides the fix the
+//! check names for a package that reads behind ([`pulled_record`]).
 
 use std::path::Path;
 
+use super::LockFile;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 use crate::process::Hardened;
@@ -57,21 +62,7 @@ pub fn recording(scope: &Scope) -> Result<Recording> {
     if crate::guard::Repo::probe(&root)?.is_none() {
         return Ok(Recording::Here);
     }
-    let records_on = match symbolic_ref(&root, REMOTE_HEAD)? {
-        Some(target) => match target.strip_prefix(REMOTE_BRANCHES) {
-            Some(branch) => branch.to_owned(),
-            // git points the remote HEAD at one of the remote's own
-            // branches; one set by hand to anything else names no branch
-            // the record could be written on.
-            None => {
-                return Err(CoreError::GitFailed {
-                    command: format!("git symbolic-ref --quiet {REMOTE_HEAD}"),
-                    stderr: format!("it names {target}, which is not a branch of origin"),
-                });
-            }
-        },
-        None => FALLBACK_BRANCH.to_owned(),
-    };
+    let records_on = default_branch(&root)?;
     let head = symbolic_ref(&root, "HEAD")?;
     if head.as_deref() == Some(&format!("{LOCAL_BRANCHES}{records_on}")) {
         return Ok(Recording::Here);
@@ -85,12 +76,132 @@ pub fn recording(scope: &Scope) -> Result<Recording> {
     }))
 }
 
+/// The record `git pull --ff-only` would bring `scope`: the lock origin's
+/// copy of the default branch holds, as this clone last fetched it, where
+/// `scope` is a checkout on that branch strictly behind it whose lock is
+/// the one `HEAD` commits. `None` where no such pull applies or the pull
+/// would not bring origin's lock: a checkout on another branch or a
+/// detached HEAD, where the pull would move another branch or refuse; a
+/// copy with commits of its own, which `--ff-only` refuses; a copy at
+/// origin's commit, with nothing to pull; and a lock git reports in
+/// `git status` at all, untracked, ignored or changed since `HEAD`, which
+/// the merge refuses to overwrite where origin changes the file
+/// (git-read-tree(1), "Two Tree Merge") and leaves as it is where origin
+/// does not. Read from the refs and objects the clone holds; nothing is
+/// fetched. Origin's copy goes through the decoder the file on disk does,
+/// so one this build cannot read is the refusal that file would get.
+pub fn pulled_record(scope: &Scope) -> Result<Option<LockFile>> {
+    let Scope::Project { root } = scope.canonical() else {
+        return Ok(None);
+    };
+    if crate::guard::Repo::probe(&root)?.is_none() {
+        return Ok(None);
+    }
+    let branch = default_branch(&root)?;
+    if symbolic_ref(&root, "HEAD")?.as_deref() != Some(&format!("{LOCAL_BRANCHES}{branch}")) {
+        return Ok(None);
+    }
+    let upstream = format!("{REMOTE_BRANCHES}{branch}");
+    if resolved(&root, &upstream)?.is_none() {
+        return Ok(None);
+    }
+    let range = format!("HEAD...{upstream}");
+    let count = ["rev-list", "--left-right", "--count", range.as_str()];
+    let counted = run(&root, &count)?;
+    let said = String::from_utf8_lossy(&counted);
+    let mut sides = said.split_whitespace().map(str::parse::<u64>);
+    match (sides.next(), sides.next(), sides.next()) {
+        (Some(Ok(0)), Some(Ok(behind)), None) if behind > 0 => {}
+        (Some(Ok(_)), Some(Ok(_)), None) => return Ok(None),
+        _ => {
+            return Err(CoreError::GitFailed {
+                command: format!("git {}", count.join(" ")),
+                stderr: format!("it printed {:?}, not two counts", said.trim()),
+            });
+        }
+    }
+    // `./` resolves against the directory git runs in (gitrevisions(7),
+    // "<rev>:<path>"; a pathspec likewise), which is the project root,
+    // and a project in a subdirectory of its repository keeps its lock
+    // there rather than at the repository's top.
+    let path = format!("./{}", super::LOCK_FILE);
+    // Without `--no-optional-locks` the read may take the index lock to
+    // refresh it, which a git command the person runs meanwhile meets.
+    let status = [
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignored",
+        "--",
+        path.as_str(),
+    ];
+    if !run(&root, &status)?.is_empty() {
+        return Ok(None);
+    }
+    let lock = crate::env::Env::project_lock_file(&root);
+    let Some(object) = resolved(&root, &format!("{upstream}:{path}"))? else {
+        return Ok(Some(LockFile::Absent));
+    };
+    let blob = run(&root, &["cat-file", "blob", object.as_str()])?;
+    let text = String::from_utf8(blob).map_err(|_| CoreError::LockCorrupt {
+        path: lock.clone(),
+        message: format!("the copy at {upstream} is not UTF-8"),
+    })?;
+    super::parse_text(&lock, &text).map(|lock| Some(LockFile::Current(lock)))
+}
+
+/// The branch the record is kept on: the one the remote HEAD names.
+fn default_branch(root: &Path) -> Result<String> {
+    match symbolic_ref(root, REMOTE_HEAD)? {
+        Some(target) => match target.strip_prefix(REMOTE_BRANCHES) {
+            Some(branch) => Ok(branch.to_owned()),
+            // git points the remote HEAD at one of the remote's own
+            // branches; one set by hand to anything else names no branch
+            // the record could be written on.
+            None => Err(CoreError::GitFailed {
+                command: format!("git symbolic-ref --quiet {REMOTE_HEAD}"),
+                stderr: format!("it names {target}, which is not a branch of origin"),
+            }),
+        },
+        None => Ok(FALLBACK_BRANCH.to_owned()),
+    }
+}
+
+/// What a git command that must succeed printed.
+fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Hardened::git(args, Some(root)).run()?;
+    match output.status.success() {
+        true => Ok(output.stdout),
+        false => Err(git_failed(args, &output)),
+    }
+}
+
+fn git_failed(args: &[&str], output: &std::process::Output) -> CoreError {
+    CoreError::GitFailed {
+        command: format!("git {}", args.join(" ")),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    }
+}
+
 /// The ref `name` points at, or `None` where it is no symbolic ref: a
-/// detached HEAD, or a remote HEAD the clone never recorded. `--quiet`
-/// makes exit 1 that answer alone; any other failure is git's.
+/// detached HEAD, or a remote HEAD the clone never recorded.
 fn symbolic_ref(root: &Path, name: &str) -> Result<Option<String>> {
-    let args = ["symbolic-ref", "--quiet", name];
-    let output = Hardened::git(&args, Some(root)).run()?;
+    quiet_answer(root, &["symbolic-ref", "--quiet", name])
+}
+
+/// The object `spec` names, or `None` where it names none: a missing ref,
+/// or a path the revision does not hold.
+fn resolved(root: &Path, spec: &str) -> Result<Option<String>> {
+    quiet_answer(root, &["rev-parse", "--verify", "--quiet", spec])
+}
+
+/// The line a `--quiet` git read prints, or `None` where it exits 1, which
+/// `--quiet` makes the answer "there is none" alone; any other failure is
+/// git's.
+fn quiet_answer(root: &Path, args: &[&str]) -> Result<Option<String>> {
+    let output = Hardened::git(args, Some(root)).run()?;
     match output.status.code() {
         Some(0) => Ok(Some(
             String::from_utf8_lossy(&output.stdout)
@@ -98,9 +209,6 @@ fn symbolic_ref(root: &Path, name: &str) -> Result<Option<String>> {
                 .to_owned(),
         )),
         Some(1) => Ok(None),
-        _ => Err(CoreError::GitFailed {
-            command: format!("git {}", args.join(" ")),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        }),
+        _ => Err(git_failed(args, &output)),
     }
 }
