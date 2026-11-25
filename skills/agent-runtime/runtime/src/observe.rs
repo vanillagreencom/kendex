@@ -155,8 +155,9 @@ impl Identities for Kernel {
 /// one of its own processes under the pane is a member, the exec'd harness
 /// itself or a harness a non-interactive shell wrapper waits on; `owns`
 /// names the harness's processes (`Harness::owns_process_of`). With
-/// `recorded`, only that exact identity is the harness, and no other
-/// process is ever selected in its place; without one, the
+/// `recorded`, only that exact identity can be the harness, and no other
+/// process is ever selected in its place. A shell is never a harness.
+/// Without a recorded identity, the
 /// nearest harness-named member is, and its identity is read for the caller
 /// to record. A group of shells alone is `ShellsOnly` when no harness
 /// process runs under the pane at all, else `ForegroundShell`. A table, a
@@ -211,9 +212,12 @@ fn classify(
         .filter_map(|(_, pid)| members.iter().copied().find(|m| m.pid == *pid))
         .collect();
     if let Some(recorded) = recorded {
-        // Only the recorded identity is the harness: in the foreground
-        // group, and still the process the record names.
-        if let Some(member) = members.iter().find(|m| m.pid == recorded.pid) {
+        // A shell can exec under the harness's PID with the same start time.
+        // Other names are allowed because a harness can change its title.
+        if let Some(member) = members
+            .iter()
+            .find(|m| m.pid == recorded.pid && !process::is_shell(&m.name))
+        {
             return match ids.still_runs(recorded) {
                 Reading::Live(_) => ProcessReading::Harness {
                     identity: recorded.clone(),
@@ -827,6 +831,22 @@ mod tests {
                 identity: recorded.clone()
             }
         );
+        let recorded_rows = |name| [row(20, 10, 20, "bash"), row(30, 20, 30, name)];
+        for (name, expected) in [
+            (
+                "renamed",
+                ProcessReading::Harness {
+                    identity: recorded.clone(),
+                },
+            ),
+            ("bash", ProcessReading::ShellsOnly),
+        ] {
+            assert_eq!(
+                classify(&recorded_rows(name), 30, 20, &owns, Some(&recorded), &live),
+                expected,
+                "{name}"
+            );
+        }
         // The record names 99, which is not in the group: the harness-named
         // member 30 is other, never adopted as the harness.
         assert_eq!(

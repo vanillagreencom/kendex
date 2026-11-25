@@ -1151,10 +1151,10 @@ impl Operation<'_> {
         Ok(read)
     }
 
-    /// One reading of a pane: who holds its terminal, written before the
-    /// capture, and what the screen says. With `recorded`, only that identity
-    /// is the harness. The pane gone discharges the pane; a host that does
-    /// not answer for a pane that stands is `Unreadable`, never an absence.
+    /// One reading of a pane: who holds its terminal and what the screen says.
+    /// A harness identity is written before capture and checked again after it.
+    /// With `recorded`, only that identity is the harness. The pane gone
+    /// discharges the pane; a host that does not answer is `Unreadable`.
     pub fn read_pane(
         &mut self,
         pane: &Pane,
@@ -1162,30 +1162,46 @@ impl Operation<'_> {
         owns: &dyn Fn(&str) -> bool,
         recorded: Option<&Identity>,
     ) -> Result<Reading<(Foreground, State)>> {
-        let fields = match tmux::pane_fields(&pane.server, &pane.id) {
-            Reading::Live(fields) => fields,
-            Reading::Gone => {
-                self.pane_end(pane, PaneEnd::Gone)?;
-                return Ok(Reading::Gone);
-            }
+        let pid = match self.pane_pid(pane)? {
+            Reading::Live(pid) => pid,
+            Reading::Gone => return Ok(Reading::Gone),
             Reading::Unreadable { cause } => return Ok(Reading::Unreadable { cause }),
         };
-        let foreground = self.foreground_of(fields.pid, owns, recorded)?;
-        let screen = match tmux::capture(pane) {
-            Ok(screen) => screen,
-            // The pane may have gone between the read and the capture: a
-            // harness exit. One that still stands was not captured.
-            Err(_) => {
-                return Ok(match tmux::pane_fields(&pane.server, &pane.id) {
-                    Reading::Live(_) => Reading::Unreadable {
+        let foreground = self.foreground_of(pid, owns, recorded)?;
+        let (screen, foreground) = match tmux::capture(pane) {
+            Ok(screen) if foreground.harness.is_none() => (screen, foreground),
+            capture => {
+                // The pane can vanish during capture, or a shell can take
+                // over and draw a prompt that looks like the composer.
+                let after_pid = match self.pane_pid(pane)? {
+                    Reading::Live(pid) => pid,
+                    Reading::Gone => return Ok(Reading::Gone),
+                    Reading::Unreadable { cause } => return Ok(Reading::Unreadable { cause }),
+                };
+                let Ok(screen) = capture else {
+                    return Ok(Reading::Unreadable {
                         cause: "capture-failed",
-                    },
-                    Reading::Gone => {
-                        self.pane_end(pane, PaneEnd::Gone)?;
-                        Reading::Gone
+                    });
+                };
+                if after_pid != pid {
+                    return Ok(Reading::Unreadable {
+                        cause: "pane-process-changed",
+                    });
+                }
+                let reading = observe::foreground(after_pid, owns, recorded);
+                let foreground = match reading {
+                    ProcessReading::Harness { .. } if reading == foreground.reading => foreground,
+                    ProcessReading::Harness { .. } => {
+                        return Ok(Reading::Unreadable {
+                            cause: "foreground-changed",
+                        });
                     }
-                    Reading::Unreadable { cause } => Reading::Unreadable { cause },
-                });
+                    reading => Foreground {
+                        reading,
+                        harness: None,
+                    },
+                };
+                (screen, foreground)
             }
         };
         let state = observe::judge(&screen, harness, &foreground.reading, None);
