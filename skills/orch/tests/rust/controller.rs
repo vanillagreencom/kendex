@@ -2594,6 +2594,55 @@ fn rows_file(runner: &Runner, server: &Server, pane: &str) -> std::path::PathBuf
         ))
 }
 
+#[test]
+fn registration_refuses_released_lane_statuses_before_writing_the_controller() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = register_runner(&server);
+    let pane = server.open_stub(
+        "hand",
+        "stub-confirm",
+        runner.state_dir(),
+        &runner.state_dir().join("pane-home"),
+    );
+    server.await_composer(&pane);
+    let fleet_path = runner.state_dir().join("workflow-state-oversee.json");
+    let mut fleet = runner.fleet();
+
+    for status in ["closed", "handed-off", "canceled"] {
+        fleet["lanes"] = json!([
+            {"item": "KEN-1", "status": "done"},
+            {"item": "KEN-2", "status": status},
+        ]);
+        runner.write_fleet(&fleet);
+        let before = std::fs::read(&fleet_path).unwrap();
+
+        let out = register(&runner, &pane, &[], &[]);
+
+        assert!(
+            std::fs::read(&fleet_path).unwrap() == before,
+            "registration wrote the fleet with status {status}; controller: {}",
+            runner.fleet()["controller"]
+        );
+        assert_eq!(refusal_key(&out), "released-lane-status");
+        let err = stderr(&out);
+        for field in [
+            "row=lanes/1",
+            "item=KEN-2",
+            &format!("status={status}"),
+            "repair=set-status-done",
+        ] {
+            assert!(err.split_whitespace().any(|word| word == field), "{err}");
+        }
+    }
+
+    fleet["lanes"][1]["status"] = json!("done");
+    runner.write_fleet(&fleet);
+    let out = register(&runner, &pane, &[], &[]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(runner.fleet()["controller"]["pane"], pane);
+}
+
 /// A hand-opened Claude session registers from its own pane: outside a pane
 /// it is refused; with no SessionStart row the pane is read, the named
 /// fallback said; the account is always the one the harness process's own

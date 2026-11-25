@@ -1151,7 +1151,7 @@ impl FleetState {
 impl Record for FleetState {
     fn view(path: &Path, doc: &Document) -> Result<Self> {
         Ok(FleetState {
-            lanes: field(path, doc, "lanes")?.unwrap_or_default(),
+            lanes: fleet_lanes(path, doc)?,
             overseer: field(path, doc, "controller")?,
             fleet_log: field(path, doc, "fleet_log")?.unwrap_or_default(),
             triaged: field(path, doc, "triaged")?.unwrap_or_default(),
@@ -1159,6 +1159,41 @@ impl Record for FleetState {
             intents: field(path, doc, "intents")?.unwrap_or_default(),
         })
     }
+}
+
+fn fleet_lanes(path: &Path, doc: &Document) -> Result<Vec<Lane>> {
+    let rows: Vec<Value> = field(path, doc, "lanes")?.unwrap_or_default();
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            Lane::deserialize(row).map_err(|error| {
+                // Older orch releases wrote these terminal statuses.
+                if let Some(status @ ("closed" | "handed-off" | "canceled")) =
+                    row.get("status").and_then(Value::as_str)
+                {
+                    let item = row.get("item").and_then(Value::as_str).unwrap_or("-");
+                    return agent_runtime::Error::refused(
+                        "released-lane-status",
+                        &[
+                            ("path", &path.display().to_string()),
+                            ("row", &format!("lanes/{index}")),
+                            ("item", item),
+                            ("status", status),
+                            ("repair", "set-status-done"),
+                        ],
+                    )
+                    .into();
+                }
+                agent_runtime::Error::RecordShape {
+                    path: path.to_path_buf(),
+                    field: "lanes".to_owned(),
+                    reason: agent_runtime::error::ShapeReason::TypeMismatch,
+                    cause: error.to_string(),
+                }
+                .into()
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

@@ -555,14 +555,15 @@ pub fn run_job(
 }
 
 /// Register the controller a person opened by hand in the caller's own
-/// pane: its identity read from its session rows or its pane, then the one
-/// adoption, then the notices its turn-end coverage owes.
+/// pane after reading the fleet, then report the notices its turn-end
+/// coverage owes.
 pub fn register_controller(
     path: &Path,
     account: Option<&str>,
     settings: &Settings,
     locking: Locking,
 ) -> Result<Value> {
+    fleet(path)?;
     let (mut reply, harness) = agent_runtime::effects::register_controller(
         path,
         account,
@@ -576,7 +577,8 @@ pub fn register_controller(
     reply["adopted"] = serde_json::to_value(ops::adoption_applied(adopted))?;
     // A record proven to name this pane keeps fields the request left out,
     // so the coverage is judged on the record as written.
-    let recorded = fleet(path)?.overseer;
+    let recorded: Option<agent_runtime::controller::Overseer> =
+        agent_runtime::record::field(path, &load(path)?.doc, "controller")?;
     let word = |key: &str| {
         recorded
             .as_ref()
