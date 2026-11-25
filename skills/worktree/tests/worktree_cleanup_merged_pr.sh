@@ -540,7 +540,7 @@ assert_eq "$(WORKTREE_SCRIPT="$map_mutant" run cleanup)" \
 
 local_branch_case() {
   local case_name="$1" branch=topic/merged.v1 ref="" tip="" moved="" source="" rc=0
-  local linked="" probe_dir="" observed_source="" git_dir="" expected_sources=1
+  local linked="" probe_dir="" observed_source=""
   local -a config_scope=()
   ROOT="$TMP_ROOT/local-$case_name"
   MAIN="$ROOT/main"
@@ -585,7 +585,7 @@ STUB
         assert_eq failed recreated "the pruned branch name can be recreated"
       fi
       ;;
-    included-config|worktree-config|branch-conditional|worktree-conditional|gitdir-conditional)
+    included-config|worktree-config|branch-conditional|worktree-conditional)
       source="$ROOT/tracking.conf"
       config_scope=(--file "$source")
       case "$case_name" in
@@ -605,15 +605,6 @@ STUB
           git -C "$MAIN" config --add "includeIf.worktree:$linked.path" "$source"
           probe_dir="$linked"
           ;;
-        gitdir-conditional)
-          linked="$ROOT/linked"
-          git -C "$MAIN" worktree add -q "$linked" "$branch"
-          git_dir="$(git -C "$linked" rev-parse --absolute-git-dir)"
-          git -C "$MAIN" config --add "includeIf.gitdir:$git_dir.path" "$source"
-          git -C "$MAIN" branch --no-track unowned "$tip"
-          expected_sources=2
-          probe_dir="$linked"
-          ;;
       esac
       git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.remote" origin
       git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.merge" refs/heads/main
@@ -630,29 +621,10 @@ STUB
         fi
         [[ "$observed_source" == *"$source"* ]] || return 2
       fi
-      if [[ "$case_name" == gitdir-conditional ]]; then
-        git -C "$MAIN" worktree remove "$linked"
-        [[ ! -e "$git_dir" ]] || return 2
-        cp -- "$MAIN/.git/config" "$ROOT/config-before"
-      fi
       (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
       assert_eq "$rc:$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config --local "branch.$branch.remote" || true)" \
         "1:$tip $ref:origin" "$case_name: unretirable tracking keeps the branch and its common config"
-      assert_eq "$(grep -cF "$source" "$ROOT/err" || true)" "$expected_sources" "$case_name: each refusal identifies the tracking source"
-      if [[ "$case_name" == gitdir-conditional ]]; then
-        assert_eq "$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" \
-          "$tip refs/heads/unowned" "gitdir-conditional: cleanup keeps the other merged candidate too"
-        assert_eq "$(cmp -s "$MAIN/.git/config" "$ROOT/config-before" && printf unchanged || printf changed)" \
-          unchanged "gitdir-conditional: cleanup keeps the exact common config bytes"
-        # Recreating the registration makes Git read the same included file.
-        if ! git -C "$MAIN" show-ref --verify --quiet "$ref"; then
-          git -C "$MAIN" branch --no-track "$branch" origin/main
-        fi
-        git -C "$MAIN" worktree add -q "$linked" "$branch"
-        assert_eq "$(git -C "$linked" rev-parse --absolute-git-dir)" "$git_dir" "gitdir-conditional: Git reuses the private registration"
-        observed_source="$(git -C "$linked" config --show-origin "branch.$branch.remote")"
-        [[ "$observed_source" == *"$source"* ]] || return 2
-      fi
+      assert_eq "$(grep -cF "$source" "$ROOT/err" || true)" 1 "$case_name: the refusal identifies the tracking source"
       ;;
     missing-perl)
       # The restricted PATH built above excludes Perl as well as gh.
@@ -664,6 +636,51 @@ STUB
         "missing Perl preserves both candidates"
       ;;
   esac
+}
+
+# A gitdir condition that holds only while the linked worktree is registered
+# reaches the branch's settings through a relative include, beside an include
+# of a file that does not exist. Cleanup runs once that worktree is gone,
+# beside a merged branch no config file names. The
+# summary reads the branches and common settings cleanup left, then the
+# upstream a recreated branch and linked worktree see.
+conditional_reuse_case() { # NAME SCRIPT
+  local branch=topic/merged.v1 ref="" tip="" linked="" git_dir="" rc=0 tracking="" left="" common=""
+  ROOT="$TMP_ROOT/conditional-$1"
+  MAIN="$ROOT/main"
+  ref="refs/heads/$branch"
+  linked="$ROOT/linked"
+  tracking="$ROOT/conf/tracking.conf"
+  make_repo
+  tip="$(git -C "$MAIN" rev-parse origin/main)"
+  git -C "$MAIN" branch --track "$branch" origin/main >/dev/null
+  git -C "$MAIN" branch --no-track unowned "$tip"
+  git -C "$MAIN" worktree add -q "$linked" "$branch"
+  git_dir="$(git -C "$linked" rev-parse --absolute-git-dir)"
+  mkdir "$ROOT/conf"
+  printf '[include]\n\tpath = tracking.conf\n\tpath = absent.conf\n' >"$ROOT/conf/conditional.conf"
+  printf '[branch "%s"]\n\tremote = origin\n\tmerge = refs/heads/main\n' "$branch" >"$tracking"
+  git -C "$MAIN" config --add "includeIf.gitdir:$git_dir.path" "$ROOT/conf/conditional.conf"
+  if [[ "$(git -C "$linked" config --show-origin "branch.$branch.remote")" != *"$tracking"* ||
+        "$(git -C "$MAIN" config --show-origin "branch.$branch.remote")" == *"$tracking"* ]]; then
+    printf 'fixture=condition-not-linked-only'
+    return 0
+  fi
+  git -C "$MAIN" worktree remove "$linked"
+  (cd "$MAIN" && "$2" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+  left="$(git -C "$MAIN" for-each-ref --format='%(refname:short)' refs/heads/ | paste -s -d , -)"
+  common="$(git -C "$MAIN" config --local "branch.$branch.remote" || true)"
+  if ! git -C "$MAIN" show-ref --verify --quiet "$ref"; then
+    git -C "$MAIN" branch --no-track "$branch" origin/main
+  fi
+  git -C "$MAIN" worktree add -q "$linked" "$branch"
+  if [[ "$(git -C "$linked" rev-parse --absolute-git-dir)" != "$git_dir" ]]; then
+    printf 'fixture=registration-moved'
+    return 0
+  fi
+  printf 'rc=%s branches=%s common=%s sources=%s upstream=%s' "$rc" "$left" "$common" \
+    "$(grep -cF "$tracking" "$ROOT/err" || true)" \
+    "$(git -C "$linked" for-each-ref --format='%(upstream:short)' "$ref")"
 }
 
 native_branch_case() {
@@ -726,9 +743,28 @@ native_branch_case() {
 }
 
 echo "=== cleanup of merged branches without worktrees ==="
-for case_name in changed-tip config-lock included-config worktree-config branch-conditional worktree-conditional gitdir-conditional missing-perl; do
+for case_name in changed-tip config-lock included-config worktree-config branch-conditional worktree-conditional missing-perl; do
   local_branch_case "$case_name"
 done
+assert_eq "$(conditional_reuse_case real "$WORKTREE_SCRIPT")" \
+  "rc=1 branches=main,topic/merged.v1 common=origin sources=1 upstream=origin/main" \
+  "an inactive conditional include keeps the branch it configures and prunes the one it does not"
+
+# must-fail: a cleanup that ignores inactive conditional includes prunes the
+# branch, and the recreated linked worktree reads the stale upstream again.
+mkdir -p "$TMP_ROOT/conditional-mutant"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/conditional-mutant/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/conditional-mutant/github"
+conditional_mutant="$TMP_ROOT/conditional-mutant/worktree/scripts/worktree"
+assert_eq "$(grep -cxF -- '      if (%roots) {' "$conditional_mutant")" "1" \
+  "control: the conditional include walk occurs once"
+sed -i.bak 's/^      if (%roots) {$/      if (0) {/' "$conditional_mutant"
+assert_eq "$(cmp -s "$conditional_mutant.bak" "$conditional_mutant" && printf unchanged || printf changed)" "changed" \
+  "control: skipping the conditional include walk changes the script"
+rm -f -- "${conditional_mutant:?}.bak"
+assert_eq "$(conditional_reuse_case mutant "$conditional_mutant")" \
+  "rc=0 branches=main common= sources=0 upstream=origin/main" \
+  "must-fail: a recreated linked worktree reads the upstream of a pruned branch from its conditional include"
 native_branch_case rebase
 native_branch_case bisect
 native_branch_case bisect-hex
