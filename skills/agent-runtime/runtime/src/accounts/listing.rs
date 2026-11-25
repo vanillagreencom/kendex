@@ -314,14 +314,15 @@ pub fn configured(
 }
 
 /// The harness whose account a configured directory holds, by its files:
-/// Copilot's `config.json` or Codex's `auth.json` with no Claude
+/// Copilot's `config.json`, or Codex's `auth.json` or its `config.toml`
+/// (a signed-out Codex home keeps its config), with no Claude
 /// `.credentials.json` beside it, else Claude.
 fn kind_of(dir: &str) -> Result<Harness, String> {
     let holds = |name: &str| usage::exists(&Path::new(dir).join(name));
     let credentials = holds(".credentials.json")?;
     Ok(if holds("config.json")? && !credentials {
         Harness::Copilot
-    } else if holds("auth.json")? && !credentials {
+    } else if (holds("auth.json")? || holds("config.toml")?) && !credentials {
         Harness::Codex
     } else {
         Harness::Claude
