@@ -1415,7 +1415,8 @@ fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_not
 /// `joined` naming the holder, the holder's record carries the item with
 /// its touched set widened, no record, intent or slot is the candidate's
 /// (the cap of one the holder fills admits it), and the holder's own inbox
-/// holds the item's brief, which a repeated launch delivers once. The
+/// holds the item's brief after the widened set as its `Admitted paths:`
+/// line, which a repeated launch delivers once. The
 /// holder's recorded `micro` tier is judged over the widened set: a
 /// candidate whose brief names an instruction file needs `small` and is
 /// refused `join-tier-narrower`. Once the holder's session holds a review
@@ -1433,7 +1434,7 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
     fleet.write_lanes(vec![held]);
     fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
     let brief = fleet.dir.path().join("brief.md");
-    std::fs::write(&brief, "Change `src/a.sh` for KEN-L.\n").unwrap();
+    std::fs::write(&brief, "Change `src/a.sh` and `src/b.sh` for KEN-L.\n").unwrap();
     let mut request = launch("KEN-L", &fleet.checkout("l", None));
     request["brief_file"] = json!(brief.display().to_string());
     let cap = [("ORCH_OVERSEER_LANES", "1")];
@@ -1455,14 +1456,20 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
         (&lane["carried"][0]["item"], &lane["carried"][0]["tracker"]),
         (&json!("KEN-L"), &json!("linear"))
     );
-    assert_eq!(lane["touched"], json!(["src/a.sh"]));
+    assert_eq!(lane["touched"], json!(["src/a.sh", "src/b.sh"]));
     let told = inbox(&root, "KEN-H");
     assert_eq!(told.len(), 1, "{told:?}");
     let text = told[0]["text"].as_str().unwrap();
-    assert!(
-        text.starts_with("joined item=KEN-L holder=KEN-H") && text.contains("for KEN-L."),
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[..2],
+        [
+            "joined item=KEN-L holder=KEN-H",
+            r#"Admitted paths: ["src/a.sh","src/b.sh"]"#,
+        ],
         "{text}"
     );
+    assert!(text.contains("for KEN-L."), "{text}");
 
     let out = fleet.op_with(&request, &cap);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
@@ -1511,7 +1518,8 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
 /// name, nothing written: a local holder whose item state is no object
 /// refuses `holder-unreadable read=stage`; a hosted holder in flight whose
 /// host answers no read of its branch refuses `join-unreachable
-/// route=hosted`, naming the cause.
+/// route=hosted`, naming the held file and the cause; one carrying the
+/// candidate's launch blocker refuses naming that blocker.
 #[test]
 fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_joined() {
     let fleet = Fleet::new();
@@ -1542,10 +1550,23 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
         fields,
         pairs(&[
             ("item", "KEN-S"),
+            ("file", "src/r.sh"),
             ("holder", "KEN-R"),
             ("route", "hosted"),
             ("branch", "unknown"),
             ("cause", "head-unread"),
+        ])
+    );
+    fleet.item_under("KEN-B", "", &["KEN-R"]);
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-B", &fleet.checkout("b", None))));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-B"),
+            ("blockers", "KEN-R"),
+            ("holder", "KEN-R"),
+            ("route", "hosted"),
         ])
     );
     assert_eq!(fleet.fleet(), before, "nothing written");
@@ -1554,8 +1575,9 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
 
 /// A running hosted holder of a shared path refuses `join-unreachable`
 /// whatever its branch shows, since edits it has not committed are on its
-/// host alone; the refusal says whether its head commit, as GitHub compares
-/// it with the default branch, changes a shared path. A shared change, a
+/// host alone; the refusal names the held file and says whether its head
+/// commit, as GitHub compares it with the default branch, changes a shared
+/// path. A shared change, a
 /// rename's old path among them, refuses as an unjudged holder did. A head
 /// that changes none refuses `worktree-unproved` naming the head. A failed
 /// comparison, a head GitHub does not hold and a comparison at GitHub's
@@ -1618,18 +1640,24 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
     let unread = |fleet: &Fleet, cause: &str| {
         let fields = refused(fleet);
         assert_eq!(
-            fields[..4],
+            fields[..5],
             pairs(&[
                 ("item", "KEN-S"),
+                ("file", "src/r.sh"),
                 ("holder", "KEN-R"),
                 ("route", "hosted"),
                 ("branch", "ken-r"),
             ])[..]
         );
-        assert_eq!(fields[4].0, "cause");
-        assert!(fields[4].1.starts_with(cause), "{fields:?}");
+        assert_eq!(fields[5].0, "cause");
+        assert!(fields[5].1.starts_with(cause), "{fields:?}");
     };
-    let held = pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")]);
+    let held = pairs(&[
+        ("item", "KEN-S"),
+        ("file", "src/r.sh"),
+        ("holder", "KEN-R"),
+        ("route", "hosted"),
+    ]);
 
     fleet.gh_api(&changing(&["src/r.sh"]));
     assert_eq!(refused(&fleet), held);
@@ -2053,6 +2081,41 @@ fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_on
         );
         assert!(inbox(&root, "KEN-H").is_empty(), "{row}");
     }
+}
+
+/// A holder that opened with no admitted set runs unbounded, and a join
+/// keeps it so: a candidate whose launch blocker it carries joins it, its
+/// record takes the candidate's path, and the directive names no
+/// `Admitted paths:` line, which would bound the holder's own work by the
+/// candidate's paths alone.
+#[test]
+fn a_join_leaves_a_holder_that_opened_unbounded_without_an_admitted_set() {
+    let mut fleet = Fleet::new();
+    fleet.init_fleet();
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder("KEN-H", "running", Some(&harness), Some(&[]));
+    held["mail_root"] = json!(root.display().to_string());
+    held["repo"] = json!("o/r");
+    fleet.write_lanes(vec![held]);
+    fleet.item_under("CC-1", "", &["KEN-H"]);
+    fleet.gh_api(&gh_map(&[]));
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(&brief, "Change `src/c.sh` for CC-1.\n").unwrap();
+    let mut request = launch("CC-1", &fleet.checkout("c", None));
+    request["repo"] = json!("o/r");
+    request["brief_file"] = json!(brief.display().to_string());
+
+    let out = fleet.op(&request);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(joined_or_launched(&answer)["op"], "joined", "{answer}");
+    assert_eq!(fleet.lane("KEN-H")["touched"], json!(["src/c.sh"]));
+    let told = inbox(&root, "KEN-H");
+    assert_eq!(told.len(), 1, "{told:?}");
+    let text = told[0]["text"].as_str().unwrap();
+    assert!(text.starts_with("joined item=CC-1 holder=KEN-H"), "{text}");
+    assert!(!text.contains("Admitted paths:"), "{text}");
 }
 
 /// With the fleet's state in its own repository (`o/fleet`): a checkout

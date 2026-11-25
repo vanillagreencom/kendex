@@ -380,6 +380,7 @@ Every pass owes two things before it answers a thread, whether it fixes, replies
 
     Then fill the delegation:
 
+    - Fill `Admitted paths:` from the lane's admitted set, as [dev-start.md § 2](dev-start.md#2-delegate) step 9 reads it.
     - Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
     - Fill `Labels:` as [dev-fix.md § 2](dev-fix.md#2-delegate) fills it.
     - Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)).
@@ -400,6 +401,7 @@ Labels: [LABELS]
 Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
+[Where dev-start.md § 2 step 9 holds a set: "Admitted paths: [SET]"]
 
 Review items:
 [For each item in the fix set:]
@@ -425,7 +427,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" log -1 --oneline
 ```
 
-1. Route the verdict by [dev-fix.md § 2](dev-fix.md#2-delegate) step 5, which owns the acceptance table. That table covers:
+1. Route the verdict by [dev-fix.md § 2](dev-fix.md#2-delegate) step 5, which owns the acceptance table. That step covers:
+   - the [paths ask](dev-start.md#paths-ask) before A;
    - its stalled-round route, with `reconcile-round` before `orch-runtime round --text recover`, and the prune on a `redelegate` line;
    - exact-commit binding on accept;
    - the stage close through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages);

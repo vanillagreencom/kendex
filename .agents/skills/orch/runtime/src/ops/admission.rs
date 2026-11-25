@@ -426,6 +426,38 @@ enum Tie {
     Blockers(Vec<String>),
 }
 
+impl Tie {
+    /// The field a refusal names the tie by, so the overseer sees what
+    /// holds the launch without searching the fleet for it.
+    fn field(&self) -> (&'static str, String) {
+        match self {
+            Tie::File(file) => ("file", file.clone()),
+            Tie::Blockers(blockers) => ("blockers", blockers.join(",")),
+        }
+    }
+}
+
+/// The `join-unreachable` refusal of `item` by a holder whose stage and
+/// mailbox are on its host (`route`): the tie, the holder and the route,
+/// then whatever the head verdict adds.
+fn join_unreachable(
+    item: &str,
+    tie: &Tie,
+    holder: &str,
+    route: &str,
+    verdict: &[(&str, &str)],
+) -> Error {
+    let (key, value) = tie.field();
+    let mut fields = vec![
+        ("item", item),
+        (key, value.as_str()),
+        ("holder", holder),
+        ("route", route),
+    ];
+    fields.extend_from_slice(verdict);
+    Error::from(agent_runtime::Error::refused("join-unreachable", &fields))
+}
+
 impl Join {
     fn refusal(&self, item: &str, holder: &str) -> Error {
         match &self.tie {
@@ -833,14 +865,11 @@ fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<us
 /// this disk (`watch::lanes::local_held`): a lane fixing after its review
 /// would take work no review round read. A state that cannot be read refuses
 /// `holder-unreadable read=stage`. A hosted or cloud holder refuses
-/// `join-unreachable`: its stage and its mailbox are on its host, and a
-/// join tells its lane itself.
-fn before_review(path: &Path, lane: &Lane, item: &str) -> Result<bool> {
+/// `join-unreachable` naming the `tie`: its stage and its mailbox are on
+/// its host, and a join tells its lane itself.
+fn before_review(path: &Path, lane: &Lane, item: &str, tie: &Tie) -> Result<bool> {
     if let Some(route) = unreachable(lane) {
-        return Err(Error::from(agent_runtime::Error::refused(
-            "join-unreachable",
-            &[("item", item), ("holder", &lane.item), ("route", route)],
-        )));
+        return Err(join_unreachable(item, tie, &lane.item, route, &[]));
     }
     if ["pending_pr", "parked"]
         .iter()
@@ -881,29 +910,30 @@ fn unreachable(lane: &Lane) -> Option<&'static str> {
 /// has not committed are on its host alone, so it holds every path it names
 /// whatever its branch shows. Where its head changes a path of `touched`
 /// that the scope leaves in, it is judged on as any live holder. Otherwise
-/// it refuses `join-unreachable` naming the branch and the cause: a head
-/// that changes none of them is `worktree-unproved`, and a read that failed
-/// names its own cause. A cloud session's head is on its cloud, which no
-/// verb reads.
+/// it refuses `join-unreachable` naming the held `tie`, the branch and the
+/// cause: a head that changes none of them is `worktree-unproved`, and a
+/// read that failed names its own cause. A cloud session's head is on its
+/// cloud, which no verb reads.
 fn branch_judged(
     lane: &Lane,
     route: &str,
+    tie: &Tie,
     touched: &[String],
     in_scope: &[String],
     item: &str,
     host: &Host,
 ) -> Result<()> {
     let refused = |unread: BranchUnread| {
-        Error::from(agent_runtime::Error::refused(
-            "join-unreachable",
+        join_unreachable(
+            item,
+            tie,
+            &lane.item,
+            route,
             &[
-                ("item", item),
-                ("holder", &lane.item),
-                ("route", route),
                 ("branch", unread.branch.as_deref().unwrap_or("unknown")),
                 ("cause", &unread.cause),
             ],
-        ))
+        )
     };
     let unread = |cause: &str| BranchUnread {
         branch: None,
@@ -1175,18 +1205,16 @@ pub(super) fn judge(
     let mut join = None;
     if let Some((index, blockers)) = blocked {
         let holder = &lanes[index];
-        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
-            && before_review(path, holder, a.item)?;
-        if !joins {
-            return Err(Error::LaunchBlocked {
-                item: a.item.to_owned(),
-                blockers,
-            });
-        }
-        join = Some(Join {
+        let tied = Join {
             holder: index,
             tie: Tie::Blockers(blockers),
-        });
+        };
+        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
+            && before_review(path, holder, a.item, &tied.tie)?;
+        if !joins {
+            return Err(tied.refusal(a.item, &holder.item));
+        }
+        join = Some(tied);
     }
     let holder_unreadable =
         |holder: &str, read: &'static str, cause: String| Error::HolderUnreadable {
@@ -1231,22 +1259,20 @@ pub(super) fn judge(
             // lanes.
             Holding::Live => {
                 let first = a.checkout.is_some();
+                let tie = Tie::File(file.clone());
                 if first && let Some(route) = unreachable(lane) {
-                    branch_judged(lane, route, &touched, &in_scope, a.item, host)?;
+                    branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
                 }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
                 let direct = first && direct(host)?;
                 let before = if joinable || direct {
-                    Some(before_review(path, lane, a.item)?)
+                    Some(before_review(path, lane, a.item, &tie)?)
                 } else {
                     None
                 };
                 match before {
                     Some(true) if joinable => {
-                        join.get_or_insert(Join {
-                            holder: index,
-                            tie: Tie::File(file.clone()),
-                        });
+                        join.get_or_insert(Join { holder: index, tie });
                     }
                     Some(false) if direct => {}
                     _ => {
@@ -1453,7 +1479,8 @@ pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Jud
 /// set that needs a wider cycle refusing `join-tier-narrower`; then the
 /// holder's record carries the candidate once, its touched set and scope
 /// widened by the candidate's, and the candidate's brief reaches the
-/// holder's own mailbox ([`tell`]). Answers the holder's record as written.
+/// holder's own mailbox with the widened set where the holder held one
+/// ([`tell`]). Answers the holder's record as written.
 pub(super) fn join(
     path: &Path,
     doc: &mut Document,
@@ -1499,21 +1526,36 @@ pub(super) fn join(
     record::set(lane, "touched", serde_json::to_value(&touched)?);
     record::set(lane, "in_scope", serde_json::to_value(&in_scope)?);
     record::set(lane, "carried", serde_json::to_value(&carried)?);
-    tell(path, a, &holder, env, host)?;
-    lane_at(path, doc, index)
+    let widened = lane_at(path, doc, index)?;
+    // A holder that opened with no admitted set runs unbounded: a set made
+    // of the joined item's paths alone would bound its own item's work by
+    // paths no judge read for it.
+    let admitted = holder.admitted_line().and_then(|_| widened.admitted_line());
+    tell(path, a, &widened, admitted.as_deref(), env, host)?;
+    Ok(widened)
 }
 
 /// The candidate's brief written to the holder's own inbox through the
 /// mailbox program its turn end reads, `lane-mail send --directive` on the
 /// holder's recorded root, under the delivery `join-<item>`: a repeated join
-/// lands once. The directive opens with `joined item=<item> holder=<holder>`.
+/// lands once. The directive opens with `joined item=<item> holder=<holder>`,
+/// then `admitted`, the holder's widened `Admitted paths:` line where it
+/// holds a set, which replaces the set its next dev round is delegated, so
+/// that round asks for none of the paths the join already admitted.
 /// A send that does not answer delivered refuses `join-unsent` with its
 /// cause, and the launch lock's transition then writes nothing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the join's directive file, created exclusively under the fleet's state directory for the mailbox program to read and removed after its send"
 )]
-fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Result<()> {
+fn tell(
+    path: &Path,
+    a: &Admission,
+    holder: &Lane,
+    admitted: Option<&str>,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
     use std::io::Write;
     let unsent = |cause: String| {
         Error::from(agent_runtime::Error::refused(
@@ -1546,11 +1588,11 @@ fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Re
         .create_new(true)
         .open(&file)
         .and_then(|mut f| {
-            writeln!(
-                f,
-                "joined item={} holder={}\n\n{brief}",
-                a.item, holder.item
-            )
+            writeln!(f, "joined item={} holder={}", a.item, holder.item)?;
+            if let Some(line) = admitted {
+                writeln!(f, "{line}")?;
+            }
+            writeln!(f, "\n{brief}")
         })
         .map_err(|e| unsent(format!("write:{:?}", e.kind())))?;
     let sent = crate::mailbox::Mailbox::new(crate::effects::fleet_mailbox(settings).mail_program)

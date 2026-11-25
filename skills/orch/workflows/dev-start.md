@@ -140,13 +140,19 @@ Run the steps below for every delegation: once for a single issue, once per grou
 
    The brief renders one `Near-ceiling:` line per entry.
 
-9. **Spawn.** Delegate with the [single issue](#single-issue) or [bundled issue](#bundled-issue) brief, and arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve the spawn parameters first:
+9. **Admitted paths.** In a lane, the brief's `Admitted paths:` line names the lane's admitted set, the paths its launch judge let it hold. The runtime writes it into the lane's opening brief from the lane record's `touched`.
+   - An overseer answer that widens the set replaces it: the answer names the whole widened set.
+   - A `joined` directive's `Admitted paths:` line replaces it too: the line names the set the join widened. The runtime sends that line only to a lane that already holds a set, so a lane that opened with no line stays unbounded.
+   - Render the current set as the brief's `Admitted paths:` line, the JSON array unchanged.
+   - A lane whose opening brief carried no such line, and a session that is not a lane, render none.
 
-   ```bash
-   .agents/skills/agent-runtime/scripts/agent-runtime subagent spawn --harness codex [AGENT_TYPE]
-   ```
+10. **Spawn.** Delegate with the [single issue](#single-issue) or [bundled issue](#bundled-issue) brief, and arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve the spawn parameters first:
 
-10. **Record the session.** After each spawn:
+    ```bash
+    .agents/skills/agent-runtime/scripts/agent-runtime subagent spawn --harness codex [AGENT_TYPE]
+    ```
+
+11. **Record the session.** After each spawn:
 
     ```bash
     .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"child-open","agent_type":"[AGENT_TYPE]","agent_id":"[AGENT_OR_TASK_ID]","runtime_agent_type":"[RUNTIME_AGENT_TYPE]","agent_type_fallback":[FALLBACK_REASON_JSON_OR_NULL]}'
@@ -165,6 +171,7 @@ Labels: [LABELS]
 Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [Where the round began with an exception: "Exception: [WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json — pass it as --exception-file beside a FAILING run of an excused check"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
+[Where step 9 holds a set: "Admitted paths: [SET]"]
 </delegation_format>
 
 A GitHub item replaces the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
@@ -195,6 +202,7 @@ Labels: [the parent's labels and every sub-issue's labels, each once, comma-sepa
 Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [Where the round began with an exception: "Exception: [WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json — pass it as --exception-file beside a FAILING run of an excused check"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
+[Where step 9 holds a set: "Admitted paths: [SET]"]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]
 
 **Work pending issues only** (completed ones are listed for context). Complete blockers before blocked issues.
@@ -212,6 +220,19 @@ Handoff from prior agents:
 ## 3. Accept The Round
 
 Accept from **A**, the receipt on disk, and **B**, git and the tracker. The agent's return message is display only. Run A and B when the § 2 watchdog answers or its deadline passes; never wait on a message.
+
+### Paths ask
+
+Before A, check for `[WORKTREE_PATH]/tmp/paths-ask-[ISSUE_ID]-[DEV_ROUND_ID].md`. The file means the round stopped before an edit to a path outside its `Admitted paths:` set and wrote no receipt ([dev SKILL.md § Round Contract](../../dev/SKILL.md#round-contract)). It lists every such path.
+
+1. Send the file as one ask: `lane-mail ask --item [ISSUE_ID] --file [FILE]` ([skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)). Wait for the answer.
+2. An answer that admits the paths names the widened set. Delegate a fresh round, whose `Admitted paths:` line renders that set, through the delegating workflow's own step:
+   - an implement round through § 2;
+   - a fix round through [dev-fix.md § 2](dev-fix.md#2-delegate) step 4;
+   - a PR-comment fix round through [review-pr-comments.md § 6.1](review-pr-comments.md#61-delegate-fixes).
+3. An answer that refuses a path changes the scope. Follow the overseer's direction, and delegate no edit to a refused path.
+
+A session that is not a lane delegates no `Admitted paths:` line, so its rounds write no such file.
 
 ### Check A
 

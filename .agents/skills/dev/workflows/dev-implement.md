@@ -117,6 +117,7 @@ Blocked → **§ 3**, then STOP. No change needed → § 9.1, then § 10. Clear 
 
 - Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`, a relative size class from 1, smallest, through 5, largest (project-management references/filing.md § Estimate).
 - **If bundled**: order sub-issues by dependency and overlap.
+- A delegation's `Admitted paths:` line bounds the paths the plan may change: check the plan against it under [dev SKILL.md § Round Contract](../SKILL.md#round-contract) before any edit. A path outside the set takes that section's steps 3 and 4, then STOP; § 3 does not apply.
 - A required command the delegation names runs in the shape orch's SKILL.md § Harness-Safe Shell admits. A command whose environment this session cannot satisfy is a blocker to report, never a license to run it under the wrong environment.
 
 ### 2.5 Domain Setup

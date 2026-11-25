@@ -127,7 +127,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
 
 4. **Stamp and delegate.** Run each command as its own tool call, immediately before delegating.
 
-   Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do.
+   Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do, and read the lane's admitted set as its step 9 does.
 
    - Arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure).
    - Where step 2 made more than one group, the `begin-round` request carries `"group": {"n": [N], "of": [GROUPS]}`.
@@ -189,6 +189,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
    [Where N is below GROUPS: "Hand-over: this group may commit its work and write its receipt with --validate handed-over; the last group validates"]
    [Where the round began with an exception: "Exception: [WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json — pass it as --exception-file beside a FAILING run of an excused check"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
+   [Where dev-start.md § 2 step 9 holds a set: "Admitted paths: [SET]"]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -200,6 +201,8 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
    </delegation_format>
 
 5. **Accept the round.** Accept from **A**, the round's receipt, and **B**, git, never from the return message.
+
+   Before A, take [dev-start.md § Paths ask](dev-start.md#paths-ask).
 
    **Check A.** Read the round's token, then check its receipt against the step 4 record:
 

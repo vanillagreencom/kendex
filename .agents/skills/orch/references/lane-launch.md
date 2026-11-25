@@ -65,12 +65,13 @@ A directed change's run comes back as the item [directed-change.md](directed-cha
 - Under `ORCH_DELIVERY=push-base`, a first launch passes a holder in its review.
 - A `github` item's own pull request is no holder against it.
 - The lane record keeps the set as `touched` and the scope as `in_scope`.
+- A local or hosted lane's opening brief carries the record's set as one `Admitted paths:` line, a JSON array, ahead of the closing lines [lane-directive.md § Brief file](lane-directive.md#brief-file) lists. A `joined` directive carries the holder's widened set the same way, only where the holder already held a set: a holder that opened with no line stays unbounded. A `read_only` lane, and a record with no path, take no line. Each dev round the lane delegates carries the set ([dev-start.md § 2](../workflows/dev-start.md#2-delegate)).
 
-A running lane that asks for a path outside its admitted set meets the same judge.
+A running lane that asks for a path outside its admitted set meets the same judge. One ask lists every path a round needs.
 
-1. Write an `admit-paths` request, `{"item": "[ITEM_KEY]", "paths": ["[PATH]"]}`, with the harness file tool, and run it.
+1. Write an `admit-paths` request, `{"item": "[ITEM_KEY]", "paths": ["[PATH]"]}`, with every asked path, with the harness file tool, and run it.
 2. The reply's `result.touched` is the widened set, or its `refusal.key` names the refusal.
-3. Answer the lane's ask with that result.
+3. Answer the lane's ask with that result: the whole widened set as a JSON array, or the refusal.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime admit --fleet --request [REQUEST_FILE]

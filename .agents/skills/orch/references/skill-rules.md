@@ -340,7 +340,7 @@ Several deliverables ride one session only in these ways:
 
 - An in-PR bundle root, whose live read reports `in_pr_bundle`, delegated with its children.
 - A leaf issue with an internal checklist.
-- A [joined launch](lane-directive.md#a-joined-launch). The holding lane receives a directive opening `joined item=[ITEM] holder=[HOLDER]`, followed by the item's brief, and takes the item into its next dev round.
+- A [joined launch](lane-directive.md#a-joined-launch). The holding lane receives a directive opening `joined item=[ITEM] holder=[HOLDER]`, followed by its widened `Admitted paths:` line and the item's brief, and takes the item into its next dev round.
 
 Run one composite task per sub-issue.
 
