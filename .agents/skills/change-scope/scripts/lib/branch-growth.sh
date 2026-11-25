@@ -6,6 +6,8 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
+BRANCH_GROWTH_BASE_REV=""
+BRANCH_GROWTH_HEAD_REV=""
 # Reads the Expected delta estimate for orch-runtime tier. A missing header is
 # permitted, and a stated zero counts as zero; a header with malformed or no
 # text returns 1 with no numeric result and leaves the text in
@@ -79,7 +81,14 @@ branch_size_numstat() {
     return 1
   fi
   BRANCH_GROWTH_BASE_REF="$base_ref"
-  measured_numstat="$(git -C "$worktree" -c core.quotePath=false diff --numstat --no-ext-diff --find-renames "$base_ref"..."$commit" --)" \
+  # Use the documented left endpoint of a three-dot diff so the ownership
+  # reads below see exactly the same trees, even if a ref moves afterward.
+  BRANCH_GROWTH_HEAD_REV="$(git -C "$worktree" rev-parse --verify --end-of-options "${commit}^{commit}")" \
+    || branch_growth_fail "head '$commit' does not resolve to a commit in '$worktree'" || return 1
+  BRANCH_GROWTH_BASE_REV="$(git -C "$worktree" merge-base "$base_ref" "$BRANCH_GROWTH_HEAD_REV")" \
+    || branch_growth_fail "git could not find a merge base for '$base_ref' and '$commit' in '$worktree'" || return 1
+  measured_numstat="$(git -C "$worktree" -c core.quotePath=false diff --numstat --no-ext-diff --find-renames \
+    "$BRANCH_GROWTH_BASE_REV" "$BRANCH_GROWTH_HEAD_REV" --)" \
     || branch_growth_fail "git could not compare '$base_ref' with '$commit' in '$worktree'" || return 1
   printf -v "$out_name" '%s' "$measured_numstat"
 }
@@ -135,7 +144,10 @@ branch_growth_render_roots() {
 # below.
 branch_baseline_lines() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
-  branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1
+  if ! branch_size_classified "$worktree" "$base_resolver" "$commit" ""; then
+    printf '%s\n' "$BRANCH_GROWTH_ERROR" >&2
+    return 1
+  fi
   measured="$BRANCH_SIZE_BASELINE"
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
@@ -169,16 +181,113 @@ BRANCH_GROWTH_AWK_PATHS='
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
+BRANCH_SIZE_PAIRED_LOCK=""
+BRANCH_SIZE_PAIRED_LOCK_FILES=""
 # Every changed path the test rule names, by itself or past a render root,
 # one per line, from every numstat row, a binary file's included. A paired
 # render mirror's lines count as mirror lines, listed or not; every other row
 # counts as test lines exactly when its path is listed. Each rename end is
 # listed on its own, as a reader without rename detection names each apart.
 BRANCH_SIZE_TEST_FILES=""
-# Every counted row's additions plus deletions, render mirrors left out, for
-# the implement receipt. This shares CI's render classification.
+# Every counted row's additions plus deletions, render mirrors and paired
+# dependency locks left out, for the implement receipt.
 BRANCH_SIZE_BASELINE=""
-# Split added lines into production, test and mandated render mirror lines
+branch_growth_cargo_pairs() { # REPO BASE HEAD LOCK_NAME MANIFEST_NAME
+  python3 -I -c '
+import functools
+import posixpath
+import re
+import subprocess
+import sys
+import tomllib
+
+repo, base, head, lock_name, manifest_name = sys.argv[1:]
+
+def git(*args):
+    return subprocess.check_output(["git", "-C", repo, *args])
+
+def plain_path(path):
+    return isinstance(path, str) and all(
+        part not in (".", "..") and re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+        for part in path.split("/")
+    )
+
+@functools.lru_cache(maxsize=None)
+def manifest(object_id):
+    try:
+        # Bound the bytes from an untrusted branch before parsing them.
+        if int(git("cat-file", "-s", object_id)) <= 1048576:
+            return tomllib.loads(git("cat-file", "blob", object_id).decode())
+    except (subprocess.CalledProcessError, ValueError, RecursionError):
+        pass
+    return {}
+
+def regular(tree, path):
+    return tree.get(path, ("", ""))[0] in ("100644", "100755")
+
+def package(doc):
+    pkg = doc.get("package")
+    return isinstance(pkg, dict) and isinstance(pkg.get("name"), str) and pkg["name"] and "workspace" not in pkg
+
+def owning_lock(tree, path):
+    if not regular(tree, path):
+        return None
+    member_dir = posixpath.dirname(path)
+    doc = manifest(tree[path][1])
+    root_dir, root_path = member_dir, path
+    if "workspace" not in doc:
+        if not package(doc) or posixpath.join(member_dir, lock_name) in tree:
+            return None
+        while root_dir:
+            root_dir = posixpath.dirname(root_dir)
+            root_path = posixpath.join(root_dir, manifest_name)
+            if root_path in tree or posixpath.join(root_dir, lock_name) in tree:
+                break
+    lock = posixpath.join(root_dir, lock_name)
+    if lock not in changed or not regular(tree, lock) or not regular(tree, root_path):
+        return None
+    root = manifest(tree[root_path][1])
+    workspace = root.get("workspace")
+    if not isinstance(workspace, dict) or workspace.get("exclude", []) != []:
+        return None
+    if "package" in root and not package(root):
+        return None
+    members = workspace.get("members", [])
+    if not isinstance(members, list) or not all(
+        plain_path(member) and regular(tree, posixpath.join(root_dir, member, manifest_name))
+        for member in members
+    ):
+        return None
+    if root_path == path:
+        return lock if members or package(root) else None
+    return lock if posixpath.relpath(member_dir, root_dir or ".") in members else None
+
+changed = {
+    path.decode(errors="surrogateescape")
+    for path in git("diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", base, head, "--").split(b"\0")
+    if path
+}
+# A literal arrow in a changed filename is ambiguous in textual numstat.
+if any(" => " in path for path in changed):
+    sys.exit(0)
+for side, revision in ((1, base), (2, head)):
+    tree = {}
+    for record in git("ls-tree", "-rz", "--full-tree", revision).split(b"\0"):
+        if not record:
+            continue
+        metadata, raw_path = record.split(b"\t", 1)
+        path = raw_path.decode(errors="surrogateescape")
+        if posixpath.basename(path) in (lock_name, manifest_name):
+            mode, _, object_id = metadata.decode().split()
+            tree[path] = (mode, object_id)
+    locks = {owning_lock(tree, path) for path in changed
+             if posixpath.basename(path) == manifest_name and plain_path(path)}
+    for lock in sorted(locks - {None}):
+        print(f"{side}\t{lock}")
+' "$@"
+}
+
+# Split added lines into production, test, render mirrors and paired locks
 # for CI classification. The receipt also reads additions plus deletions.
 #
 # The render-mirror roots come from branch_growth_render_roots, not from an
@@ -213,9 +322,30 @@ BRANCH_SIZE_BASELINE=""
 # by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
   local worktree="$1" base_resolver="$2" commit="$3" test_paths="$4" base_override="${5:-}"
-  local numstat measured
+  local numstat measured lock_pairs kind lock_name manifest_name extra members lock_members=""
+  local conf="$BRANCH_GROWTH_LIB_DIR/../../references/narrow-change.conf"
   branch_growth_render_roots "$worktree" || return 1
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat "$base_override" || return 1
+  lock_pairs="$(sed -n '/^lock-pair /p' "$conf" 2>/dev/null)" \
+    || branch_growth_fail "lock-pair list unreadable: $conf" || return 1
+  # The exact names and ownership are checked below. This prefilter keeps
+  # tree reads off ranges with no possible lock and manifest change.
+  while IFS=' ' read -r kind lock_name manifest_name extra; do
+    [ -n "$kind" ] || continue
+    if [ -z "$lock_name" ] || [ -z "$manifest_name" ] || [ -n "$extra" ]; then
+      branch_growth_fail "malformed lock-pair in $conf"
+      return 1
+    fi
+    [ "$manifest_name" = Cargo.toml ] || continue
+    case "$numstat" in *"$lock_name"*) ;; *) continue ;; esac
+    case "$numstat" in *"$manifest_name"*) ;; *) continue ;; esac
+    # Membership is optional proof. An unavailable reader or tree leaves
+    # every affected lock in the ordinary measurement.
+    if members="$(branch_growth_cargo_pairs "$worktree" "$BRANCH_GROWTH_BASE_REV" "$BRANCH_GROWTH_HEAD_REV" \
+      "$lock_name" "$manifest_name" 2>/dev/null)" && [ -n "$members" ]; then
+      lock_members="${lock_members:+$lock_members$'\n'}$members"
+    fi
+  done <<<"$lock_pairs"
   if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
     awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" "$BRANCH_GROWTH_AWK_PATHS"'
     # One end of a numstat path, 1 the path before a rename and 2 after it.
@@ -269,15 +399,19 @@ branch_size_classified() {
       nroots = split(roots, root, " ")
       npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
       for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
+      read_pairs = 1
     }
+    /^\tNUMSTAT$/ { read_pairs = 0; next }
+    read_pairs { if (NF > 0) paired[$1, $2] = 1; next }
     NF > 0 {
       list_if_test(rename_end($3, 1))
       if (index($3, " => ")) list_if_test(rename_end($3, 2))
     }
     NF == 0 || ($1 == "-" && $2 == "-") { next }
-    $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = 1; next }
+    $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = "unsupported git numstat additions/deletions"; next }
     {
       n += 1
+      before[n] = rename_end($3, 1)
       path[n] = rename_end($3, 2)
       lines[n] = $1
       changed[n] = $1 + $2
@@ -285,19 +419,37 @@ branch_size_classified() {
       if (mirror_rest[n] == "") source_stem[stem_path(path[n])] = 1
     }
     END {
-      if (failed) exit 2
+      if (failed) { print failed; exit 2 }
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
+        old_paired = ((1 SUBSEP before[i]) in paired)
+        head_paired = ((2 SUBSEP path[i]) in paired)
+        # Require a current owner for a surviving path. A rename must pair
+        # on both sides to set its lines aside. A deletion counts in full.
+        if (before[i] == path[i]) {
+          old_paired = head_paired
+        } else if (old_paired) {
+          lock_files = lock_files before[i] "\n"
+        }
+        if (head_paired) lock_files = lock_files path[i] "\n"
+        if (old_paired && head_paired) {
+          paired_lock += lines[i]
+          continue
+        }
         baseline += changed[i]
         if (path[i] in listed) tests += lines[i]; else production += lines[i]
       }
-      printf "%d %d %d %d%s", production + 0, tests + 0, mirror + 0, baseline + 0, test_files
+      printf "%d %d %d %d %d%s\n\n%s", production + 0, tests + 0, mirror + 0, baseline + 0, paired_lock + 0, test_files, lock_files
     }
-  ' <<<"$numstat")"; then
-    branch_growth_fail "git numstat returned an unsupported additions/deletions shape"
+  ' <<<"$lock_members"$'\n\tNUMSTAT\n'"$numstat")"; then
+    branch_growth_fail "${measured:-awk could not measure branch growth}"
     return 1
   fi
-  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR BRANCH_SIZE_BASELINE <<<"$measured"
+  BRANCH_SIZE_PAIRED_LOCK_FILES=""
+  case "$measured" in
+    *$'\n\n'*) BRANCH_SIZE_PAIRED_LOCK_FILES="${measured#*$'\n\n'}"; measured="${measured%%$'\n\n'*}" ;;
+  esac
+  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR BRANCH_SIZE_BASELINE BRANCH_SIZE_PAIRED_LOCK <<<"$measured"
   BRANCH_SIZE_TEST_FILES=""
   case "$measured" in
     *$'\n'*) BRANCH_SIZE_TEST_FILES="${measured#*$'\n'}" ;;

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Inputs: skills/iced-rs/examples/gallery/Cargo.toml
 # What change-scope reads this package's narrow-change list against: the files
 # a package's risk sits in and not the package whole, the render inventory only
 # where its change is more than the names the same diff adds or deletes, an
@@ -21,16 +22,27 @@ SOURCE=skills/orch/tests/added.test.sh
 HASHED_A="sha256:$(printf 'a%.0s' $(seq 64))"
 HASHED_B="sha256:$(printf 'b%.0s' $(seq 64))"
 
-# The base holds a render and its source, a product file, and an inventory
-# with one templated entry, so a row can move a name, a hash, or neither.
+# The base holds a render and its source, a product file, a Cargo workspace
+# manifest and lock, and an inventory with one templated entry.
 KEPT_RENDER=.agents/skills/orch/tests/kept.test.sh
 repo="$(new_repo narrow-change)"
 jq -c --arg kept "$KEPT_RENDER" --arg hash "$HASHED_A" \
   '. + [$kept, {path: "CLAUDE.md.tmpl", template: "claude", templateHash: $hash}]' \
   "$repo/$INVENTORY" >"$SANDBOX/base-inventory"
 mv "$SANDBOX/base-inventory" "$repo/$INVENTORY"
+GALLERY=skills/iced-rs/examples/gallery/Cargo.toml
+mkdir -p "$repo/pkg" "$repo/nested" "$repo/isolated" "$repo/move/old" "$repo/$(dirname "$GALLERY")"
+printf '[workspace]\nmembers = ["pkg"]\nresolver = "3"\n' >"$repo/Cargo.toml"
+for package_dir in pkg nested isolated move/old; do
+  manifest="$repo/$package_dir/Cargo.toml"
+  if [ "$package_dir" != pkg ]; then printf '[workspace]\n' >"$manifest"; fi
+  printf '[package]\nname = "fixture"\nversion = "0.1.0"\n\n[dependencies]\n' >>"$manifest"
+done
+# The bundled gallery has no committed upstream workspace root here.
+cp -- "$TEST_DIR/../../iced-rs/examples/gallery/Cargo.toml" "$repo/$GALLERY"
 commit_paths "$repo" baseline seed.txt runtime/kept.ts \
-  "$KEPT_RENDER" skills/orch/tests/kept.test.sh
+  "$KEPT_RENDER" skills/orch/tests/kept.test.sh Cargo.lock \
+  nested/Cargo.lock other/Cargo.lock move/old/Cargo.lock
 base="$(git -C "$repo" rev-parse HEAD)"
 
 # ROW_BASE, when set, is the base commit a row's diff is made on and judged
@@ -48,6 +60,14 @@ write_lines() { # PATH COUNT
   while [ "$n" -lt "$2" ]; do
     n=$((n + 1))
     printf 'line %d\n' "$n" >>"$repo/$1"
+  done
+}
+
+add_dependencies() { # MANIFEST COUNT
+  local n=0
+  while [ "$n" -lt "$2" ]; do
+    n=$((n + 1))
+    printf 'fixture_dep_%d = "1"\n' "$n" >>"$repo/$1"
   done
 }
 
@@ -94,6 +114,29 @@ cargo_roster() { # base|target-removed
 # The row's edit, by name: each is the diff a real change of that kind makes.
 apply_edit() { # EDIT
   case "$1" in
+    move-workspace)
+      git -C "$repo" mv -- move/old move/new
+      write_lines move/new/Cargo.lock 1
+      add_dependencies move/new/Cargo.toml 1 ;;
+    move-isolated-lock)
+      git -C "$repo" mv -- other/Cargo.lock isolated/Cargo.lock
+      write_lines isolated/Cargo.lock 1
+      add_dependencies isolated/Cargo.toml 1 ;;
+    move-member-lock)
+      git -C "$repo" mv -- Cargo.lock pkg/Cargo.lock
+      write_lines pkg/Cargo.lock 1
+      add_dependencies pkg/Cargo.toml 1 ;;
+    gallery-version)
+      sed 's/^blurhash = "0.2.3"$/blurhash = "0.2.4"/' "$repo/$GALLERY" >"$SANDBOX/gallery.toml"
+      mv "$SANDBOX/gallery.toml" "$repo/$GALLERY" ;;
+    malformed-member)
+      printf 'fixture_dep = [\n' >>"$repo/pkg/Cargo.toml" ;;
+    conflicted-member)
+      sed '/^\[package\]$/a\
+workspace = "../elsewhere"
+' "$repo/pkg/Cargo.toml" >"$SANDBOX/member.toml"
+      mv "$SANDBOX/member.toml" "$repo/pkg/Cargo.toml" ;;
+    */Cargo.toml=*) add_dependencies "${1%=*}" "${1#*=}" ;;
     test-added)
       write_lines "$SOURCE" 30
       write_lines "$RENDER" 30
@@ -140,6 +183,54 @@ run_row() { # CLASSIFIER EDITS...
   env ${ROW_ENV:+"$ROW_ENV"} "$classifier" --repo "$repo" --event pull_request \
     --base "${ROW_BASE:-$base}" --head HEAD 2>&1 >/dev/null
 }
+
+# A Cargo update pairs a lock with a changed manifest it is proved to own.
+# The final class also proves the paired lock left the subsystem set.
+toml_reader=false
+if python3 -I -c 'import tomllib' >/dev/null 2>&1; then toml_reader=true; fi
+while IFS='|' read -r label expected sizes edits without_reader; do
+  if [ "$toml_reader" = false ] && [ -n "$without_reader" ]; then
+    expected="$without_reader"
+    sizes=""
+  fi
+  # shellcheck disable=SC2086
+  row_err="$(run_row "$CHANGE_SCOPE" $edits)"
+  assert_eq "$label" "$expected" "$(sed -n 's/^class: //p' <<<"$row_err")"
+  assert_eq "$label measurement" "$sizes" "$(sed -n 's/^size: //p' <<<"$row_err")"
+done <<'LOCK_ROWS'
+paired Cargo update|class=small measured=true cause=production-within-small subsystem=pkg|production=1 paired-lock=117|pkg/Cargo.toml=1 Cargo.lock=117|class=standard measured=true cause=several-subsystems production=118
+standalone Cargo lock|class=small measured=true cause=production-within-small subsystem=Cargo.lock||Cargo.lock=117
+lock beside a different project|class=standard measured=true cause=several-subsystems production=118||pkg/Cargo.toml=1 other/Cargo.lock=117
+root lock beside independently locked manifest|class=standard measured=true cause=several-subsystems production=118||nested/Cargo.toml=1 Cargo.lock=117
+root lock beside an independent manifest with no lock|class=standard measured=true cause=several-subsystems production=118||isolated/Cargo.toml=1 Cargo.lock=117
+root lock beside the bundled Iced gallery|class=standard measured=true cause=several-subsystems production=118||gallery-version Cargo.lock=117
+root lock beside a malformed member|class=standard measured=true cause=several-subsystems production=118||malformed-member Cargo.lock=117
+root lock beside an overriding member|class=standard measured=true cause=several-subsystems production=118||conflicted-member Cargo.lock=117
+lock renamed with its declared workspace|class=small measured=true cause=production-within-small subsystem=move|production=1 paired-lock=1|move-workspace|class=micro measured=true cause=production-within-micro production=2
+lock renamed from another workspace|class=standard measured=true cause=several-subsystems production=2|production=2 paired-lock=0|move-isolated-lock|class=micro measured=true cause=production-within-micro production=2
+lock renamed without proof of a destination owner|class=small measured=true cause=production-within-small subsystem=pkg|production=2 paired-lock=0|move-member-lock|class=micro measured=true cause=production-within-micro production=2
+paired update past the small ceiling|class=standard measured=true cause=production-past-small production=151|production=151 paired-lock=117|pkg/Cargo.toml=151 Cargo.lock=117|class=standard measured=true cause=several-subsystems production=268
+LOCK_ROWS
+
+layout="$(plant_layout "$SANDBOX/receipt")"
+conf="$layout/change-scope/references/narrow-change.conf"
+rm -- "$conf"
+if baseline_out="$("$BASH" -c '
+  set -euo pipefail
+  . "$1"
+  fixture_base() { printf "main\n"; }
+  branch_baseline_lines "$2" fixture_base HEAD lines
+  printf "%s\n" "$lines"
+' receipt "$layout/change-scope/scripts/lib/branch-growth.sh" "$repo" 2>"$SANDBOX/receipt.stderr")"; then
+  baseline_exit=0
+else
+  baseline_exit=$?
+fi
+assert_eq "receipt baseline refuses an unreadable pairing list" 1 "$baseline_exit"
+assert_eq "receipt baseline leaves stdout empty on refusal" "" "$baseline_out"
+assert_eq "receipt baseline reports the unreadable list on stderr" \
+  "lock-pair list unreadable: $layout/change-scope/scripts/lib/../../references/narrow-change.conf" \
+  "$(cat "$SANDBOX/receipt.stderr")"
 
 # label | expected verdict | edits | environment
 rows=0
