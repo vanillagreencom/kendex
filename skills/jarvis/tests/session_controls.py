@@ -41,7 +41,7 @@ CONTROLS = (
     ("boot", SESSION, 'if boot and record and record.get("boot") == boot:', "if False:",
      "test_app_off_blocks_starts_and_a_repeated_boot_never_relaunches"),
     # A released record is read as a controller's.
-    ("record form", SESSION, 'record.get("v") != 2', 'record.get("v") not in (1, 2)',
+    ("record form", SESSION, 'record.get("v") not in (1, 2)', 'record.get("v") not in (1, 2, 3)',
      "test_a_record_of_another_form_is_unreadable"),
     ("attach line", SESSION, '"attach-session", "-t", "=" + terminal["session"]]',
      '"attach-session", "-t", "=" + terminal["session"] + "-"]', "test_attach_outside_tmux"),
