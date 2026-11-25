@@ -24,9 +24,13 @@
 
 ## Recommendation / Decision Criteria
 
+<!-- For vendor comparisons, fill this section using [Vendor comparisons](../SKILL.md#vendor-comparisons). -->
+
 {{recommendation}}
 
 ## Risks / Unknowns
+
+<!-- For a vendor comparison, which unanswered question, if any, could change the choice? -->
 
 {{risks}}
 
