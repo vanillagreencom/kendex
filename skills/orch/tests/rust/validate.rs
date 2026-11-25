@@ -3279,7 +3279,11 @@ fn an_admitted_entry_directs_targeted_checks_only_when_required_ci_takes_the_cha
             .enumerate()
             .filter(|(_, line)| !field(line, "local-checks").is_empty());
         let advisory = advisory_rows.next().map(|(index, line)| {
-            (index, field(line, "validate-mode"), field(line, "local-checks"))
+            (
+                index,
+                field(line, "validate-mode"),
+                field(line, "local-checks"),
+            )
         });
         let expected = (mode == "ci").then(|| (1, "ci".into(), "targeted-only".into()));
         assert_eq!(advisory, expected, "{world}: {output}");
