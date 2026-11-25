@@ -5070,7 +5070,6 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     assert_eq!(field(&text(&out), "state"), "lost", "{}", text(&out));
     // The same records with the job's error log the runtime's start creates
     // first: its launcher's record names no identity yet, so the run is held.
-    fs::remove_file(dir.join("stop")).unwrap();
     fs::write(dir.join("job.err"), "").unwrap();
     let live = w.entry(&["--live", "--worktree", &wt], &[]);
     assert_eq!(live.status.code(), Some(0), "{}", text(&live));
