@@ -1131,10 +1131,11 @@ cp "$TMP/arm-helper" "$arm_helper"
 # itself, with no pull request and with the landing token alone, where its
 # merge queue holds no entry, and lands where GitHub takes the push. No
 # token, another class, a render that removes a path no emitted path of the
-# root lock covers, an unread lock, other sources, a busy or unread queue
-# and GitHub's refusal keep the pull request route, a removal inside a
-# position the lock still emits lands, and a default branch that moved
-# defers to the next run. A retained head never lands, and a landed run
+# root lock covers, an unread lock, other sources, an unread queue and
+# GitHub's refusal keep the pull request route, a removal inside a position
+# the lock still emits lands, and a busy queue and a default branch that
+# moved defer to the next run with the rolling pull request left as it was.
+# A retained head never lands, and a landed run
 # closes the open rolling pull request only while GitHub still holds it
 # open. SAID is the one refresh-land line the run prints, or none: every
 # precondition that keeps the pull request names itself, once a landing
@@ -1167,11 +1168,16 @@ land_matches() { # OUTCOME CLASS CLOSE SAID
         close) grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" ;;
         *) ! grep -q '^pr close ' "$TMP/state/calls" ;;
       esac ;;
-    base-moved)
-      [ "$main" = "$(cat "$TMP/state/moved-head")" ] && [ "$rolling" = "$land_rolling" ] &&
+    base-moved | queued)
+      [ "$rolling" = "$land_rolling" ] &&
         grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
-        grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
-        ! grep -q '^pr \|^api --method ' "$TMP/state/calls" ;;
+        ! grep -q '^pr \|^api --method ' "$TMP/state/calls" || return 1
+      case "$1" in
+        base-moved)
+          [ "$main" = "$(cat "$TMP/state/moved-head")" ] &&
+            grep -qxF 'git push main token=land-token' "$TMP/state/calls" ;;
+        queued) [ "$main" = "$land_base" ] && ! grep -q '^git push main ' "$TMP/state/calls" ;;
+      esac ;;
     land-check)
       [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
         grep -qxF 'refresh-error=land-check value=unset' <<<"$OUT" &&
@@ -1274,7 +1280,7 @@ for row in \
   'push-refused|render|true|rejected|refused|0|land-token||true|refused value=1' \
   'third-party|render|true||unasked|0|land-token||true|skipped value=sources-uncovered' \
   'sources-unread|render|true||unasked|0|land-token||true|unavailable value=sources-read' \
-  'queue-busy|render|true||pull|2|land-token||true|skipped value=queued' \
+  'queue-busy|render|true||queued|2|land-token||true|skipped value=queued' \
   'unread-queue|render|true||pull|fail|land-token||true|unavailable value=queue-read' \
   'precondition-unanswered|small|true||land-check|0|land-token||true|' \
   'retained|render|true||retained|0|land-token||true|'; do

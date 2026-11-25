@@ -1,0 +1,1 @@
+- A consumer refresh whose proved render meets a busy merge queue no longer opens a pull request. The run prints `refresh-land=skipped value=queued` and `refresh-state=deferred reason=queued`, and a later refresh run that meets an empty queue lands the render with no pull request, CI run or review.

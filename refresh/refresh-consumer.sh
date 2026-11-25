@@ -12,7 +12,8 @@
 # packages from the default catalog at main alone, and that branch's merge
 # queue holds no entry: the run pushes its one commit with that token, and where GitHub's
 # rulesets let the push through, no pull request, merge group or approval
-# follows.
+# follows. Where every other condition holds and the queue holds an entry,
+# the run defers the render to a later run and publishes no pull request.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=landed pr=none class=render head=REVISION, or
 # refresh-state=pushed|merged pr=NUMBER class=CLASS, or
@@ -27,7 +28,8 @@
 # render this run committed that it did not push, or whose push GitHub
 # refused, and a held run's retained head, where the caller set either
 # landing name, also print one landing line ahead of the pull request
-# route's record:
+# route's record, or, for a queue that holds an entry, ahead of
+# refresh-state=deferred reason=queued:
 # refresh-land=refused value=STATUS (GitHub refused the push),
 # refresh-land=unavailable value=token|lock-read|sources-read|queue-read (no
 # landing token reached the run, or the root lock, the project sources or
@@ -710,8 +712,9 @@ refresh_emitted_paths() { # FILE
 # consumer still cites, which the render proof does not read, so it keeps
 # the pull request too; a removal inside a position the lock still emits
 # lands. No token, a held run, a class other than render, such a removal,
-# an unread lock, that coverage, and a merge queue that holds an entry or
-# could not be read keep the pull request route.
+# an unread lock, that coverage, and a merge queue that could not be read
+# keep the pull request route. A merge queue that holds an entry defers
+# the render below instead.
 # Sets land_check to try, to unconfigured where the caller set neither
 # landing name, or to unavailable:CAUSE or skipped:CAUSE for the first
 # precondition the run does not meet. The one reporter below prints every
@@ -763,6 +766,15 @@ case "$land_check" in
   unavailable:?* | skipped:?*) printf 'refresh-land=%s value=%s\n' "${land_check%%:*}" "${land_check#*:}" ;;
   *) printf 'refresh-error=land-check value=%s\n' "${land_check:-unset}" >&2; exit 1 ;;
 esac
+# A proved render owes no pull request, CI run or approval, and a push into
+# a busy queue rebuilds every running group, so it waits for a run that
+# meets an empty queue: the next daily or release-dispatched run renders
+# again and lands. Nothing re-dispatches this run, so a queue busy at every
+# run holds the render until one finds it empty.
+if [ "$land_check" = skipped:queued ]; then
+  printf 'refresh-state=deferred reason=queued\n'
+  exit 0
+fi
 if [ "$land_check" = try ]; then
   kendex_land_push "$ROOT" origin "$head" "$default" "$land_token"
   if [ "$KENDEX_LAND_RESULT" = landed ]; then
