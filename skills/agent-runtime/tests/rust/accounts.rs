@@ -3414,6 +3414,63 @@ fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refus
     assert_eq!(retired["record"]["retire_date"], json!(today));
 }
 
+/// A Codex home whose login is gone keeps its `config.toml` and no
+/// `auth.json`: the listing names it Codex with no credentials, beside the
+/// Claude and Copilot homes it names as before, and a Codex pick naming it
+/// answers that account's state, `excluded` for an excluded one, never
+/// `no-record`.
+#[test]
+fn a_signed_out_codex_home_lists_as_codex_and_a_codex_pick_finds_it() {
+    let mut world = World::new(&[("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "xcodex")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    let home = world.path().join("home");
+    for name in ["xcodex", "scodex"] {
+        let dir = home.join(format!(".{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    }
+    let kcopilot = home.join(".kcopilot");
+    std::fs::create_dir_all(&kcopilot).unwrap();
+    std::fs::write(kcopilot.join("config.json"), "{}").unwrap();
+    let dirs = ["aclaude", "xcodex", "scodex", "kcopilot"]
+        .map(|n| world.dir(n))
+        .join(":");
+    world.env.retain(|(k, _)| k != "AGENT_RUNTIME_ACCOUNT_DIRS");
+    world
+        .env
+        .push(("AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(), dirs));
+    let roster = world.roster();
+    let lines = roster["lines"].as_array().unwrap();
+    let line = |alias: &str| {
+        lines
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|l| l.contains(&format!("config_dir={} ", world.dir(alias))))
+            .unwrap_or_else(|| panic!("no line for {alias}: {lines:?}"))
+            .to_owned()
+    };
+    assert!(line("aclaude").contains(" harness=claude "), "{lines:?}");
+    assert!(line("kcopilot").contains(" harness=copilot "), "{lines:?}");
+    for alias in ["xcodex", "scodex"] {
+        assert!(
+            line(alias).contains(" harness=codex ")
+                && line(alias).contains(" status=no_credentials "),
+            "a signed-out Codex home lists as Codex: {lines:?}"
+        );
+    }
+    let codex = || PickRequest::new(Harness::Codex);
+    let excluded = world.pick(&named(&world.dir("xcodex"), codex()));
+    assert_eq!(excluded["answer"], json!("excluded"), "{excluded}");
+    let signed_out = world.pick(&named(&world.dir("scodex"), codex()));
+    assert_ne!(signed_out["answer"], json!("no-record"), "{signed_out}");
+    assert_eq!(
+        signed_out["record"]["status"],
+        json!("no_credentials"),
+        "{signed_out}"
+    );
+}
+
 /// One Codex row's credit facts as the provider line states them.
 fn codex_credit(balance: u64) -> String {
     format!(
