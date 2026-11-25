@@ -59,12 +59,17 @@ if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
       kendex_hook_scope=global
       kendex_hook_project=${kendex_hook_pi%/.pi}
       case $kendex_hook_project in '' | [A-Za-z]:) kendex_hook_project=$kendex_hook_project/ ;; esac
+      # The carrier's project: config.ts::walkProjectRoot from its cwd.
       kendex_hook_here=$(pwd -P 2>/dev/null) || kendex_hook_here=''
       while [ -n "$kendex_hook_here" ]; do
-        if [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
-          kendex_hook_scope=both
+        [ ! -f "$kendex_hook_here/.kendex-lock.json" ] || break
+        if [ "$kendex_hook_here" -ef "$kendex_hook_home" ]; then
+          kendex_hook_here=''
           break
         fi
+        for kendex_hook_marker in .claude .codex .opencode .cursor .pi .agents .gemini; do
+          [ ! -d "$kendex_hook_here/$kendex_hook_marker" ] || break 2
+        done
         case $kendex_hook_here in
           */?*)
             kendex_hook_here=${kendex_hook_here%/*}
@@ -73,6 +78,9 @@ if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
           *) kendex_hook_here='' ;;
         esac
       done
+      if [ -n "$kendex_hook_here" ] && [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
+        kendex_hook_scope=both
+      fi
     else
       kendex_hook_tail=/.pi$kendex_hook_tail
     fi
@@ -91,7 +99,7 @@ if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
   esac
   unset kendex_hook_at kendex_hook_tail kendex_hook_scope kendex_hook_win kendex_hook_home \
     kendex_hook_rest kendex_hook_lead kendex_hook_global kendex_hook_part kendex_hook_pi \
-    kendex_hook_project kendex_hook_here kendex_hook_root
+    kendex_hook_project kendex_hook_here kendex_hook_marker kendex_hook_root
 fi
 
 set -euo pipefail

@@ -7,6 +7,9 @@ Catalog hooks, one bash script per hook, each with its suite under `tests/<name>
   - An optional `harnesses: [..]` restricting delivery. Antigravity is reached only when named there, because its payload is `toolCall.args`, not `tool_input`.
   - An optional `requires: [..]` naming companion hooks, and `requires-on: [..]` restricting those hook requirements to named harnesses.
   - An optional `requires-skills: [..]` naming skills this hook needs.
+  - An optional `reads-registration: true` for a hook that finds its install through the Pi carrier's `KENDEX_HOOK_SCOPE` and `KENDEX_HOOK_ROOT`.
+- A `safety` line opening `Advisory reader.` declares an advisory reader: a hook that reports what it cannot read at exit 0.
+- A Pi render acts on both declarations where a pi-hooks carrier older than 0.19.3 cannot say which registration started it ([pi.md](../docs/adapters/pi.md#hooks)).
 - A hook names under `requires` each companion it runs beside itself, and under `requires-skills` each skill it needs, from its catalog in the same scope. `crates/core/src/engine/deps.rs` installs both through the dependency walk.
   - Without `requires-on`, a companion is required on every harness the requiring hook runs on. The companion's `harnesses` line narrows that.
   - A required dependency kept removed or switched off withholds the hook on the tools that need it, with a finding naming both.
@@ -45,14 +48,5 @@ Catalog hooks, one bash script per hook, each with its suite under `tests/<name>
   - So what a suite would have read out of prose (which arm `session-drift-check`'s exit code chose) is emitted as a value and pinned as one.
   - Relay producer reports unchanged, except for the lane count in `session-drift-check.sh::report`.
 - The one thing a hook cannot put under its keyed line is a diagnostic from shell startup, before the script runs. Everything the hook itself runs is captured at the site and replayed.
-- Two hooks use fixed keys.
-  - `block-bare-cd`:
-    - Payload or tool errors warn once at exit 0.
-    - `missing-tools` lists jq,cat,grep,sed in that order.
-    - `refused=bare-cd` exits 2.
-    - No bare cd exits 0 silently.
-  - `pre-commit-check`:
-    - `bypass=<matched word, verbatim>` exits 2.
-    - `missing-tools=<comma list, order jq,cat,grep>`, `payload=invalid-json`, `payload=read-failed`, `command=unresolved`, `unarmed=<directory judged>` and `judged=<directory judged>` exit 0.
-    - An unarmed notice adds `setup=consent` or `setup=<main checkout path>`.
+- Before changing what `block-bare-cd` or `pre-commit-check` writes: [fixed-keys.md](fixed-keys.md), the fixed keys each holds.
 - `tests/*` renders nowhere.

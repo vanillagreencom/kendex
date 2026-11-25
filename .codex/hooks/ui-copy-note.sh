@@ -9,6 +9,7 @@
 # timeout: 10
 # harnesses: [claude, codex, pi]
 # requires-skills: [code-quality, decider]
+# reads-registration: true
 # ---
 
 set -euo pipefail

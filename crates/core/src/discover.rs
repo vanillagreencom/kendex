@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{CoreError, Result};
 
-const MARKER_DIRS: [&str; 7] = [
+pub(crate) const MARKER_DIRS: [&str; 7] = [
     ".claude",
     ".codex",
     ".opencode",

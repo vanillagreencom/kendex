@@ -1,13 +1,14 @@
 //! A project-only refresh under an enabled global carrier keeps the command
 //! check and the mailbox hold tied to the project install, whether the
 //! carrier names the registration (pi-hooks 0.19.3 and later) or not
-//! (0.19.2 and earlier), and a file that is both scopes' install is refused
-//! under a carrier that cannot say which registration started it.
+//! (0.19.2 and earlier). Where a file is both scopes' install, a carrier
+//! that cannot say which registration started it runs the shipped guards,
+//! and refuses only a guard that declares it reads the registration.
 //!
 //! The guards run as the repository ships them, over two sets of the skills
 //! they read: the shipped readers, which take the install from the path the
 //! guard hands them, and readers that demand the project registration, the
-//! readers KEN-5647 moves the guards onto.
+//! readers KEN-5647 moves the guards onto, with the declaration it adds.
 
 use super::{World, carrier_runner, register_carrier, scope, source_path, world};
 use crate::test_util;
@@ -57,9 +58,11 @@ fn executable(path: &Path, text: &str) {
 }
 
 /// The catalog's three guards, as the repository ships them, or with a body
-/// that passes everything, the hooks a refresh replaces.
+/// that passes everything, the hooks a refresh replaces. Under
+/// `Readers::Registration` the two that read an install declare that they
+/// read it from the registration.
 #[allow(clippy::unwrap_used)]
-fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool) {
+fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool, readers: Readers) {
     for guard in GUARDS {
         let text = fs::read_to_string(repo.join(format!("hooks/{guard}.sh"))).unwrap();
         let (header, body) = text.split_once("\n# ---\n\n").unwrap();
@@ -72,6 +75,12 @@ fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool) {
                 .join("\n")
         } else {
             header.to_owned()
+        };
+        let header = match readers {
+            Readers::Registration if guard != "lane-mail-halt" => {
+                format!("{header}\n# reads-registration: true")
+            }
+            _ => header,
         };
         let body = if refreshed { body } else { "exit 0\n" };
         fs::write(
@@ -153,8 +162,9 @@ fn refresh_project(
     catalog: &Path,
     repo: &Path,
     refreshed: bool,
+    readers: Readers,
 ) {
-    catalog_guards(catalog, repo, refreshed);
+    catalog_guards(catalog, repo, refreshed, readers);
     let report = plan_apply(env, &scope(world), &PlanOptions::current()).unwrap();
     kendex_core::apply::execute(env, &report.plan).unwrap();
 }
@@ -232,9 +242,9 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
         "[env]\nCOMMAND_SAFETY_DENY_PATTERN = '^echo configured-policy$'\n",
     )
     .unwrap();
-    refresh_project(&w, &env, &catalog, &repo, false);
+    refresh_project(&w, &env, &catalog, &repo, false, readers);
     let settings = fs::read(global.join("settings.json")).unwrap();
-    refresh_project(&w, &env, &catalog, &repo, true);
+    refresh_project(&w, &env, &catalog, &repo, true, readers);
     assert_eq!(
         fs::read(global.join("settings.json")).unwrap(),
         settings,
@@ -268,7 +278,7 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
             assert_eq!(metadata, guarded, "{case}, carrier metadata");
             assert_eq!(legacy, guarded, "{case}, pi-hooks 0.19.2 spawn");
         }
-        (Layout::Overlap | Layout::Retargeted, _) => {
+        (Layout::Overlap | Layout::Retargeted, readers) => {
             // The carrier's registration reaches the mailbox hold. The
             // command check on main still classifies this layout from its own
             // path, a global root, and reads no project policy; KEN-5647 moves
@@ -281,6 +291,14 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
                     .any(|line| overlap_refusal(line).is_some()),
                 "{case}, carrier metadata: {metadata:?}"
             );
+            if let Readers::Shipped = readers {
+                // The shipped guards find their install from their own path,
+                // which both registrations share, so the old carrier runs
+                // them as the new one does: calls pass, and the hold holds.
+                assert_eq!(legacy[..2], [None, None], "{case}, pi-hooks 0.19.2 spawn");
+                assert_eq!(legacy, metadata, "{case}, pi-hooks 0.19.2 spawn");
+                return;
+            }
             for line in &legacy {
                 assert!(
                     matches!(line.as_deref().and_then(overlap_refusal), Some((hook, "carrier=pi-hooks>=0.19.3")) if GUARDS.contains(&hook)),

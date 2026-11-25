@@ -54,13 +54,13 @@ The carrier's rules:
   - A path ending in `/.pi/kendex/hooks/<name>.sh` is the project's, its root the path less that tail.
   - Any other path ending in `/kendex/hooks/<name>.sh` is the global root's, its root the path less that tail.
   - A project path is the global root's spawn too where the global root the carrier resolves is that `.pi`, spelled the same. The stamp resolves it as `package-config.ts::userDir` does: a trimmed `PI_CODING_AGENT_DIR` with a leading `~` expanded, used only where it is root-anchored, else `~/.pi/agent`.
-  - In that layout one registry file is both scopes'. The working directory decides between them, since the carrier's project is the directory or one of its ancestors. A working directory outside the project leaves the global registration.
-  - Inside the project, the hook cannot tell the two registrations apart.
+  - In that layout the project registry is the same file only where the carrier's project is the directory above that `.pi`. The stamp finds the carrier's project from its working directory with the walk the carrier uses (`config.ts::walkProjectRoot`, the same in pi-hooks 0.19.2). Any other project, or none, leaves the global registration.
+  - Where the carrier's project is that directory, the hook cannot tell the two registrations apart.
   - A carrier that sets either variable keeps its own values. A path that does not end in the tail, or leaves no absolute root, gets neither variable.
-- A hook that cannot tell the registrations apart acts on what its header declares:
-  - A hook with no `requires-skills` runs with neither variable, since both registrations run it alike.
-  - A hook with `requires-skills` whose `safety` line opens `Advisory reader.` prints `kendex-hook-scope-overlap: hook=<name> carrier=pi-hooks>=0.19.3` on stdout, skips its body and exits 0, so the call goes ahead.
-  - Any other hook with `requires-skills` refuses with exit 2 under the same key.
+- A hook that cannot tell the registrations apart acts on what its header declares (`hooks/AGENTS.md`):
+  - A hook with no `reads-registration: true` runs with neither variable. It finds its install from its own path, which both registrations share.
+  - A hook with `reads-registration: true` whose `safety` line opens `Advisory reader.` prints `kendex-hook-scope-overlap: hook=<name> carrier=pi-hooks>=0.19.3` on stdout, skips its body and exits 0, so the call goes ahead.
+  - Any other hook with `reads-registration: true` exits 2 under the same key.
 - The carrier resolves the project with `discover.rs::project_root_from`, not the adapter's two markers: a walk up that stops at home. The lock file wins, home's own included, else the nearest ancestor carrying one of the seven `MARKER_DIRS`; home itself is never a project otherwise, and nothing above home answers for a start below it. A start outside home walks to the filesystem root. That is what kendex asks before it renders, so the carrier reads where the renderer wrote.
 - The project's registry is read only where Pi reports the workspace trusted; Pi saves that decision for the folder or any parent. Untrusted or outside any project, the project scope contributes nothing and the global root still answers.
 

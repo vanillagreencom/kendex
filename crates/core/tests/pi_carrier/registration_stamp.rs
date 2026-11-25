@@ -14,15 +14,19 @@ use std::process::Command;
 const REPORT: &str =
     "printf '%s|%s\\n' \"${KENDEX_HOOK_SCOPE-unset}\" \"${KENDEX_HOOK_ROOT-unset}\"\n";
 
-/// The three hooks the case renders, by what they read of their install:
-/// none, an advisory reader of a skill, and a gate on a skill.
+/// The three hooks the case renders, all needing a skill, by how they find
+/// their install: from their own path, from the registration as an
+/// advisory reader, and from the registration as a gate.
 const HOOKS: [(&str, &str); 3] = [
-    ("guard", ""),
+    ("guard", "# requires-skills: [s]\n"),
     (
         "note",
-        "# safety: Advisory reader. Reads the skill.\n# requires-skills: [s]\n",
+        "# safety: Advisory reader. Reads the skill.\n# requires-skills: [s]\n# reads-registration: true\n",
     ),
-    ("gate", "# requires-skills: [s]\n"),
+    (
+        "gate",
+        "# requires-skills: [s]\n# reads-registration: true\n",
+    ),
 ];
 
 /// Each hook's project render, through the ordinary plan of both scopes.
@@ -128,12 +132,23 @@ fn a_rendered_pi_hook_names_its_install_to_a_carrier_that_names_none() {
     let scripts = renders(&w);
     let script = |hook: &str| &scripts[HOOKS.iter().position(|(name, _)| *name == hook).unwrap()];
     let dir = w.home.join("spawned");
-    for sub in ["c/sub", "d/g"] {
+    for sub in [
+        "c/sub",
+        "c/packages/x/.claude",
+        "c/locked",
+        "d/g",
+        "h/repo/.claude",
+        "h/plain",
+    ] {
         fs::create_dir_all(dir.join(sub)).unwrap();
     }
+    fs::write(dir.join("c/locked/.kendex-lock.json"), "{}").unwrap();
     let at = |rest: &str| format!("{}/{rest}", dir.display());
     let home = dir.display().to_string();
     let (c, c_sub, d) = (dir.join("c"), dir.join("c/sub"), dir.join("d"));
+    let (nested, locked) = (dir.join("c/packages/x"), dir.join("c/locked"));
+    let (h, h_repo, h_plain) = (at("h"), dir.join("h/repo"), dir.join("h/plain"));
+    let h_pi = at("h/.pi");
     let checkout = at("c/.pi");
     let elsewhere = at("d/g");
     let installed = w.project.join(".pi/kendex/hooks/guard.sh");
@@ -169,6 +184,22 @@ fn a_rendered_pi_hook_names_its_install_to_a_carrier_that_names_none() {
         ("guard", at("c/.pi/kendex/hooks/guard.sh"), &c_sub, vec![("PI_CODING_AGENT_DIR", &checkout)], ran("unset|unset".to_owned())),
         ("note", at("c/.pi/kendex/hooks/note.sh"), &c_sub, vec![("PI_CODING_AGENT_DIR", &checkout)], Outcome::Notice(overlap("note"))),
         ("gate", at("c/.pi/kendex/hooks/gate.sh"), &c, vec![("PI_CODING_AGENT_DIR", &checkout)], Outcome::Refused(overlap("gate"))),
+        // Inside it, the carrier's project is the nearest directory holding
+        // a marker directory or the lock, so a nested one is another project.
+        ("gate", at("c/.pi/kendex/hooks/gate.sh"), &nested, vec![("PI_CODING_AGENT_DIR", &checkout)], ran(format!("global|{checkout}"))),
+        ("gate", at("c/.pi/kendex/hooks/gate.sh"), &locked, vec![("PI_CODING_AGENT_DIR", &checkout)], ran(format!("global|{checkout}"))),
+        // Pi pointed at home's `.pi`: home is never the carrier's project
+        // without the lock, so a session in a project under home, or in no
+        // project, runs the global registration.
+        ("gate", at("h/.pi/kendex/hooks/gate.sh"), &h_repo, vec![("HOME", &h), ("PI_CODING_AGENT_DIR", "~/.pi")], ran(format!("global|{h_pi}"))),
+        ("gate", at("h/.pi/kendex/hooks/gate.sh"), &h_plain, vec![("HOME", &h), ("PI_CODING_AGENT_DIR", "~/.pi")], ran(format!("global|{h_pi}"))),
+        // A Windows carrier's global root, from Git Bash: a drive or UNC
+        // lead, `~` from USERPROFILE. The overlap test there compares a
+        // drive spelling with `-ef`, which Linux bash cannot resolve, so no
+        // row here reaches that overlap.
+        ("gate", r"C:\c\.pi\kendex\hooks\gate.sh".to_owned(), &dir, vec![("OSTYPE", "msys"), ("PI_CODING_AGENT_DIR", r"C:\c\.pi")], ran(r"global|C:\c\.pi".to_owned())),
+        ("gate", r"C:\c\.pi\kendex\hooks\gate.sh".to_owned(), &dir, vec![("OSTYPE", "msys"), ("USERPROFILE", r"C:\c"), ("PI_CODING_AGENT_DIR", "~/.pi")], ran(r"global|C:\c\.pi".to_owned())),
+        ("gate", r"\\srv\share\.pi\kendex\hooks\gate.sh".to_owned(), &dir, vec![("OSTYPE", "msys"), ("PI_CODING_AGENT_DIR", r"\\srv\share\.pi")], ran(r"global|\\srv\share\.pi".to_owned())),
         // A relative variable is the carrier's default root, never this one.
         ("gate", at("c/.pi/kendex/hooks/gate.sh"), &c, vec![("PI_CODING_AGENT_DIR", "c/.pi")], ran(format!("project|{}", at("c")))),
     ];

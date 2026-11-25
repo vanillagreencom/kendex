@@ -124,38 +124,36 @@ pub fn hook_path(root: &Path, name: &str) -> PathBuf {
 /// and root, as the overlap refusal names it.
 const CARRIER_FLOOR: &str = "pi-hooks>=0.19.3";
 
-/// What a hook does with the install its registration names, read from its
-/// own header, so the class cannot drift from the hook.
+/// What a hook does with the registration that started it, read from the
+/// two declarations `hooks/AGENTS.md` names, so the class cannot drift from
+/// the hook.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InstallUse {
-    /// Requires no skill, so every registration of one file runs it alike.
+    /// Declares no `reads-registration`, so it finds its install from its
+    /// own path, and both registrations of one file give it one answer.
     None,
-    /// Requires skills, and declares an advisory reader: a `safety` line
-    /// opening `Advisory reader.`, the declaration `hooks/AGENTS.md` names.
-    /// What it cannot read it reports at exit 0.
+    /// Declares `reads-registration` and an advisory reader, a `safety`
+    /// line opening `Advisory reader.`. What it cannot read it reports at
+    /// exit 0.
     Advisory,
-    /// Requires skills, and refuses what it cannot judge.
+    /// Declares `reads-registration` and no advisory reader, so it refuses
+    /// what it cannot judge.
     Gate,
 }
 
 /// The declaration that makes a hook an advisory reader.
 const ADVISORY_READER: &str = "Advisory reader.";
 
-fn install_use(script: &str) -> InstallUse {
-    // A script body is the catalog file the hook was parsed from, so this
-    // parses. Were it ever not to, the hook is judged a gate, which refuses.
-    let Ok(hook) = crate::hook::parse_hook(script) else {
-        return InstallUse::Gate;
-    };
+fn install_use(hook: &crate::hook::HookSource) -> InstallUse {
     match (
-        hook.requires_skills.is_empty(),
+        hook.reads_registration,
         hook.safety
             .as_deref()
             .is_some_and(|safety| safety.starts_with(ADVISORY_READER)),
     ) {
-        (true, _) => InstallUse::None,
-        (false, true) => InstallUse::Advisory,
-        (false, false) => InstallUse::Gate,
+        (false, _) => InstallUse::None,
+        (true, true) => InstallUse::Advisory,
+        (true, false) => InstallUse::Gate,
     }
 }
 
@@ -174,15 +172,17 @@ fn install_use(script: &str) -> InstallUse {
 /// The spawned path ends in `/.pi/kendex/hooks/<name>.sh` from the project
 /// registry and `/kendex/hooks/<name>.sh` from the global one. A project
 /// spelling is the global registry's spawn too only where the global root
-/// the carrier resolved is that `.pi`, spelled the same: then one registry
-/// file is both scopes'. Even so, the carrier's project is an ancestor of
-/// its working directory (`discover.rs::project_root_from`), so a working
-/// directory outside that project leaves the global registry alone. Inside
-/// it, the hook cannot tell the registrations apart, and what it does
-/// follows [`InstallUse`]: a hook that reads no install runs, an advisory
-/// one reports the overlap at exit 0 and lets the call through, and a gate
-/// refuses with exit 2. A carrier that sets either variable is left to say
-/// both.
+/// the carrier resolved is that `.pi`, spelled the same. Even then the
+/// project registry is this file only where the carrier's project is the
+/// directory above that `.pi`. The stamp finds that project as the
+/// carrier does, from the working directory the carrier spawns the hook
+/// in: it follows `pi-extensions/pi-hooks/extensions/config.ts::walkProjectRoot`,
+/// unchanged from pi-hooks 0.19.2. Any other project, or none, leaves the
+/// global registration. Where it is that project, the hook cannot tell the
+/// registrations apart, and what it does follows [`InstallUse`]: a hook that
+/// reads no registration runs, an advisory one reports the overlap at exit
+/// 0 and lets the call through, and a gate refuses with exit 2. A carrier
+/// that sets either variable is left to say both.
 ///
 /// The global root is resolved as the carrier resolves it
 /// (`pi-extensions/pi-hooks/extensions/package-config.ts::userDir`, which
@@ -193,7 +193,12 @@ fn install_use(script: &str) -> InstallUse {
 ///
 /// Remove this when the oldest carrier kendex supports is [`CARRIER_FLOOR`].
 pub(crate) fn stamp_hook(name: &str, script: &mut String) {
-    let stamp = registration_stamp(name, install_use(script));
+    // A script body is the catalog file the hook was parsed from, so this
+    // parses. Were it ever not to, the hook is judged a gate, which refuses.
+    let stamp = match crate::hook::parse_hook(script) {
+        Ok(hook) => registration_stamp(name, &hook.event, install_use(&hook)),
+        Err(_) => registration_stamp(name, "", InstallUse::Gate),
+    };
     let mut at = stamp_offset(script);
     if at > 0 && !script[..at].ends_with('\n') {
         script.insert(at, '\n');
@@ -237,7 +242,7 @@ fn stamp_offset(script: &str) -> usize {
 /// with the platform's separator by a Windows carrier, so every comparison
 /// reads the path with `\` as `/`, and the root keeps the carrier's own
 /// spelling.
-fn registration_stamp(name: &str, install: InstallUse) -> String {
+fn registration_stamp(name: &str, event: &str, install: InstallUse) -> String {
     let key = crate::names::quoted(&format!(
         "kendex-hook-scope-overlap: hook={} carrier={CARRIER_FLOOR}",
         crate::names::shown(name)
@@ -263,10 +268,17 @@ fn registration_stamp(name: &str, install: InstallUse) -> String {
   fi
 "#,
             text = crate::names::quoted(&format!(
-                "This call is refused: {cause} The hook cannot tell which install's skills and settings to use. {remedy}"
+                "{outcome} {cause} The hook cannot tell which install's skills and settings to use. {remedy}",
+                // Pi refuses only a tool call on exit 2 (`caps.rs::pi_listener`).
+                outcome = if event == "PreToolUse" {
+                    "This call is refused:"
+                } else {
+                    "The hook did not run:"
+                }
             )),
         ),
     };
+    let markers = crate::discover::MARKER_DIRS.join(" ");
     format!(
         r#"# kendex: a pi-hooks carrier before 0.19.3 names no registration, so this
 # render reads it from the path the registry spawned (docs/adapters/pi.md).
@@ -320,12 +332,17 @@ if [ -z "${{KENDEX_HOOK_SCOPE+set}}${{KENDEX_HOOK_ROOT+set}}" ]; then
       kendex_hook_scope=global
       kendex_hook_project=${{kendex_hook_pi%/.pi}}
       case $kendex_hook_project in '' | [A-Za-z]:) kendex_hook_project=$kendex_hook_project/ ;; esac
+      # The carrier's project: config.ts::walkProjectRoot from its cwd.
       kendex_hook_here=$(pwd -P 2>/dev/null) || kendex_hook_here=''
       while [ -n "$kendex_hook_here" ]; do
-        if [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
-          kendex_hook_scope=both
+        [ ! -f "$kendex_hook_here/{lock}" ] || break
+        if [ "$kendex_hook_here" -ef "$kendex_hook_home" ]; then
+          kendex_hook_here=''
           break
         fi
+        for kendex_hook_marker in {markers}; do
+          [ ! -d "$kendex_hook_here/$kendex_hook_marker" ] || break 2
+        done
         case $kendex_hook_here in
           */?*)
             kendex_hook_here=${{kendex_hook_here%/*}}
@@ -334,6 +351,9 @@ if [ -z "${{KENDEX_HOOK_SCOPE+set}}${{KENDEX_HOOK_ROOT+set}}" ]; then
           *) kendex_hook_here='' ;;
         esac
       done
+      if [ -n "$kendex_hook_here" ] && [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
+        kendex_hook_scope=both
+      fi
     else
       kendex_hook_tail=/.pi$kendex_hook_tail
     fi
@@ -352,10 +372,11 @@ if [ -z "${{KENDEX_HOOK_SCOPE+set}}${{KENDEX_HOOK_ROOT+set}}" ]; then
   esac
   unset kendex_hook_at kendex_hook_tail kendex_hook_scope kendex_hook_win kendex_hook_home \
     kendex_hook_rest kendex_hook_lead kendex_hook_global kendex_hook_part kendex_hook_pi \
-    kendex_hook_project kendex_hook_here kendex_hook_root
+    kendex_hook_project kendex_hook_here kendex_hook_marker kendex_hook_root
 fi
 "#,
         tail = crate::names::quoted(&format!("/{}", hook_rel(name))),
+        lock = crate::lock::LOCK_FILE,
     )
 }
 
@@ -500,7 +521,10 @@ mod tests {
         let mut script = format!("{header}{body}");
         stamp_hook("g", &mut script);
         let stamp = &script[header.len()..script.len() - body.len()];
-        assert_eq!(stamp, registration_stamp("g", InstallUse::None));
+        assert_eq!(
+            stamp,
+            registration_stamp("g", "PreToolUse", InstallUse::None)
+        );
         let hook = crate::hook::parse_hook(&script).unwrap();
         assert_eq!(
             (hook.name.as_str(), hook.event.as_str()),

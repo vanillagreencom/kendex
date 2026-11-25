@@ -14,8 +14,8 @@ trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses: the keys and values are the fixed set
-# hooks/AGENTS.md names, and the English explanation and the rewrite follow on
-# later lines.
+# hooks/fixed-keys.md names, and the English explanation and the rewrite follow
+# on later lines.
 # The keyed line stands first, at position 1. What a command this hook runs
 # wrote is captured where the hook reads it and passed here as the cause, so
 # it is replayed under the key rather than ahead of it.
