@@ -120,6 +120,36 @@ pub fn hook_path(root: &Path, name: &str) -> PathBuf {
     root.join(hook_rel(name))
 }
 
+pub(crate) fn render_project_hook(name: &str, script: &mut String) {
+    if !matches!(name, "command-safety" | "lane-mail-check") {
+        return;
+    }
+    let suffix = format!("/.pi/{}", hook_rel(name));
+    // pi-hooks 0.19.2 omits registration metadata but still starts the script
+    // at its registry-anchored path. Assignments in the registered command
+    // would make that carrier fall back to running the command's cwd walk.
+    // Remove this when the oldest supported carrier supplies both variables.
+    let prelude = format!(
+        r#"
+# Kendex project install metadata for pi-hooks 0.19.2.
+if [[ -z ${{KENDEX_HOOK_SCOPE+x}} && -z ${{KENDEX_HOOK_ROOT+x}} &&
+      ( ${{BASH_SOURCE[0]}} = /* || ${{BASH_SOURCE[0]}} = [A-Za-z]:/* ) &&
+      ${{BASH_SOURCE[0]}} = *{suffix} ]]; then
+  KENDEX_HOOK_ROOT=${{BASH_SOURCE[0]%{suffix}}}
+  case "$KENDEX_HOOK_ROOT" in
+    ''|[A-Za-z]:) KENDEX_HOOK_ROOT+=/ ;;
+  esac
+  export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT
+fi
+"#,
+    );
+    let offset = script
+        .find('\n')
+        .filter(|_| script.starts_with("#!"))
+        .map_or(0, |newline| newline + 1);
+    script.insert_str(offset, &prelude);
+}
+
 impl HarnessAdapter for Pi {
     fn id(&self) -> HarnessId {
         HarnessId::Pi

@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+
+# Kendex project install metadata for pi-hooks 0.19.2.
+if [[ -z ${KENDEX_HOOK_SCOPE+x} && -z ${KENDEX_HOOK_ROOT+x} &&
+      ( ${BASH_SOURCE[0]} = /* || ${BASH_SOURCE[0]} = [A-Za-z]:/* ) &&
+      ${BASH_SOURCE[0]} = */.pi/kendex/hooks/command-safety.sh ]]; then
+  KENDEX_HOOK_ROOT=${BASH_SOURCE[0]%/.pi/kendex/hooks/command-safety.sh}
+  case "$KENDEX_HOOK_ROOT" in
+    ''|[A-Za-z]:) KENDEX_HOOK_ROOT+=/ ;;
+  esac
+  export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT
+fi
 # ---
 # name: command-safety
 # event: PreToolUse

@@ -11,6 +11,9 @@ use test_util::source_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "pi_carrier/project_refresh.rs"]
+mod project_refresh;
+
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::harness::{Enforcement, pi_listener};

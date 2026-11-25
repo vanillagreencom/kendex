@@ -1,0 +1,1 @@
+- Project refresh preserves configured command checks and lane-mail halts when the global Pi carrier still runs pi-hooks 0.19.2.
