@@ -543,6 +543,14 @@ work into a new commit, so a merged branch is an ancestor of nothing. With
 merge proven, cleanup asks Git to remove the intact worktree and deletes the
 local branch.
 
+Cleanup also prunes unowned local branches whose tips are ancestors of the
+same base. It keeps the default branch, recovery branches, and branches used
+by a registered worktree, including a paused restack on an offline worktree.
+A changed tip or branch settings that cleanup cannot retire leave the branch
+and its settings in place. Correct the reported config problem and retry.
+When Git lists a conditional config include, cleanup reports that source and
+keeps all otherwise eligible local branches and their settings.
+
 A non-empty worktree-private 'kendex-rebase-map' keeps the worktree and branch
 until orch consumes the rewrite record. The skip starts with
 'worktree-cleanup-rebase-map:' and names the map file.

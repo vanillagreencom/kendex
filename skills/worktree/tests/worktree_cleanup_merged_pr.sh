@@ -181,6 +181,8 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
@@ -535,6 +537,201 @@ assert_eq "$(grep -cF 'worktree_message cleanup-rebase-map' "$map_mutant")" "1" 
 assert_eq "$(WORKTREE_SCRIPT="$map_mutant" run cleanup)" \
   "rc=0 out=worktree-cleaned: <wt> err=worktree-cleanup-rebase-map: <map> tree=absent dirty=- branch=absent other=- map=gone registered=absent" \
   "control: the map preservation expectation rejects an arm that falls through"
+
+local_branch_case() {
+  local case_name="$1" branch=topic/merged.v1 ref="" tip="" moved="" source="" rc=0
+  local linked="" probe_dir="" observed_source="" git_dir="" expected_sources=1
+  local -a config_scope=()
+  ROOT="$TMP_ROOT/local-$case_name"
+  MAIN="$ROOT/main"
+  ref="refs/heads/$branch"
+  make_repo
+  tip="$(git -C "$MAIN" rev-parse origin/main)"
+  git -C "$MAIN" branch --track "$branch" origin/main >/dev/null
+  case "$case_name" in
+    changed-tip)
+      moved="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -p "$tip" -m 'branch advanced')"
+      mkdir "$ROOT/bin"
+      # Move the ref once the candidate snapshot exists, before its deletion.
+      cat >"$ROOT/bin/git" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$*" == "-C $MAIN worktree list --porcelain -z" ]]; then
+  "$(command -v git)" -C "$MAIN" update-ref "$ref" "$moved" "$tip"
+  printf 'moved\n' >"$ROOT/moved"
+fi
+exec "$(command -v git)" "\$@"
+STUB
+      chmod +x "$ROOT/bin/git"
+      (cd "$MAIN" && PATH="$ROOT/bin:$PATH" "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$(cat "$ROOT/moved")" moved "the fixture moves the candidate after the ancestry snapshot"
+      assert_eq "$rc:$(git -C "$MAIN" rev-parse --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config "branch.$branch.remote" || true):$(git -C "$MAIN" config "branch.$branch.merge" || true)" \
+        "1:$moved:origin:refs/heads/main" "a changed candidate keeps its ref and both upstream settings"
+      ;;
+    config-lock)
+      : >"$MAIN/.git/config.lock"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(git -C "$MAIN" rev-parse --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config "branch.$branch.remote" || true):$(git -C "$MAIN" config "branch.$branch.merge" || true)" \
+        "1:$tip:origin:refs/heads/main" "a refused config write keeps the candidate with its tracking intact"
+      rm -- "$MAIN/.git/config.lock"
+      rc=0
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true)" "0:" \
+        "releasing the config lock lets cleanup prune the candidate"
+      if git -C "$MAIN" branch --no-track "$branch" origin/main; then
+        assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname:short) %(upstream)' "$ref")" "$branch " \
+          "the recreated branch has no upstream"
+      else
+        assert_eq failed recreated "the pruned branch name can be recreated"
+      fi
+      ;;
+    included-config|worktree-config|branch-conditional|worktree-conditional|gitdir-conditional)
+      source="$ROOT/tracking.conf"
+      config_scope=(--file "$source")
+      case "$case_name" in
+        included-config) git -C "$MAIN" config --add include.path "$source" ;;
+        worktree-config)
+          source="$MAIN/.git/config.worktree"
+          git -C "$MAIN" config extensions.worktreeConfig true
+          config_scope=(--worktree)
+          ;;
+        branch-conditional)
+          git -C "$MAIN" config --add "includeIf.onbranch:$branch.path" "$source"
+          probe_dir="$MAIN"
+          ;;
+        worktree-conditional)
+          linked="$ROOT/linked"
+          git -C "$MAIN" worktree add -q --detach "$linked" "$tip"
+          git -C "$MAIN" config --add "includeIf.worktree:$linked.path" "$source"
+          probe_dir="$linked"
+          ;;
+        gitdir-conditional)
+          linked="$ROOT/linked"
+          git -C "$MAIN" worktree add -q "$linked" "$branch"
+          git_dir="$(git -C "$linked" rev-parse --absolute-git-dir)"
+          git -C "$MAIN" config --add "includeIf.gitdir:$git_dir.path" "$source"
+          git -C "$MAIN" branch --no-track unowned "$tip"
+          expected_sources=2
+          probe_dir="$linked"
+          ;;
+      esac
+      git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.remote" origin
+      git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.merge" refs/heads/main
+      if [[ -n "$probe_dir" ]]; then
+        observed_source="$(git -C "$MAIN" config --show-origin "branch.$branch.remote")"
+        [[ "$observed_source" != *"$source"* ]] || return 2
+        if [[ "$case_name" == branch-conditional ]]; then git -C "$MAIN" switch -q "$branch"; fi
+        observed_source="$(git -C "$probe_dir" config --show-origin "branch.$branch.remote")"
+        if [[ "$case_name" == branch-conditional ]]; then
+          git -C "$MAIN" switch -q main
+        elif [[ "$case_name" == worktree-conditional && "$observed_source" != *"$source"* ]]; then
+          printf '%s\n' 'skip: Git does not activate worktree conditional includes'
+          return 0
+        fi
+        [[ "$observed_source" == *"$source"* ]] || return 2
+      fi
+      if [[ "$case_name" == gitdir-conditional ]]; then
+        git -C "$MAIN" worktree remove "$linked"
+        [[ ! -e "$git_dir" ]] || return 2
+        cp -- "$MAIN/.git/config" "$ROOT/config-before"
+      fi
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config --local "branch.$branch.remote" || true)" \
+        "1:$tip $ref:origin" "$case_name: unretirable tracking keeps the branch and its common config"
+      assert_eq "$(grep -cF "$source" "$ROOT/err" || true)" "$expected_sources" "$case_name: each refusal identifies the tracking source"
+      if [[ "$case_name" == gitdir-conditional ]]; then
+        assert_eq "$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" \
+          "$tip refs/heads/unowned" "gitdir-conditional: cleanup keeps the other merged candidate too"
+        assert_eq "$(cmp -s "$MAIN/.git/config" "$ROOT/config-before" && printf unchanged || printf changed)" \
+          unchanged "gitdir-conditional: cleanup keeps the exact common config bytes"
+        # Recreating the registration makes Git read the same included file.
+        if ! git -C "$MAIN" show-ref --verify --quiet "$ref"; then
+          git -C "$MAIN" branch --no-track "$branch" origin/main
+        fi
+        git -C "$MAIN" worktree add -q "$linked" "$branch"
+        assert_eq "$(git -C "$linked" rev-parse --absolute-git-dir)" "$git_dir" "gitdir-conditional: Git reuses the private registration"
+        observed_source="$(git -C "$linked" config --show-origin "branch.$branch.remote")"
+        [[ "$observed_source" == *"$source"* ]] || return 2
+      fi
+      ;;
+    missing-perl)
+      # The restricted PATH built above excludes Perl as well as gh.
+      git -C "$MAIN" branch --no-track unowned "$tip"
+      (cd "$MAIN" && PATH="$TMP_ROOT/nogh" "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(grep -c '^worktree-cleanup-local-prune-unavailable:' "$ROOT/err" || true)" "1:1" \
+        "missing Perl reports one dependency refusal"
+      assert_eq "$(git -C "$MAIN" show-ref --verify "$ref" refs/heads/unowned)" "$tip $ref"$'\n'"$tip refs/heads/unowned" \
+        "missing Perl preserves both candidates"
+      ;;
+  esac
+}
+
+native_branch_case() {
+  local operation="$1" ref="" private_dir="" old="" base="" rebase_help="" rc=0 branch=topic reset_rc=0
+  local -a refs=()
+  ROOT="$TMP_ROOT/native-$operation"
+  MAIN="$ROOT/main"
+  if [[ "$operation" == bisect-hex ]]; then
+    branch="$(printf 'a%.0s' {1..64})"
+    GIT_DEFAULT_HASH=sha1 make_repo
+  else
+    make_repo
+  fi
+  WT="$ROOT/trees/$branch"
+  add_branch_tree "$branch"
+  if [[ "$operation" == bisect* ]]; then git -C "$WT" commit --allow-empty -qm 'topic: follow-up'; fi
+  old="$(git -C "$WT" rev-parse HEAD)"
+  git -C "$MAIN" branch --no-track unowned main
+  printf 'main conflict\n' >"$MAIN/topic.txt"
+  git -C "$MAIN" add topic.txt
+  git -C "$MAIN" commit -qm 'main conflicts with topic'
+  base="$(git -C "$MAIN" rev-parse HEAD)"
+  private_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  case "$operation" in
+    rebase)
+      rebase_help="$(git rebase -h 2>&1 || true)"
+      if [[ "$rebase_help" != *update-refs* ]]; then
+        printf '%s\n' 'skip: Git lacks rebase --update-refs'
+        return 0
+      fi
+      git -C "$WT" branch --no-track dependent "$old"
+      git -C "$WT" rebase --update-refs "$base" >"$ROOT/rebase" 2>&1 && return 2
+      [[ -f "$private_dir/rebase-merge/head-name" && -f "$private_dir/rebase-merge/update-refs" ]] || return 2
+      refs=(refs/heads/topic refs/heads/dependent)
+      ;;
+    bisect|bisect-hex)
+      git -C "$WT" bisect start >/dev/null
+      git -C "$WT" bisect bad "$old" >/dev/null
+      # The bad commit is two steps above this good commit, so Git detaches.
+      git -C "$WT" bisect good "$(git -C "$WT" rev-parse "$old^^")" >/dev/null
+      [[ "$(cat -- "$private_dir/BISECT_START")" == "$branch" ]] || return 2
+      refs=("refs/heads/$branch")
+      ;;
+  esac
+  [[ -z "$(git -C "$WT" branch --show-current)" ]] || return 2
+  git -C "$MAIN" merge -q --no-ff --no-edit -s ours "refs/heads/$branch"
+  git -C "$MAIN" push -q origin main
+  for ref in "${refs[@]}"; do git -C "$MAIN" merge-base --is-ancestor "$ref" origin/main; done
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+  assert_eq "$rc:$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" "0:" \
+    "$operation: cleanup prunes the unrelated merged branch"
+  for ref in "${refs[@]}"; do
+    assert_eq "$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true)" "$old $ref" "$operation: cleanup preserves $ref"
+  done
+  if [[ "$operation" == bisect-hex ]]; then
+    git -C "$WT" bisect reset >"$ROOT/reset" 2>&1 || reset_rc=$?
+    assert_eq "$reset_rc:$(git -C "$WT" branch --show-current):$(git -C "$WT" rev-parse HEAD)" \
+      "0:$branch:$old" "bisect-hex: reset reattaches the original branch at its starting tip"
+  fi
+}
+
+echo "=== cleanup of merged branches without worktrees ==="
+for case_name in changed-tip config-lock included-config worktree-config branch-conditional worktree-conditional gitdir-conditional missing-perl; do
+  local_branch_case "$case_name"
+done
+native_branch_case rebase
+native_branch_case bisect
+native_branch_case bisect-hex
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
