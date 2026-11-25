@@ -167,7 +167,7 @@ class Presence(unittest.TestCase):
             # Stale context never borrows an unproved native idle route.
             self.assertFalse(watch.live(epoch+780))
             no_renew(epoch+780)
-            for change in ({"pane_key":"different pane"}, {"session_id":"predecessor"}):
+            for change in ({"pane_key":"different pane"}, {"session_id":"predecessor"}, {"harness":"codex"}):
                 altered = dict(row, **change)
                 context.write_text(json.dumps(altered))
                 self.assertFalse(watch.live(epoch+480))

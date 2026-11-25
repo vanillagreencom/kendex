@@ -2200,8 +2200,9 @@ with open(sys.argv[1], "ab") as out:
         else:
             self.module.orch_runtime = lambda: self.packages / "orch/scripts/orch-runtime"
         status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
-            "live": True, "binding": "bound", "native_match": True, "open_intents": [],
-            "recorded": {"session_id": session, "account": account, "harness": "claude"}}}))
+            "live": True, "open_intents": [], "server_start": 1790000000,
+            "recorded": {"server": 4242, "pane": pane, "session_id": session,
+                         "account": account, "harness": "claude"}}}))
         box = self.home / "tmp/lane-mail/overseer"
         box.mkdir(parents=True, exist_ok=True)
         box.joinpath("context.json").write_text(json.dumps(
@@ -2247,6 +2248,36 @@ with open(sys.argv[1], "ab") as out:
                 return future
         for offset in range(3):
             watch._poll(Inline(), Future(), now + offset)
+
+    def test_first_turn_auth_wall_without_heartbeat(self):
+        # Record a started controller and the StopFailure row the native hook
+        # writes for authentication_failed (turnend/rows.rs::Written::session).
+        # An unsuccessful first turn has no context stamp.
+        with subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as harness:
+            try:
+                started = self.command(["env", "LC_ALL=C", "TZ=UTC", "ps", "-o", "lstart=", "-p", harness.pid])
+                self.assertEqual(started.returncode, 0, started.stderr)
+                record = dict(server="4242", pane="%3", harness="claude", session_id="s1", account="/accounts/a",
+                              harness_pid=harness.pid, harness_start="lstart:" + started.stdout.strip())
+                result = self.command([REPO / "skills/orch/scripts/orch-runtime", "state", "set", "--fleet",
+                                       "/controller", json.dumps(record)])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                box = self.home / "tmp/lane-mail/overseer"
+                box.mkdir(parents=True, exist_ok=True)
+                box.joinpath("session-4242-3.jsonl").write_text(json.dumps(dict(
+                    event="StopFailure", error="authentication_failed", harness="claude",
+                    session_id="s1", account="/accounts/a", at=1)) + "\n")
+                self.assertFalse(box.joinpath("context.json").exists())
+                with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                    log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+                    watch = self.watch()
+                    self.wall_passes(watch, 0)
+                    self.wall_passes(watch, 30)
+                self.assertEqual(log.read_text().splitlines() if log.exists() else [],
+                                 [f"succeed --home {self.home} --account-walled"])
+                self.assertEqual(len(self.owner_notice_rows()), 1)
+            finally:
+                harness.terminate()
 
     def test_a_walled_controller_tells_the_owner_once_and_starts_one_succession(self):
         # The failure it stops: a controller whose every turn fails reads only

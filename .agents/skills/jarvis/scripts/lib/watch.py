@@ -1063,6 +1063,7 @@ class Watch:
         print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):
+        """Whether the recorded controller wrote a heartbeat in the last 300 seconds."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "live", self.home])
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -1084,7 +1085,7 @@ class Watch:
             return False
 
     def wall(self):
-        """The bound controller's wall: session, pane, account, kind and row.
+        """The recorded controller's wall: session, pane, account, kind and row.
         Kind is None for a session its rows do not read walled; None with no bound
         controller; a Failure where the controller or its rows were not read:
         a missing package, or the runtime's refusal of the status or the

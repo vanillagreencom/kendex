@@ -59,7 +59,7 @@ Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-en
 
 - `orch-runtime watch wall --file PATH` reads agent-runtime's session verdict of the rows its hooks write for the controller's pane. The usage verdict carries the window and reset read from the failure row.
 - The verdict reads usage walls on Claude Code and Pi, and auth walls on Claude Code alone. A controller on another harness never reads walled, and this check tells nobody about it.
-- It reads a live, bound controller whatever its context stamp's age. A quiet session that is not walled starts nothing.
+- It reads the live controller from the fleet record, including a session that has written no context stamp. A quiet session that is not walled starts nothing.
 - For an authentication wall, it runs `jarvis-session succeed --home HOME --account-walled` once per episode. The owner notice follows the attempt and carries its outcome. If the loop ends with the predecessor, the next loop sends the owed notice once a controller is bound.
 - For a usage wall, it sends the owner a notice as soon as it reads that stop. The notice names the session, account, usage window and reset time where the row supplies them.
 - On each check of the same usage stop it looks for another account to take over. From the reset onward, if no successor is available, it checks the current account for room and tries to resume in the same pane. If the resume receipt is uncertain, subsequent checks look for the matching turn before they report a resume. The outcome follows in the original notice's thread while that thread is available.
