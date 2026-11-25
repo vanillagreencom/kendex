@@ -963,6 +963,26 @@ os.execvp(argv[0], argv)
                 self.assertEqual([row["what"] for row in rows[login]], ["Remote original"])
                 self.assertEqual(rows[login], rows["sh"])
 
+    def test_mailbox_frames_keep_owner_evidence_without_outward_bodies(self):
+        active = self.mail(self.home, "ask", "Question still open", "--to", "owner", "--options", "a,b", "--reserved")
+        closed = self.mail(self.home, "ask", "Question already resolved", "--to", "owner", "--options", "a,b", "--reserved")
+        self.mirror(self.home, closed, "closed-mirror")
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        self.command([BASH, mail, "resolve", "--item", "overseer", "--id", closed], self.home).check_returncode()
+        self.mail(self.home, "notice", "Unrelated outward body", "--to", "owner")
+        full = self.command([BASH, mail, "events", "--item", "overseer", "--box", "to-overseer"], self.home)
+        full.check_returncode()
+        with patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
+            reader = owner_asks.Sources(Session(str(self.home)), {})
+            record, = reader.mailboxes(owner_asks.watch.Destination("local", None, None), [str(self.home)])
+        self.assertEqual([(ask["id"], ask["text"]) for ask in map(json.loads, record["pending"].splitlines())],
+                         [(active, "Question still open")])
+        outward = reader.events(record["outward"])
+        self.assertEqual(outward["header"], full.stdout.partition("\n")[0])
+        self.assertEqual([(ask["id"], ask.get("tracker_comment")) for ask in outward["rows"]],
+                         [(active, None), (closed, "closed-mirror")])
+        self.assertTrue(all("text" not in ask for ask in outward["rows"]))
+
     def test_mailbox_reads_leave_their_stdin_unread(self):
         # A host read runs them with bash -s's script stream as stdin, where
         # a read would take the bytes after their own command.
