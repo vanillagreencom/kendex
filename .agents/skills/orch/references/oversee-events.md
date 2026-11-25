@@ -204,7 +204,7 @@ The watch writes one line per event to its log beside the fleet state. A line th
 
 Below, a field in brackets is a value, and every other word prints as shown. To wake a lane is to send it a directive as [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane) says.
 
-On `idle-after-return` or a recovery event such as a stop, exit, window loss or usage wall, resolve the lane to its fleet item key before applying the event's route. For a `verify-*` key, follow [verify.md § Reading lanes](../workflows/verify.md#reading-lanes). Read the result on the original item, using the item and box in the key and the lane record's `repo` for the GitHub form. Use that workflow's result or unread handling and leave any retry to verify.
+On `idle-after-return` or a recovery event such as a stop, exit, window loss or usage wall, resolve the lane to its fleet item key before applying the event's route. For a `verify-*` key, follow [verify.md § Reading lanes](../workflows/verify.md#reading-lanes). Read the result on the original item, using the item and box in the key and the lane record's `repo` for the GitHub form. Use that workflow's result or unread handling.
 
 ### `watch-step-failed`
 
@@ -486,13 +486,13 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 `EVENT idle-after-return [LANE]`, then an optional note: the lane read idle on two passes in a row, or a local Codex lane read idle after its turn.
 
 - Pane dialogs and walls take priority over a local lane's session rows except on Pi.
-- Codex's current failed-turn marker below its last prompt and above its idle composer can end a Working row.
+- Codex and Copilot's current provider failure below the last prompt and above the idle composer can end a Working row.
 - Hosted Pi lanes use their own Stop rows; other hosted lanes keep their provider's screen reading.
 
 Read the closing lines under the `idle-after-return` line.
 
 - `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
-- `cause=api-error` is a turn its provider's API ended. The watch resumes a lane the wake reaches once, with no line. So this line is a second such end, a resume the wake could not type, or a lane the wake does not reach: wake the lane with a continuation directive.
+- `cause=api-error` on Codex or Copilot, `cause=server_error` on Claude, and `cause=error` on Pi are failed provider turns. The watch continues a session it reaches once. This event reports a repeated failure, a continuation the wake could not deliver, or an unreachable session. For a worker, send a one-line continuation directive if the workflow calls for another turn.
 - `stop-cause=allow-all-blocked-by-policy`: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of sending a directive. That section names the `session-record=` reasons.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line.
 - A lane inside `merge-pr.md` § 5 step 1 waits on its queue. That is work in flight, not idle.
@@ -1133,4 +1133,4 @@ A verification comment records one reading of an item's post-merge boxes. It is 
 - Repeat `### Box [N]` for each box read.
 - A delegate's reading opens with `Delegate checks ([DATE]): [result and effect]` and names whose reading or ruling it is. It cites evidence another comment holds instead of copying it.
 - A first missing-evidence rewrite keeps its own line, [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence) step 1.
-- The watch reads the item's boxes and their trigger and deadline fields, never these comment labels.
+- Before continuing a reading lane, the watch checks its `Reading lane: [LANE_KEY]` line under the matching `### Box [N]` heading.

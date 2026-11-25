@@ -368,8 +368,7 @@ pub enum LaneState {
     Working,
     /// `cause` is the stop's own word from the harness's row where the
     /// lane was judged by its rows and the word is not its ordinary end;
-    /// a pane-judged idle carries none but `api-error`, a Codex turn its
-    /// provider's API ended.
+    /// a pane-judged provider failure carries `api-error`.
     Idle {
         capacity: bool,
         cause: Option<String>,
@@ -398,7 +397,7 @@ pub struct Inputs<'a> {
 /// The classifier, in the rung order: the window (where the pane is this
 /// server's), the read, the process (a pane with nothing but shells under
 /// it is the lane, finished), pane dialogs and walls except on Pi, then
-/// the rows. Codex's failed-turn pane can end a Working row. A Pi lane with no rows is unjudged,
+/// the rows. A failed-turn pane can end a Working row. A Pi lane with no rows is unjudged,
 /// never idle off its pane.
 pub fn classify(inputs: &Inputs) -> LaneState {
     match inputs.pane {
@@ -445,7 +444,7 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             let capacity = codex && observe::codex_capacity_refused(&slice);
             LaneState::Idle {
                 capacity,
-                cause: (codex && !capacity && observe::codex_api_error(&slice))
+                cause: (!capacity && observe::pane_api_error(harness, &slice))
                     .then(|| "api-error".to_owned()),
             }
         }
@@ -499,9 +498,8 @@ pub fn classify(inputs: &Inputs) -> LaneState {
                 };
             }
             Reading::Live((_, LaneVerdict::Working)) => {
-                if harness == Harness::Codex
-                    && (matches!(&screen_state, LaneState::Idle { capacity: true, .. })
-                        || matches!(&screen_state, LaneState::Idle { cause: Some(cause), .. } if cause == "api-error"))
+                if matches!(&screen_state, LaneState::Idle { capacity: true, .. })
+                    || matches!(&screen_state, LaneState::Idle { cause: Some(_), .. })
                 {
                     return screen_state;
                 }
@@ -754,7 +752,12 @@ fn read_lane<'a>(
         }
         match lane.session_rows_at_launch {
             Some(at) if row.position <= at => {
-                row.error.as_deref() != Some("rate_limit") && !auth_stop_failure(row)
+                row.error.as_deref() != Some("rate_limit")
+                    && !auth_stop_failure(row)
+                    && !row
+                        .error
+                        .as_deref()
+                        .is_some_and(|cause| wake::can_continue(Harness::Claude, cause, false))
             }
             None => row.error.as_deref() != Some("rate_limit"),
             Some(_) => true,
@@ -1089,7 +1092,9 @@ pub fn observe(pass: &Pass) -> Produced {
     // Rows of lanes that left the record no longer describe an observation.
     for kind in LANE_ROWS {
         for identity in pass.baseline.identities(kind) {
-            if !names.contains(&identity) {
+            if !names.contains(&identity)
+                && !(kind == wake::RESUME_KIND && identity == wake::OVERSEER_TARGET)
+            {
                 out.changes.push(clear(kind, &identity));
             }
         }
@@ -1499,7 +1504,7 @@ fn observe_one(
     // stop's cause where the verdict kept one, so a turn its output limit
     // cut is told apart from a finished one, whose line carries none, else
     // a Copilot lane's policy note, keyed as the asking line keys it. The
-    // `resume` row chains an API error's resume (`api-error|<key>`) to the
+    // `resume` row chains a failed turn's resume (`<cause>|<key>`) to the
     // failure after it (`told|<key>`), which the wake never serves.
     match &state {
         LaneState::Idle { capacity: true, .. } => {
@@ -1562,19 +1567,26 @@ fn observe_one(
             if prior == key || codex_after_turn {
                 out.changes
                     .push(set("lane-idle", lane, format!("{key}|reported")));
-                // A turn its provider's API ended, on a lane the wake reaches,
-                // is the wake's to resume once, with no line; the next such
-                // end is told and its row asks nothing more. A finished
-                // return ends the chain.
-                let api_error = cause.as_deref() == Some("api-error");
-                let asked = get(wake::RESUME_KIND)
-                    .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
-                if api_error && !asked && wake::reaches(obs.lane, hosts.of(obs.lane).ok()) {
+                let continuation = cause.as_deref().filter(|cause| {
+                    obs.lane
+                        .harness
+                        .as_deref()
+                        .and_then(Harness::parse)
+                        .is_some_and(|harness| {
+                            wake::can_continue(harness, cause, is_reading_lane(&obs.lane.item))
+                        })
+                });
+                let asked = get(wake::RESUME_KIND);
+                let asked = wake::continued(asked.as_deref());
+                if let Some(cause) = continuation
+                    && !asked
+                    && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
+                {
                     out.changes
-                        .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
+                        .push(set(wake::RESUME_KIND, lane, format!("{cause}|{key}")));
                     return reading;
                 }
-                if !api_error {
+                if continuation.is_none() {
                     out.changes.push(clear(wake::RESUME_KIND, lane));
                 } else if asked {
                     out.changes

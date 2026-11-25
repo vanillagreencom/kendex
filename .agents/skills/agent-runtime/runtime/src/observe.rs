@@ -353,6 +353,25 @@ pub fn codex_api_error(slice: &str) -> bool {
         && lines.any(|line| CODEX_MARKER.is_match(line))
 }
 
+/// A provider failure in the current idle turn's pane. Copilot CLI draws
+/// the execution failure after its model retries (github/copilot-cli#2166,
+/// #875); the retry notices and tool failures alone are not turn ends.
+pub fn pane_api_error(harness: Harness, slice: &str) -> bool {
+    match harness {
+        Harness::Codex => codex_api_error(slice),
+        Harness::Copilot => slice.lines().any(|line| {
+            let line = line.strip_prefix("✗ ").unwrap_or(line);
+            (line.starts_with("Execution failed: CAPIError:")
+                || line.starts_with(
+                    "Execution failed: Error: Failed to get response from the AI model",
+                ))
+                && !line.contains("CAPIError: 429")
+                && !line.contains("you've hit a rate limit")
+        }),
+        Harness::Claude | Harness::Pi => false,
+    }
+}
+
 /// Whether a wall screen is the live process's: a screen first seen before
 /// the process holding the pane started was drawn by an earlier process and
 /// is scrollback, not a wall.

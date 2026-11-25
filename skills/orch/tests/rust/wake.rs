@@ -1221,6 +1221,79 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
     assert_eq!(codex_turns(&fleet.home, "lead-4"), Vec::<String>::new());
 }
 
+#[test]
+fn a_controller_provider_resume_is_delivered_once_to_its_own_pane() {
+    let fleet = Fleet::new();
+    let pane = fleet.open("overseer", "claude", "controller", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_overseer(fleet.overseer("claude", &pane));
+    let row = format!("server_error|{} {}|Some(1)|12", fleet.server.pid, pane.id);
+    let baseline = resume_row(OVERSEER_TARGET, &row);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let first = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec!["EVENT wake-delivered overseer resume=server_error"]
+    );
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(fleet.turns("controller").len(), 1);
+}
+
+#[test]
+fn reading_worker_continuation_keeps_its_brief_and_yields_to_a_posted_result() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fleet = Fleet::new();
+    let comments = fleet.root.join("comments");
+    let tracker = fleet.root.join("linear");
+    std::fs::write(
+        &tracker,
+        format!(
+            "#!/bin/sh\n[ \"$*\" = 'comments list KEN-5' ] || exit 1\ncat '{}'\n",
+            comments.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&tracker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let settings = settings_with(
+        &fleet.root,
+        agent_runtime(),
+        &[("OVERSEE_WATCH_TRACKER", tracker.to_str().unwrap())],
+    );
+    let clock = FakeClock::new();
+    let mut body = wake::body(&fleet.fleet_file(), &settings);
+    for (box_number, cause) in [(1, "api-error"), (2, "length")] {
+        let item = format!("verify-KEN-5-box-{box_number}");
+        let pane = fleet.open(&item, "codex", &item, &[]);
+        await_codex_composer(&fleet, &pane.id);
+        fleet.set_lanes(vec![fleet.lane(&item, "codex", &pane)]);
+        assert!(rendered(&run_once(&mut body, &Baseline::default(), &clock).unwrap()).is_empty());
+        assert!(codex_turns(&fleet.home, &item).is_empty());
+        std::fs::write(&comments, "[]").unwrap();
+        let first = resume_row(&item, &format!("{cause}|first"));
+        assert_eq!(
+            rendered(&run_once(&mut body, &first, &clock).unwrap()),
+            vec![format!("EVENT wake-delivered {item} resume={cause}")]
+        );
+        assert!(rendered(&run_once(&mut body, &first, &clock).unwrap()).is_empty());
+        let typed = codex_turns(&fleet.home, &item);
+        assert_eq!(typed.len(), 1);
+        assert!(typed[0].starts_with(&format!(
+            "Continue the post-merge check for {item} using your original brief and box."
+        )));
+        std::fs::write(&comments, json!([{"body": format!(
+            "## Verification\n\n### Box {box_number}\n\nReading lane: {item}\n\n- **Result**: pass\n"
+        )}]).to_string()).unwrap();
+        let next = resume_row(&item, &format!("{cause}|second"));
+        assert_eq!(
+            rendered(&run_once(&mut body, &next, &clock).unwrap()),
+            vec![format!("EVENT idle-after-return {item} cause={cause}")]
+        );
+        assert_eq!(codex_turns(&fleet.home, &item), typed);
+    }
+}
+
 /// Wait until the Codex stub in `pane` has drawn its composer line.
 fn await_codex_composer(fleet: &Fleet, pane: &str) {
     let deadline = Instant::now() + secs(5);

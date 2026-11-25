@@ -20,6 +20,7 @@ use serde_json::Value;
 use crate::error::Result;
 use crate::ops::boxes;
 use crate::settings::Settings;
+use crate::state::Lane;
 use crate::verify::Answer;
 use crate::verify::wire::{IssueText, Job, Nullable, Pull, RunConclusion, RunStatus};
 use crate::watch::github::IssueItem;
@@ -29,6 +30,79 @@ use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 /// The trackerless lane keys reserved by verify.md's Reading lanes route.
 pub(super) fn is_reading_lane(item: &str) -> bool {
     item.starts_with("verify-")
+}
+
+/// Read the original item's comments before a failed reader is woken.
+/// The verification workflow owns the comment format and all completion.
+pub(super) fn reading_lane_has_result(
+    settings: &Settings,
+    lane: &Lane,
+) -> std::result::Result<bool, String> {
+    let (item, number) = lane
+        .item
+        .strip_prefix("verify-")
+        .and_then(|key| key.rsplit_once("-box-"))
+        .ok_or("reading lane key has no box")?;
+    let number: u64 = number.parse().map_err(|_| "invalid reading lane box")?;
+    let bodies = if let Some(github) = item.strip_prefix("gh-") {
+        let repo = lane
+            .repo
+            .as_deref()
+            .ok_or("reading lane has no GitHub repository")?;
+        let issue: u64 = github
+            .rsplit_once('-')
+            .ok_or("reading lane key has no GitHub issue")?
+            .1
+            .parse()
+            .map_err(|_| "invalid reading lane GitHub issue")?;
+        let endpoint = format!("repos/{repo}/issues/{issue}/comments");
+        let answer = super::github::handle(Path::new("gh"))
+            .tagged(TAG)
+            .bounded(BOUND)
+            .run(
+                "verification-comments",
+                &["api", "--paginate", "--slurp", &endpoint],
+                None,
+            )
+            .map_err(|error| error.detail())?;
+        let stdout = match answer {
+            Answer::Printed { stdout, .. } => stdout,
+            Answer::Failed(failed) => {
+                return Err(format!("gh api {endpoint}: {}", failed.stderr.trim()));
+            }
+        };
+        #[derive(Deserialize)]
+        struct Comment {
+            body: String,
+        }
+        serde_json::from_slice::<Vec<Vec<Comment>>>(&stdout)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .flatten()
+            .map(|comment| comment.body)
+            .collect()
+    } else {
+        match super::tracker::Linear::comment_bodies(&settings.reads.tracker_cli, item)
+            .map_err(|error| error.to_string())?
+        {
+            super::tracker::Answered::Value(bodies) => bodies,
+            super::tracker::Answered::Quota(_) => return Err("tracker-quota".to_owned()),
+        }
+    };
+    let box_heading = format!("### Box {number}");
+    let marker = format!("Reading lane: {}", lane.item);
+    Ok(bodies.iter().any(|body| {
+        let mut in_box = false;
+        for line in body.lines().map(str::trim) {
+            if line.starts_with("### ") {
+                in_box = line == box_heading;
+            }
+            if in_box && line.trim_start_matches("- ") == marker {
+                return true;
+            }
+        }
+        false
+    }))
 }
 
 /// The baseline row kind this duty owns: `verifying-deadline <id>`, the
