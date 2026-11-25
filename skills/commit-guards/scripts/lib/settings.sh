@@ -353,9 +353,8 @@ gg_env_table() { # FILE [LABEL] — [env]-table lines on stdout; 1 + ::error on 
 # (shell-sourcing semantics), optional surrounding quotes stripped. Parsed,
 # never sourced. 0 = value on stdout; 1 = this layer assigns nothing;
 # 2 = the layer is unusable and resolution must fail loud.
-gg_dotenv_layer() { # FILE NAME
-  local file="$1" name="$2" src line val matches status=0
-  src="$(gg_settings_source "$file")" || return 2
+gg_dotenv_layer() { # SRC FILE NAME — FILE is the configured source label
+  local src="$1" file="$2" name="$3" line val matches status=0
   gg_settings_usable "$src" || return 2
   [ -f "$src" ] || return 1
   gg_bom_guard "$src" "$file" || return 2
@@ -396,8 +395,12 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     else
       set -- ".kendex/settings.toml" "kendex.settings.toml"
     fi
+    # Replace each argument with a pair for fallback: the label and the path
+    # selected for it. The for loop walks the original argument list.
     for file in "$@"; do
       src="$(gg_settings_source "$file")" || return 1
+      shift
+      set -- "$@" "$file" "$src"
       gg_settings_usable "$src" || return 1
       if [ -f "$src" ]; then
         gg_env_table "$src" "$file" >/dev/null || return 1
@@ -434,17 +437,19 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   fi
   # Standard project layering: .env.local beats the committed settings.
   status=0
-  val="$(gg_dotenv_layer ".env.local" "$name")" || status=$?
+  val="$(gg_dotenv_layer "$src" ".env.local" "$name")" || status=$?
   [ "$status" -ne 2 ] || return 1
   if [ "$status" -eq 0 ]; then
     printf '%s' "$val"
     return 0
   fi
   # Nested project settings override the root file (the standard loader
-  # order); the positional list was built — and every present file already
-  # validated whole — before any source answered, above.
-  for file in "$@"; do
-  src="$(gg_settings_source "$file")" || return 1
+  # order). Keep the source selected above, but check its current contents
+  # again in case the file changed since validation.
+  while [ "$#" -gt 0 ]; do
+  file="$1"
+  src="$2"
+  shift 2
   gg_settings_usable "$src" || return 1
   if [ -f "$src" ]; then
     table="$(gg_env_table "$src" "$file")" || return 1

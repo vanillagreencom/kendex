@@ -37,14 +37,18 @@ assert_eq() { # LABEL EXPECT ACTUAL
 # reach the resolver.
 K=COMMIT_GUARDS_TP
 R=""
-resolve() { # ENVS [KEY]
+resolve() { # ENVS [KEY [trace]]
   local envs=() rc=0 out="" err=""
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   out="$(cd "$R" && { unset "$K" COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null; env ${envs[@]+"${envs[@]}"} bash -c '
     set -euo pipefail
     source "$0"
+    if [ "${2:-}" = trace ]; then
+      PS4="+settings-test: "
+      set -x
+    fi
     gg_setting "$1" dflt
-  ' "$SETTINGS" "${2:-$K}" 2>"$TMP/err"; })" || rc=$?
+  ' "$SETTINGS" "${2:-$K}" "${3:-}" 2>"$TMP/err"; })" || rc=$?
   # bash names the resolver's own path and line when a redirect inside it is
   # refused; the path and the line number are not the row's to pin.
   err="$(LC_ALL=C awk '/^commit-guards: [a-z-]+=/ { print }' "$TMP/err" | LC_ALL=C paste -sd ';' -)"
@@ -85,6 +89,14 @@ run_rows() { # label | world | envs | expect
     assert_eq "$label" "$expect" "$(resolve "$envs")"
   done
 }
+
+root counted-fallback
+put .kendex/settings.toml '[env]\nUNRELATED = "nested"\n'
+put .env.local 'UNRELATED=dotenv\n'
+result="$(resolve '' "$K" trace)"
+sources="$(LC_ALL=C awk '/^[+]+settings-test: gg_settings_source / { print $3 }' "$TMP/err" | LC_ALL=C sort)"
+assert_eq "the default fallback resolves each source once and takes the root value" \
+  $'rc=0 value=root\n.env.local\n.kendex/settings.toml\nkendex.settings.toml' "$result"$'\n'"$sources"
 
 echo "=== the resolution ladder, one layer at a time; .env is read by nothing ==="
 run_rows \
