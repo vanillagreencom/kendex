@@ -105,7 +105,7 @@ List Options:
 
 Get:
   issues.sh get <id>    Get by UUID or identifier (PROJ-42)
-  --format <fmt>        safe (default) | raw
+  --format <fmt>        safe (default) | compact | raw
 
 Bulk Get:
   issues.sh bulk-get <id1> <id2> ...   Get multiple issues with relations
@@ -1166,7 +1166,7 @@ get_issue_bundle() {
         esac
     done
 
-    linear_require_format "$FORMAT" safe raw || return 1
+    linear_require_format "$FORMAT" safe compact raw || return 1
 
     result=$(issue_read '
         query GetIssueWithBundle($id: String!) {
@@ -1189,6 +1189,7 @@ get_issue_bundle() {
                 branchName
                 createdAt
                 updatedAt
+                dueDate
                 archivedAt
                 trashed
                 parent { id identifier title }
@@ -1234,6 +1235,7 @@ get_issue_bundle() {
 
     case "$FORMAT" in
     raw) linear_public_result "$result" ;;
+    compact) format_issue_compact "$result" ;;
     safe) format_issue_with_bundle "$result" ;;
     esac
 }
@@ -2643,8 +2645,6 @@ write_issue_update() {
         echo "$result" | jq -c --arg id "$issue_id" '{error: ("issueUpdate was rejected (success != true) for " + $id + " - nothing was updated; uploaded files (if any) were not attached"), data: (.issueUpdate // {})}' >&2
         return 1
     fi
-    local updated_issue
-    updated_issue=$(echo "$result" | jq '.issueUpdate.issue // empty')
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueUpdate" "issue")
     # Output format. Default (no --format) preserves the historical mutation
@@ -2654,10 +2654,8 @@ write_issue_update() {
     # query actions. `safe`/`compact` reuse the shared formatters by wrapping the
     # mutation's issue in {issue: ...}; a response that omitted the issue object
     # falls back to the mutation summary.
-    local wrapped_issue=""
-    if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
-        wrapped_issue=$(jq -n --argjson i "$updated_issue" '{issue: $i}')
-    fi
+    local wrapped_issue
+    wrapped_issue=$(jq '.issueUpdate.issue | select(. != null) | {issue: .}' <<<"$result") || return 1
     local attach_failed=0
     if [ ${#attach_pending[@]} -gt 0 ]; then
         local attach_target_uuid attach_target_identifier updated_attachments

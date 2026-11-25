@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# Surface: native dueDate in create, update, bulk-update and complete payloads.
+# Surface: native dueDate in reads and write payloads, and large update results.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -27,7 +27,7 @@ reply=$(jq -j '
   {id:"team-uuid", key:"CC", name:"Claude"} as $team
   | . as $sent | fromjson | .query as $query | .variables as $v
   | ($v.id // "CC-1") as $id
-  | {id:$id, identifier:$id, title:"item", team:$team, dueDate:"2026-12-31",
+  | {id:$id, identifier:$id, title:"item", team:$team,
      description:(if $id == "CC-1" then env.STORED_BODY else "No checklist." end),
      state:{name:"Verifying",type:"started"}, labels:connection([]), children:connection([]),
      relations:connection([]), inverseRelations:connection([]),
@@ -36,9 +36,11 @@ reply=$(jq -j '
     ((if ($query | contains("teams(filter:")) then {teams:connection([$team])}
       elif ($query | contains("workflowStates(filter:")) then
         {workflowStates:connection([{id:$v.name,type:(if $v.name == "Done" then "completed" else "started" end)}])}
-      elif ($query | contains("issue(id:")) then {issue:$issue}
+      elif ($query | contains("issue(id:")) then {issue:($issue |
+        if $query | test("\\bdueDate\\b") then .dueDate = "2026-12-31" else . end)}
       elif ($query | contains("issueCreate(input:")) then {issueCreate:{success:true,issue:$issue}}
-      elif ($query | contains("issueUpdate(id:")) then {issueUpdate:{success:true,issue:$issue}}
+      elif ($query | contains("issueUpdate(id:")) then {issueUpdate:{success:true,issue:($issue |
+        if $id == "CC-3" then .title = $v.input.title | .description = ("x" * 180000) else . end)}}
       elif ($query | contains("fileUpload(")) then {fileUpload:{success:true,
         uploadFile:{uploadUrl:"https://uploads.linear.app/put",assetUrl:"https://uploads.linear.app/shot.png",headers:[]}}}
       elif ($query | contains("commentCreate(input:")) then {commentCreate:{success:true,comment:{id:"comment-uuid",issue:{identifier:$id}}}}
@@ -166,4 +168,21 @@ tick-earliest|complete|mixed|omitted|ticked_mixed|Verifying|2026-10-03
 tick-final-relative|complete|final_relative|omitted|ticked_relative|Done|null
 waive-final|complete|absolute|omitted|waived|Done|null
 synced-materialization|complete|relative|omitted|omitted||omitted
+ROWS
+
+while IFS='|' read -r verb id format filter; do
+  args=(issues "$verb" "$id" --format "$format")
+  [[ "$verb" != update ]] || args+=(--title changed)
+  rc=0
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
+    LOG="$log" STORED_BODY="$ordinary" SYNCED=no \
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" "${args[@]}") >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
+  assert_eq "$verb $format succeeds" "$rc" 0
+  if [[ "$rc" != 0 ]]; then cat "$TMP_ROOT/err"; fi
+  assert "$verb $format prints the expected result" jq -es "length == 1 and (.[0] | $filter)" "$TMP_ROOT/out"
+done <<'ROWS'
+update|CC-3|safe|.id == "CC-3" and .title == "changed" and (.description | length) == 180000
+get|CC-1|safe|.due_date == "2026-12-31"
+get|CC-1|compact|.due_date == "2026-12-31"
+get|CC-1|raw|.issue.dueDate == "2026-12-31"
 ROWS
