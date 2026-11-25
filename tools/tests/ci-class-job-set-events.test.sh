@@ -16,7 +16,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # selection, and a selection asked for one would stand lanes down on no
 # diff. The main push and the schedule take the proof routes below.
 # ARGUMENT|EVENT|EXPECTED
-if [ "${1-}" != --inventory-proof ]; then
+if [ "${1-}" != --inventory-proof ] && [ "${1-}" != --checkout-reads ]; then
 refused_rows=0
 while IFS='|' read -r arg event expected; do
   refused_rows=$((refused_rows + 1))
@@ -322,6 +322,40 @@ field() { # NAME — the value of the NAME= line on stdin
 in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEMBER
   field "$1" <"$TMP/push-out" | jq --arg m "$2" 'index($m) != null'
 }
+main_checkout_rows() {
+  local synthetic_head="$PUSH_AFTER" path expected got
+  while IFS='|' read -r path expected; do
+    git -C "$PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
+    printf '\n' >>"$PUSH_REPO/$path"
+    git -C "$PUSH_REPO" add -- "$path"
+    git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm input
+    PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+    PUSH_SHA="$PUSH_AFTER"
+    push_world no-run
+    got="$(push_select no-run)"
+    if [[ $got != exit=* ]]; then
+      got="$(field shards <"$TMP/push-out" | jq -c '
+        [.[] | select(. == "refresh" or . == "orch-rest" or . == "rest" or . == "jarvis")]')"
+    fi
+    check "main push without merge proof selects checkout build shards for $path" "$expected" "$got"
+  done <<'ROWS'
+ui/src/index.css|[]
+skills/bot-instructions/tests/fixtures/canonical.toml|[]
+crates/core/src/author/assets/mit.txt|["refresh","orch-rest","rest","jarvis"]
+ROWS
+  git -C "$PUSH_REPO" reset -q --hard "$synthetic_head"
+  PUSH_AFTER="$synthetic_head"
+  PUSH_SHA="$PUSH_AFTER"
+}
+case "${1-}" in
+  --checkout-reads)
+    main_checkout_rows
+    printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+    [ "$FAIL" -eq 0 ]
+    exit ;;
+  '') main_checkout_rows ;;
+esac
+
 # The probes and the counts each row's expectation is made of.
 P_TOOLS=tools/tests/ci-skill-prose.test.sh
 P_JARVIS=skills/jarvis/tests/task.test.sh

@@ -638,9 +638,10 @@ PROSE='\.(md|markdown)$'
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|guard|rust-reads|macos-test-contracts|macos-test-contracts\.json)$)'
 # Battery dispatch is by suite name, which the file reach cannot trace.
 RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
-# The release check runs a downloaded engine whose catalog and Git inputs
-# cannot be inspected by the source reach.
-CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
+# The repository's catalog layout. The release check also reads Git setup
+# and its driver, using a downloaded engine outside the source reach.
+CATALOG_SOURCE='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.gitmodules$)'
+CATALOG_INPUTS="$CATALOG_SOURCE|^(\.git(ignore|attributes)$|tools/catalog-release-check$)"
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
@@ -759,7 +760,7 @@ cargo_job_reads() {
 # Project source reads onto compiler, smoke and Linux test inputs. An opaque
 # checkout read retains its executable but cannot place a changed path.
 reads() {
-  local rows job_reads
+  local rows job_reads not_rendered=""
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
     return 1
   awk -F '\t' '
@@ -770,8 +771,27 @@ reads() {
   ' <<<"$rows" || return 1
   job_reads="$(cargo_job_reads)" ||
     return 1
+  if [[ $rows == *$'\ntarget-catalog\t'* ]]; then
+    # Use SealedSource's own fixed top-level render exclusions. A changed
+    # or unreadable declaration authorizes no narrowed Cargo matrix.
+    not_rendered="$(awk '
+      /^pub const NOT_RENDERED: / {
+        count++
+        if (!match($0, /\[&str; [0-9]+\]/)) exit 1
+        size=substr($0, RSTART, RLENGTH)
+        sub(/^.*; /, "", size); sub(/\]$/, "", size)
+        sub(/^.* = \[/, "")
+        if (!sub(/\];$/, "") || $0 !~ /^"[[:alnum:]_.-]+"(, "[[:alnum:]_.-]+")*$/) exit 1
+        gsub(/"|,/, "")
+        if (NF != size) exit 1
+        print
+      }
+      END { if (count != 1) exit 1 }
+    ' crates/core/src/source_read.rs)" || return 1
+  fi
   PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
-    EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
+    EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" \
+    CATALOG_SOURCE="$CATALOG_SOURCE" NOT_RENDERED="$not_rendered" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -784,11 +804,17 @@ reads() {
       for (i = 1; i <= n; i++) placed[paths[i]] = 1
       n = split(ENVIRON["EXCLUDED"], paths, "\n")
       for (i = 1; i <= n; i++) excluded[paths[i]] = 1
+      n = split(ENVIRON["NOT_RENDERED"], entries, " ")
+      for (i = 1; i <= n; i++) not_rendered[entries[i]] = 1
     }
     $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
     function select_target(r) {
       selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
+    }
+    function catalog_source(path,   segments) {
+      if (path !~ ENVIRON["CATALOG_SOURCE"]) return 0
+      return !(split(path, segments, "/") >= 3 && segments[1] == "skills" && segments[3] in not_rendered)
     }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
@@ -808,6 +834,10 @@ reads() {
           }
           if (kind[r] == "package-root") {
             if (read[r] == "." || index(path, read[r] "/") == 1) mapped = 1
+            continue
+          }
+          if (kind[r] == "target-catalog") {
+            if (catalog_source(path)) { select_target(r); mapped = 1 }
             continue
           }
           if (read[r] == ".") {
