@@ -311,7 +311,8 @@ pub fn recovery(launch: &LaunchSettings, path: &Path, predecessor: &str) -> Resu
 /// working directory, which must stand (`session-missing`): the home is the
 /// one the start's launch names, the account where it is the Pi root. An
 /// accountless Claude or Codex successor keeps the recorded home, a Claude
-/// one in its recorded mode. A start opens
+/// one in its recorded mode, as does a Claude one recorded on its implicit
+/// default whose account is that path. A start opens
 /// it; a record naming no native id refuses `session-unrecorded`.
 pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     let missing = || refused("record-missing", &[("path", &path.display().to_string())]);
@@ -335,19 +336,27 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     // the variable the fleet server or the caller hands may no longer name.
     // A Claude home resumes only with its recorded mode; one recorded with
     // none resumes on the home a fresh launch resolves, as before modes
-    // were recorded.
-    if successor.account.is_none()
-        && let Some(home) = Caller::of(&record).home
-    {
-        match record.harness {
-            Some(Harness::Codex) => successor.home = Some(home),
-            Some(Harness::Claude) => {
-                if let Some(implicit) = record.raw.get("home_implicit").and_then(Value::as_bool) {
-                    successor.home = Some(home);
-                    successor.home_implicit = implicit;
-                }
+    // were recorded. A Claude session on its implicit default whose account
+    // is that same path, the account a registration derives for a session
+    // naming no config dir, resumes on that default too, its account still
+    // billed and measured.
+    if let Some(home) = Caller::of(&record).home {
+        let mode = record.raw.get("home_implicit").and_then(Value::as_bool);
+        match (record.harness, successor.account.as_deref(), mode) {
+            (Some(Harness::Codex), None, _) => successor.home = Some(home),
+            (Some(Harness::Claude), None, Some(implicit)) => {
+                successor.home = Some(home);
+                successor.home_implicit = implicit;
             }
-            Some(Harness::Copilot | Harness::Pi) | None => {}
+            (Some(Harness::Claude), Some(account), Some(true))
+                if canon(account) == canon(&home) =>
+            {
+                successor.home = Some(home);
+                successor.home_implicit = true;
+            }
+            (Some(Harness::Codex), Some(_), _)
+            | (Some(Harness::Claude), _, _)
+            | (Some(Harness::Copilot | Harness::Pi) | None, _, _) => {}
         }
     }
     if record.harness == Some(Harness::Pi) {

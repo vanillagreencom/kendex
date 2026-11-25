@@ -291,8 +291,7 @@ pub struct LaunchHome {
     pub cleared: bool,
     /// The account the launch bills where its variable is not the home's.
     pub account: Option<PathBuf>,
-    /// Where its sessions are read: the named home, or the config dir an
-    /// accountless Claude launch keeps in either mode, else the harness's own
+    /// Where its sessions are read: the named home, else the harness's own
     /// default root.
     pub sessions: Option<PathBuf>,
     /// How the launch directory came to be trusted, where a home was
@@ -394,16 +393,12 @@ pub fn launch_home(
         .map(|home| prepare_trust(harness, &home, cwd, bypass))
         .transpose()?;
     let mut named = trusted.as_ref().map(|t| t.home.clone());
-    let mut sessions = named.clone();
     let mut cleared = false;
     if let (Harness::Claude, None) = (harness, account) {
         named = kept.filter(|kept| kept.named).map(|kept| kept.home.clone());
         cleared = named.is_none();
-        // An implicit default kept from a resumed session is that session's
-        // store, never the one under this process's `HOME`.
-        sessions = kept.map(|kept| kept.home.clone());
     }
-    let sessions = sessions.or_else(|| super::default_home(harness));
+    let sessions = named.clone().or_else(|| super::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
     Ok(LaunchHome {
         sessions,

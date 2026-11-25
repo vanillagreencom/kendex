@@ -8762,6 +8762,15 @@ fn an_accountless_controller_resumes_in_its_recorded_home_and_mode() {
     }
 }
 
+/// A controller registered from a pane on its implicit default, which the
+/// registration bills as the account at that path, resumes on that default
+/// under the `HOME` it ran with, its config dir variable unset, and keeps
+/// its account.
+#[test]
+fn a_registered_implicit_controller_resumes_on_its_default_and_keeps_its_account() {
+    resume_started_controller(ResumeHome::Registered);
+}
+
 /// A same-pane adoption keeps the recorded mode for the process the record
 /// names and reads a replacement's own: the replaced process's mode never
 /// carries over to the process now in the pane.
@@ -8787,6 +8796,8 @@ enum ResumeHome {
     /// Started on the implicit default, adopted again from its pane, then
     /// replaced in that pane by a process naming the same path.
     Readopted,
+    /// Opened by hand on the implicit default and registered from its pane.
+    Registered,
 }
 
 fn resume_started_controller(mode: ResumeHome) {
@@ -8831,17 +8842,19 @@ fn resume_started_controller(mode: ResumeHome) {
         ResumeHome::NamedDefault
         | ResumeHome::Implicit
         | ResumeHome::AdoptedDefault
-        | ResumeHome::Readopted => login_home.join(".claude"),
+        | ResumeHome::Readopted
+        | ResumeHome::Registered => login_home.join(".claude"),
     };
-    // Whether the record names its home: a host with no `/proc` reads no
-    // process environment, so the path an adoption names stands, named.
-    let named = match mode {
+    // The mode the record keeps beside its home, `home_implicit`: a host
+    // with no `/proc` reads no process environment, so an adoption naming a
+    // path records none.
+    let mut recorded = match mode {
         ResumeHome::Account
         | ResumeHome::Named
         | ResumeHome::NamedDefault
-        | ResumeHome::Adopted => true,
-        ResumeHome::AdoptedDefault => !cfg!(target_os = "linux"),
-        ResumeHome::Implicit | ResumeHome::Readopted => false,
+        | ResumeHome::Adopted => Some(false),
+        ResumeHome::AdoptedDefault => cfg!(target_os = "linux").then_some(true),
+        ResumeHome::Implicit | ResumeHome::Readopted | ResumeHome::Registered => Some(true),
     };
     if mode == ResumeHome::Account {
         assert!(runner.fleet().get("tmux").is_none());
@@ -8888,7 +8901,10 @@ fn resume_started_controller(mode: ResumeHome) {
         command.env_remove("CLAUDE_CONFIG_DIR");
         command.output().unwrap()
     };
-    if matches!(mode, ResumeHome::Adopted | ResumeHome::AdoptedDefault) {
+    if matches!(
+        mode,
+        ResumeHome::Adopted | ResumeHome::AdoptedDefault | ResumeHome::Registered
+    ) {
         let id = "a8bf284a-7556-42a7-98de-20c7660878b8";
         plant_claude_session(&home, cwd, id);
         let config_dir = if mode == ResumeHome::Adopted {
@@ -8905,13 +8921,28 @@ fn resume_started_controller(mode: ResumeHome) {
             ),
         );
         server.await_composer(&pane);
-        let out = adopt(
-            &runner,
-            &pane,
-            cwd,
-            &["--session-id", id, "--home", home.to_str().unwrap()],
-        );
-        assert!(out.status.success(), "{mode:?}: {}", stderr(&out));
+        if mode == ResumeHome::Registered {
+            // The account the registration derives is the default path, whose
+            // sign-in the resume judges.
+            plant_credential(&home);
+            let watch_tools = runner.tools.clone();
+            register_tools(&mut runner, CLAUDE_HOOK, 0);
+            let out = register(&runner, &pane, &[], &[]);
+            assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+            runner.tools = watch_tools;
+            // The id the session's next hook run binds.
+            let mut fleet = runner.fleet();
+            fleet["controller"]["session_id"] = json!(id);
+            runner.write_fleet(&fleet);
+        } else {
+            let out = adopt(
+                &runner,
+                &pane,
+                cwd,
+                &["--session-id", id, "--home", home.to_str().unwrap()],
+            );
+            assert!(out.status.success(), "{mode:?}: {}", stderr(&out));
+        }
         let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
         std::fs::write(
             &paths.flags,
@@ -8952,10 +8983,18 @@ fn resume_started_controller(mode: ResumeHome) {
     if mode != ResumeHome::Account {
         assert_eq!(
             before["controller"]["home_implicit"],
-            json!(!named),
+            json!(recorded),
             "{mode:?}: the record keeps the mode beside its home"
         );
     }
+    if mode == ResumeHome::Registered {
+        assert_eq!(
+            before["controller"]["account"],
+            json!(home),
+            "the registration bills the default path"
+        );
+    }
+    let started = recorded;
     if mode == ResumeHome::Readopted {
         let original = before["controller"].clone();
         let pane = original["pane"].as_str().unwrap();
@@ -8987,14 +9026,15 @@ fn resume_started_controller(mode: ResumeHome) {
         server.await_composer(pane);
         let mut flags = vec!["--session-id", id];
         // A host with no `/proc` reads no process environment: the path the
-        // adoption names stands, named.
+        // adoption names is recorded with no mode.
         if !cfg!(target_os = "linux") {
             flags.extend(["--home", home.to_str().unwrap()]);
         }
         let replaced = readopt(&flags);
         assert_eq!(replaced["generation"], original["generation"]);
         assert_ne!(replaced["harness_pid"], original["harness_pid"]);
-        assert_eq!(replaced["home_implicit"], false, "{replaced}");
+        recorded = cfg!(target_os = "linux").then_some(false);
+        assert_eq!(replaced["home_implicit"], json!(recorded), "{replaced}");
         before = runner.fleet();
     }
     let original = &before["controller"];
@@ -9007,20 +9047,24 @@ fn resume_started_controller(mode: ResumeHome) {
         let latest: Value = serde_json::from_str(rows.lines().last().unwrap()).unwrap();
         latest[key].clone()
     };
-    let adopted = matches!(mode, ResumeHome::Adopted | ResumeHome::AdoptedDefault);
+    let adopted = matches!(
+        mode,
+        ResumeHome::Adopted | ResumeHome::AdoptedDefault | ResumeHome::Registered
+    );
     let original_turns = usize::from(!adopted);
     if !adopted {
         assert_eq!(file_turns(&file), ["START HERE"]);
-        assert_eq!(latest("configDirSet"), named, "{mode:?}");
+        assert_eq!(latest("configDirSet"), started == Some(false), "{mode:?}");
     }
     // Nothing in the environment names the home now; the implicit default
     // resumes where the caller and the server name another home and
-    // another config dir.
-    let resumed_named = named || mode == ResumeHome::Readopted;
+    // another config dir. A record with no mode resumes on the home a fresh
+    // launch resolves, here the implicit default the caller's `HOME` holds.
+    let resumed_named = recorded == Some(false);
     if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
         set_config_dir(None);
     }
-    if !resumed_named {
+    if recorded == Some(true) {
         let other = dir.path().join("other-home");
         std::fs::create_dir_all(other.join(".claude")).unwrap();
         set_home(&mut runner, &other);
@@ -9074,6 +9118,7 @@ fn resume_started_controller(mode: ResumeHome) {
     if !resumed_named {
         assert_eq!(latest("home"), json!(login_home), "{mode:?}");
     }
+    assert_eq!(successor["account"], original["account"], "{mode:?}");
 }
 
 /// An accountless Codex controller resumes its session under the
