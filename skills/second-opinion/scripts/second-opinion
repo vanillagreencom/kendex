@@ -313,7 +313,7 @@ Default commands:
           Room check, where orch is installed in the project this script is
           installed in and AGENT_RUNTIME_ACCOUNT_DIRS names accounts:
           .agents/skills/agent-runtime/scripts/agent-runtime
-            accounts pick --env --harness claude --native-model MODEL
+            accounts pick --env --max-pct 100 --harness claude --native-model MODEL
           and for codex the same with --harness codex and --binding-floor,
           MODEL being the class's model (omitted where it is unresolved).
           The pick chooses among the accounts AGENT_RUNTIME_ACCOUNT_DIRS
@@ -1146,6 +1146,7 @@ DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --eph
 DEFAULT_PI_COPILOT_CMD="pi -p --no-session --no-extensions --model %s --thinking high --tools read,grep,find,ls"
 ACCOUNT_PICK=".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env"
 DEFAULT_PI_COPILOT_ROOM_CMD="$ACCOUNT_PICK --harness pi --native-model %s"
+STOCK_ROOM_PICK="$ACCOUNT_PICK --max-pct 100"
 # The stock claude and codex entries take the same pick where orch is
 # installed in the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts. The
 # pick chooses among the accounts that key names alone, and orch's settings
@@ -1348,8 +1349,8 @@ target_room() {
     # --binding-floor holds that limit to the same bound and the fuller of
     # the two decides.
     case "$harness" in
-      claude) cmd="$ACCOUNT_PICK --harness claude${STOCK_CLAUDE_MODEL:+ --native-model $STOCK_CLAUDE_MODEL}" ;;
-      codex) cmd="$ACCOUNT_PICK --harness codex${STOCK_CODEX_MODEL:+ --native-model $STOCK_CODEX_MODEL} --binding-floor" ;;
+      claude) cmd="$STOCK_ROOM_PICK --harness claude${STOCK_CLAUDE_MODEL:+ --native-model $STOCK_CLAUDE_MODEL}" ;;
+      codex) cmd="$STOCK_ROOM_PICK --harness codex${STOCK_CODEX_MODEL:+ --native-model $STOCK_CODEX_MODEL} --binding-floor" ;;
     esac
     from="the default $var"
     again=": $cmd"

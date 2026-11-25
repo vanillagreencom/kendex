@@ -49,8 +49,8 @@ run_table "room checks" "$DEFAULTS" "$ROWS" room_state
 # the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts, the command then
 # running on the account it names. agent-runtime is stubbed here and real below.
 STOCK_DEFAULTS="ps:none current:claude models:claude+codex count:1 bin:claude bin:codex orch:installed accounts:listed runtime:room tier:class"
-CLAUDE_PICK="accounts pick --env --harness claude --native-model opus"
-CODEX_PICK="accounts pick --env --harness codex --native-model gpt-6.2-sol --binding-floor"
+CLAUDE_PICK="accounts pick --env --max-pct 100 --harness claude --native-model opus"
+CODEX_PICK="accounts pick --env --max-pct 100 --harness codex --native-model gpt-6.2-sol --binding-floor"
 CODEX_TAKEN="calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out"
 NEXT="my-model+codex cmd:my-model=extra model:my-model=deepseek"
 NEXT_TAKEN="calls=claude:0,codex:0,extra:1 art=external-my-model/$OWN files=out"
@@ -78,7 +78,7 @@ with orch installed and agent-runtime not, the check is unavailable, never room,
 every account walled refuses the entry and the next reviews|runtime:walled models:claude+codex+$NEXT|review|0|<out>|same:claude:claude roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 single:my-model:review:claude written|$NEXT_TAKEN runtime=$CODEX_PICK seat=claude:none,codex:none model=-
 a configured command replaces the built-in model and check|cmd:codex=codex|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=-
 a room check set empty is no check|marker:SECOND_OPINION_CODEX_ROOM_CMD=|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
-an unresolved class leaves the harness default, said once, and a pick naming no model|tier:none|review|0|<out>|same:claude:claude unresolved:codex stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=accounts pick --env --harness codex --binding-floor seat=claude:none,codex:runtime-seat model=codex:
+an unresolved class leaves the harness default, said once, and a pick naming no model|tier:none|review|0|<out>|same:claude:claude unresolved:codex stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=accounts pick --env --max-pct 100 --harness codex --binding-floor seat=claude:none,codex:runtime-seat model=codex:
 a global install has no project, so no check, though orch and agent-runtime sit under the working directory|install:global|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
 a forced target is held to the built-in check too|runtime:walled|review --target codex|1|-|roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 refused:claude:1|$NONE runtime=$CODEX_PICK seat=claude:none,codex:none model=-
 "
@@ -135,7 +135,7 @@ claude_account() {
 # answer stubbed: the pick is the one the package runs, not a setting.
 # label|second account weekly usage|orch installed|AGENT_RUNTIME_ACCOUNT_DIRS|reviewer|account
 CLAUDE_ROWS='
-Claude chooses the second account after the first reaches its weekly wall|20|yes|listed|claude|second
+Claude chooses an account at 96 percent after the first reaches its weekly wall|96|yes|listed|claude|second
 Claude account metadata survives collection with another opinion|20|union|listed|claude,my-model|second
 control: without orch the review stays on the walled account it inherits|20|no|listed|claude|first
 with orch installed and no account listed the review runs on the account it inherits|20|yes|unset|claude|first
@@ -200,7 +200,7 @@ TOKEN_UNJUDGED='unjudged harness=claude exit=1 cause=claude-oauth-token-room-unm
 TOKEN_ROWS="
 the inherited token's room reading launches Claude|firstclaude|room|10.5|95|90||1:0|
 an excluded token's matching room reading leaves Claude unavailable|firstclaude|room|10.5|95|90|firstclaude|0:1|excluded harness=claude exit=3
-the host's room reaches the stricter local ceiling|firstclaude|room|10|95|90||0:1|walled harness=claude exit=3
+the stock bound admits a host-approved token at the local setting's ceiling|firstclaude|room|10|95|90||1:0|
 a host wall refuses above its ceiling even with a looser local ceiling|firstclaude|walled|4|95|100||0:1|walled harness=claude exit=3
 an unmeasured host reading refuses Claude|firstclaude|unmeasured|null|95|95||0:1|unmeasured harness=claude exit=5
 a different account's reading leaves the inherited token unjudged|secondclaude|room|50|95|95||0:1|$TOKEN_UNJUDGED
