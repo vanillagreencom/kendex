@@ -18,10 +18,13 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ARGUMENT|EVENT|EXPECTED
 if [ "${1-}" != --inventory-proof ] && [ "${1-}" != --checkout-reads ]; then
 refused_rows=0
+refused_row() { # ARGUMENT EVENT EXPECTED
+  check "event ${2:-unset}, called with ${1:-no argument}" "$3" \
+    "$(SELECT_ARG="$1" SELECT_EVENT="$2" selection micro false skills/orch/SKILL.md)"
+}
 while IFS='|' read -r arg event expected; do
   refused_rows=$((refused_rows + 1))
-  check "event ${event:-unset}, called with ${arg:-no argument}" "$expected" \
-    "$(SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/SKILL.md)"
+  row_spawn refused_row "$arg" "$event" "$expected"
 done <<ROWS
 |workflow_dispatch|exit=2 unsupported-event event=workflow_dispatch
 --event-parity|workflow_dispatch|exit=2 unsupported-event event=workflow_dispatch
@@ -32,10 +35,13 @@ ROWS
 # request as in the merge group.
 # EVENT|PATHS|LEGS
 leg_rows=0
+leg_row() { # EVENT PATHS EXPECTED
+  check "the $1 legs over '$2'" "$3" \
+    "$(SELECT_EVENT="$1" selection micro false "$(printf '%s\n' $2)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+}
 while IFS='|' read -r event paths expected; do
   leg_rows=$((leg_rows + 1))
-  check "the $event legs over '$paths'" "$expected" \
-    "$(SELECT_EVENT="$event" selection micro false "$(printf '%s\n' $paths)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+  row_spawn leg_row "$event" "$paths" "$expected"
 done <<ROWS
 pull_request|skills/orch/scripts/resolve-base-branch|$BOTH
 merge_group|skills/orch/scripts/resolve-base-branch|$BOTH
@@ -65,10 +71,13 @@ awk '
 ' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
 chmod +x "$TMP/parity/tools/ci-job-set"
 parity_rows=0
+parity_row() { # ARGUMENT EVENT EXPECTED
+  check "a macOS leg the merge group alone selects, called with ${1:-no argument} on $2" "$3" \
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$1" SELECT_EVENT="$2" selection micro false skills/orch/scripts/resolve-base-branch | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+}
 while IFS='|' read -r arg event expected; do
   parity_rows=$((parity_rows + 1))
-  check "a macOS leg the merge group alone selects, called with ${arg:-no argument} on $event" "$expected" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+  row_spawn parity_row "$arg" "$event" "$expected"
 done <<ROWS
 --event-parity|pull_request|exit=2 event-parity event=merge_group
 --event-parity|merge_group|exit=2 event-parity event=pull_request
@@ -77,9 +86,6 @@ done <<ROWS
 --parity|pull_request|exit=2 unknown-argument value=--parity
 ROWS
 [ "$parity_rows" -eq 5 ] || { echo "the parity table read $parity_rows rows" >&2; exit 1; }
-check "this tree's selection passes the --event-parity call unchanged" \
-  "$(selection micro false skills/orch/scripts/resolve-base-branch)" \
-  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/resolve-base-branch)"
 # That call says on stderr each step it starts, in order, with the reach's
 # own progress forwarded inside the reach step.
 progress_steps() { # STDERR_FILE — the steps and the reach's end, `|`-joined
@@ -87,8 +93,14 @@ progress_steps() { # STDERR_FILE — the steps and the reach's end, `|`-joined
     "$1" | paste -sd '|' -
 }
 PROGRESS_STEPS="reach 1/4|guard done|select 2/4 event=pull_request|select 3/4 event=merge_group|emit 4/4"
-check "the --event-parity call reports each step in order, the reach's progress inside the reach" \
-  "$PROGRESS_STEPS" "$(progress_steps "$TMP/selection-err")"
+parity_call_row() {
+  check "this tree's selection passes the --event-parity call unchanged" \
+    "$(selection micro false skills/orch/scripts/resolve-base-branch)" \
+    "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/resolve-base-branch)"
+  check "the --event-parity call reports each step in order, the reach's progress inside the reach" \
+    "$PROGRESS_STEPS" "$(progress_steps "$TMP/selection-err$ROW_TAG")"
+}
+row_spawn parity_call_row
 # Control: a copy that drops the reach's progress lines breaks the row.
 mkdir -p "$TMP/progress/tools"
 cp -R "$ROOT/tools/lib" "$TMP/progress/tools/lib"
@@ -98,36 +110,45 @@ ln -s "$ROOT/skills" "$TMP/progress/skills"
 sed "/^      'guard-progress: '\*) printf /d" "$JOB_SET" >"$TMP/progress/tools/ci-job-set"
 chmod +x "$TMP/progress/tools/ci-job-set"
 ! cmp -s "$JOB_SET" "$TMP/progress/tools/ci-job-set" || exit 1
-SELECT_WITH="$TMP/progress/tools/ci-job-set" SELECT_ARG=--event-parity selection micro false \
-  skills/orch/scripts/resolve-base-branch >/dev/null
-[ "$(progress_steps "$TMP/selection-err")" != "$PROGRESS_STEPS" ] &&
-  grep -q '^ci-job-set: progress=emit ' "$TMP/selection-err" &&
-  ok "control: a copy that drops the reach's progress breaks the progress row" ||
-  bad "control: a copy that drops the reach's progress breaks the progress row"
+progress_control_row() {
+  SELECT_WITH="$TMP/progress/tools/ci-job-set" SELECT_ARG=--event-parity selection micro false \
+    skills/orch/scripts/resolve-base-branch >/dev/null
+  [ "$(progress_steps "$TMP/selection-err$ROW_TAG")" != "$PROGRESS_STEPS" ] &&
+    grep -q '^ci-job-set: progress=emit ' "$TMP/selection-err$ROW_TAG" &&
+    ok "control: a copy that drops the reach's progress breaks the progress row" ||
+    bad "control: a copy that drops the reach's progress breaks the progress row"
+}
+row_spawn progress_control_row
 
 # An Ubuntu lane that differs by event is refused too.
+cp -R "$TMP/parity" "$TMP/ubuntu"
 awk '
   /^  printf .* cargo_linux=\$linux / {
     print "  [ \"$event\" = merge_group ] || linux=false"; n++
   }
   { print }
   END { if (n != 1) exit 1 }
-' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
-for event in pull_request merge_group; do
-  other=merge_group
-  [ "$event" != merge_group ] || other=pull_request
-  check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false crates/core/src/lib.rs)"
-done
+' "$JOB_SET" >"$TMP/ubuntu/tools/ci-job-set"
+ubuntu_row() { # EVENT OTHER
+  check "Ubuntu event parity on $1" "exit=2 event-parity event=$2" \
+    "$(SELECT_WITH="$TMP/ubuntu/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$1" selection micro false crates/core/src/lib.rs)"
+}
+row_spawn ubuntu_row pull_request merge_group
+row_spawn ubuntu_row merge_group pull_request
 
 # THE PUBLISHED SELECTION: where CI_SELECTION names a file, a class
 # selection writes there the skips and targets it emits, the one record the
 # push at the group's head reads.
-written="$(CI_SELECTION="$TMP/written.json" selection micro false skills/orch/scripts/resolve-base-branch)"
-check "a class selection writes its skips and targets to CI_SELECTION" \
-  "$(jq -cn --argjson s "$(sed -n 's/.* skipped_suites=\([^ ]*\).*/\1/p' <<<"$written")" \
-    --argjson r "$(sed -n 's/.* rust_targets=\([^ ]*\).*/\1/p' <<<"$written")" '{skipped_suites: $s, rust_targets: $r}')" \
-  "$(jq -c . "$TMP/written.json" 2>/dev/null || echo unwritten)"
+written_row() {
+  local written
+  written="$(CI_SELECTION="$TMP/written.json" selection micro false skills/orch/scripts/resolve-base-branch)"
+  check "a class selection writes its skips and targets to CI_SELECTION" \
+    "$(jq -cn --argjson s "$(sed -n 's/.* skipped_suites=\([^ ]*\).*/\1/p' <<<"$written")" \
+      --argjson r "$(sed -n 's/.* rust_targets=\([^ ]*\).*/\1/p' <<<"$written")" '{skipped_suites: $s, rust_targets: $r}')" \
+    "$(jq -c . "$TMP/written.json" 2>/dev/null || echo unwritten)"
+}
+row_spawn written_row
+rows_join
 fi
 
 # THE PUSH ROUTE: a main push owes, on each runner, the suites and Rust
@@ -304,23 +325,23 @@ push_world() { # NAME
 # main-proof=… warned=yes|no`, with the step's empty class inputs, or
 # `exit=N`; the output stays in push-out for in_list.
 push_select() { # WORLD [SELECTOR]
-  local out="$TMP/push-out" status=0
+  local out="$TMP/push-out$ROW_TAG" err="$TMP/push-err$ROW_TAG" stdout="$TMP/push-stdout$ROW_TAG" status=0
   : >"$out"
   (cd "$PUSH_REPO" && PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/$1" GITHUB_REPOSITORY=vanillagreencom/kendex \
     GITHUB_SHA="$PUSH_SHA" EVENT=push CHANGE_CLASS='' DOCS_ONLY='' CHANGED_PATHS='' GITHUB_OUTPUT="$out" \
-    "${2:-$JOB_SET}" --event-parity >"$TMP/push-stdout" 2>"$TMP/push-err") || status=$?
+    "${2:-$JOB_SET}" --event-parity >"$stdout" 2>"$err") || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
   printf 'shards=%s queue_macos_shards=%s rust_targets=%s skips=%s/%s %s warned=%s' \
     "$(field shards <"$out")" "$(field queue_macos_shards <"$out")" "$(field rust_targets <"$out")" \
     "$(field skipped_suites <"$out" | jq length)" "$(field skipped_suites_macos <"$out" | jq length)" \
-    "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) .*/\1/p' "$TMP/push-err")" \
-    "$(grep -q '^::warning ' "$TMP/push-stdout" && echo yes || echo no)"
+    "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) .*/\1/p' "$err")" \
+    "$(grep -q '^::warning ' "$stdout" && echo yes || echo no)"
 }
 field() { # NAME — the value of the NAME= line on stdin
   sed -n "s/^$1=//p"
 }
 in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEMBER
-  field "$1" <"$TMP/push-out" | jq --arg m "$2" 'index($m) != null'
+  field "$1" <"$TMP/push-out$ROW_TAG" | jq --arg m "$2" 'index($m) != null'
 }
 main_checkout_rows() {
   local synthetic_head="$PUSH_AFTER" range_base="$PUSH_BEFORE" path expected skipped got
@@ -403,13 +424,18 @@ WHOLE="shards=$ROSTER queue_macos_shards=$QUEUE_ALL rust_targets=$EVERY_TARGET s
 UNREAD="main-proof=unread warned=yes"
 NO_RUN="main-proof=none warned=yes"
 push_world kept-subset
-index_group="$(GIT_INDEX_FILE="$TMP/unavailable-index" SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group \
-  selection small false kendex.toml)"
-index_push="$(GIT_INDEX_FILE="$TMP/unavailable-index" push_select kept-subset)"
-case "$index_push" in exit=*) cat "$TMP/push-err" >&2 ;; esac
-check "a missing Git index keeps Node and prevents same-head subtraction" "true|$WHOLE $UNREAD" \
-  "$(field shards <<<"$(tr ' ' '\n' <<<"$index_group")" | jq 'index("node") != null')|$index_push"
+index_row() {
+  local index_group index_push
+  index_group="$(GIT_INDEX_FILE="$TMP/unavailable-index" SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group \
+    selection small false kendex.toml)"
+  index_push="$(GIT_INDEX_FILE="$TMP/unavailable-index" push_select kept-subset)"
+  case "$index_push" in exit=*) cat "$TMP/push-err$ROW_TAG" >&2 ;; esac
+  check "a missing Git index keeps Node and prevents same-head subtraction" "true|$WHOLE $UNREAD" \
+    "$(field shards <<<"$(tr ' ' '\n' <<<"$index_group")" | jq 'index("node") != null')|$index_push"
+}
+row_spawn index_row
 if [ "${1-}" = --inventory-proof ]; then
+  rows_join
   printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
   exit
@@ -422,15 +448,20 @@ M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
 check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
 check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
 check "push route: all-proved publishes no runtime build main has" '[]' "$(field runtime_publish <"$TMP/push-out")"
+# The table rewrites the kept-subset world the index row reads.
+rows_join
 # WORLD|EXPECTED. A suite counts only where no selection left it out and
 # every same-head leg that runs it on its runner succeeded; a target only
 # where every selection listed it and the orch-rest Linux leg succeeded; any
 # read that fails runs the whole roster.
 push_rows=0
+push_row() { # WORLD EXPECTED
+  push_world "$1"
+  check "push route: $1" "$2" "$(push_select "$1")"
+}
 while IFS='|' read -r world expected; do
   push_rows=$((push_rows + 1))
-  push_world "$world"
-  check "push route: $world" "$expected" "$(push_select "$world")"
+  row_spawn push_row "$world" "$expected"
 done <<ROWS
 kept-subset|shards=["guards-tools","guards-tools-tail"] queue_macos_shards=["guards-tools"] rust_targets=[] skips=$((U - 1))/$((M - 1)) main-proof=read warned=no
 replacement-split|shards=["rest"] queue_macos_shards=["rest"] rust_targets=[] skips=$((U - 1))/$((M - 2)) main-proof=read warned=no
@@ -455,45 +486,62 @@ jobs-missing|$WHOLE $UNREAD
 jobs-partial|$WHOLE $UNREAD
 ROWS
 [ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+# The probes read the worlds the table wrote.
+rows_join
 # The probes: a red Linux leg owes its suites on Linux alone, and a group
 # that left a suite out proves its every other suite.
-push_select red-leg >/dev/null
-check "push route: a red Linux leg owes its suite on Linux" false "$(in_list skipped_suites "$P_TOOLS")"
-check "push route: and its macOS leg still proves it" true "$(in_list skipped_suites_macos "$P_TOOLS")"
-check "push route: the red leg's other package owes its suites" false "$(in_list skipped_suites "$P_JARVIS")"
-push_select kept-subset >/dev/null
-check "push route: the suite the group left out is owed" false "$(in_list skipped_suites "$P_TOOLS")"
-check "push route: the group's kept suites are proved" true "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
+red_leg_row() {
+  push_select red-leg >/dev/null
+  check "push route: a red Linux leg owes its suite on Linux" false "$(in_list skipped_suites "$P_TOOLS")"
+  check "push route: and its macOS leg still proves it" true "$(in_list skipped_suites_macos "$P_TOOLS")"
+  check "push route: the red leg's other package owes its suites" false "$(in_list skipped_suites "$P_JARVIS")"
+}
+kept_subset_row() {
+  push_select kept-subset >/dev/null
+  check "push route: the suite the group left out is owed" false "$(in_list skipped_suites "$P_TOOLS")"
+  check "push route: the group's kept suites are proved" true "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
+}
 # What the push's macOS leg runs of SUITE..., through the leg's own skip list
 # and native filter, or the filter's refusal.
 macos_leg() { # SUITE...
-  local kept status=0
-  kept="$(SKIPPED_SUITES="$(field skipped_suites_macos <"$TMP/push-out")" "$JOB_SET" --suite-list "$@" |
-    (cd "$ROOT" && tools/macos-test-contracts --filter) 2>"$TMP/macos-leg-err")" || status=$?
-  [ "$status" -eq 0 ] || { sed -n 's/^macos-test-contracts: //p' "$TMP/macos-leg-err"; return 0; }
+  local kept status=0 err="$TMP/macos-leg-err$ROW_TAG"
+  kept="$(SKIPPED_SUITES="$(field skipped_suites_macos <"$TMP/push-out$ROW_TAG")" "$JOB_SET" --suite-list "$@" |
+    (cd "$ROOT" && tools/macos-test-contracts --filter) 2>"$err")" || status=$?
+  [ "$status" -eq 0 ] || { sed -n 's/^macos-test-contracts: //p' "$err"; return 0; }
   printf '%s' "$kept" | paste -sd ' ' -
 }
-push_select replacement-split >/dev/null
-check "push route: an owed original keeps the replacement its group proved" "$P_NATIVE" \
-  "$(macos_leg "$P_MERGE" "$P_NATIVE" "$P_VIEW")"
+replacement_row() {
+  push_select replacement-split >/dev/null
+  check "push route: an owed original keeps the replacement its group proved" "$P_NATIVE" \
+    "$(macos_leg "$P_MERGE" "$P_NATIVE" "$P_VIEW")"
+}
 # A green leg proves no main-only suite it filtered out: the push's
 # dedicated job still runs it.
-push_select all-proved >/dev/null
-check "push route: a main-only suite the group filtered out stays selected" false "$(in_list skipped_suites "$P_MAIN_ONLY")"
-check "push route: only the adopter still runs in the dedicated job" '["adopt-refresh.test"]' \
-  "$(field main_suites <"$TMP/push-out" | jq -c '[.[].suite]')"
-check "push route: the group proves the restored ownership partition" true \
-  "$(in_list skipped_suites tools/tests/orch-shard-partition.test.sh)"
-check "push route: the group proves the restored deny hook" true \
-  "$(in_list skipped_suites hooks/tests/critical-path-deny.test.sh)"
+main_only_row() {
+  push_select all-proved >/dev/null
+  check "push route: a main-only suite the group filtered out stays selected" false "$(in_list skipped_suites "$P_MAIN_ONLY")"
+  check "push route: only the adopter still runs in the dedicated job" '["adopt-refresh.test"]' \
+    "$(field main_suites <"$TMP/push-out$ROW_TAG" | jq -c '[.[].suite]')"
+  check "push route: the group proves the restored ownership partition" true \
+    "$(in_list skipped_suites tools/tests/orch-shard-partition.test.sh)"
+  check "push route: the group proves the restored deny hook" true \
+    "$(in_list skipped_suites hooks/tests/critical-path-deny.test.sh)"
+}
 # The one-target world: the group ran orch/lib alone, so every other target
 # of both runtimes runs on the push's orch-rest leg.
-push_world one-target
-check "push route: one-target" "shards=[\"orch-rest\"] queue_macos_shards=[] main-proof=read warned=no" \
-  "$(push_select one-target | sed 's/ rust_targets=[^ ]* skips=[^ ]*//')"
-check "push route: one-target leaves out the proved target" false "$(in_list rust_targets orch/lib)"
-check "push route: one-target owes another orch target" true "$(in_list rust_targets orch/watch_reads)"
-check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
+one_target_row() {
+  push_world one-target
+  check "push route: one-target" "shards=[\"orch-rest\"] queue_macos_shards=[] main-proof=read warned=no" \
+    "$(push_select one-target | sed 's/ rust_targets=[^ ]* skips=[^ ]*//')"
+  check "push route: one-target leaves out the proved target" false "$(in_list rust_targets orch/lib)"
+  check "push route: one-target owes another orch target" true "$(in_list rust_targets orch/watch_reads)"
+  check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
+}
+row_spawn red_leg_row
+row_spawn kept_subset_row
+row_spawn replacement_row
+row_spawn main_only_row
+row_spawn one_target_row
 
 # THE RUNTIME PUBLICATION: a push owes each package runtime build whose
 # `<name>-<key>` has no unexpired artifact from a push run of this workflow
@@ -506,22 +554,25 @@ runtime_key() { # RUNTIME_DIR
 }
 KEYS="$(jq -cn --arg a "$(runtime_key skills/agent-runtime/runtime)" --arg o "$(runtime_key skills/orch/runtime)" \
   '{"agent-runtime": $a, "orch-runtime": $o}')"
-publish_world() { # STATES — a world from all-proved, its listing states set
-  local state
-  rm -rf -- "${TMP:?}/push/publish"
-  cp -R "$TMP/push/all-proved" "$TMP/push/publish"
-  for state in $1; do printf '%s\n' "${state#*=}" >"$TMP/push/publish/runtime-${state%%=*}"; done
+publish_world() { # STATES — a world from all-proved, its listing states set, named publish and the row's tag
+  local state world="$TMP/push/publish$ROW_TAG"
+  rm -rf -- "${world:?}"
+  cp -R "$TMP/push/all-proved" "$world"
+  for state in $1; do printf '%s\n' "${state#*=}" >"$world/runtime-${state%%=*}"; done
 }
 owed_publish() { # OWED — the runtime_publish value naming OWED
   jq -c --argjson keys "$KEYS" 'map({name: ., key: $keys[.]})' <<<"$1"
 }
 publish_rows=0
+publish_row() { # STATES OWED
+  publish_world "$1"
+  push_select "publish$ROW_TAG" >/dev/null
+  check "runtime publication: $1" "shards=[\"orch-state\"] runtime_publish=$(owed_publish "$2")" \
+    "shards=$(field shards <"$TMP/push-out$ROW_TAG") runtime_publish=$(field runtime_publish <"$TMP/push-out$ROW_TAG")"
+}
 while IFS='|' read -r states owed; do
   publish_rows=$((publish_rows + 1))
-  publish_world "$states"
-  push_select publish >/dev/null
-  check "runtime publication: $states" "shards=[\"orch-state\"] runtime_publish=$(owed_publish "$owed")" \
-    "shards=$(field shards <"$TMP/push-out") runtime_publish=$(field runtime_publish <"$TMP/push-out")"
+  row_spawn publish_row "$states" "$owed"
 done <<'ROWS'
 agent-runtime=none|["agent-runtime"]
 agent-runtime=fork orch-runtime=expired|["agent-runtime","orch-runtime"]
@@ -546,9 +597,12 @@ filter_copy() { # NAME FROM TO
 # Control: a selector that takes a push of any event as main's counts a
 # pull-request run whose head branch is named main as published.
 filter_copy any-event '\(\.event == "push" and ' '('
-publish_world agent-runtime=pull-request-main
-push_select publish "$TMP/any-event/tools/ci-job-set" >/dev/null
-check "control: a selector taking any event's run owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out")"
+any_event_row() {
+  publish_world agent-runtime=pull-request-main
+  push_select "publish$ROW_TAG" "$TMP/any-event/tools/ci-job-set" >/dev/null
+  check "control: a selector taking any event's run owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out$ROW_TAG")"
+}
+row_spawn any_event_row
 
 # THE MERGE GROUP'S PUBLICATION: under --runtime-publish a class selection
 # owes the same builds and adds the orch-state leg to its Linux shards in
@@ -560,9 +614,9 @@ UNREAD_DOC="docs/no-reader"".md"
 GROUP_SELECTION="$TMP/group-selection.json"
 group_select() { # STATES [SELECTOR [CLASS PATH]] — the selection, micro over GROUP_PATH unless named, in a world from all-proved
   publish_world "$1"
-  : >"$GROUP_SELECTION"
-  PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/publish" GITHUB_REPOSITORY=vanillagreencom/kendex \
-    CI_SELECTION="$GROUP_SELECTION" SELECT_IN="$PUSH_REPO" SELECT_WITH="${2:-$JOB_SET}" SELECT_EVENT=merge_group \
+  : >"$GROUP_SELECTION$ROW_TAG"
+  PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/publish$ROW_TAG" GITHUB_REPOSITORY=vanillagreencom/kendex \
+    CI_SELECTION="$GROUP_SELECTION$ROW_TAG" SELECT_IN="$PUSH_REPO" SELECT_WITH="${2:-$JOB_SET}" SELECT_EVENT=merge_group \
     SELECT_ARG="--event-parity --runtime-publish" selection "${3:-micro}" false "${4:-$GROUP_PATH}"
 }
 group_base="$(SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group selection micro false "$GROUP_PATH")"
@@ -571,7 +625,7 @@ group_queue="$(field queue_macos_shards <<<"$(tr ' ' '\n' <<<"$group_base")")"
 [ "$(jq 'index("orch-state") == null and length > 0' <<<"$group_shards")" = true ] &&
   [ "$group_queue" != '[]' ] ||
   { echo "$GROUP_PATH no longer selects shards on both runners and no orch-state leg: $group_base" >&2; exit 1; }
-check "a selection without --runtime-publish publishes no runtime line" '' \
+row_spawn check "a selection without --runtime-publish publishes no runtime line" '' \
   "$(tr ' ' '\n' <<<"$group_base" | field runtime_publish)"
 with_leg="$(jq -c --argjson roster "$ROSTER" '. as $s | [$roster[] | select(. == "orch-state" or (. as $r | $s | index($r)))]' <<<"$group_shards")"
 group_row() { # SELECTION — `shards=… queue_macos_shards=… runtime_publish=…`
@@ -582,11 +636,14 @@ group_row() { # SELECTION — `shards=… queue_macos_shards=… runtime_publish
 }
 # STATES|SHARDS|OWED
 group_rows=0
+group_publish_row() { # STATES SHARDS OWED
+  check "merge-group publication: $1" \
+    "shards=$2 queue_macos_shards=$group_queue runtime_publish=$(owed_publish "$3")" \
+    "$(group_row "$(group_select "$1")")"
+}
 while IFS='|' read -r states shards owed; do
   group_rows=$((group_rows + 1))
-  check "merge-group publication: $states" \
-    "shards=$shards queue_macos_shards=$group_queue runtime_publish=$(owed_publish "$owed")" \
-    "$(group_row "$(group_select "$states")")"
+  row_spawn group_publish_row "$states" "$shards" "$owed"
 done <<ROWS
 agent-runtime=none orch-runtime=queue|$with_leg|["agent-runtime"]
 agent-runtime=queue|$group_shards|[]
@@ -605,7 +662,7 @@ leg_runs() { # SKIPS — the orch-state suites the shard step runs under SKIPS, 
   # A skip list --suite-list refuses fails the shard step, so it is no
   # empty run.
   # shellcheck disable=SC2086 # one candidate per word
-  if ! kept=" $(cd "$ROOT" && SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $ORCH_CANDIDATES 2>"$TMP/leg-err" | paste -sd ' ' -) "; then
+  if ! kept=" $(cd "$ROOT" && SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $ORCH_CANDIDATES 2>"$TMP/leg-err$ROW_TAG" | paste -sd ' ' -) "; then
     printf 'refused'
     return 0
   fi
@@ -614,15 +671,19 @@ leg_runs() { # SKIPS — the orch-state suites the shard step runs under SKIPS, 
   done
   printf '%s' "$runs"
 }
-check "control: a skip list --suite-list refuses reads as refused" refused "$(leg_runs '"[]"')"
+row_spawn check "control: a skip list --suite-list refuses reads as refused" refused "$(leg_runs '"[]"')"
 verify_rows=0
+verify_row() { # CLASS PATH STATES SHARDS QUEUE OWED LEG
+  local lines skips
+  lines="$(tr ' ' '\n' <<<"$(group_select "$3" "$JOB_SET" "$1" "$2")")"
+  skips="$(field skipped_suites <<<"$lines")"
+  check "merge-group publication on $1 $2: $3" \
+    "shards=$4 queue_macos_shards=$5 runtime_publish=$(owed_publish "$6") leg=$7 selection_skips=$skips" \
+    "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION$ROW_TAG" 2>/dev/null)"
+}
 while IFS='|' read -r class path states shards queue owed leg; do
   verify_rows=$((verify_rows + 1))
-  lines="$(tr ' ' '\n' <<<"$(group_select "$states" "$JOB_SET" "$class" "$path")")"
-  skips="$(field skipped_suites <<<"$lines")"
-  check "merge-group publication on $class $path: $states" \
-    "shards=$shards queue_macos_shards=$queue runtime_publish=$(owed_publish "$owed") leg=$leg selection_skips=$skips" \
-    "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION" 2>/dev/null)"
+  row_spawn verify_row "$class" "$path" "$states" "$shards" "$queue" "$owed" "$leg"
 done <<ROWS
 render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|[]|["agent-runtime"]|
 trivial|$UNREAD_DOC|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
@@ -633,9 +694,12 @@ ROWS
 # Control: a selector whose filter admits no merge-group run owes the build
 # the queue run published.
 filter_copy no-queue '\(\.event == "merge_group" and ' '(false and '
-check "control: a selector admitting no merge-group run owes the queue's orch-runtime build" \
-  "$(owed_publish '["agent-runtime","orch-runtime"]')" \
-  "$(tr ' ' '\n' <<<"$(group_select "agent-runtime=none orch-runtime=queue" "$TMP/no-queue/tools/ci-job-set")" | field runtime_publish)"
+no_queue_row() {
+  check "control: a selector admitting no merge-group run owes the queue's orch-runtime build" \
+    "$(owed_publish '["agent-runtime","orch-runtime"]')" \
+    "$(tr ' ' '\n' <<<"$(group_select "agent-runtime=none orch-runtime=queue" "$TMP/no-queue/tools/ci-job-set")" | field runtime_publish)"
+}
+row_spawn no_queue_row
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
@@ -647,10 +711,15 @@ awk '{ n += gsub(/select\(\.head_sha == \$sha and \.run_id == \$id\)/, "select(.
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set" ||
   { echo "the job head check is no longer one select in $JOB_SET" >&2; exit 1; }
 chmod +x "$TMP/trusting/tools/ci-job-set"
-case "$(push_select foreign-head-job "$TMP/trusting/tools/ci-job-set")" in
-  *"queue_macos_shards=[] "*) ok "control: a selector skipping the job head check proves the foreign head's mailbox leg" ;;
-  *) bad "control: the head-check mutant did not prove the foreign head's leg" ;;
-esac
+trusting_row() {
+  case "$(push_select foreign-head-job "$TMP/trusting/tools/ci-job-set")" in
+    *"queue_macos_shards=[] "*) ok "control: a selector skipping the job head check proves the foreign head's mailbox leg" ;;
+    *) bad "control: the head-check mutant did not prove the foreign head's leg" ;;
+  esac
+}
+row_spawn trusting_row
+# The rows read the checkout the rows below move.
+rows_join
 
 # Path selection precedes proof subtraction, including a narrowed whole leg.
 PUSH_BASE="$PUSH_BEFORE"

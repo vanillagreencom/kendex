@@ -17,7 +17,7 @@ UNPLACED_LANES="$(lanes both false false false)"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
-  sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
+  row_spawn sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
 done <<ROWS
 trivial|true|$UNREAD_DOC|$UNPLACED_LANES|$ROSTER
 trivial|true|AGENTS.md|$UNPLACED_LANES|$ROSTER
@@ -73,12 +73,15 @@ ROWS
 
 # The Linear shard can already be selected by other suites. The control
 # shard's workflow step must also receive the battery from --suite-list.
-linear_controls_suite=skills/linear/tests/must-fail-controls.sh
-got="$(SELECT_EVENT=merge_group selection micro false skills/linear/scripts/commands/issues.sh)"
-check "a Linear control target alone selects its merge-group shard" '' \
-  "$(shards_miss +linear-controls "$(field shards <<<"$got")")"
-check "a Linear control target alone keeps the control battery" "$linear_controls_suite" \
-  "$(SKIPPED_SUITES="$(field skipped_suites <<<"$got")" "$JOB_SET" --suite-list "$linear_controls_suite")"
+linear_row() {
+  local suite=skills/linear/tests/must-fail-controls.sh got
+  got="$(SELECT_EVENT=merge_group selection micro false skills/linear/scripts/commands/issues.sh)"
+  check "a Linear control target alone selects its merge-group shard" '' \
+    "$(shards_miss +linear-controls "$(field shards <<<"$got")")"
+  check "a Linear control target alone keeps the control battery" "$suite" \
+    "$(SKIPPED_SUITES="$(field skipped_suites <<<"$got")" "$JOB_SET" --suite-list "$suite")"
+}
+row_spawn linear_row
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
@@ -87,9 +90,13 @@ check "a Linear control target alone keeps the control battery" "$linear_control
 # runtime runs or reads runs those targets, and a lane source every target.
 # What the reach leaves out is held in guard-range's planted runtime.
 # PATHS|A TARGET THE LIST HOLDS
+target_row() { # PATHS HELD
+  local got
+  got="$(selection micro false "$(printf '%s\n' $1)" | field rust_targets)"
+  check "rust targets over '$1' hold $2" true "$(jq --arg t "$2" 'index($t) != null' <<<"$got")"
+}
 while IFS='|' read -r paths held; do
-  got="$(selection micro false "$(printf '%s\n' $paths)" | field rust_targets)"
-  check "rust targets over '$paths' hold $held" true "$(jq --arg t "$held" 'index($t) != null' <<<"$got")"
+  row_spawn target_row "$paths" "$held"
 done <<'ROWS'
 skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib
 skills/agent-runtime/runtime/src/lib.rs|orch/lib
@@ -99,8 +106,11 @@ skills/mailbox/scripts/lane-mail|agent-runtime/controller
 skills/orch/tests/rust/push.rs|orch/push
 tools/ci-job-set|orch/*
 ROWS
-check "an unplaced path keeps all skill runtimes" "$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
-  "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
+unplaced_row() {
+  check "an unplaced path keeps all skill runtimes" "$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
+    "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
+}
+row_spawn unplaced_row
 
 # The shards are the reach's projection and the skips the rest. The install
 # record changes no suite input. The github package's group-leader.sh runs
@@ -108,22 +118,34 @@ check "an unplaced path keeps all skill runtimes" "$(cd "$ROOT" && "$JOB_SET" --
 # path a suite's input note names for a read the scan cannot see runs that
 # suite (the required members of the derived reach and of the notes).
 # A runtime source runs every Jarvis suite that runs that built runtime.
-lock="$(selection micro false .kendex-lock.json)"
-kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | awk '!/\/run-all\.sh$/' | tr '\n' ' ')"
-check "the install record keeps no orch suite" "" "$kept_orch"
-check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
-leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
-check "group-leader.sh runs the runtime target that runs it" true \
-  "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
-evaluator="$(SELECT_EVENT=merge_group selection micro false skills/harness-ci/tests/lib/gh-eval.py)"
-check "an evaluator-only merge group selects the Pi package policy's node shard" true \
-  "$(field shards <<<"$evaluator" | jq 'index("node") != null')"
+lock_row() {
+  local lock kept_orch
+  lock="$(selection micro false .kendex-lock.json)"
+  kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | awk '!/\/run-all\.sh$/' | tr '\n' ' ')"
+  check "the install record keeps no orch suite" "" "$kept_orch"
+  check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
+}
+leader_row() {
+  check "group-leader.sh runs the runtime target that runs it" true \
+    "$(jq 'index("orch/validate") != null' <<<"$(selection micro false skills/github/scripts/lib/group-leader.sh | field rust_targets)")"
+}
+evaluator_row() {
+  check "an evaluator-only merge group selects the Pi package policy's node shard" true \
+    "$(SELECT_EVENT=merge_group selection micro false skills/harness-ci/tests/lib/gh-eval.py | field shards | jq 'index("node") != null')"
+}
+row_spawn lock_row
+row_spawn leader_row
+row_spawn evaluator_row
 # PATH|THE SUITES WHOSE NOTES NAME IT
-while IFS='|' read -r path suites; do
-  skipped="$(selection micro false "$path" | field skipped_suites)"
-  for suite in $suites; do
-    check "$path keeps $suite" false "$(jq --arg s "$suite" 'index($s) != null' <<<"$skipped")"
+keep_row() { # PATH SUITES
+  local skipped suite
+  skipped="$(selection micro false "$1" | field skipped_suites)"
+  for suite in $2; do
+    check "$1 keeps $suite" false "$(jq --arg s "$suite" 'index($s) != null' <<<"$skipped")"
   done
+}
+while IFS='|' read -r path suites; do
+  row_spawn keep_row "$path" "$suites"
 done <<'ROWS'
 skills/change-scope/references/narrow-change.conf|skills/orch/tests/merge-pr-restack-wiring.test.sh
 skills/agent-runtime/scripts/setup|skills/orch/tests/post_merge.sh
@@ -138,19 +160,23 @@ ROWS
 # path whose reach keeps an original keeps each declared replacement too.
 # The account judge's source reaches the github package's pr-merge suite and
 # not its replacement; at least one declared pair must apply.
-skipped="$(selection micro false skills/agent-runtime/runtime/src/accounts/mod.rs | field skipped_suites)"
-paired=0
-while IFS=' ' read -r original replacement; do
-  [ "$(jq --arg s "$original" 'index($s) == null' <<<"$skipped")" = true ] || continue
-  paired=$((paired + 1))
-  check "a kept $original keeps its replacement $replacement" false \
-    "$(jq --arg s "$replacement" 'index($s) != null' <<<"$skipped")"
-done <<<"$(jq -r '.native_replacements | to_entries[] | "\(.key) \(.value)"' "$ROOT/tools/macos-test-contracts.json")"
-if [ "$paired" -ge 1 ]; then
-  ok "a declared replacement's original is kept"
-else
-  bad "no declared replacement's original is kept, so the pairing went unjudged"
-fi
+account_row() {
+  local skipped paired=0 original replacement
+  skipped="$(selection micro false skills/agent-runtime/runtime/src/accounts/mod.rs | field skipped_suites)"
+  while IFS=' ' read -r original replacement; do
+    [ "$(jq --arg s "$original" 'index($s) == null' <<<"$skipped")" = true ] || continue
+    paired=$((paired + 1))
+    check "a kept $original keeps its replacement $replacement" false \
+      "$(jq --arg s "$replacement" 'index($s) != null' <<<"$skipped")"
+  done <<<"$(jq -r '.native_replacements | to_entries[] | "\(.key) \(.value)"' "$ROOT/tools/macos-test-contracts.json")"
+  if [ "$paired" -ge 1 ]; then
+    ok "a declared replacement's original is kept"
+  else
+    bad "no declared replacement's original is kept, so the pairing went unjudged"
+  fi
+}
+row_spawn account_row
+rows_join
 
 # The copy stands beside the real reach, so only the planted rule differs.
 cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"
@@ -189,7 +215,9 @@ NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo cl
 pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
 sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-reads")"
-while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
+lane_row() { check "lane source $1 runs every lane" "$ALL_ON" "$(selection standard false "$1")"; } # PATH
+while IFS= read -r p; do row_spawn lane_row "$p"; done <<<"$sources"
+rows_join
 # A lane source decides which lanes `CI` waits on, so a change to one runs in
 # a merge group: harness-ci's change-class answers it queue-only, off the
 # `queue` group of change-scope's narrow-change.conf.
