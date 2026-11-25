@@ -169,19 +169,23 @@ row "a range that adds a line beside an older credential passes" \
 repo removed
 put base.txt "base\n"
 commit
+put base.txt "base\nfirst addition\n"
+commit before-credential
 put cred.txt "aws = $CRED\n"
 commit added
 ADDED="$(git -C "$R" rev-parse HEAD)" || exit 2
 git -C "$R" rm -q cred.txt
 commit removed
-row "a credential one commit adds and a later commit removes is refused under --against" \
-  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --against HEAD~2
+row "a credential present only in the middle commit is refused under --against" \
+  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --against HEAD~3
 carries "in commit $ADDED;"
 assert_eq "the refusal names the commit that added it" "present" "$HAS"
 carries "rewrite the commit that added it (git rebase -i)"
 assert_eq "and says to rewrite that commit, since a removal does not clear it" "present" "$HAS"
 row "and under --base" \
-  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --base HEAD~2
+  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --base HEAD~3
+row "control: scanning the head tree misses the middle commit's credential" \
+  "rc=0 secrets: summary=violations=0 files=1 scope=all skipped=0" "$R" --all
 REMOVED="$R"
 # side merges main, whose own commit added a credential and a whole key
 # block: the merge carries main's lines, each of the key's lines over the
@@ -460,14 +464,11 @@ row "control: holding every finding to the first file's lines fails the old cred
   "rc=1 secrets: secret=b.txt:1:aws-access-token" "$TWO_OLD"
 row "control: and misses the second file's new credential" \
   "rc=0 secrets: summary=violations=0 files=2 scope=staged skipped=0" "$TWO_NEW"
-gg_mutant LANE secrets 'side_rows "$1" "$k" "$p..$COMMIT"' 'side_rows "$1" "$k"'
+gg_mutant LANE secrets 'side_rows "$1" "$k" "$p..$2"' 'side_rows "$1" "$k"'
 row "control: reading the index instead of the commit finds no added line" \
   "rc=0 secrets: summary=violations=0 files=2 scope=against skipped=0" "$RANGE_ADD" --against HEAD~2
-gg_mutant LANE secrets 'git rev-list --reverse --parents --right-only "$range"' 'printf "%s %s\n" "$(git rev-parse HEAD)" "$(git rev-parse "$REF")"'
-row "control: judging the net diff of the range passes the removed credential" \
-  "rc=0 secrets: summary=violations=0 files=0 scope=against skipped=0" "$REMOVED" --against HEAD~2
-gg_mutant LANE secrets 'ORIGINS+=("${COMMIT:+ in commit $COMMIT}")' 'ORIGINS+=("")'
-lane "$REMOVED" --against HEAD~2
+gg_mutant LANE secrets '${commit:+ in commit $commit}' ''
+lane "$REMOVED" --against HEAD~3
 carries "in commit $ADDED;"
 assert_eq "control: a lane that drops the commit from the refusal names no commit" "absent" "$HAS"
 gg_mutant LANE secrets 'SIDE_COUNT="${#parent_list[@]}"' 'SIDE_COUNT=1'
@@ -484,10 +485,10 @@ gg_mutant LANE secrets '--parents --right-only' '--parents --no-merges --right-o
 git -C "$MERGE" checkout -q evil
 row "control: skipping merges passes the merge's own credential" \
   "rc=0 secrets: summary=violations=0 files=1 scope=against skipped=0" "$MERGE" --against main
-gg_mutant LANE secrets '1) PARENTS="$empty" ;;' '1) continue ;;'
+gg_mutant LANE secrets 'PARENTS="${PARENTS:-$empty}"' 'PARENTS="${PARENTS:-$COMMIT}"'
 git -C "$MERGE" checkout -q orphan
-row "control: skipping a parentless commit passes its credential" \
-  "rc=0 secrets: summary=violations=0 files=0 scope=against skipped=0" "$MERGE" --against main
+row "control: judging a parentless commit against itself misses its credential" \
+  "rc=0 secrets: summary=violations=0 files=1 scope=against skipped=0" "$MERGE" --against main
 git -C "$MERGE" checkout -q evil
 gg_mutant LANE secrets 'grep -Fxq -- "$COMMIT" "$shallow"' 'grep -Fxq -- "$COMMIT" /dev/null'
 row "control: a shallow boundary read as a root commit judges every line it holds" \
