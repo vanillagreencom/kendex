@@ -28,7 +28,7 @@ An overseer that runs the watch reads a peer's answer as its `kind=answer` event
 
 - `--repo` names another repository's checkout; `lane-mail --help` states how it resolves and refuses.
 - A note to this overseer's own mailbox is `lane-mail send --item overseer --directive --file PATH`.
-- For a peer on another host, add `--host` and name the peer's path on that host in `--repo`. This needs a provider that addresses another repository's checkout; `scripts/lane-host-ssh` serves no peer.
+- For a peer on another host, use `peer send` or `peer ask` with `--host --repo PATH`. `PATH` is the absolute path to the peer's main checkout on that host. Set `ORCH_LANE_HOST` to the provider for that host. Static SSH declares `peer-mail=verb` for `peer-append` and requires an `overseer` inventory row for the receiving checkout. Reply through the same route with the original sender's checkout as `--repo`. See [Static SSH provider](../schemas/lane-host.md#static-ssh-provider).
 - `lane-mail send` writes only the caller's own repository's mailboxes: its lanes' and its overseer's. `peer` is the only write across repositories.
 - Every message carries its sender.
 - The watch reports an owner's note as an owner message and a peer's as `peer-note REPOSITORY`; `lane-mail --help` states how the repository is named.
@@ -42,10 +42,9 @@ An overseer that runs the watch reads a peer's answer as its `kind=answer` event
 
 The sender checks that reader as `lane-mail --help` states under `peer send`:
 
-1. A local `peer send`, an answer included, refuses `overseer-absent=ROOT` before appending where the target records no controller.
+1. A local or static SSH `peer send`, an answer included, refuses `overseer-absent=ROOT` before appending where the target records no controller.
    - Run `orch-runtime register --fleet` in the session that should read that checkout's mail.
    - `peer ask` also needs this overseer's own record.
-   - For an overseer on another host, send from that host's checkout.
 2. After the receipt or the `id=` line, at exit `0`, stderr opens with `no-reader=ROOT live=false` and a `fix=` line naming `orch-runtime register --fleet` where the controller is not live, or with `reader-unjudged=ROOT` where its status cannot be read. The message landed either way.
 
 The named session reads its mailbox as follows:

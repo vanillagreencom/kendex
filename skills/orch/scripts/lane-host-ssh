@@ -24,10 +24,12 @@ IDENTITY_FILE = "/.git/lane-host-pid"
 # The clone's own runtimes, each built by create for the clone's sources.
 AGENT_RUNTIME = "/.agents/skills/agent-runtime/scripts/agent-runtime"
 ORCH_RUNTIME = "/.agents/skills/orch/scripts/orch-runtime"
+LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
 # The static host kind's capability line, this provider's answer to the
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
-                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local"))
+                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local",
+                          "peer-mail=verb"))
 
 
 def notice(key, **values):
@@ -384,6 +386,30 @@ esac''', path, str(len(data)), row["clone"], "kendex-append", "append", data=dat
         raise SystemExit(4)
 
 
+def peer_append(row, repo):
+    """Send an intact envelope to the configured checkout's mailbox client."""
+    if repo != row["clone"]:
+        notice("peer-repo-mismatch", repo=repo, configured=row["clone"])
+        raise SystemExit(1)
+    # Only the mailbox's diagnostics belong on protocol stdout. SSH can
+    # print its own diagnostics even when the remote operation succeeded.
+    data = sys.stdin.buffer.read()
+    result = remote(row, '''rc=0
+"$1$2" peer-receive --root "$1" 2>&1 || rc=$?
+case "$rc" in 0|4) exit "$rc" ;; *) exit 3 ;; esac''', repo, LANE_MAIL,
+                    data=f"{len(data)}\n".encode("ascii") + data, accept=(2, 3, 4))
+    sys.stdout.buffer.write(result.stdout)
+    if result.returncode:
+        raise SystemExit(1 if result.returncode == 2 else result.returncode)
+
+
+def peer_read_allowed(row, path):
+    """The overseer row serves only files in its configured inbox directory."""
+    directory, _, leaf = path.rpartition("/")
+    return row["item"] != "overseer" or (directory == row["clone"] + "/tmp/lane-mail/overseer"
+                                        and leaf not in ("", ".", ".."))
+
+
 READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
 
 def read(row, path):
@@ -421,6 +447,11 @@ def read_many(rows, requests):
                 "error": f"lane-host-ssh: item-unconfigured item={request['item']}"}
             continue
         row = inventory[request["item"]]
+        if not peer_read_allowed(row, request["path"]):
+            replies[(request["item"], request["path"])] = {
+                **request, "status": 1, "data": "",
+                "error": f"lane-host-ssh: peer-read-outside-inbox path={request['path']}"}
+            continue
         groups.setdefault(row["target"], []).append(request)
     for target, group in groups.items():
         # Stage each file before declaring its byte count. A failed read's
@@ -1144,8 +1175,11 @@ mail envelope is judged under that same lock and exits 4 with duplicate id=FIRST
 on stderr, appending nothing. A clone without the repeat guard delivers with
 append-library-outdated path=LIBRARY repeat-check=skipped on stderr. A clone
 without that library predates the verb and append exits 1 naming it, so
-refresh a host created before the verb shipped. Prepare the
-host with Git, gh, Bash, kendex and the harness first, and npm where a linked
+refresh a host created before the verb shipped. For a peer envelope, use
+peer-append --item overseer --repo PATH. Its inventory row names the SSH
+target and the recipient's installed checkout as clone. The row uses the
+inventory's existing repo and account fields. See schemas/lane-host.md.
+Prepare the host with Git, gh, Bash, kendex and the harness first, and npm where a linked
 node_modules has a committed package-lock.json. A Pi lane runs with the
 row's remote account directory as PI_CODING_AGENT_DIR, so install its Pi
 packages once on the host at that root:
@@ -1250,6 +1284,9 @@ capabilities prints the static ssh host kind's one capability line
         stopping = sub.add_parser(verb)
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+    peer = sub.add_parser("peer-append")
+    peer.add_argument("--item", required=True, choices=("overseer",))
+    peer.add_argument("--repo", required=True)
     sub.add_parser("read-many")
     sub.add_parser("list")
     sub.add_parser("capabilities")
@@ -1257,10 +1294,12 @@ capabilities prints the static ssh host kind's one capability line
     if args.verb == "capabilities":
         print(CAPABILITIES)
         return
+    # Status 2 lets a caller fall back only when the peer verb is absent.
+    inventory_error = 1 if args.verb == "peer-append" else 2
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
     if not inventory:
         notice("inventory-required", variable="LANE_HOST_SSH_INVENTORY")
-        raise SystemExit(2)
+        raise SystemExit(inventory_error)
     with open(inventory, encoding="utf-8") as stream:
         rows = json.load(stream)
     fields = ("repo", "item", "target", "clone", "account")
@@ -1269,28 +1308,33 @@ capabilities prints the static ssh host kind's one capability line
         or any(c in row[k] for c in "\t\r\n") for k in fields) for row in rows
     ):
         notice("inventory-fields", path=inventory)
-        raise SystemExit(2)
+        raise SystemExit(inventory_error)
     if len({r["item"] for r in rows}) != len(rows) or len({(r["target"], r["clone"]) for r in rows}) != len(rows):
         notice("inventory-duplicate", path=inventory)
-        raise SystemExit(2)
+        raise SystemExit(inventory_error)
     if any(not r["clone"].startswith("/") or not r["account"].startswith("/") for r in rows):
         notice("inventory-path", path=inventory)
-        raise SystemExit(2)
+        raise SystemExit(inventory_error)
     if len({r["repo"] for r in rows}) > 1:
         notice("inventory-repo", path=inventory)
-        raise SystemExit(2)
+        raise SystemExit(inventory_error)
     if args.verb == "read-many":
         read_many(rows, json.load(sys.stdin))
         return
     if args.verb == "list":
         for row in rows:
+            if row["item"] == "overseer":
+                continue
             state = remote(row, 'if test -f "$1/.git/lane-host-item"; then printf hosted; else printf available; fi', row["clone"])
             print(f"{row['repo']}/{row['item']}\t{state.stdout.decode()}\t-\t{row['target']}")
         return
+    if args.item == "overseer" and args.verb not in ("peer-append", "cat", "touch"):
+        notice("peer-only", verb=args.verb, item=args.item)
+        raise SystemExit(1)
     matches = [row for row in rows if row["item"] == args.item]
     if not matches:
         notice("item-unconfigured", item=args.item)
-        raise SystemExit(2)
+        raise SystemExit(1 if args.item == "overseer" else 2)
     row = matches[0]
     if args.verb in ("create", "status", "stop", "close"):
         with ownership_lock(row) as locked:
@@ -1306,6 +1350,9 @@ def dispatch(row, args):
             raise SystemExit(2)
         create(row, args, Path(os.environ.get("LANE_HOST_SSH_SOURCE", os.getcwd())))
     elif args.verb == "cat":
+        if not peer_read_allowed(row, args.path):
+            notice("peer-read-outside-inbox", path=args.path)
+            raise SystemExit(1)
         data = read(row, args.path)
         if data is None:
             raise SystemExit(2)
@@ -1314,6 +1361,8 @@ def dispatch(row, args):
         put(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "append":
         append(row, args.path, sys.stdin.buffer.read())
+    elif args.verb == "peer-append":
+        peer_append(row, args.repo)
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "stop":

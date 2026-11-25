@@ -21,7 +21,7 @@ orch-runtime host [--host HOST] VERB ARGS...
 
 ## Host kinds
 
-A host declares its kind in one capability line: tab-separated `key=value` fields, each of the twelve keys below exactly once, each value from its key's set.
+A host declares its kind in one capability line of tab-separated `key=value` fields. Include each required key once and use a value from its set.
 
 - The runtime answers the line itself for `local` and `claude-cloud`; `orch-runtime host --host HOST capabilities` prints any host's line.
 - For a provider, the runtime runs the `capabilities` verb, which takes no slot.
@@ -51,6 +51,7 @@ Each key, its values, and what the runtime does with it:
 - `accounts`: `verb`, `none`. Declared, read by no caller: the account listing asks the `accounts` verb and reads exit `2` as absent.
 - `pool`: `plan`, `cloud-credit`. The account judge's tier: a Claude row on a `cloud-credit` host is judged on cloud credit.
 - `land`: `lane`, `handoff`. The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md).
+- `peer-mail`: optional, `verb` only. It selects `peer-append` for a hosted peer send or ask. A valid line with `files=verb` and no `peer-mail` selects legacy `append`.
 
 ## Provider protocol
 
@@ -58,7 +59,7 @@ Exit statuses:
 
 - Exit `0` is the verb done.
 - Exit `2` is an absent verb, and for `cat` a missing file.
-- Any other non-zero status is a failed verb, its cause on stderr, except the `item-unknown` answer of `start` and the `stop-worktree-removed` and `stop-unowned` answers of `stop`.
+- Other non-zero exits report failures on stderr. The `peer-append`, `start` and `stop` entries below describe their specific outcomes.
 
 The recorded cause:
 
@@ -108,6 +109,11 @@ Each verb, its arguments, and its answer:
   - A repeated mail envelope exits `4` with `duplicate id=FIRST` on stderr and adds nothing.
   - A failed append adds nothing.
   - Only append to a file several machines write; never read it and `put` it back.
+- `peer-append --item overseer --repo PATH`, optional, takes one newline-terminated peer envelope on stdin.
+  - The recipient's installed mailbox validates the checkout, envelope and controller, then appends using its mailbox lock. A network provider verifies that it received the complete envelope before appending.
+  - Static SSH calls `lane-mail peer-receive --root PATH` on the recipient. Its stdin starts with the decimal byte count and a newline, then the envelope bytes.
+  - Exit `0` prints `monitor=live` or `monitor=none` on stdout, followed by any reader notice. Exit `3` carries a mailbox refusal on stdout. Exit `4` prints `duplicate id=FIRST` on stdout, followed by the original envelope for a repeated answer. These outcomes keep transport diagnostics on stderr.
+  - The validated `peer-mail=verb` declaration selects this operation. Every failure is reported on that route, including exit `2`.
 - `read-many`, no arguments; stdin is a JSON array of `{"item": "ID", "path": "PATH"}` rows.
   - One JSON array on stdout, one row per request, in request order.
   - Each row holds the request's `item` and `path`, an integer `status` from `0` to `255` other than `69`, `data` with the file's bytes in padded standard base64, and an optional `error` string.
@@ -304,6 +310,9 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 - Every verb that brings the clone up to date runs the clone's orch and agent-runtime setups right after that update: `create` on a create, a reuse and a relaunch alike, and `close` after it refreshes the clone. No runtime call after an update comes before the setup for the tree it runs in.
 - A host with no Rust toolchain holds the orch runtime and agent-runtime binaries in the setup cache (`AGENT_RUNTIME_CACHE`).
 - `close` exits `3` on changes it cannot save as render drift. Check and preserve needed files before asking it to close.
+- Static SSH declares `peer-mail=verb`.
+- For peer mail, reserve one inventory row with `item` set to `overseer`, `target` set to the recipient's SSH alias and `clone` set to the absolute path of its main checkout with mailbox and agent-runtime installed. The sender passes that same path as `peer-append --repo`. Keep the `repo` field equal to the inventory's repository, including when the recipient checkout belongs to a different repository. The existing absolute `account` field is required by the inventory and peer mail does not use it.
+- The `overseer` row serves `peer-append`, `touch`, and `cat` and `read-many` for files directly in that checkout's overseer mailbox directory. Reads outside the directory fail with status `1`. The row is omitted from lane listings.
 
 ## Test provider
 

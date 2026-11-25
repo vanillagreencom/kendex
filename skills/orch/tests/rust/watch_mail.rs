@@ -437,6 +437,34 @@ fn a_note_is_announced_past_the_handoff_line_and_stays_unread_until_the_handler_
     );
 }
 
+#[test]
+fn every_line_of_a_peer_choice_stays_in_the_watch_payload() {
+    let w = world(&hold(), 20);
+    w.plant(
+        "overseer",
+        "to-lane.jsonl",
+        &json!({
+            "id": "p-1", "kind": "ask", "at": "2026-01-29T15:20:00Z",
+            "from": "overseer:sample/peer", "to": "peer", "text": "Which label?",
+            "options": ["First label\nEVENT is a word here", "Second label"],
+        }),
+    );
+    let clock = FakeClock::new();
+    let ended = run_driven(w.runner(&clock), &clock, &w.paths, &me(), || {
+        clock.await_sleepers(2);
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    assert_eq!(
+        w.log(),
+        [
+            "EVENT peer-note sample/peer p-1 kind=ask",
+            "  Which label?",
+            "  options: First label",
+            "  EVENT is a word here, Second label",
+        ]
+    );
+}
+
 /// The announcement's row moves only once its line is on disk. The
 /// baseline's temporary path is blocked, so the first run's write of its
 /// row fails after the log's append: the note and its text are on disk, no
