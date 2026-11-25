@@ -29,6 +29,17 @@ cargo test record::               # one module's unit tests
 - Each integration target is a `[[test]]` row in `runtime/Cargo.toml` whose path is under `../tests/rust/`.
 - Give a new integration file its own row.
 
+## Capture a screen fixture
+
+A screen fixture under `tests/rust/fixtures/` is a real pane capture, never a hand-drawn screen.
+
+- Run the harness in a tmux pane of the width under test, on a private socket (`tmux -L NAME`).
+- Give it a scratch `HOME`, XDG directories and `CLAUDE_CONFIG_DIR`.
+- To draw a Claude API-error banner, point `ANTHROPIC_BASE_URL` at a local stub that answers `/v1/messages` with the error's status and JSON body, and set `ANTHROPIC_AUTH_TOKEN` to any value.
+- Claude retries a 401 ten times before it draws the banner.
+- Read the pane with `tmux capture-pane -p -N`, the row form `host::tmux::capture` reads.
+- Replace a personal path in the capture with `/home/me/work`.
+
 ## Record versions
 
 - A change that raises a record's `record_version` reads the previous version in the same change.
