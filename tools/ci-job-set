@@ -944,6 +944,8 @@ CARGO_READ=false
 read_lines=""
 SUITE_INPUTS_READ=false
 FULL_RUNTIME_TARGETS='[]'
+LINEAR_CONTROLS_SUITE=skills/linear/tests/must-fail-controls.sh
+LINEAR_CONTROLS_NEEDED=false
 reach_notes() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
@@ -989,6 +991,37 @@ reach_read() {
   REACH_READ=true
 }
 
+# The Linear battery mutates the literal file operand of each control helper.
+# Read those operands from the tracked declarations. Unrecognized operands
+# or an unread roster provide no proof that the battery can be skipped.
+linear_controls_needed() {
+  local control controls=()
+  while IFS= read -r control; do
+    case "$control" in
+      skills/linear/tests/controls/*.control.sh)
+        [ -s "$control" ] || return 1
+        controls+=("$control") ;;
+    esac
+  done <<<"$TRACKED_FILES"
+  [ "${#controls[@]}" -gt 0 ] || return 1
+  PATHS="$paths" awk '
+    BEGIN {
+      n = split(ENVIRON["PATHS"], paths, "\n")
+      for (i = 1; i <= n; i++) {
+        changed[paths[i]] = 1
+        if (paths[i] ~ /^skills\/linear\/tests\/controls\/[^/]+\.control\.sh$/) needed = 1
+      }
+    }
+    FNR == 1 { if (NR > 1 && !mutations) unread = 1; mutations = 0 }
+    $1 ~ /^control_(replace|append|write)$/ {
+      if ($2 !~ /^[[:alnum:]_-]+(\/[[:alnum:]_.-]+)+$/ || $2 ~ /(^|\/)\.\.?($|\/)/) unread = 1
+      if (("skills/linear/" $2) in changed) needed = 1
+      mutations++
+    }
+    END { if (unread || !mutations) exit 1; print (needed ? "true" : "false") }
+  ' "${controls[@]}"
+}
+
 # Both event projections take their skip evidence here. A producer that
 # refused or stopped before completing its read authorizes no skips in its
 # roster. An unplaced path also keeps suites unless their owner excludes it.
@@ -996,6 +1029,12 @@ read_selection() {
   [ "$CHECKOUT_READ" = true ] || return 0
   if [ "$SUITE_INPUTS_READ" = true ]; then
     reach_read || printf 'ci-job-set: reach=unproved coverage=full\n' >&2
+    if any '^skills/linear/' && tracked_file "$LINEAR_CONTROLS_SUITE"; then
+      if ! LINEAR_CONTROLS_NEEDED="$(linear_controls_needed)"; then
+        printf 'ci-job-set: linear-control-inputs=unread coverage=full\n' >&2
+        REACH_READ=false
+      fi
+    fi
   fi
   if read_lines="$(reads)"; then
     CARGO_READ=true
@@ -1089,6 +1128,10 @@ kept_replacements() { # KEPT
 select_shards() { # BUILD(true|false)
   local build="$1" path list="" shard kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
   want=" "
+  if [ "$LINEAR_CONTROLS_NEEDED" = true ]; then
+    kept="$kept
+$LINEAR_CONTROLS_SUITE"
+  fi
   while IFS= read -r path; do
     case "$path" in
       # Deployment inventory, toolchain pin and hook dispatch are dynamic
