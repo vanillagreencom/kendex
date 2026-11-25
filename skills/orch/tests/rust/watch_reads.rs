@@ -6296,7 +6296,7 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     .unwrap();
     assert_eq!(
         updates(&second),
-        ["issues update KEN-7 --labels skills --clear-assignee --description Body."]
+        ["issues update KEN-7 --labels skills --clear-assignee"]
     );
     assert_eq!(
         second
@@ -6322,12 +6322,10 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
         SINCE_EPOCH + 1960,
     )
     .unwrap();
-    let log = std::fs::read_to_string(first.dir.path().join("linear.log")).unwrap();
-    assert!(
-        log.contains(&format!(
-            "issues update KEN-7 --labels skills --description {ACTION}\n"
-        )),
-        "another mailbox clearing the assignee leaves the existing description intact"
+    assert_eq!(
+        updates(&first),
+        ["issues update KEN-7 --labels skills"],
+        "field-only cleanup preserves the original description after the other mailbox clears the assignee"
     );
 }
 

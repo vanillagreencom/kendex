@@ -1974,7 +1974,8 @@ fn clear_owner_item(
         .chain(remaining.iter().copied().map(label_of))
         .collect();
     let name = item.assignee.map(|a| a.name).unwrap_or_default();
-    let mut description = item.description.unwrap_or_default();
+    let original = item.description.unwrap_or_default();
+    let mut description = original.clone();
     if let Some(action) = ask.action.as_deref().filter(|d| !d.is_empty())
         && let Some(prefix) = owner_action_line(&name, action, "")
         && let Some(body) = description.strip_prefix(&prefix)
@@ -1999,7 +2000,9 @@ fn clear_owner_item(
     if has_gate && remaining.is_empty() {
         args.push("--clear-assignee");
     }
-    args.extend(["--description", description.as_str()]);
+    if description != original {
+        args.extend(["--description", &description]);
+    }
     quota!(linear.call("owner-ask-close", &args)?);
     Ok(Answered::Value(true))
 }
