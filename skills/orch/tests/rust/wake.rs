@@ -1221,6 +1221,218 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
     assert_eq!(codex_turns(&fleet.home, "lead-4"), Vec::<String>::new());
 }
 
+#[test]
+fn a_controller_provider_resume_is_delivered_once_to_its_own_pane() {
+    let fleet = Fleet::new();
+    let pane = fleet.open("overseer", "claude", "controller", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_overseer(fleet.overseer("claude", &pane));
+    let row = format!("server_error|{} {}|Some(1)|12", fleet.server.pid, pane.id);
+    let baseline = resume_row(OVERSEER_TARGET, &row);
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let first = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec!["EVENT wake-delivered overseer resume=server_error"]
+    );
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(fleet.turns("controller").len(), 1);
+}
+
+#[test]
+fn reading_worker_continuation_keeps_its_brief_and_yields_to_a_posted_result() {
+    let test = "reading_worker_continuation_keeps_its_brief_and_yields_to_a_posted_result";
+    let github = if let Some(path) = std::env::var_os("ORCH_TEST_READING_COMMENTS") {
+        PathBuf::from(path)
+    } else {
+        agent_runtime();
+        let dir = tempfile::tempdir().unwrap();
+        write_executable(
+            &dir.path().join("gh"),
+            r#"#!/bin/sh
+case "$*" in
+  'api repos/fleet/repo/issues/5/comments?per_page=100&page=1') cat "$ORCH_TEST_READING_COMMENTS/page1" ;;
+  'api repos/fleet/repo/issues/5/comments?per_page=100&page=2') cat "$ORCH_TEST_READING_COMMENTS/page2" ;;
+  *) exit 1 ;;
+esac
+"#,
+        );
+        let out = program(std::env::current_exe().unwrap())
+            .args([test, "--exact"])
+            .env("ORCH_TEST_ISOLATED_ROW", test)
+            .env("ORCH_TEST_READING_COMMENTS", dir.path())
+            .env("PATH", tool_path(&[dir.path()]))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            stderr(&out)
+        );
+        return;
+    };
+
+    let fleet = Fleet::new();
+    let identity_file = fleet
+        .root
+        .join(".agents/skills/github/scripts/lib/refresh-identity.sh");
+    std::fs::create_dir_all(identity_file.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/refresh-identity.sh"),
+        &identity_file,
+    )
+    .unwrap();
+    let comments = fleet.root.join("comments");
+    let tracker = fleet.root.join("linear");
+    write_executable(
+        &tracker,
+        format!(
+            "#!/bin/sh\n[ \"$*\" = 'comments list KEN-5 --format=safe' ] || exit 1\ncat '{}'\n",
+            comments.display()
+        ),
+    );
+    let pi = fleet.root.join("pi");
+    write_executable(
+        &pi,
+        r#"#!/bin/bash
+printf '{"type":"session","id":"%s","cwd":"%s"}\n' "$2" "$PWD" > "$STUB_PI_SESSION"
+composer() { printf '────────────────────────────────────────\n%s\n0.4%%/1.0M\n' "$PWD"; }
+composer
+while IFS= read -r line; do
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' \
+    "$escaped" >> "$STUB_PI_SESSION"
+  composer
+done
+"#,
+    );
+    let settings = settings_with(
+        &fleet.root,
+        agent_runtime(),
+        &[("OVERSEE_WATCH_TRACKER", tracker.to_str().unwrap())],
+    );
+    let clock = FakeClock::new();
+    let mut body = wake::body(&fleet.fleet_file(), &settings);
+    let mut child = program("git")
+        .args(["hash-object", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"fleet/repo").unwrap();
+    let sha = child.wait_with_output().unwrap();
+    assert!(sha.status.success());
+    let repo_hash = std::str::from_utf8(&sha.stdout).unwrap().trim();
+    for (source, box_number, harness, cause) in [
+        ("KEN-5".to_owned(), 1, "codex", "api-error"),
+        (format!("gh-{repo_hash}-5"), 2, "pi", "length"),
+    ] {
+        let item = format!("verify-{source}-box-{box_number}");
+        let pi_file = fleet
+            .home
+            .join("sessions")
+            .join(agent_runtime::session::pi_slug(&fleet.cwd))
+            .join(format!("stub_{item}.jsonl"));
+        let pane = if harness == "pi" {
+            std::fs::create_dir_all(pi_file.parent().unwrap()).unwrap();
+            fleet.open_program(
+                &item,
+                &pi,
+                &item,
+                &[("STUB_PI_SESSION", pi_file.to_str().unwrap())],
+            )
+        } else {
+            fleet.open(&item, harness, &item, &[])
+        };
+        let mut lane = fleet.lane(&item, harness, &pane);
+        let is_github = harness == "pi";
+        if is_github {
+            lane["repo"] = json!("fleet/repo");
+            lane["home"] = json!(fleet.home);
+            lane["account"] = json!(fleet.root.join("provider-seat"));
+            let deadline = Instant::now() + secs(5);
+            while !String::from_utf8_lossy(
+                &tmux(
+                    &fleet.server.socket,
+                    &["capture-pane", "-p", "-t", &pane.id],
+                )
+                .stdout,
+            )
+            .contains("0.4%/1.0M")
+            {
+                assert!(Instant::now() < deadline, "the Pi composer was never drawn");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        } else {
+            await_codex_composer(&fleet, &pane.id);
+        }
+        fleet.set_lanes(vec![lane]);
+        let turns = || {
+            if harness == "pi" {
+                agent_runtime::session::user_texts_after(agent_runtime::Harness::Pi, &pi_file, 0)
+                    .unwrap()
+            } else {
+                codex_turns(&fleet.home, &item)
+            }
+        };
+        assert!(rendered(&run_once(&mut body, &Baseline::default(), &clock).unwrap()).is_empty());
+        assert!(turns().is_empty());
+        let marker = format!("## Verification\n\n### Box {box_number}\n\nReading lane: {item}\n");
+        let result = format!("{marker}\n- **Result**: pass\n");
+        let app = "vanillagreen-fleet-lanes[bot]";
+        let github_comment = |id, login: &str, association: &str, kind: &str, body: &str| {
+            json!({
+                "id": id, "author_association": association, "user": {"login": login, "type": kind}, "body": body
+            })
+        };
+        if is_github {
+            let wrong_box = format!("{marker}\n### Box 9\n\n- **Result**: pass\n");
+            let non_results = json!([
+                github_comment(1, "outsider[bot]", "CONTRIBUTOR", "Bot", &result),
+                github_comment(2, "member", "MEMBER", "User", &result),
+                github_comment(3, app, "CONTRIBUTOR", "Bot", &marker),
+                github_comment(4, app, "CONTRIBUTOR", "Bot", &wrong_box)
+            ]);
+            std::fs::write(github.join("page1"), non_results.to_string()).unwrap();
+        } else {
+            std::fs::write(&comments, "[]").unwrap();
+        }
+        let first = resume_row(&item, &format!("{cause}|first"));
+        assert_eq!(
+            rendered(&run_once(&mut body, &first, &clock).unwrap()),
+            vec![format!("EVENT wake-delivered {item} resume={cause}")]
+        );
+        assert!(rendered(&run_once(&mut body, &first, &clock).unwrap()).is_empty());
+        let typed = turns();
+        assert_eq!(typed.len(), 1);
+        assert!(typed[0].starts_with(&format!(
+            "Continue the post-merge check for {item} using your original brief and box."
+        )));
+        if is_github {
+            let page: Vec<_> = (1..=100)
+                .map(|id| github_comment(id, "member", "MEMBER", "User", "No reading here."))
+                .collect();
+            std::fs::write(github.join("page1"), json!(page).to_string()).unwrap();
+            std::fs::write(
+                github.join("page2"),
+                json!([github_comment(101, app, "CONTRIBUTOR", "Bot", &result)]).to_string(),
+            )
+            .unwrap();
+        } else {
+            std::fs::write(&comments, json!([{"body": result}]).to_string()).unwrap();
+        }
+        let next = resume_row(&item, &format!("{cause}|second"));
+        assert_eq!(
+            rendered(&run_once(&mut body, &next, &clock).unwrap()),
+            vec![format!("EVENT idle-after-return {item} cause={cause}")]
+        );
+        assert_eq!(turns(), typed);
+    }
+}
+
 /// Wait until the Codex stub in `pane` has drawn its composer line.
 fn await_codex_composer(fleet: &Fleet, pane: &str) {
     let deadline = Instant::now() + secs(5);

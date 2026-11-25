@@ -1956,10 +1956,114 @@ fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
     .unwrap();
     driver.pass(&state);
     let again = driver.pass(&state);
-    assert_eq!(
-        event_lines(&again),
-        vec!["EVENT idle-after-return gh-7 cause=error"]
+    assert!(event_lines(&again).is_empty());
+    assert!(
+        driver
+            .baseline
+            .get("resume", "gh-7")
+            .unwrap()
+            .starts_with("error|")
     );
+}
+
+#[test]
+fn provider_stops_request_one_continuation_for_each_harness() {
+    if !isolated_row("provider_stops_request_one_continuation_for_each_harness") {
+        return;
+    }
+    for (item, harness, cause, screen, draw, stop) in [
+        (
+            "KEN-1",
+            "claude",
+            "server_error",
+            "❯\u{a0}\n",
+            "❯",
+            r#"{"harness":"claude","event":"StopFailure","error":"server_error"}"#,
+        ),
+        (
+            "KEN-1",
+            "pi",
+            "error",
+            "pi drew this\n",
+            "pi drew this",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"error","working_agents":0}"#,
+        ),
+        (
+            "verify-KEN-5-box-1",
+            "pi",
+            "length",
+            "pi drew this\n",
+            "pi drew this",
+            r#"{"harness":"pi","event":"Stop","stop_reason":"length","working_agents":0}"#,
+        ),
+        (
+            "verify-KEN-5-box-2",
+            "codex",
+            "api-error",
+            CODEX_LIVE_FAILURE,
+            "not supported",
+            r#"{"harness":"codex","event":"UserPromptSubmit"}"#,
+        ),
+        (
+            "KEN-1",
+            "copilot",
+            "api-error",
+            "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n────────────────────────────────────────\n",
+            "────",
+            r#"{"harness":"copilot","event":"UserPromptSubmit"}"#,
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(&server, &dir, "gh-1", harness, screen);
+        await_drawn(&server, &pane, draw);
+        fleet.set_lanes(vec![lane_record(
+            item,
+            "gh-1",
+            harness,
+            &server,
+            &pane,
+            Some(&identity),
+            &dir,
+        )]);
+        let file = dir
+            .join("tmp/lane-mail")
+            .join(item)
+            .join("session-rows.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, format!("{stop}\n")).unwrap();
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.pass(&state);
+        let stopped = driver.pass(&state);
+        let expected = format!("{cause}|");
+        assert!(
+            driver
+                .baseline
+                .get("resume", "gh-1")
+                .is_some_and(|row| row.starts_with(&expected)),
+            "{harness} did not request a {cause} continuation"
+        );
+        assert!(event_lines(&stopped).is_empty(), "{harness}");
+        std::fs::write(&file, format!("{stop}\n{stop}\n")).unwrap();
+        let events: Vec<_> = (0..3)
+            .flat_map(|_| event_lines(&driver.pass(&state)))
+            .collect();
+        assert_eq!(
+            events,
+            vec![format!("EVENT idle-after-return gh-1 cause={cause}")],
+            "{harness}"
+        );
+        assert!(
+            driver
+                .baseline
+                .get("resume", "gh-1")
+                .unwrap()
+                .starts_with("told|")
+        );
+    }
 }
 
 /// A window of the fleet session that no lane, controller record, open
@@ -2270,6 +2374,66 @@ fn window_of(server: &Server, pane: &str) -> String {
         panic!("the pane reads")
     };
     fields.pane.window
+}
+
+#[test]
+fn an_idle_claude_controller_continues_after_server_error_but_not_a_usage_wall() {
+    if !isolated_row("an_idle_claude_controller_continues_after_server_error_but_not_a_usage_wall")
+    {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let server = Server::start(&dir, "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = redrawing(&server, &dir, "overseer", "claude", "❯\u{a0}\n");
+    await_drawn(&server, &pane, "❯");
+    let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), &dir);
+    let file = dir.join("session-rows.jsonl");
+    record["session_rows"] = json!(file);
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    overseer_driver!(server, fleet, reached, no_walk, readers, transfers, driver);
+    driver.succession = Succession::Off;
+    let provider = r#"{"harness":"claude","event":"StopFailure","error":"server_error"}"#;
+    std::fs::write(&file, format!("{provider}\n")).unwrap();
+    driver.pass(&state);
+    let first = driver
+        .baseline
+        .get("resume", "overseer")
+        .unwrap()
+        .to_owned();
+    assert!(first.starts_with("server_error|"));
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("resume", "overseer"),
+        Some(first.as_str())
+    );
+    std::fs::write(&file, format!("{provider}\n{provider}\n")).unwrap();
+    assert!(
+        event_lines(&driver.pass(&state))
+            .contains(&"EVENT idle-after-return overseer cause=server_error".to_owned())
+    );
+    assert!(
+        driver
+            .baseline
+            .get("resume", "overseer")
+            .unwrap()
+            .starts_with("told|")
+    );
+    std::fs::write(
+        &file,
+        r#"{"harness":"claude","event":"StopFailure","error":"rate_limit"}"#,
+    )
+    .unwrap();
+    driver.pass(&state);
+    assert_eq!(driver.baseline.get("resume", "overseer"), None);
+    assert!(matches!(
+        driver.slot.read().unwrap().verdict,
+        Verdict::Walled { .. }
+    ));
 }
 
 /// A pane holding nothing but shells under a record naming its harness is

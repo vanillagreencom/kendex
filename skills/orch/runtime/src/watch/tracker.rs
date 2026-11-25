@@ -347,6 +347,21 @@ pub(super) struct Linear<'a> {
 }
 
 impl Linear<'_> {
+    pub(super) fn comment_bodies(cli: &Path, item: &str) -> Result<Answered<Vec<String>>> {
+        #[derive(Deserialize)]
+        struct Comment {
+            body: String,
+        }
+        let linear = Linear { cli };
+        let comments: Vec<Comment> = quota!(linear.json(
+            "verification-comments",
+            &["comments", "list", item, "--format=safe"],
+        )?);
+        Ok(Answered::Value(
+            comments.into_iter().map(|c| c.body).collect(),
+        ))
+    }
+
     /// One call, its stdout as printed. A call that could not run or
     /// exited nonzero without a quota receipt refuses
     /// `tracker-list-failed`; a quota receipt is the answer.

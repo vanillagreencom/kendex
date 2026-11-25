@@ -1,5 +1,8 @@
 # shellcheck shell=bash
-# The watcher uses this refresh identity for its review route. It validates
-# its GitHub response before evaluating the identity.
+# The fleet App login used by refresh review and reading-worker results.
+# Orch reads this literal assignment as data.
+FLEET_APP_LOGIN='vanillagreen-fleet-lanes[bot]'
+
+# The watcher validates its GitHub response before evaluating this rule.
 REFRESH_IDENTITY_JQ='.head.ref == "kendex/refresh"
-  and .user.login == "vanillagreen-fleet-lanes[bot]" and .user.type == "Bot"'
+  and .user.login == "'"$FLEET_APP_LOGIN"'" and .user.type == "Bot"'

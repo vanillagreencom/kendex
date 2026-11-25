@@ -25,11 +25,10 @@
 //! the row once read. The wake reads that row from its tick's snapshot and
 //! writes no row of its own.
 //!
-//! Resume: the lanes duty sets a row of kind [`RESUME_KIND`], its identity
-//! the lane's name, its value the turn end it asks a resume for: a wall
-//! (`usage-limit|<identity>|<reset>`), for a lane [`resumable`] names whose
-//! wall's reset passed, or an API error (`api-error|<key>`), for a lane
-//! [`reaches`] names. The wake types the resume sentence before the inbox
+//! Resume: the lane and controller duties set a row of kind [`RESUME_KIND`]
+//! for a passed lane wall (`usage-limit|<identity>|<reset>`), or a failed
+//! turn (`<cause>|<key>`) on a reachable session. The identity is the lane's
+//! name or [`OVERSEER_TARGET`]. The wake types the resume sentence before the inbox
 //! line once per row value: the mark keeps the value typed. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room, and is typed past its usage banner (`deliver
@@ -48,8 +47,8 @@
 //! Pending, unmatched or failed post-send reads are read once on later
 //! passes without resending. No evidence gives final `session-hosted`; a
 //! failed pre-send cursor read still sends, final `rows-host-unread`. An
-//! unanswered transport paste keeps `paste-unanswered`. An API
-//! error's resume reaches either kind by the same route and is final as
+//! unanswered transport paste keeps `paste-unanswered`. A failed
+//! turn's resume reaches either kind by the same route and is final as
 //! typed; a provider read that refuses it is told once. A wall's resume is
 //! local alone.
 //!
@@ -105,8 +104,29 @@ use agent_runtime::effects::overseer_socket;
 
 /// The baseline row kind the mail duty signals unread mail with.
 pub const UNREAD_KIND: &str = "unread";
-/// The baseline row kind the lanes duty asks a resume with.
+/// The baseline row kind the lane and controller duties ask a resume with.
 pub const RESUME_KIND: &str = "resume";
+
+/// The turn-end causes that can spend a continuation. Claude and Pi
+/// supply row words. Codex and Copilot supply a pane-classified API error.
+const PROVIDER_STOPS: &[(Harness, &str)] = &[
+    (Harness::Claude, "server_error"),
+    (Harness::Pi, "error"),
+    (Harness::Copilot, "api-error"),
+    (Harness::Codex, "api-error"),
+];
+
+pub(super) fn can_continue(harness: Harness, cause: &str, reading: bool) -> bool {
+    PROVIDER_STOPS.contains(&(harness, cause)) || (reading && cause == "length")
+}
+
+/// Preserve one continuation through repeated failures until a finished
+/// turn ends the chain. An existing wall resume does not spend it.
+pub(super) fn continued(row: Option<&str>) -> bool {
+    row.and_then(|r| r.split_once('|'))
+        .is_some_and(|(cause, _)| cause != "usage-limit")
+}
+
 /// The watch's wake record, beside the fleet state: it shares the runner's
 /// own records' stem, which the retention duty never judges.
 pub const WAKE_FILE: &str = "oversee-watch.wake.json";
@@ -162,12 +182,14 @@ fn follow_line(start: &str) -> String {
 struct Resume {
     lane: String,
     row: String,
-    cause: &'static str,
+    cause: String,
     /// How the session's last turn ended, as the sentence says it.
     ended: &'static str,
     /// Whether the turn ended at a wall: its pane stands at a usage banner
     /// only the account's reading with room judges past.
     wall: bool,
+    /// A posted reading takes the normal idle report into verification.
+    reading_has_result: bool,
 }
 
 impl Resume {
@@ -175,21 +197,21 @@ impl Resume {
     /// not resume (`told|…`, an API error's resume already answered by the
     /// same end).
     fn of(lane: &str, row: &str) -> Option<Resume> {
-        let (cause, ended, wall) = match row.split('|').next()? {
-            "usage-limit" => (
-                "usage-limit",
-                "its account's usage limit, which has since reset",
-                true,
-            ),
-            "api-error" => ("api-error", "an API error", false),
+        let (cause, _) = row.split_once('|')?;
+        let ended = match cause {
+            "usage-limit" => "its account's usage limit, which has since reset",
+            "length" => "the output limit",
+            "api-error" => "an API error",
+            cause if PROVIDER_STOPS.iter().any(|(_, word)| *word == cause) => "a provider error",
             _ => return None,
         };
         Some(Resume {
             lane: lane.to_owned(),
             row: row.to_owned(),
-            cause,
+            cause: cause.to_owned(),
             ended,
-            wall,
+            wall: cause == "usage-limit",
+            reading_has_result: false,
         })
     }
 
@@ -207,6 +229,13 @@ impl Resume {
     /// The line typed for `target`: the resume sentence, then the inbox
     /// line, so the resumed turn reads the mail that waited too.
     fn line(&self, target: &str) -> String {
+        if super::verifying::is_reading_lane(target) {
+            return format!(
+                "Continue the post-merge check for {target} using your original brief and box. Your last turn ended on {}. {}",
+                self.ended,
+                line_for(target)
+            );
+        }
         format!(
             "Resume the orch workflow for {target} from where this session stopped: your last turn ended on {}. {}",
             self.ended,
@@ -349,8 +378,9 @@ fn u64_of(value: &Value) -> Option<u64> {
 
 /// A lane as a target: its launch pane on the fleet server, its recorded
 /// harness identity, and its session under the account home, else the
-/// harness's default home (as `effects::launch` reads them; Pi's account is
-/// a provider seat, not its home). A lane with no harness, pane, server or
+/// harness's default home (as `effects::launch` reads them). Pi uses its
+/// recorded launch home because its account can be a provider seat.
+/// A lane with no harness, pane, server or
 /// directory is nobody to type into. Nor is a lane whose record names
 /// another host: its session runs there, the pane here holds the client,
 /// and no file here confirms its turn; [`hosted_target`] names such a lane
@@ -460,7 +490,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         (None, _) | (Some(_), None) => None,
     };
     let home = match harness {
-        Harness::Pi => None,
+        Harness::Pi => lane.home.as_deref().map(PathBuf::from),
         Harness::Claude | Harness::Codex | Harness::Copilot => {
             lane.account.as_deref().map(PathBuf::from)
         }
@@ -740,9 +770,55 @@ impl Wake {
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
         for (name, row) in resumes {
-            let Some(resume) = Resume::of(&name, &row) else {
+            let Some(mut resume) = Resume::of(&name, &row) else {
                 continue;
             };
+            if name == OVERSEER_TARGET {
+                let Some(overseer) = fleet.overseer.as_ref().filter(|o| {
+                    o.extra.get("off").is_none_or(Value::is_null)
+                        && !fleet
+                            .intents
+                            .iter()
+                            .any(|i| i.open() && i.op.on_controller())
+                }) else {
+                    continue;
+                };
+                let Some(target) = overseer_target(overseer, &socket) else {
+                    continue;
+                };
+                let key_prefix = format!("{} {}|", target.server, target.pane);
+                if resume.wall
+                    || !row
+                        .split_once('|')
+                        .is_some_and(|(_, key)| key.starts_with(&key_prefix))
+                {
+                    continue;
+                }
+                if let Some(mark) = record
+                    .get(&name)
+                    .filter(|m| m.resume.as_deref() == Some(row.as_str()))
+                    .cloned()
+                {
+                    self.repeat(
+                        &target,
+                        mark,
+                        Some(&resume.cause),
+                        &mut record,
+                        &mut produced,
+                    )?;
+                } else {
+                    let state = wake_unread(&unread, &name, record.get(&name)).to_owned();
+                    self.first_pass(
+                        &target,
+                        &state,
+                        Some(&resume),
+                        tick.wall,
+                        &mut record,
+                        &mut produced,
+                    )?;
+                }
+                continue;
+            }
             let Some(lane) = fleet
                 .lanes
                 .iter()
@@ -758,7 +834,7 @@ impl Wake {
                         lane,
                         &socket,
                         mark,
-                        Some(resume.cause),
+                        Some(&resume.cause),
                         &mut record,
                         &mut produced,
                     )?;
@@ -785,12 +861,19 @@ impl Wake {
             {
                 continue;
             }
-            let state = unread
-                .iter()
-                .find(|(t, _)| *t == target.name)
-                .map(|(_, s)| s.clone())
-                .or_else(|| marked.map(|m| m.unread.clone()))
-                .unwrap_or_default();
+            let state = wake_unread(&unread, &target.name, marked).to_owned();
+            if !resume.wall && super::verifying::is_reading_lane(&lane.item) {
+                match super::verifying::reading_lane_has_result(&self.settings, lane) {
+                    Ok(posted) => resume.reading_has_result = posted,
+                    Err(cause) => {
+                        super::lanes::fail(
+                            &mut produced,
+                            format!("reading-lane {}: {cause}", lane.item),
+                        );
+                        continue;
+                    }
+                }
+            }
             self.first_pass(
                 &target,
                 &state,
@@ -1262,6 +1345,10 @@ impl Wake {
             })
         };
         let room = resume.is_some_and(|r| r.wall);
+        if resume.is_some_and(|r| r.reading_has_result) {
+            self.untyped(target, standing.as_ref(), resume, &mark, record, produced)?;
+            return Ok(());
+        }
         let read = match &target.route {
             // An exited or unread hosted harness is the lanes duty's to
             // name; the rows cursor is read only after this idle check.
@@ -1713,6 +1800,19 @@ impl Wake {
         }
         Err(protocol_error("refused", &reply))
     }
+}
+
+fn wake_unread<'a>(
+    unread: &'a [(String, String)],
+    target: &str,
+    standing: Option<&'a WakeMark>,
+) -> &'a str {
+    unread
+        .iter()
+        .find(|(name, _)| name == target)
+        .map(|(_, state)| state.as_str())
+        .or_else(|| standing.map(|mark| mark.unread.as_str()))
+        .unwrap_or_default()
 }
 
 /// What a run of `deliver` gave: its reply, or the wrapper's unbuilt

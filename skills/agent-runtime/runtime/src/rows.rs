@@ -115,6 +115,54 @@ pub enum SessionVerdict {
     Live,
 }
 
+/// Turn-end evidence carried by an overseer's session row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionIdle {
+    Returned,
+    Failed { cause: String },
+}
+
+/// A single judgment of the row, with the position of its turn evidence.
+#[must_use]
+pub struct SessionObservation {
+    pub verdict: SessionVerdict,
+    pub idle: Option<SessionIdle>,
+    pub harness: Option<String>,
+    pub position: usize,
+    pub message: Option<String>,
+}
+
+pub fn observe_session(row: Row) -> SessionObservation {
+    let verdict = judge_session(&row);
+    let idle = if matches!(verdict, SessionVerdict::Live | SessionVerdict::Unsupported) {
+        match row.event.as_deref() {
+            Some("Stop") => Some(SessionIdle::Returned),
+            _ => failure_cause(&row).map(|cause| SessionIdle::Failed {
+                cause: cause.to_owned(),
+            }),
+        }
+    } else {
+        None
+    };
+    SessionObservation {
+        verdict,
+        idle,
+        harness: row.harness,
+        position: row.position,
+        message: row.message,
+    }
+}
+
+/// Claude's StopFailure carries the error kind. Pi's StopFailure comes
+/// from the carrier only for an error, with no separate kind.
+fn failure_cause(row: &Row) -> Option<&str> {
+    match (row.harness.as_deref(), row.event.as_deref()) {
+        (Some("claude"), Some("StopFailure")) => row.error.as_deref(),
+        (Some("pi"), Some("StopFailure")) => Some("error"),
+        _ => None,
+    }
+}
+
 /// What a lane's last row says (`rows verdict --kind lane`).
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -283,7 +331,7 @@ pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
             Reading::Live(LaneVerdict::Walled)
         } else {
             Reading::Live(LaneVerdict::Idle {
-                cause: row.error.clone(),
+                cause: failure_cause(row).map(str::to_owned),
             })
         };
     }

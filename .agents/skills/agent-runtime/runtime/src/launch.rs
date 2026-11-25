@@ -403,6 +403,12 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
     }
     match h {
         Harness::Claude => {
+            env.insert("CLAUDE_CODE_RETRY_WATCHDOG".to_owned(), "1".to_owned());
+            // Long usage waits belong to the watch's account wall route.
+            env.insert(
+                "CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS".to_owned(),
+                "1000".to_owned(),
+            );
             if full_bypass {
                 for name in CLAUDE_BYPASS_ENV {
                     env.insert(name.to_owned(), "1".to_owned());
@@ -763,6 +769,32 @@ mod tests {
         i.home = Some(PathBuf::from(format!("/home/x/.1{h}")));
         i.brief = Brief::None;
         i
+    }
+
+    #[test]
+    fn only_claude_lane_and_controller_launches_enable_the_retry_watchdog() {
+        for harness in [
+            Harness::Claude,
+            Harness::Codex,
+            Harness::Copilot,
+            Harness::Pi,
+        ] {
+            for agent in [Some("runtime"), Some(CONTROLLER_AGENT)] {
+                let mut launch = bare(harness);
+                launch.agent = agent.map(str::to_owned);
+                let command = build(&launch).unwrap();
+                for (name, value) in [
+                    ("CLAUDE_CODE_RETRY_WATCHDOG", "1"),
+                    ("CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS", "1000"),
+                ] {
+                    assert_eq!(
+                        command.env.get(name).map(String::as_str),
+                        (harness == Harness::Claude).then_some(value),
+                        "{harness} {agent:?} {name}"
+                    );
+                }
+            }
+        }
     }
 
     /// The environment a child of the rendered line sees: the line is run

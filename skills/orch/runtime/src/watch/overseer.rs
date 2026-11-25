@@ -45,10 +45,10 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::PaneState;
-use agent_runtime::observe::{self, ProcessReading, State, WallKind};
+use agent_runtime::observe::{self, IdleTurn, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Level, Memory};
 use agent_runtime::reading::Reading;
-use agent_runtime::rows::{self, SessionVerdict};
+use agent_runtime::rows::{self, SessionIdle, SessionObservation, SessionVerdict};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -57,6 +57,7 @@ use super::context::{self, Owned, Times};
 use super::events::{Event, OverseerCase};
 use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
 use super::owner_alert::{self, Word};
+use super::wake;
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts;
 use agent_runtime::accounts::walk::{self, WalkRequest};
@@ -751,7 +752,7 @@ fn relaunch_started(launch: agent_runtime::effects::job::Launch) -> Result<(), S
 struct Reads {
     process: ProcessReading,
     screen: Result<String, String>,
-    rows: Option<Reading<SessionVerdict>>,
+    rows: Option<Reading<SessionObservation>>,
     /// A pane holding only shells whose harness is proven gone: its
     /// recorded process read gone, or no process recorded under a record
     /// that names a harness, the reading a start takes as `harness-gone`.
@@ -792,31 +793,32 @@ pub struct Pass<'a> {
 /// The verdict of the record's session from the reads: the login wall
 /// first, then the exit record over a bare shell, then the rows, then the
 /// pane.
-fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks>) -> Verdict {
+fn judge(
+    record: &Record,
+    reads: &Reads,
+    pane: Option<&State>,
+    marks: &mut dyn FnMut() -> Option<Marks>,
+) -> Verdict {
     let bare = matches!(reads.process, ProcessReading::ShellsOnly);
-    let screen = match &reads.screen {
-        Ok(screen) => screen.as_str(),
-        Err(cause) => {
-            return Verdict::Unreadable {
-                cause: cause.clone(),
-            };
-        }
-    };
+    if let Err(cause) = &reads.screen {
+        return Verdict::Unreadable {
+            cause: cause.clone(),
+        };
+    }
     if let ProcessReading::Unread { cause } = reads.process {
         return Verdict::Unreadable {
             cause: cause.to_owned(),
         };
     }
-    let Some(harness) = record.harness else {
+    let Some(state) = pane else {
         return Verdict::Unreadable {
             cause: "harness-unrecorded".to_owned(),
         };
     };
-    let state = observe::judge(screen, harness, &reads.process, None);
     if let State::Walled {
         kind: WallKind::Auth,
         banner,
-    } = &state
+    } = state
     {
         return Verdict::Walled {
             source: Source::Auth,
@@ -829,43 +831,38 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
             source: Source::Record,
         };
     }
-    if let Some(rows) = &reads.rows {
-        match rows {
-            Reading::Live(SessionVerdict::Ended) if bare => {
+    if let Some(Reading::Live(row)) = &reads.rows {
+        match row.verdict {
+            SessionVerdict::Ended if bare => {
                 return Verdict::Exited {
                     source: Source::Rows,
                 };
             }
             // The last row is the harness's record of its own wall, and a
             // pane holding only shells has no harness left behind that wall.
-            Reading::Live(SessionVerdict::Walled { .. }) if bare => {
+            SessionVerdict::Walled { .. } if bare => {
                 return Verdict::Exited {
                     source: Source::Process,
                 };
             }
-            Reading::Live(SessionVerdict::Walled { kind }) => {
-                let message = record
-                    .session_rows
-                    .as_deref()
-                    .map(rows::last_row)
-                    .and_then(|r| match r {
-                        Reading::Live(row) => row.message,
-                        Reading::Gone | Reading::Unreadable { .. } => None,
-                    })
+            SessionVerdict::Walled { kind } => {
+                let message = row
+                    .message
+                    .clone()
                     .unwrap_or_else(|| "message=unrecorded".to_owned());
                 // A rows usage wall stands unless the account judgement
                 // measures room (`overseer-wall-lifted`); an auth wall
                 // stands whatever it reads.
-                if *kind == WallKind::Usage && marks().is_some_and(|m| m.key == MarkKey::Below) {
+                if kind == WallKind::Usage && marks().is_some_and(|m| m.key == MarkKey::Below) {
                     return Verdict::Live;
                 }
                 return Verdict::Walled {
                     source: Source::Rows,
-                    kind: *kind,
+                    kind,
                     text: message,
                 };
             }
-            Reading::Live(SessionVerdict::Wedged) => {
+            SessionVerdict::Wedged => {
                 return Verdict::Exited {
                     source: if bare {
                         Source::Process
@@ -874,7 +871,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
                     },
                 };
             }
-            Reading::Live(SessionVerdict::Ended | SessionVerdict::Live) => {
+            SessionVerdict::Ended | SessionVerdict::Live => {
                 return if bare {
                     Verdict::Exited {
                         source: Source::Process,
@@ -883,9 +880,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
                     Verdict::Live
                 };
             }
-            Reading::Live(SessionVerdict::Unsupported)
-            | Reading::Gone
-            | Reading::Unreadable { .. } => {}
+            SessionVerdict::Unsupported => {}
         }
     }
     match state {
@@ -904,7 +899,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
                 Verdict::Walled {
                     source: Source::Pane,
                     kind: WallKind::Usage,
-                    text: banner,
+                    text: banner.clone(),
                 }
             } else {
                 Verdict::Live
@@ -919,6 +914,77 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
         | State::Asking { .. }
         | State::RateLimitSwitch
         | State::Unjudged { .. } => Verdict::Live,
+    }
+}
+
+/// A controller that can take another turn keeps the same resume row as a
+/// worker. A Claude or Pi StopFailure supplies its current row position;
+/// Codex and Copilot supply the screen below the current user turn.
+fn continue_overseer(
+    record: &Record,
+    reads: &Reads,
+    idle: IdleTurn,
+    baseline: &Baseline,
+    out: &mut Produced,
+) {
+    let (Some(harness), Ok(screen)) = (record.harness, &reads.screen) else {
+        return;
+    };
+    let pane_key = record.pane_key();
+    let target = wake::OVERSEER_TARGET;
+    let prior = baseline.get(wake::RESUME_KIND, target).and_then(|row| {
+        let (_, key) = row.split_once('|')?;
+        key.strip_prefix(&pane_key)?.starts_with('|').then_some(row)
+    });
+    let row = match &reads.rows {
+        Some(Reading::Live(row)) if row.harness.as_deref() == Some(harness.name()) => Some(row),
+        Some(Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. }) | None => None,
+    };
+    let (cause, finished) = match harness {
+        Harness::Claude | Harness::Pi => match row.and_then(|row| row.idle.as_ref()) {
+            Some(SessionIdle::Failed { cause }) => (Some(cause.as_str()), false),
+            Some(SessionIdle::Returned) => (None, true),
+            None => (None, false),
+        },
+        Harness::Codex | Harness::Copilot => match idle {
+            IdleTurn::ApiError => (Some("api-error"), false),
+            IdleTurn::Ordinary { after_prompt } => (None, after_prompt),
+            IdleTurn::Capacity => (None, false),
+        },
+    };
+    let Some(cause) = cause.filter(|cause| wake::can_continue(harness, cause, false)) else {
+        if finished && prior.is_some() {
+            out.changes.push(clear(wake::RESUME_KIND, target));
+        }
+        return;
+    };
+    let key = match harness {
+        Harness::Claude | Harness::Pi => {
+            let Some(row) = row else { return };
+            format!("{pane_key}|row:{}", row.position)
+        }
+        Harness::Codex | Harness::Copilot => format!(
+            "{pane_key}|{:?}|{}",
+            row.map(|row| row.position),
+            agent_runtime::session::text_digest(screen)
+        ),
+    };
+    if prior
+        .and_then(|row| row.split_once('|'))
+        .is_some_and(|(_, old)| old == key)
+    {
+        return;
+    }
+    if wake::continued(prior) {
+        out.changes
+            .push(set(wake::RESUME_KIND, target, format!("told|{key}")));
+        out.events.push(Event::IdleAfterReturn {
+            lane: target.to_owned(),
+            note: Some(format!("cause={cause}")),
+        });
+    } else {
+        out.changes
+            .push(set(wake::RESUME_KIND, target, format!("{cause}|{key}")));
     }
 }
 
@@ -1044,7 +1110,10 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                     Some(Reads {
                         process,
                         screen: (pass.readers.capture)(&fields.pane),
-                        rows: record.session_rows.as_deref().map(rows::session_verdict),
+                        rows: record
+                            .session_rows
+                            .as_deref()
+                            .map(|path| (pass.readers.rows)(path).map(rows::observe_session)),
                         harness_gone,
                     }),
                     Some(fields.pid),
@@ -1080,8 +1149,21 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         marks_read.clone().flatten()
     };
+    let pane = reads.as_ref().and_then(|reads| {
+        Some(observe::observe_pane(
+            reads.screen.as_ref().ok()?,
+            record.harness?,
+            &reads.process,
+            None,
+        ))
+    });
     let mut verdict = match &reads {
-        Some(reads) => judge(&record, reads, &mut marks),
+        Some(reads) => judge(
+            &record,
+            reads,
+            pane.as_ref().map(|pane| &pane.state),
+            &mut marks,
+        ),
         None => Verdict::Exited {
             source: Source::Pane,
         },
@@ -1172,9 +1254,20 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             if let Some(pid) = pane_pid {
                 oom_baseline(&key, pid, pass, out);
             }
+            if let (Some(reads), Some(idle)) = (&reads, pane.and_then(|pane| pane.idle)) {
+                continue_overseer(&record, reads, idle, pass.baseline, out);
+            }
         }
         return judged(verdict, Some(key));
     };
+    if pass
+        .baseline
+        .get(wake::RESUME_KIND, wake::OVERSEER_TARGET)
+        .is_some()
+    {
+        out.changes
+            .push(clear(wake::RESUME_KIND, wake::OVERSEER_TARGET));
+    }
     let (row, other) = match case {
         OverseerCase::Dead => ("overseer-dead", "overseer-walled"),
         OverseerCase::Walled | OverseerCase::Reserve => ("overseer-walled", "overseer-dead"),
