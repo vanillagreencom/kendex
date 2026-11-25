@@ -379,15 +379,13 @@ class Forwarder:
             raise Refusal("role-main", "")
 
     def active_standing(self, grant):
-        """Verify the current saved grant against this home, destination and settings file."""
+        """Verify the grant in the shell settings file selected by its originating forward."""
         if self.settings["JARVIS_FORWARD_CONFIRM"] != "on":
             return False
-        path = standing_settings()
         scope = (self.home + "\n" + self.settings["JARVIS_MAIN_HOST"]).encode()
         key = "fleet.forward:" + hashlib.sha256(scope).hexdigest()
         confirmation = grant["confirmation"]
-        return (path is not None and str(path) == grant["path"] and confirmation["key"] == key
-                and saved_standing(path, confirmation))
+        return confirmation["key"] == key and saved_standing(grant["path"], confirmation)
 
     def host(self, script, args, data=None):
         """One call on the main: ("ok", result), or (cause, first diagnostic line)."""
@@ -628,8 +626,10 @@ class Forwarder:
         request, confirmation = record["request"], record.get("confirmation")
         standing = None
         if confirmation and confirmation.get("scope") == "standing":
-            standing = {"path": str(standing_settings()), "confirmation": confirmation}
-            if not self.active_standing(standing):
+            settings_path = standing_settings()
+            if settings_path is not None:
+                standing = {"path": str(settings_path), "confirmation": confirmation}
+            if standing is None or not self.active_standing(standing):
                 raise Refusal("stop", request["ref"])
         # A forward with no confirmation turn cites none: `null` is no
         # reference or time a record can hold, and `none` no method.

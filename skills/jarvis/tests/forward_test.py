@@ -932,8 +932,8 @@ class Forward(MailWorld):
     def test_standing_grant_is_rechecked_by_the_collection_before_send(self):
         config_home = self.root / "shell-config"
         self.env.update(XDG_CONFIG_HOME=str(config_home), JARVIS_FORWARD_CONFIRM="on")
-        for change in ("retained", "removed", "regranted", "unreadable", "different settings path",
-                       "confirmation off", "after cursor"):
+        for change in ("retained", "watch uses default", "removed", "regranted", "unreadable",
+                       "removed with stale duplicate", "confirmation off", "after cursor"):
             with self.subTest(change=change):
                 record = self.standing_record()
                 confirmation = record["confirmation"]
@@ -950,8 +950,11 @@ class Forward(MailWorld):
                     self.save_standing(dict(confirmation, at=CONFIRMED_AT), config_home)
                 elif change == "unreadable":
                     config.write_text("{")
-                elif change == "different settings path":
+                elif change == "watch uses default":
+                    env["XDG_CONFIG_HOME"] = ""
+                elif change == "removed with stale duplicate":
                     self.save_standing(confirmation, self.root / ".config")
+                    config.unlink()
                     env["XDG_CONFIG_HOME"] = ""
                 elif change == "confirmation off":
                     env["JARVIS_FORWARD_CONFIRM"] = "off"
@@ -961,7 +964,7 @@ class Forward(MailWorld):
                 result = self.jarvis("forward-drain", "--collection", env=env)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 key = self.key(record)
-                if change == "retained":
+                if change in ("retained", "watch uses default"):
                     self.assertEqual(len(self.directives()), before + 1)
                     self.assertEqual(self.directives()[-1]["delivery_id"], key)
                 else:
