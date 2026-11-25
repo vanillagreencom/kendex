@@ -49,7 +49,7 @@ if [ ! -x "$binary" ] && [ "${1:-}:${2:-}" != turn-end:--hook-dir ]; then
   agent_runtime_prepare "$binary" "$here/setup" "$key" || exit 69
 fi
 if [ ! -x "$binary" ]; then
-  printf 'orch-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
+  agent_runtime_setup_required "$binary" "$here/setup" "$key"
   exit 69
 fi
 exec "$binary" "$@"

@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import platform
 import select
 import shutil
 import signal
@@ -33,11 +34,13 @@ printf 'fake cargo: resuming build\n' >&2
 exec "$SUITE_CARGO" "$@"
 """)
 cargo.chmod(0o755)
-# An empty publication makes this fixture exercise the build on hosts
-# where GitHub already has an artifact for the checkout's key.
+# Stall the listing so this fixture reaches the build through the same
+# deadline Jarvis places on a runtime record read.
+listing_started = scratch / "listing-started"
 gh = gate_bin / "gh"
 gh.write_text("""#!/bin/sh
-echo '{"total_count":0,"artifacts":[]}'
+: >"$LISTING_STARTED"
+exec sleep 30
 """)
 gh.chmod(0o755)
 ready, started = os.pipe()
@@ -46,6 +49,7 @@ os.environ.update(
     AGENT_RUNTIME_CACHE=str(cache), SUITE_CARGO=shutil.which("cargo"),
     PATH=f"{gate_bin}{os.pathsep}{os.environ['PATH']}",
     BUILD_STARTED=str(started), BUILD_RELEASE=str(released),
+    LISTING_STARTED=str(listing_started),
 )
 with subprocess.Popen(
     [wrapper, "version"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL,
@@ -82,5 +86,9 @@ with subprocess.Popen(
 expected = cache / "bin" / f"{wrapper.name}-{key}"
 if caller.returncode != -signal.SIGKILL:
     sys.exit("wrapper did not receive the timeout signal")
+if platform.system() == "Linux" and platform.machine() == "x86_64" and all(
+    shutil.which(tool) for tool in ("jq", "timeout", "unzip")
+) and not listing_started.is_file():
+    sys.exit("wrapper did not attempt the stalled listing")
 if not expected.is_file() or not os.access(expected, os.X_OK):
     sys.exit(f"build did not place {expected}")

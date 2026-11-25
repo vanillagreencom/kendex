@@ -41,7 +41,7 @@ if [ ! -x "$binary" ]; then
   agent_runtime_prepare "$binary" "$here/setup" "$key" || exit 69
 fi
 if [ ! -x "$binary" ]; then
-  printf 'agent-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
+  agent_runtime_setup_required "$binary" "$here/setup" "$key"
   exit 69
 fi
 exec "$binary" "$@"

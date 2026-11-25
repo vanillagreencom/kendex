@@ -37,6 +37,8 @@ case "$*" in
     printf '{"total_count":1,"artifacts":[{"id":11,"name":"%s","expired":%s,"workflow_run":{"id":22}}]}\n' "$name" "$expired"
     ;;
   "api --hostname github.com $api/runs/22")
+    if [ "$CASE" = run-unread ]; then exit 124; fi
+    if [ "$CASE" = run-invalid ]; then echo '{"id":22}'; exit; fi
     event=push branch=main head=1190866154 workflow=.github/workflows/skill-tests.yml
     case "$CASE" in
       queue) event=merge_group branch=gh-readonly-queue/main/pr-42-abcd ;;
@@ -62,8 +64,11 @@ for package in agent-runtime orch; do
   wrapper="$SKILLS/$package/scripts/$name"
   key="$(agent_runtime_key "$SKILLS/$package/runtime")"
   export ARTIFACT="$name-$key"
-  for CASE in push queue cache absent download wrong-key expired pr fork other-workflow checksum incompatible; do
-    if [ "${1:-}" = --published-only ] && [ "$CASE" != push ]; then continue; fi
+  for CASE in push queue cache absent download wrong-key expired pr fork other-workflow checksum incompatible run-unread run-invalid; do
+    case "${1:-}:$CASE" in
+      --published-only:push | --publication-errors-only:run-unread | --publication-errors-only:run-invalid | --publication-errors-only:download | :*) ;;
+      *) continue ;;
+    esac
     export CASE
     cache="$TMP_ROOT/$name-$CASE"
     export ZIP="$cache.zip"
@@ -101,11 +106,22 @@ BINARY
       *)
         assert_eq "$rc|$out" '69|' "$name refuses $CASE without cargo" "$TMP_ROOT/err"
         if [ ! -e "$binary" ]; then pass "$name leaves no binary for $CASE"; else fail "$name leaves no binary for $CASE"; fi
+        IFS= read -r first <"$TMP_ROOT/err"
+        # Jarvis's jarvis_bound forwards only this first line.
+        assert_eq "$first" "$name: setup-required key=$key run=$SKILLS/$package/scripts/setup" "$name $CASE preserves the first stderr line"
+        case "$CASE" in
+          run-unread | run-invalid)
+            cause='run-lookup'
+            [ "$CASE" != run-invalid ] || cause='run-parse'
+            detail="$(awk '/fetch-unavailable/ { print }' "$TMP_ROOT/err")"
+            assert_eq "$detail" "$name: fetch-unavailable cause=$cause artifact=$ARTIFACT run=22" "$name reports unread provenance for $CASE"
+            ;;
+        esac
         ;;
     esac
   done
 done
-if [ "${1:-}" != --published-only ]; then
+if [ "$#" -eq 0 ]; then
   : >"$API_LOG"
   rc=0
   PATH="$TMP_ROOT/bin" AGENT_RUNTIME_CACHE="$TMP_ROOT/hook" "$SKILLS/orch/scripts/orch-runtime" turn-end --hook-dir "$TMP_ROOT" 2>"$TMP_ROOT/err" || rc=$?
