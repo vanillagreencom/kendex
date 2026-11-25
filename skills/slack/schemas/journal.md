@@ -307,3 +307,39 @@ One thread read was refused.
 - `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`.
 
 A `never` line carries `fix=` alone, with no other field.
+
+## The Jarvis session hold
+
+The relay pages an unread owner message from Jarvis's delivered `owner-unread` event in this root's mailbox. It waits for the session hold to end and checks the original message's read receipt before sending. A read message produces no page, even if it remains unanswered. A definite send refusal stays eligible for retry; an accepted page or an unknown send is not repeated. An unavailable relay cannot deliver a page, and a stopped producer emits no new event. Recovery handles retained events within the relay's existing history limit. [§ Journal lines](#journal-lines) define the event and receipt requirements and the limits of the send-time check.
+
+The hold stands while the file `SLACK_JARVIS_SESSION_FILE` names is younger than `SLACK_JARVIS_SESSION_MAX_AGE`. The README's Setup gives the settings.
+
+While held, ordinary mailbox posts wait and `--mention` posts without mentions, with a `mention-held` diagnostic. `slack listen --status` shows `held-by=jarvis`.
+
+Owner messages still reach the overseer. Replies to messages the owner typed in Slack still post in their threads. A notice answering `/report` posts as a new channel message; a notice answering a forwarded request posts under its root, creating that root when needed.
+
+Presence setting changes take effect at the next poll without a restart. Emptying or removing the file setting ends the hold. A stale or missing presence file also ends it, except that a running relay retains a renamed file's hold until the replacement is fresh or the retained file is stale. A failed settings read keeps that checkout's hold and fails its post step; other checkouts continue. The retired presence keys stay readable until kendex 2.0.0 with a `setting-renamed` warning; an explicitly set new key takes precedence, including an empty value.
+
+The Jarvis session marks its view read with `lane-mail events --item overseer --box to-overseer --mark-read`. On resume, ordinary notices and questions the session marked read are skipped without a post or mention, including closed questions. Replies to Slack-origin messages, `/report` and forwarded requests still post. Later notices/questions and held answers continue to post. A missing, unreadable or invalid read marker skips nothing; hold times do not decide which messages were read.
+
+The oldest supported mailbox producer is orch 3.0.0. Producers without usable position metadata still route, but cannot supply Jarvis-read suppression or position-based answer read marks.
+
+A notice that answers the `/report` request with `lane-mail notice --ref` reaches the channel even during a hold. An ordinary `orch-runtime report write` notice has no request reference: it is held, skipped on resume if the session read it, and not sent during `ORCH_REPORT_QUIET_HOURS`.
+
+## Reconnects and history
+
+Socket Mode reconnects after a dropped connection. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
+
+## Lost responses
+
+Posts whose response was lost are not repeated. Explicit refusals can retry after their cause is fixed.
+
+## Slash command limits
+
+- `/report` avoids duplicate delivery only when Slack resends the same request id; stable ids on resends are an assumption, not a guarantee from Slack.
+- Oversized command output can be cut or withheld in full. The reply names the cut or refusal.
+- A failed command names its cause; a killed command reports its signal without claiming an OOM cause or victim.
+
+## Retired names
+
+Slack reserves `/status`; the relay accepts that retired command name until kendex 2.0.0 and warns with its replacement, `/lanes`.

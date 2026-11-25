@@ -79,7 +79,7 @@ The block:
 - A label matching two categories must be disambiguated by the taxonomy before mutation.
 - The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`. A `match.prefix` declares none.
 - The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry.
-- Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names.
+- Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands `linear.sh issues --help` § Label taxonomy names.
 - The taxonomy check does not refuse an undeclared label the issue already carries. `labels audit` lists such labels.
 - A `### Project taxonomy` heading with no readable JSON block, an empty one included, refuses every label write. So do two renders whose taxonomy sections differ.
 - With no heading the CLI enforces nothing.
@@ -153,7 +153,7 @@ A label is a taxonomy change, never a side effect of the work at hand.
 - An `agent:*` label additionally requires the agent definition to exist first.
 - `agent:researcher` is reserved for research issues owned by the researcher agent.
 - Do not create a label for a one-off categorization, when an existing label covers the case, or for a project label.
-- The label commands that refuse a name are listed in [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing).
+- `linear.sh labels --help` lists the label commands that refuse a name.
 - After creating, rerun preflight before mutating.
 
 ## Label drift check

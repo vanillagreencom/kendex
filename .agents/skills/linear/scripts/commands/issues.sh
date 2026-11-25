@@ -347,10 +347,11 @@ Complete Options:
                          ticks every box. A box not named stays unchecked. A
                          number past the section's last box refuses before
                          any write. The section runs from its "## Done when"
-                         line to the next "## " heading. The result's
-                         Refuses before any write if no checklist boxes are
-                         recognized; normalize the heading to "## Done when".
-                         "done_when_checked" counts the boxes this call ticked.
+                         line to the next "## " heading. The call refuses
+                         before any write if it recognizes no checklist box;
+                         normalize the heading to "## Done when". The
+                         result's "done_when_checked" counts the boxes this
+                         call ticked.
   --done-when-waived <N[,N...]>
                          Retire open post-merge boxes an authorized person
                          dropped. Each box's evidence-file line names the
@@ -3020,7 +3021,7 @@ add_relation() {
     echo "$normalized"
 }
 
-# A Done or Canceled blocker's relation is history, ../../SKILL.md § Blocked Label vs Issue Relations
+# A Done or Canceled blocker's relation is history, ../../references/writes.md § Blocked Label vs Issue Relations
 # says; $2 = true is tpm-audit's structural repair, for a pair the rule refuses.
 refuse_completed_blocker() {
     local relation blocker facts nodes
@@ -3031,7 +3032,7 @@ refuse_completed_blocker() {
     nodes=$(jq -c '.issueRelation | {blocker: .issue, blocked: .relatedIssue}' <<<"$relation") || return 1
     facts=$(blocking_level_facts "$nodes") || return 1
     if [ "$2" = "true" ] && ! blocking_level_ok "$facts"; then return 0; fi
-    echo "linear: refused=completed-blocker $blocker section=\"linear SKILL.md § Blocked Label vs Issue Relations\"" >&2
+    echo "linear: refused=completed-blocker $blocker section=\"linear references/writes.md § Blocked Label vs Issue Relations\"" >&2
     return 1
 }
 

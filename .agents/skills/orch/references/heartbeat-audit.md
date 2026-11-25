@@ -93,7 +93,7 @@ The Urgent or High priority hold does not hold a `wrong_project` correction whos
    - Never use the wrapper's interactive multi-select.
    - An open ask for the same rows stays pending; do not send it twice.
 3. When the Jarvis session runs, check its presence before sending.
-   - Presence means the root's `SLACK_JARVIS_SESSION_FILE` is younger than `SLACK_JARVIS_SESSION_MAX_AGE` (the slack skill's `README.md` § The Jarvis session hold), and `slack listen --status` reports `held-by=jarvis`.
+   - Presence means the root's `SLACK_JARVIS_SESSION_FILE` is younger than `SLACK_JARVIS_SESSION_MAX_AGE` (the slack skill's `schemas/journal.md` § The Jarvis session hold), and `slack listen --status` reports `held-by=jarvis`.
    - With presence, the Jarvis session reads the root's mailbox first.
    - Without it, the relay posts the ask to the owner.
 4. After the ruling, apply only the rows the owner authorizes.

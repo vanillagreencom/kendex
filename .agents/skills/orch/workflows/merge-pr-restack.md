@@ -94,7 +94,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
 
    - Bind `[RUN_DIR]` to the run's `run-dir=` line.
    - A start that exits 3 printed `state=running`: its wait budget passed while the run continues. Follow it with `orch-runtime validate entry --wait --run-dir [RUN_DIR]` until it prints `state=done`. Poll as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness.
-   - A start refused as `run-live` ran nothing. Take that refusal's route in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), then start the range run again.
+   - A start refused as `run-live` ran nothing. Take that refusal's route in [validation.md § Run-live refusal](../../dev/references/validation.md#run-live-refusal), then start the range run again.
    - Once the run ends, read its head and times:
 
    ```bash

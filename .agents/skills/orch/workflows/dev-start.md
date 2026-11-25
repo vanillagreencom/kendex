@@ -357,7 +357,7 @@ Each row's steps:
   3. Accept only when a valid receipt for THIS round appears.
 - **`wait`, fail.** Wait to the deadline, then escalate per [Round Closure](../references/skill-rules.md#round-closure).
 - **`retry`, any.** A receipt for THIS round exists but fails a gate; the reply's `reason` names it.
-  - A structurally valid receipt whose `validate` fails may take the one recovery [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) admits, under the original brief, `pre_delegate_sha` and Check B.
+  - A structurally valid receipt whose `validate` fails may take the one recovery [validation.md § Recovery](../../dev/references/validation.md#recovery) admits, under the original brief, `pre_delegate_sha` and Check B.
     1. The runtime admits the round's next attempt, which writes its own receipt under its own run id.
     2. The check then selects the receipt the round's newest `validate` stage names.
     3. Check A again when that run has ended.

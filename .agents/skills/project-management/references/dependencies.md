@@ -17,12 +17,12 @@ A `blocks`/`blocked-by` relation records a real dependency between two issues.
 
 ### Level
 
-Select each relation under linear SKILL.md § Blocked Label vs Issue Relations.
+Select each relation under linear references/writes.md § Blocked Label vs Issue Relations.
 
 When an audit finds a relation at the wrong level, **lift it, never delete it**:
 
 1. Add the parent-level relation.
-2. Remove the child-level one with `issues remove-relation --peer-rule-violation` (linear SKILL.md § Blocked Label vs Issue Relations).
+2. Remove the child-level one with `issues remove-relation --peer-rule-violation` (linear references/writes.md § Blocked Label vs Issue Relations).
 3. Add `related` between the original children.
 
 The Linear CLI enforces that rule at mutation time.

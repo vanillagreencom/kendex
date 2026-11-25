@@ -55,7 +55,7 @@ The one Done-when box is the parent's whole checklist.
 1. `## Sub-Issues`, never `## Requirements`.
    - No implementation detail lives here.
 2. All children share the parent's project. See [dependencies.md](../references/dependencies.md).
-3. Record dependencies under linear SKILL.md § Blocked Label vs Issue Relations.
+3. Record dependencies under linear references/writes.md § Blocked Label vs Issue Relations.
 4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
 6. Drop any header line with no value.

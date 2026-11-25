@@ -60,7 +60,7 @@ Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The ap
 
 - With your email configured, `issues activate` can assign an unassigned issue to you.
 - An orch-launched lane assigns nobody.
-- See [SKILL.md § Option Behavior](SKILL.md#option-behavior) for assignment details.
+- `linear.sh issues --help` gives the assignment details.
 
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
 

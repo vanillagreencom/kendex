@@ -83,7 +83,7 @@ An architecture dependency with no relation recorded belongs in `actions.add_rel
 - Issue A creates something issue B consumes.
 - Two issues modify the same file where the lower-layer one must land first.
 
-Recommend each relation under linear SKILL.md § Blocked Label vs Issue Relations. See [dependencies.md](../references/dependencies.md) for structural repair.
+Recommend each relation under linear references/writes.md § Blocked Label vs Issue Relations. See [dependencies.md](../references/dependencies.md) for structural repair.
 
 ### 4.4 Order and Prioritize
 

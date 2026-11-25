@@ -158,7 +158,7 @@ build_completion_validation_result() {
 #
 # A leaf's wait must not hold its unrelated siblings. The parent-child
 # hierarchy already encodes ancestor dependencies; adding a relation there
-# would make the hierarchy wait on itself. The owning rule is SKILL.md
+# would make the hierarchy wait on itself. The owning rule is references/writes.md
 # § Blocked Label vs Issue Relations; no architecture decision is needed
 # for this local validation choice.
 

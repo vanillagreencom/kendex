@@ -185,7 +185,7 @@ Record uncovered components in `architecture_gaps[]`:
    - The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
 3. **Relation level.**
-   - Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations.
+   - Keep each valid relation under linear references/writes.md § Blocked Label vs Issue Relations.
    - Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
 
 4. **Order.**

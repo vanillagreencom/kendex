@@ -241,7 +241,7 @@ For a merge-group failure, run the failing job's command locally on the fix head
 Every other outcome stops here and never reaches the wait below:
 
 - A red local run is the fix's failure: report it and stop.
-- A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. On a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
+- A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. On a `run-live` refusal, take the wait or stop route of [validation.md § Run-live refusal](../../dev/references/validation.md#run-live-refusal), then start the reproduction again. Report any other unproved reproduction and stop.
 
 The pull-request wait proves nothing about a merge-group fix. The caller re-arms only under [merge-contracts.md § Re-queue rule](../references/merge-contracts.md#re-queue-rule).
 

@@ -142,7 +142,7 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 .agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|handed-over|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--exception-file [FILE]] [--validate-note [TEXT]] [--label [LABEL]]... [--no-labels] --no-summary --summary-file tmp/fix-summary-[ISSUE_ID].md --item [N] [DECISION] [REASONING] [--item ...] --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`; the Apple gate in `orch-runtime dev-return --text write --help` reads them, and [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) names the `mac run test` it holds an Apple item to.
+One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`; the Apple gate in `orch-runtime dev-return --text write --help` reads them, and [validation.md § Apple gate](../references/validation.md#apple-gate) names the `mac run test` it holds an Apple item to.
 
 - One `--item N DECISION REASONING` per **delegated** item, Applied, Skipped, and Blocked alike. The artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `orch-runtime dev-return --text write --help`). Keep `REASONING` free of backticks.
 - `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.

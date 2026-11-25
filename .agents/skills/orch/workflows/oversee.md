@@ -165,7 +165,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    rm -f tmp/oversee-select-source.json
    ```
 
-2. Where code shows a dependency that holds an item, first record its blocking relation under the linear skill's `SKILL.md` § Blocked Label vs Issue Relations.
+2. Where code shows a dependency that holds an item, first record its blocking relation under the linear skill's `references/writes.md` § Blocked Label vs Issue Relations.
    - The launch's admission applies the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to a `linear` item, reading the item and every container ancestor.
    - [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) holds its refusals; a relaunch is judged as [§ Recovery relaunch](../references/lane-directive.md#recovery-relaunch) states.
 3. Keep the order in the fleet state's `launch_queue`.
