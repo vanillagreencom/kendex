@@ -3009,9 +3009,7 @@ cleanup_enumerate_worktrees() {
     return 1
   fi
   while IFS= read -r -d '' line; do
-    if [[ "$line" == branch\ * ]]; then
-      CLEANUP_OWNED_REFS+="${line#branch }"$'\n'
-    fi
+    [[ "$line" != branch\ * ]] || CLEANUP_OWNED_REFS+="${line#branch }"$'\n'
     [[ "$line" == worktree\ * ]] || continue
     wt="${line#worktree }"
     same_canonical_dir "$wt" "$PROJECT_ROOT" && continue
@@ -3023,41 +3021,96 @@ cleanup_enumerate_worktrees() {
 # Read the same private settings that guarded restack uses, even if the
 # worktree path is absent or Git discovery there would find another checkout.
 cleanup_restack_branch() { # PRIVATE_GIT_DIR
-  local file="$1/config.worktree" pending="" branch="" rc=0
+  local file="$1/config.worktree"
   [[ -e "$file" || -L "$file" ]] || return 0
-  pending="$(git config --file "$file" --get kendex-restack.pending)" || rc=$?
-  [[ "$rc" != 1 ]] || return 0 # Git config reports an absent key with exit 1.
-  [[ "$rc" == 0 && "$pending" == true ]] || return 1
-  branch="$(git config --file "$file" --get kendex-restack.branch)" || return 1
-  git check-ref-format "refs/heads/$branch" || return 1
-  printf '%s\n' "$branch"
+  # Git config --get can return 1 for either a missing key or an unreadable file.
+  git config --file "$file" --null --list | (
+    unset pending
+    branch=""
+    while IFS= read -r -d '' entry; do
+      case "${entry%%$'\n'*}" in
+        kendex-restack.pending) pending="${entry#*$'\n'}" ;;
+        kendex-restack.branch) branch="${entry#*$'\n'}" ;;
+      esac
+    done
+    [[ -n "${pending+x}" ]] || exit 0
+    [[ "$pending" == true ]] && git check-ref-format "refs/heads/$branch" || exit 1
+    printf 'refs/heads/%s\n' "$branch"
+  )
+}
+
+# Worktree porcelain reports detached HEAD without the refs Git's branch
+# deletion protects. Read Git's rebase/bisect records in the private Git dir.
+cleanup_native_owned_refs() { # PRIVATE_GIT_DIR
+  local dir="$1" state="" ref="" journal="" before="" after="" start=""
+  local oid='^([0-9a-f]{40}|[0-9a-f]{64})$'
+  for state in "$dir/rebase-apply" "$dir/rebase-merge"; do
+    [[ -e "$state" || -L "$state" ]] || continue
+    [[ -d "$state" && -r "$state" && -x "$state" ]] || return 1
+    [[ "$state" != */rebase-apply || ! -f "$state/applying" ]] || continue
+    ref="$(cat -- "$state/head-name")" || return 1
+    if [[ "$ref" != 'detached HEAD' ]]; then
+      [[ "$ref" == refs/heads/* ]] && git check-ref-format "$ref" || return 1
+      printf '%s\n' "$ref"
+    fi
+    [[ -e "$state/update-refs" || -L "$state/update-refs" ]] || continue
+    journal="$(cat -- "$state/update-refs")" || return 1
+    [[ -n "$journal" ]] || continue
+    # Git's --update-refs record is a ref followed by its before and after OIDs.
+    while IFS= read -r ref; do
+      IFS= read -r before && IFS= read -r after || return 1
+      [[ "$before" =~ $oid && "$after" =~ $oid ]] && git check-ref-format "$ref" || return 1
+      printf '%s\n' "$ref"
+    done <<<"$journal"
+  done
+  if [[ -e "$dir/BISECT_LOG" || -e "$dir/BISECT_START" || -L "$dir/BISECT_START" ]]; then
+    start="$(cat -- "$dir/BISECT_START")" || return 1
+    if [[ ! "$start" =~ $oid ]]; then
+      git check-ref-format "refs/heads/$start" || return 1
+      printf 'refs/heads/%s\n' "$start"
+    fi
+  fi
 }
 
 # Git's prepare locks and verifies the refs before config changes. A config
-# refusal aborts the transaction, leaving the same branch eligible for retry.
-cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID
+# refusal aborts the transaction. Git branch -D has no expected-tip check
+# and deletes the ref before attempting to remove branch config.
+cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE_GIT_DIR...
   perl -MIPC::Open2 -e '
     use strict;
     use warnings;
-    my ($repo, $base_ref, $base_oid, $ref, $oid) = @ARGV;
+    my ($repo, $base_ref, $base_oid, $ref, $oid, @dirs) = @ARGV;
     my @git = ("git", "-C", $repo);
     my ($branch) = $ref =~ m{^refs/heads/(.+)$};
     my $section = "branch.$branch";
+    my $writable = "file:$dirs[0]/config";
+    sub retire_settings {
+      my $configured = 0;
+      for my $dir (@dirs) {
+        open(my $keys, "-|", @git, "--git-dir=$dir", "config", "--null", "--show-origin", "--name-only", "--list") or return 0;
+        my $outside;
+        {
+          local $/ = "\0";
+          while (my $origin = <$keys>) {
+            my $key = <$keys> // return 0;
+            chomp($origin, $key);
+            next unless $key =~ /^\Q$section\E\.[^.]+$/;
+            if ($origin eq $writable) { $configured = 1; }
+            else { $outside = $origin; }
+          }
+        }
+        close($keys) or return 0;
+        if (defined $outside) {
+          warn "  Cannot retire $section from Git config source $outside\n";
+          return 0;
+        }
+      }
+      return !$configured || system(@git, "config", "--local", "--remove-section", $section) == 0;
+    }
     my $pid = open2(my $reply, my $request, @git, "update-ref", "--no-deref", "--stdin");
     print $request "start\nverify $base_ref $base_oid\ndelete $ref $oid\nprepare\n";
     my $prepared = (<$reply> // "") eq "start: ok\n" && (<$reply> // "") eq "prepare: ok\n";
-    my $retired = 0;
-    if ($prepared && open(my $keys, "-|", @git, "config", "--local", "--null", "--name-only", "--list")) {
-      my $configured = 0;
-      {
-        local $/ = "\0";
-        while (<$keys>) {
-          chomp;
-          $configured = 1 if /^\Q$section\E\.[^.]+$/;
-        }
-      }
-      $retired = close($keys) && (!$configured || system(@git, "config", "--local", "--remove-section", $section) == 0);
-    }
+    my $retired = $prepared && retire_settings();
     print $request ($retired ? "commit\n" : "abort\n") if $prepared;
     close $request;
     waitpid($pid, 0);
@@ -3065,49 +3118,53 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID
   ' -- "$PROJECT_ROOT" "$@"
 }
 
-cleanup_prune_local_branches() { # BASE_REF BASE_OID MERGED_ROWS
-  local wt="" dir="" branch="" oid="" ref="" symref="" candidates="" failed=0
+cleanup_prune_local_branches() ( # BASE_REF BASE_OID MERGED_ROWS
+  local dir="" refs="" oid="" ref="" symref="" candidates="" failed=0 perl_ready=false
+  local linked="$PROJECT_COMMON_GIT_DIR/worktrees"
+  local -a dirs=("$PROJECT_COMMON_GIT_DIR")
   while read -r oid ref symref; do
     [[ -n "$ref" && -z "$symref" && "$ref" != "refs/heads/$DEFAULT_BRANCH" && "$ref" != refs/heads/recovery/* ]] || continue
     [[ "$CLEANUP_OWNED_REFS" != *$'\n'"$ref"$'\n'* ]] || continue
     candidates+="$oid $ref"$'\n'
   done <<<"$3"
   [[ -n "$candidates" ]] || return 0
-  for wt in "$PROJECT_ROOT" ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
-    if [[ "$wt" == "$PROJECT_ROOT" ]]; then
-      dir="$PROJECT_COMMON_GIT_DIR"
-    else
-      dir="$(registered_worktree_git_dir "$wt")" || {
-        worktree_message cleanup-local-registration-unread "$wt" "Could not read the private Git registration for $wt. Keeping unregistered local branches." >&2
-        return 1
-      }
-    fi
-    # Git also protects branches named by native operations in detached trees.
-    if [[ -e "$dir/rebase-merge" || -e "$dir/rebase-apply" || -e "$dir/BISECT_START" ]]; then
-      worktree_message cleanup-local-active-operation "$wt" "A rebase or bisect at $wt can still use a local branch. Keeping unregistered local branches." >&2
-      return 0
-    fi
-    if ! branch="$(cleanup_restack_branch "$dir")"; then
-      worktree_message cleanup-local-restack-unread "$dir" "Could not read the pending restack branch in $dir. Keeping unregistered local branches." >&2
+  # Git stores registrations here even when the checkout's gitdir path is
+  # relative or its volume is offline. Ownership reads need only these dirs.
+  shopt -s dotglob nullglob
+  if [[ -e "$linked" || -L "$linked" ]]; then
+    if [[ ! -d "$linked" || ! -r "$linked" || ! -x "$linked" ]]; then
+      worktree_message cleanup-local-registration-unread "$linked" "Could not list the private Git registrations. Keeping unregistered local branches." >&2
       return 1
     fi
-    if [[ -n "$branch" ]]; then
-      CLEANUP_OWNED_REFS+="refs/heads/$branch"$'\n'
+    for dir in "$linked"/*/; do dirs+=("${dir%/}"); done
+  fi
+  for dir in "${dirs[@]}"; do
+    if [[ ! -r "$dir" || ! -x "$dir" ]] || ! refs="$(cleanup_restack_branch "$dir" && cleanup_native_owned_refs "$dir")"; then
+      worktree_message cleanup-local-operation-unread "$dir" "Could not read branch ownership from Git state in $dir. Keeping unregistered local branches." >&2
+      return 1
     fi
+    CLEANUP_OWNED_REFS+="$refs"$'\n'
   done
   while read -r oid ref; do
     [[ -n "$ref" ]] || continue
     if [[ "$CLEANUP_OWNED_REFS" == *$'\n'"$ref"$'\n'* ]]; then
-      worktree_message cleanup-local-restack-held "$ref" "Keeping ${ref#refs/heads/} for a pending restack." >&2
+      worktree_message cleanup-local-operation-held "$ref" "Keeping ${ref#refs/heads/} for a paused Git operation." >&2
       continue
     fi
-    if ! cleanup_prune_local_branch "$1" "$2" "$ref" "$oid"; then
+    if [[ "$perl_ready" == false ]]; then
+      if ! command -v perl >/dev/null || ! perl -MIPC::Open2 -e 1; then
+        worktree_message cleanup-local-prune-unavailable "$PROJECT_ROOT" "Perl with IPC::Open2 is required for transactional local branch pruning. Keeping unregistered local branches." >&2
+        return 1
+      fi
+      perl_ready=true
+    fi
+    if ! cleanup_prune_local_branch "$1" "$2" "$ref" "$oid" "${dirs[@]}"; then
       worktree_message cleanup-local-delete-failed "$ref" "Could not prune ${ref#refs/heads/} and retire its local branch settings. Check Git's diagnostic and retry cleanup." >&2
       failed=1
     fi
   done <<<"$candidates"
   return "$failed"
-}
+)
 
 # `cleanup --targets-only`: the build-output prune, its flags and its lease.
 # shellcheck source=lib/output-prune.sh

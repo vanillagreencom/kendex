@@ -597,7 +597,8 @@ assert_eq "$(settings_read "$settings_mutant" settings-mutant)" "rc=0 read=main-
   "must-fail: with the scrub cut, the hook reads the main checkout's value"
 
 offline_replay_case() {
-  local mount="$1" action="$2" actual="" expected="" recovery_rc=0
+  local mount="$1" action="$2" actual="" expected="" repair_help="" private_dir="" config="" recorded=""
+  local cleanup_rc=0 recovery_rc=0 want_rc=0 want_unowned=""
   build "offline-$mount" conflict restack-replay
   # Pause first, then land the original head without changing the paused base.
   git -C "$MAIN" merge -q --no-ff --no-edit -s ours "refs/heads/$ISSUE"
@@ -605,6 +606,30 @@ offline_replay_case() {
   git -C "$MAIN" merge-base --is-ancestor "refs/heads/$ISSUE" origin/main
   git -C "$MAIN" branch --no-track unowned "$PRE"
   [[ -n "$(paused_state_dir)" && -z "$(git -C "$WT" branch --show-current)" ]]
+  private_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  case "$mount" in
+    relative)
+      repair_help="$(git worktree repair -h 2>&1 || true)"
+      if [[ "$repair_help" != *relative-paths* ]]; then
+        printf '%s\n' 'skip: Git lacks relative worktree registrations'
+        return 0
+      fi
+      git -C "$MAIN" worktree repair --relative-paths "$WT"
+      recorded="$(cat -- "$private_dir/gitdir")"
+      [[ "$recorded" == ../* ]] || return 2
+      ;;
+    unreadable)
+      config="$private_dir/config.worktree"
+      chmod 000 -- "$config"
+      if [[ -r "$config" ]]; then
+        chmod 600 -- "$config"
+        printf '%s\n' 'skip: caller can read owner-unreadable files'
+        return 0
+      fi
+      want_rc=1
+      want_unowned="$PRE refs/heads/unowned"
+      ;;
+  esac
   git -C "$MAIN" worktree lock --reason portable "$WT"
   mv -- "$WT" "$ROOT/portable"
   if [[ "$mount" == empty ]]; then
@@ -615,11 +640,12 @@ offline_replay_case() {
   else
     [[ ! -e "$WT" ]]
   fi
-  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" cleanup >"$ROOT/cleanup.out" 2>"$ROOT/cleanup.err")
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" cleanup >"$ROOT/cleanup.out" 2>"$ROOT/cleanup.err") || cleanup_rc=$?
+  if [[ "$mount" == unreadable ]]; then chmod 600 -- "$config"; fi
   assert_eq "$(git -C "$MAIN" show-ref --verify "refs/heads/$ISSUE" 2>/dev/null || true)" "$PRE refs/heads/$ISSUE" \
     "$mount mountpoint: cleanup keeps the original ref of the locked replay"
-  assert_eq "$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" "" \
-    "$mount mountpoint: cleanup prunes the unowned merged ref"
+  assert_eq "$cleanup_rc:$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" "$want_rc:$want_unowned" \
+    "$mount mountpoint: cleanup handles the unowned merged ref according to read availability"
   if [[ "$mount" == empty ]]; then rmdir -- "$WT"; fi
   mv -- "$ROOT/portable" "$WT"
   case "$action" in
@@ -641,6 +667,8 @@ offline_replay_case() {
 echo "=== cleanup with a locked worktree offline during replay ==="
 offline_replay_case absent abort
 offline_replay_case empty continue
+offline_replay_case relative abort
+offline_replay_case unreadable abort
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -546,8 +546,8 @@ local branch.
 Cleanup also prunes unowned local branches whose tips are ancestors of the
 same base. It keeps the default branch, recovery branches, and branches used
 by a registered worktree, including a paused restack on an offline worktree.
-A changed ref tip or a refused branch config write leaves the branch and its
-settings in place. Correct the config write failure and run cleanup again.
+A changed tip or branch settings that cleanup cannot retire leave the branch
+and its settings in place. Correct the reported config problem and retry.
 
 A non-empty worktree-private 'kendex-rebase-map' keeps the worktree and branch
 until orch consumes the rewrite record. The skip starts with
