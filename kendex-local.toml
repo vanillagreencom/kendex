@@ -30,6 +30,9 @@ Enforce a rule on the platform where it can hold it (GitHub settings and ruleset
 
 From 1.0, kendex keeps a retired consumer-visible form reading, with one warning that names the new form, until the next major release. This overrides § Cleanup's no-shim line here; the rule is `changelog.d/README.md` § Release standard.
 '''
+dev = '''
+In this repository, the `.agents/skills/` render of an admitted `skills/` path counts as admitted under § Round Contract, Admitted paths: the render lands with its source in the same commit, so the source's admission already holds it.
+'''
 docs-writing = '''
 Migrate this repository hand-written harness instructions only through an authorized instruction migration. Put rules used by one installed skill in that skill's named [skill-instructions] key in kendex.toml, or kendex-local.toml only for a source catalog. Put agent-specific rules in the named [agent-additional-instructions] key and command-specific rules in the named [command-instructions] key. Keep only rules every agent needs in AGENTS.md. Keep operator instructions in consumer docs. Preserve every still-required rule. Remove an empty source instruction file only after its replacement is checked.
 '''

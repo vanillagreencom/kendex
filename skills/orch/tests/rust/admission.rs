@@ -1415,7 +1415,8 @@ fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_not
 /// `joined` naming the holder, the holder's record carries the item with
 /// its touched set widened, no record, intent or slot is the candidate's
 /// (the cap of one the holder fills admits it), and the holder's own inbox
-/// holds the item's brief, which a repeated launch delivers once. The
+/// holds the item's brief after the widened set as its `Admitted paths:`
+/// line, which a repeated launch delivers once. The
 /// holder's recorded `micro` tier is judged over the widened set: a
 /// candidate whose brief names an instruction file needs `small` and is
 /// refused `join-tier-narrower`. Once the holder's session holds a review
@@ -1433,7 +1434,7 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
     fleet.write_lanes(vec![held]);
     fleet.item("KEN-L", "`src/a.sh`", 0, &[]);
     let brief = fleet.dir.path().join("brief.md");
-    std::fs::write(&brief, "Change `src/a.sh` for KEN-L.\n").unwrap();
+    std::fs::write(&brief, "Change `src/a.sh` and `src/b.sh` for KEN-L.\n").unwrap();
     let mut request = launch("KEN-L", &fleet.checkout("l", None));
     request["brief_file"] = json!(brief.display().to_string());
     let cap = [("ORCH_OVERSEER_LANES", "1")];
@@ -1455,14 +1456,20 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
         (&lane["carried"][0]["item"], &lane["carried"][0]["tracker"]),
         (&json!("KEN-L"), &json!("linear"))
     );
-    assert_eq!(lane["touched"], json!(["src/a.sh"]));
+    assert_eq!(lane["touched"], json!(["src/a.sh", "src/b.sh"]));
     let told = inbox(&root, "KEN-H");
     assert_eq!(told.len(), 1, "{told:?}");
     let text = told[0]["text"].as_str().unwrap();
-    assert!(
-        text.starts_with("joined item=KEN-L holder=KEN-H") && text.contains("for KEN-L."),
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[..2],
+        [
+            "joined item=KEN-L holder=KEN-H",
+            r#"Admitted paths: ["src/a.sh","src/b.sh"]"#,
+        ],
         "{text}"
     );
+    assert!(text.contains("for KEN-L."), "{text}");
 
     let out = fleet.op_with(&request, &cap);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));

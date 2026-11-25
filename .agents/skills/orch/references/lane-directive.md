@@ -105,7 +105,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 
 ### A joined launch
 
-A first launch can join a live lane of the same repository before that lane's review, through a shared path or the launch blockers that lane carries. Across worktrees the holder must be unconfined. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox, and the holder ships both items.
+A first launch can join a live lane of the same repository before that lane's review, through a shared path or the launch blockers that lane carries. Across worktrees the holder must be unconfined. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox after the holder's widened `Admitted paths:` line, and the holder ships both items.
 
 ### A read-only launch
 
@@ -182,9 +182,10 @@ The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in
 
 The launch closes a local or hosted lane's brief with these, in order:
 
-1. The unattended words.
-2. The lane mailbox monitor's arm line, for Claude Code and Copilot CLI ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)).
-3. The output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output).
+1. The `Admitted paths:` line, the lane record's `touched` as a JSON array, where the record holds a non-empty set and the lane is not `read_only` ([lane-launch.md § Shared files](lane-launch.md#shared-files)).
+2. The unattended words.
+3. The lane mailbox monitor's arm line, for Claude Code and Copilot CLI ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)).
+4. The output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output).
 
 A cloud launch's brief takes the cloud session words in place of the unattended words.
 

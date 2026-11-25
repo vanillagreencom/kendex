@@ -88,12 +88,15 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 
 **Admitted paths.** A delegation's `Admitted paths:` line is a JSON array of the paths the lane may change: the set its launch judge admitted. An entry that ends in `/` covers every path under it. A delegation with no such line sets no bound.
 
-1. Before the first edit, list every tracked path the round changes, companions included: module declarations, tests, generated copies, docs and callers.
+1. Before the first edit, list every repository path the round adds or changes, companions included: module declarations, tests, generated copies, docs and callers.
 2. A listed path outside the set is a blocker, except a `changelog.d/` fragment, which the judge never counts.
 3. On a blocker, make no edit to that path. Write every such path, one per line with the reason the change needs it, to `[WORKTREE_PATH]/tmp/paths-ask-[ARTIFACT_KEY]-[DEV_ROUND_ID].md`.
 4. Commit nothing, write no receipt, and return `Blocked: paths outside the admitted set: [FILE]`. The orchestrator asks for every path at once and delegates a fresh round with the widened set.
 
-A path the round finds after its first edit is the same blocker, before its edit. Edits already made stay uncommitted for the fresh round.
+A path the round finds after its first edit is the same blocker, before its edit. Before returning, leave the tree clean, since a fresh fix round may restack and a restack refuses a dirty tree:
+
+- Describe the edits already made in the ask file, so the fresh round can make them again.
+- Restore each changed file to HEAD and remove each file the round added, naming each path literally.
 
 A session keeps the rule text it loaded, and a push, `worktree create --reuse` or a restack can rebase the branch onto a base that changed that text. A session that already ran a round on this branch takes these steps before the round's first step:
 

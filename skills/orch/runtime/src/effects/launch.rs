@@ -108,17 +108,6 @@ fn arm_line(harness: Harness, item: &str) -> Option<String> {
     }
 }
 
-/// The line naming the paths the admission judged `lane` to touch, its
-/// record's `touched`: the lane carries the set into each dev delegation,
-/// so a round asks for a path outside it before any edit, and the record
-/// stays the one place the set is kept. A read-only lane writes no path,
-/// and a record with no set, or one whose sources named none, gives the
-/// round no judged path to bound it by: neither carries a line.
-fn admitted_line(lane: &Lane) -> Option<String> {
-    let paths = lane.touched.as_ref().filter(|p| !p.is_empty())?;
-    (!lane.read_only).then(|| format!("Admitted paths: {}", json!(paths)))
-}
-
 /// A local or hosted lane's brief, fresh or relaunched: closed by the
 /// record's admitted paths where it holds some, then by the unattended
 /// words, then by the harness's arm line for mailbox `item`, then by the
@@ -127,7 +116,7 @@ fn admitted_line(lane: &Lane) -> Option<String> {
 /// `APPEND_SYSTEM.md`). A cloud session takes no line: it never asks, so
 /// no answer could widen its set.
 fn lane_brief(brief: &str, lane: &Lane, harness: Harness, item: &str, mode: LaneOutput) -> String {
-    let brief = match admitted_line(lane) {
+    let brief = match lane.admitted_line() {
         Some(line) => closed_by(brief, &line),
         None => brief.to_owned(),
     };

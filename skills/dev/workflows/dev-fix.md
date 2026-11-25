@@ -42,7 +42,7 @@ An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` recor
 
 With no line, no binary blob is known to be within reach of the ceiling.
 
-An optional `Admitted paths:` line bounds the paths the fixes may change. Check every fix's paths against it under [dev SKILL.md § Round Contract](../SKILL.md#round-contract) before the first edit.
+An optional `Admitted paths:` line bounds the paths the fixes may change. Check every fix's paths against it under [dev SKILL.md § Round Contract](../SKILL.md#round-contract) before the first edit. A path outside it ends the round by that section's steps 3 and 4, never by an item's Blocked decision.
 
 Decide each item:
 

@@ -727,6 +727,19 @@ pub struct Lane {
 
 // The one reading of a lane's channel the runtime makes.
 impl Lane {
+    /// The line naming the paths the admission judged the lane to touch,
+    /// its `touched`, which every message that opens or widens the lane's
+    /// work carries: the lane renders the set into each dev delegation, so
+    /// a round asks for a path outside it before any edit, and the record
+    /// stays the one place the set is kept. A read-only lane writes no
+    /// path, and a record with no set, or one whose sources named none,
+    /// gives a round no judged path to bound it by: neither has a line.
+    pub fn admitted_line(&self) -> Option<String> {
+        let paths = self.touched.as_ref().filter(|p| !p.is_empty())?;
+        let list = Value::from(paths.clone());
+        (!self.read_only).then(|| format!("Admitted paths: {list}"))
+    }
+
     /// Whether the lane delivers `item`: its own, or one joined to it.
     pub fn carries(&self, item: &str) -> bool {
         self.item == item || self.carried.iter().any(|c| c.item == item)
