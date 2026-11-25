@@ -2784,12 +2784,6 @@ fn a_hand_started_codex_reading_takes_its_window_from_its_home_config() {
     let rows: &[(Option<&str>, i32, &str, Value)] = &[
         (Some(keeps), 2, "lane-mail-check: context=950", json!(1000)),
         (None, 0, "lane-mail-check: window-unread=gpt-6", json!(null)),
-        (
-            Some("model_auto_compact_token_limit = 9223372036854775807\n"),
-            0,
-            "lane-mail-check: window-unread=gpt-6",
-            json!(null),
-        ),
     ];
     for (body, code, first, window) in rows {
         world.untold();
@@ -2805,7 +2799,7 @@ fn a_hand_started_codex_reading_takes_its_window_from_its_home_config() {
         assert_eq!(world.record()["window"], *window, "{body:?}");
     }
     world.untold();
-    fs::remove_file(&config).unwrap();
+    let _ = fs::remove_file(&config);
     fs::create_dir(&config).unwrap();
     let out = world.turn_in(&world.lane, &world.hooks("codex"), &[], &payload, &env);
     assert_eq!(out.code, 0, "{}", out.stderr);

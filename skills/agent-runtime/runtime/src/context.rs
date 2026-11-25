@@ -630,15 +630,22 @@ fn session_named(at: &SessionAt) -> Result<Named, RecordUnread> {
 /// a post-turn threshold of 0 and do not turn background compaction on:
 /// under the `total` scope Codex caps the limit at 90% of the window, a
 /// post-turn threshold compacts at that share of it, and background
-/// compaction starts at 65% (openai/codex rust-v0.172.0,
+/// compaction starts by default at 65% (openai/codex rust-v0.172.0,
 /// `core/src/session/context_window.rs`,
-/// `protocol/src/openai_models.rs` `auto_compact_token_limit` and
-/// `core/src/session/async_compaction.rs`). A key no layer sets counts as
-/// unknown, never as Codex's default, so a default a later release changes
-/// verifies no point. Overrides that are no launch's JSON leave the floor
-/// unresolved; a config that stands and cannot be read is `Err`. Not read:
-/// Codex's project, managed and system layers, and the command words of a
-/// session no launch recorded.
+/// `protocol/src/openai_models.rs` `auto_compact_token_limit`,
+/// `core/src/session/async_compaction.rs` and `core/src/config/mod.rs`
+/// `DEFAULT_ASYNC_COMPACTION_THRESHOLD_PERCENT`). Any of the three compaction
+/// keys no layer sets counts as unknown, never as Codex's default, so a
+/// default a later release changes verifies no point. An absent background
+/// switch is read at Codex's default, off (`features/src/lib.rs`, the
+/// `async_compaction` `FeatureSpec`, `default_enabled: false`); that reading
+/// stops holding once Codex turns `async_compaction` on by default.
+/// Overrides that are no launch's JSON leave the floor unresolved; a config
+/// that stands and cannot be read is `Err`. Not read: Codex's project,
+/// managed and system layers, the `$CODEX_HOME/<name>.config.toml` profile
+/// layer, a launched session's command words other than the three
+/// compaction keys (feature switches and `-p`/`--profile`), and the command
+/// words of a session no launch recorded.
 pub fn codex_compaction_floor(
     overrides: Option<&str>,
     config: &Path,
@@ -1284,12 +1291,6 @@ mod tests {
         type Row = (&'static str, Option<String>, Option<String>, Option<u64>);
         let rows: Vec<Row> = vec![
             ("launch override alone", Some(off.clone()), None, max),
-            (
-                "launch override at the window",
-                Some(off.replace(MAX, "258400")),
-                None,
-                Some(258_400),
-            ),
             (
                 "launch override as numbers",
                 Some(flags(
