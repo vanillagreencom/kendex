@@ -1479,8 +1479,8 @@ pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Jud
 /// set that needs a wider cycle refusing `join-tier-narrower`; then the
 /// holder's record carries the candidate once, its touched set and scope
 /// widened by the candidate's, and the candidate's brief reaches the
-/// holder's own mailbox with the widened set ([`tell`]). Answers the
-/// holder's record as written.
+/// holder's own mailbox with the widened set where the holder held one
+/// ([`tell`]). Answers the holder's record as written.
 pub(super) fn join(
     path: &Path,
     doc: &mut Document,
@@ -1527,7 +1527,11 @@ pub(super) fn join(
     record::set(lane, "in_scope", serde_json::to_value(&in_scope)?);
     record::set(lane, "carried", serde_json::to_value(&carried)?);
     let widened = lane_at(path, doc, index)?;
-    tell(path, a, &widened, env, host)?;
+    // A holder that opened with no admitted set runs unbounded: a set made
+    // of the joined item's paths alone would bound its own item's work by
+    // paths no judge read for it.
+    let admitted = holder.admitted_line().and_then(|_| widened.admitted_line());
+    tell(path, a, &widened, admitted.as_deref(), env, host)?;
     Ok(widened)
 }
 
@@ -1535,16 +1539,23 @@ pub(super) fn join(
 /// mailbox program its turn end reads, `lane-mail send --directive` on the
 /// holder's recorded root, under the delivery `join-<item>`: a repeated join
 /// lands once. The directive opens with `joined item=<item> holder=<holder>`,
-/// then the holder's widened `Admitted paths:` line, which replaces the set
-/// its next dev round is delegated, so that round asks for none of the
-/// paths the join already admitted.
+/// then `admitted`, the holder's widened `Admitted paths:` line where it
+/// holds a set, which replaces the set its next dev round is delegated, so
+/// that round asks for none of the paths the join already admitted.
 /// A send that does not answer delivered refuses `join-unsent` with its
 /// cause, and the launch lock's transition then writes nothing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the join's directive file, created exclusively under the fleet's state directory for the mailbox program to read and removed after its send"
 )]
-fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Result<()> {
+fn tell(
+    path: &Path,
+    a: &Admission,
+    holder: &Lane,
+    admitted: Option<&str>,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
     use std::io::Write;
     let unsent = |cause: String| {
         Error::from(agent_runtime::Error::refused(
@@ -1578,7 +1589,7 @@ fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Re
         .open(&file)
         .and_then(|mut f| {
             writeln!(f, "joined item={} holder={}", a.item, holder.item)?;
-            if let Some(line) = holder.admitted_line() {
+            if let Some(line) = admitted {
                 writeln!(f, "{line}")?;
             }
             writeln!(f, "\n{brief}")

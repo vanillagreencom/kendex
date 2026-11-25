@@ -2083,6 +2083,41 @@ fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_on
     }
 }
 
+/// A holder that opened with no admitted set runs unbounded, and a join
+/// keeps it so: a candidate whose launch blocker it carries joins it, its
+/// record takes the candidate's path, and the directive names no
+/// `Admitted paths:` line, which would bound the holder's own work by the
+/// candidate's paths alone.
+#[test]
+fn a_join_leaves_a_holder_that_opened_unbounded_without_an_admitted_set() {
+    let mut fleet = Fleet::new();
+    fleet.init_fleet();
+    let root = fleet.checkout("h", None);
+    let harness = Owned::sleep();
+    let mut held = holder("KEN-H", "running", Some(&harness), Some(&[]));
+    held["mail_root"] = json!(root.display().to_string());
+    held["repo"] = json!("o/r");
+    fleet.write_lanes(vec![held]);
+    fleet.item_under("CC-1", "", &["KEN-H"]);
+    fleet.gh_api(&gh_map(&[]));
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(&brief, "Change `src/c.sh` for CC-1.\n").unwrap();
+    let mut request = launch("CC-1", &fleet.checkout("c", None));
+    request["repo"] = json!("o/r");
+    request["brief_file"] = json!(brief.display().to_string());
+
+    let out = fleet.op(&request);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(joined_or_launched(&answer)["op"], "joined", "{answer}");
+    assert_eq!(fleet.lane("KEN-H")["touched"], json!(["src/c.sh"]));
+    let told = inbox(&root, "KEN-H");
+    assert_eq!(told.len(), 1, "{told:?}");
+    let text = told[0]["text"].as_str().unwrap();
+    assert!(text.starts_with("joined item=CC-1 holder=KEN-H"), "{text}");
+    assert!(!text.contains("Admitted paths:"), "{text}");
+}
+
 /// With the fleet's state in its own repository (`o/fleet`): a checkout
 /// sharing its git directory, and a second clone whose origin names the
 /// same repository in another case, are its own and admitted; a checkout of
