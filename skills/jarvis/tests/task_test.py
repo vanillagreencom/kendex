@@ -329,23 +329,39 @@ sys.exit(task.main())
         theme.write_text("Choose the text style that looks best with your terminal\n\n"
                          "\u276f 1. Dark mode \u2714\n  2. Light mode\n")
         captured = ROOT / "skills/orch/tests/fixtures/oversee-watch"
+        # Pi 1.6.1 records its brief in its session file as these rows,
+        # shaped as a recorded file's, before it answers.
+        briefed = ("store=Path(os.environ['PI_CODING_AGENT_DIR'],'sessions','-'+os.getcwd().replace('/','-')+'--')\n"
+                   + "store.mkdir(parents=True)\n"
+                   + "rows=[{'type':'session','version':3,'id':os.environ['JARVIS_TASK_ID'],'cwd':os.getcwd()},"
+                   + "{'type':'message','id':'u','parentId':None,'message':{'role':'user',"
+                   + "'content':[{'type':'text','text':sys.argv[-1]}]}},"
+                   + "{'type':'message','id':'a','parentId':'u','message':{'role':'assistant',"
+                   + "'content':[{'type':'text','text':'Done.'}],'stopReason':'stop'}}]\n"
+                   + "store.joinpath('2026-11-25T21-47-35-110Z_'+os.environ['JARVIS_TASK_ID']+'.jsonl')"
+                   + ".write_text(''.join(json.dumps(row)+'\\n' for row in rows))\n")
         # A None outcome is a launch that records running: a harness at its
-        # composer, or in a turn.
-        rows = (("claude", theme, "harness-not-ready"),
-                ("codex", captured / "codex-dialog-trust.txt", "harness-not-ready"),
-                ("codex", captured / "codex-rate-limit-switch.txt", "harness-not-ready"),
-                ("copilot", captured / "copilot-idle.txt", "harness-not-ready"),
-                ("copilot", captured / "copilot-dialog-trust.txt", "harness-not-ready"),
-                ("copilot", captured / "copilot-working.txt", None),
-                ("copilot", IDLE / "copilot-model-turn.txt", None),
-                ("copilot", IDLE / "copilot-model-turn-sidebar.txt", None),
-                ("codex", captured / "codex-composer-idle.txt", None),
-                ("codex", captured / "codex-working.txt", None))
-        for index, (harness, screen, reason) in enumerate(rows):
+        # composer, or in a turn, or one that wrote its brief as its turn
+        # under a screen that settles nothing, such as Pi's under pi-qol's
+        # status line and prompt.
+        rows = (("claude", theme, "harness-not-ready", False),
+                ("codex", captured / "codex-dialog-trust.txt", "harness-not-ready", False),
+                ("codex", captured / "codex-rate-limit-switch.txt", "harness-not-ready", False),
+                ("copilot", captured / "copilot-idle.txt", "harness-not-ready", False),
+                ("copilot", captured / "copilot-dialog-trust.txt", "harness-not-ready", False),
+                ("pi", ROOT / "skills/jarvis/tests/fixtures/pi-trust.txt", "harness-not-ready", False),
+                ("copilot", captured / "copilot-working.txt", None, False),
+                ("copilot", IDLE / "copilot-model-turn.txt", None, False),
+                ("copilot", IDLE / "copilot-model-turn-sidebar.txt", None, False),
+                ("codex", captured / "codex-composer-idle.txt", None, False),
+                ("codex", captured / "codex-working.txt", None, False),
+                ("pi", captured / "pi-qol-idle.txt", None, True))
+        for index, (harness, screen, reason, turn) in enumerate(rows):
             with self.subTest(harness=harness, screen=screen.name):
                 path = self.bin / harness
                 original = path.read_text()
-                path.write_text("#!" + sys.executable + "\nimport os,signal,sys\nfrom pathlib import Path\n"
+                path.write_text("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
+                                + (briefed if turn else "")
                                 + "sys.stdout.write(Path(" + repr(str(screen)) + ").read_text().rstrip('\\n'))\n"
                                 + "sys.stdout.flush()\n"
                                 + "Path(" + repr(str(self.home)) + ",'drawn-'+os.environ['JARVIS_TASK_ID']).write_text('')\n"
@@ -812,7 +828,8 @@ sys.exit(task.main())
             ("rollback", "task.py", (("self.deadline = time.monotonic() + 3",
                 "self.deadline = time.monotonic() + 3 if False else self.deadline"),),
              "test_expired_launch_retains_rollback_ownership"),
-            ("ready-wait", "task.py", (('if state in ("idle", "working"):', "if True:"),), "test_setup_screen_refuses"),
+            ("ready-wait", "task.py", (('if state in ("idle", "working") or (state == "unjudged" and self.briefed(brief_file)):',
+                "if True:"),), "test_setup_screen_refuses"),
             ("picker", "task.py", (('pick += ["--native-model", chosen["model"]]', 'pick += []'),),
              "test_model_classes_use_production_picker"),
             ("short-bound", "task.py", (('pick += ["--max-pct", "100"] + ', 'pick += '),),

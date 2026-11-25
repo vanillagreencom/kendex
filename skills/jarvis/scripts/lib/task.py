@@ -160,7 +160,12 @@ class Task(Session):
                     # or selection dialog, or a sign-in or usage wall, or end
                     # before it draws. A reading that failed decides nothing
                     # and is taken again. The last read must finish inside the
-                    # bound, so the refusal keeps its screen.
+                    # bound, so the refusal keeps its screen. A screen that
+                    # settles nothing, such as Pi's under an extension that
+                    # draws its own prompt and status line, is ready once the
+                    # harness recorded the brief as its user turn: every setup
+                    # screen stands before that turn, and the task's own
+                    # completion waits on this lock.
                     while True:
                         try:
                             seen, unread = self.inspected(), ""
@@ -172,7 +177,7 @@ class Task(Session):
                                 raise Refusal("native-exited", "\n".join(seen["screen_tail"]))
                             if seen["pane"]["reading"] != "live":
                                 seen, unread = None, seen["pane"].get("cause", "")
-                            elif state in ("idle", "working"):
+                            elif state in ("idle", "working") or (state == "unjudged" and self.briefed(brief_file)):
                                 break
                         if self.deadline - time.monotonic() < 1:
                             if not seen:
@@ -212,6 +217,17 @@ class Task(Session):
                         print("jarvis-task: record=write-failed id=" + self.path.stem
                               + " cause=" + type(write_error).__name__, file=sys.stderr)
                 raise
+
+    def briefed(self, brief_file):
+        """Whether the harness wrote BRIEF_FILE's text as a user turn in the
+        session file its launch bound: agent-runtime's read, which types
+        nothing. An unread answer is no turn, so the launch reads again."""
+        try:
+            read, code, _, _ = self.runtime("deliver", "--record", self.launched, "--file", brief_file,
+                                            "--no-paste", "--turns-before", "0", "--bound-secs", "0")
+        except (Refusal, subprocess.TimeoutExpired):
+            return False
+        return code == 0 and read["delivery"] == "confirmed"
 
     def account(self, chosen, args, fleet, scratch):
         """The account the task spends and how it was read: agent-runtime's
