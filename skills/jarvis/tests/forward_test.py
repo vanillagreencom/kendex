@@ -39,6 +39,8 @@ case "$mode" in
   refused) printf 'ssh: connect to host main.example port 22: Connection refused\n' >&2; exit 255 ;;
   hang) exec sleep 30 ;;
   drop-receipt) case "$*" in *--delivery-id*) sh -c "$*" >/dev/null 2>&1; exit 255 ;; esac ;;
+  revoke-after-cursor)
+    case "$*" in *--delivery-id*) ;; *) sh -c "$*"; result=$?; printf '{}' > "$STANDING_SETTINGS"; exit "$result" ;; esac ;;
 esac
 exec sh -c "$*"
 '''
@@ -170,6 +172,20 @@ class Forward(MailWorld):
         path.write_text(json.dumps(lease))
         path.chmod(0o600)
         return path, lease
+
+    def standing_record(self):
+        scope = "%s\n%s" % (self.satellite.resolve(), self.env["JARVIS_MAIN_HOST"])
+        key = "fleet.forward:" + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+        return self.record(confirmation={"method": "physical", "scope": "standing", "key": key,
+                                         "setting": "vgs.jarvis.alwaysAllow", "at": "2026-11-01T00:00:00Z"})
+
+    def save_standing(self, confirmation, config_home):
+        config = config_home / "vgshell/shell.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        allowed = [{"grant": confirmation["key"], "label": "Send requests to Jarvis main",
+                    "confirmation": {field: confirmation[field] for field in ("ref", "at", "method")}}]
+        config.write_text(json.dumps({"plugins": [{"id": "vgs.jarvis", "alwaysAllow": allowed}]}))
+        return config
 
     def ssh_calls(self):
         return self.ssh_log.read_text().splitlines() if self.ssh_log.exists() else []
@@ -867,6 +883,95 @@ class Forward(MailWorld):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("cause=record-invalid", result.stderr.splitlines()[0])
         self.assertEqual(self.ssh_calls(), [])
+
+    def test_standing_grant_requires_the_saved_confirmation_and_scope(self):
+        config_home = self.root / "shell-config"
+        self.env.update(XDG_CONFIG_HOME=str(config_home), JARVIS_FORWARD_CONFIRM="on")
+        record = self.standing_record()
+        confirmation = record["confirmation"]
+        foreign_key = {"key": "fleet.forward:" + "a" * 64}
+        for row, saved_changes, record_changes, env_changes in (
+            ("missing key", None, {}, {}),
+            ("missing confirmation", {}, {}, {}),
+            ("another confirmation time", {"at": CONFIRMED_AT}, {}, {}),
+            ("another confirmation ref", {"ref": "vgs-audit:other"}, {}, {}),
+            ("another confirmation method", {"method": "voice"}, {}, {}),
+            ("another main", {}, {}, {"JARVIS_MAIN_HOST": "other:" + str(self.main)}),
+            ("another home", foreign_key, foreign_key, {}),
+        ):
+            with self.subTest(row=row):
+                if saved_changes is not None:
+                    config = self.save_standing(dict(confirmation, **saved_changes), config_home)
+                    if row == "missing confirmation":
+                        settings = json.loads(config.read_text())
+                        del settings["plugins"][0]["alwaysAllow"][0]["confirmation"]
+                        config.write_text(json.dumps(settings))
+                candidate = dict(record, confirmation=dict(confirmation, **record_changes))
+                result = self.forward(candidate, env=dict(self.env, **env_changes))
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(result.stderr.splitlines()[0], "jarvis-session: forward=refused cause=stop")
+                self.assertFalse(self.outbox_path().exists())
+                self.assertEqual(self.ssh_calls(), [])
+        forged = dict(record, confirmation=dict(confirmation, setting="caller-chosen-file"))
+        refused = self.forward(forged)
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn("cause=record-invalid field=confirmation.setting", refused.stderr.splitlines()[0])
+        self.save_standing(dict(confirmation, at="2026-11-01T00:00:00.000Z"), config_home)
+        refused = self.forward(record, env=dict(self.env, JARVIS_FORWARD_CONFIRM="off"))
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn("cause=record-invalid field=confirmation", refused.stderr.splitlines()[0])
+        self.assertFalse(self.outbox_path().exists())
+        self.assertEqual(self.ssh_calls(), [])
+        result = self.forward(record)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = self.directives()[0]["text"].splitlines()
+        self.assertEqual(body[0], "forwarded-confirmation: caller=unproved")
+        self.assertIn(" confirmation-ref=" + confirmation["ref"] + " confirmed-at=" + confirmation["at"] + " ", body[-1])
+        self.assertTrue(body[-1].endswith(" confirmation-method=physical confirmation-text=null"))
+
+    def test_standing_grant_is_rechecked_by_the_collection_before_send(self):
+        config_home = self.root / "shell-config"
+        self.env.update(XDG_CONFIG_HOME=str(config_home), JARVIS_FORWARD_CONFIRM="on")
+        for change in ("retained", "watch uses default", "removed", "regranted", "unreadable",
+                       "removed with stale duplicate", "confirmation off", "after cursor"):
+            with self.subTest(change=change):
+                record = self.standing_record()
+                confirmation = record["confirmation"]
+                config = self.save_standing(confirmation, config_home)
+                self.mode.write_text("down")
+                self.assertEqual(self.forward(record).returncode, 75)
+                self.retry_due()
+                before = len(self.directives())
+                env = dict(self.env)
+                self.mode.write_text("up")
+                if change == "removed":
+                    config.write_text('{"plugins":[{"id":"vgs.jarvis","alwaysAllow":[]}]}')
+                elif change == "regranted":
+                    self.save_standing(dict(confirmation, at=CONFIRMED_AT), config_home)
+                elif change == "unreadable":
+                    config.write_text("{")
+                elif change == "watch uses default":
+                    env["XDG_CONFIG_HOME"] = ""
+                elif change == "removed with stale duplicate":
+                    self.save_standing(confirmation, self.root / ".config")
+                    config.unlink()
+                    env["XDG_CONFIG_HOME"] = ""
+                elif change == "confirmation off":
+                    env["JARVIS_FORWARD_CONFIRM"] = "off"
+                elif change == "after cursor":
+                    env["STANDING_SETTINGS"] = str(config)
+                    self.mode.write_text("revoke-after-cursor")
+                result = self.jarvis("forward-drain", "--collection", env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                key = self.key(record)
+                if change in ("retained", "watch uses default"):
+                    self.assertEqual(len(self.directives()), before + 1)
+                    self.assertEqual(self.directives()[-1]["delivery_id"], key)
+                else:
+                    self.assertEqual(len(self.directives()), before)
+                    result = self.jarvis("forward-wait", "--key", key, "--timeout", "1")
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["cause"], "stop")
 
     def test_fast_reads_keep_queued_retry_at_sixty_seconds(self):
         self.mode.write_text("down")

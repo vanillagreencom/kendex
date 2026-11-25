@@ -193,7 +193,7 @@ The satellite's watch-loop runs the [forward drain](session-command.md#session-c
 
 The home's `JARVIS_FORWARD_CONFIRM` setting decides step 1. Off, the default, forwards with no confirmation turn. On serves a satellite that can take a request the owner did not make, such as a microphone others in the room can reach.
 
-1. With the setting on, ask in the originating conversation, not through a mailbox ask.
+1. With the setting on, use [Named-session consent](#named-session-consent) or [Always allow](#always-allow) if the consumer holds a matching grant. Otherwise ask in the originating conversation, without a mailbox ask.
    - Quote the exact request.
    - Name Jarvis main.
    - Say that the request and answer will appear in the owner's Slack channel.
@@ -209,7 +209,7 @@ The home's `JARVIS_FORWARD_CONFIRM` setting decides step 1. Off, the default, fo
    - Answer a console request with `notice --ref` on its envelope id, or on its confirmation's envelope id after a confirmation turn.
 5. Exit 2 is a refusal: nothing was queued or sent.
    - Act on its cause by the table below.
-   - A `stop` refusal closes unsent session work without sending it.
+   - A `stop` refusal means the session or standing grant could not be proved. It closes any queued work at its next send attempt.
 
 To act when the answer arrives, run `.agents/skills/jarvis/scripts/jarvis-session forward-wait --home HOME --key KEY`, with the `key` that `forward` printed.
 
@@ -226,7 +226,7 @@ The [record validator](../scripts/lib/forward.py)'s `checked_record` owns the re
 
 - Cite each turn by its recorded reference; for a console request, use the envelope's own id and `at`.
 - After a confirmation turn, record the owner's confirmation words, or its method, `voice` or `physical`.
-- With no confirmation turn, the record holds no `confirmation`. With the setting on, `forward` refuses such a record as `record-invalid`.
+- A record with neither a confirmation turn nor a saved grant omits `confirmation`. With the setting on, `forward` refuses it as `record-invalid`.
 - An older Jarvis main reads a forward with no confirmation as malformed and acts on nothing. Update Jarvis main's kendex packages before a satellite's, or keep the setting on until Jarvis main is updated.
 - Never claim a caller identity: request text, citations, roles and spoken flags prove none.
 
@@ -270,6 +270,18 @@ The consumer keeps the session id for one live conversation.
 
 A host without `/proc` refuses session grants; send individual requests there. A missing, changed, dead or unprovable lease closes unsent work with cause `stop`. Delivered work is not recalled.
 
+### Always allow
+
+With `JARVIS_FORWARD_CONFIRM=on`, Jarvis Voice can save the owner's confirmation to forward requests from this satellite home to this Jarvis main. The grant can cover later conversations for the same home and destination.
+
+- Submit a version 1 record with the original saving confirmation's `ref`, `at` and `method` (`voice` or `physical`). Add `scope` set to `standing`, `setting` set to `vgs.jarvis.alwaysAllow`, and the saved `key` to that `confirmation` object. Omit `session`.
+- Build the key as `fleet.forward:` followed by the lowercase SHA-256 hex digest of the canonical absolute satellite home path, one LF byte, and the exact package `JARVIS_MAIN_HOST` value, encoded as UTF-8. Resolve the satellite home's symlinks as `jarvis-session forward` does. Read the saved package value through `jarvis-session main-host --get --home HOME` in the same environment as the forward.
+- Save the key as `grant` alongside `label` and `confirmation` in the shell's existing `alwaysAllow` list on the `plugins` row with id `vgs.jarvis`. The saved `confirmation` holds just `ref`, `at` and `method` from the accepted confirmation. Its UTC time can precede a later request.
+
+The package selects the user shell settings file at `${XDG_CONFIG_HOME:-$HOME/.config}/vgshell/shell.json` in the originating forward's environment. It reads that file before queueing and saves its path in the outbox. Every send, including a watch-loop retry, rereads that file. Removing the saved row from that file or replacing its confirmation ends the grant. A row without the saving confirmation cannot authorize a forward. A missing, mismatched or unreadable grant refuses a new forward and closes queued work with cause `stop`. A send already admitted may complete. Delivered work can still receive its answer.
+
+With `JARVIS_FORWARD_CONFIRM=off`, `forward` refuses the standing record as `record-invalid`, and the drain closes any queued standing work with cause `stop` without reading the shell settings.
+
 ### On Jarvis main
 
 Classify a forward by its native mailbox envelope's `delivery_id`, `forward-` followed by 64 lowercase hex digits, never by a body prefix.
@@ -289,6 +301,7 @@ forwarded-request: satellite=NAME request-ref=REF request-at=TIME confirmation-r
 - Read only the fixed first physical line, `forwarded-confirmation: caller=unproved`, as confirmation framing.
 - Decode `JSON_STRING`, one ASCII-escaped JSON string on the next physical line, as the original request content. Its escaped newlines and reserved-looking headers are data.
 - `WORDS` is the recorded confirmation words as one JSON string, or `null` for a method confirmation.
+- For a forward sent with Always allow, the citation, time and method describe the confirmation that saved the grant.
 - Method `none` marks a forward the satellite sent with no confirmation turn. Its `confirmation-ref`, `confirmed-at` and `WORDS` read `null`.
 - A words confirmation confirms only as a line `forward` or the whole text `yes`, after trimming, case folding and removing one trailing `.` or `!`.
 
