@@ -79,14 +79,13 @@ install_label_team_fixture "$PROJECT"
 TAXONOMY="$PROJECT/.agents/skills/project-management/SKILL.md"
 AGENTS=LINEAR_AGENT_LABELS=agent:runtime
 
-# The private fixture adds workspace `agent:rust` and `blocked` labels, so an
+# The private fixture adds a workspace `agent:rust` label, so an
 # undeclared label the rows below apply exists in Linear: only the taxonomy
 # stands between it and the write.
 FIXTURES="$TMP_ROOT/fixtures"
 mkdir -p "$FIXTURES"
 cp -- "$SKILL_DIR/tests/lib/fixtures/label-team-issue.json" "$FIXTURES/"
-jq '.issueLabels.nodes += [{id: "0d6f3b8e-2a41-4c97-b5e2-8f1a7c3d9e60", name: "agent:rust", team: null},
-      {id: "5b9e2c71-8d3a-4f06-a1e4-7c2b9d5f3a18", name: "blocked", team: null}]' \
+jq '.issueLabels.nodes += [{id: "0d6f3b8e-2a41-4c97-b5e2-8f1a7c3d9e60", name: "agent:rust", team: null}]' \
   "$SKILL_DIR/tests/lib/fixtures/issue-team-labels.json" >"$FIXTURES/issue-team-labels.json"
 
 # Recorded issue KEN-2413 carries `harness` (undeclared) and `agent:runtime`.
@@ -113,7 +112,6 @@ update-undeclared|refused|linear-labels: undeclared labels=baseline taxonomy=$TA
 update-kept|accepted||issueUpdate|update KEN-2413 --labels harness,agent:runtime,bug
 activate-undeclared|refused|linear-labels: undeclared labels=agent:rust taxonomy=$TAXONOMY||activate KEN-2413 --agent rust
 activate-kept|accepted||issueUpdate|activate KEN-2413 --agent runtime
-block-undeclared|refused|linear-labels: undeclared labels=blocked taxonomy=$TAXONOMY||block KEN-2413 --by KEN-1
 ROWS
 assert "create-undeclared: refused before any request" test ! -s "$TMP_ROOT/create-undeclared.jsonl"
 

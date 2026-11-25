@@ -415,27 +415,22 @@ struct OpenItem {
     parent_id: String,
     created_at: String,
     blocked_by_open: Vec<String>,
-    /// Every blocking relation's blocker, open or ended.
-    blocked_by: Vec<String>,
     /// The blockers that hold dispatch (the Ancestor gate's field): open,
     /// and not Verifying.
     blocked_by_launch: Vec<String>,
     labels: Vec<String>,
 }
 
-/// The label `issues block` sets beside its blocking relation and a person
-/// sets alone for a blocker that is no tracker item. Nothing removes it
-/// when its blocker ends; `issues unblock` is the package's verb for that.
+/// The label for a blocker outside the tracker.
 const BLOCKED_LABEL: &str = "blocked";
 
 impl OpenItem {
-    /// The `blocked` label on an item with no blocking relation at all: a
-    /// blocker outside the tracker. Beside a relation, the relation judges.
+    /// A relation that holds launch takes precedence over the label.
     fn label_held(&self) -> bool {
-        self.blocked_by.is_empty() && self.labels.iter().any(|l| l == BLOCKED_LABEL)
+        self.blocked_by_launch.is_empty() && self.labels.iter().any(|l| l == BLOCKED_LABEL)
     }
 
-    /// Held by a blocker the launch gate counts, or by the label alone.
+    /// The item's own hold, from a launch blocker or the outside-blocker label.
     fn blocked(&self) -> bool {
         !self.blocked_by_launch.is_empty() || self.label_held()
     }
@@ -1279,7 +1274,7 @@ fn inventory_of(
             });
             continue;
         }
-        if fleet.launch_queue.contains(&item.id) {
+        if fleet.launch_queue.contains(&item.id) || item.label_held() {
             continue;
         }
         if state.unstarted() && !startable(item, &by_id, parents) {
@@ -1346,17 +1341,14 @@ fn inventory_of(
 
 /// Whether work no lane has begun can start, on the rows this read holds:
 /// the launch's own container and chain-blocker rules
-/// (`ops::admission`), and two holds of selection alone, the `blocked`
-/// label with no blocking relation and an open in-PR bundle root ancestor,
+/// (`ops::admission`) and the hold of an open in-PR bundle root ancestor,
 /// whose own lane works its children. The chain ends at an ancestor the
 /// read does not hold, ended or in another team, which the admission's own
 /// read judges; a chain the walk cannot read is not startable, as the
 /// admission refuses it.
 fn startable(item: &OpenItem, by_id: &BTreeMap<&str, &OpenItem>, parents: &BTreeSet<&str>) -> bool {
     let has_children = parents.contains(item.id.as_str());
-    if admission::container_cause(item.in_pr_bundle, has_children, &item.labels).is_err()
-        || item.label_held()
-    {
+    if admission::container_cause(item.in_pr_bundle, has_children, &item.labels).is_err() {
         return false;
     }
     let read = |parent: &str| Ok(by_id.get(parent).map(|row| row.chain_node()));

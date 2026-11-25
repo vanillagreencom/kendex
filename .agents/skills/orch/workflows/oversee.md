@@ -152,7 +152,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - `[STATES]` names the team's open states but Triage and Verifying, comma-separated, as `linear.sh statuses list --team "[TEAM]"` lists them. The verification pass owns a Verifying item's post-merge readings.
    - Keep only an item that can start, in any state. Each of these holds it out:
      - a blocker its `blocked_by_launch` names, the field the [Ancestor gate](../references/skill-rules.md#ancestor-gate) reads;
-     - the `blocked` label on an item with no blocking relation at all. Beside a relation, the relation decides;
+     - the `blocked` label when `blocked_by_launch` is empty, even if the item has completed blocking relations;
      - being a container, as [skill-rules.md § Containers](../references/skill-rules.md#containers) defines one, judged from the item's children of any state as [start.md § 3](start.md#3-resolve-work-item) reads them;
      - an open ancestor whose `blocked_by_launch` names a blocker;
      - an open in-PR bundle root ancestor, whose own lane works its children;
@@ -161,7 +161,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
    ```bash
    .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --state "[STATES]" --select owed --max > tmp/oversee-select-source.json
-   jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_launch | join(",")), (.blocked_by | length), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
+   jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_launch | join(",")), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
    rm -f tmp/oversee-select-source.json
    ```
 

@@ -155,7 +155,7 @@ Filing-line and review-born rules: project-management references/filing.md § Na
 
 Under a declared label taxonomy (project-management references/labels.md § Project Taxonomy Contract):
 
-- `issues create`, `issues update --labels`, `issues bulk-update --labels`, `issues activate` and `issues block` refuse before any write a label it does not declare, naming the label and the taxonomy file.
+- `issues create`, `issues update --labels`, `issues bulk-update --labels` and `issues activate` refuse before any write a label it does not declare, naming the label and the taxonomy file.
 - The taxonomy check does not refuse an undeclared label the issue already carries.
 - `issues create` refuses declared labels absent from Linear.
 - `labels create` and `labels update --name` refuse an undeclared name.
@@ -188,7 +188,7 @@ For a cross-team relation:
 2. Confirm `credential: "app-token"` with `auth-check`.
 3. Check that the actor can access both teams.
 
-A blocker that is itself a Linear issue is a relation (`--blocked-by`). An external one (vendor, license) is the `blocked` label plus a comment.
+For a blocker tracked in Linear, `issues block --by ITEM` creates the blocking relation and posts a comment. For an external blocker such as a vendor or license, use the `blocked` label and a comment.
 
 - Blocking relations may connect issues with the same direct parent, two top-level issues, or a blocked leaf to an issue outside its ancestors.
 - An ancestor/descendant pair is refused at any depth. Use `--related` for traceability.
@@ -240,8 +240,6 @@ A **name** selects one project on `issues create` / `update` / `bulk-update --pr
 - `--assignee` on create and update takes the same address form. A value containing `@` matches a user's whole email, case-insensitively. A user id is sent as given.
 
 On a nonzero `bulk-update` exit, read its JSON before retrying. `partial: true` means some issues already changed, and `results` identifies which.
-
-`issues block` applies the `blocked` label, creates the blocking relation, and comments.
 
 `issues complete`:
 

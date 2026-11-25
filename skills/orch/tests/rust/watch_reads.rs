@@ -2129,18 +2129,12 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     );
 }
 
-/// Which open items the heartbeat owes, with an empty queue and no lane: a
-/// Todo or Backlog item only where the launch's container and chain-blocker
-/// rules pass and neither hold of selection alone applies (the `blocked`
-/// label with no blocking relation, an open in-PR bundle root ancestor); a
-/// started one whatever blocks or parents it. One row per case of the
-/// owner (`tracker::inventory_of`): the state, by type for work not yet
-/// begun; the blocker, launch-held or not; the `blocked` label, alone or
-/// beside a relation whose blocker ended; a container by children or
-/// `agent:multi`, and an in-PR bundle root; an ancestor held one and two
-/// levels up. The last column is the `open-unblocked` membership.
+/// The heartbeat owes Todo and Backlog items that can start. It owes
+/// started items unless the label holds them or a live lane has them.
+/// A stopped lane with a label and a completed relation waits on the
+/// blocker. The last column is the `open-unblocked` membership.
 #[test]
-fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
+fn the_heartbeat_applies_selection_holds_and_reports_the_stopped_blocker() {
     let mut world = World::new();
     // id, state, state type, priority, then the row's other fields; the
     // `owed` line expected, or none; whether `open-unblocked` lists it.
@@ -2201,15 +2195,15 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             None,
             false,
         ),
-        // The label `issues block` left beside a relation whose blocker ended.
+        // A completed relation leaves the label in force.
         (
             "KEN-6",
             "Backlog",
             "backlog",
             json!(2),
             json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
-            Some("state=backlog priority=2"),
-            true,
+            None,
+            false,
         ),
         // A Verifying blocker holds no launch.
         (
@@ -2291,7 +2285,7 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             "In Progress",
             "started",
             json!(2),
-            json!({"blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
             Some("state=in-progress priority=2"),
             false,
         ),
@@ -2322,6 +2316,44 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             json!({"parent_id": "KEN-14"}),
             None,
             true,
+        ),
+        (
+            "KEN-19",
+            "Todo",
+            "unstarted",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            None,
+            false,
+        ),
+        // The same completed relation without the outside blocker.
+        (
+            "KEN-20",
+            "Backlog",
+            "backlog",
+            json!(2),
+            json!({"blocked_by": ["KEN-99"]}),
+            Some("state=backlog priority=2"),
+            true,
+        ),
+        (
+            "KEN-21",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
+            None,
+            false,
+        ),
+        // Verifying is open for verification but holds no launch.
+        (
+            "KEN-22",
+            "Todo",
+            "unstarted",
+            json!(3),
+            json!({"labels": ["blocked"], "blocked_by_open": ["KEN-98"], "blocked_by": ["KEN-98"]}),
+            None,
+            false,
         ),
     ];
     let items: Vec<Value> = rows
@@ -2364,6 +2396,10 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
         "issues bulk-get",
         json!({"body": {"issues": {"nodes": nodes}}}),
     );
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-21", "tracker": "linear", "status": "stopped"}]
+    }));
     quiet_github(&mut world);
     let clock = FakeClock::new();
     let ctx = world.context(world.settings(&[]), None);
@@ -2394,6 +2430,13 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
     )
     .unwrap();
     let lines = rendered(&produced);
+    assert_eq!(
+        lines
+            .iter()
+            .find(|line| line.starts_with("EVENT lane-ended KEN-21 "))
+            .map(String::as_str),
+        Some("EVENT lane-ended KEN-21 lane=stopped waits=blocker"),
+    );
     let owed: Vec<&str> = lines
         .iter()
         .map(String::as_str)
