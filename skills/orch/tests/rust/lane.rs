@@ -4361,6 +4361,19 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
             vec![("field", "mail_root")],
         ),
         (
+            CloseCase2::new("empty mail root", vec![with("mail_root", json!(""))]),
+            "record-invalid",
+            vec![("field", "mail_root")],
+        ),
+        (
+            CloseCase2::new(
+                "unnamed hosted mail root",
+                vec![with("mail_root", Value::Null)],
+            ),
+            "mail-read-failed",
+            vec![("cause", "listed=hosted mail-root-unrecorded")],
+        ),
+        (
             CloseCase2::new("capabilities unread", vec![hosted_lane("KEN-1")]),
             "host-capabilities-unread",
             vec![],
@@ -4477,6 +4490,9 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
             // The close holds its slot once the provider answered `status`:
             // the mailbox's read on the host meets the bound.
             "mailbox capped" => case.slots = Some(Slots::After("status")),
+            "unnamed hosted mail root" => case
+                .answers
+                .push(("LIST", "o/r/KEN-1\thosted\t-\tlane.example")),
             "park without a pull request" => {
                 case.request = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {}}});
             }
