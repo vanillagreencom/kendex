@@ -1016,7 +1016,8 @@ fn relaunchable(mut record: Value) -> Value {
 /// for the outcome reader first, the record's own launcher line with
 /// `--lane` the picked account, `lane-relaunched` with its log, and nothing
 /// on the next pass; under `ask` the wall is `usage-limit` with the pick's
-/// answer under it and nothing starts.
+/// answer under it and nothing starts. A reading lane reports its wall
+/// even under `auto` and starts no replacement.
 #[test]
 fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     let dir = tempfile::tempdir().unwrap();
@@ -1152,6 +1153,32 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     assert!(
         asked.relaunches.borrow().is_empty(),
         "nothing starts under ask"
+    );
+
+    fleet.set_lanes(vec![relaunchable(lane_record(
+        "verify-KEN-4-box-1",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    ))]);
+    lane_driver!(server, fleet, reading_readers, reading);
+    reading.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+    let reported = reading.pass(&fleet.read());
+    assert!(
+        lines(&reported)
+            .iter()
+            .any(|line| line.starts_with("EVENT usage-limit gh-4 ")),
+        "the overseer can handle the reading lane's wall"
+    );
+    assert!(reading.relaunches.borrow().is_empty());
+    assert!(
+        !reading
+            .state_dir
+            .join("wall-relaunch-verify-KEN-4-box-1.close.json")
+            .exists()
     );
 }
 

@@ -1290,17 +1290,25 @@ fn a_verifying_item_no_live_lane_carries_reads_its_landing() {
 /// A stopped lane whose item is Done with every box checked gets one
 /// `close-owned-resources` request, its line prints and the record reads
 /// done; one whose item is Done with an open box stays open; a canceled one
-/// closes; a refused close prints its line and is held under its key.
+/// closes; a refused close prints its line and is held under its key. A
+/// reading lane stays out of the tracker batch so the other items can close.
 #[test]
 fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     let lane = |item: &str| {
         json!({"item": item, "tracker": "linear", "repo": "owner/repo", "harness": "codex", "window": null, "host": null,
             "mail_root": "/srv/lane/x", "status": "stopped", "session_since": "2026-10-09T00:00:00Z"})
     };
+    let reading_lane = |item| {
+        let mut record = lane(item);
+        record.as_object_mut().unwrap().remove("tracker");
+        record
+    };
     let mut world = World::new();
     world.write_fleet(
         &json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
-        "lanes": [lane("KEN-1"), lane("KEN-2"), lane("KEN-3"), lane("KEN-4")]}),
+        "lanes": [lane("KEN-1"), lane("KEN-2"), lane("KEN-3"), lane("KEN-4"),
+            reading_lane("verify-KEN-1-box-1"),
+            reading_lane("verify-gh-e4f602fb1d01f06eb268feb7e179579ccbdac5ec-1-box-1")]}),
     );
     world.linear("statuses list", statuses());
     world.linear("issues list", json!({"body": []}));

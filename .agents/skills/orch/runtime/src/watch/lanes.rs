@@ -75,6 +75,7 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use super::verifying::is_reading_lane;
 use super::wake;
 use crate::effects::start_brief;
 use crate::marker;
@@ -2060,6 +2061,9 @@ pub(crate) fn compose_relaunch(
     how: &Composition,
     state_dir: &Path,
 ) -> Result<Composed, String> {
+    if is_reading_lane(&lane.item) {
+        return Err("reading-lane".to_owned());
+    }
     if lane.class.is_none()
         || lane
             .class_reason
