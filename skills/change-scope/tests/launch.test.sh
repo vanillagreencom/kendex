@@ -366,8 +366,14 @@ assert_settings_ranges() {
     if [ "$row" = standard-path ]; then
       printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\nORDINARY = "new"\n' >"$SETTINGS_REPO/$file"
     fi
+    if [ "$row" = map-entry-added ]; then
+      git -C "$SETTINGS_REPO" config --local color.ui always
+    fi
     assert_eq "settings range: $row" "$want rc=0" \
       "$(ARM_RAW="${raw:-false}" run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
+    if [ "$row" = map-entry-added ]; then
+      git -C "$SETTINGS_REPO" config --local --unset color.ui
+    fi
     if [ "$row" = checker-refuses ]; then
       assert_eq "launch relays the installed checker's findings" reported \
         "$(if grep -qE '^bot-instructions: findings=[1-9][0-9]*$' "$SANDBOX/arm.err"; then echo reported; fi)"

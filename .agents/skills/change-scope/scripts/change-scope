@@ -689,7 +689,7 @@ launch_settings_range() ( # BASE HEAD REPO WORK
     lines=$((lines + added))
   done <<<"$numstat"
   if [ "$mode" = manifest ]; then
-    if ! hunks="$(git -C "$repo" diff --unified=0 --inter-hunk-context=0 --no-ext-diff \
+    if ! hunks="$(git -C "$repo" diff --no-color --unified=0 --inter-hunk-context=0 --no-ext-diff \
         --no-textconv --no-renames "$base_rev" "$head_rev" -- "$changed" |
         awk '/^@@ / { count++ } END { print count+0 }')"; then
       configuration_unread "cause=settings-hunks-unreadable path=$changed"
@@ -845,7 +845,7 @@ launch_class() { # ARG...
     launch_work="$LAUNCH_WORK"
     if ! base="$(git -C "$repo" rev-parse --verify "$base^{commit}" 2>/dev/null)" ||
       ! head="$(git -C "$repo" rev-parse --verify "$head^{commit}" 2>/dev/null)" ||
-      ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- \
+      ! git -C "$repo" diff --no-color --name-only -z --no-ext-diff --no-renames "$base...$head" -- \
       >"$launch_work/paths" 2>/dev/null; then
       launch_consider standard branch-paths-unreadable unmeasured
     elif ! change_scope_location_load "$repo"; then
