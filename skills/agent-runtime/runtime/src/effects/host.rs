@@ -4,6 +4,7 @@
 //! acting method takes a [`Standing`] token, writes `signalled` before it
 //! acts and discharges the token's key by its own answer.
 
+use crate::accounts::wall::canon;
 use crate::controller::{Overseer, views};
 use crate::record::Locking;
 use crate::settings::EngineSettings;
@@ -1862,13 +1863,22 @@ fn vouched_home(
 /// not run on is named. Unread, the home vouched for this process stands on
 /// the same terms; with none that agrees, the request's home is recorded
 /// with no mode, since the path alone cannot tell the implicit default from
-/// `$HOME/.claude` named, and the cause is said.
+/// `$HOME/.claude` named, and the cause is said. Paths agree by where they
+/// resolve, since a caller may supply a link's target; the recorded home
+/// keeps the process's spelling, whose parent a resumed implicit home pins
+/// as `HOME`.
 fn adopted_home(
     supplied: Option<&str>,
     observed: std::result::Result<Kept, &'static str>,
     vouched: Option<Kept>,
 ) -> (Option<Kept>, Option<&'static str>) {
-    let agrees = |kept: &Kept| supplied.is_none_or(|path| Path::new(path) == kept.home);
+    let agrees = |kept: &Kept| {
+        supplied.is_none_or(|path| {
+            kept.home
+                .to_str()
+                .is_some_and(|home| canon(path) == canon(home))
+        })
+    };
     match observed {
         Ok(seen) if agrees(&seen) => (Some(seen), None),
         Ok(_) => (
@@ -2481,15 +2491,35 @@ mod tests {
         };
         let implicit = kept("/h/.claude", false);
         let explicit = kept("/h/.claude", true);
-        type Row = (
-            &'static str,
-            Option<&'static str>,
+        // `$HOME/.claude` a link to a config dir elsewhere, the caller
+        // supplying the link's target.
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("data").join("claude");
+        std::fs::create_dir_all(&target).unwrap();
+        let linked_home = root.path().join("home");
+        std::fs::create_dir_all(&linked_home).unwrap();
+        std::os::unix::fs::symlink(&target, linked_home.join(".claude")).unwrap();
+        let linked = Kept {
+            home: linked_home.join(".claude"),
+            named: false,
+        };
+        type Row<'a> = (
+            &'a str,
+            Option<&'a str>,
             std::result::Result<Kept, &'static str>,
             Option<Kept>,
             Option<Kept>,
             Option<&'static str>,
         );
-        let rows: [Row; 9] = [
+        let rows: [Row; 10] = [
+            (
+                "read through a link, its target named",
+                target.to_str(),
+                Ok(linked.clone()),
+                None,
+                Some(linked.clone()),
+                None,
+            ),
             (
                 "read, none named",
                 None,
