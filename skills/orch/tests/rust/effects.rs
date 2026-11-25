@@ -12121,6 +12121,49 @@ fn armed(closed: String, harness: &str, item: &str) -> String {
     }
 }
 
+/// A lane told nothing of the paths its launch admitted edits outside them
+/// before it asks, so two lanes can change one file before the judge reads
+/// either. Through the real `launch-lane`: a brief naming paths reaches the
+/// harness's line closed by the record's touched set, sorted, as one
+/// `Admitted paths:` line on the line after the brief's own, before the
+/// unattended words.
+#[test]
+fn a_lane_brief_names_the_paths_its_launch_admitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    runner.env.push((
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+        format!("claude={}", fixtures().join("stub-record/claude").display()),
+    ));
+    let work = runner.state_dir().to_path_buf();
+    let file = dir.path().join("brief.md");
+    std::fs::write(&file, "/orch start KEN-U on `src/b.sh` and `src/a.sh`\n").unwrap();
+    let mut request = launch_request("KEN-U", &work);
+    request["brief_file"] = json!(file.display().to_string());
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_ne!(report["intent"]["outcome"], "failed", "{report}");
+    let recorded = launch_record_of(&work);
+    let brief = recorded["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|arg| arg.starts_with("/orch start KEN-U"))
+        .unwrap_or_else(|| panic!("no brief on the line: {recorded}"));
+    let lines: Vec<&str> = brief.lines().collect();
+    assert_eq!(
+        lines[..2],
+        [
+            "/orch start KEN-U on `src/b.sh` and `src/a.sh`",
+            r#"Admitted paths: ["src/a.sh","src/b.sh"]"#,
+        ],
+        "{brief}"
+    );
+}
+
 /// A launch that names no brief file opens its lane on the start brief,
 /// never on nothing, and the brief closes with its harness's arm line,
 /// once, before the mode sentence: a lane told nothing of its mailbox

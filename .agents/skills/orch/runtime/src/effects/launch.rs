@@ -108,13 +108,30 @@ fn arm_line(harness: Harness, item: &str) -> Option<String> {
     }
 }
 
+/// The line naming the paths the admission judged `lane` to touch, its
+/// record's `touched`: the lane carries the set into each dev delegation,
+/// so a round asks for a path outside it before any edit, and the record
+/// stays the one place the set is kept. A read-only lane writes no path,
+/// and a record with no set, or one whose sources named none, gives the
+/// round no judged path to bound it by: neither carries a line.
+fn admitted_line(lane: &Lane) -> Option<String> {
+    let paths = lane.touched.as_ref().filter(|p| !p.is_empty())?;
+    (!lane.read_only).then(|| format!("Admitted paths: {}", json!(paths)))
+}
+
 /// A local or hosted lane's brief, fresh or relaunched: closed by the
-/// unattended words, then by the harness's arm line for mailbox `item`,
-/// then by the sentence stating `mode`. All ride the brief, never a
-/// system-prompt flag (Pi's `--append-system-prompt` would stop it reading
-/// its own `APPEND_SYSTEM.md`).
-fn lane_brief(brief: &str, harness: Harness, item: &str, mode: LaneOutput) -> String {
-    let brief = closed_by(brief, UNATTENDED_TEXT);
+/// record's admitted paths where it holds some, then by the unattended
+/// words, then by the harness's arm line for mailbox `item`, then by the
+/// sentence stating `mode`. All ride the brief, never a system-prompt flag
+/// (Pi's `--append-system-prompt` would stop it reading its own
+/// `APPEND_SYSTEM.md`). A cloud session takes no line: it never asks, so
+/// no answer could widen its set.
+fn lane_brief(brief: &str, lane: &Lane, harness: Harness, item: &str, mode: LaneOutput) -> String {
+    let brief = match admitted_line(lane) {
+        Some(line) => closed_by(brief, &line),
+        None => brief.to_owned(),
+    };
+    let brief = closed_by(&brief, UNATTENDED_TEXT);
     let brief = match arm_line(harness, item) {
         Some(line) => closed_by(&brief, &line),
         None => brief,
@@ -554,6 +571,7 @@ fn prepare_launch(
     let brief = operation
         .hold_brief(&lane_brief(
             &opening,
+            lane,
             harness,
             &r.item,
             settings.lane_output.get()?,
@@ -1138,7 +1156,7 @@ fn hosted_launch(
         Err(Unready::Gate(cause)) => return failed(operation, &cause),
     };
     let brief = match run.settings.lane_output.get() {
-        Ok(mode) => lane_brief(&opening, harness, &r.item, mode),
+        Ok(mode) => lane_brief(&opening, lane, harness, &r.item, mode),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
     // `create --relaunch` resumes on the sandbox the item's work stands in.

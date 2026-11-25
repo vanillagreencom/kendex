@@ -1511,7 +1511,8 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
 /// name, nothing written: a local holder whose item state is no object
 /// refuses `holder-unreadable read=stage`; a hosted holder in flight whose
 /// host answers no read of its branch refuses `join-unreachable
-/// route=hosted`, naming the cause.
+/// route=hosted`, naming the held file and the cause; one carrying the
+/// candidate's launch blocker refuses naming that blocker.
 #[test]
 fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_joined() {
     let fleet = Fleet::new();
@@ -1542,10 +1543,23 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
         fields,
         pairs(&[
             ("item", "KEN-S"),
+            ("file", "src/r.sh"),
             ("holder", "KEN-R"),
             ("route", "hosted"),
             ("branch", "unknown"),
             ("cause", "head-unread"),
+        ])
+    );
+    fleet.item_under("KEN-B", "", &["KEN-R"]);
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-B", &fleet.checkout("b", None))));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-B"),
+            ("blockers", "KEN-R"),
+            ("holder", "KEN-R"),
+            ("route", "hosted"),
         ])
     );
     assert_eq!(fleet.fleet(), before, "nothing written");
@@ -1554,8 +1568,9 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
 
 /// A running hosted holder of a shared path refuses `join-unreachable`
 /// whatever its branch shows, since edits it has not committed are on its
-/// host alone; the refusal says whether its head commit, as GitHub compares
-/// it with the default branch, changes a shared path. A shared change, a
+/// host alone; the refusal names the held file and says whether its head
+/// commit, as GitHub compares it with the default branch, changes a shared
+/// path. A shared change, a
 /// rename's old path among them, refuses as an unjudged holder did. A head
 /// that changes none refuses `worktree-unproved` naming the head. A failed
 /// comparison, a head GitHub does not hold and a comparison at GitHub's
@@ -1618,18 +1633,24 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
     let unread = |fleet: &Fleet, cause: &str| {
         let fields = refused(fleet);
         assert_eq!(
-            fields[..4],
+            fields[..5],
             pairs(&[
                 ("item", "KEN-S"),
+                ("file", "src/r.sh"),
                 ("holder", "KEN-R"),
                 ("route", "hosted"),
                 ("branch", "ken-r"),
             ])[..]
         );
-        assert_eq!(fields[4].0, "cause");
-        assert!(fields[4].1.starts_with(cause), "{fields:?}");
+        assert_eq!(fields[5].0, "cause");
+        assert!(fields[5].1.starts_with(cause), "{fields:?}");
     };
-    let held = pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")]);
+    let held = pairs(&[
+        ("item", "KEN-S"),
+        ("file", "src/r.sh"),
+        ("holder", "KEN-R"),
+        ("route", "hosted"),
+    ]);
 
     fleet.gh_api(&changing(&["src/r.sh"]));
     assert_eq!(refused(&fleet), held);

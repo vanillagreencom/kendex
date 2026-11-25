@@ -426,6 +426,38 @@ enum Tie {
     Blockers(Vec<String>),
 }
 
+impl Tie {
+    /// The field a refusal names the tie by, so the overseer sees what
+    /// holds the launch without searching the fleet for it.
+    fn field(&self) -> (&'static str, String) {
+        match self {
+            Tie::File(file) => ("file", file.clone()),
+            Tie::Blockers(blockers) => ("blockers", blockers.join(",")),
+        }
+    }
+}
+
+/// The `join-unreachable` refusal of `item` by a holder whose stage and
+/// mailbox are on its host (`route`): the tie, the holder and the route,
+/// then whatever the head verdict adds.
+fn join_unreachable(
+    item: &str,
+    tie: &Tie,
+    holder: &str,
+    route: &str,
+    verdict: &[(&str, &str)],
+) -> Error {
+    let (key, value) = tie.field();
+    let mut fields = vec![
+        ("item", item),
+        (key, value.as_str()),
+        ("holder", holder),
+        ("route", route),
+    ];
+    fields.extend_from_slice(verdict);
+    Error::from(agent_runtime::Error::refused("join-unreachable", &fields))
+}
+
 impl Join {
     fn refusal(&self, item: &str, holder: &str) -> Error {
         match &self.tie {
@@ -833,14 +865,11 @@ fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<us
 /// this disk (`watch::lanes::local_held`): a lane fixing after its review
 /// would take work no review round read. A state that cannot be read refuses
 /// `holder-unreadable read=stage`. A hosted or cloud holder refuses
-/// `join-unreachable`: its stage and its mailbox are on its host, and a
-/// join tells its lane itself.
-fn before_review(path: &Path, lane: &Lane, item: &str) -> Result<bool> {
+/// `join-unreachable` naming the `tie`: its stage and its mailbox are on
+/// its host, and a join tells its lane itself.
+fn before_review(path: &Path, lane: &Lane, item: &str, tie: &Tie) -> Result<bool> {
     if let Some(route) = unreachable(lane) {
-        return Err(Error::from(agent_runtime::Error::refused(
-            "join-unreachable",
-            &[("item", item), ("holder", &lane.item), ("route", route)],
-        )));
+        return Err(join_unreachable(item, tie, &lane.item, route, &[]));
     }
     if ["pending_pr", "parked"]
         .iter()
@@ -881,29 +910,30 @@ fn unreachable(lane: &Lane) -> Option<&'static str> {
 /// has not committed are on its host alone, so it holds every path it names
 /// whatever its branch shows. Where its head changes a path of `touched`
 /// that the scope leaves in, it is judged on as any live holder. Otherwise
-/// it refuses `join-unreachable` naming the branch and the cause: a head
-/// that changes none of them is `worktree-unproved`, and a read that failed
-/// names its own cause. A cloud session's head is on its cloud, which no
-/// verb reads.
+/// it refuses `join-unreachable` naming the held `tie`, the branch and the
+/// cause: a head that changes none of them is `worktree-unproved`, and a
+/// read that failed names its own cause. A cloud session's head is on its
+/// cloud, which no verb reads.
 fn branch_judged(
     lane: &Lane,
     route: &str,
+    tie: &Tie,
     touched: &[String],
     in_scope: &[String],
     item: &str,
     host: &Host,
 ) -> Result<()> {
     let refused = |unread: BranchUnread| {
-        Error::from(agent_runtime::Error::refused(
-            "join-unreachable",
+        join_unreachable(
+            item,
+            tie,
+            &lane.item,
+            route,
             &[
-                ("item", item),
-                ("holder", &lane.item),
-                ("route", route),
                 ("branch", unread.branch.as_deref().unwrap_or("unknown")),
                 ("cause", &unread.cause),
             ],
-        ))
+        )
     };
     let unread = |cause: &str| BranchUnread {
         branch: None,
@@ -1175,18 +1205,16 @@ pub(super) fn judge(
     let mut join = None;
     if let Some((index, blockers)) = blocked {
         let holder = &lanes[index];
-        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
-            && before_review(path, holder, a.item)?;
-        if !joins {
-            return Err(Error::LaunchBlocked {
-                item: a.item.to_owned(),
-                blockers,
-            });
-        }
-        join = Some(Join {
+        let tied = Join {
             holder: index,
             tie: Tie::Blockers(blockers),
-        });
+        };
+        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
+            && before_review(path, holder, a.item, &tied.tie)?;
+        if !joins {
+            return Err(tied.refusal(a.item, &holder.item));
+        }
+        join = Some(tied);
     }
     let holder_unreadable =
         |holder: &str, read: &'static str, cause: String| Error::HolderUnreadable {
@@ -1231,22 +1259,20 @@ pub(super) fn judge(
             // lanes.
             Holding::Live => {
                 let first = a.checkout.is_some();
+                let tie = Tie::File(file.clone());
                 if first && let Some(route) = unreachable(lane) {
-                    branch_judged(lane, route, &touched, &in_scope, a.item, host)?;
+                    branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
                 }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
                 let direct = first && direct(host)?;
                 let before = if joinable || direct {
-                    Some(before_review(path, lane, a.item)?)
+                    Some(before_review(path, lane, a.item, &tie)?)
                 } else {
                     None
                 };
                 match before {
                     Some(true) if joinable => {
-                        join.get_or_insert(Join {
-                            holder: index,
-                            tie: Tie::File(file.clone()),
-                        });
+                        join.get_or_insert(Join { holder: index, tie });
                     }
                     Some(false) if direct => {}
                     _ => {
