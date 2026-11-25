@@ -181,6 +181,8 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
@@ -535,6 +537,59 @@ assert_eq "$(grep -cF 'worktree_message cleanup-rebase-map' "$map_mutant")" "1" 
 assert_eq "$(WORKTREE_SCRIPT="$map_mutant" run cleanup)" \
   "rc=0 out=worktree-cleaned: <wt> err=worktree-cleanup-rebase-map: <map> tree=absent dirty=- branch=absent other=- map=gone registered=absent" \
   "control: the map preservation expectation rejects an arm that falls through"
+
+local_branch_case() {
+  local case_name="$1" branch=topic/merged.v1 ref="" tip="" moved="" rc=0
+  ROOT="$TMP_ROOT/local-$case_name"
+  MAIN="$ROOT/main"
+  ref="refs/heads/$branch"
+  make_repo
+  tip="$(git -C "$MAIN" rev-parse origin/main)"
+  git -C "$MAIN" branch --track "$branch" origin/main >/dev/null
+  case "$case_name" in
+    changed-tip)
+      moved="$(git -C "$MAIN" commit-tree 'HEAD^{tree}' -p "$tip" -m 'branch advanced')"
+      mkdir "$ROOT/bin"
+      # Move the ref once the candidate snapshot exists, before its deletion.
+      cat >"$ROOT/bin/git" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$*" == "-C $MAIN worktree list --porcelain -z" ]]; then
+  "$(command -v git)" -C "$MAIN" update-ref "$ref" "$moved" "$tip"
+  printf 'moved\n' >"$ROOT/moved"
+fi
+exec "$(command -v git)" "\$@"
+STUB
+      chmod +x "$ROOT/bin/git"
+      (cd "$MAIN" && PATH="$ROOT/bin:$PATH" "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$(cat "$ROOT/moved")" moved "the fixture moves the candidate after the ancestry snapshot"
+      assert_eq "$rc:$(git -C "$MAIN" rev-parse --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config "branch.$branch.remote" || true):$(git -C "$MAIN" config "branch.$branch.merge" || true)" \
+        "1:$moved:origin:refs/heads/main" "a changed candidate keeps its ref and both upstream settings"
+      ;;
+    config-lock)
+      : >"$MAIN/.git/config.lock"
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(git -C "$MAIN" rev-parse --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config "branch.$branch.remote" || true):$(git -C "$MAIN" config "branch.$branch.merge" || true)" \
+        "1:$tip:origin:refs/heads/main" "a refused config write keeps the candidate with its tracking intact"
+      rm -- "$MAIN/.git/config.lock"
+      rc=0
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
+      assert_eq "$rc:$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true)" "0:" \
+        "releasing the config lock lets cleanup prune the candidate"
+      if git -C "$MAIN" branch --no-track "$branch" origin/main; then
+        assert_eq "$(git -C "$MAIN" for-each-ref --format='%(refname:short) %(upstream)' "$ref")" "$branch " \
+          "the recreated branch has no upstream"
+      else
+        assert_eq failed recreated "the pruned branch name can be recreated"
+      fi
+      ;;
+  esac
+}
+
+echo "=== cleanup of merged branches without worktrees ==="
+for case_name in changed-tip config-lock; do
+  local_branch_case "$case_name"
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

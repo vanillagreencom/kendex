@@ -2994,6 +2994,7 @@ cleanup_lease_permits_removal() {
 cleanup_enumerate_worktrees() {
   local list_file="" err_file="" rc=0 line="" wt=""
   CLEANUP_TREES=()
+  CLEANUP_OWNED_REFS=$'\n'
   if ! list_file="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
     worktree_message cleanup-scratch-failed "$PROJECT_ROOT" "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
     return 1
@@ -3008,12 +3009,104 @@ cleanup_enumerate_worktrees() {
     return 1
   fi
   while IFS= read -r -d '' line; do
+    if [[ "$line" == branch\ * ]]; then
+      CLEANUP_OWNED_REFS+="${line#branch }"$'\n'
+    fi
     [[ "$line" == worktree\ * ]] || continue
     wt="${line#worktree }"
     same_canonical_dir "$wt" "$PROJECT_ROOT" && continue
     CLEANUP_TREES+=("$wt")
   done <"$list_file"
   rm -f "$list_file" "$err_file"
+}
+
+# Read the same private settings that guarded restack uses, even if the
+# worktree path is absent or Git discovery there would find another checkout.
+cleanup_restack_branch() { # PRIVATE_GIT_DIR
+  local file="$1/config.worktree" pending="" branch="" rc=0
+  [[ -e "$file" || -L "$file" ]] || return 0
+  pending="$(git config --file "$file" --get kendex-restack.pending)" || rc=$?
+  [[ "$rc" != 1 ]] || return 0 # Git config reports an absent key with exit 1.
+  [[ "$rc" == 0 && "$pending" == true ]] || return 1
+  branch="$(git config --file "$file" --get kendex-restack.branch)" || return 1
+  git check-ref-format "refs/heads/$branch" || return 1
+  printf '%s\n' "$branch"
+}
+
+# Git's prepare locks and verifies the refs before config changes. A config
+# refusal aborts the transaction, leaving the same branch eligible for retry.
+cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID
+  perl -MIPC::Open2 -e '
+    use strict;
+    use warnings;
+    my ($repo, $base_ref, $base_oid, $ref, $oid) = @ARGV;
+    my @git = ("git", "-C", $repo);
+    my ($branch) = $ref =~ m{^refs/heads/(.+)$};
+    my $section = "branch.$branch";
+    my $pid = open2(my $reply, my $request, @git, "update-ref", "--no-deref", "--stdin");
+    print $request "start\nverify $base_ref $base_oid\ndelete $ref $oid\nprepare\n";
+    my $prepared = (<$reply> // "") eq "start: ok\n" && (<$reply> // "") eq "prepare: ok\n";
+    my $retired = 0;
+    if ($prepared && open(my $keys, "-|", @git, "config", "--local", "--null", "--name-only", "--list")) {
+      my $configured = 0;
+      {
+        local $/ = "\0";
+        while (<$keys>) {
+          chomp;
+          $configured = 1 if /^\Q$section\E\.[^.]+$/;
+        }
+      }
+      $retired = close($keys) && (!$configured || system(@git, "config", "--local", "--remove-section", $section) == 0);
+    }
+    print $request ($retired ? "commit\n" : "abort\n") if $prepared;
+    close $request;
+    waitpid($pid, 0);
+    exit !($retired && $? == 0);
+  ' -- "$PROJECT_ROOT" "$@"
+}
+
+cleanup_prune_local_branches() { # BASE_REF BASE_OID MERGED_ROWS
+  local wt="" dir="" branch="" oid="" ref="" symref="" candidates="" failed=0
+  while read -r oid ref symref; do
+    [[ -n "$ref" && -z "$symref" && "$ref" != "refs/heads/$DEFAULT_BRANCH" && "$ref" != refs/heads/recovery/* ]] || continue
+    [[ "$CLEANUP_OWNED_REFS" != *$'\n'"$ref"$'\n'* ]] || continue
+    candidates+="$oid $ref"$'\n'
+  done <<<"$3"
+  [[ -n "$candidates" ]] || return 0
+  for wt in "$PROJECT_ROOT" ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
+    if [[ "$wt" == "$PROJECT_ROOT" ]]; then
+      dir="$PROJECT_COMMON_GIT_DIR"
+    else
+      dir="$(registered_worktree_git_dir "$wt")" || {
+        worktree_message cleanup-local-registration-unread "$wt" "Could not read the private Git registration for $wt. Keeping unregistered local branches." >&2
+        return 1
+      }
+    fi
+    # Git also protects branches named by native operations in detached trees.
+    if [[ -e "$dir/rebase-merge" || -e "$dir/rebase-apply" || -e "$dir/BISECT_START" ]]; then
+      worktree_message cleanup-local-active-operation "$wt" "A rebase or bisect at $wt can still use a local branch. Keeping unregistered local branches." >&2
+      return 0
+    fi
+    if ! branch="$(cleanup_restack_branch "$dir")"; then
+      worktree_message cleanup-local-restack-unread "$dir" "Could not read the pending restack branch in $dir. Keeping unregistered local branches." >&2
+      return 1
+    fi
+    if [[ -n "$branch" ]]; then
+      CLEANUP_OWNED_REFS+="refs/heads/$branch"$'\n'
+    fi
+  done
+  while read -r oid ref; do
+    [[ -n "$ref" ]] || continue
+    if [[ "$CLEANUP_OWNED_REFS" == *$'\n'"$ref"$'\n'* ]]; then
+      worktree_message cleanup-local-restack-held "$ref" "Keeping ${ref#refs/heads/} for a pending restack." >&2
+      continue
+    fi
+    if ! cleanup_prune_local_branch "$1" "$2" "$ref" "$oid"; then
+      worktree_message cleanup-local-delete-failed "$ref" "Could not prune ${ref#refs/heads/} and retire its local branch settings. Check Git's diagnostic and retry cleanup." >&2
+      failed=1
+    fi
+  done <<<"$candidates"
+  return "$failed"
 }
 
 # `cleanup --targets-only`: the build-output prune, its flags and its lease.
@@ -4401,7 +4494,20 @@ case "${1:-}" in
     # NOT on this chain; a tip that IS on it has no commits of its own —
     # pending work, not merged work.
     CLEANUP_MAINLINE="$(git -C "$PROJECT_ROOT" rev-list --first-parent "$CLEANUP_MERGE_TARGET" 2>/dev/null || true)"
+    CLEANUP_BASE_REF="refs/remotes/origin/$DEFAULT_BRANCH"
+    if [[ "$CLEANUP_MERGE_TARGET" == "$DEFAULT_BRANCH" ]]; then
+      CLEANUP_BASE_REF="refs/heads/$DEFAULT_BRANCH"
+    fi
+    # A branch created after the worktree list must never enter the prune set.
+    if ! CLEANUP_BASE_OID="$(git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_BASE_REF")" ||
+       ! CLEANUP_LOCAL_ROWS="$(git_stored_history -C "$PROJECT_ROOT" for-each-ref --merged="$CLEANUP_BASE_OID" \
+         --format='%(objectname) %(refname) %(symref)' refs/heads/)"; then
+      CLEANUP_FAILED=true
+      CLEANUP_LOCAL_ROWS=""
+      worktree_message cleanup-local-enumeration-failed "$CLEANUP_BASE_REF" "Could not prove which local branches are merged. Keeping unregistered local branches." >&2
+    fi
     cleanup_enumerate_worktrees || exit 1
+    cleanup_prune_local_branches "$CLEANUP_BASE_REF" "$CLEANUP_BASE_OID" "$CLEANUP_LOCAL_ROWS" || CLEANUP_FAILED=true
     for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
       # Every arm below either removes the worktree or says on stderr why it is
       # keeping it. Nothing falls through silently: the help promises that a

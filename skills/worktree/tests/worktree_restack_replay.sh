@@ -110,6 +110,8 @@ make_repo() {
   git -C "$repo" config user.email test@example.com
   git -C "$repo" config user.name Test
   git -C "$repo" config commit.gpgsign false
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
   printf 'orig\n' >"$repo/file.txt"
   printf 'orig\n' >"$repo/other.txt"
   git -C "$repo" add file.txt other.txt
@@ -593,6 +595,52 @@ assert_eq "$(grep -c 'without_committed_settings git -C "\$WT_PATH" cherry-pick 
   "control cuts the scrub only in its private copy"
 assert_eq "$(settings_read "$settings_mutant" settings-mutant)" "rc=0 read=main-value" \
   "must-fail: with the scrub cut, the hook reads the main checkout's value"
+
+offline_replay_case() {
+  local mount="$1" action="$2" actual="" expected="" recovery_rc=0
+  build "offline-$mount" conflict restack-replay
+  # Pause first, then land the original head without changing the paused base.
+  git -C "$MAIN" merge -q --no-ff --no-edit -s ours "refs/heads/$ISSUE"
+  git -C "$MAIN" push -q origin main
+  git -C "$MAIN" merge-base --is-ancestor "refs/heads/$ISSUE" origin/main
+  git -C "$MAIN" branch --no-track unowned "$PRE"
+  [[ -n "$(paused_state_dir)" && -z "$(git -C "$WT" branch --show-current)" ]]
+  git -C "$MAIN" worktree lock --reason portable "$WT"
+  mv -- "$WT" "$ROOT/portable"
+  if [[ "$mount" == empty ]]; then
+    # An empty mountpoint can discover the repository above it.
+    make_repo "${WT%/*}"
+    mkdir -- "$WT"
+    [[ "$(git -C "$WT" rev-parse --show-toplevel)" == "${WT%/*}" ]]
+  else
+    [[ ! -e "$WT" ]]
+  fi
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" cleanup >"$ROOT/cleanup.out" 2>"$ROOT/cleanup.err")
+  assert_eq "$(git -C "$MAIN" show-ref --verify "refs/heads/$ISSUE" 2>/dev/null || true)" "$PRE refs/heads/$ISSUE" \
+    "$mount mountpoint: cleanup keeps the original ref of the locked replay"
+  assert_eq "$(git -C "$MAIN" show-ref --verify refs/heads/unowned 2>/dev/null || true)" "" \
+    "$mount mountpoint: cleanup prunes the unowned merged ref"
+  if [[ "$mount" == empty ]]; then rmdir -- "$WT"; fi
+  mv -- "$ROOT/portable" "$WT"
+  case "$action" in
+    abort) expected="$PRE" ;;
+    continue)
+      step resolve
+      expected="$END"
+      ;;
+  esac
+  (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" restack "$action" "$ISSUE" >"$ROOT/recovery.out" 2>"$ROOT/recovery.err") || recovery_rc=$?
+  case "$action" in
+    abort) actual="$(git -C "$WT" rev-parse HEAD)" ;;
+    continue) actual="$(git -C "$WT" rev-parse HEAD^)" ;;
+  esac
+  assert_eq "$recovery_rc:$(git -C "$WT" branch --show-current):$actual" "0:$ISSUE:$expected" \
+    "$mount mountpoint: guarded $action reattaches the replay after remount"
+}
+
+echo "=== cleanup with a locked worktree offline during replay ==="
+offline_replay_case absent abort
+offline_replay_case empty continue
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
