@@ -1192,9 +1192,16 @@ pub(super) fn judge_item(
 /// stderr. A refused Linear write is not retried: the key stands in the
 /// row, and the due event hands the box to the verify pass. A GitHub
 /// item's met box is written again on each pass that reads it met, since
-/// its ticked body is the only record of it.
-fn write_owed(ctx: &Context, id: &str, issue: Option<&IssueItem>, judged: &str, owed: &Owed) {
-    let note = match (owed, issue) {
+/// its ticked body is the only record of it. Keep the met mark only when
+/// that write could have closed the issue.
+fn write_owed(
+    ctx: &Context,
+    id: &str,
+    issue: Option<&IssueItem>,
+    judged: &str,
+    owed: &Owed,
+) -> bool {
+    let (mark_read, note) = match (owed, issue) {
         (
             Owed::Complete {
                 number,
@@ -1202,13 +1209,17 @@ fn write_owed(ctx: &Context, id: &str, issue: Option<&IssueItem>, judged: &str, 
                 merged_at,
             },
             None,
-        ) => format!(
-            "box={number} {}",
-            boxes::complete_reading(&ctx.settings, id, merged_at.as_deref(), *number, evidence)
+        ) => (
+            true,
+            format!(
+                "box={number} {}",
+                boxes::complete_reading(&ctx.settings, id, merged_at.as_deref(), *number, evidence)
+            ),
         ),
-        (Owed::Comment { text }, None) => {
-            format!("comment={}", boxes::post(&ctx.settings, id, text))
-        }
+        (Owed::Comment { text }, None) => (
+            true,
+            format!("comment={}", boxes::post(&ctx.settings, id, text)),
+        ),
         (
             Owed::Complete {
                 number,
@@ -1222,18 +1233,21 @@ fn write_owed(ctx: &Context, id: &str, issue: Option<&IssueItem>, judged: &str, 
                 evidence,
                 merged_at: merged_at.as_deref(),
             };
-            format!(
-                "box={number} {}",
-                settle_issue(ctx, issue, judged, Some(&met)).1
+            let (close, note) = settle_issue(ctx, issue, judged, Some(&met));
+            (
+                matches!(close, Some(IssueWrite::Written | IssueWrite::Unknown)),
+                format!("box={number} {note}"),
             )
         }
         (Owed::Comment { text }, Some(issue)) => {
             let path = format!("repos/{}/issues/{}/comments", issue.repo, issue.number);
-            let posted = issue_write(&ctx.gh, "POST", &path, &serde_json::json!({ "body": text }));
-            format!("comment={posted}")
+            let (_, note) =
+                issue_write(&ctx.gh, "POST", &path, &serde_json::json!({ "body": text }));
+            (true, format!("comment={note}"))
         }
     };
     let _ = writeln!(std::io::stderr(), "verifying-write issue={id} {note}");
+    mark_read
 }
 
 /// A met box's tick: its number, its Evidence line and the merge its
@@ -1248,15 +1262,15 @@ struct Met<'a> {
 /// is the open body `judged` was: a body edited since may number its boxes
 /// otherwise, and the next pass judges it again. `met`'s box is ticked by
 /// the box parser, which writes its Evidence line; the issue closes as
-/// completed once no post-merge box stays open. Whether GitHub took the
-/// write, and the note that names it.
+/// completed once no post-merge box stays open. Return the closing PATCH's
+/// result if one was attempted, and the write's diagnostic.
 fn settle_issue(
     ctx: &Context,
     issue: &IssueItem,
     judged: &str,
     met: Option<&Met<'_>>,
-) -> (bool, String) {
-    let unwritten = |cause: &str| (false, format!("issue-unwritten cause={cause}"));
+) -> (Option<IssueWrite>, String) {
+    let unwritten = |cause: &str| (None, format!("issue-unwritten cause={cause}"));
     let path = format!("repos/{}/issues/{}", issue.repo, issue.number);
     let live = gh_json(&ctx.gh, &path, &mut BTreeMap::new())
         .and_then(|v| serde_json::from_value::<IssueText>(v).map_err(|e| e.to_string()));
@@ -1296,17 +1310,24 @@ fn settle_issue(
         patch.insert("state".to_owned(), "closed".into());
         patch.insert("state_reason".to_owned(), "completed".into());
     }
-    let written = issue_write(&ctx.gh, "PATCH", &path, &Value::Object(patch));
+    let (write, note) = issue_write(&ctx.gh, "PATCH", &path, &Value::Object(patch));
     (
-        written == "written",
-        format!("closed={} issue={written}", !open_left),
+        (!open_left).then_some(write),
+        format!("closed={} issue={note}", !open_left),
     )
 }
 
+#[derive(PartialEq, Eq)]
+enum IssueWrite {
+    Written,
+    Refused,
+    Unknown,
+}
+
 /// One GitHub write of `input` on `path`: `written`; `failed` where gh
-/// refused it or never ran, `unknown` where it started and gave no answer,
+/// confirmed rejection or never ran, `unknown` where the write could have landed,
 /// each with what gh or the runner said.
-fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> String {
+fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> (IssueWrite, String) {
     let input = input.to_string();
     let args = ["api", path, "--method", method, "--input", "-"];
     match super::github::handle(gh).tagged(TAG).bounded(BOUND).run(
@@ -1314,15 +1335,27 @@ fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> St
         &args,
         Some(input.as_bytes()),
     ) {
-        Ok(Answer::Printed { .. }) => "written".to_owned(),
-        Ok(Answer::Failed(failed)) if failed.exit.is_some() => {
-            format!("failed error={}", one_line(&failed.detail()))
+        Ok(Answer::Printed { .. }) => (IssueWrite::Written, "written".to_owned()),
+        Ok(Answer::Failed(failed))
+            if failed.sign_in_refused() || crate::verify::refused_by_github(&failed.stderr) =>
+        {
+            (
+                IssueWrite::Refused,
+                format!("failed error={}", one_line(&failed.detail())),
+            )
         }
-        Ok(Answer::Failed(failed)) => format!("unknown error={}", one_line(&failed.detail())),
-        Err(crate::verify::Unrun::Runner(e @ agent_runtime::Error::NotStarted { .. })) => {
-            format!("failed error={}", one_line(&e.to_string()))
-        }
-        Err(unrun) => format!("unknown error={}", one_line(&unrun.detail())),
+        Ok(Answer::Failed(failed)) => (
+            IssueWrite::Unknown,
+            format!("unknown error={}", one_line(&failed.detail())),
+        ),
+        Err(crate::verify::Unrun::Runner(e @ agent_runtime::Error::NotStarted { .. })) => (
+            IssueWrite::Refused,
+            format!("failed error={}", one_line(&e.to_string())),
+        ),
+        Err(unrun) => (
+            IssueWrite::Unknown,
+            format!("unknown error={}", one_line(&unrun.detail())),
+        ),
     }
 }
 
@@ -1448,13 +1481,13 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                     && key == "boxes=0"
                     && prior.is_some_and(prior_owes_issue_close)
                 {
-                    let (written, note) = settle_issue(ctx, issue, &item.description, None);
+                    let (close, note) = settle_issue(ctx, issue, &item.description, None);
                     let _ = writeln!(
                         std::io::stderr(),
                         "verifying-write issue={} {note}",
                         item.id
                     );
-                    if !written {
+                    if close != Some(IssueWrite::Written) {
                         continue;
                     }
                 }
@@ -1499,8 +1532,19 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                             Owed::Complete { .. } => marked != "met" || issue.is_some(),
                             Owed::Comment { .. } => !written,
                         }) {
-                            write_owed(ctx, &item.id, issue.as_ref(), &item.description, write);
-                            mark = reading;
+                            mark = if write_owed(
+                                ctx,
+                                &item.id,
+                                issue.as_ref(),
+                                &item.description,
+                                write,
+                            ) {
+                                reading
+                            } else if marked == "met" {
+                                ""
+                            } else {
+                                marked
+                            };
                         }
                         saved.push(format!("{deadline} read={mark}"));
                     }

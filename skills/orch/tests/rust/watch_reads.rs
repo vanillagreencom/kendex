@@ -5007,6 +5007,78 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         "a written close is not asked again"
     );
 
+    // Read the release box met again. A refused closing PATCH or a
+    // body-only PATCH leaves a later hand close owed. With an ambiguous
+    // closing PATCH, the issue may have been closed and reopened.
+    for (index, (label, other_box, error, close)) in [
+        ("refused final tick", "", Some(422), true),
+        ("unconfirmed final tick", "", Some(502), false),
+        ("nonfinal tick", ADDED, None, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = LATER + 480 + index as u64 * 120;
+        let body = format!("{ticked}{other_box}");
+        plant_issue(&mut world, Some(&body));
+        let reply = error.map_or_else(
+            || json!({"body": {}}),
+            |code| json!({"exit": 1, "stderr": format!("gh: HTTP {code}")}),
+        );
+        world.gh("PATCH repos/owner/repo/issues/7", reply);
+        let before = writes(&world).len();
+        assert_eq!(read_github(&mut baseline, at), 0);
+        pass_as(
+            Duty::Verification,
+            &mut verification,
+            &mut baseline,
+            &clock,
+            at,
+        )
+        .unwrap();
+        let attempts = writes(&world);
+        assert_eq!(attempts.len(), before + 1, "{label}");
+        let attempt = &attempts[before]["input"];
+        assert_eq!(
+            attempt.get("state").is_some(),
+            other_box.is_empty(),
+            "{label}"
+        );
+
+        let attempted_body = attempt["body"].as_str().unwrap();
+        let proved = match error {
+            Some(422) => format!(
+                "{}  Evidence: checked by hand\n",
+                body.replace("- [ ] Post-merge: releases", "- [x] Post-merge: releases")
+            ),
+            Some(_) => attempted_body.to_owned(),
+            None => format!(
+                "{}  Evidence: checked by hand\n",
+                attempted_body.replace("- [ ] Post-merge: health", "- [x] Post-merge: health")
+            ),
+        };
+        plant_issue(&mut world, Some(&proved));
+        world.gh("PATCH repos/owner/repo/issues/7", json!({"body": {}}));
+        assert_eq!(read_github(&mut baseline, at + 60), 0);
+        pass_as(
+            Duty::Verification,
+            &mut verification,
+            &mut baseline,
+            &clock,
+            at + 60,
+        )
+        .unwrap();
+        let after = writes(&world);
+        assert_eq!(after.len(), before + 1 + usize::from(close), "{label}");
+        if close {
+            assert_eq!(
+                after.last().unwrap()["input"],
+                json!({"state": "closed", "state_reason": "completed"}),
+                "{label}"
+            );
+        }
+    }
+
     assert!(
         writes(&world)
             .iter()

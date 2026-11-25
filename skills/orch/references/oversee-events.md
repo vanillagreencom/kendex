@@ -1116,8 +1116,8 @@ For each proved box:
 For an owner-only reading or a missing-evidence decision on `[OWNER/REPO]#[N]`, keep the question and answer on that GitHub issue.
 
 1. Read the issue's comments with `gh api --paginate repos/[OWNER/REPO]/issues/[N]/comments`. Reuse an open ask for this box. If another box has an open owner ask, leave this box pending until that ask closes.
-2. Save the question to a file. Name the box, check, `Where:` and deadline. Ask the owner to answer on the issue with one comment. Post with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
-3. On the next pass, read the same issue's comments. Use the owner's GitHub login to identify their answer after the question. If the answer or the owner's identity is unread, keep the ask open.
+2. If the owner's GitHub login is unknown, have the owner confirm it in the existing trusted owner conversation before posting. Address the question to that login. Save it to a file and name the box, check, `Where:` and deadline. Ask for one answer on the issue. Post with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
+3. On the next pass, read the same issue's comments for an answer from the confirmed login after the question. If the answer or the owner's identity is unread, keep the ask open.
 4. For a reading, use the acceptance words in [communication-modes.md § Answers](communication-modes.md#answers). For missing evidence, act on the owner's chosen option. Record the answer on the issue before completing the check or editing the box.
 
 ### Verification comment
