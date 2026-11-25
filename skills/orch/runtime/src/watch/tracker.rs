@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, OwnerImportRead, OwnerImportReceipt, Resolved};
 use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal, admission};
-use crate::settings::Settings;
+use crate::settings::{OwnerTracker, Settings};
 use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
 use crate::verify::wire::Nullable;
 use crate::watch::events::OwnerMark;
@@ -1086,7 +1086,7 @@ fn read_tracker(
             linear,
             &mailbox,
             &reach.mail_root,
-            &configured.label,
+            configured,
             tick,
             owner
         )?);
@@ -1598,6 +1598,14 @@ struct LabelName {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct OwnerQuestion {
+    id: String,
+    reserved: bool,
+    ruled: bool,
+    legacy_asks: Vec<String>,
+}
+
 /// What the owner-ask work of one pass hands back beside the tracker read:
 /// its lines, its rows and its partial failures.
 #[derive(Default)]
@@ -1718,15 +1726,13 @@ impl OwnerPass {
 /// The tracker marks of every owner ask posted to an item and closed by any
 /// route: the ruling comment, a reply under the question where its comment
 /// id is recorded, and one item write of labels, assignee and action line.
-/// The two steps run alone, so a refused one stops neither; a refused step
-/// is said once per cause and tried again at every pass. The first pass
-/// that reads the mailbox records the asks closed before it as marked and
-/// writes nothing. A refused mailbox read is the pass's partial failure.
+/// The first pass records legacy closes as marked. Reserved questions
+/// still need both steps, and a refused step retries on the next pass.
 fn mark_closed_owner_asks(
     linear: &Linear,
     mailbox: &Mailbox,
     root: &Path,
-    configured: &str,
+    configured: &OwnerTracker,
     tick: &Tick,
     owner: &mut OwnerPass,
 ) -> Result<Answered<()>> {
@@ -1770,29 +1776,32 @@ fn mark_closed_owner_asks(
         item: Some(Mark::Landed),
         line: None,
     };
-    if tick.baseline.get(OWNER_MARK_ROW, FLEET).is_none() {
-        owner.changes.push(Change::Set {
-            kind: OWNER_MARK_ROW.to_owned(),
-            identity: FLEET.to_owned(),
-            value: "floor".to_owned(),
-        });
-        for ask in closed {
-            owner.keep_marks(tick, ask.id(), &landed);
-        }
-        return Ok(Answered::Value(()));
-    }
+    let first = tick.baseline.get(OWNER_MARK_ROW, FLEET).is_none();
     let open: Vec<&Envelope> = asks
         .iter()
         .filter(posted)
         .filter(|a| !closes.contains(a.id()))
         .copied()
         .collect();
-    for ask in closed {
+    for &ask in &closed {
         let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask.id()))?;
         if marks == landed {
             continue;
         }
         let issue = ask.issue.as_deref().unwrap_or("");
+        if first && marks == Marks::default() {
+            let marked_question = if let Some(id) = &ask.tracker_comment {
+                quota!(read_owner_questions(linear, ask, issue, &configured.email)?)
+                    .iter()
+                    .any(|q| q.reserved && q.id == *id)
+            } else {
+                false
+            };
+            if !marked_question {
+                owner.keep_marks(tick, ask.id(), &landed);
+                continue;
+            }
+        }
         marks.line = None;
         if marks.ruling != Some(Mark::Landed) {
             let answer = envelopes
@@ -1826,17 +1835,26 @@ fn mark_closed_owner_asks(
         }
         owner.keep_marks(tick, ask.id(), &marks);
         if marks.item != Some(Mark::Landed) {
-            let written = clear_owner_item(linear, ask, issue, &open, configured);
-            marks.item = Some(quota!(settle_mark(
-                written,
-                &marks.item,
-                ask,
-                issue,
-                OwnerMark::Item,
-                owner
-            )?));
+            let written = clear_owner_item(linear, ask, issue, &open, &closed, configured);
+            if !matches!(written, Ok(Answered::Value(false))) {
+                marks.item = Some(quota!(settle_mark(
+                    written,
+                    &marks.item,
+                    ask,
+                    issue,
+                    OwnerMark::Item,
+                    owner
+                )?));
+            }
         }
         owner.keep_marks(tick, ask.id(), &marks);
+    }
+    if first {
+        owner.changes.push(Change::Set {
+            kind: OWNER_MARK_ROW.to_owned(),
+            identity: FLEET.to_owned(),
+            value: "floor".to_owned(),
+        });
     }
     Ok(Answered::Value(()))
 }
@@ -1871,8 +1889,8 @@ fn ruling_comment(answer: Option<&Envelope>) -> String {
 
 /// One close step's outcome as its mark: a refusal whose cause was not the
 /// one standing before is said.
-fn settle_mark(
-    written: Result<Answered<()>>,
+fn settle_mark<T>(
+    written: Result<Answered<T>>,
     before: &Option<Mark>,
     ask: &Envelope,
     issue: &str,
@@ -1880,7 +1898,7 @@ fn settle_mark(
     owner: &mut OwnerPass,
 ) -> Result<Answered<Mark>> {
     match written {
-        Ok(Answered::Value(())) => Ok(Answered::Value(Mark::Landed)),
+        Ok(Answered::Value(_)) => Ok(Answered::Value(Mark::Landed)),
         Ok(Answered::Quota(quota)) => Ok(Answered::Quota(quota)),
         Err(e) => {
             let mark = Mark::Standing(e.key().to_owned());
@@ -1892,17 +1910,30 @@ fn settle_mark(
     }
 }
 
+fn read_owner_questions(
+    linear: &Linear,
+    ask: &Envelope,
+    issue: &str,
+    email: &str,
+) -> Result<Answered<Vec<OwnerQuestion>>> {
+    let tracker_ref = ask.identity.as_ref().map_or(issue, |id| id.uuid.as_str());
+    let args = ["comments", "owner-questions", tracker_ref, "--email", email];
+    linear.json("owner-questions", &args)
+}
+
 /// The closed `ask`'s item write: its label dropped unless an `open` ask on
 /// the same item was posted under it, the assignee cleared once no open
 /// ask stands there, and its action line removed, or replaced by the
 /// latest open ask's, only where the description still opens with it.
+/// An unruled tracker question in another mailbox defers the item write.
 fn clear_owner_item(
     linear: &Linear,
     ask: &Envelope,
     issue: &str,
     open: &[&Envelope],
-    configured: &str,
-) -> Result<Answered<()>> {
+    closed: &[&Envelope],
+    configured: &OwnerTracker,
+) -> Result<Answered<bool>> {
     let variables = serde_json::json!({ "id": issue }).to_string();
     let item = quota!(linear.json::<OwnerAskItem>(
         "owner-ask-item",
@@ -1915,13 +1946,33 @@ fn clear_owner_item(
         ],
     )?)
     .issue;
+    let questions = quota!(read_owner_questions(linear, ask, issue, &configured.email)?);
+    let remaining: Vec<&Envelope> = open.iter().filter(|a| a.on_item_of(ask)).copied().collect();
+    let matches_question = |local: &Envelope, question: &OwnerQuestion| {
+        if let Some(comment) = &local.tracker_comment {
+            comment == &question.id
+        } else {
+            local.on_item_of(ask) && question.legacy_asks.iter().any(|id| id == local.id())
+        }
+    };
+    if questions.iter().filter(|q| !q.ruled).any(|question| {
+        let open_here = remaining.iter().any(|a| matches_question(a, question));
+        let legacy_close = !question.reserved
+            && closed.iter().any(|a| {
+                (a.identity.is_none() || a.tracker_comment.is_none())
+                    && matches_question(a, question)
+            });
+        !open_here && !legacy_close
+    }) {
+        return Ok(Answered::Value(false));
+    }
     let label_of = |a: &Envelope| {
         a.tracker_label
             .clone()
-            .unwrap_or_else(|| configured.to_owned())
+            .unwrap_or_else(|| configured.label.clone())
     };
-    let remaining: Vec<&Envelope> = open.iter().filter(|a| a.on_item_of(ask)).copied().collect();
     let closing = label_of(ask);
+    let has_gate = item.labels.nodes.iter().any(|label| label.name == closing);
     let labels: BTreeSet<String> = item
         .labels
         .nodes
@@ -1953,12 +2004,12 @@ fn clear_owner_item(
     } else {
         args.extend(["--labels", joined.as_str()]);
     }
-    if remaining.is_empty() {
+    if has_gate && remaining.is_empty() {
         args.push("--clear-assignee");
     }
     args.extend(["--description", description.as_str()]);
     quota!(linear.call("owner-ask-close", &args)?);
-    Ok(Answered::Value(()))
+    Ok(Answered::Value(true))
 }
 
 // --- the closes ---------------------------------------------------------------

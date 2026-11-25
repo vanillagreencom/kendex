@@ -18,7 +18,7 @@ set -euo pipefail
 config=$(cat)
 payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
 printf '%s\n' "$payload" >>"$CALLS"
-response=$(jq -cj --arg mode "$MODE" '
+response=$(jq -cj --arg mode "$MODE" --arg question "${QUESTION:-}" --slurpfile calls "$CALLS" '
 def user: {id:"owner-id",name:"Owner",email:"owner@example.test",url:"https://linear.app/example/profiles/owner"};
 def comment($id; $body): {id:$id,body:$body,createdAt:"2026-11-01T01:00:00Z",updatedAt:"2026-11-01T01:00:00Z",
   user:{id:"original-author",name:"Original asker",email:"asker@example.test",url:"https://linear.app/example/profiles/asker"},
@@ -34,6 +34,24 @@ def first_issue: {id:"issue-uuid",identifier:"KEN-1",comments:(comments |
     .nodes |= map(select(.id != "ask-b")) else . end)};
 if (.query | contains("GetUserByEmail")) then
   {data:{users:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[user]}}}
+elif (.query | contains("mutation CreateComment")) then
+  if $mode == "question-replayed" then {errors:[{message:"already exists",extensions:{code:"INPUT_ERROR"}}]}
+  else {data:{commentCreate:{success:true,comment:{id:.variables.input.id}}}} end
+elif (.query | contains("query OwnerRuling(")) then
+  ($calls | map(select(.variables.input.id == $question)) | last | .variables.input) as $posted
+  | {data:{comment:{id:$posted.id,body:$posted.body,parent:null,issue:{identifier:"KEN-1",id:"issue-uuid"}}}}
+elif (.query | contains("query ListComments(")) then
+  if $mode == "failed-comments" then {errors:[{message:"failed",extensions:{code:"INPUT_ERROR"}}]}
+  else {data:{issue:{id:"issue-uuid",comments:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[
+    (comment($question;"Reserved question with no owner mention") | .parent = null),
+    (comment("legacy";"https://linear.app/example/profiles/owner legacy question") | .parent = null),
+    (comment("unrelated";"https://linear.app/example/profiles/owner-other is another user") | .parent = null),
+    (comment("reply";"https://linear.app/example/profiles/owner ordinary reply") | .parent.id = $question),
+    (comment("wrong-ruling";"This question closed with no answer.") | .parent.id = $question),
+    (if $mode == "questions-ruled" then
+      (comment("2"+$question[1:];"This question closed with no answer.") | .parent.id = $question)
+    else empty end)
+  ]}}}} end
 elif (.query | contains("TeamKeys")) then {data:{organization:{urlKey:"example",teams:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}
 elif (.query | contains("ListIssues")) then
   if (.query | contains("comments {") | not) then issue_page([first_issue | del(.comments)]; null)
@@ -117,3 +135,33 @@ assert_jq "both issue and comment continuations preserve requests" "$OUT" \
 run_requests failed-comments
 assert_not "an unread configured source fails" test "$RC" -eq 0
 assert_eq "an unread source publishes no partial projection" "$OUT" ''
+
+run_comment() {
+    local mode="$1"
+    shift
+    RC=0
+    OUT=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" \
+        LINEAR_API_KEY_OVERRIDE=test-key CALLS="$TMP_ROOT/calls" RESPONSES="$TMP_ROOT/responses" \
+        MODE="$mode" QUESTION="${QUESTION:-}" \
+        "$BASH" "$SKILL_DIR/scripts/linear.sh" comments "$@" 2>"$TMP_ROOT/err") || RC=$?
+    if [[ "$RC" != 0 && "$mode" != failed-comments ]]; then cat "$TMP_ROOT/err" >&2; fi
+}
+run_comment question-create create KEN-1 --owner-question ask-1 --no-attribution --body 'Same question'
+assert_eq "question creation succeeds with a supplied ID" "$RC" 0
+QUESTION=$(jq -r '.data.comment.id' <<<"$OUT")
+assert_jq "question ID is UUID v4 and creates a top-level comment" "$(tail -1 "$TMP_ROOT/calls")" \
+    '.variables.input | (.id | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")) and (has("parentId") | not)'
+run_comment question-replayed create KEN-1 --owner-question ask-1 --no-attribution --body 'Same question'
+assert_eq "the same ask confirms its first write under the same ID" "$RC $(jq -r '.data.comment.id' <<<"$OUT")" "0 $QUESTION"
+run_comment question-create create KEN-1 --owner-question ask-2 --no-attribution --body 'Same question'
+assert_not "another ask gets another ID" test "$(jq -r '.data.comment.id' <<<"$OUT")" = "$QUESTION"
+run_comment questions-open owner-questions KEN-1 --email owner@example.test
+assert_eq "question read succeeds" "$RC" 0
+assert_jq "reserved and unruled legacy top-level questions stay open" "$OUT" \
+    "all(.[]; .ruled | not) and (map(select(.reserved))[0].id == \"$QUESTION\") and (map(select(.reserved | not) | .id) == [\"legacy\"])"
+run_comment questions-ruled owner-questions KEN-1 --email owner@example.test
+assert_jq "the exact ruling closes only its parent question" "$OUT" \
+    'map([.reserved, .ruled]) == [[true,true],[false,false]]'
+run_comment failed-comments owner-questions KEN-1 --email owner@example.test
+assert_not "an unread question source fails" test "$RC" -eq 0
+assert_eq "an unread question source publishes no empty set" "$OUT" ''

@@ -34,6 +34,7 @@ with (root / "calls.jsonl").open("a") as out:
 row = os.environ["TRACKER_ROW"]
 comments_path = root / "comments.json"
 comments = json.loads(comments_path.read_text())
+question_id = root / "question-id"
 if args[:2] == ["users", "list"]:
     print(json.dumps([{"id": "owner", "name": "Owner Person", "email": "owner@example.test",
                        "display_name": "owner.person"}]))
@@ -77,7 +78,7 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         print("tracker: refused=mention-read", file=sys.stderr)
         sys.exit(1)
     # Only the saved comment exists: any other id reads as Linear's null.
-    if json.loads(args[args.index("--variables") + 1]) != {"id": "question-id"}:
+    if json.loads(args[args.index("--variables") + 1]) != {"id": question_id.read_text()}:
         print(json.dumps({"comment": None}))
         sys.exit(0)
     # Linear's bodyData for the saved comment: the owner's mention is a
@@ -89,7 +90,7 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         node = {"type": "suggestion_userMentions", "attrs": {"id": "someone-else", "label": "someone.else"}}
     doc = {"type": "doc", "content": [{"type": "paragraph", "content": [node]}]}
     print(json.dumps({"comment": {"bodyData": json.dumps(doc)}}))
-elif args[:3] == ["comments", "delete", "question-id"]:
+elif args[:2] == ["comments", "delete"] and args[2] == question_id.read_text():
     # The linear package exits 0 on a refused delete and prints the answer.
     if row == "delete-refused":
         print(json.dumps(DELETE_REFUSED))
@@ -136,10 +137,13 @@ payload = json.loads(json.loads(data))
 if not payload["query"].lstrip().startswith("mutation CreateComment"):
     print(json.dumps({"errors": [{"message": "unexpected fixture query"}]}) + "___HTTP_CODE___200", end="")
     sys.exit(0)
-comments_path = Path(os.environ["TRACKER_CASE"]) / "comments.json"
-body = payload["variables"]["input"]["body"]
+root = Path(os.environ["TRACKER_CASE"])
+comments_path = root / "comments.json"
+question = payload["variables"]["input"]
+body = question["body"]
+(root / "question-id").write_text(question["id"])
 comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
-comment = {"id": "question-id", "body": body, "createdAt": "2026-11-22T00:00:00Z",
+comment = {"id": question["id"], "body": body, "createdAt": "2026-11-22T00:00:00Z",
            "updatedAt": "2026-11-22T00:00:00Z", "user": {"name": "App", "email": "app@example.test"},
            "issue": {"identifier": "KEN-7", "updatedAt": "2026-11-22T00:00:00Z"}}
 print(json.dumps({"data": {"commentCreate": {"success": True, "comment": comment}}}) + "___HTTP_CODE___200", end="")

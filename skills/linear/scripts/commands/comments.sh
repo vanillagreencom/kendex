@@ -17,6 +17,7 @@ Actions:
   bulk-list  List the comments of several issues in one read
   bulk-get   Read comment URLs by comment ID
   owner-requests  Complete owner-mentioned requests in the assigned, labelled view
+  owner-questions ISSUE --email EMAIL  Read reserved and possible legacy questions with ruling state
   create     Create a new comment
   update  Update an existing comment
   delete  Delete a comment
@@ -98,16 +99,30 @@ case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
-# The watch's ruling UUID is its exact question UUID with the high bit flipped.
-readonly OWNER_RULING_JQ='def ruling_id:
-  if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\z") then
+# Question UUIDs reserve this prefix. Rulings flip the question's high bit,
+# placing rulings for reserved questions outside that prefix.
+readonly OWNER_QUESTION_PREFIX=a54c6f77-50d1
+readonly OWNER_RULING_JQ='def comment_uuid:
+  type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\z");
+def ruling_id:
+  if comment_uuid then
     .[0:1] as $first | ("0123456789abcdef" | index($first)) as $at | "89abcdef01234567"[$at:$at+1] + .[1:]
   else null end;
 def ruling_body:
   gsub("\r\n"; "\n") | sub("\\n+\\z"; "") | split("\n")
   | if .[0] == "This question closed with no answer." then length == 1
     else .[0] | IN("This question closed on its answer.", "This question closed on your answer.",
-      "This question closed at its deadline with no answer, so its recommendation stands.") end;'
+      "This question closed at its deadline with no answer, so its recommendation stands.") end;
+def owner_ruling:
+  (.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body);
+def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;'
+
+owner_question_id() {
+    local hash hash_command=(shasum -a 256)
+    if command -v sha256sum >/dev/null 2>&1; then hash_command=(sha256sum); fi
+    hash=$(printf '%s' "$1" | "${hash_command[@]}") || return 1
+    printf '%s-4%s-8%s-%s\n' "$OWNER_QUESTION_PREFIX" "${hash:0:3}" "${hash:3:3}" "${hash:6:12}"
+}
 
 read_body_file() {
     local body_file="$1"
@@ -295,15 +310,32 @@ owner_requests() {
     jq -cs "$COMMENT_SAFE_JQ$OWNER_RULING_JQ"'
       .[0] as $owner | .[1] as $workspace |
       (.[2].issues.nodes | map(.comments |= (.nodes | map(comment_safe)))) as $items |
-      def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
       {workspace: $workspace.urlKey, owner: $owner.id,
        discussions: ($items | map({key: .id, value: (.comments | map({id, parent_id, user_id,
-          ruling: ((.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body)),
+          ruling: owner_ruling,
           opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
        requests: [$items[] | . as $issue | .comments[] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.identifier, issueUuid: $issue.id, comment: ., thread: (.parent_id // .id)}]}' \
       <<<"$owner"$'\n'"$workspace"$'\n'"$items"
+}
+
+owner_questions() {
+    if [[ "$#" -ne 3 || "$2" != --email || -z "$3" ]]; then
+        echo '{"error":"owner-questions requires ISSUE --email EMAIL"}' >&2; return 1
+    fi
+    local owner comments profile
+    owner=$(find_user_by_email "$3") || return 1
+    profile=$(jq -er '.url | strings | select(startswith("https://"))' <<<"${owner:-null}") || return 1
+    comments=$(list_comments "$1" --format=safe) || return 1
+    jq -ce --arg prefix "$OWNER_QUESTION_PREFIX-" --arg profile "$profile" "$OWNER_RULING_JQ"'
+        if type == "array" and all(.[]; (.id | type) == "string") then . else error("invalid-owner-comments") end
+        | [.[] | select(owner_ruling) | .parent_id] as $ruled
+        | [.[] | select(.parent_id == null)
+          | (.id | comment_uuid and startswith($prefix)) as $reserved
+          | select($reserved or (.body | mentions($profile)))
+          | {id, reserved: $reserved, ruled: (.id as $id | $ruled | index($id) != null),
+             legacy_asks: [.body | split("\n")[] | select(startswith("ask=")) | ltrimstr("ask=")]}]' <<<"$comments"
 }
 
 # The line a new comment opens with, naming who posts it, read once per post
@@ -345,7 +377,7 @@ create_comment() {
     local body_file=""
     local parent_id=""
     local attributed=1
-    local comment_id="" owner_ruling=0
+    local comment_id="" owner_ruling=0 owner_question=""
     local attach_paths=()
 
     while [[ $# -gt 0 ]]; do
@@ -356,6 +388,7 @@ create_comment() {
             --no-attribution) attributed=0; shift ;;
             --id) comment_id="$2"; shift 2 ;;
             --owner-ruling) owner_ruling=1; shift ;;
+            --owner-question) linear_require_option_value "$@" || return 1; owner_question="$2"; shift 2 ;;
             --attach)
                 if [ -z "${2-}" ]; then
                     echo '{"error": "--attach requires a path argument"}' >&2
@@ -381,6 +414,11 @@ create_comment() {
     if [[ "$owner_ruling" -eq 1 ]]; then
         [[ -z "$comment_id" ]] && comment_id=$(jq -ern --arg parent "$parent_id" "$OWNER_RULING_JQ"' $parent | ruling_id') || {
             echo '{"error":"invalid-owner-ruling-identity"}' >&2; return 1;
+        }
+    fi
+    if [[ -n "$owner_question" ]]; then
+        [[ -z "$comment_id" && -z "$parent_id" ]] && comment_id=$(owner_question_id "$owner_question") || {
+            echo '{"error":"invalid-owner-question-identity"}' >&2; return 1;
         }
     fi
 
@@ -459,15 +497,18 @@ create_comment() {
     }'
 
     local result
-    if [[ "$owner_ruling" -eq 0 ]]; then
+    if [[ "$owner_ruling" -eq 0 && -z "$owner_question" ]]; then
         result=$(graphql_query "$mutation" "{\"input\": $input_json}")
     elif ! result=$(graphql_query "$mutation" "{\"input\": $input_json}") ||
         ! jq -e --arg id "$comment_id" '.commentCreate | .success == true and .comment.id == $id' <<<"$result" >/dev/null; then
-        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id } } }'
+        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id identifier } } }'
         result=$(graphql_query "$query" "$(jq -cn --arg id "$comment_id" '{id: $id}')") || return 1
-        jq -e --arg id "$comment_id" --arg item "$comment_issue_id" --arg parent "$parent_id" "$COMMENT_ATTRIBUTION_JQ$OWNER_RULING_JQ"'
-          .comment | if .id == $id and .parent.id == $parent and .issue.id == $item and (.body | unattributed | ruling_body)
-          then {success: true, data: {comment: {id}}} else error("owner-ruling-unconfirmed") end' <<<"$result"
+        jq -e --arg id "$comment_id" --arg item "$comment_issue_id" --arg parent "$parent_id" --argjson body "$escaped_body" "$COMMENT_ATTRIBUTION_JQ$OWNER_RULING_JQ"'
+          def clean: gsub("\r\n"; "\n") | sub("\n+\\z"; "");
+          .comment | if .id == $id and (if $parent == "" then .parent == null and
+            (.issue.id == $item or .issue.identifier == ($item | ascii_upcase)) and (.body | clean) == ($body | clean)
+            else .parent.id == $parent and .issue.id == $item and (.body | unattributed | ruling_body) end)
+          then {success: true, data: {comment: {id}}} else error(if $parent == "" then "owner-question-unconfirmed" else "owner-ruling-unconfirmed" end) end' <<<"$result"
         return
     fi
     normalize_mutation_response "$result" "commentCreate" "comment"
@@ -564,6 +605,9 @@ case "$action" in
         ;;
     owner-requests)
         owner_requests "$@"
+        ;;
+    owner-questions)
+        owner_questions "$@"
         ;;
     create)
         if [ -z "${1:-}" ]; then
