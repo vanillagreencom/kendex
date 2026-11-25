@@ -8,8 +8,11 @@ use serde_json::{Value, json};
 
 use super::Recorded;
 use crate::accounts::wall::canon;
-use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer};
+use crate::controller::{
+    AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer, record_home_mode, views,
+};
 use crate::error::{Error, Result};
+use crate::harness::Harness;
 use crate::journal::{self, intents};
 use crate::record::{self, Document, Locking};
 use crate::settings::Judged;
@@ -61,6 +64,7 @@ pub(super) fn apply_adoption(
 /// written as the active one, and `pending`, `exit` and `off` are dropped.
 /// Another session's record, or none, is replaced by this session's at the
 /// next generation, with the fields of the session that ended left out.
+/// An omitted Claude home is kept only for the same harness process.
 fn adopt_controller(
     path: &Path,
     doc: &mut Document,
@@ -77,7 +81,8 @@ fn adopt_controller(
     }
     let current: Option<Overseer> = record::field(path, doc, MEMBER)?;
     let prior_generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
-    let home = r.home.clone().or_else(|| r.account.clone());
+    let claude = r.harness == Harness::Claude.name();
+    let (home, home_mode) = adopted_home(r, read, current.as_ref());
     let rows = r.session_rows.as_ref().map(|p| p.display().to_string());
     if read.same {
         let record = record::object_mut(path, doc, MEMBER)?;
@@ -98,6 +103,10 @@ fn adopt_controller(
                 record::set(record, key, value.as_str());
             }
         }
+        if claude && home.is_none() {
+            record::delete(record, "home");
+        }
+        record_home_mode(record, home_mode);
         record::set(record, "session_id", json!(r.session_id));
         record::set(record, "harness_pid", read.identity.pid);
         record::set(record, "harness_start", read.identity.start.as_str());
@@ -147,11 +156,48 @@ fn adopt_controller(
     for (key, value) in adopted_posture(path, r)? {
         record[key] = value;
     }
+    record_home_mode(
+        record
+            .as_object_mut()
+            .expect("adoption record is an object"),
+        home_mode,
+    );
     record::set(doc, MEMBER, record);
     Ok(ControllerAdopted {
         generation,
         healed: false,
     })
+}
+
+/// The mode belongs to the process, even when a replacement reuses its pane.
+fn adopted_home(
+    request: &AdoptController,
+    read: &AdoptionRead,
+    current: Option<&Overseer>,
+) -> (Option<String>, Option<bool>) {
+    if request.harness != Harness::Claude.name() {
+        return (
+            request.home.clone().or_else(|| request.account.clone()),
+            None,
+        );
+    }
+    if let Some(home) = &request.home {
+        return (Some(home.clone()), Some(false));
+    }
+    let same_process = current.filter(|record| {
+        read.same
+            && record.extra.get("harness").and_then(Value::as_str) == Some(request.harness.as_str())
+            && super::predecessor_identity(record).as_ref() == Some(&read.identity)
+    });
+    let prior_home = same_process.and_then(|record| views::text(record.extra.get("home")));
+    let prior_mode = same_process.and_then(|record| record.extra.get("home_implicit")?.as_bool());
+    if prior_home.is_some() && prior_mode.is_some() {
+        return (prior_home, prior_mode);
+    }
+    if let Some(home) = &read.home {
+        return (Some(home.home.display().to_string()), Some(!home.named));
+    }
+    (prior_home.or_else(|| request.account.clone()), None)
 }
 
 /// The posture fields an adoption names, in the form a confirmed
@@ -218,6 +264,7 @@ mod tests {
             extra_args: None,
         };
         let read = Recorded::planted(AdoptionRead {
+            home: None,
             identity: Identity {
                 pid: 5151,
                 start: "ticks:5151".into(),
@@ -262,6 +309,7 @@ mod tests {
         };
         let read = |same: bool| {
             Recorded::planted(AdoptionRead {
+                home: None,
                 identity: Identity {
                     pid: 5151,
                     start: "ticks:5151".into(),

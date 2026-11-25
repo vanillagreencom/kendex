@@ -19,7 +19,7 @@ use crate::accounts::wall::canon;
 use crate::accounts::{Env, PickAnswer, PickRequest};
 use crate::error::{Error, Result};
 use crate::harness::Harness;
-use crate::intent::EffectOp;
+use crate::intent::{EffectOp, Phase};
 use crate::launch::Permission;
 use crate::protocol::Outcome;
 use crate::record;
@@ -336,7 +336,11 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     {
         match record.harness {
             Some(Harness::Claude) => {
-                if let Some(implicit) = claude_home_mode(path, &doc, &record, &id, &home)? {
+                let implicit = match record.raw.get("home_implicit").and_then(Value::as_bool) {
+                    Some(mode) => Some(mode),
+                    None => claude_home_mode(path, &doc, &record, &id, &home)?,
+                };
+                if let Some(implicit) = implicit {
                     successor.home = Some(home);
                     successor.home_implicit = implicit;
                 }
@@ -385,6 +389,9 @@ fn claude_home_mode(
     id: &str,
     home: &str,
 ) -> Result<Option<bool>> {
+    let Some(identity) = &record.identity else {
+        return Ok(None);
+    };
     let Some(predecessor) = record
         .generation
         .and_then(|generation| generation.checked_sub(1))
@@ -405,8 +412,12 @@ fn claude_home_mode(
             {
                 return None;
             }
-            let opened = intent.phase.as_ref()?.opened()?;
-            (opened.pane == record.pane
+            let Phase::IdentityRead { opened, pid, start } = intent.phase.as_ref()? else {
+                return None;
+            };
+            (*pid == u64::from(identity.pid)
+                && start == &identity.start
+                && opened.pane == record.pane
                 && opened.server == record.server
                 && Some(opened.server_start) == record.server_start
                 && opened.home.as_deref() == Some(home)
