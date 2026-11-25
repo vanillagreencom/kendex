@@ -36,6 +36,8 @@ clap = { version = "4.6", features = ["derive"] }
 jiff = "0.2"
 # The tracker's issue pattern a branch is matched against, GH_ISSUE_PATTERN.
 regex = "1"
+# Match the Pi Claude transcript writer's Unicode NFC normalization.
+unicode-normalization = "=0.1.25"
 
 [dev-dependencies]
 tempfile = "3"

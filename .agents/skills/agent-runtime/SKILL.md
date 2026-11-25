@@ -83,7 +83,7 @@ The wrapper applies each `Grants` member only as the intent spells it:
 - Each `read_only` path must exist; the wrapper refuses a missing one.
 - `runtime_dir`: the user's runtime folder is hidden, and with it the tmux and session-bus sockets. With no `runtime_dir`, the folder stays in reach.
 - `seats`: the account paths the launch records.
-- `seat_mounts`: the ordered source and destination binds for a seat view. The wrapper applies them after the ordinary writable and read-only paths. The view has its own backing directory. Standing entries project read-only, and a link's target projects at its name.
+- `seat_mounts`: ordered source and destination binds for a seat view, each with an explicit read-only or writable mode. The wrapper applies them after the ordinary writable and read-only paths.
 - `Grants` in `runtime/src/confine.rs` names the other members.
 
 When a launch runs unconfined:

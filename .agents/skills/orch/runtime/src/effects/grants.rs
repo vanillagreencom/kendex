@@ -8,12 +8,14 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agent_runtime::accounts::usage::CLAUDE_CREDENTIALS_FILE;
 use agent_runtime::confine::{self, Answer, Cause, Grants, Host, SeatMount};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
 use agent_runtime::session::{CLAUDE_PROJECTS, COPILOT_SESSION_STATE, claude_slug};
 use serde_json::{Value, json};
+use unicode_normalization::UnicodeNormalization;
 
 use super::refused;
 use crate::error::Result;
@@ -121,6 +123,7 @@ pub(super) struct Granted {
     /// seat's session folders, which the harness could not make there.
     kept: Vec<PathBuf>,
     view_dirs: Vec<PathBuf>,
+    view_links: Vec<(PathBuf, PathBuf)>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
     /// A confined lane's own runtime cache, which its line names as
@@ -309,6 +312,7 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 struct SeatViews {
     mounts: Vec<SeatMount>,
     directories: Vec<PathBuf>,
+    links: Vec<(PathBuf, PathBuf)>,
     shared_dirs: Vec<PathBuf>,
     private_targets: Vec<PathBuf>,
 }
@@ -328,13 +332,14 @@ impl SeatViews {
         seat: &Path,
         kind: Harness,
         checkout_dirs: (&Path, &Path),
+        transcript_slug: &str,
     ) -> Result<()> {
         let mut key = DefaultHasher::new();
         seat.hash(&mut key);
         let backing = view_root.join(format!("{:016x}", key.finish()));
         let home = backing.join("home");
         self.directories.extend([backing.clone(), home.clone()]);
-        self.bind(home, seat.to_path_buf(), true);
+        self.bind(home.clone(), seat.to_path_buf(), true);
         let shared = match kind {
             Harness::Claude => CLAUDE_PROJECTS,
             Harness::Copilot => COPILOT_SESSION_STATE,
@@ -346,6 +351,24 @@ impl SeatViews {
         };
         for path in seat_entries(seat)? {
             let name = path.file_name().and_then(|name| name.to_str());
+            if kind == Harness::Claude
+                && name == Some(CLAUDE_CREDENTIALS_FILE)
+                && std::fs::symlink_metadata(&path)
+                    .map_err(|e| seat_read_failed(&path, e))?
+                    .is_file()
+            {
+                // Host renewal renames a new file over the credential. A
+                // directory bind keeps that replacement visible without
+                // granting the lane a write to the account.
+                let account = backing.join("account");
+                self.directories.push(account.clone());
+                self.bind(seat.to_path_buf(), account.clone(), false);
+                self.links.push((
+                    home.join(CLAUDE_CREDENTIALS_FILE),
+                    account.join(CLAUDE_CREDENTIALS_FILE),
+                ));
+                continue;
+            }
             if name.is_some_and(|name| name == shared || local.contains(&name)) {
                 if let Some(target) = resolved(&path).filter(|target| !target.starts_with(seat)) {
                     self.private_targets.push(target);
@@ -355,7 +378,7 @@ impl SeatViews {
             self.bind(read_only_bind(path.clone())?, path, false);
         }
         if kind == Harness::Claude {
-            self.claude_projects(seat, &backing, checkout_dirs)?;
+            self.claude_projects(seat, &backing, checkout_dirs, transcript_slug)?;
         } else {
             let destination = seat.join(shared);
             let source = seat_folder(destination.clone(), &mut self.shared_dirs)?;
@@ -369,15 +392,15 @@ impl SeatViews {
         seat: &Path,
         backing: &Path,
         (cwd, repository): (&Path, &Path),
+        slug: &str,
     ) -> Result<()> {
         // The observer reads transcripts under the launch cwd. Claude's
         // default auto memory is keyed by the Git root across worktrees.
         let projects = seat.join(CLAUDE_PROJECTS);
         let source = seat_folder(projects.clone(), &mut self.shared_dirs)?;
         self.bind(source.clone(), projects.clone(), false);
-        let slug = claude_slug(cwd);
-        let destination = projects.join(&slug);
-        let project = seat_folder(source.join(&slug), &mut self.shared_dirs)?;
+        let destination = projects.join(slug);
+        let project = seat_folder(source.join(slug), &mut self.shared_dirs)?;
         self.bind(project.clone(), destination.clone(), true);
         let local = backing.join("memory");
         self.directories.push(local.clone());
@@ -445,6 +468,50 @@ impl SeatViews {
         self.bind(local.to_path_buf(), memory_at, true);
         Ok(())
     }
+}
+
+/// The Claude bridge writes through cc-session-io's normalized project
+/// path. Native Claude lookups keep their own established path contract.
+fn pi_claude_slug(path: &Path) -> String {
+    let physical = resolved(path);
+    let path: String = physical
+        .as_deref()
+        .unwrap_or(path)
+        .to_string_lossy()
+        .nfc()
+        .collect();
+    let sanitized: String = path
+        .encode_utf16()
+        .map(|unit| {
+            u8::try_from(unit)
+                .ok()
+                .filter(u8::is_ascii_alphanumeric)
+                .map_or('-', char::from)
+        })
+        .collect();
+    const MAX: usize = 200;
+    if sanitized.len() <= MAX {
+        return sanitized;
+    }
+    let mut hash = path
+        .encode_utf16()
+        .fold(0i32, |hash, unit| {
+            hash.wrapping_mul(31).wrapping_add(i32::from(unit))
+        })
+        .unsigned_abs();
+    let mut suffix = Vec::new();
+    loop {
+        suffix.push(char::from_digit(hash % 36, 36).expect("base 36 digit"));
+        hash /= 36;
+        if hash == 0 {
+            break;
+        }
+    }
+    format!(
+        "{}-{}",
+        &sanitized[..MAX],
+        suffix.into_iter().rev().collect::<String>()
+    )
 }
 
 fn seat_entries(path: &Path) -> Result<Vec<PathBuf>> {
@@ -593,27 +660,18 @@ pub(super) fn of(
     }
     let private = folder(&root, item);
     let view_root = private.join(SEAT_VIEWS);
-    let mut views = SeatViews::default();
-    let mut seat_paths: Vec<PathBuf> = Vec::new();
+    let mut seat_paths = Vec::new();
     seats.sort_by_key(|(seat, _)| seat.components().count());
-    let repository = if checkout.common != checkout.git_dir {
-        checkout.common.parent().unwrap_or(&root)
-    } else {
-        &root
-    };
-    for (seat, kind) in seats {
-        if seat_paths.contains(&seat) {
-            continue;
+    seats.retain(|(seat, _)| {
+        if seat_paths.contains(seat) {
+            return false;
         }
+        seat_paths.push(seat.clone());
+        true
+    });
+    for (seat, kind) in &seats {
+        let kind = *kind;
         if answer == Answer::Confined && matches!(kind, Harness::Claude | Harness::Copilot) {
-            if root.starts_with(&seat) {
-                return Err(refused(
-                    "grant-seat-contains-checkout",
-                    &[("path", &seat.display().to_string())],
-                ));
-            }
-            views.add(&view_root, &seat, kind, (mail_root, repository))?;
-            seat_paths.push(seat);
             continue;
         }
         let (name, empty) = settings_file(kind);
@@ -661,7 +719,6 @@ pub(super) fn of(
                 }
             }
         }
-        seat_paths.push(seat);
     }
     let home = settings
         .home
@@ -707,6 +764,39 @@ pub(super) fn of(
     } else {
         answer
     };
+    let mut views = SeatViews::default();
+    if answer == Answer::Confined {
+        let repository = if checkout.common != checkout.git_dir {
+            checkout.common.parent().unwrap_or(&root)
+        } else {
+            &root
+        };
+        let bridge_seat = if harness == Harness::Pi
+            && harness.billed(request.model.as_deref().unwrap_or_default()) == Some(Harness::Claude)
+        {
+            homes.account.as_deref().or(account).and_then(resolved)
+        } else {
+            None
+        };
+        let bridge_slug = bridge_seat.as_ref().map(|_| pi_claude_slug(mail_root));
+        let native_slug = claude_slug(mail_root);
+        for (seat, kind) in &seats {
+            if matches!(kind, Harness::Claude | Harness::Copilot) {
+                if root.starts_with(seat) {
+                    return Err(refused(
+                        "grant-seat-contains-checkout",
+                        &[("path", &seat.display().to_string())],
+                    ));
+                }
+                let slug = if bridge_seat.as_ref() == Some(seat) {
+                    bridge_slug.as_deref().expect("bridge seat has a slug")
+                } else {
+                    &native_slug
+                };
+                views.add(&view_root, seat, *kind, (mail_root, repository), slug)?;
+            }
+        }
+    }
     // A seat's link may point into a writable checkout. Protect the same
     // contents at their original path as well as at the view's entry name.
     read_only.extend(
@@ -782,6 +872,7 @@ pub(super) fn of(
         usage: Some(usage),
         item_dir,
         view_dirs: views.directories,
+        view_links: views.links,
         kept,
         lane_writable,
         own_cache,
@@ -999,11 +1090,8 @@ fn gh_token() -> Option<String> {
 }
 
 impl Granted {
-    pub fn remove_failed_views(&self) -> Result<()> {
-        if self.view_dirs.is_empty() {
-            return Ok(());
-        }
-        remove_views(self.grants.file.parent().expect("grants file has a parent"))
+    pub fn view_path(&self) -> Option<PathBuf> {
+        (!self.view_dirs.is_empty()).then(|| self.grants.file.with_file_name(SEAT_VIEWS))
     }
 
     /// The variables the lane's launch line sets for its grants: the Pi
@@ -1077,6 +1165,15 @@ impl Granted {
             own_folder(&self.grants.file.with_file_name(SEAT_VIEWS))?;
             for dir in &self.view_dirs {
                 own_folder(dir)?;
+            }
+        }
+        for (link, target) in &self.view_links {
+            match std::os::unix::fs::symlink(target, link) {
+                Ok(()) => {}
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AlreadyExists
+                        && std::fs::read_link(link).is_ok_and(|old| old == *target) => {}
+                Err(e) => return Err(failed(link, e)),
             }
         }
         for dir in &self.kept {
@@ -1209,30 +1306,47 @@ pub(crate) fn remove_token(path: &Path) -> Result<()> {
     clippy::disallowed_methods,
     reason = "the close removes the lane's own backing directories after its processes stop"
 )]
-pub(crate) fn remove_views(private: &Path) -> Result<()> {
-    let path = private.join(SEAT_VIEWS);
+pub(crate) fn remove_views(mail_root: &Path, item: &str, path: &Path) -> Result<()> {
     let failed = |cause: &str| {
         refused(
             "grant-view-remove-failed",
             &[("path", &path.display().to_string()), ("cause", cause)],
         )
     };
-    match std::fs::symlink_metadata(&path) {
+    match std::fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(failed(&e.to_string())),
         Ok(meta) if !meta.is_dir() => return Err(failed("not-a-folder")),
         Ok(_) => {}
     }
-    let parent = std::fs::canonicalize(private).map_err(|e| failed(&e.to_string()))?;
-    if parent != private {
+    let root = std::fs::canonicalize(mail_root).map_err(|e| failed(&e.to_string()))?;
+    let item = crate::marker::item_name(item)?;
+    let suffix = crate::marker::mailbox_path(Path::new(""), item).join(SEAT_VIEWS);
+    if !path.starts_with(&root)
+        || !path.ends_with(suffix.strip_prefix("tmp").expect("mailbox is under tmp"))
+    {
+        return Err(failed("outside-mailbox"));
+    }
+    let physical = std::fs::canonicalize(path).map_err(|e| failed(&e.to_string()))?;
+    if physical != path {
         return Err(failed("linked-parent"));
     }
-    std::fs::remove_dir_all(&path).map_err(|e| failed(&e.to_string()))
+    std::fs::remove_dir_all(path).map_err(|e| failed(&e.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pi_claude_slug_matches_the_writers_unicode_and_long_path_contract() {
+        assert_eq!(pi_claude_slug(Path::new("/test/e\u{301} 🙂")), "-test-----");
+        let path = format!("/long/{}/e\u{301} 💩", "a".repeat(196));
+        assert_eq!(
+            pi_claude_slug(Path::new(&path)),
+            format!("-long-{}-bmaz82", "a".repeat(194))
+        );
+    }
 
     #[test]
     fn the_review_names_the_roster_s_other_harnesses() {

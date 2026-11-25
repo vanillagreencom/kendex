@@ -54,11 +54,11 @@ kendex installs these with orch.
 | On Linux, a lane runs sandboxed | yes | yes | yes | no |
 | On macOS, a lane runs sandboxed | no | no | no | no |
 
-On Linux the sandbox limits a lane's writes to its checkout, its issue's own records and the folders its launch grants. Copilot CLI lanes run outside it because the sandbox would hide Copilot's sign-in.
+On Linux the sandbox limits a lane's writes to its checkout, its issue's own records and the folders its launch grants. Claude workers write shell snapshots to their private seat view. Copilot CLI lanes run outside the sandbox because it would hide Copilot's sign-in.
 
 The sandbox is not complete. A sandboxed lane can still write:
 
-- the account folders' plugins and instruction files, and the session folders, among them the shell snapshots Claude Code runs before each command;
+- account files and session stores in Codex and Pi seats;
 - four parts of the main checkout's git folder: its hooks folder when it has none at launch, its worktree settings, its submodule stores and its attributes file;
 - the other lanes' worktree records.
 

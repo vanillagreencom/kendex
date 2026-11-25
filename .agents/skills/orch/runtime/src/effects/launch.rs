@@ -979,7 +979,7 @@ fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet
 /// window and the harness in it.
 fn local_launch(
     run: &Run,
-    operation: Operation,
+    mut operation: Operation,
     r: &LaunchLane,
     lane: &Lane,
     fleet: Fleet,
@@ -1011,10 +1011,16 @@ fn local_launch(
     if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
+    let view = prep.granted.view_path();
+    if let Some(path) = &view {
+        operation.record_seat_view(path.clone())?;
+    }
     if let Err(e) = prep.granted.write() {
         return Ok(rollback_local_views(
             operation.settle(Word::Failed, refusal_observation(&e)),
-            &prep.granted,
+            Some(&cwd),
+            &r.item,
+            view.as_deref(),
         ));
     }
     // The tree's setups run once what the grants bind stands: a confined
@@ -1022,7 +1028,9 @@ fn local_launch(
     if let Err(e) = build_runtimes(run.settings.inherited().setups, &prep.command) {
         return Ok(rollback_local_views(
             operation.settle(Word::Failed, refusal_observation(&Error::from(e))),
-            &prep.granted,
+            Some(&cwd),
+            &r.item,
+            view.as_deref(),
         ));
     }
     let target = prep.target.clone();
@@ -1052,17 +1060,29 @@ fn local_launch(
             outcome.annotate(&key, value);
         }
     }
-    Ok(rollback_local_views(outcome, &prep.granted))
+    Ok(rollback_local_views(
+        outcome,
+        Some(&cwd),
+        &r.item,
+        view.as_deref(),
+    ))
 }
 
 fn rollback_local_views(
     mut outcome: EffectOutcome,
-    granted: &super::grants::Granted,
+    mail_root: Option<&Path>,
+    item: &str,
+    view: Option<&Path>,
 ) -> EffectOutcome {
     if outcome.failed()
-        && let Err(e) = granted.remove_failed_views()
+        && let Some(view) = view
     {
-        outcome.annotate("seat_view_cleanup", refusal_observation(&e));
+        let removed = mail_root
+            .ok_or_else(|| refused("grant-view-root-missing", &[("item", item)]))
+            .and_then(|root| super::grants::remove_views(root, item, view));
+        if let Err(e) = removed {
+            outcome.annotate("seat_view_cleanup", refusal_observation(&e));
+        }
     }
     outcome
 }
@@ -2309,6 +2329,14 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
         .and_then(|observation| observation.get("confinement"))
     {
         outcome.annotate("confinement", confinement.clone());
+    }
+    if matches!(surface_of(lane.host.as_deref()), Surface::Local(())) {
+        outcome = rollback_local_views(
+            outcome,
+            lane.mail_root.as_deref().map(Path::new),
+            &lane.item,
+            intent.seat_view.as_deref(),
+        );
     }
     Ok(outcome)
 }

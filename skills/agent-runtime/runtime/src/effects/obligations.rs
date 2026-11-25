@@ -1796,6 +1796,7 @@ mod tests {
             observation: None,
             reconciled: None,
             observed_generation: None,
+            seat_view: None,
             extra: Default::default(),
         };
         let recorded = Obligations::recorded(&intent)

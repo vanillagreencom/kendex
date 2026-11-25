@@ -209,6 +209,8 @@ pub struct IntentClaimed {
 pub struct RecordProgress {
     pub intent_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_view: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<Phase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<ObligationRecord>,
@@ -436,6 +438,7 @@ pub fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         observation: None,
         reconciled: None,
         observed_generation: None,
+        seat_view: None,
         extra: Default::default(),
         notice: None,
     })
@@ -735,7 +738,7 @@ pub fn record_progress(
     // A write that carries only a notice mark is a continuation of the
     // intent's recorded outcome, taken on the closed intent; the store's
     // content comparison still holds the mark.
-    let continuation = r.phase.is_none() && r.obligations.is_none();
+    let continuation = r.phase.is_none() && r.obligations.is_none() && r.seat_view.is_none();
     if !continuation && !intent.open() {
         return Err(Error::IntentComplete {
             id: intent.id.clone(),
@@ -761,6 +764,18 @@ pub fn record_progress(
         && r.notice.is_some()
     {
         record::set(row, "notice", json(path, notice)?);
+    }
+    if let Some(seat_view) = &r.seat_view {
+        if intent.op != EffectOp::LaunchSession
+            || intent
+                .seat_view
+                .as_ref()
+                .is_some_and(|held| held != seat_view)
+        {
+            return Err(Error::refused("seat-view-owner", &[("intent", &intent.id)]));
+        }
+        intent.seat_view = Some(seat_view.clone());
+        record::set(row, "seat_view", json(path, seat_view)?);
     }
     if let Some(phase) = &r.phase {
         intent.phase = Some(phase.clone());
