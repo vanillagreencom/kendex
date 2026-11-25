@@ -921,9 +921,15 @@ pub fn outcome_arm(
             }
         }
         EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-            return Ok(controller::outcome_arm(
-                path, doc, intent, r, at, terminal, target,
-            )?);
+            let stale = controller::outcome_arm(path, doc, intent, r, at, terminal, target)?;
+            if stale.is_none()
+                && intent.op == EffectOp::StartController
+                && r.outcome == agent_runtime::protocol::Outcome::Confirmed
+                && let Some(session) = r.members.get("tmux_session").and_then(Value::as_str)
+            {
+                lane::record_tmux_session(path, doc, session)?;
+            }
+            return Ok(stale);
         }
     };
     if let Value::Object(moved) = serde_json::to_value(moved)? {

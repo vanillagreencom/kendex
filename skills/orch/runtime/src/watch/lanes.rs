@@ -82,6 +82,7 @@ use super::wake;
 use crate::effects::start_brief;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
+use crate::ops::lane::RecoveryReason;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, CloseGround, FleetState, Lane, LaneMembers, LaneStatus};
@@ -1925,8 +1926,6 @@ enum Routed {
     Left,
 }
 
-const AUTH_WALL: &str = "auth-wall";
-
 enum AuthRecovery {
     Ready,
     Opening,
@@ -1954,7 +1953,8 @@ fn auth_recovery(lane: &Lane, pass: &Pass) -> Result<AuthRecovery, String> {
     }
     let fleet = pass.state_dir.join(agent_runtime::record::FLEET_FILE_NAME);
     let members = LaneMembers::of(&fleet, close).map_err(|e| e.to_string())?;
-    if !matches!(members.close, Some(CloseGround::NoLanding { reason, .. }) if reason == AUTH_WALL)
+    if !matches!(members.close, Some(CloseGround::NoLanding { reason, .. })
+        if RecoveryReason::read(&reason) == Some(RecoveryReason::AuthWall))
     {
         return Ok(AuthRecovery::Ready);
     }
@@ -2156,7 +2156,7 @@ pub(crate) struct Composition<'a> {
     pub(crate) account: Option<&'a str>,
     pub(crate) exclude: Option<&'a str>,
     pub(crate) brief: fn(&Lane, Harness) -> Result<String, String>,
-    pub(crate) ground: Value,
+    pub(crate) ground: RecoveryReason,
 }
 
 /// A composed relaunch: the checkout it runs from and its two request files
@@ -2234,7 +2234,7 @@ pub(crate) fn compose_relaunch(
     let retire = json!({
         "op": "close-owned-resources",
         "item": lane.item,
-        "no_landing": how.ground.clone(),
+        "no_landing": how.ground.ground(),
     });
     std::fs::write(&close, retire.to_string())
         .map_err(|e| format!("request-unwritten path={} cause={e}", close.display()))?;
@@ -2287,8 +2287,8 @@ fn relaunch_request(
     session: Option<&str>,
 ) -> Result<Recovery, String> {
     let (exclude, reason) = match kind {
-        WallKind::Usage => (lane.account.as_deref(), "usage-limit"),
-        WallKind::Auth => (None, AUTH_WALL),
+        WallKind::Usage => (lane.account.as_deref(), RecoveryReason::UsageLimit),
+        WallKind::Auth => (None, RecoveryReason::AuthWall),
     };
     let Composed {
         cwd,
@@ -2302,7 +2302,7 @@ fn relaunch_request(
             account: to,
             exclude,
             brief: start_brief,
-            ground: json!({"reason": reason, "source": "wall-route"}),
+            ground: reason,
         },
         state_dir,
     )?;

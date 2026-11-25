@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 
 use super::refused;
 use crate::error::Result;
+use crate::ops::lane::RecoveryReason;
 use crate::ops::lane_model::{
     Mark, RecoverLaneModel, RecoveryRecorded, StopFailure, StopModelPredecessor,
 };
@@ -148,7 +149,7 @@ fn recover(
             account: lane.account.as_deref().filter(|a| !a.is_empty()),
             exclude: None,
             brief: continuation,
-            ground: json!({"reason": "model-switch", "source": "model-recovery", "interrupt": true}),
+            ground: RecoveryReason::ModelSwitch,
         },
         &settings.state_dir,
     )

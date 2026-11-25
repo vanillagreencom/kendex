@@ -351,7 +351,7 @@ pub(crate) fn server_absent(error: &Error) -> bool {
 /// refuses `tmux-socket-dir-unsafe`. A read or search bit replaces nothing,
 /// and a directory a user makes under the usual `022` umask carries them.
 pub(crate) fn socket_dir(socket: &Path) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     let Some(dir) = socket.parent().filter(|d| !d.as_os_str().is_empty()) else {
         return Ok(());
     };
@@ -370,9 +370,11 @@ pub(crate) fn socket_dir(socket: &Path) -> Result<()> {
         if e.kind() != std::io::ErrorKind::NotFound {
             return Err(failed("stat", e));
         }
-        std::fs::create_dir_all(dir).map_err(|e| failed("create", e))?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| failed("chmod", e))?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| failed("create", e))?;
     }
     let meta = std::fs::symlink_metadata(dir).map_err(|e| failed("stat", e))?;
     let uid = own_uid()?;
@@ -1586,6 +1588,12 @@ mod tests {
             }
             assert_eq!(mode(&standing), bits, "{bits:o}: left as it stood");
         }
+        let linked = dir.path().join("linked");
+        let target = dir.path().join("755");
+        std::os::unix::fs::symlink(&target, &linked).unwrap();
+        let refused = socket_dir(&linked.join("tmux.sock")).unwrap_err();
+        assert_eq!(refused.key(), "tmux-socket-dir-unsafe", "{refused}");
+        assert_eq!(mode(&target), 0o755);
         // `/` stands at `0755`, root's: only its owner decides the answer,
         // read here by the test itself, and nothing is made.
         let uid = |path: &Path| std::fs::metadata(path).unwrap().uid();

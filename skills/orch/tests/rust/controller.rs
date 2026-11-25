@@ -8688,6 +8688,96 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
     }
 }
 
+#[test]
+fn a_controller_start_records_the_session_for_resume_without_a_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-resume");
+    runner.init_fleet();
+    let (bin, watch_env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    let cwd = runner.state_dir();
+    let state = cwd.join(agent_runtime::record::FLEET_FILE_NAME);
+    let brief = cwd.join("brief.md");
+    std::fs::write(&brief, "START HERE\n").unwrap();
+    assert!(runner.fleet().get("tmux").is_none());
+
+    let run = |args: &[&str]| {
+        let mut command = isolated();
+        command
+            .args(["--state-dir", cwd.to_str().unwrap()])
+            .args(args)
+            .current_dir(cwd);
+        runner.apply_env(&mut command);
+        command.envs(watch_env.iter().map(|(key, value)| (key, value)));
+        command.env_remove("AGENT_RUNTIME_TMUX_SESSION");
+        command.output().unwrap()
+    };
+    let request = cwd.join("request.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "start-controller",
+            "controller": pending(cwd),
+            "session": "fleet",
+            "brief_file": brief,
+            "watch": watch_words(&state),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let started = effect_report(&run(&[
+        "op",
+        "--fleet",
+        "--request",
+        request.to_str().unwrap(),
+    ]));
+    assert_eq!(started["intent"]["outcome"], "confirmed", "{started}");
+    stop_live_watch(&runner, &state);
+    let before = runner.fleet();
+    let original = &before["controller"];
+    let pane = original["pane"].as_str().unwrap();
+    let id = original["session_id"].as_str().unwrap();
+    let file = project_dir(cwd, cwd).join(format!("{id}.jsonl"));
+    assert_eq!(file_turns(&file), ["START HERE"]);
+    // Keep the session standing when its controller's only window closes.
+    server.open_window("shell", cwd, pane_shell());
+    let killed = tmux(&server.socket, &["kill-pane", "-t", pane]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    let pid = u32::try_from(original["harness_pid"].as_u64().unwrap()).unwrap();
+    wait_until("the controller's pane and identity ended", SETTLE, || {
+        !server.panes().iter().any(|standing| standing == pane) && !live(pid)
+    });
+
+    let out = run(&["resume-controller", "--fleet"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{} {}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    stop_live_watch(&runner, &state);
+    let after = runner.fleet();
+    let successor = &after["controller"];
+    let successor_pane = successor["pane"].as_str().unwrap();
+    assert_ne!(successor_pane, pane);
+    assert_eq!(successor["session_id"], id);
+    assert_eq!(after["tmux"]["session"], "fleet");
+    let opened = tmux(
+        &server.socket,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            successor_pane,
+            "#{session_name}",
+        ],
+    );
+    assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "fleet");
+    assert_eq!(file_turns(&file).len(), 2);
+}
+
 /// The compare-and-swap set of `record`, with no pending standing.
 fn expected_of(record: &Value) -> Value {
     json!({
@@ -11011,6 +11101,17 @@ fn a_start_naming_no_session_opens_in_the_session_the_fleets_lanes_open_in() {
         ],
     );
     assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "lanes");
+
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let stop = runner.wait_intent_settled("stop-controller:", SETTLE);
+    assert_eq!(stop["outcome"], "confirmed", "{stop}");
+    let later = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": pending(runner.state_dir()),
+        "session": "fleet",
+    })));
+    assert_eq!(later["intent"]["outcome"], "confirmed", "{later}");
+    assert_eq!(runner.fleet()["tmux"]["session"], "lanes");
 }
 
 // ---------------------------------------------------------------------------
