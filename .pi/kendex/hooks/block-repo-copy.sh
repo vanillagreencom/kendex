@@ -7,24 +7,91 @@
 # summary: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
 # safety: Temp destinations are commonly RAM-backed tmpfs; a multi-gigabyte tree copy fills the filesystem and every process writing there then fails with ENOSPC. One regex over the raw command decides, in the order the words stand, so nothing is resolved, expanded or stat-ed: a source whose last path component IS `.git` or `target` is expensive by construction, and a destination spelled under a temp root is scratch. Both edges of that component are tested, so a word merely ending in one — a `…/bar.git` clone URL, a `build-target` directory — is not it. A source reached through a variable, and a repository named only by its working-tree path, are not seen; neither is a `tar -czf DEST SRC`, which spells the destination before the source. The reading runs the other way too: the three parts count wherever they stand, a quoted string and a comment tail included, so a read-only command spelling out a copy is refused as the copy it is not. Every refusal opens with `block-repo-copy: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
-# kendex: rendered as the project Pi install of this hook. A pi-hooks
-# carrier before 0.19.3 names no registration, so the render names it.
+# kendex: a pi-hooks carrier before 0.19.3 names no registration, so this
+# render reads it from the path the registry spawned (docs/adapters/pi.md).
 if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
   kendex_hook_at=${BASH_SOURCE[0]-}
-  kendex_hook_tail='/.pi/kendex/hooks/block-repo-copy.sh'
+  kendex_hook_tail='/kendex/hooks/block-repo-copy.sh'
+  kendex_hook_scope=''
   case ${kendex_hook_at//\\//} in
-    *"$kendex_hook_tail")
+    */.pi"$kendex_hook_tail") kendex_hook_scope=project ;;
+    *"$kendex_hook_tail") kendex_hook_scope=global ;;
+  esac
+  if [ "$kendex_hook_scope" = project ]; then
+    kendex_hook_win=''
+    case ${OSTYPE-} in msys* | cygwin* | win32*) kendex_hook_win=1 ;; esac
+    kendex_hook_home=${HOME-}
+    [ -z "$kendex_hook_win" ] || kendex_hook_home=${USERPROFILE-}
+    kendex_hook_rest=${PI_CODING_AGENT_DIR-}
+    kendex_hook_rest=${kendex_hook_rest#"${kendex_hook_rest%%[![:space:]]*}"}
+    kendex_hook_rest=${kendex_hook_rest%"${kendex_hook_rest##*[![:space:]]}"}
+    case $kendex_hook_rest in
+      '~') kendex_hook_rest=$kendex_hook_home ;;
+      '~/'*) kendex_hook_rest=$kendex_hook_home/${kendex_hook_rest:2} ;;
+    esac
+    kendex_hook_rest=${kendex_hook_rest//\\//}
+    kendex_hook_lead=''
+    if [ -z "$kendex_hook_win" ]; then
+      case $kendex_hook_rest in /*) ;; *) kendex_hook_rest='' ;; esac
+    else
+      case $kendex_hook_rest in
+        [A-Za-z]:/*) kendex_hook_lead=${kendex_hook_rest:0:2} kendex_hook_rest=${kendex_hook_rest:2} ;;
+        //[!/]*/[!/]*) kendex_hook_lead=/ ;;
+        *) kendex_hook_rest='' ;;
+      esac
+    fi
+    kendex_hook_global=''
+    if [ -n "$kendex_hook_rest" ]; then
+      while [ -n "$kendex_hook_rest" ]; do
+        kendex_hook_part=${kendex_hook_rest%%/*}
+        case $kendex_hook_rest in */*) kendex_hook_rest=${kendex_hook_rest#*/} ;; *) kendex_hook_rest='' ;; esac
+        case $kendex_hook_part in
+          '' | .) ;;
+          ..) kendex_hook_global=${kendex_hook_global%/*} ;;
+          *) kendex_hook_global=$kendex_hook_global/$kendex_hook_part ;;
+        esac
+      done
+      kendex_hook_global=$kendex_hook_lead${kendex_hook_global:-/}
+    fi
+    kendex_hook_pi=${kendex_hook_at//\\//}
+    kendex_hook_pi=${kendex_hook_pi%"$kendex_hook_tail"}
+    if [ -n "$kendex_hook_global" ] && [ "$kendex_hook_global" = "$kendex_hook_pi" ]; then
+      kendex_hook_scope=global
+      kendex_hook_project=${kendex_hook_pi%/.pi}
+      case $kendex_hook_project in '' | [A-Za-z]:) kendex_hook_project=$kendex_hook_project/ ;; esac
+      kendex_hook_here=$(pwd -P 2>/dev/null) || kendex_hook_here=''
+      while [ -n "$kendex_hook_here" ]; do
+        if [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
+          kendex_hook_scope=both
+          break
+        fi
+        case $kendex_hook_here in
+          */?*)
+            kendex_hook_here=${kendex_hook_here%/*}
+            kendex_hook_here=${kendex_hook_here:-/}
+            ;;
+          *) kendex_hook_here='' ;;
+        esac
+      done
+    else
+      kendex_hook_tail=/.pi$kendex_hook_tail
+    fi
+  fi
+  case $kendex_hook_scope in
+    project | global)
       kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
       case ${kendex_hook_root//\\//} in
         '') kendex_hook_root=${kendex_hook_at:0:1} ;;
         [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
       esac
       case ${kendex_hook_root//\\//} in
-        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=$kendex_hook_scope KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
       esac
       ;;
   esac
-  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+  unset kendex_hook_at kendex_hook_tail kendex_hook_scope kendex_hook_win kendex_hook_home \
+    kendex_hook_rest kendex_hook_lead kendex_hook_global kendex_hook_part kendex_hook_pi \
+    kendex_hook_project kendex_hook_here kendex_hook_root
 fi
 
 set -euo pipefail

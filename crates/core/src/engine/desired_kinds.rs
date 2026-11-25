@@ -563,7 +563,7 @@ pub(crate) fn restated_hook_artifact(
     };
     let target = hook_target(env, scope, harness, name, vars)?;
     if let (HarnessId::Pi, HookBody::Script(script)) = (harness, &mut hook.body) {
-        crate::harness::pi::stamp_hook(env, scope, name, script);
+        crate::harness::pi::stamp_hook(name, script);
     }
     state
         .warnings

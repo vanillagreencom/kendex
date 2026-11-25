@@ -3,6 +3,11 @@
 //! carrier names the registration (pi-hooks 0.19.3 and later) or not
 //! (0.19.2 and earlier), and a file that is both scopes' install is refused
 //! under a carrier that cannot say which registration started it.
+//!
+//! The guards run as the repository ships them, over two sets of the skills
+//! they read: the shipped readers, which take the install from the path the
+//! guard hands them, and readers that demand the project registration, the
+//! readers KEN-5647 moves the guards onto.
 
 use super::{World, carrier_runner, register_carrier, scope, source_path, world};
 use crate::test_util;
@@ -23,9 +28,26 @@ enum Layout {
     Ordinary,
     /// `<project>/.pi` links to a directory elsewhere in the project.
     Linked,
+    /// The global root is elsewhere in the project, and the project's hook
+    /// directory links into the global one: one directory of scripts, two
+    /// registries, the hooks registered in the project's alone.
+    LinkedHooks,
     /// The global root is `<project>/.pi`, so both registries are one file
     /// and every hook script is both scopes' install.
     Overlap,
+    /// Rendered as `Ordinary`, then Pi is pointed at the checkout's `.pi`:
+    /// the overlap of a checkout whose files were written before.
+    Retargeted,
+}
+
+/// The skills the guards read their install through.
+#[derive(Clone, Copy, Debug)]
+enum Readers {
+    /// The repository's settings loader, and a turn-end runtime that holds
+    /// for the hook directory the guard hands it.
+    Shipped,
+    /// Both of those, answering only for the project registration.
+    Registration,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -60,11 +82,11 @@ fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool) {
     }
 }
 
-/// The skills the guards read. Each reader the guards reach demands the
-/// project install's registration, so a guard that lost it, or took the
-/// global one, loses its verdict.
+/// The skills the guards read. Under `Readers::Registration` each reader the
+/// guards reach demands the project install's registration, so a guard that
+/// lost it, or took the global one, loses its verdict.
 #[allow(clippy::unwrap_used)]
-fn catalog_skills(catalog: &Path, repo: &Path) {
+fn catalog_skills(catalog: &Path, repo: &Path, readers: Readers) {
     for skill in ["commit-guards", "mailbox", "orch", "agent-runtime"] {
         let dir = catalog.join("skills").join(skill);
         fs::create_dir_all(dir.join("scripts")).unwrap();
@@ -80,38 +102,47 @@ fn catalog_skills(catalog: &Path, repo: &Path) {
         let file = file.unwrap();
         fs::copy(file.path(), libraries.join(file.file_name())).unwrap();
     }
-    // The real settings loader still reads the configured command policy;
-    // it answers only for the project registration.
-    let settings = libraries.join("settings.sh");
-    let loader = fs::read_to_string(&settings).unwrap();
-    fs::write(
-        settings,
-        format!(
-            r#"[[ "${{KENDEX_HOOK_SCOPE:-}}" = project &&
+    let registration = match readers {
+        Readers::Shipped => "",
+        Readers::Registration => {
+            r#"&& "${KENDEX_HOOK_SCOPE:-}" = project && "${KENDEX_HOOK_ROOT:-}" = "$FIXTURE_PROJECT""#
+        }
+    };
+    if let Readers::Registration = readers {
+        // The real settings loader still reads the configured command policy;
+        // it answers only for the project registration.
+        let settings = libraries.join("settings.sh");
+        let loader = fs::read_to_string(&settings).unwrap();
+        fs::write(
+            settings,
+            format!(
+                r#"[[ "${{KENDEX_HOOK_SCOPE:-}}" = project &&
       "${{KENDEX_HOOK_ROOT:-}}" = "$FIXTURE_PROJECT" ]] || return 1
 {loader}"#
-        ),
-    )
-    .unwrap();
+            ),
+        )
+        .unwrap();
+    }
     executable(
         &catalog.join("skills/mailbox/scripts/lane-mail"),
         "#!/bin/sh\nexit 1\n",
     );
     // The orch suite covers the mailbox decision. Here the installed runtime
-    // holds the turn only for the project registration and its hook
-    // directory, with the fixture's halt standing.
+    // holds the turn only for the project's hook directory, with the
+    // fixture's halt standing.
     executable(
         &catalog.join("skills/orch/scripts/orch-runtime"),
-        r#"#!/bin/bash
+        &format!(
+            r#"#!/bin/bash
 set -eu
 # orch-runtime: hook-entry-no-build
-if [[ "$#" = 4 && "$1:$2:$4" = turn-end:--hook-dir:halt &&
-      "${KENDEX_HOOK_SCOPE:-}" = project && "${KENDEX_HOOK_ROOT:-}" = "$FIXTURE_PROJECT" &&
+if [[ "$#" = 4 && "$1:$2:$4" = turn-end:--hook-dir:halt {registration} &&
       "$3" -ef "$FIXTURE_PROJECT/.pi/kendex/hooks" && -f "$FIXTURE_PROJECT/halt" ]]; then
   printf 'lane-mail-check: halt=fixture\n' >&2
   exit 2
 fi
-"#,
+"#
+        ),
     );
 }
 
@@ -131,22 +162,41 @@ fn refresh_project(
 #[test]
 fn a_project_refresh_keeps_both_pi_guards_on_the_project_install_under_either_carrier() {
     let Some(bun) = carrier_runner() else { return };
-    for layout in [Layout::Ordinary, Layout::Linked, Layout::Overlap] {
-        assert_project_refresh(&bun, layout);
+    for readers in [Readers::Shipped, Readers::Registration] {
+        for layout in [
+            Layout::Ordinary,
+            Layout::Linked,
+            Layout::LinkedHooks,
+            Layout::Overlap,
+            Layout::Retargeted,
+        ] {
+            assert_project_refresh(&bun, layout, readers);
+        }
     }
 }
 
 #[allow(clippy::unwrap_used)]
-fn assert_project_refresh(bun: &Path, layout: Layout) {
+fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
     let w = world();
     let global = match layout {
-        Layout::Ordinary => w.home.join(".pi/agent"),
+        Layout::Ordinary | Layout::Retargeted => w.home.join(".pi/agent"),
         Layout::Linked => {
             let pi = w.project.join(".pi");
             let shared = w.project.join("shared-pi");
             fs::rename(&pi, &shared).unwrap();
             symlink(&shared, &pi).unwrap();
             w.home.join(".pi/agent")
+        }
+        Layout::LinkedHooks => {
+            let global = w.project.join("global-pi");
+            fs::create_dir_all(global.join("kendex/hooks")).unwrap();
+            fs::create_dir_all(w.project.join(".pi/kendex")).unwrap();
+            symlink(
+                global.join("kendex/hooks"),
+                w.project.join(".pi/kendex/hooks"),
+            )
+            .unwrap();
+            global
         }
         Layout::Overlap => w.project.join(".pi"),
     };
@@ -158,7 +208,7 @@ fn assert_project_refresh(bun: &Path, layout: Layout) {
     let catalog = w.home.join("cat");
     fs::create_dir_all(catalog.join("hooks")).unwrap();
     fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    catalog_skills(&catalog, &repo);
+    catalog_skills(&catalog, &repo, readers);
 
     register_carrier(&global);
     assert_eq!(
@@ -190,6 +240,11 @@ fn assert_project_refresh(bun: &Path, layout: Layout) {
         settings,
         "{layout:?}: the project refresh rewrote the global carrier's settings"
     );
+    // The global root a session reads from from here on.
+    let global = match layout {
+        Layout::Retargeted => w.project.join(".pi"),
+        _ => global,
+    };
 
     let guarded = vec![
         None,
@@ -199,28 +254,37 @@ fn assert_project_refresh(bun: &Path, layout: Layout) {
     ];
     let metadata = drive(bun, &w, &repo, &nested, &global, Carrier::Metadata);
     let legacy = drive(bun, &w, &repo, &nested, &global, Carrier::Legacy);
-    match layout {
-        Layout::Ordinary | Layout::Linked => {
-            assert_eq!(metadata, guarded, "{layout:?}, carrier metadata");
-            assert_eq!(legacy, guarded, "{layout:?}, pi-hooks 0.19.2 spawn");
+    let case = format!("{layout:?}, {readers:?} readers");
+    match (layout, readers) {
+        (Layout::LinkedHooks, _) => {
+            // The command check on main takes its install from its physical
+            // directory, here the global root's, and reads no project
+            // policy under either carrier; KEN-5647 moves it onto the
+            // registration. The old carrier still runs what the new one does.
+            assert_eq!(metadata[3], guarded[3], "{case}, carrier metadata");
+            assert_eq!(legacy, metadata, "{case}, pi-hooks 0.19.2 spawn");
         }
-        Layout::Overlap => {
+        (Layout::Ordinary | Layout::Linked, _) => {
+            assert_eq!(metadata, guarded, "{case}, carrier metadata");
+            assert_eq!(legacy, guarded, "{case}, pi-hooks 0.19.2 spawn");
+        }
+        (Layout::Overlap | Layout::Retargeted, _) => {
             // The carrier's registration reaches the mailbox hold. The
             // command check on main still classifies this layout from its own
             // path, a global root, and reads no project policy; KEN-5647 moves
             // it onto the registration.
-            assert_eq!(metadata[3], guarded[3], "{layout:?}, carrier metadata");
+            assert_eq!(metadata[3], guarded[3], "{case}, carrier metadata");
             assert!(
                 !metadata
                     .iter()
                     .flatten()
                     .any(|line| overlap_refusal(line).is_some()),
-                "{layout:?}, carrier metadata: {metadata:?}"
+                "{case}, carrier metadata: {metadata:?}"
             );
             for line in &legacy {
                 assert!(
                     matches!(line.as_deref().and_then(overlap_refusal), Some((hook, "carrier=pi-hooks>=0.19.3")) if GUARDS.contains(&hook)),
-                    "{layout:?}, pi-hooks 0.19.2 spawn: {legacy:?}"
+                    "{case}, pi-hooks 0.19.2 spawn: {legacy:?}"
                 );
             }
         }

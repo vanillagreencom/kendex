@@ -8,24 +8,91 @@
 # summary: Stops plain rm on shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
 # safety: The operand scan checks plain rm. It excludes git rm, including commands with global Git options. Git rejects empty path arguments and paths outside the repository. Only a raw refusal starts the boundary parser. Masking requires one complete simple command whose words are literal: safe unquoted bytes, single-quoted text, or double-quoted text without expansions or escapes. A quoted-delimiter heredoc is data for cat with an optional literal output file. Python with a lone dash or a literal quoted -c program, with no other arguments or redirections, must also pass one closed string-program grammar: unprefixed string literals, assignments to names holding strings, string replacement with string arguments, and builtin print of a string. Only previously assigned string names may be read. Process starts, dynamic code, arbitrary calls or aliases, imports, other interpreters and all unknown Python syntax keep the original raw scan. Only whitespace may follow the command or closing delimiter. Inline or file programs with heredoc stdin, expanded words, multiple commands or heredocs, and all unproved syntax keep the original scan. The scan refuses plain rm on TMPDIR, TMP, TEMP, AGENT_TMPDIR or HOME roots, globs directly under them, and child paths containing . or .. segments, regardless of flags, including `${NAME:?…}`. Literal operands are compared as text against nonempty hook environment values, with trailing slashes ignored; no filesystem reads or glob expansion occur. Named child paths without . or .. segments pass this check. The empty-variable check refuses `$NAME`, `${NAME}` and `${NAME:-…}` roots; `${NAME:?…}` passes it. A redirection target is not an operand. This is not a full shell evaluator: aliases such as `D=$TMPDIR`, `${!NAME}`, cd followed by relative rm, split command names and line continuations can escape it. Every refusal opens with `block-unsafe-rm: <key>=<value>`; captured command output follows that line. Missing tools or unreadable payload produce one keyed warning and allow the call.
 # ---
-# kendex: rendered as the project Pi install of this hook. A pi-hooks
-# carrier before 0.19.3 names no registration, so the render names it.
+# kendex: a pi-hooks carrier before 0.19.3 names no registration, so this
+# render reads it from the path the registry spawned (docs/adapters/pi.md).
 if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
   kendex_hook_at=${BASH_SOURCE[0]-}
-  kendex_hook_tail='/.pi/kendex/hooks/block-unsafe-rm.sh'
+  kendex_hook_tail='/kendex/hooks/block-unsafe-rm.sh'
+  kendex_hook_scope=''
   case ${kendex_hook_at//\\//} in
-    *"$kendex_hook_tail")
+    */.pi"$kendex_hook_tail") kendex_hook_scope=project ;;
+    *"$kendex_hook_tail") kendex_hook_scope=global ;;
+  esac
+  if [ "$kendex_hook_scope" = project ]; then
+    kendex_hook_win=''
+    case ${OSTYPE-} in msys* | cygwin* | win32*) kendex_hook_win=1 ;; esac
+    kendex_hook_home=${HOME-}
+    [ -z "$kendex_hook_win" ] || kendex_hook_home=${USERPROFILE-}
+    kendex_hook_rest=${PI_CODING_AGENT_DIR-}
+    kendex_hook_rest=${kendex_hook_rest#"${kendex_hook_rest%%[![:space:]]*}"}
+    kendex_hook_rest=${kendex_hook_rest%"${kendex_hook_rest##*[![:space:]]}"}
+    case $kendex_hook_rest in
+      '~') kendex_hook_rest=$kendex_hook_home ;;
+      '~/'*) kendex_hook_rest=$kendex_hook_home/${kendex_hook_rest:2} ;;
+    esac
+    kendex_hook_rest=${kendex_hook_rest//\\//}
+    kendex_hook_lead=''
+    if [ -z "$kendex_hook_win" ]; then
+      case $kendex_hook_rest in /*) ;; *) kendex_hook_rest='' ;; esac
+    else
+      case $kendex_hook_rest in
+        [A-Za-z]:/*) kendex_hook_lead=${kendex_hook_rest:0:2} kendex_hook_rest=${kendex_hook_rest:2} ;;
+        //[!/]*/[!/]*) kendex_hook_lead=/ ;;
+        *) kendex_hook_rest='' ;;
+      esac
+    fi
+    kendex_hook_global=''
+    if [ -n "$kendex_hook_rest" ]; then
+      while [ -n "$kendex_hook_rest" ]; do
+        kendex_hook_part=${kendex_hook_rest%%/*}
+        case $kendex_hook_rest in */*) kendex_hook_rest=${kendex_hook_rest#*/} ;; *) kendex_hook_rest='' ;; esac
+        case $kendex_hook_part in
+          '' | .) ;;
+          ..) kendex_hook_global=${kendex_hook_global%/*} ;;
+          *) kendex_hook_global=$kendex_hook_global/$kendex_hook_part ;;
+        esac
+      done
+      kendex_hook_global=$kendex_hook_lead${kendex_hook_global:-/}
+    fi
+    kendex_hook_pi=${kendex_hook_at//\\//}
+    kendex_hook_pi=${kendex_hook_pi%"$kendex_hook_tail"}
+    if [ -n "$kendex_hook_global" ] && [ "$kendex_hook_global" = "$kendex_hook_pi" ]; then
+      kendex_hook_scope=global
+      kendex_hook_project=${kendex_hook_pi%/.pi}
+      case $kendex_hook_project in '' | [A-Za-z]:) kendex_hook_project=$kendex_hook_project/ ;; esac
+      kendex_hook_here=$(pwd -P 2>/dev/null) || kendex_hook_here=''
+      while [ -n "$kendex_hook_here" ]; do
+        if [ "$kendex_hook_here" -ef "$kendex_hook_project" ]; then
+          kendex_hook_scope=both
+          break
+        fi
+        case $kendex_hook_here in
+          */?*)
+            kendex_hook_here=${kendex_hook_here%/*}
+            kendex_hook_here=${kendex_hook_here:-/}
+            ;;
+          *) kendex_hook_here='' ;;
+        esac
+      done
+    else
+      kendex_hook_tail=/.pi$kendex_hook_tail
+    fi
+  fi
+  case $kendex_hook_scope in
+    project | global)
       kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
       case ${kendex_hook_root//\\//} in
         '') kendex_hook_root=${kendex_hook_at:0:1} ;;
         [A-Za-z]:) kendex_hook_root+=${kendex_hook_at:2:1} ;;
       esac
       case ${kendex_hook_root//\\//} in
-        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
+        /* | [A-Za-z]:/*) export KENDEX_HOOK_SCOPE=$kendex_hook_scope KENDEX_HOOK_ROOT="$kendex_hook_root" ;;
       esac
       ;;
   esac
-  unset kendex_hook_at kendex_hook_tail kendex_hook_root
+  unset kendex_hook_at kendex_hook_tail kendex_hook_scope kendex_hook_win kendex_hook_home \
+    kendex_hook_rest kendex_hook_lead kendex_hook_global kendex_hook_part kendex_hook_pi \
+    kendex_hook_project kendex_hook_here kendex_hook_root
 fi
 
 set -euo pipefail
