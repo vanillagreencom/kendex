@@ -8739,19 +8739,157 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
 
 #[test]
 fn a_controller_start_records_the_session_for_resume_without_a_lane() {
+    resume_started_controller(ResumeHome::Account);
+}
+
+/// An accountless Claude controller resumes in the config dir its record
+/// keeps, in the mode it ran in, once nothing in the environment names it:
+/// started on a named home, a named `$HOME/.claude` or the implicit default,
+/// or adopted naming its home, whether that home is a named one or the
+/// implicit process's default path. The implicit default resumes under the
+/// `HOME` it ran with, its config dir variable unset, where the resume's
+/// caller and the fleet server hold another `HOME` and another config dir.
+#[test]
+fn an_accountless_controller_resumes_in_its_recorded_home_and_mode() {
+    for mode in [
+        ResumeHome::Named,
+        ResumeHome::NamedDefault,
+        ResumeHome::Implicit,
+        ResumeHome::Adopted,
+        ResumeHome::AdoptedDefault,
+    ] {
+        resume_started_controller(mode);
+    }
+}
+
+/// A controller registered from a pane on its implicit default, which the
+/// registration bills as the account at that path, resumes on that default
+/// under the `HOME` it ran with, its config dir variable unset, and keeps
+/// its account.
+#[test]
+fn a_registered_implicit_controller_resumes_on_its_default_and_keeps_its_account() {
+    resume_started_controller(ResumeHome::Registered);
+}
+
+/// A same-pane adoption keeps the recorded mode for the process the record
+/// names and reads a replacement's own: the replaced process's mode never
+/// carries over to the process now in the pane.
+#[test]
+fn a_same_pane_adoption_keeps_the_mode_of_the_process_it_names() {
+    resume_started_controller(ResumeHome::Readopted);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeHome {
+    /// Started on an account.
+    Account,
+    /// Started with the fleet server naming a home of its own.
+    Named,
+    /// Started with the fleet server naming `$HOME/.claude`.
+    NamedDefault,
+    /// Started on the implicit default.
+    Implicit,
+    /// Opened by hand on a named home and adopted naming it.
+    Adopted,
+    /// Opened by hand on the implicit default and adopted naming its path.
+    AdoptedDefault,
+    /// Started on the implicit default, adopted again from its pane, then
+    /// replaced in that pane by a process naming the same path.
+    Readopted,
+    /// Opened by hand on the implicit default and registered from its pane.
+    Registered,
+}
+
+fn resume_started_controller(mode: ResumeHome) {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-resume");
     runner.init_fleet();
     let (bin, watch_env) = watch_world(runner.state_dir());
     runner.tools = Some(bin);
-    let cwd = runner.state_dir();
+    let login_home = dir.path().join("home");
+    std::fs::create_dir(&login_home).unwrap();
+    let set_home = |runner: &mut Runner, home: &Path| {
+        for (key, subdir) in [
+            ("HOME", ""),
+            ("XDG_CONFIG_HOME", "config"),
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_STATE_HOME", "state"),
+            ("XDG_CACHE_HOME", "cache"),
+        ] {
+            let value = home.join(subdir);
+            runner.env.retain(|(name, _)| name != key);
+            runner
+                .env
+                .push((key.to_owned(), value.display().to_string()));
+            let set = tmux(
+                &server.socket,
+                &["set-environment", "-g", key, value.to_str().unwrap()],
+            );
+            assert!(set.status.success(), "{}", stderr(&set));
+        }
+    };
+    set_home(&mut runner, &login_home);
+    let cwd = runner.state_dir().to_path_buf();
+    let cwd = cwd.as_path();
     let state = cwd.join(agent_runtime::record::FLEET_FILE_NAME);
     let brief = cwd.join("brief.md");
     std::fs::write(&brief, "START HERE\n").unwrap();
-    assert!(runner.fleet().get("tmux").is_none());
+    let mut controller = pending(cwd);
+    let home = match mode {
+        ResumeHome::Account => cwd.to_path_buf(),
+        ResumeHome::Named | ResumeHome::Adopted => cwd.join("native-home"),
+        ResumeHome::NamedDefault
+        | ResumeHome::Implicit
+        | ResumeHome::AdoptedDefault
+        | ResumeHome::Readopted
+        | ResumeHome::Registered => login_home.join(".claude"),
+    };
+    // The mode the record keeps beside its home, `home_implicit`: a host
+    // with no `/proc` reads no process environment, so an adoption naming a
+    // path records none.
+    let mut recorded = match mode {
+        ResumeHome::Account
+        | ResumeHome::Named
+        | ResumeHome::NamedDefault
+        | ResumeHome::Adopted => Some(false),
+        ResumeHome::AdoptedDefault => cfg!(target_os = "linux").then_some(true),
+        ResumeHome::Implicit | ResumeHome::Readopted | ResumeHome::Registered => Some(true),
+    };
+    if mode == ResumeHome::Account {
+        assert!(runner.fleet().get("tmux").is_none());
+    } else {
+        // Isolate the native home from session persistence.
+        let mut fleet = runner.fleet();
+        fleet["tmux"] = json!({"session": "fleet"});
+        runner.write_fleet(&fleet);
+        controller.as_object_mut().unwrap().remove("account");
+        controller.as_object_mut().unwrap().remove("home");
+        std::fs::create_dir(&home).unwrap();
+    }
+    let set_config_dir = |value: Option<&Path>| {
+        let out = match value {
+            Some(value) => tmux(
+                &server.socket,
+                &[
+                    "set-environment",
+                    "-g",
+                    "CLAUDE_CONFIG_DIR",
+                    value.to_str().unwrap(),
+                ],
+            ),
+            None => tmux(
+                &server.socket,
+                &["set-environment", "-gu", "CLAUDE_CONFIG_DIR"],
+            ),
+        };
+        assert!(out.status.success(), "{}", stderr(&out));
+    };
+    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
+        set_config_dir(Some(&home));
+    }
 
-    let run = |args: &[&str]| {
+    let run = |runner: &Runner, args: &[&str]| {
         let mut command = isolated();
         command
             .args(["--state-dir", cwd.to_str().unwrap()])
@@ -8760,35 +8898,178 @@ fn a_controller_start_records_the_session_for_resume_without_a_lane() {
         runner.apply_env(&mut command);
         command.envs(watch_env.iter().map(|(key, value)| (key, value)));
         command.env_remove("AGENT_RUNTIME_TMUX_SESSION");
+        command.env_remove("CLAUDE_CONFIG_DIR");
         command.output().unwrap()
     };
-    let request = cwd.join("request.json");
-    std::fs::write(
-        &request,
-        json!({
-            "op": "start-controller",
-            "controller": pending(cwd),
-            "session": "fleet",
-            "brief_file": brief,
-            "watch": watch_words(&state),
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let started = effect_report(&run(&[
-        "op",
-        "--fleet",
-        "--request",
-        request.to_str().unwrap(),
-    ]));
-    assert_eq!(started["intent"]["outcome"], "confirmed", "{started}");
-    stop_live_watch(&runner, &state);
-    let before = runner.fleet();
+    if matches!(
+        mode,
+        ResumeHome::Adopted | ResumeHome::AdoptedDefault | ResumeHome::Registered
+    ) {
+        let id = "a8bf284a-7556-42a7-98de-20c7660878b8";
+        plant_claude_session(&home, cwd, id);
+        let config_dir = if mode == ResumeHome::Adopted {
+            format!("CLAUDE_CONFIG_DIR={} ", home.display())
+        } else {
+            String::new()
+        };
+        let pane = server.open_window(
+            "manual-controller",
+            cwd,
+            &format!(
+                "exec env {config_dir}{} --resume {id}",
+                stub("stub-resume").display()
+            ),
+        );
+        server.await_composer(&pane);
+        if mode == ResumeHome::Registered {
+            // The account the registration derives is the default path, whose
+            // sign-in the resume judges.
+            plant_credential(&home);
+            let watch_tools = runner.tools.clone();
+            register_tools(&mut runner, CLAUDE_HOOK, 0);
+            let out = register(&runner, &pane, &[], &[]);
+            assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+            runner.tools = watch_tools;
+            // The id the session's next hook run binds.
+            let mut fleet = runner.fleet();
+            fleet["controller"]["session_id"] = json!(id);
+            runner.write_fleet(&fleet);
+        } else {
+            let out = adopt(
+                &runner,
+                &pane,
+                cwd,
+                &["--session-id", id, "--home", home.to_str().unwrap()],
+            );
+            assert!(out.status.success(), "{mode:?}: {}", stderr(&out));
+        }
+        let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+        std::fs::write(
+            &paths.flags,
+            serde_json::to_vec(&orch_runtime::watch::claim::StartFlags {
+                interval: 240,
+                max_loops: 25,
+                since: None,
+                repos: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    } else {
+        let request = cwd.join("request.json");
+        std::fs::write(
+            &request,
+            json!({
+                "op": "start-controller",
+                "controller": controller,
+                "session": "fleet",
+                "brief_file": brief,
+                "watch": watch_words(&state),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let started = effect_report(&run(
+            &runner,
+            &["op", "--fleet", "--request", request.to_str().unwrap()],
+        ));
+        assert_eq!(
+            started["intent"]["outcome"], "confirmed",
+            "{mode:?}: {started}"
+        );
+        stop_live_watch(&runner, &state);
+    }
+    let mut before = runner.fleet();
+    if mode != ResumeHome::Account {
+        assert_eq!(
+            before["controller"]["home_implicit"],
+            json!(recorded),
+            "{mode:?}: the record keeps the mode beside its home"
+        );
+    }
+    if mode == ResumeHome::Registered {
+        assert_eq!(
+            before["controller"]["account"],
+            json!(home),
+            "the registration bills the default path"
+        );
+    }
+    let started = recorded;
+    if mode == ResumeHome::Readopted {
+        let original = before["controller"].clone();
+        let pane = original["pane"].as_str().unwrap();
+        let id = original["session_id"].as_str().unwrap();
+        let readopt = |flags: &[&str]| {
+            let out = adopt(&runner, pane, cwd, flags);
+            assert!(out.status.success(), "{}", stderr(&out));
+            runner.fleet()["controller"].clone()
+        };
+        // The process the record names, adopted again naming no home.
+        let healed = readopt(&["--session-id", id]);
+        assert_eq!(healed["home_implicit"], true, "{healed}");
+        // A replacement in the same pane naming the same path.
+        let respawned = tmux(
+            &server.socket,
+            &[
+                "respawn-pane",
+                "-k",
+                "-t",
+                pane,
+                &format!(
+                    "exec env CLAUDE_CONFIG_DIR={} {} --resume {id}",
+                    home.display(),
+                    stub("stub-resume").display()
+                ),
+            ],
+        );
+        assert!(respawned.status.success(), "{}", stderr(&respawned));
+        server.await_composer(pane);
+        let mut flags = vec!["--session-id", id];
+        // A host with no `/proc` reads no process environment: the path the
+        // adoption names is recorded with no mode.
+        if !cfg!(target_os = "linux") {
+            flags.extend(["--home", home.to_str().unwrap()]);
+        }
+        let replaced = readopt(&flags);
+        assert_eq!(replaced["generation"], original["generation"]);
+        assert_ne!(replaced["harness_pid"], original["harness_pid"]);
+        recorded = cfg!(target_os = "linux").then_some(false);
+        assert_eq!(replaced["home_implicit"], json!(recorded), "{replaced}");
+        before = runner.fleet();
+    }
     let original = &before["controller"];
     let pane = original["pane"].as_str().unwrap();
     let id = original["session_id"].as_str().unwrap();
-    let file = project_dir(cwd, cwd).join(format!("{id}.jsonl"));
-    assert_eq!(file_turns(&file), ["START HERE"]);
+    assert_eq!(original["home"], json!(home), "{mode:?}");
+    let file = project_dir(&home, cwd).join(format!("{id}.jsonl"));
+    let latest = |key: &str| {
+        let rows = std::fs::read_to_string(&file).unwrap();
+        let latest: Value = serde_json::from_str(rows.lines().last().unwrap()).unwrap();
+        latest[key].clone()
+    };
+    let adopted = matches!(
+        mode,
+        ResumeHome::Adopted | ResumeHome::AdoptedDefault | ResumeHome::Registered
+    );
+    let original_turns = usize::from(!adopted);
+    if !adopted {
+        assert_eq!(file_turns(&file), ["START HERE"]);
+        assert_eq!(latest("configDirSet"), started == Some(false), "{mode:?}");
+    }
+    // Nothing in the environment names the home now; the implicit default
+    // resumes where the caller and the server name another home and
+    // another config dir. A record with no mode resumes on the home a fresh
+    // launch resolves, here the implicit default the caller's `HOME` holds.
+    let resumed_named = recorded == Some(false);
+    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
+        set_config_dir(None);
+    }
+    if recorded == Some(true) {
+        let other = dir.path().join("other-home");
+        std::fs::create_dir_all(other.join(".claude")).unwrap();
+        set_home(&mut runner, &other);
+        set_config_dir(Some(&other.join(".claude")));
+    }
     // Keep the session standing when its controller's only window closes.
     server.open_window("shell", cwd, pane_shell());
     let killed = tmux(&server.socket, &["kill-pane", "-t", pane]);
@@ -8798,11 +9079,11 @@ fn a_controller_start_records_the_session_for_resume_without_a_lane() {
         !server.panes().iter().any(|standing| standing == pane) && !live(pid)
     });
 
-    let out = run(&["resume-controller", "--fleet"]);
+    let out = run(&runner, &["resume-controller", "--fleet"]);
     assert_eq!(
         out.status.code(),
         Some(0),
-        "{} {}",
+        "{mode:?}: {} {}",
         String::from_utf8_lossy(&out.stdout),
         stderr(&out)
     );
@@ -8812,6 +9093,7 @@ fn a_controller_start_records_the_session_for_resume_without_a_lane() {
     let successor_pane = successor["pane"].as_str().unwrap();
     assert_ne!(successor_pane, pane);
     assert_eq!(successor["session_id"], id);
+    assert_eq!(successor["home"], json!(home), "{mode:?}");
     assert_eq!(after["tmux"]["session"], "fleet");
     let opened = tmux(
         &server.socket,
@@ -8824,7 +9106,120 @@ fn a_controller_start_records_the_session_for_resume_without_a_lane() {
         ],
     );
     assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "fleet");
-    assert_eq!(file_turns(&file).len(), 2);
+    assert_eq!(file_turns(&file).len(), original_turns + 1, "{mode:?}");
+    assert_eq!(latest("configDirSet"), resumed_named, "{mode:?}");
+    if mode != ResumeHome::Account {
+        assert_eq!(
+            successor["home_implicit"],
+            json!(!resumed_named),
+            "{mode:?}"
+        );
+    }
+    if !resumed_named {
+        assert_eq!(latest("home"), json!(login_home), "{mode:?}");
+    }
+    assert_eq!(successor["account"], original["account"], "{mode:?}");
+}
+
+/// An accountless Codex controller resumes its session under the
+/// `CODEX_HOME` its record keeps once nothing in the environment names it:
+/// the session is found there before any window opens, and the launch names
+/// that home.
+#[test]
+fn an_accountless_codex_controller_resumes_under_its_recorded_home() {
+    let id = "3e1f5a7b-9c2d-4e6f-8a1b-2c3d4e5f6a7b";
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-resume");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    let cwd = runner.state_dir().to_path_buf();
+    let login_home = dir.path().join("home");
+    std::fs::create_dir_all(login_home.join(".codex")).unwrap();
+    for (key, subdir) in [
+        ("HOME", ""),
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_STATE_HOME", "state"),
+        ("XDG_CACHE_HOME", "cache"),
+    ] {
+        runner.env.push((
+            key.to_owned(),
+            login_home.join(subdir).display().to_string(),
+        ));
+    }
+    let home = dir.path().join("codex-home");
+    let day = home.join("sessions/2026/01/01");
+    std::fs::create_dir_all(&day).unwrap();
+    std::fs::write(
+        day.join(format!("rollout-2026-01-01T00-00-00-{id}.jsonl")),
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"{}\",\"parent_thread_id\":null,\"source\":\"cli\"}}}}\n",
+            cwd.display()
+        ),
+    )
+    .unwrap();
+    plant_codex_credential(&home);
+    let mut gone = pending(&cwd);
+    gone.as_object_mut().unwrap().remove("account");
+    gone["harness"] = json!("codex");
+    gone["model"] = json!("gpt-6.1");
+    gone["home"] = json!(home.display().to_string());
+    gone["server"] = json!("1");
+    gone["server_start"] = json!(1);
+    gone["server_socket"] = json!(server.socket.display().to_string());
+    gone["pane"] = json!("%99");
+    gone["generation"] = json!(4);
+    gone["session_id"] = json!(id);
+    gone["exit"] = json!({"run": {"generation": 4}});
+    let mut fleet = runner.fleet();
+    fleet["controller"] = gone;
+    fleet["tmux"] = json!({"session": "fleet"});
+    runner.write_fleet(&fleet);
+    let paths =
+        orch_runtime::watch::claim::Paths::of(&cwd.join(agent_runtime::record::FLEET_FILE_NAME))
+            .unwrap();
+    std::fs::write(
+        &paths.flags,
+        serde_json::to_vec(&orch_runtime::watch::claim::StartFlags {
+            interval: 240,
+            max_loops: 25,
+            since: None,
+            repos: Vec::new(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let binaries = format!(
+        "codex={}",
+        fixtures().join("stub-record").join("codex").display()
+    );
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    env.push(("AGENT_RUNTIME_HARNESS_BINARIES", &binaries));
+    let out = runner.run_env(&["resume-controller", "--fleet"], &env);
+    // The stub draws no composer, so the resume is abandoned once the stub
+    // has written what it was opened with: a session the launch's home
+    // lacks would have refused `session-missing` before any window.
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    assert!(
+        line.contains(" note=successor-not-ready"),
+        "{line} {}",
+        stderr(&out)
+    );
+    let launched = launch_record(&cwd);
+    let argv = argv_of(&launched);
+    assert!(
+        argv.windows(2).any(|w| w[0] == "resume" && w[1] == id),
+        "{argv:?}"
+    );
+    let store_of = |path: &Path| std::fs::canonicalize(path.join("sessions")).ok();
+    let child = launched["env"]["CODEX_HOME"].as_str().unwrap_or("");
+    assert_eq!(
+        store_of(Path::new(child)),
+        store_of(&home),
+        "the launch names the recorded home's store: {launched}"
+    );
 }
 
 /// The compare-and-swap set of `record`, with no pending standing.

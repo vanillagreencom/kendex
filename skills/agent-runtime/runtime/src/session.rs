@@ -55,12 +55,18 @@ pub struct SessionRef {
 /// The home a harness reads when the caller names none.
 pub fn default_home(harness: Harness) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    Some(match harness {
+    Some(default_home_at(harness, &home))
+}
+
+/// The home a harness reads under the home directory `home` when it is
+/// named none.
+pub(crate) fn default_home_at(harness: Harness, home: &Path) -> PathBuf {
+    match harness {
         Harness::Claude => home.join(".claude"),
         Harness::Codex => home.join(".codex"),
         Harness::Copilot => home.join(".copilot"),
         Harness::Pi => home.join(".pi").join("agent"),
-    })
+    }
 }
 
 /// A fresh version 4 UUID for a launch that fixes its session id

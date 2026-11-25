@@ -68,6 +68,11 @@ pub struct Pending {
     pub account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// A resumed accountless Claude session ran on its implicit default
+    /// config dir, `home`: the launch names no config dir, since a named one,
+    /// even the same path, reads another `.claude.json`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -263,6 +268,9 @@ pub struct AdoptController {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdoptionRead {
     pub identity: Identity,
+    /// A Claude process's home and whether it names it, where read or
+    /// vouched for; `None` records the request's home with no mode.
+    pub home: Option<crate::effects::prepare::Kept>,
     pub server: u64,
     pub server_start: u64,
     pub socket: String,
@@ -279,4 +287,20 @@ pub struct ControllerAdopted {
     /// True when the record already named this pane and was healed in
     /// place; false when the record was written for this session.
     pub healed: bool,
+    /// What the adoption could not read, each a keyed line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
+}
+
+/// Write a Claude home's mode beside it: `true` its implicit default, `false`
+/// a named config dir, absent unknown. The path alone cannot tell the
+/// implicit default from `$HOME/.claude` named, and each reads another
+/// `.claude.json`.
+pub(crate) fn record_home_mode(record: &mut crate::record::Document, implicit: Option<bool>) {
+    match implicit {
+        Some(implicit) => crate::record::set(record, "home_implicit", implicit),
+        None => {
+            crate::record::delete(record, "home_implicit");
+        }
+    }
 }

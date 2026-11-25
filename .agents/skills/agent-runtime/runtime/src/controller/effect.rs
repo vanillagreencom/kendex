@@ -339,11 +339,12 @@ fn unconfirmed_after_retirement(
 
 /// The home a successor keeps where no account names one, the lane
 /// launch's own rule (`launch::accountless_kept`) deciding it: the
-/// pending's `home` first, named as the pending names it, which is the Pi
+/// pending's `home` first, in the mode the pending names it, which is the Pi
 /// root a Pi successor keeps whatever account bills it, or for the other
 /// harnesses the home a resumed session stands under (the pending's own
 /// rule); `served` is the home the fleet server hands its panes. An
-/// account names its own home.
+/// account names its own home, but a resumed Claude session's implicit
+/// default, which its account names as a path (`successor::resumed`).
 fn kept(
     settings: &Settings,
     pending: &crate::controller::Pending,
@@ -352,11 +353,12 @@ fn kept(
 ) -> Option<Kept> {
     let home = pending.home.as_deref().map(|home| Kept {
         home: PathBuf::from(home),
-        named: true,
+        named: !pending.home_implicit,
     });
     match (harness, pending.account.is_some()) {
         (Harness::Pi, _) => accountless_kept(&settings.inherited(), harness, home, served),
-        (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
+        (Harness::Claude, true) => home.filter(|kept| !kept.named && pending.resume.is_some()),
+        (Harness::Codex | Harness::Copilot, true) => None,
         (Harness::Claude | Harness::Codex | Harness::Copilot, false) => accountless_kept(
             &settings.inherited(),
             harness,
@@ -444,12 +446,21 @@ impl Successor {
                 (None, None)
             }
         };
-        let homes = launch_home(
+        let kept = kept(settings, pending, harness, served);
+        // A Claude launch on a kept implicit default names no config dir,
+        // whatever account bills it.
+        let homed = match (harness, &kept) {
+            (Harness::Claude, Some(_)) => None,
+            (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => {
+                pending.account.as_deref()
+            }
+        };
+        let mut homes = launch_home(
             &settings.inherited(),
             harness,
-            pending.account.as_deref(),
+            homed,
             pending.model.as_deref(),
-            kept(settings, pending, harness, served).as_ref(),
+            kept.as_ref(),
             &cwd,
             crate::launch::full_bypass(
                 harness,
@@ -459,6 +470,14 @@ impl Successor {
                 &pending.extra_args,
             ),
         )?;
+        // The implicit default a resumed session ran on is its store, which
+        // the `HOME` its command pins makes the child's.
+        if homes.cleared
+            && pending.resume.is_some()
+            && let Some(kept) = &kept
+        {
+            homes.sessions = Some(kept.home.clone());
+        }
         let successor = Successor {
             claude_sign_in,
             ..Self::of(settings, pending, harness, cwd, homes)?
@@ -596,6 +615,17 @@ impl Successor {
         } else {
             if self.cleared {
                 intent.env_remove.push(self.harness.home_var().to_owned());
+                // The implicit default is read under `HOME`: a resumed session
+                // keeps the store and `.claude.json` it ran with, whatever
+                // `HOME` the resume's caller or the fleet server holds.
+                if self.resume.is_some() {
+                    let user_home = self.home.parent().ok_or_else(|| {
+                        refused("home-unresolved", &[("harness", self.harness.name())])
+                    })?;
+                    intent
+                        .env
+                        .insert("HOME".to_owned(), user_home.display().to_string());
+                }
             }
             if let Some(id) = &self.resume {
                 intent.resume = Some(Resume {

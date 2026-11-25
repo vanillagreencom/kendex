@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 
 use super::Recorded;
 use crate::accounts::wall::canon;
-use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer};
+use crate::controller::{
+    AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer, record_home_mode,
+};
 use crate::error::{Error, Result};
 use crate::journal::{self, intents};
 use crate::record::{self, Document, Locking};
@@ -60,7 +62,10 @@ pub(super) fn apply_adoption(
 /// binds that id at its next hook run; the identity read in the pane is
 /// written as the active one, and `pending`, `exit` and `off` are dropped.
 /// Another session's record, or none, is replaced by this session's at the
-/// next generation, with the fields of the session that ended left out.
+/// next generation, with the fields of the session that ended left out. A
+/// Claude home the read settled is recorded with its mode; otherwise the
+/// request's home with none, so a mode never outlives the process it was
+/// read for.
 fn adopt_controller(
     path: &Path,
     doc: &mut Document,
@@ -77,7 +82,11 @@ fn adopt_controller(
     }
     let current: Option<Overseer> = record::field(path, doc, MEMBER)?;
     let prior_generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
-    let home = r.home.clone().or_else(|| r.account.clone());
+    let home = match &read.home {
+        Some(kept) => Some(kept.home.display().to_string()),
+        None => r.home.clone().or_else(|| r.account.clone()),
+    };
+    let home_mode = read.home.as_ref().map(|kept| !kept.named);
     let rows = r.session_rows.as_ref().map(|p| p.display().to_string());
     if read.same {
         let record = record::object_mut(path, doc, MEMBER)?;
@@ -98,6 +107,7 @@ fn adopt_controller(
                 record::set(record, key, value.as_str());
             }
         }
+        record_home_mode(record, home_mode);
         record::set(record, "session_id", json!(r.session_id));
         record::set(record, "harness_pid", read.identity.pid);
         record::set(record, "harness_start", read.identity.start.as_str());
@@ -122,6 +132,7 @@ fn adopt_controller(
         return Ok(ControllerAdopted {
             generation,
             healed: true,
+            notices: Vec::new(),
         });
     }
     let generation = prior_generation + 1;
@@ -147,10 +158,14 @@ fn adopt_controller(
     for (key, value) in adopted_posture(path, r)? {
         record[key] = value;
     }
+    if let Some(implicit) = home_mode {
+        record["home_implicit"] = json!(implicit);
+    }
     record::set(doc, MEMBER, record);
     Ok(ControllerAdopted {
         generation,
         healed: false,
+        notices: Vec::new(),
     })
 }
 
@@ -218,6 +233,7 @@ mod tests {
             extra_args: None,
         };
         let read = Recorded::planted(AdoptionRead {
+            home: None,
             identity: Identity {
                 pid: 5151,
                 start: "ticks:5151".into(),
@@ -262,6 +278,7 @@ mod tests {
         };
         let read = |same: bool| {
             Recorded::planted(AdoptionRead {
+                home: None,
                 identity: Identity {
                     pid: 5151,
                     start: "ticks:5151".into(),
