@@ -2748,7 +2748,8 @@ with open(sys.argv[1], "ab") as out:
                 (walled, 'raise Failure("controller-wall", "rows", "unreadable", rows["cause"])', "return None"),
                 (walled, 'return error if error.record["key"][1:] == ["refusal", "dependency"] else None', "return None"),
                 # An unsent notice stays owed.
-                (walled, 'failure("wall-notice", error).record)\n                return', 'failure("wall-notice", error).record)'),
+                (walled, '                return\n        if usage and not outcome_notice:',
+                 '        if usage and not outcome_notice:'),
                 # A succession with no answer tells its refusal.
                 (walled, '"No replacement started: " + answer.record["detail"][:200] + "."', '"No replacement started."'),
                 # A successor in control settles the notice its predecessor's loop owed.

@@ -429,9 +429,9 @@ INBOUND_PEER="${OUT#id=}"
 LANE="$REFUSALS"; BOX="$LANE/tmp/lane-mail/overseer"
 lm peer ask --repo peer --file "$(text q 'Yours?')" --options yes,no
 PEER_ASK="${OUT#id=}"
-# ARGS|WANT (rc=first stderr line); F is the message file. A --ref answers an
-# owner note or an owner ask; a notice of this overseer's own, a peer's line
-# and a resolution are none of them.
+# ARGS|WANT (rc=first stderr line); F is the message file. A notice may
+# reference a prior owner notice. An ask may reference an owner request.
+# Peer messages and resolutions remain invalid references.
 F="$TMP_ROOT/q.txt"
 while IFS='|' read -r args want; do
   before="$(cat "$BOX/to-overseer.jsonl")"
@@ -472,11 +472,10 @@ ask --item overseer --to owner --ref $OWNER_NOTE --progress --options a,b --reco
 send --item overseer --directive --progress --file $F|2=lane-mail: option-unknown=--progress
 notice --item overseer --to owner --ref no/such --file $F|2=lane-mail: ref-invalid=no/such
 notice --item overseer --to owner --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
-notice --item overseer --to owner --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
-notice --item overseer --to owner --ref $ASK_TO_OWNER --file $F|0=
 notice --item overseer --to owner --ref $PEER_ASK --file $F|2=lane-mail: ref-unknown=$PEER_ASK
 notice --item overseer --to owner --ref $INBOUND_PEER --file $F|2=lane-mail: ref-unknown=$INBOUND_PEER
 notice --item overseer --to owner --ref $RESOLUTION --file $F|2=lane-mail: ref-unknown=$RESOLUTION
+ask --item overseer --to owner --options a,b --recommend a --effect none --ref $NOTE_TO_OWNER --file $F|2=lane-mail: ref-unknown=$NOTE_TO_OWNER
 ask --item overseer --to owner --options a,b --recommend a --effect none --ref 1790000000-1-1 --file $F|2=lane-mail: ref-unknown=1790000000-1-1
 ask --item overseer --to owner --options a,b --recommend a --effect none --attach x --file $F|2=lane-mail: option-unknown=--attach
 notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
@@ -498,9 +497,18 @@ events --item overseer --box to-lane --after sideways|2=lane-mail: after-invalid
 drain --item overseer --after 0 --box to-lane|2=lane-mail: option-unknown=--box
 pending --item overseer --after 3|2=lane-mail: option-unknown=--after
 ROWS
-lm notice --item overseer --to owner --file "$(text n 'Reply.')" --ref "$OWNER_NOTE"
-assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" 'select(.text == "Reply.") | .ref')" "0=$OWNER_NOTE" \
-  "a reply names the owner note it answers"
+# Distinct replies keep the reference cases independent of text deduplication.
+# Only the notice parent gets the binding the Slack relay uses for a follow-up.
+while IFS='|' read -r parent ref has_notice_binding; do
+  lm notice --item overseer --to owner --ref "$ref" --file "$(text n "Reply to $parent.")"
+  binding="$(jq -rs 'last | [.ref, has("re_owner_notice"), .re_owner_notice == true] | map(tostring) | join("|")' "$BOX/to-overseer.jsonl")"
+  assert_eq "$RC=$binding" "0=$ref|$has_notice_binding|$has_notice_binding" \
+    "a reply to $parent records its reference and the appropriate notice binding"
+done <<ROWS
+owner notice|$NOTE_TO_OWNER|true
+owner ask|$ASK_TO_OWNER|false
+owner note|$OWNER_NOTE|false
+ROWS
 
 # The host worker sends a voice request as an owner note with --delivery-id.
 # A reply carries that id only when --ref names the delivered request; a plain
@@ -1272,7 +1280,7 @@ assert_eq "$RC=$(field "$BOX/to-lane.jsonl" '.kind' | wc -l | tr -d ' ')" "0=2" 
 
 new_repo control_ref
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
-mutant ref-lane-only 'lm_ask_find "$id" ||' 'false ||'
+mutant ref-lane-only 'lm_ask_find "$id" "$VERB:$TO" ||' 'false ||'
 lm notice --item overseer --to owner --file "$(text n 'Ruled.')" --ref "$ASK"
 assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$ASK" "control: without the to-overseer read a reply naming an owner ask is refused"
 
