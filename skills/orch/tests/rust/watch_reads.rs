@@ -4745,15 +4745,16 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
             .unwrap()
             .to_owned()
     };
-    let mut read_github = |baseline: &mut Baseline, at: u64| -> usize {
-        let said = rendered(&pass_as(Duty::GitHub, &mut github, baseline, &clock, at).unwrap());
-        said.iter()
+    let mut read_github = |baseline: &mut Baseline, at: u64| -> Result<usize, Error> {
+        let said = rendered(&pass_as(Duty::GitHub, &mut github, baseline, &clock, at)?);
+        Ok(said
+            .iter()
             .filter(|l| *l == "EVENT verifying-unjudged owner/repo#8")
-            .count()
+            .count())
     };
 
     assert_eq!(
-        read_github(&mut baseline, NOW),
+        read_github(&mut baseline, NOW).unwrap(),
         1,
         "the outside author's merged issue is said once"
     );
@@ -4843,7 +4844,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
         json!({"body": {"status": "behind"}}),
     );
-    assert_eq!(read_github(&mut baseline, LATER), 0);
+    assert_eq!(read_github(&mut baseline, LATER).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4883,7 +4884,29 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     // The issue reopens between GitHub reads, so the met due row still
     // stands from the verification pass that closed it.
     plant_issue(&mut world, Some(&closed));
-    assert_eq!(read_github(&mut baseline, LATER + 90), 0);
+    // Give the failed refresh its own baseline so the direct reopen
+    // assertion still exercises the original route.
+    let mut stale = baseline.clone();
+    world.gh(
+        "repos/owner/repo/issues?state=open&per_page=100&page=1",
+        json!({"exit": 1, "stderr": "gh: HTTP 404"}),
+    );
+    assert!(read_github(&mut stale, LATER + 70).is_err());
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut stale,
+        &clock,
+        LATER + 70,
+    )
+    .unwrap();
+    assert_eq!(
+        writes(&world).len(),
+        4,
+        "the live issue differs from the inventory"
+    );
+    plant_issue(&mut world, Some(&closed));
+    assert_eq!(read_github(&mut baseline, LATER + 90).unwrap(), 0);
     let prior = baseline
         .get(verifying::DEADLINE_ROW, "owner/repo#7")
         .unwrap();
@@ -4904,10 +4927,19 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         4,
         "a reopen before the closed read stands"
     );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut stale,
+        &clock,
+        LATER + 90,
+    )
+    .unwrap();
+    assert_eq!(writes(&world).len(), 4, "a reopen survives stale inventory");
 
     // Closed, its row goes; reopened with every box ticked, it stays open.
     plant_issue(&mut world, None);
-    assert_eq!(read_github(&mut baseline, LATER + 120), 0);
+    assert_eq!(read_github(&mut baseline, LATER + 120).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4918,7 +4950,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     .unwrap();
     assert_eq!(baseline.get(verifying::DEADLINE_ROW, "owner/repo#7"), None);
     plant_issue(&mut world, Some(&closed));
-    assert_eq!(read_github(&mut baseline, LATER + 180), 0);
+    assert_eq!(read_github(&mut baseline, LATER + 180).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4933,7 +4965,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     // close GitHub refuses asked again.
     let added = format!("{closed}{ADDED}");
     plant_issue(&mut world, Some(&added));
-    assert_eq!(read_github(&mut baseline, LATER + 240), 0);
+    assert_eq!(read_github(&mut baseline, LATER + 240).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4947,7 +4979,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     // issue stays open.
     let clicked = added.replace("- [ ] Post-merge: health", "- [x] Post-merge: health");
     plant_issue(&mut world, Some(&clicked));
-    assert_eq!(read_github(&mut baseline, LATER + 270), 0);
+    assert_eq!(read_github(&mut baseline, LATER + 270).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4967,7 +4999,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         "PATCH repos/owner/repo/issues/7",
         json!({"exit": 1, "stderr": "gh: HTTP 502"}),
     );
-    assert_eq!(read_github(&mut baseline, LATER + 300), 0);
+    assert_eq!(read_github(&mut baseline, LATER + 300).unwrap(), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -5027,7 +5059,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         );
         world.gh("PATCH repos/owner/repo/issues/7", reply);
         let before = writes(&world).len();
-        assert_eq!(read_github(&mut baseline, at), 0);
+        assert_eq!(read_github(&mut baseline, at).unwrap(), 0);
         pass_as(
             Duty::Verification,
             &mut verification,
@@ -5059,7 +5091,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         };
         plant_issue(&mut world, Some(&proved));
         world.gh("PATCH repos/owner/repo/issues/7", json!({"body": {}}));
-        assert_eq!(read_github(&mut baseline, at + 60), 0);
+        assert_eq!(read_github(&mut baseline, at + 60).unwrap(), 0);
         pass_as(
             Duty::Verification,
             &mut verification,

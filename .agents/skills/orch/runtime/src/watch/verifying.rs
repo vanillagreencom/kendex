@@ -1192,16 +1192,16 @@ pub(super) fn judge_item(
 /// stderr. A refused Linear write is not retried: the key stands in the
 /// row, and the due event hands the box to the verify pass. A GitHub
 /// item's met box is written again on each pass that reads it met, since
-/// its ticked body is the only record of it. Keep the met mark only when
-/// that write could have closed the issue.
+/// its ticked body is the only record of it. Return the settlement for
+/// that GitHub tick so the caller can retain or update its mark.
 fn write_owed(
     ctx: &Context,
     id: &str,
     issue: Option<&IssueItem>,
     judged: &str,
     owed: &Owed,
-) -> bool {
-    let (mark_read, note) = match (owed, issue) {
+) -> Option<IssueSettlement> {
+    let (settled, note) = match (owed, issue) {
         (
             Owed::Complete {
                 number,
@@ -1210,14 +1210,14 @@ fn write_owed(
             },
             None,
         ) => (
-            true,
+            None,
             format!(
                 "box={number} {}",
                 boxes::complete_reading(&ctx.settings, id, merged_at.as_deref(), *number, evidence)
             ),
         ),
         (Owed::Comment { text }, None) => (
-            true,
+            None,
             format!("comment={}", boxes::post(&ctx.settings, id, text)),
         ),
         (
@@ -1233,21 +1233,18 @@ fn write_owed(
                 evidence,
                 merged_at: merged_at.as_deref(),
             };
-            let (close, note) = settle_issue(ctx, issue, judged, Some(&met));
-            (
-                matches!(close, Some(IssueWrite::Written | IssueWrite::Unknown)),
-                format!("box={number} {note}"),
-            )
+            let (settled, note) = settle_issue(ctx, issue, judged, Some(&met));
+            (Some(settled), format!("box={number} {note}"))
         }
         (Owed::Comment { text }, Some(issue)) => {
             let path = format!("repos/{}/issues/{}/comments", issue.repo, issue.number);
             let (_, note) =
                 issue_write(&ctx.gh, "POST", &path, &serde_json::json!({ "body": text }));
-            (true, format!("comment={note}"))
+            (None, format!("comment={note}"))
         }
     };
     let _ = writeln!(std::io::stderr(), "verifying-write issue={id} {note}");
-    mark_read
+    settled
 }
 
 /// A met box's tick: its number, its Evidence line and the merge its
@@ -1258,19 +1255,25 @@ struct Met<'a> {
     merged_at: Option<&'a str>,
 }
 
+enum IssueSettlement {
+    BodyUnconfirmed,
+    LeftOpen,
+    Close(IssueWrite),
+}
+
 /// A GitHub item's issue settled on the body read now, and only while it
 /// is the open body `judged` was: a body edited since may number its boxes
 /// otherwise, and the next pass judges it again. `met`'s box is ticked by
 /// the box parser, which writes its Evidence line; the issue closes as
-/// completed once no post-merge box stays open. Return the closing PATCH's
-/// result if one was attempted, and the write's diagnostic.
+/// completed once no post-merge box stays open. A changed or unreadable
+/// body leaves a prior close possible.
 fn settle_issue(
     ctx: &Context,
     issue: &IssueItem,
     judged: &str,
     met: Option<&Met<'_>>,
-) -> (Option<IssueWrite>, String) {
-    let unwritten = |cause: &str| (None, format!("issue-unwritten cause={cause}"));
+) -> (IssueSettlement, String) {
+    let unwritten = |state, cause: &str| (state, format!("issue-unwritten cause={cause}"));
     let path = format!("repos/{}/issues/{}", issue.repo, issue.number);
     let live = gh_json(&ctx.gh, &path, &mut BTreeMap::new())
         .and_then(|v| serde_json::from_value::<IssueText>(v).map_err(|e| e.to_string()));
@@ -1280,9 +1283,15 @@ fn settle_issue(
             body: Nullable::Present(body),
             ..
         }) if state == "open" && body == judged => body,
-        Ok(_) => return unwritten("moved"),
-        Err(e) => return unwritten(&format!("read-failed error={}", one_line(&e))),
+        Ok(_) => return unwritten(IssueSettlement::BodyUnconfirmed, "moved"),
+        Err(e) => {
+            return unwritten(
+                IssueSettlement::BodyUnconfirmed,
+                &format!("read-failed error={}", one_line(&e)),
+            );
+        }
     };
+    let left_open = |cause: &str| unwritten(IssueSettlement::LeftOpen, cause);
     let mut patch = serde_json::Map::new();
     let open_left = match met {
         None => false,
@@ -1294,11 +1303,11 @@ fn settle_issue(
             }
             let ticked = match parse(&ctx.settings, &body, &tick) {
                 Ok(Ok((parsed, _))) if parsed.ticked == 1 && parsed.errors.is_empty() => parsed,
-                Ok(Ok((parsed, _))) if parsed.ticked != 1 => return unwritten("box-not-open"),
-                Ok(Ok(_)) => return unwritten("checklist-invalid"),
-                Ok(Err(e)) => return unwritten(&format!("tick-unparsed error={}", one_line(&e))),
+                Ok(Ok((parsed, _))) if parsed.ticked != 1 => return left_open("box-not-open"),
+                Ok(Ok(_)) => return left_open("checklist-invalid"),
+                Ok(Err(e)) => return left_open(&format!("tick-unparsed error={}", one_line(&e))),
                 Err(e) => {
-                    return unwritten(&format!("tick-unrun error={}", one_line(&e.to_string())));
+                    return left_open(&format!("tick-unrun error={}", one_line(&e.to_string())));
                 }
             };
             let open_left = ticked.boxes.iter().any(|b| ticked.post_merge_owed(b));
@@ -1311,13 +1320,14 @@ fn settle_issue(
         patch.insert("state_reason".to_owned(), "completed".into());
     }
     let (write, note) = issue_write(&ctx.gh, "PATCH", &path, &Value::Object(patch));
-    (
-        (!open_left).then_some(write),
-        format!("closed={} issue={note}", !open_left),
-    )
+    let settled = if open_left {
+        IssueSettlement::LeftOpen
+    } else {
+        IssueSettlement::Close(write)
+    };
+    (settled, format!("closed={} issue={note}", !open_left))
 }
 
-#[derive(PartialEq, Eq)]
 enum IssueWrite {
     Written,
     Refused,
@@ -1487,7 +1497,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                         "verifying-write issue={} {note}",
                         item.id
                     );
-                    if close != Some(IssueWrite::Written) {
+                    if !matches!(close, IssueSettlement::Close(IssueWrite::Written)) {
                         continue;
                     }
                 }
@@ -1532,18 +1542,28 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
                             Owed::Complete { .. } => marked != "met" || issue.is_some(),
                             Owed::Comment { .. } => !written,
                         }) {
-                            mark = if write_owed(
+                            mark = match write_owed(
                                 ctx,
                                 &item.id,
                                 issue.as_ref(),
                                 &item.description,
                                 write,
                             ) {
-                                reading
-                            } else if marked == "met" {
-                                ""
-                            } else {
-                                marked
+                                Some(IssueSettlement::BodyUnconfirmed) => marked,
+                                Some(
+                                    IssueSettlement::LeftOpen
+                                    | IssueSettlement::Close(IssueWrite::Refused),
+                                ) => {
+                                    if marked == "met" {
+                                        ""
+                                    } else {
+                                        marked
+                                    }
+                                }
+                                Some(IssueSettlement::Close(
+                                    IssueWrite::Written | IssueWrite::Unknown,
+                                ))
+                                | None => reading,
                             };
                         }
                         saved.push(format!("{deadline} read={mark}"));
