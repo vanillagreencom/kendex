@@ -1095,7 +1095,38 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
             "standing halt must leave the predecessor alone"
         );
     }
+    lane_driver!(
+        server,
+        fleet,
+        reset_readers,
+        reset,
+        &[("ORCH_WALL_RELAUNCH", "auto")]
+    );
+    reset.halted = driver.halted;
+    reset.pass(&state);
+    reset.now = BANNER_RESET + 60;
+    for _ in 0..2 {
+        let passed = reset.pass(&state);
+        assert_eq!(
+            reset.baseline.get("resume", "gh-4"),
+            None,
+            "standing halt must withhold the reset resume"
+        );
+        assert!(lines(&passed).is_empty(), "{:?}", lines(&passed));
+    }
     send("--directive", "The restart is complete. Resume work.");
+    reset.pass(&state);
+    assert_eq!(
+        reset.baseline.get("resume", "gh-4"),
+        Some(
+            format!(
+                "usage-limit|{}:{}|{BANNER_RESET}",
+                identity.pid, identity.start
+            )
+            .as_str()
+        )
+    );
+    assert!(reset.relaunches.borrow().is_empty());
     let since = driver.now;
     let first = driver.pass(&state);
     assert_eq!(

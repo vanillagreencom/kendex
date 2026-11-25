@@ -439,9 +439,15 @@ def row_links(obj):
 
 
 def plan(box, dest, cutoff, seen, jq_defs):
-    """Keep unread rows and each ask's complete, still-needed exchange."""
+    """Keep unread rows, needed exchanges and the current halt directive."""
     boxes = [read_box(8, box / "to-overseer.jsonl"), read_box(9, box / "to-lane.jsonl")]
     objects = [[envelope(row) for row in data[0]] for data in boxes]
+    directives = [(i, obj) for i, obj in enumerate(objects[1])
+                  if obj and obj.get("kind") == "directive"]
+    # Acknowledgment does not lift a halt. Keep the latest directive while a
+    # halt is in the box so an older retained halt cannot outlive its lift.
+    directive_to_keep = directives[-1][0] if any(
+        obj.get("halt") is True for _, obj in directives) else None
     metadata = [row_metadata(data[0], jq_defs) for data in boxes]
     answers = {obj.get("re") for group in objects for obj in group
                if obj and obj.get("kind") == "answer" and isinstance(obj.get("re"), str)}
@@ -458,7 +464,8 @@ def plan(box, dest, cutoff, seen, jq_defs):
             open_ask = obj and obj.get("kind") == "ask" and (
                 not isinstance(obj.get("id"), str) or obj["id"] not in (
                     owner_closed if obj.get("to") == "owner" else owner_closed | answers))
-            retain = at is None or at >= cutoff or unread or open_ask
+            retain = (at is None or at >= cutoff or unread or open_ask
+                      or (b == 1 and i == directive_to_keep))
             selected.append(retain)
             if obj:
                 ids = row_links(obj)

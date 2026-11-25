@@ -598,7 +598,8 @@ assert_eq "$PENDING_DIRECTIVE" "Unread." "pending lists a directive past an answ
 # peeks; aN acknowledges N; r reads. STEPS records each inbox step: its first
 # stderr line, then for p the header count, the cursor and the texts printed,
 # for aN the exit and the cursor, for r the texts printed. tN sets the clock
-# to epoch N; x compacts and records its exit and counts.
+# to epoch N; x compacts and records its exit and counts; e reads the
+# surviving directives from the event history, after acknowledgment too.
 cursor_steps() { # NAME OPS
   local op line=0 box
   new_lane "$1"
@@ -616,6 +617,10 @@ cursor_steps() { # NAME OPS
         ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 \
           LANE_MAIL_BIN="$LANE_MAIL" clock_lm compact --item KEN-1 --root "$LANE"
         STEPS+=" x:$RC:$OUT"
+        ;;
+      e)
+        lm events --item KEN-1 --box to-lane
+        STEPS+=" e:$RC:$(tail -n +2 <<<"$OUT" | jq -r '"\(.text)=\(.halt // false)"' | paste -sd, -)"
         ;;
       c*) printf '%s\n' "${op#c}" >"$box/to-lane.cursor" ;;
       p)
@@ -641,6 +646,7 @@ CURSOR_ROWS=(
   "over_ack|d a2 d r|a2:lane-mail: ack-clamped=1 asked=2:0:1 r::2|an --ack past the lines present stops at them, so a line that lands later is still handed over"
   "halt_clamp|d h d a5|a5:lane-mail: ack-clamped=1 asked=5:0:1|an --ack past the lines present names the count it acknowledged, the line before an unread halt"
   "compact_halt|t946684800 d d r t1790870400 h d x p a4 r|r::1,2 x:0:compacted item=KEN-1 to-lane=2 to-overseer=0 p::count=4:2:3,4 a4::0:2 r::3,4|after compaction an --ack at the logical count stops before the unread halt"
+  "compact_standing_halt|t946684800 d h r t1790870400 x e h t946684801 d r t1790870400 x e|r::1,2 x:0:compacted item=KEN-1 to-lane=1 to-overseer=0 e:0:2=true r::3,4 x:0:compacted item=KEN-1 to-lane=1 to-overseer=0 e:0:3=true,4=false|compaction keeps an acknowledged halt and keeps its later lift when an older halt survives"
   "peek_lowers|d c2 p d p r p|p:lane-mail: cursor-lowered=1 was=2:count=1:1: p::count=2:1:2 r::2 p::count=2:2:|a peek brings a cursor past the lines present down to them before any --ack, so a line that lands later is handed over"
   "ack_lowers|d c3 d a1 r|a1:lane-mail: cursor-lowered=1 was=3:0:1 r::2|an --ack lowers a cursor past the lines present to the count acknowledged, not to a line that landed after the peek"
 )

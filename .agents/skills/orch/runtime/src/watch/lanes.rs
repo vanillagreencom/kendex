@@ -1809,12 +1809,12 @@ fn wall(
         if passed { "-passed" } else { "" },
         if auth { ":auth" } else { "" }
     );
-    let quiet = same_banner
-        && prior.get(2).is_some_and(|i| *i == identity)
+    let same_wall = same_banner && prior.get(2).is_some_and(|i| *i == identity);
+    let quiet = same_wall
         && prior
             .get(3)
             .is_some_and(|r| *r == reported || (!passed && r == "lane-relaunched"));
-    let held = quiet && !passed && prior.get(5).is_some_and(|r| r == "held");
+    let held = same_wall && prior.get(5).is_some_and(|r| r == "held");
     // A resume asked for this wall whose screen has since moved under the
     // same banner: the resumed turn ended at the wall again, told once.
     let screen = hash_of(slice).to_string();
@@ -1880,15 +1880,27 @@ fn wall(
             notes.push("resume walled".to_owned());
             out.changes.push(clear(wake::RESUME_KIND, lane));
         }
-        Some(at) if wake::resumable(obs.lane) => {
-            notes.push("resume wake".to_owned());
-            out.changes.push(set(
-                wake::RESUME_KIND,
-                lane,
-                format!("usage-limit|{identity}|{at}"),
-            ));
+        Some(at) => {
+            let resumable = wake::resumable(obs.lane);
+            if (held || resumable)
+                && let Some(reason) = halt_reason(obs, pass)
+            {
+                if held {
+                    return (walled, observed);
+                }
+                notes.push(format!("resume held reason={reason}"));
+                retry = "|held";
+            } else if resumable {
+                notes.push("resume wake".to_owned());
+                out.changes.push(set(
+                    wake::RESUME_KIND,
+                    lane,
+                    format!("usage-limit|{identity}|{at}"),
+                ));
+            } else {
+                notes.push("resume unreached".to_owned());
+            }
         }
-        Some(_) => notes.push("resume unreached".to_owned()),
     }
     // The line's body: the lane, the claimed account where the record names
     // one, `resets=` where read, `wall_kind=auth`.
@@ -1926,7 +1938,7 @@ enum Routed {
     Relaunched,
     /// A replacement's open launch still owns the outcome.
     Opening,
-    /// The mailbox holds the relaunch. Check it again on the same wall.
+    /// The mailbox holds the relaunch. Check it again even if the wall passes.
     Held,
     /// The wall is left to the overseer; `notes` carry the pick's answer
     /// and any refusal.
@@ -2005,6 +2017,17 @@ fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
     }))
 }
 
+fn halt_reason(obs: &Observed, pass: &Pass) -> Option<String> {
+    if pass.route.relaunch != WallRelaunch::Auto {
+        return None;
+    }
+    match (pass.route.halted)(obs.lane) {
+        Ok(false) => None,
+        Ok(true) => Some("halted".to_owned()),
+        Err(cause) => Some(format!("halt-unread cause={cause}")),
+    }
+}
+
 /// A usage wall walks accounts for the record's model with the spent account
 /// excluded and prints the pick's answer under the event. An auth wall keeps
 /// the lane's account so a resumed harness reads its current credentials.
@@ -2033,16 +2056,9 @@ fn route(
     let (Some(harness), false) = (harness, model.is_empty()) else {
         return refused(notes, "record-unnamed");
     };
-    if pass.route.relaunch == WallRelaunch::Auto {
-        let reason = match (pass.route.halted)(obs.lane) {
-            Ok(false) => None,
-            Ok(true) => Some("halted".to_owned()),
-            Err(cause) => Some(format!("halt-unread cause={cause}")),
-        };
-        if let Some(reason) = reason {
-            notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
-            return Routed::Held;
-        }
+    if let Some(reason) = halt_reason(obs, pass) {
+        notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
+        return Routed::Held;
     }
     let account = obs.lane.account.as_deref();
     let to = match kind {
