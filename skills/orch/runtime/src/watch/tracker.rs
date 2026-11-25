@@ -54,6 +54,7 @@ use crate::watch::{Body, Change, Event, Produced, Tick};
 use agent_runtime::journal::Env;
 
 use super::github;
+use super::verifying::is_reading_lane;
 
 pub mod reconcile_items;
 
@@ -528,12 +529,12 @@ fn invalid(read: &'static str, field: &str, value: &str) -> Error {
     )
 }
 
-/// The tracker an item is read from: the one recorded, else `linear` for a
-/// key that is no `issue-N`.
+/// The recorded tracker, or `linear` for an item whose key does not name
+/// a GitHub issue or a trackerless reading lane.
 fn tracker_of<'a>(tracker: Option<&'a str>, item: &str) -> &'a str {
     match tracker {
         Some(tracker) => tracker,
-        None if item.starts_with("issue-") => "",
+        None if item.starts_with("issue-") || is_reading_lane(item) => "",
         None => "linear",
     }
 }

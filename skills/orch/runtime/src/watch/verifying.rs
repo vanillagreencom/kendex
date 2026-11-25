@@ -26,6 +26,11 @@ use crate::watch::github::IssueItem;
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
+/// The trackerless lane keys reserved by verify.md's Reading lanes route.
+pub(super) fn is_reading_lane(item: &str) -> bool {
+    item.starts_with("verify-")
+}
+
 /// The baseline row kind this duty owns: `verifying-deadline <id>`, the
 /// due keys joined by `|`, `-` with none due, `boxes=0` with no open box,
 /// [`INVALID_ROW`] for an item its checklist leaves unjudged.
