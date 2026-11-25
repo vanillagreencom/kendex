@@ -176,8 +176,20 @@ commit added
 ADDED="$(git -C "$R" rev-parse HEAD)" || exit 2
 git -C "$R" rm -q cred.txt
 commit removed
+RANGE_TRACE="$TMP/range.trace"
 row "a credential present only in the middle commit is refused under --against" \
-  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "$R" --against HEAD~3
+  "rc=1 secrets: secret=cred.txt:1:aws-access-token" "GIT_TRACE2_EVENT=$RANGE_TRACE" "$R" --against HEAD~3
+# Git's Trace2 cmd_name events measure the diff work without a clock limit.
+# This fixture needs at most one inventory diff and one attribution diff.
+diff_calls="$(jq -es '
+  map(select(.event == "cmd_name") | .name)
+  | if length == 0 then error("no Git command events")
+    else map(select(test("^diff(-|$)"))) | length
+    end
+' "$RANGE_TRACE")" || exit 2
+within_budget=no
+if [ "$diff_calls" -le 2 ]; then within_budget=yes; fi
+assert_eq "the range uses at most two Git diff operations ($diff_calls observed)" yes "$within_budget"
 carries "in commit $ADDED;"
 assert_eq "the refusal names the commit that added it" "present" "$HAS"
 carries "rewrite the commit that added it (git rebase -i)"
