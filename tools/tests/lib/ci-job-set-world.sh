@@ -23,6 +23,7 @@
 #   queue_only_of PATH       the queue-only line harness-ci's change-class
 #                            prints for a diff touching PATH alone
 #   ok / bad / check         the tally in PASS and FAIL
+#   row_spawn / rows_join    rows run beside each other, and their tally
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -31,7 +32,7 @@ JOB_SET="$ROOT/tools/ci-job-set"
 TMP="$(mktemp -d)" || { echo "suite: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "suite: scratch=not-a-directory" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo "suite: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP:?}"' EXIT
+trap 'rows_reap; rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
 FAIL=0
@@ -39,6 +40,54 @@ ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 check() { # DESC EXPECTED ACTUAL
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
+}
+
+# Each tools/ci-job-set call reads the whole checkout on one core, so a
+# suite of a hundred calls in line outlasts its shard. Rows that write no
+# file another row reads run beside each other, as many as there are
+# cores: row_spawn starts COMMAND in the background with its own output and
+# tally, and rows_join waits for every row spawned, prints each one's lines
+# in spawn order and adds its tally to PASS and FAIL. A row that stops
+# before its tally stops the suite, as it would have in line. Inside a row
+# ROW_TAG names its own scratch files, empty outside one.
+ROW_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null)" || ROW_JOBS=1
+case "$ROW_JOBS" in '' | *[!0-9]* | 0) ROW_JOBS=1 ;; esac
+ROW_TAG=""
+ROW_PIDS=()
+ROW_STATUS=()
+ROW_FIRST=0 ROW_NEXT=0 ROW_REAPED=0
+row_wait() { # the oldest row still running
+  local status=0
+  wait "${ROW_PIDS[ROW_REAPED]}" || status=$?
+  ROW_STATUS[ROW_REAPED]=$status
+  ROW_REAPED=$((ROW_REAPED + 1))
+}
+rows_reap() {
+  while [ "$ROW_REAPED" -lt "$ROW_NEXT" ]; do row_wait; done
+}
+row_spawn() { # COMMAND [ARG...]
+  local n=$ROW_NEXT
+  [ $((n - ROW_REAPED)) -lt "$ROW_JOBS" ] || row_wait
+  (
+    PASS=0 FAIL=0 ROW_TAG=".row$n"
+    "$@"
+    printf '%s %s\n' "$PASS" "$FAIL" >"$TMP/row$n.tally"
+  ) >"$TMP/row$n.out" 2>&1 &
+  ROW_PIDS[n]=$!
+  ROW_NEXT=$((n + 1))
+}
+rows_join() {
+  local n pass fail
+  rows_reap
+  for ((n = ROW_FIRST; n < ROW_NEXT; n++)); do
+    cat "$TMP/row$n.out"
+    if [ "${ROW_STATUS[n]}" -ne 0 ] || ! read -r pass fail <"$TMP/row$n.tally"; then
+      echo "suite: row=$n status=${ROW_STATUS[n]} cause=untallied" >&2
+      exit 1
+    fi
+    PASS=$((PASS + pass)) FAIL=$((FAIL + fail))
+  done
+  ROW_FIRST=$ROW_NEXT
 }
 
 # One unrelated suite from each shard whose workflow steps use checkout kendex.
@@ -53,14 +102,14 @@ checkout_suites_skipped() {
 # arguments passed, blank-separated, none unless set; the workflow's changes
 # job passes --event-parity --runtime-publish.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
-  local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0 arg="${SELECT_ARG:-}"
+  local class="$1" docs="$2" paths="$3" out="$TMP/selection$ROW_TAG" err="$TMP/selection-err$ROW_TAG" status=0 arg="${SELECT_ARG:-}"
   : >"$out"
   # shellcheck disable=SC2086 # one argument per word
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
-    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" $arg 2>"$TMP/selection-err") || status=$?
+    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" $arg 2>"$err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
-      "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"
+      "$(sed -n 's/^ci-job-set: cause=//p' "$err" | head -1)"
     return 0
   fi
   if [ "${SELECT_CARGO_MATRIX:-}" = true ]; then

@@ -292,67 +292,83 @@ if rows=$(find crates -type f -name '*.rs' |
   }
   # Mask comments and literals without moving offsets. Braces inside a Rust
   # string, nested comment or char literal do not close a gated item.
-  function structure(text,   code, at, tok, close_at, depth, pattern, span) {
-    while (match(text, /\/\/|\/\*|r#*"|["\047]/)) {
-      at = RSTART; tok = substr(text, at, RLENGTH)
-      code = code substr(text, 1, at - 1)
-      text = substr(text, at)
-      if (tok == "//") {
-        close_at = index(text, "\n")
-        span = close_at ? close_at - 1 : length(text)
-      } else if (tok == "/*") {
-        span = 2; depth = 1
-        while (depth && match(substr(text, span + 1), /\/\*|\*\//)) {
-          depth += substr(text, span + RSTART, 2) == "/*" ? 1 : -1
-          span += RSTART + 1
-        }
-        if (depth) return ""
-      } else if (tok ~ /^r/) {
-        pattern = "\"" substr(tok, 2, length(tok) - 2)
-        close_at = index(substr(text, length(tok) + 1), pattern)
-        if (!close_at) return ""
-        span = length(tok) + close_at + length(pattern) - 1
-      } else if (tok == "\"") {
-        if (!match(text, /^"([^"\\]|\\.)*"/)) return ""
-        span = RLENGTH
-      } else if (match(text, /^\047([^\047\\\n]|\\(x[[:xdigit:]]{2}|u\{[[:xdigit:]_]+\}|.))\047/)) {
-        span = RLENGTH
-      } else {
-        # A lifetime begins with the same punctuation as a char literal.
-        code = code tok; text = substr(text, 2); continue
+  # It walks one line at a time, carrying an open comment, string or raw
+  # string into the next: a step that cut the rest of the file would cost
+  # the size of the file per token. A string escape at a line end escapes
+  # the newline.
+  function structure(text,   lines, n, i, line, code, out, open, at, tok, close_at, depth, pattern, span) {
+    n = split(text, lines, "\n")
+    for (i = 1; i <= n; i++) {
+      line = lines[i]; code = ""
+      while (line != "") {
+        if (open == "") {
+          if (!match(line, /\/\/|\/\*|r#*"|["\047]/)) { code = code line; break }
+          at = RSTART; tok = substr(line, at, RLENGTH)
+          code = code substr(line, 1, at - 1)
+          line = substr(line, at)
+          if (tok == "//") span = length(line)
+          else if (tok == "/*") { open = "comment"; depth = 1; span = 2 }
+          else if (tok ~ /^r/) {
+            open = "raw"; pattern = "\"" substr(tok, 2, length(tok) - 2); span = length(tok)
+          } else if (tok == "\"") { open = "string"; span = 1 }
+          else if (match(line, /^\047([^\047\\]|\\(x[[:xdigit:]]{2}|u\{[[:xdigit:]_]+\}|.))\047/)) span = RLENGTH
+          else {
+            # A lifetime begins with the same punctuation as a char literal.
+            code = code tok; line = substr(line, 2); continue
+          }
+        } else if (open == "comment") {
+          if (!match(line, /\/\*|\*\//)) span = length(line)
+          else {
+            depth += substr(line, RSTART, 2) == "/*" ? 1 : -1
+            span = RSTART + 1
+            if (!depth) open = ""
+          }
+        } else if (open == "raw") {
+          close_at = index(line, pattern)
+          if (!close_at) span = length(line)
+          else { span = close_at + length(pattern) - 1; open = "" }
+        } else if (!match(line, /^([^"\\]|\\.)*"/)) span = length(line)
+        else { span = RLENGTH; open = "" }
+        code = code sprintf("%*s", span, "")
+        line = substr(line, span + 1)
       }
-      code = code blank(substr(text, 1, span))
-      text = substr(text, span + 1)
+      out = out (i == 1 ? "" : "\n") code
     }
-    return code text
+    return open == "" ? out : ""
   }
   # A positive test cfg (or all(test, ...)) is false for cargo build. Keep
   # other predicates conservatively. Scan the whole item before masking it.
-  function production(text,   code, offset, start, end, masked_end, rest, tok, braces, parens, brackets) {
+  # The item walk goes a line at a time for the reason structure() does.
+  function production(text,   code, offset, start, end, masked_end, lines, n, i, line, tok, braces, parens, brackets) {
     if (text !~ /#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test|all)[ \t]*[),\(]/) return text
     code = structure(text)
     while (match(code, /(^|\n)[ \t]*#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test[ \t]*\)|all[ \t]*\([ \t]*test[ \t]*[,\)])[^]\n]*\]/)) {
       start = RSTART; end = RSTART + RLENGTH - 1
-      rest = substr(code, end + 1)
-      braces = parens = brackets = 0; tok = ""
+      n = split(substr(code, end + 1), lines, "\n")
+      braces = parens = brackets = 0
       masked_end = 0
-      while (match(rest, /[][(){},;]/)) {
-        tok = substr(rest, RSTART, 1)
-        end += RSTART
-        rest = substr(rest, RSTART + 1)
-        if (tok == "(" || tok == ")") parens += tok == "(" ? 1 : -1
-        if (tok == "[" || tok == "]") brackets += tok == "[" ? 1 : -1
-        if (parens < 0 || brackets < 0) return text
-        if (parens || brackets) continue
-        # A field ends at a comma or its enclosing brace. Leave the
-        # delimiter for the outer item, and stop at an ambiguous comma.
-        if (!braces && (tok == "," || tok == "}")) { masked_end = end - 1; break }
-        if (tok == "{" || tok == "}") braces += tok == "{" ? 1 : -1
-        if (!braces && (tok == ";" || tok == "}")) { masked_end = end; break }
+      for (i = 1; i <= n && !masked_end; i++) {
+        line = lines[i]
+        while (match(line, /[][(){},;]/)) {
+          tok = substr(line, RSTART, 1)
+          end += RSTART
+          line = substr(line, RSTART + 1)
+          if (tok == "(" || tok == ")") parens += tok == "(" ? 1 : -1
+          if (tok == "[" || tok == "]") brackets += tok == "[" ? 1 : -1
+          if (parens < 0 || brackets < 0) return text
+          if (parens || brackets) continue
+          # A field ends at a comma or its enclosing brace. Leave the
+          # delimiter for the outer item, and stop at an ambiguous comma.
+          if (!braces && (tok == "," || tok == "}")) { masked_end = end - 1; break }
+          if (tok == "{" || tok == "}") braces += tok == "{" ? 1 : -1
+          if (!braces && (tok == ";" || tok == "}")) { masked_end = end; break }
+        }
+        # The rest of the line and its newline.
+        if (!masked_end) end += length(line) + 1
       }
       if (!masked_end) return text
       text = substr(text, 1, offset + start - 1) blank(substr(text, offset + start, masked_end - start + 1)) substr(text, offset + masked_end + 1)
-      code = rest
+      code = substr(code, end + 1)
       offset += end
     }
     return text
