@@ -4891,6 +4891,72 @@ fn a_foreground_run_whose_executor_dies_is_held_while_its_command_runs_and_close
     assert!(!Path::new(&dir).join("exit").exists());
 }
 
+/// A unit stop ends a foreground run's executor and command together, so
+/// the run leaves no sentinel. `--record` reads it lost as `--wait` does, a
+/// start under its own admission is refused as ended, and the round's next
+/// admission starts, the gone run's stage closing `lost` with its notice
+/// owed rather than holding the round as live.
+#[test]
+fn a_run_whose_executor_and_command_ended_reads_lost_and_holds_no_start() {
+    let w = World::new();
+    let fifo = w.root.join("hold");
+    assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+    let command = format!("exec 9<> '{}'; read -r -t 20 -u 9 answer", fifo.display());
+    let mut child = support::isolated();
+    child.args([
+        "--state-dir",
+        w.state.to_str().unwrap(),
+        "validate",
+        "start",
+        "--item",
+        ITEM_ID,
+        "--round",
+        ROUND,
+        "--foreground",
+    ]);
+    for (k, v) in w.env() {
+        child.env(k, v);
+    }
+    child
+        .env("DEV_VALIDATE_CMD", command)
+        .current_dir(&w.worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = Owned(child.spawn().unwrap());
+    until(|| recorded_run(&w.worktree).is_some());
+    let dir = recorded_run(&w.worktree).unwrap().display().to_string();
+    kill_group(&Path::new(&dir).join("pid"));
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+
+    let record = read_record(&w, &dir);
+    assert_eq!(field(&record, "verdict"), "FAILING", "{record}");
+    assert_eq!(field(&record, "state"), "lost", "{record}");
+    let wait = w.entry(&["--wait", "--run-dir", &dir, "--budget", "1"], &[]);
+    assert_eq!(wait.status.code(), Some(1), "{}", text(&wait));
+    assert_eq!(field(&text(&wait), "state"), "lost");
+    assert_eq!(field(&text(&wait), "validate"), "FAILING");
+
+    let again = w.run(
+        &["validate", "start", "--run-dir", &dir, "--poll", "1"],
+        &[],
+    );
+    assert_eq!(refusal(&again), "run-ended");
+    let next = ok(&w.op(
+        &json!({"op": "record-validation-admission", "round_id": ROUND, "attempt": "next"}),
+        &[],
+    ));
+    let next_dir = next["report"]["run_dir"].as_str().unwrap().to_owned();
+    ok(&w.run(
+        &["validate", "start", "--run-dir", &next_dir, "--poll", "1"],
+        &[],
+    ));
+    let gone = w.stage(&dir);
+    assert_eq!(gone["outcome"], "lost", "{gone}");
+    assert_eq!(gone["notice"]["owner"], "owed", "{gone}");
+    w.wait_marked(&next_dir);
+}
+
 /// Ends the group a row's detached child leads, whatever the row's answer.
 struct Group(PathBuf);
 impl Drop for Group {

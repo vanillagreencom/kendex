@@ -1841,17 +1841,13 @@ pub fn start(
                 run_dir: dir.display().to_string(),
             });
         }
-        // One run at a time per round, judged before any read.
-        if let Some(open) = stages.iter().find(|s| {
-            s.kind == StageKind::Validate
-                && s.round_id.as_deref() == Some(&round)
-                && s.end.is_none()
-                && s.job.is_some()
-        }) {
-            return Err(Error::RunLive {
-                round_id: round,
-                run_dir: open.run_dir.clone().unwrap_or_default(),
-            });
+        // One run at a time per round, judged before the worktree is read;
+        // the start's record closes a run this finds gone.
+        for stage in stages
+            .iter()
+            .filter(|s| crate::ops::validate::open_started(s, &round))
+        {
+            crate::ops::validate::hold(&round, stage)?;
         }
         let scratch = Scratch::new(env)?;
         let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;

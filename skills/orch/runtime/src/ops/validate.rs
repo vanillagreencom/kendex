@@ -55,8 +55,9 @@ impl Validate {
 /// admitted run before the launcher is asked. With `run_dir` the stage the
 /// dev agent's admission named, open and not yet started; without it the
 /// round's open admitted run, or one minted here through the admission.
-/// A round with an open run that carries a job refuses `run-live`: one run
-/// at a time per round.
+/// An open run of the round that carries a job refuses `run-live` while
+/// its job runs, and closes first where its job is gone; a named run that
+/// has ended refuses `run-ended`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordStart {
     pub round_id: String,
@@ -274,27 +275,52 @@ pub(super) fn apply(path: &Path, doc: &mut Document, r: &Validate, env: &Env) ->
     }
 }
 
-fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<Started> {
-    let before = stages(path, doc)?;
-    // One run at a time per round: an open run with its job recorded is
-    // the round's, whether it still runs or its reconcile is still owed.
-    if let Some(open) = before.iter().find(|s| {
-        s.kind == StageKind::Validate
-            && s.round_id.as_deref() == Some(&r.round_id)
-            && s.end.is_none()
-            && s.job.is_some()
-    }) {
-        return Err(Error::RunLive {
-            round_id: r.round_id.clone(),
-            run_dir: open.run_dir.clone().unwrap_or_default(),
-        });
+/// Whether the stage is an open run of the round that the runtime started.
+pub(crate) fn open_started(stage: &Stage, round_id: &str) -> bool {
+    stage.kind == StageKind::Validate
+        && stage.round_id.as_deref() == Some(round_id)
+        && stage.end.is_none()
+        && stage.job.is_some()
+}
+
+/// One run at a time per round: an open started run holds its round while
+/// its job runs (`run-live`) or cannot be read (the reader's cause). A job
+/// read gone holds nothing, and its read is returned for the close.
+pub(crate) fn hold(round_id: &str, stage: &Stage) -> Result<item::RunRead> {
+    let run_dir = stage.run_dir.clone().unwrap_or_default();
+    match item::read_stage(stage) {
+        Some(read @ (item::RunRead::Ended { .. } | item::RunRead::Gone { .. })) => Ok(read),
+        Some(item::RunRead::Unreadable(cause)) => Err(Error::ValidateUnreadable {
+            read: "run-job",
+            cause: format!("{run_dir}: {cause}"),
+        }),
+        Some(item::RunRead::Live { .. } | item::RunRead::LiveUnit { .. }) | None => {
+            Err(Error::RunLive {
+                round_id: round_id.to_owned(),
+                run_dir,
+            })
+        }
     }
+}
+
+fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<Started> {
+    // A started run whose job is gone closes here as the round's reconcile
+    // closes it, so a stopped or killed job never holds its round. Only
+    // started runs: the whole reconcile would close, as never started, the
+    // admission this start is for.
+    for (index, stage) in stages(path, doc)?.iter().enumerate() {
+        if open_started(stage, &r.round_id) {
+            let read = hold(&r.round_id, stage)?;
+            item::settle_stage(path, doc, index, stage, read, env)?;
+        }
+    }
+    let before = stages(path, doc)?;
     if let Some(run_dir) = &r.run_dir {
         // The named run is the dev agent's admission: it stands open, or
-        // the start is of a run that already ended.
+        // it has ended and the round's next admission is owed.
         let index = stage_index(&before, &r.round_id, run_dir)?;
         if before[index].end.is_some() {
-            return Err(Error::RunUnknown {
+            return Err(Error::RunEnded {
                 round_id: r.round_id.clone(),
                 run_dir: run_dir.clone(),
             });

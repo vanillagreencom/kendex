@@ -1046,7 +1046,7 @@ pub(super) fn close_stage(
 /// How a run directory reads at the reconcile: the sentinel's verdict and
 /// time once the run ended, the recorded child's liveness before, or what
 /// its absence means.
-enum RunRead {
+pub(crate) enum RunRead {
     Ended {
         outcome: StageOutcome,
         /// The sentinel's `at=` time, where it parses.
@@ -1358,7 +1358,6 @@ pub(super) fn reconcile_round(
             round_id: r.round_id.clone(),
         });
     }
-    let item = item_name(path);
     let mut runs = Vec::new();
     for (index, stage) in stages.iter().enumerate() {
         if stage.kind != StageKind::Validate
@@ -1367,102 +1366,121 @@ pub(super) fn reconcile_round(
         {
             continue;
         }
-        let Some(run_dir) = stage.run_dir.clone() else {
+        let Some(read) = read_stage(stage) else {
             continue;
         };
-        let (outcome, end, cause, seconds) = match read_run(Path::new(&run_dir), stage.job.as_ref())
-        {
-            RunRead::Live { pid } => {
-                runs.push(RunReconciled {
-                    run_dir,
-                    state: RunState::Live { pid },
-                });
-                continue;
-            }
-            RunRead::LiveUnit { unit } => {
-                runs.push(RunReconciled {
-                    run_dir,
-                    state: RunState::LiveUnit { unit },
-                });
-                continue;
-            }
-            RunRead::Unreadable(cause) => {
-                runs.push(RunReconciled {
-                    run_dir,
-                    state: RunState::Unreadable { cause },
-                });
-                continue;
-            }
-            RunRead::Ended {
-                outcome,
-                at,
-                seconds,
-            } => {
-                // The sentinel's time is the end where it lies in the
-                // stage's bounds; a time outside them, a clock the runner
-                // and this host disagree on, yields to the reconcile's.
-                let end = at
-                    .filter(|t| (stage.start..=env.now_secs).contains(t))
-                    .unwrap_or(env.now_secs);
-                // A recorded stop decides the word, as the job's own close
-                // reads it: the stop's signal ends the command, whose
-                // executor still writes the sentinel of that ending.
-                let outcome = if stage.stop.is_some() {
-                    StageOutcome::Stopped
-                } else {
-                    outcome
-                };
-                (outcome, end, RunCause::Sentinel, seconds)
-            }
-            // A job gone with no sentinel closes `lost`, unless the stage
-            // records the intentional stop `validate stop` wrote before it
-            // ended the job: then `stopped`, the word the
-            // job's own close reads the same way. No one recorded an
-            // intent for a `lost` run.
-            RunRead::Gone { outcome, cause } => {
-                let outcome = match (outcome, &stage.stop) {
-                    (StageOutcome::Lost, Some(_)) => StageOutcome::Stopped,
-                    (word, _) => word,
-                };
-                (outcome, env.now_secs, cause, None)
-            }
-        };
-        close_stage(path, doc, index, stage, end, outcome, env)?;
-        // A runtime-started run's close owes its lane the end notice, written
-        // in the same transition; the owed walk after the reconcile sends it.
-        // The job closed a live run itself and already owns its notice; a run
-        // with no runtime job owes none.
-        if stage
-            .job
-            .as_ref()
-            .is_some_and(|j| j.runner.as_deref() != Some("none"))
-        {
-            let notice = super::validate::end_notice(&run_id_of(&run_dir), &run_dir, outcome);
-            let rows = record::array_mut(path, doc, "stages")?;
-            let row = record::element_mut(path, rows, index, "stages")?;
-            record::set(
-                row,
-                "notice",
-                serde_json::to_value(agent_runtime::intent::Notice {
-                    key: notice.key,
-                    text: notice.text,
-                    to: Some(item.clone()),
-                    owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
-                })?,
-            );
-        }
-        runs.push(RunReconciled {
-            run_dir,
-            state: RunState::Closed {
-                outcome,
-                cause,
-                seconds,
-            },
-        });
+        runs.push(settle_stage(path, doc, index, stage, read, env)?);
     }
     Ok(RoundReconciled {
         round_id: r.round_id.clone(),
         runs,
+    })
+}
+
+/// One open admitted run as the reconcile reads it: `None` for a stage that
+/// names no run directory.
+pub(crate) fn read_stage(stage: &Stage) -> Option<RunRead> {
+    let run_dir = stage.run_dir.as_deref()?;
+    Some(read_run(Path::new(run_dir), stage.job.as_ref()))
+}
+
+/// The reconcile's close of one open admitted run from its read: a run that
+/// will not end itself closes with its word, and a runtime-started run's
+/// close owes its lane the end notice in the same write; a live or unread
+/// run keeps its stage open.
+pub(super) fn settle_stage(
+    path: &Path,
+    doc: &mut Document,
+    index: usize,
+    stage: &Stage,
+    read: RunRead,
+    env: &Env,
+) -> Result<RunReconciled> {
+    let run_dir = stage.run_dir.clone().unwrap_or_default();
+    let (outcome, end, cause, seconds) = match read {
+        RunRead::Live { pid } => {
+            return Ok(RunReconciled {
+                run_dir,
+                state: RunState::Live { pid },
+            });
+        }
+        RunRead::LiveUnit { unit } => {
+            return Ok(RunReconciled {
+                run_dir,
+                state: RunState::LiveUnit { unit },
+            });
+        }
+        RunRead::Unreadable(cause) => {
+            return Ok(RunReconciled {
+                run_dir,
+                state: RunState::Unreadable { cause },
+            });
+        }
+        RunRead::Ended {
+            outcome,
+            at,
+            seconds,
+        } => {
+            // The sentinel's time is the end where it lies in the
+            // stage's bounds; a time outside them, a clock the runner
+            // and this host disagree on, yields to the reconcile's.
+            let end = at
+                .filter(|t| (stage.start..=env.now_secs).contains(t))
+                .unwrap_or(env.now_secs);
+            // A recorded stop decides the word, as the job's own close
+            // reads it: the stop's signal ends the command, whose
+            // executor still writes the sentinel of that ending.
+            let outcome = if stage.stop.is_some() {
+                StageOutcome::Stopped
+            } else {
+                outcome
+            };
+            (outcome, end, RunCause::Sentinel, seconds)
+        }
+        // A job gone with no sentinel closes `lost`, unless the stage
+        // records the intentional stop `validate stop` wrote before it
+        // ended the job: then `stopped`, the word the
+        // job's own close reads the same way. No one recorded an
+        // intent for a `lost` run.
+        RunRead::Gone { outcome, cause } => {
+            let outcome = match (outcome, &stage.stop) {
+                (StageOutcome::Lost, Some(_)) => StageOutcome::Stopped,
+                (word, _) => word,
+            };
+            (outcome, env.now_secs, cause, None)
+        }
+    };
+    close_stage(path, doc, index, stage, end, outcome, env)?;
+    // A runtime-started run's close owes its lane the end notice, written
+    // in the same transition; the owed walk after the reconcile sends it.
+    // The job closed a live run itself and already owns its notice; a run
+    // with no runtime job owes none.
+    if stage
+        .job
+        .as_ref()
+        .is_some_and(|j| j.runner.as_deref() != Some("none"))
+    {
+        let notice = super::validate::end_notice(&run_id_of(&run_dir), &run_dir, outcome);
+        let rows = record::array_mut(path, doc, "stages")?;
+        let row = record::element_mut(path, rows, index, "stages")?;
+        record::set(
+            row,
+            "notice",
+            serde_json::to_value(agent_runtime::intent::Notice {
+                key: notice.key,
+                text: notice.text,
+                to: Some(item_name(path)),
+                owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
+            })?,
+        );
+    }
+    Ok(RunReconciled {
+        run_dir,
+        state: RunState::Closed {
+            outcome,
+            cause,
+            seconds,
+        },
     })
 }
 
