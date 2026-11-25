@@ -1955,7 +1955,7 @@ pub fn start(
                     end: None,
                     seconds: None,
                     selection: None,
-                    notice: None,
+                    notify: false,
                 }),
                 env,
                 locking,

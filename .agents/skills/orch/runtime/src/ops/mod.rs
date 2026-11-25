@@ -410,58 +410,6 @@ fn apply_host(
     apply_interleaved(path, request, env, locking, host, &|| {})
 }
 
-/// Whether a store of `request` that refuses `record-changed` is read again
-/// and re-applied: the launcher-side progress and outcome writes, which write
-/// only while their owner still holds the intent, the job's claim, whose
-/// first store can meet the launcher's sidecar write that lands the instant
-/// the job starts, and the transitions that judge the record they commit
-/// against.
-fn reread_on_record_changed(request: &Request) -> bool {
-    match request {
-        Request::RecordProgress(r) => r.while_owner.is_some(),
-        Request::RecordLaneProgress(r) => r.while_owner.is_some(),
-        Request::RecordOutcome(r) => r.while_owner.is_some(),
-        Request::ClaimIntent(_) => true,
-        // A claim and a mark judge the record they commit against, so a
-        // snapshot another writer moved is judged again.
-        Request::RecoverLaneModel(_) | Request::StopModelPredecessor(_) => true,
-        // The reconcile judges each open run against the record it commits
-        // to, and races the run's own job by design: a `validate stop`
-        // reconciles while the job it signalled writes its close, the first
-        // closer winning. A close that landed in the gap is judged again.
-        Request::ReconcileRound(_) => true,
-        Request::LaunchLane(_)
-        | Request::BeginRound(_)
-        | Request::RecordValidationAdmission(_)
-        | Request::RequestTransfer(_)
-        | Request::StartController(_)
-        | Request::StopController(_)
-        | Request::AcceptResult(_)
-        | Request::RecordVerification(_)
-        | Request::VerifyHead(_)
-        | Request::VerifyPr(_)
-        | Request::VerifyReview(_)
-        | Request::ApproveHead(_)
-        | Request::CloseLane(_)
-        | Request::RecordHandoff(_)
-        | Request::ResumeHandoff(_)
-        | Request::CloseOwnedResources(_)
-        | Request::ParkLane(_)
-        | Request::ReserveLane(_)
-        | Request::ReleaseLane(_)
-        | Request::RecordPhase(_)
-        | Request::RecordDirectiveSend(_)
-        | Request::RecordWallPauses(_)
-        | Request::AdmitPaths(_)
-        | Request::PruneRecords(_)
-        | Request::Validate(_)
-        | Request::RecordQueueWatch(_)
-        | Request::RecordPush(_)
-        | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => false,
-    }
-}
-
 /// [`apply_host`] with `between` run after the transition and before the
 /// store on each attempt: the seam a test uses to land another writer's
 /// commit in the gap. Production passes a no-op.
@@ -488,14 +436,71 @@ fn apply_interleaved(
         })?;
         Ok(Applied { kind, report })
     };
-    if reread_on_record_changed(request) {
-        // The owner the transition compared is the one the store commits
-        // against: a snapshot another writer moved between the read and the
-        // store is read again, so a claim that landed in the gap is answered
-        // with the claimant's state, never `record-changed`. The ordinary
-        // stale-write refusal stays for a record that keeps moving.
-        return record::reread(transition, Error::key);
-    }
+    let rejudge = match request {
+        // The journal's progress and outcome receipts can yield to a new
+        // owner only when the writer supplied the owner it acted under.
+        Request::RecordProgress(r) => r.while_owner.is_some(),
+        Request::RecordLaneProgress(r) => r.while_owner.is_some(),
+        Request::RecordOutcome(r) => r.while_owner.is_some(),
+        // A launch can send its join directive before the fleet store.
+        Request::LaunchLane(_) => false,
+        // Settlements belong to an earlier owed send. The sender also reads
+        // the lane's delivery route before it records a new send as owed.
+        Request::RecordDirectiveSend(_) => false,
+        // These record observations supplied by the caller. Reapplying can
+        // overwrite a receipt or observation the caller never saw.
+        Request::RecordPhase(_)
+        | Request::RecordVerification(_)
+        | Request::RecordWallPauses(_)
+        | Request::RecordQueueWatch(_)
+        | Request::CloseOwnedResources(_)
+        | Request::ParkLane(_) => false,
+        // A superseding write or a resume can act on a handoff the caller
+        // read before the transition. A replacement needs its own decision.
+        Request::RecordHandoff(_) | Request::ResumeHandoff(_) => false,
+        // Retention archives before it commits. A fresh snapshot may carry
+        // old log rows outside that archive, so the next pass must replan.
+        Request::PruneRecords(_) => false,
+        // The effects for these requests own their writes.
+        Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::CloseLane(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => false,
+        // These judge the record they commit against. Effects, if any,
+        // follow the store. Path admission checks holders without joining.
+        Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::RequestTransfer(_)
+        | Request::StartController(_)
+        | Request::StopController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::ReconcileRound(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::AdmitPaths(_)
+        | Request::RecoverLaneModel(_)
+        | Request::StopModelPredecessor(_) => true,
+        // An already closed or marked stage keeps the first result.
+        Request::Validate(step) => match step {
+            validate::Validate::Start(_)
+            | validate::Validate::Launch(_)
+            | validate::Validate::End(_)
+            | validate::Validate::Mark(_)
+            | validate::Validate::Stop(_) => true,
+        },
+    };
+    let commit = || {
+        if rejudge {
+            record::reread(transition, Error::key)
+        } else {
+            transition()
+        }
+    };
     if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
         // A lane admission, and the path admission that judges against the
         // same holders, run under the fleet launch lock (`flock` on
@@ -503,7 +508,7 @@ fn apply_interleaved(
         // committed row, so two contenders on one path are judged one after
         // the other; the state file's own lock is taken inside, by the write.
         return record::locked(&occupancy::launch_lock_base(path), locking, || {
-            let applied = transition();
+            let applied = commit();
             if let (Request::LaunchLane(r), Err(refusal)) = (request, &applied)
                 && lane::held_for_capacity(refusal)
             {
@@ -522,7 +527,7 @@ fn apply_interleaved(
             applied
         });
     }
-    transition()
+    commit()
 }
 
 /// What the settings admit before any transition runs: the programs the
@@ -1614,6 +1619,229 @@ mod tests {
         };
         assert_eq!(t.expected.pane, Value::Null);
         assert_eq!(t.expected.pending, Value::Null);
+    }
+
+    #[test]
+    fn a_launch_refuses_a_moved_fleet_record_and_keeps_the_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let mut doc = object(&path);
+        doc["lanes"][0]["status"] = LaneStatus::Stopped.word().into();
+        fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let reservation = state::Reservation {
+            reason: "keep the slot".into(),
+            until: "2026-01-29T16:20:00Z".into(),
+        };
+        let reserve = std::cell::Cell::new(Some(Request::ReserveLane(ReserveLane {
+            item: "KEN-4437".into(),
+            reason: reservation.reason.clone(),
+            until: reservation.until.clone(),
+        })));
+        // A reservation can commit while the launch holds its launch lock.
+        let refused = apply_interleaved(
+            &path,
+            &launch("KEN-4468"),
+            &env(),
+            LOCK,
+            Some(&host()),
+            &|| {
+                if let Some(request) = reserve.take() {
+                    run(&path, &request).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(refused.key(), "record-changed");
+        let stored = fleet(&path);
+        assert_eq!(stored.lanes[0].reservation, Some(reservation));
+        assert!(stored.intents.is_empty());
+    }
+
+    #[test]
+    fn a_directive_settlement_cannot_follow_a_replaced_owed_record() {
+        use mail::{Credit, DirectiveSend, DirectiveWrite, RecordDirectiveSend, SendResult, Word};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let mut doc = object(&path);
+        doc["lanes"][0]["kind"] = "claude-cloud".into();
+        fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let request = |write| {
+            Request::RecordDirectiveSend(RecordDirectiveSend {
+                item: "KEN-4437".into(),
+                write,
+            })
+        };
+        let owed = |key: &str| {
+            request(DirectiveWrite::Owed {
+                text: key.into(),
+                key: Some(key.into()),
+            })
+        };
+        let settled = request(DirectiveWrite::Settled {
+            at: NOW_SECS,
+            send: DirectiveSend {
+                result: SendResult::Sent,
+                text: String::new(),
+                credit: Credit::Unread(Word::Unread),
+            },
+        });
+        let failed = request(DirectiveWrite::Failed {
+            cause: "receipt missing".into(),
+        });
+        run(&path, &owed("first")).unwrap();
+        for (settlement, next) in [(&settled, "second"), (&failed, "third")] {
+            let replace = std::cell::Cell::new(true);
+            let refused = apply_interleaved(&path, settlement, &env(), LOCK, None, &|| {
+                if replace.replace(false) {
+                    run(&path, &settled).unwrap();
+                    run(&path, &owed(next)).unwrap();
+                }
+            })
+            .unwrap_err();
+            assert_eq!(refused.key(), "record-changed");
+            let send = &object(&path)["lanes"][0]["directive_send"];
+            assert_eq!(send["key"], next);
+            assert_eq!(send["result"], mail::OWED);
+        }
+    }
+
+    fn validation_awaits_its_launch(path: &Path, run_dir: &Path) -> validate::RecordEnd {
+        let round_id = item(path).dev_round_id.unwrap();
+        let run_dir = run_dir.to_str().unwrap().to_owned();
+        let mut doc = object(path);
+        doc["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "kind": "validate", "round_id": round_id, "start": NOW_SECS - 10,
+                "run_dir": run_dir, "job": {"record": validate::job_record(&run_dir)},
+            }));
+        fs::write(path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        validate::RecordEnd {
+            round_id,
+            notify: true,
+            run_dir,
+            outcome: state::StageOutcome::Pass,
+            end: Some(NOW_SECS - 1),
+            seconds: Some(0),
+            selection: None,
+        }
+    }
+
+    #[test]
+    fn a_validation_job_closes_and_marks_when_its_launch_sets_the_runner() {
+        use validate::{MarkNotice, RecordLaunch, Validate};
+
+        for launch_at_close in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = item_file(dir.path());
+            let end = validation_awaits_its_launch(&path, &dir.path().join("dev-validate-job"));
+            let launch = Request::Validate(Validate::Launch(RecordLaunch {
+                round_id: end.round_id.clone(),
+                run_dir: end.run_dir.clone(),
+                launch: agent_runtime::effects::job::Launch::Started {
+                    runner: "systemd".into(),
+                    unit: Some("validation.service".into()),
+                    pid: None,
+                    start: None,
+                    line: "runner=systemd unit=validation.service".into(),
+                },
+            }));
+            let launch = std::cell::Cell::new(Some(launch));
+            let write_launch = || {
+                if let Some(request) = launch.take() {
+                    apply(&path, &request, &env(), LOCK).unwrap();
+                }
+            };
+            let mark = Request::Validate(Validate::Mark(MarkNotice {
+                round_id: end.round_id.clone(),
+                run_dir: end.run_dir.clone(),
+                owner: "sent".into(),
+            }));
+            let close = Request::Validate(Validate::End(end));
+            let (close_writer, mark_writer): (&dyn Fn(), &dyn Fn()) = if launch_at_close {
+                (&write_launch, &|| {})
+            } else {
+                (&|| {}, &write_launch)
+            };
+            apply_interleaved(&path, &close, &env(), LOCK, None, close_writer).unwrap();
+            apply_interleaved(&path, &mark, &env(), LOCK, None, mark_writer).unwrap();
+            let stage = item(&path).stages.pop().unwrap();
+            assert_eq!(stage.end, Some(NOW_SECS - 1));
+            assert_eq!(stage.outcome, Some(state::StageOutcome::Pass));
+            assert_eq!(stage.notice.unwrap().owner, "sent");
+            assert_eq!(
+                stage.job.unwrap().unit.as_deref(),
+                Some("validation.service")
+            );
+        }
+    }
+
+    #[test]
+    fn a_validation_job_yields_to_a_reconcile_that_closes_first() {
+        use validate::{Validate, Validated};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = item_file(dir.path());
+        let end = validation_awaits_its_launch(&path, &dir.path().join("dev-validate-job"));
+        let reconcile = Request::ReconcileRound(ReconcileRound {
+            round_id: end.round_id.clone(),
+        });
+        let reconcile = std::cell::Cell::new(Some(reconcile));
+        let first_close = std::cell::Cell::new(None);
+        let close = Request::Validate(Validate::End(end));
+        let result = apply_interleaved(&path, &close, &env(), LOCK, None, &|| {
+            if let Some(request) = reconcile.take() {
+                apply(&path, &request, &env(), LOCK).unwrap();
+                first_close.set(item(&path).stages.pop());
+            }
+        })
+        .unwrap();
+        let Report::Validate(ended) = result.report else {
+            panic!()
+        };
+        let Validated::End(ended) = *ended else {
+            panic!()
+        };
+        assert!(!ended.closed_now);
+        assert_eq!(ended.outcome, Some(state::StageOutcome::Stopped));
+        let stage = item(&path).stages.pop().unwrap();
+        assert_eq!(stage.end, Some(NOW_SECS));
+        assert!(stage.notice.as_ref().unwrap().owed());
+        assert_eq!(Some(stage), first_close.into_inner());
+    }
+
+    #[test]
+    fn a_validation_job_honors_a_stop_recorded_before_its_close_commits() {
+        use validate::{RecordStop, Validate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = item_file(dir.path());
+        let end = validation_awaits_its_launch(&path, &dir.path().join("dev-validate-job"));
+        let stop = std::cell::Cell::new(Some(Request::Validate(Validate::Stop(RecordStop {
+            round_id: end.round_id.clone(),
+            run_dir: end.run_dir.clone(),
+        }))));
+        let close = Request::Validate(Validate::End(end));
+        apply_interleaved(&path, &close, &env(), LOCK, None, &|| {
+            if let Some(request) = stop.take() {
+                apply(&path, &request, &env(), LOCK).unwrap();
+            }
+        })
+        .unwrap();
+        let stage = item(&path).stages.pop().unwrap();
+        assert_eq!(stage.stop.unwrap().at, NOW_SECS);
+        assert_eq!(stage.end, Some(NOW_SECS - 1));
+        assert_eq!(stage.outcome, Some(state::StageOutcome::Stopped));
+        let notice = stage.notice.unwrap();
+        assert!(notice.owed());
+        assert!(
+            notice
+                .text
+                .split_whitespace()
+                .any(|word| word == "state=stopped")
+        );
     }
 
     /// A model recovery's claim, a predecessor stop's keep and a round's
