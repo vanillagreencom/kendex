@@ -15,8 +15,12 @@ set -euo pipefail
 
 # The judge is the lane-mail-check hook installed beside this one: the one
 # reader of the lane mailbox. A halt it cannot read is never passed.
+hook=${BASH_SOURCE[0]}
+case "$hook" in
+  [A-Za-z]:[\\/]*|\\\\*) hook=${hook//\\//} ;;
+esac
 JUDGE=""
-if HOOK_DIR=$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P); then
+if HOOK_DIR=$(cd -- "${hook%/*}" && pwd -P); then
   JUDGE="$HOOK_DIR/lane-mail-check.sh"
 fi
 if [ -z "$JUDGE" ] || [ ! -f "$JUDGE" ]; then
