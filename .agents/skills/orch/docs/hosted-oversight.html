@@ -94,16 +94,16 @@
 <tr><td>Lane</td><td><code>lane-mail notice</code></td><td>Tells the overseer something that needs no answer: a pushed head, a proposal, a handoff.</td></tr>
 <tr><td>Lane</td><td><code>lane-mail inbox</code></td><td>Reads unread directives. Which hooks hand the lane its mail and hold its turn end or its tools: <a href="../references/skill-rules.md#lane-mail">Lane mail</a>; the handoff marks: <a href="../references/skill-rules.md#round-closure">Round Closure</a>.</td></tr>
 <tr><td>Overseer</td><td><code>lane-mail send --re</code>, <code>--directive</code>, <code>--halt</code></td><td>Answers an ask, or writes a directive. When the lane reads it: <a href="../references/skill-rules.md#lane-mail">Lane mail</a>.</td></tr>
-<tr><td>Overseer</td><td><code>lane-mail peer ask</code>, <code>peer send</code></td><td>Writes another repository's overseer inbox, stamped <code>overseer:&lt;repository&gt;</code>. The reader's watch reports it as <code>peer-note</code>.</td></tr>
+<tr><td>Overseer</td><td><code>lane-mail peer ask</code>, <code>peer send</code></td><td>Writes another repository's overseer inbox, stamped <code>overseer:&lt;repository&gt;</code>. With <code>--host --repo PATH</code>, a configured SSH provider delivers directly to the receiving checkout. The reader's watch reports it as <code>peer-note</code>. See <a href="../references/peer-mail.md#addressing">Peer mail addressing</a>.</td></tr>
 </table>
 
 <figure>
-<svg viewBox="0 0 920 124" role="img" aria-label="The fleet overseer's inbox on the workstation is read every watch pass, while the copy on the control VM, which the kendex overseer writes with peer send, is read only by an ssh read at a heartbeat. The kendex inbox on the VM, which the fleet overseer writes over ssh, is read by the kendex watch every pass.">
+<svg viewBox="0 0 920 124" role="img" aria-label="When direct peer mail is unavailable, the kendex overseer writes to a fleet inbox copy on the control VM. The fleet overseer reads that copy by SSH at a heartbeat. Each watch reads its own inbox every pass.">
   <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
   <rect x="20" y="36" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--local)" stroke-width="1.5"/>
   <text x="32" y="56" font-size="11">workstation · fleet inbox</text>
   <text x="32" y="74" font-size="10.5" fill="var(--muted)">read by the fleet watch, every pass</text>
-  <text x="32" y="92" font-size="10.5" fill="var(--muted)">kendex cannot write here</text>
+  <text x="32" y="92" font-size="10.5" fill="var(--muted)">copy route when direct delivery is unavailable</text>
   <rect x="340" y="36" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--remote)" stroke-width="1.5"/>
   <text x="352" y="56" font-size="11">control VM · fleet inbox copy</text>
   <text x="352" y="74" font-size="10.5" fill="var(--muted)">kendex writes it with peer send</text>
@@ -114,7 +114,7 @@
   <text x="672" y="74" font-size="10.5" fill="var(--muted)">the fleet overseer writes it over ssh</text>
   <text x="672" y="92" font-size="10.5" fill="var(--muted)">read by the kendex watch, every pass</text>
 </svg>
-<figcaption>Nothing pushes from the VM to the workstation, and the workstation's watch does not read the VM copy: a note the kendex overseer writes there waits for an ssh read at a heartbeat. The heartbeat is a quiet-period backstop for triage, not a mail poll.</figcaption>
+<figcaption>When direct delivery is unavailable, a note written to the VM copy waits for a manual SSH read at a heartbeat. With direct delivery, each overseer's watch reads its own inbox.</figcaption>
 </figure>
 
 <h2>The watch</h2>

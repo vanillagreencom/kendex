@@ -69,7 +69,7 @@ enum Pool {
 
 /// Every verb the provider contract names (`schemas/lane-host.md`), with
 /// the pool it takes; `capabilities` takes none.
-const VERBS: [(&str, Option<Pool>); 18] = [
+const VERBS: [(&str, Option<Pool>); 19] = [
     ("capabilities", None),
     ("create", Some(Pool::Long)),
     ("wait", Some(Pool::Long)),
@@ -81,6 +81,7 @@ const VERBS: [(&str, Option<Pool>); 18] = [
     ("cat", Some(Pool::Short)),
     ("put", Some(Pool::Short)),
     ("append", Some(Pool::Short)),
+    ("peer-append", Some(Pool::Short)),
     ("touch", Some(Pool::Short)),
     ("status", Some(Pool::Short)),
     ("list", Some(Pool::Short)),

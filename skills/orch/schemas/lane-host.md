@@ -58,7 +58,7 @@ Exit statuses:
 
 - Exit `0` is the verb done.
 - Exit `2` is an absent verb, and for `cat` a missing file.
-- Any other non-zero status is a failed verb, its cause on stderr, except the `item-unknown` answer of `start` and the `stop-worktree-removed` and `stop-unowned` answers of `stop`.
+- Other non-zero exits report failures on stderr. The `peer-append`, `start` and `stop` entries below describe their specific outcomes.
 
 The recorded cause:
 
@@ -108,9 +108,11 @@ Each verb, its arguments, and its answer:
   - A repeated mail envelope exits `4` with `duplicate id=FIRST` on stderr and adds nothing.
   - A failed append adds nothing.
   - Only append to a file several machines write; never read it and `put` it back.
-  - Static SSH accepts peer envelopes (`from` starts with `overseer:`) at `append --item overseer REPO/tmp/lane-mail/overseer/to-lane.jsonl`, with the absolute path to the peer's main checkout as `REPO`.
-  - The provider uses an `overseer` inventory row if present. Otherwise all rows must name one SSH target. The same route serves `cat` for the peer inbox and `touch` for the host probe.
-  - The selected clone's installed `lane-mail` checks the peer's controller record on the host before delivery. A refused check exits `2` with the mailbox diagnostic. A successful append prints `reader-checked` on stdout and carries any reader notice on stderr.
+- `peer-append --item overseer --repo PATH`, optional, takes one newline-terminated peer envelope on stdin.
+  - The recipient's installed mailbox validates the checkout, envelope and controller, then appends using its mailbox lock. A network provider verifies that it received the complete envelope before appending.
+  - Static SSH calls `lane-mail peer-receive --root PATH` on the recipient. Its stdin starts with the decimal byte count and a newline, then the envelope bytes.
+  - Exit `0` prints `monitor=live` or `monitor=none` on stdout, followed by any reader notice. Exit `3` carries a mailbox refusal on stdout. Exit `4` prints `duplicate id=FIRST` on stdout, followed by the original envelope for a repeated answer. These outcomes keep transport diagnostics on stderr.
+  - Exit `2` means the provider lacks this verb. `lane-mail peer` uses legacy `append` only for that outcome.
 - `read-many`, no arguments; stdin is a JSON array of `{"item": "ID", "path": "PATH"}` rows.
   - One JSON array on stdout, one row per request, in request order.
   - Each row holds the request's `item` and `path`, an integer `status` from `0` to `255` other than `69`, `data` with the file's bytes in padded standard base64, and an optional `error` string.
@@ -307,6 +309,8 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 - Every verb that brings the clone up to date runs the clone's orch and agent-runtime setups right after that update: `create` on a create, a reuse and a relaunch alike, and `close` after it refreshes the clone. No runtime call after an update comes before the setup for the tree it runs in.
 - A host with no Rust toolchain holds the orch runtime and agent-runtime binaries in the setup cache (`AGENT_RUNTIME_CACHE`).
 - `close` exits `3` on changes it cannot save as render drift. Check and preserve needed files before asking it to close.
+- For peer mail, reserve one inventory row with `item` set to `overseer`, `target` set to the recipient's SSH alias and `clone` set to the absolute path of its main checkout with mailbox and agent-runtime installed. The sender passes that same path as `peer-append --repo`. Keep the `repo` field equal to the inventory's repository, including when the recipient checkout belongs to a different repository. The existing absolute `account` field is required by the inventory and peer mail does not use it.
+- The `overseer` row serves `peer-append`, `touch`, and `cat` and `read-many` for files directly in that checkout's overseer mailbox directory. Reads outside the directory fail with status `1`. The row is omitted from lane listings.
 
 ## Test provider
 

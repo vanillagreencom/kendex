@@ -466,8 +466,9 @@ Peer side, one other repository's overseer mailbox per call:
               `lane-mail: no-reader=<REPO root> live=false` with a `fix=` line
               naming `orch-runtime register --fleet`; where the status could
               not be read, `lane-mail: reader-unjudged=<REPO root> cause=C`
-              with agent-runtime's cause and its refusal. A provider that
-              only appends reports `cause=hosted`. Either is a notice after the
+              with agent-runtime's cause and its refusal. For an older provider
+              that only supports append, lane-mail reports `cause=hosted`.
+              Either is a notice after the
               receipt, at exit 0: the note landed. Only ORCH_STATE_DIR is
               read from REPO's settings files, as data, to place its record,
               and no file of REPO's is sourced. An answer (--re) has no pane
@@ -735,8 +736,10 @@ failed read: a host that does not answer is `host-unreachable` with its
 `append` verb included, is `host-append`. No write falls back to reading the
 file and putting it back, which is what loses a line.
 
-`lane-host-ssh` routes a hosted peer through the provider's `append --item
-overseer` verb. It checks the receiving repository's reader on that host.
+`lane-host-ssh` routes a hosted peer through `peer-append`. The receiving
+mailbox checks its controller on that host. A refusal of that check keeps
+the receiving mailbox's diagnostic and appends nothing. The legacy `append`
+route above is used only when the provider lacks `peer-append`.
 USAGE
 }
 
@@ -762,6 +765,7 @@ lm_message() { # KEY VALUE
     root-unresolved) text='The lane root could not be resolved. Pass --root.' ;;
     repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
+    peer-envelope) text='The hosted peer delivery needs one complete peer note, ask or answer.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
     no-reader) text="$reader_outcome"' no session reads that checkout'\''s overseer mailbox: agent-runtime'\''s controller status reads the controller its fleet record names not live (live=false), a record naming no tmux pane and server start, a pane that no longer runs or holds no harness, or a tmux server that is gone or replaced. The lane-mail hooks hand that mailbox only to the session the record names.
 fix=run `orch-runtime register --fleet` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with the runtime'\''s `start-controller` request, as orch'\''s workflows/oversee.md § Controller start and adoption states' ;;
@@ -852,7 +856,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | peer-reader | attach-check | owner-answers) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | peer-receive | attach-check | owner-answers) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -1025,7 +1029,7 @@ if [ "$VERB" = peer ]; then
   # A peer ask is addressed by the verb: the record it leaves carries the
   # audience field pending filters on, written here and never typed.
   [ "$PEER_VERB" != ask ] || TO=peer
-elif [ "$VERB" = peer-reader ]; then
+elif [ "$VERB" = peer-receive ]; then
   [ -n "$ROOT" ] || refuse option-required --root
   for given in $OPTS_GIVEN; do
     [ "$given" = --root ] || refuse option-unknown "$given"
@@ -1786,7 +1790,7 @@ lm_root_own() { # ROOT own|checkout
     # Compaction retains existing rows and delivers no new envelope. Cursor
     # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | peer | peer-reader)
+      ask | notice | send | resolve | peer | peer-receive)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
@@ -1812,7 +1816,7 @@ fi
 if [ "$VERB" = peer ]; then
   # Either peer route can append to the sender's local delivery record.
   lm_root_own "$OWN_ROOT" checkout
-elif [ "$VERB" = peer-reader ]; then
+elif [ "$VERB" = peer-receive ]; then
   lm_root_own "$ROOT" checkout
   MAIN_ROOT="$(mailbox_common_root "$ROOT" 2>/dev/null)" || refuse repo-unresolved "$ROOT"
   [ "$MAIN_ROOT" = "$(cd -P -- "$ROOT" && pwd -P)" ] || refuse repo-unresolved "$ROOT"
@@ -2060,10 +2064,11 @@ lm_objects() { # FILE [BOX [AFTER [OUTBOUND]]]
 # to fail sits between the append and the line reporting it: a send that
 # landed always prints its receipt, and a caller reads silence as a send that
 # did not.
-lm_receipt_fields() { # LINE — sets SENT_ID, SENT_BYTES and SENT_MONITOR
+lm_receipt_fields() { # LINE [MONITOR] — sets SENT_ID, SENT_BYTES and SENT_MONITOR
   SENT_BYTES="$(jq -r '.text | utf8bytelength' <<<"$1")" || refuse write-failed "$TO_LANE"
   SENT_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
-  SENT_MONITOR="$(lm_monitor)" || exit "$?"
+  SENT_MONITOR="${2:-}"
+  [ -n "$SENT_MONITOR" ] || { SENT_MONITOR="$(lm_monitor)" || exit "$?"; }
 }
 
 # `live` where the mailbox's watch record is fresh, `none` otherwise: absent,
@@ -2102,12 +2107,12 @@ lm_sent() {
 # alone, and a live watch there reads it itself. Whether it still runs is
 # agent-runtime's controller status, which lm_require_overseer read for this
 # root: `live: false` is nobody to read it, and its `controller-unreadable`
-# refusal is a read that failed, reported with its own cause. An SSH
-# provider can report its own `peer-reader` call after a successful append.
-LM_PEER_READER_CHECKED=0
+# refusal is a read that failed, reported with its own cause. A peer provider
+# returns the receiving mailbox's notice after a successful append.
+LM_PEER_PROVIDER=0
 lm_peer_reader() {
-  if [ "$LM_PEER_READER_CHECKED" -eq 1 ]; then
-    cat -- "$WORK_DIR/append.err" >&2
+  if [ "$LM_PEER_PROVIDER" -eq 1 ]; then
+    tail -n +2 -- "$WORK_DIR/peer.out" >&2
     return 0
   fi
   if [ "$HOST" -eq 1 ]; then
@@ -2589,19 +2594,11 @@ lm_draft() {
 # is probed like a failed read, so a host out of reach keeps its own key and
 # the state an operator acts on, and `host-append` is a host that answered.
 lm_append_host() { # FILE LINE
-  local rc=0 report="" answer
+  local rc=0 report=""
   printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
-  answer="$("$ORCH_SCRIPTS/orch-runtime" host append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
-    2>"$WORK_DIR/append.err")" || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    [ "$VERB:$answer" != peer:reader-checked ] || LM_PEER_READER_CHECKED=1
-    return 0
-  fi
-  if [ "$VERB:$rc" = peer:2 ]; then
-    case "$(head -n 1 -- "$WORK_DIR/append.err")" in
-      'lane-mail: '*) cat -- "$WORK_DIR/append.err" >&2; exit 2 ;;
-    esac
-  fi
+  "$ORCH_SCRIPTS/orch-runtime" host append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
+    >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
   if [ "$rc" -eq 4 ]; then
     report="$(cat -- "$WORK_DIR/append.err")" || refuse file-unreadable "$WORK_DIR/append.err"
     case "$report" in
@@ -2613,6 +2610,40 @@ lm_append_host() { # FILE LINE
   refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
 }
 
+lm_peer_append() { # LINE
+  local rc=0 outcome
+  "$ORCH_SCRIPTS/orch-runtime" host peer-append --item overseer --repo="$ROOT" <<<"$1" \
+    >"$WORK_DIR/peer.out" 2>"$WORK_DIR/peer.err" || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    # Older providers take the inbox path on append and judge no reader.
+    [ "$PEER_VERB" != send ] || { SENT_MONITOR="$(lm_monitor)" || exit "$?"; }
+    lm_append_host "$TO_LANE" "$1"
+    return "$?"
+  fi
+  lm_host_busy "$rc" "$WORK_DIR/peer.err"
+  outcome="$(head -n 1 -- "$WORK_DIR/peer.out")" || refuse file-unreadable "$WORK_DIR/peer.out"
+  LM_PEER_PROVIDER=1
+  case "$rc:$outcome" in
+    0:monitor=live | 0:monitor=none) SENT_MONITOR="${outcome#monitor=}" ;;
+    3:'lane-mail: '*) cat -- "$WORK_DIR/peer.out" >&2; exit 2 ;;
+    4:'duplicate id='*) lm_duplicate "${outcome#duplicate id=}"; return 4 ;;
+    *) refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/peer.out" "$WORK_DIR/peer.err")" ;;
+  esac
+}
+
+lm_reply_line() { # FILE — reads the exact repeated answer
+  jq -cR --arg id "$REPEAT_ID" --arg re "$MSGID" --arg from "$FROM" '
+    (fromjson? // empty) | objects
+      | select(.id == $id and .kind == "answer" and .re == $re and .from == $from)' \
+    <"$1" || refuse file-unreadable "$TO_LANE"
+}
+
+lm_read_reply() {
+  lm_fetch "$TO_LANE" "$WORK_DIR/reply.raw"
+  lm_terminated "$WORK_DIR/reply.raw" "$WORK_DIR/reply.jsonl"
+  lm_reply_line "$WORK_DIR/reply.jsonl"
+}
+
 # Record the delivered envelope. On a repeat the destination guard gives
 # its id, which lets a retry repair a failed journal write.
 lm_reply_receipt() { # LINE
@@ -2621,12 +2652,11 @@ lm_reply_receipt() { # LINE
     lm_sent
     [ "$RECORD_REPLY" -eq 1 ] || return 0
   else
-    lm_fetch "$TO_LANE" "$WORK_DIR/reply.raw"
-    lm_terminated "$WORK_DIR/reply.raw" "$WORK_DIR/reply.jsonl"
-    line="$(jq -cR --arg id "$REPEAT_ID" --arg re "$MSGID" --arg from "$FROM" '
-      (fromjson? // empty) | objects
-      | select(.id == $id and .kind == "answer" and .re == $re and .from == $from)' \
-      <"$WORK_DIR/reply.jsonl")" || refuse file-unreadable "$TO_LANE"
+    if [ "$LM_PEER_PROVIDER" -eq 1 ]; then
+      line="$(lm_reply_line "$WORK_DIR/peer.out")" || exit "$?"
+    else
+      line="$(lm_read_reply)" || exit "$?"
+    fi
     SENT_ID="$REPEAT_ID"
   fi
   if [ -n "$line" ]; then
@@ -2637,6 +2667,41 @@ lm_reply_receipt() { # LINE
   [ -n "$REPEAT_ID" ] || return 0
   [ -z "$DELIVERY_ID" ] || REFUSE_EXTRA="id=$REPEAT_ID" refuse delivery-repeated "$DELIVERY_ID"
   refuse duplicate "$REPEAT_ID"
+}
+
+lm_peer_receive() {
+  local expected envelope route kind monitor
+  IFS= read -r expected || refuse peer-envelope "$ROOT"
+  case "$expected" in '' | *[!0-9]*) refuse peer-envelope "$ROOT" ;; esac
+  cat >"$WORK_DIR/peer.in" || refuse file-unreadable "$WORK_DIR/peer.in"
+  [ "$expected" -eq "$(wc -c <"$WORK_DIR/peer.in")" ] || refuse peer-envelope "$ROOT"
+  IFS= read -r envelope <"$WORK_DIR/peer.in" || refuse peer-envelope "$ROOT"
+  printf '%s\n' "$envelope" | cmp -s - "$WORK_DIR/peer.in" || refuse peer-envelope "$ROOT"
+  route="$(jq -er "$MAILBOX_CLASS_JQ"'
+    select(type == "object" and overseer_mail_class == "peer")
+    | select(.kind | IN("directive", "ask", "answer"))
+    # An inbox honors halt before classifying its sender. Accept only the
+    # fields the peer command emits, so owner controls cannot cross this verb.
+    | select((keys_unsorted - (["id", "kind", "at", "from", "text"] +
+        (if .kind == "ask" then ["to", "options"] elif .kind == "answer" then ["re"] else [] end))) == [])
+    | select(.from | strings | test("^overseer:[A-Za-z0-9._-]+$"))
+    | select(.id | strings | test("^[A-Za-z0-9._-]+$"))
+    | select((.at | type == "string") and (.text | type == "string"))
+    | select(.kind != "ask" or .to == "peer")
+    | select(.kind != "answer" or (.re | strings | test("^[A-Za-z0-9._-]+$")))
+    | [.kind, .from, (.re // "")] | @tsv' <"$WORK_DIR/peer.in" 2>/dev/null)" || refuse peer-envelope "$ROOT"
+  IFS=$'\t' read -r kind FROM MSGID <<<"$route"
+  lm_require_overseer data "$ROOT"
+  monitor="$(lm_monitor)" || exit "$?"
+  RECORD_REPLY=1
+  if lm_append_local "$TO_LANE" "$envelope"; then
+    printf 'monitor=%s\n' "$monitor"
+    lm_peer_reader
+  else
+    printf 'duplicate id=%s\n' "$REPEAT_ID"
+    [ "$kind" != answer ] || lm_read_reply
+    exit 4
+  fi
 }
 
 lm_read_file() {
@@ -3316,9 +3381,8 @@ case "$VERB" in
     lm_objects "$WORK_DIR/lane.jsonl" to-lane || refuse file-unreadable "$TO_LANE"
     ;;
 
-  peer-reader)
-    lm_require_overseer data "$ROOT"
-    lm_peer_reader
+  peer-receive)
+    lm_peer_receive
     ;;
 
   peer)
@@ -3348,12 +3412,11 @@ case "$VERB" in
     else
       LINE="$(lm_envelope directive)"
     fi
-    if [ "$PEER_VERB" = send ]; then
-      lm_receipt_fields "$LINE"
-    fi
     if [ "$HOST" -eq 1 ]; then
-      lm_append_host "$TO_LANE" "$LINE" || [ -n "$REPEAT_ID" ]
+      [ "$PEER_VERB" != send ] || lm_receipt_fields "$LINE" none
+      lm_peer_append "$LINE" || [ -n "$REPEAT_ID" ]
     else
+      [ "$PEER_VERB" != send ] || lm_receipt_fields "$LINE"
       lm_append_local "$TO_LANE" "$LINE" || [ -n "$REPEAT_ID" ]
     fi
     if [ "$PEER_VERB" = send ]; then
