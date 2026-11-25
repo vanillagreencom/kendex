@@ -3095,9 +3095,9 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE
             my $entry = <$keys> // return 0;
             chomp($origin, $entry);
             my ($key, $value) = split(/\n/, $entry, 2);
-            # Git lists directives even when their files are inactive. A
-            # different branch or checkout can expose settings we cannot retire.
-            if ($key =~ m{^includeif\.(?:onbranch|worktree(?:/i)?):.*\.path$}) {
+            # Git lists directives even when their files are inactive. The
+            # condition can expose more settings when the branch is reused.
+            if ($key =~ /^includeif\..*\.path$/) {
               $outside //= "$origin ($key includes " . ($value // "") . ")";
             }
             next unless $key =~ /^\Q$section\E\.[^.]+$/;
