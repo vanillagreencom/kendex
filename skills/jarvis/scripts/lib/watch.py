@@ -1674,8 +1674,8 @@ class Watch:
     def accept_presence(self, side, results):
         side = self.destination_key(side)
         failures = self.state.setdefault("presence_failures", {}).setdefault(side, {})
-        # Any per-root answer means the machine answered.
-        if any(root is not None for root, _, _ in results):
+        # A machine that answered lists only roots, none at all included.
+        if all(root is not None for root, _, _ in results):
             failures.pop(side, None)
         for root, status, cause in results:
             # A whole-side result has no target. Its storage key is scope,

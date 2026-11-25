@@ -1137,6 +1137,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             self.assertIn("local", outage.state["presence_failures"]["local"])
             outage.accept_presence("local", results)
             self.assertNotIn("local", outage.state["presence_failures"]["local"])
+            # A machine that answers with no eligible root also clears its outage.
+            outage.accept_presence("local", [(None, "failed", self.module.failure("presence-local", OSError("down")).record)])
+            outage.accept_presence("local", [])
+            self.assertNotIn("local", outage.state["presence_failures"]["local"])
             self.assertNotIn(str(unclassified), outage.state["presence_failures"]["local"])
             self.executable("ssh", '#!/bin/sh\nexec '+BASH+' -s\n')
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
