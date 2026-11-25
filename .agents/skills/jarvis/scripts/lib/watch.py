@@ -107,8 +107,9 @@ def destination_roots(destination):
 
     A readable folder that is not a linked worktree is a root. A folder Git
     cannot classify is a root whose Failure, kendex's cause, stops what needs
-    Git there, its mail read and a note to it; the presence hold reads no Git
-    and renews it. Other unreadable entries are skipped."""
+    Git there, its mail read and a note to it; the presence pass renews no
+    hold for it, so Slack delivers its notices. Other unreadable entries are
+    skipped."""
     roots = []
     for entry in destination_projects(destination):
         if entry.state == "git-unclassified":
@@ -428,9 +429,12 @@ def presence_roots(permitted):
     if not permitted():
         return [(None, "skipped", None)]
     results = []
-    # The hold reads settings and touches a file, never Git, so a folder
-    # Git cannot classify renews like any other root.
-    for root, _ in project_roots():
+    for root, unread in project_roots():
+        # Jarvis cannot read a folder Git cannot classify, so no hold keeps
+        # Slack from delivering that folder's notices.
+        if unread is not None:
+            results.append((str(root), "unclassified", unread.record))
+            continue
         try:
             results.append((str(root), hold(root, permitted), None))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
@@ -1670,7 +1674,8 @@ class Watch:
     def accept_presence(self, side, results):
         side = self.destination_key(side)
         failures = self.state.setdefault("presence_failures", {}).setdefault(side, {})
-        if any(status == "ok" for _, status, _ in results) and all(status != "failed" for _, status, _ in results):
+        # A machine that answered lists only roots, none at all included.
+        if all(root is not None for root, _, _ in results):
             failures.pop(side, None)
         for root, status, cause in results:
             # A whole-side result has no target. Its storage key is scope,
@@ -1684,7 +1689,7 @@ class Watch:
                         event("presence-renew-failed", repo=Path(root).name if root is not None else side,
                               side=side, cause=cause["detail"]))]))
                     failures[scope] = cause
-            elif status != "skipped":
+            elif status not in ("skipped", "unclassified"):
                 raise RuntimeError("presence-status-invalid")
         self.save()
 

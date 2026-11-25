@@ -1113,13 +1113,35 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                                              entry(unclassified, state="git-unclassified", cause="fatal:gitdir-moved")))
             for root in (self.home, equal, self.peer):
                 root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
-            # The hold reads no Git, so a folder Git cannot classify still renews.
+            # Jarvis cannot read a folder Git cannot classify, so it renews
+            # no hold there and reports the folder apart from hold failures.
             unclassified.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
-            local = {root: (root, status, cause) for root, status, cause in self.module.presence_roots(lambda: True)}
+            results = self.module.presence_roots(lambda: True)
+            local = {root: (root, status, cause) for root, status, cause in results}
             self.assertEqual({root: status for root, (_, status, _) in local.items()},
                              {str(self.home): "failed", str(equal): "failed", str(self.peer): "failed",
-                              str(unclassified): "ok"})
-            self.assertTrue(unclassified.joinpath("hold").is_file())
+                              str(unclassified): "unclassified"})
+            self.assertFalse(unclassified.joinpath("hold").exists())
+            # The relay holds no notice of that folder, and `slack post --mention` keeps its mention.
+            held = subprocess.run([sys.executable, "-I", "-B", "-c", "import os,sys,time\nfrom pathlib import Path\n"
+                                   "sys.path.insert(0,sys.argv[1])\nos.environ['SLACK_ORCH_DIR']=sys.argv[2]\n"
+                                   "from settings import load_presence\nfrom relay import jarvis_session_held\n"
+                                   "root=Path(sys.argv[3])\nprint(jarvis_session_held(root,load_presence(root),time.time()))",
+                                   self.module.LIB.parents[2] / "slack/scripts/lib", self.module.LIB.parents[2] / "orch",
+                                   unclassified], capture_output=True, text=True, check=True).stdout
+            self.assertEqual(held, "False\n")
+            # A side outage clears once the side answers, whatever one root reports.
+            self.settings["JARVIS_LOG_DIR"] = str(self.root / "outage")
+            outage = self.watch()
+            outage.accept_presence("local", [(None, "failed", self.module.failure("presence-local", OSError("down")).record)])
+            self.assertIn("local", outage.state["presence_failures"]["local"])
+            outage.accept_presence("local", results)
+            self.assertNotIn("local", outage.state["presence_failures"]["local"])
+            # A machine that answers with no eligible root also clears its outage.
+            outage.accept_presence("local", [(None, "failed", self.module.failure("presence-local", OSError("down")).record)])
+            outage.accept_presence("local", [])
+            self.assertNotIn("local", outage.state["presence_failures"]["local"])
+            self.assertNotIn(str(unclassified), outage.state["presence_failures"]["local"])
             self.executable("ssh", '#!/bin/sh\nexec '+BASH+' -s\n')
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
             probe = self.watch()
