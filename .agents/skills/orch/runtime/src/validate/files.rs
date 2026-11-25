@@ -82,35 +82,43 @@ impl RunFile {
         self.start.get(key).map(String::as_str).unwrap_or("")
     }
     pub fn outcome(&self) -> Option<StageOutcome> {
-        let outcome = self
-            .sentinel
-            .as_deref()
-            .and_then(crate::ops::validate::sentinel_outcome);
+        self.stop_word(
+            self.sentinel
+                .as_deref()
+                .and_then(crate::ops::validate::sentinel_outcome),
+        )
+    }
+    /// How the run ended, `None` while work may still hold it: its
+    /// sentinel's word, else `lost` once [`lost`] reads it so under
+    /// `past_grace`.
+    fn ending(&self, past_grace: bool) -> Result<Option<StageOutcome>> {
+        if self.sentinel.is_some() {
+            return Ok(self.outcome());
+        }
+        Ok(self.stop_word(lost(self, past_grace)?.then_some(StageOutcome::Lost)))
+    }
+    /// A stop the stop file records ended the run: its ending reads
+    /// `stopped`, as the stage's close reads it.
+    fn stop_word(&self, ended: Option<StageOutcome>) -> Option<StageOutcome> {
         if self.stopped {
-            outcome.map(|_| StageOutcome::Stopped)
+            ended.map(|_| StageOutcome::Stopped)
         } else {
-            outcome
+            ended
         }
     }
     pub fn verdict(&self) -> Result<&'static str> {
-        match (self.sentinel.is_some(), self.outcome()) {
-            (_, Some(StageOutcome::Pass)) if self.get("validate-mode") == "ci" => Ok("pending"),
-            (_, Some(StageOutcome::Pass)) => Ok("pass"),
-            (_, Some(StageOutcome::NoVerdict | StageOutcome::Stopped)) => Ok("no-verdict"),
-            (_, Some(_)) => Ok("FAILING"),
-            (false, None) if lost(self, false)? => Ok(self.lost_verdict()),
-            (false, None) => Ok("unfinished"),
-            (true, None) => Err(unreadable("sentinel-unreadable", self.dir.display())),
-        }
+        self.verdict_of(self.ending(false)?)
     }
-    /// The verdict of a run that ended with no sentinel: a stop the stop
-    /// file records ended it, as the stage's close reads it `stopped`, or
-    /// nothing did and it failed.
-    fn lost_verdict(&self) -> &'static str {
-        if self.stopped {
-            "no-verdict"
-        } else {
-            "FAILING"
+    fn verdict_of(&self, ending: Option<StageOutcome>) -> Result<&'static str> {
+        match ending {
+            Some(StageOutcome::Pass) if self.get("validate-mode") == "ci" => Ok("pending"),
+            Some(StageOutcome::Pass) => Ok("pass"),
+            Some(StageOutcome::NoVerdict | StageOutcome::Stopped) => Ok("no-verdict"),
+            Some(_) => Ok("FAILING"),
+            None if self.sentinel.is_some() => {
+                Err(unreadable("sentinel-unreadable", self.dir.display()))
+            }
+            None => Ok("unfinished"),
         }
     }
     pub fn selection(&self) -> Result<(Option<String>, String)> {
@@ -212,7 +220,8 @@ impl RunFile {
     pub fn record(&self) -> Result<String> {
         let mode = mode(self.get("validate-mode"))?;
         let (lanes, selection) = self.selection()?;
-        let verdict = self.verdict()?;
+        let ending = self.ending(false)?;
+        let verdict = self.verdict_of(ending)?;
         let mut line = format!(
             "validate-mode={} {}selection={selection} verdict={verdict} head={} start={}",
             mode.word(),
@@ -249,7 +258,7 @@ impl RunFile {
             line.push_str(&format!(" slow-step={}", slow.join(",")));
         }
         // The run ended with no sentinel: `--wait`'s word for it.
-        if self.sentinel.is_none() && verdict == "FAILING" {
+        if self.sentinel.is_none() && ending == Some(StageOutcome::Lost) {
             line.push_str(" state=lost");
         }
         Ok(line)
@@ -637,17 +646,18 @@ fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String,
         } else {
             String::new()
         };
-        if lost(&run, elapsed >= poll.max(10))? {
-            let line = match run.lost_verdict() {
-                "FAILING" => format!(
+        if let Some(ending) = run.ending(elapsed >= poll.max(10))? {
+            let line = match ending {
+                StageOutcome::Lost => format!(
                     "state=lost elapsed-secs={elapsed} validate=FAILING run-dir={}{log}",
                     run_dir.display()
                 ),
-                verdict => format!(
-                    "state=done stopped validate={verdict} run-dir={} log={}/log",
+                StageOutcome::Stopped => format!(
+                    "state=done stopped validate=no-verdict run-dir={} log={}/log",
                     run_dir.display(),
                     run_dir.display()
                 ),
+                other => unreachable!("a run with no sentinel ends lost or stopped, not {other:?}"),
             };
             return Ok((line, 1));
         }

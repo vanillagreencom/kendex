@@ -305,47 +305,18 @@ pub(crate) fn open_started(stage: &Stage, round_id: &str) -> bool {
         && stage.job.is_some()
 }
 
-/// One run at a time per round: an open started run holds its round while
-/// its job runs (`run-live`) or cannot be read (the reader's cause). A job
-/// read gone holds nothing: [`SettleRound`] closes it.
-pub(crate) fn hold(round_id: &str, stage: &Stage) -> Result<()> {
-    let run_dir = stage.run_dir.clone().unwrap_or_default();
-    match item::read_stage(stage) {
-        Some(item::RunRead::Ended { .. } | item::RunRead::Gone { .. }) => Ok(()),
-        Some(item::RunRead::Unreadable(cause)) => Err(Error::ValidateUnreadable {
-            read: "run-job",
-            cause: format!("{run_dir}: {cause}"),
-        }),
-        Some(item::RunRead::Live { .. } | item::RunRead::LiveUnit { .. }) | None => {
-            Err(Error::RunLive {
-                round_id: round_id.to_owned(),
-                run_dir,
-            })
-        }
-    }
-}
-
 fn settle(path: &Path, doc: &mut Document, r: &SettleRound, env: &Env) -> Result<RoundSettled> {
-    let mut runs = Vec::new();
-    for (index, stage) in stages(path, doc)?.iter().enumerate() {
-        if !open_started(stage, &r.round_id) {
-            continue;
-        }
-        let Some(read) = item::read_stage(stage) else {
-            continue;
-        };
-        runs.push(item::settle_stage(path, doc, index, stage, read, env)?);
-    }
     Ok(RoundSettled {
         round_id: r.round_id.clone(),
-        runs,
+        runs: item::settle_round(path, doc, |s| open_started(s, &r.round_id), env)?,
     })
 }
 
 fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<Started> {
     let before = stages(path, doc)?;
     // A run its job left with no close is settled before this transition,
-    // so one still open here held the round when the settle read it.
+    // so one still open here opened since the settle read the round, or
+    // names no run directory to read.
     if let Some(open) = before.iter().find(|s| open_started(s, &r.round_id)) {
         return Err(Error::RunLive {
             round_id: r.round_id.clone(),

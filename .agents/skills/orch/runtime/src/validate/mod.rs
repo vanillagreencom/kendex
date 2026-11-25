@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::ops::validate::{
     RecordEnd, RecordLaunch, RecordStart, SettleRound, Validate, Validated,
 };
-use crate::ops::{self, Report, Request};
+use crate::ops::{self, Report, Request, RunState};
 use crate::settings::Settings;
 use crate::state::{
     self, ItemState, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob, ValidateMode,
@@ -1844,20 +1844,15 @@ pub fn start(
             });
         }
         // One run at a time per round, judged before the worktree is read.
-        // An open started run that passes holds nothing: its job is gone, so
-        // its close lands in its own transition whatever the start then
-        // answers, and the owed walk sends its end notice before the next
-        // run launches.
-        let mut gone = false;
-        for stage in stages
+        // The settle reads each open started run once: a live or unreadable
+        // one refuses, and one whose job is gone closes in its own
+        // transition whatever the start then answers, its end notice sent
+        // by the owed walk before the next run launches.
+        if stages
             .iter()
-            .filter(|s| crate::ops::validate::open_started(s, &round))
+            .any(|s| crate::ops::validate::open_started(s, &round))
         {
-            crate::ops::validate::hold(&round, stage)?;
-            gone = true;
-        }
-        if gone {
-            apply(
+            let settled = apply(
                 &path,
                 Validate::Settle(SettleRound {
                     round_id: round.clone(),
@@ -1865,6 +1860,26 @@ pub fn start(
                 env,
                 locking,
             )?;
+            let Validated::Settle(settled) = settled else {
+                unreachable!("a settle reports its settle")
+            };
+            for run in settled.runs {
+                match run.state {
+                    RunState::Live { .. } | RunState::LiveUnit { .. } => {
+                        return Err(Error::RunLive {
+                            round_id: round,
+                            run_dir: run.run_dir,
+                        });
+                    }
+                    RunState::Unreadable { cause } => {
+                        return Err(Error::ValidateUnreadable {
+                            read: "run-job",
+                            cause: format!("{}: {cause}", run.run_dir),
+                        });
+                    }
+                    RunState::Closed { .. } => {}
+                }
+            }
             run::deliver_owed(
                 settings,
                 &crate::effects::fleet_mailbox(settings),

@@ -174,7 +174,7 @@ Each `items[]` element is `{n: number, decision: "Applied"|"Skipped"|"Blocked", 
   - Only a `no-verdict` in the `ci` mode leaves its proof to required CI; any other is unproved.
 - `FAILING: …`: the names are the failing checks, comma-separated.
 
-The writer refuses a `--validate` that differs from the named run's verdict as `validate-disagrees`, a `FAILING` one aside. It refuses an empty or whitespace-only note or summary as `empty-text`.
+The writer refuses a `--validate` that differs from the named run's verdict as `validate-disagrees`, a `FAILING` one aside. It refuses a `pass` or `no-verdict` whose run left no timing as `timing-unreadable`. It refuses an empty or whitespace-only note or summary as `empty-text`.
 
 ### Fix-round run binding
 

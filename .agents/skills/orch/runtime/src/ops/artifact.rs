@@ -1442,6 +1442,21 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
                 format!("validate={} run={}", r.validate, run.verdict),
             ));
         }
+        // The receipt of a verdict carries the run's timing, which a run a
+        // stop ended before its sentinel never wrote.
+        if matches!(r.validate.as_str(), "pass" | "no-verdict") && run.time.is_null() {
+            return Err(refuse(
+                "timing-unreadable",
+                format!(
+                    "{} verdict={} timing=none",
+                    r.validate_run_dir
+                        .as_deref()
+                        .unwrap_or(Path::new(""))
+                        .display(),
+                    run.verdict
+                ),
+            ));
+        }
         // A ci pass leaves the run to CI, which runs the commit: the contents
         // it compared must be that commit's tree.
         if run.mode == "ci" && r.validate == "pass" {

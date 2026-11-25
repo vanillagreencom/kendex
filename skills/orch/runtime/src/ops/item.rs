@@ -1046,7 +1046,7 @@ pub(super) fn close_stage(
 /// How a run directory reads at the reconcile: the sentinel's verdict and
 /// time once the run ended, the recorded child's liveness before, or what
 /// its absence means.
-pub(crate) enum RunRead {
+enum RunRead {
     Ended {
         outcome: StageOutcome,
         /// The sentinel's `at=` time, where it parses.
@@ -1358,37 +1358,49 @@ pub(super) fn reconcile_round(
             round_id: r.round_id.clone(),
         });
     }
-    let mut runs = Vec::new();
-    for (index, stage) in stages.iter().enumerate() {
-        if stage.kind != StageKind::Validate
-            || stage.round_id.as_deref() != Some(&r.round_id)
-            || stage.end.is_some()
-        {
-            continue;
-        }
-        let Some(read) = read_stage(stage) else {
-            continue;
-        };
-        runs.push(settle_stage(path, doc, index, stage, read, env)?);
-    }
+    let runs = settle_round(
+        path,
+        doc,
+        |s| {
+            s.kind == StageKind::Validate
+                && s.round_id.as_deref() == Some(&r.round_id)
+                && s.end.is_none()
+        },
+        env,
+    )?;
     Ok(RoundReconciled {
         round_id: r.round_id.clone(),
         runs,
     })
 }
 
-/// One open admitted run as the reconcile reads it: `None` for a stage that
-/// names no run directory.
-pub(crate) fn read_stage(stage: &Stage) -> Option<RunRead> {
-    let run_dir = stage.run_dir.as_deref()?;
-    Some(read_run(Path::new(run_dir), stage.job.as_ref()))
+/// The reconcile's walk over the open admitted runs `keep` selects, each
+/// read and settled once: one row per run whose stage names its directory.
+pub(super) fn settle_round(
+    path: &Path,
+    doc: &mut Document,
+    keep: impl Fn(&Stage) -> bool,
+    env: &Env,
+) -> Result<Vec<RunReconciled>> {
+    let mut runs = Vec::new();
+    for (index, stage) in stages(path, doc)?.iter().enumerate() {
+        if !keep(stage) {
+            continue;
+        }
+        let Some(run_dir) = stage.run_dir.as_deref() else {
+            continue;
+        };
+        let read = read_run(Path::new(run_dir), stage.job.as_ref());
+        runs.push(settle_stage(path, doc, index, stage, read, env)?);
+    }
+    Ok(runs)
 }
 
 /// The reconcile's close of one open admitted run from its read: a run that
 /// will not end itself closes with its word, and a runtime-started run's
 /// close owes its lane the end notice in the same write; a live or unread
 /// run keeps its stage open.
-pub(super) fn settle_stage(
+fn settle_stage(
     path: &Path,
     doc: &mut Document,
     index: usize,
