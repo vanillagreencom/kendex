@@ -275,9 +275,9 @@ For a test-only PR whose validation runs longer than 30 minutes and fails, run t
 A `validate=FAILING`, a failing required verification command, or another failing run in this gate permits one recovery sequence when every failing check has a named cause fixed within the delegated scope.
 
 1. Stage the repaired final contents.
-2. Where `orch-runtime validate policy --stage focused-proof`, with `--base-checkout` naming the main checkout, answers `run`, run the focused failed checks once to prove the repair; if that proof fails or remains unread, stop. Where it answers `skip`, run no focused check: the rerun below is the proof.
+2. Read `orch-runtime validate policy --stage focused-proof` with `--base-checkout` naming the main checkout. Repeat each failed check once through its existing owner if the policy answers `run` or if the check is required and the configured rerun cannot be shown to cover it. Keep the CI verification scope above. If any repeated check fails or remains unread, stop.
 3. Add no selector override, smaller base or replacement command.
-4. When all those conditions hold and this round has not spent its correction/rerun allowance, run the unchanged configured validation once through its existing execution owner, preserving the real base and mode. The admission step's `"attempt": "next"` mints the rerun's own run id, and the rerun writes its own receipt under it, the failed receipt standing. Where the focused proof runs, a failed required verification command's focused rerun above must pass first.
+4. When all those conditions hold and this round has not spent its correction/rerun allowance, run the unchanged configured validation once through its existing execution owner, preserving the real base and mode. The admission step's `"attempt": "next"` mints the rerun's own run id, and the rerun writes its own receipt under it, the failed receipt standing.
 5. Record the causes, scoped repair, focused execution, both evidence locations and final verdict in the round notes, summary and `--validate-note`.
 
 Existing fix-round calls into this section keep their delegated fix base and mode. This sequence grants no additional allowance after an earlier correction/rerun, validation refresh or recovery attempt.
