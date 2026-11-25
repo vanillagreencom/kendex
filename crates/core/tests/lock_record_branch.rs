@@ -11,7 +11,7 @@ use test_util::rooted;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kendex_core::lock::branch::{OffBranch, Recording, recording};
+use kendex_core::lock::branch::{OffBranch, Recording, pulled_record, recording};
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 
@@ -192,6 +192,46 @@ fn a_remote_head_naming_no_remote_branch_is_refused() {
     let answer = recording(&project(&root));
     assert!(
         matches!(answer, Err(kendex_core::error::CoreError::GitFailed { .. })),
+        "{answer:?}"
+    );
+}
+
+/// Origin's copy of the lock, written by a kendex that writes a newer
+/// format, is refused as the file on disk would be, but named as the copy
+/// it is: the local lock it was read beside is the current format, and
+/// the fix for that file is not the fix for this one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_of_origin_this_build_cannot_read_is_named_as_that_copy() {
+    let (_tmp, root) = repository();
+    fs::write(
+        root.join(kendex_core::lock::LOCK_FILE),
+        r#"{"version": 9999, "entries": {}}"#,
+    )
+    .unwrap();
+    git(&root, &["add", kendex_core::lock::LOCK_FILE]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            "two",
+        ],
+    );
+    git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(&root, &["reset", "--quiet", "--hard", "HEAD~1"]);
+    let answer = pulled_record(&project(&root));
+    assert!(
+        matches!(
+            &answer,
+            Err(kendex_core::error::CoreError::OriginLockUnreadable { copy, .. })
+                if copy == "refs/remotes/origin/main:./.kendex-lock.json"
+        ),
         "{answer:?}"
     );
 }

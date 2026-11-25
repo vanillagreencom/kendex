@@ -17,7 +17,7 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set: apply, replace-unmanaged,
-//! refresh, source-refresh, remove, add, fork, drift-hook, move-aside,
+//! refresh, pull, source-refresh, remove, add, fork, drift-hook, move-aside,
 //! findings, plan —
 //! with validated identifiers or quoted paths in argument positions.
 //! Free text from sources or errors renders in quoted informational
@@ -125,6 +125,11 @@ pub enum Remedy {
     Refresh {
         global: bool,
     },
+    /// Fast-forward a checkout on its default branch to origin's copy,
+    /// which records the package at another commit: in a copy that follows
+    /// the default branch, a refresh would write a record of its own over
+    /// the one the pull brings.
+    Pull,
     /// Fetch the scope's sources and derive its standing again: the fix
     /// for a record naming a commit this machine's copy of the source has
     /// not fetched. It writes nothing in the project, so a clone that must
@@ -243,6 +248,7 @@ impl Remedy {
             | Remedy::Add { global, .. }
             | Remedy::Fork { global, .. } => *global,
             Remedy::MoveAside { .. } => true,
+            Remedy::Pull => false,
         }
     }
 
@@ -335,6 +341,7 @@ impl Remedy {
                 format!("kendex update-pi --scope project{place}")
             }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::Pull => "git pull --ff-only".to_owned(),
             Remedy::SourceRefresh { .. } => format!("{SOURCE_REFRESH_COMMAND}{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(

@@ -174,6 +174,12 @@ pub enum CoreError {
     )]
     SchemaTooNew { path: PathBuf, found: i64 },
 
+    /// Origin's copy of a project lock, read from the clone's objects to
+    /// see what a pull would bring: nothing on disk is wrong, so it names
+    /// the copy and no remedy for a local file.
+    #[error("{copy}: origin's copy of the install record could not be read: {reason}")]
+    OriginLockUnreadable { copy: String, reason: String },
+
     #[error("{path}: refused catalog read — {reason}")]
     SourceEscape { path: PathBuf, reason: String },
 

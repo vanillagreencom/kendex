@@ -4693,6 +4693,13 @@ allowRepoEffects?: boolean } |
 /**  Install or replace Pi packages through their carrier installer. */
 { verb: "update-pi"; global: boolean } | { verb: "refresh"; global: boolean } | 
 /**
+ *  Fast-forward a checkout on its default branch to origin's copy,
+ *  which records the package at another commit: in a copy that follows
+ *  the default branch, a refresh would write a record of its own over
+ *  the one the pull brings.
+ */
+{ verb: "pull" } | 
+/**
  *  Fetch the scope's sources and derive its standing again: the fix
  *  for a record naming a commit this machine's copy of the source has
  *  not fetched. It writes nothing in the project, so a clone that must
