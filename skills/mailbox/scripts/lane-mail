@@ -1366,7 +1366,7 @@ owner_answers() {
     | select($ask != null)
     | {id, ask: $ask.id, description: (if ((.description // "") | test("^\\*\\*[^*\\r\\n]+, what you do:\\*\\* "))
         then null
-        elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do; $ask.tracker_comment))
+        elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do))
         else error("owner-assignee-unavailable") end)}' \
     <<<"$items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=issues-format' >&2; return 0

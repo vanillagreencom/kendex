@@ -321,7 +321,6 @@ owner_requests() {
 
 owner_questions() {
     if [[ "$#" -eq 1 && "$1" == --prefix ]]; then jq -n --arg prefix "$OWNER_QUESTION_PREFIX-" '$prefix'; return; fi
-    if [[ "$#" -eq 2 && "$1" == --id ]]; then owner_question_id "$2"; return; fi
     if [[ "$#" -ne 3 || "$2" != --email || -z "$3" ]]; then
         echo '{"error":"owner-questions requires ISSUE --email EMAIL"}' >&2; return 1
     fi

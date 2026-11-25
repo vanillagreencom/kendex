@@ -49,7 +49,6 @@ case "$1:$2" in
     [[ "$3" == "query OwnerTracker("* ]] || exit 1
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
-  comments:owner-questions) printf 'question-id\n' ;;
   comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\n' "$3" "$3" ;;

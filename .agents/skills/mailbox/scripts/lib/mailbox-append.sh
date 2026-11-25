@@ -309,12 +309,10 @@ def owner_question_settled($answered; $closed; $replaced):
 # The Linear file reader trims trailing newlines. Use --description and keep
 # a sentinel during shell capture so the existing body retains those bytes.
 OWNER_ACTION_JQ='def owner_action_body:
-  sub("^\\*\\*[^*\\r\\n]+, what you do:\\*\\*(?:(?s:.*?)\\r?\\n\\r?\\n`Owner question: [0-9a-f-]{36}`(\\r?\\n\\r?\\n|$)|[^\\r\\n]*(\\r?\\n\\r?\\n)?)"; "");
-def owner_action_line($name; $action; $question):
+  sub("^\\*\\*[^*\\r\\n]+, what you do:\\*\\*[^\\r\\n]*(\\r?\\n\\r?\\n)?"; "");
+def owner_action_line($name; $action):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
-  + ", what you do:** " + $action + "\n\n"
-  + (if ($question // "" | test("^[0-9a-f-]{36}$")) then "`Owner question: " + $question + "`\n\n" else "" end)
-  + owner_action_body;'
+  + ", what you do:** " + $action + "\n\n" + owner_action_body;'
 
 # The item as the ask reads it: description, assignee name and
 # label names. `linear.sh graphql` refuses a label page left open, which the
@@ -351,14 +349,13 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue question_id
+  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue
   local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
   ask_id="$(jq -er '.id | strings | select(length > 0)' <<<"$envelope")" || return 1
-  question_id="$("$tracker" comments owner-questions --id "$ask_id")" || return 1
   comment_issue="$(jq -r '.identity.uuid // .issue' <<<"$envelope")" || return 1
   owner="$("$tracker" users list --max --format=safe 2>"$work/tracker.err" | jq -ce --arg email "$OWNER_TRACKER_EMAIL" '
     [.[] | select((.email | ascii_downcase) == ($email | ascii_downcase))]
@@ -379,8 +376,8 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
   added_label="$(jq -r --arg label "$OWNER_TRACKER_LABEL" '.labels | index($label) == null' <<<"$current")" || return 1
-  description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" --arg question "$question_id" "$OWNER_ACTION_JQ"'
-    (.description // "") | owner_action_line($owner.name; $ask.do; $question) + "."' <<<"$current")" || return 1
+  description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
+    (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
   description="${description%.}"
   # The comment is a message to a person. Ids stay in the mailbox: the watch
   # finds this comment by the id the tracker-posted record keeps.

@@ -73,7 +73,6 @@ case "$1:$2" in
         else cat "$FIXTURE/repair"; fi ;;
       *) exit 1 ;;
     esac ;;
-  comments:owner-questions) printf 'question\\n' ;;
   comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n' ;;
   comments:bulk-list)
     [[ ! -e "$FIXTURE/unread-comments" ]] || exit 1

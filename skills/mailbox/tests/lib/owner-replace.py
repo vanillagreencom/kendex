@@ -121,8 +121,6 @@ elif args[:2] == ["issues", "bulk-get"]:
         refuse_missing(missing)
     keys = list(dict.fromkeys(key_of(ref) for ref in refs))
     print(json.dumps([{"id": key, "uuid": items[key]["uuid"]} for key in keys]))
-elif args[:3] == ["comments", "owner-questions", "--id"]:
-    print("c%d" % (len(comments) + 1))
 elif args[:2] == ["comments", "create"]:
     if (state / "fail-create").exists():
         print("tracker: refused=create", file=sys.stderr)
