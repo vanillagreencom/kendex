@@ -206,6 +206,7 @@ format_issue_with_bundle() {
             cycle: (if .issue.cycle then (.issue.cycle.name // "Cycle \(.issue.cycle.number)") else "" end),
             created_at: (.issue.createdAt // ""),
             updated_at: (.issue.updatedAt // ""),
+            due_date: .issue.dueDate,
             blocks: issue_blocks_ids(.issue.relations.nodes),
             blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
             blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
@@ -240,7 +241,7 @@ format_issue_compact() {
         blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
         blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
         children: [(.issue.children.nodes // [])[] | {id: .identifier, title: .title, state: .state.name}]
-    }'
+    } + (if .issue | has("dueDate") then {due_date: .issue.dueDate} else {} end)'
 }
 
 # Format issues list to compact structure
