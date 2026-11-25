@@ -304,11 +304,18 @@ gg_walk_diff_flags() {
 # into GG_WALK_META, GG_WALK_SRC and GG_WALK_PATH; 1 past the last record.
 # --raw -z alternates "meta NUL path NUL", meta being
 # ":srcmode dstmode srcsha dstsha status"; a rename's or a copy's record
-# carries its source path before its destination. One reader, so no scope
+# carries its source path before its destination. A caller that already read
+# the metadata passes it as the first argument. One reader, so no scope
 # classifies the same record two ways or pairs a move another scope leaves
 # unpaired.
 gg_walk_read_record() {
-  IFS= read -r -d '' GG_WALK_META && IFS= read -r -d '' GG_WALK_PATH || return 1
+  if [ $# -ne 0 ]; then
+    GG_WALK_META="$1"
+  else
+    IFS= read -r -d '' GG_WALK_META || return 1
+  fi
+  IFS= read -r -d '' GG_WALK_PATH \
+    || gg_fail walk-record "$GG_WALK_META" "A diff record carries no path."
   GG_WALK_SRC=""
   case "$GG_WALK_META" in
     *" R"[0-9]* | *" C"[0-9]*)
@@ -321,31 +328,34 @@ gg_walk_read_record() {
 
 # The records in $GG_TMP/raw.z, each selected file handed to the callback.
 gg_walk_raw_records() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
-  local noun="$1" on_file="$2" f dstmode dstsha
   while gg_walk_read_record; do
-    f="$GG_WALK_PATH"
-    gg_matches_path_glob "$f" || continue
-    gg_is_excluded "$f" && continue
-    set -- $GG_WALK_META
-    dstmode="$2"
-    dstsha="$4"
-    case "$dstmode" in
-      120000)
-        gg_note_skip "$f" symlink "tracked as a symlink, not $noun"
-        continue
-        ;;
-      160000)
-        gg_note_skip "$f" gitlink "tracked as a submodule gitlink, not $noun"
-        continue
-        ;;
-    esac
-    gg_read_blob "$dstsha" "$f" "$noun file"
-    if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
-      gg_note_skip "$f" binary "binary content, not $noun"
-      continue
-    fi
-    "$on_file" "$f" "$GG_TMP/blob" "$dstsha"
+    gg_walk_raw_record "$@"
   done <"$GG_TMP/raw.z"
+}
+
+gg_walk_raw_record() { # NOUN ON_FILE — one record already read into GG_WALK_*
+  local noun="$1" on_file="$2" f="$GG_WALK_PATH" dstmode dstsha
+  gg_matches_path_glob "$f" || return 0
+  gg_is_excluded "$f" && return 0
+  set -- $GG_WALK_META
+  dstmode="$2"
+  dstsha="$4"
+  case "$dstmode" in
+    120000)
+      gg_note_skip "$f" symlink "tracked as a symlink, not $noun"
+      return 0
+      ;;
+    160000)
+      gg_note_skip "$f" gitlink "tracked as a submodule gitlink, not $noun"
+      return 0
+      ;;
+  esac
+  gg_read_blob "$dstsha" "$f" "$noun file"
+  if gg_blob_is_binary "$GG_TMP/blob" "$f"; then
+    gg_note_skip "$f" binary "binary content, not $noun"
+    return 0
+  fi
+  "$on_file" "$f" "$GG_TMP/blob" "$dstsha"
 }
 
 # The staged changes' records into $GG_TMP/raw.z, renames as GG_WALK_RENAMES
