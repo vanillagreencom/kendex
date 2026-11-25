@@ -1319,7 +1319,8 @@ print(json.dumps(session.terminal(status)))
                          "field": "session_id", "pane": "%1"}),
             lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"),
             lane_line("refused", b, "KEN-3", cause="harness-unrecorded"), lane_line("resumed", b, "KEN-4"),
-            lane_line("refused", c, "KEN-6", cause="launch-failed")], err + self.diagnostics())
+            lane_line("refused", c, "KEN-6", cause="launch-failed", close="i8", refusal="account-walled")],
+            err + self.diagnostics())
         self.assertEqual(code, 1)
         resumed = self.started()[-1]["argv"]
         self.assertEqual((len(self.started()), resumed[resumed.index("--resume") + 1]), (2, self.started()[0]["id"]))
@@ -1333,6 +1334,31 @@ print(json.dumps(session.terminal(status)))
         # before it had ended.
         self.assertTrue(all(row["open"] == [] and row["resumed"] for row in steps), steps)
         self.assertTrue(all(later["begin"] >= earlier["end"] for earlier, later in zip(steps, steps[1:])), steps)
+
+        # The rerun with every session still running, as orch answers a live
+        # overseer (skills/orch/tests/rust/controller.rs overseer-live) and a
+        # live lane (skills/orch/tests/rust/effects.rs lane-live): nothing
+        # starts and it succeeds. A checkout not mounted yet then fails it.
+        lane_live = lambda item: {"code": 1, "stdout": json.dumps({"protocol": "orch-runtime-v1", "ok": False, "refusal": {
+            "key": "lane-live", "fields": [["item", item], ["status", "running"]]}}) + "\n"}
+        answers.write_text(json.dumps({
+            str(a) + " resume-controller --fleet": {"code": 3, "stdout": "controller-resume-failed intent=i2 "
+                                                                         "note=overseer-live cause=-\n"},
+            str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
+            str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2")}))
+        live = [delegate("resumed"), ("resumed", {"kind": "overseer", "checkout": str(a)}),
+                lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2")]
+        unmounted = self.root / "unmounted"
+        for listed, expected, exit in (
+                ([], live, 0),
+                ([{"folder": str(unmounted), "state": "folder-not-found", "worktree": None}],
+                 live[:1] + [("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"})]
+                 + live[1:], 1)):
+            registry.write_text(json.dumps([{"folder": str(folder), "state": "ok", "worktree": None}
+                                            for folder in (self.home, a)] + listed))
+            lines, code, err = resume()
+            self.assertEqual((lines, code), (expected, exit), err + self.diagnostics())
+            self.assertEqual(len(self.started()), 2, self.started())
 
         # The delegate's conversation is gone: the start that tried it fails,
         # as status answers it, and no new conversation opens.

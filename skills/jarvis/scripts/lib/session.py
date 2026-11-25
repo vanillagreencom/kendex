@@ -1074,7 +1074,7 @@ class Session:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import watch
         try:
-            roots = watch.project_roots()
+            roots = watch.project_roots(every=True)
         except watch.Failure as failure:
             print("jarvis-session: project-list=unread " + json.dumps(failure.record), file=sys.stderr)
             report("projects", ("project-list-unread", ()))
@@ -1100,20 +1100,21 @@ class Session:
             lanes += [(root, lane["item"]) for lane in state.get("lanes") or [] if lane.get("status") == "running"]
         for root in overseers:
             self.deadline = time.monotonic() + RESUME_SECONDS
-            report("overseer", self.orch_step(root, "resume-controller", "--fleet"), checkout=root)
+            refusal = self.orch_step(root, "resume-controller", "--fleet")
+            report("overseer", None if still_running("overseer", refusal) else refusal, checkout=root)
         for root, item in lanes:
             self.deadline = time.monotonic() + RESUME_SECONDS
             refusal = self.orch_step(root, "lane", "relaunch", "--fleet", item)
             # A hosted lane runs on its own host: this machine's restart left it.
             if refusal and refusal[0] == "lane-hosted":
                 continue
-            report("lane", refusal, checkout=root, item=item)
+            report("lane", None if still_running("lane", refusal) else refusal, checkout=root, item=item)
         return None, 1 if refused else 0
 
     def resume_delegate(self):
         """The recorded delegate on its own conversation, through Start's
-        resume, never a new one: None once it runs resumed, else Start's
-        reason as a refusal."""
+        resume, never a new one: None once it runs, resumed or still running
+        (`existing`), else Start's reason as a refusal."""
         try:
             recorded = (self.status() or {}).get("recorded") or {}
             if not recorded.get("harness"):
@@ -1132,7 +1133,9 @@ class Session:
             return failure.reason, ()
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return "record-unreadable", ()
-        if answer["state"] == "running" and answer["reason"] == "resumed":
+        # A resume-only start opens no new conversation, so a running answer
+        # is the recorded one.
+        if answer["state"] == "running":
             return None
         return answer["reason"], ()
 
@@ -1170,10 +1173,26 @@ class Session:
         return None if result.returncode == 0 else orch_refusal(result)
 
 
+# orch's answer for a session the restart did not end, by kind: a lane's
+# relaunch refuses `lane-live` with nothing closed, and a controller's resume
+# fails its start `overseer-live` before anything opens
+# (skills/agent-runtime/runtime/src/controller/effect.rs resolve_predecessor).
+# Nothing needs doing to it, so a rerun after a partial refusal reads it
+# resumed and can exit 0.
+STILL_RUNNING = {"lane": ("lane-live", ()), "overseer": ("controller-resume-failed", (("note", "overseer-live"),))}
+
+
+def still_running(kind, refusal):
+    key, fields = STILL_RUNNING[kind]
+    return refusal is not None and refusal[0] == key and set(fields) <= set(refusal[1])
+
+
 def orch_refusal(result):
     """A failed orch-runtime call as (key, fields): its reply's refusal, else
-    the key that leads its last line, as a close or launch that failed after
-    the fact prints it, else `answer-unread`."""
+    the key that leads its last line, as a close, launch or resume that failed
+    or is unconfirmed after the fact prints it, with that line's NAME=VALUE
+    fields, else `answer-unread`. A field's value runs to the next field, since
+    a cause is free text."""
     try:
         refusal = json.loads(result.stdout.splitlines()[-1])["refusal"]
         return refusal["key"], [tuple(field) for field in refusal.get("fields") or []]
@@ -1181,9 +1200,9 @@ def orch_refusal(result):
         pass
     for text in (result.stdout, result.stderr):
         lines = text.strip().splitlines()
-        match = re.match(r"(?:orch-runtime: )?([a-z][a-z0-9-]*)(?: |$)", lines[-1]) if lines else None
+        match = re.match(r"(?:orch-runtime: )?([a-z][a-z0-9-]*)(?: (.*)|$)", lines[-1]) if lines else None
         if match:
-            return match[1], ()
+            return match[1], re.findall(r"([a-z_]+)=(.*?)(?= [a-z_]+=|$)", match[2] or "")
     return "answer-unread", (("exit", result.returncode),)
 
 
