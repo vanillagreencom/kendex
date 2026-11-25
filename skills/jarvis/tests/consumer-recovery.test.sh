@@ -10,7 +10,4 @@
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"
-if [[ $# -eq 0 ]]; then
-    set -- ConsumerRecovery
-fi
-exec python3 -B "$ROOT/skills/jarvis/tests/progress_log_test.py" "$@"
+exec python3 -B "$ROOT/skills/jarvis/tests/progress_log_test.py" ConsumerRecovery "$@"

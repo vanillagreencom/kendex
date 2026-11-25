@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1256,6 +1257,7 @@ class ConsumerRecovery(ProgressLogCommands):
     OPERATION = ("KEN-3", "Read run/child/result before resuming the operation without a receipt")
     UNREAD = ("KEN-4", "Retry unavailable tracker read before acting")
     PENDING = {"KEN-1": "Check the vendor receipt", "KEN-2": "Wait for the rollout approval"}
+    NEXT_ACTION = {("KEN-1", COMMENT): "Jarvis next action: " + ACTION + "\n"}
 
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
@@ -1301,7 +1303,7 @@ class ConsumerRecovery(ProgressLogCommands):
 
     def tracker_read(self, home, *args):
         result = self.command([self.tracker, *args], home)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result.check_returncode()
         return json.loads(result.stdout)
 
     def handoff(self, home, selected, text):
@@ -1340,19 +1342,47 @@ class ConsumerRecovery(ProgressLogCommands):
         self.assertEqual(default.read_text(), empty)
         covered, *later = records(text)
         self.assertEqual(covered["id"], first)
-        self.assertIn(f"Tracker next action: KEN-1 comment={COMMENT}", later[-1]["Observed result and source"].splitlines())
         return empty, checkpoint, covered, later, text, expected
 
-    def next_action_comments(self):
-        return self.tracker_read(self.home, "comments", "list", "KEN-1", "--format=safe")
+    def replay_route(self, checkpoint, rows, apply, route):
+        entries = rebuild_state(checkpoint, rows, apply)
+        confirmed = {}
+        # progress-log records the tracker destination in Observed result and source.
+        prefix = "Tracker next action: "
+        for row in rows:
+            for line in row["Observed result and source"].splitlines():
+                if not line.startswith(prefix):
+                    continue
+                item, separator, receipt = line[len(prefix):].partition(" comment=")
+                if not (item and separator and receipt):
+                    continue
+                operation = f"{route} | tracker comments list {item} comment={receipt}"
+                try:
+                    comments = self.tracker_read(self.home, "comments", "list", item, "--format=safe")
+                except subprocess.CalledProcessError as error:
+                    print(f"{operation} | exit={error.returncode} {error.stderr.strip()}".rstrip(), flush=True)
+                    continue
+                except (OSError, subprocess.SubprocessError, ValueError) as error:
+                    print(f"{operation} | {error}", flush=True)
+                    continue
+                if not isinstance(comments, list) or any(
+                    not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
+                    or not isinstance(comment.get("body"), str) for comment in comments
+                ):
+                    print(f"{operation} | invalid tracker response", flush=True)
+                    continue
+                matches = [comment["body"] for comment in comments if comment["id"] == receipt]
+                if len(matches) == 1:
+                    confirmed[item, receipt] = matches[0]
+        return entries, confirmed
 
-    def assert_recovered(self, path, entries, expected, comments):
+    def assert_recovered(self, path, entries, expected, confirmed):
         outcomes = {
             "session and wake": all(expected[key] in entries for key in (self.SESSION[0], self.WAKE[0])),
             "open ask": expected[self.ASK[0]] in entries,
             "unfinished operation": expected[self.OPERATION[0]] in entries,
             "unavailable tracker read": expected[self.UNREAD[0]] in entries,
-            "work next action": (comments == [{"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}]
+            "work next action": (confirmed == self.NEXT_ACTION
                                  and not any("KEN-1" in entry for entry in entries)),
         }
         for name, recovered in outcomes.items():
@@ -1365,20 +1395,27 @@ class ConsumerRecovery(ProgressLogCommands):
               "judging whether an open item supplies a State entry, and writing records to their homes.", flush=True)
         empty, checkpoint, covered, later, text, expected = self.predecessor(interrupted=True)
         apply = runpy.run_path(str(self.scripts / "lib/progress.py"))["change_state"]
-        rebuilt = (
-            ("cold Start", rebuild_state(checkpoint, later, apply)),
-            ("hand-over", rebuild_state(empty, [covered, *later], apply)),
+        routes = (
+            ("cold Start", checkpoint, later),
+            ("hand-over", empty, [covered, *later]),
         )
-        comments = self.next_action_comments()
-        missing = [f"{route}: {name}" for route, entries in rebuilt
-                   for name in self.assert_recovered(route, entries, expected, comments)]
+        missing = []
+        for route, starting_state, rows in routes:
+            entries, confirmed = self.replay_route(starting_state, rows, apply, route)
+            missing.extend(f"{route}: {name}" for name in self.assert_recovered(route, entries, expected, confirmed))
         self.assertEqual(missing, [])
         self.assertEqual([entry for _, entry in state_entries(text.splitlines(keepends=True))], list(expected.values()))
         # A failed live read in Start leaves the selected handoff available for retry.
         world = json.loads(self.store.read_text())
         self.store.write_text(json.dumps({**world, "fail": True}))
+        earlier_calls = len(self.trace.read_text().splitlines())
         check = self.progress("--check-state", "--handoff", self.SELECTED)
         self.assertEqual(check.returncode, 1, check.stderr)
+        calls = [json.loads(line) for line in self.trace.read_text().splitlines()[earlier_calls:]]
+        self.assertEqual(calls, [[BULK_GET, [self.OPERATION[0], self.UNREAD[0]]]], check.stderr)
+        cause, _, detail = check.stderr.strip().partition(" detail=")
+        self.assertEqual(cause, "progress-log: tracker-unavailable=exit-1", check.stderr)
+        self.assertEqual(json.loads(detail), {"error": "HTTP 503"})
         self.assertTrue(any(line.startswith("progress-log: unread line=") and line.endswith(" ids=KEN-4")
                             for line in check.stdout.splitlines()), check.stdout)
         self.assertEqual((self.home / self.SELECTED).read_text(), text)
@@ -1409,11 +1446,10 @@ class ConsumerRecovery(ProgressLogCommands):
         for scenario, interrupted in (("clean", False), ("interrupted", True)):
             with self.subTest(transfer=scenario):
                 empty, checkpoint, covered, later, _, expected = self.predecessor(interrupted=interrupted)
-                ordinary = rebuild_state(checkpoint, later, apply), self.next_action_comments()
-                full = rebuild_state(empty, [covered, *later], apply), self.next_action_comments()
+                ordinary = self.replay_route(checkpoint, later, apply, "checkpoint replay")
+                full = self.replay_route(empty, [covered, *later], apply, "full replay")
                 self.assertEqual(ordinary, full, f"{scenario} transfer: replay routes differ")
-                self.assertEqual(full, (list(expected.values()),
-                                        [{"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}]))
+                self.assertEqual(full, (list(expected.values()), self.NEXT_ACTION))
                 print(f"{scenario} transfer | checkpoint and full replay agree on State and tracker comments", flush=True)
 
 
