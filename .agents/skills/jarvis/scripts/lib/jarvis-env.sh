@@ -29,12 +29,12 @@ jarvis_load() {
 # Its native id and tmux coordinates identify the session and its rows.
 # A home with no fleet record binds nothing. A status read the runtime
 # refuses prints `jarvis: dependency=agent-runtime-refused` and the runtime's
-# first stderr line, such as the wrapper's setup-required, so each caller
+# keyed refusal, such as the wrapper's setup-required, so each caller
 # judges a refusal apart from an unbound session. Sets the caller's locals
 # box, server, pane and status.
 jarvis_bound() {
   local root="$1" runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
-  local record refusal first coordinates code=0
+  local record refusal diagnostic coordinates code=0
   [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
   [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
   source "$MAILBOX_LIB/common-root.sh"
@@ -43,10 +43,18 @@ jarvis_bound() {
   [[ -e "$record" ]] || return 1
   refusal="$(mktemp)" || return 1
   status="$("$runtime" controller status --record "$record" 2>"$refusal")" || code=$?
-  first="$(head -n 1 -- "$refusal")" || first=""
+  if ((code)); then
+    # The wrapper can print build progress before setup or status refuses.
+    diagnostic="$(awk '
+      /^agent-runtime: setup-building( |$)/ { next }
+      /^agent-runtime(-setup)?: / { keyed = $0 }
+      first == "" { first = $0 }
+      END { print (keyed != "" ? keyed : first) }
+    ' "$refusal")" || diagnostic=""
+  fi
   rm -f -- "${refusal:?}"
   if ((code)); then
-    printf 'jarvis: dependency=agent-runtime-refused %s\n' "${first:-exit=$code}" >&2
+    printf 'jarvis: dependency=agent-runtime-refused %s\n' "${diagnostic:-exit=$code}" >&2
     return 1
   fi
   coordinates="$(jq -er '.result | select(.live == true) | .recorded
