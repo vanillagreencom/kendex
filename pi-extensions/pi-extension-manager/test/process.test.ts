@@ -43,8 +43,7 @@ test("each way a run ends maps to one result kind, and only exit 0 is success", 
 	const rows = [
 		{ body: "echo done", expected: { kind: "exited", failure: undefined } },
 		{ body: "exit 7", expected: { kind: "exited", failure: { reason: "exit", termination: "7" } } },
-		// A natural signal exit, standing in for npm's heap-exhaustion abort.
-		{ body: "kill -ABRT $$", expected: { kind: "signaled", failure: { reason: "exit", termination: "SIGABRT" } } },
+		{ body: "kill -KILL $$", expected: { kind: "signaled", failure: { reason: "exit", termination: "SIGKILL" } } },
 	];
 	for (const [index, row] of rows.entries()) {
 		const command = writeCommand(join(rootTmp, `row-${index}`), row.body);
@@ -55,7 +54,7 @@ test("each way a run ends maps to one result kind, and only exit 0 is success", 
 });
 
 async function signalExit(module: ProcessModule): Promise<unknown> {
-	const command = writeCommand(join(rootTmp, "self-abort"), "kill -ABRT $$");
+	const command = writeCommand(join(rootTmp, "self-kill"), "kill -KILL $$");
 	const result = await module.runCommand(command, [], { deadlineMs: 10_000, signal: live() });
 	return { kind: result.kind, success: module.commandFailure(result) === undefined };
 }
