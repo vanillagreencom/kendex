@@ -4677,15 +4677,15 @@ struct Worker {
 
 #[cfg(target_os = "linux")]
 impl Worker {
-    /// `sleep` led under `setsid`, as a caller with no terminal leads it, its
-    /// record at `file`, with `account` where given; returns once the record
-    /// stands.
-    fn lead(world: &World, file: &Path, account: Option<&str>) -> Worker {
+    /// `sleep` led under `setsid`, as a caller with no terminal leads it, as
+    /// the worker `name` in the world's account records, with `account`
+    /// where given; returns once the record stands.
+    fn lead(world: &World, name: &str, account: Option<&str>) -> Worker {
+        let file = world.path().join("workers").join(name);
         let mut command = program("setsid");
         command
             .arg(agent_runtime())
-            .args(["process", "lead", "--file"])
-            .arg(file);
+            .args(["process", "lead", "--worker", name]);
         if let Some(account) = account {
             command.args(["--account", account]);
         }
@@ -4700,15 +4700,15 @@ impl Worker {
             command.env(key, value);
         }
         let worker = Worker {
-            file: file.to_path_buf(),
             leader: command.spawn().unwrap(),
+            file,
         };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while std::fs::metadata(file).is_err() {
+        while std::fs::metadata(&worker.file).is_err() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "{} never written",
-                file.display()
+                worker.file.display()
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -4762,11 +4762,11 @@ fn a_worker_led_on_an_account_charges_the_count_both_pickers_read() {
         let claims = world.pick(&claude(None))["record"]["claims"].clone();
         (charges, claims)
     };
-    let plain = Worker::lead(&world, &workers.join("plain"), None);
+    let plain = Worker::lead(&world, "plain", None);
     assert_eq!(read(&world), (json!({}), json!(0)));
     drop(plain);
     let file = workers.join("w");
-    let mut worker = Worker::lead(&world, &file, Some(&account));
+    let mut worker = Worker::lead(&world, "w", Some(&account));
     assert_eq!(read(&world), (json!({ canon.clone(): 1 }), json!(1)));
     worker.stop();
     assert_eq!(read(&world), (json!({}), json!(0)));
