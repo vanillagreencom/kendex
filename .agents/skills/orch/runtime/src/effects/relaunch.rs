@@ -6,11 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
-use serde_json::json;
 
 use super::refused;
 use crate::error::Result;
 use crate::ops;
+use crate::ops::lane::RecoveryReason;
 use crate::settings::Settings;
 use crate::watch::lanes::{Composed, Composition, compose_relaunch};
 
@@ -81,7 +81,7 @@ pub fn composed(
             account: account.as_deref(),
             exclude: None,
             brief: super::launch::start_brief,
-            ground: json!({"reason": "restart-recovery", "source": "overseer"}),
+            ground: RecoveryReason::RestartRecovery,
         },
         &settings.state_dir,
     )

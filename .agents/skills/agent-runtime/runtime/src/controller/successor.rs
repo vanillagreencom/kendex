@@ -329,6 +329,16 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
                 &[("field", "session_id"), ("pane", &record.pane)],
             )
         })?;
+    if successor.account.is_none()
+        && matches!(record.harness, Some(Harness::Claude | Harness::Codex))
+    {
+        // The native session belongs to the home the original launch used.
+        successor.home = record
+            .raw
+            .get("home")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+    }
     if record.harness == Some(Harness::Pi) {
         // The Pi root the launch runs on: the account where its variable is
         // Pi's own (a model Pi's root bills), else the home the record keeps.

@@ -2174,7 +2174,7 @@ pub(super) fn observe_status(
 
 /// Record the fleet's tmux session where none is recorded yet, the
 /// first launch's `.tmux.session //= $s`.
-fn record_tmux_session(path: &Path, doc: &mut Document, session: &str) -> Result<()> {
+pub(super) fn record_tmux_session(path: &Path, doc: &mut Document, session: &str) -> Result<()> {
     if matches!(doc.get("tmux"), None | Some(Value::Null)) {
         record::set(doc, "tmux", json!({"session": session}));
         return Ok(());
@@ -2493,10 +2493,32 @@ fn sandbox_ended(lane: &mut Document) {
     record::delete(lane, state::PARK_OWED);
 }
 
-/// The `no_landing` reasons that retire an attempt for a cause outside its
-/// outcome, as their closers write them: the model-switch recovery and the
-/// wall route.
-const OUTSIDE_THE_OUTCOME: [&str; 3] = ["model-switch", "usage-limit", "auth-wall"];
+/// Recovery close reasons retire an attempt without judging its outcome.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum RecoveryReason {
+    ModelSwitch,
+    UsageLimit,
+    AuthWall,
+    RestartRecovery,
+}
+
+impl RecoveryReason {
+    pub(crate) fn read(reason: &str) -> Option<Self> {
+        use serde::de::value::{Error, StrDeserializer};
+        Self::deserialize(StrDeserializer::<Error>::new(reason)).ok()
+    }
+
+    pub(crate) fn ground(self) -> Value {
+        match self {
+            Self::ModelSwitch => {
+                json!({"reason": self, "source": "model-recovery", "interrupt": true})
+            }
+            Self::UsageLimit | Self::AuthWall => json!({"reason": self, "source": "wall-route"}),
+            Self::RestartRecovery => json!({"reason": self, "source": "overseer"}),
+        }
+    }
+}
 
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
@@ -2543,12 +2565,10 @@ pub(super) fn record_close_outcome(
                     if let Some(wait) = park {
                         record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
                     }
-                    // An attempt below `standard` retired for its outcome is
-                    // the item's miss; a model switch, a wall and a
-                    // park end an attempt for a cause outside it.
+                    // Recovery and parking give no evidence about the attempt's outcome.
                     if let Some(class) = standing.class.filter(|class| class.below_standard())
                         && park.is_none()
-                        && !OUTSIDE_THE_OUTCOME.contains(&reason.as_str())
+                        && RecoveryReason::read(reason).is_none()
                     {
                         let miss = state::ClassMiss {
                             class,

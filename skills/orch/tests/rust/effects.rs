@@ -475,7 +475,7 @@ fn two_launch_processes_mint_distinct_intent_ids() {
 /// usage reads `used` percent in both windows through the usage fixture,
 /// and a controller record naming the fleet's socket: the world a restart
 /// leaves once the server goes.
-fn relaunch_world(dir: &Path, server: &Server, used: u32) -> Runner {
+fn relaunch_world(dir: &Path, server: &Server, used: u32, class: &str) -> Runner {
     let mut runner = Runner::new(server, "stub-confirm");
     runner.init_fleet();
     let bin = dir.join("usage-bin");
@@ -495,7 +495,9 @@ fn relaunch_world(dir: &Path, server: &Server, used: u32) -> Runner {
     runner
         .env
         .push(("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()));
-    let launched = effect_report(&runner.op_fleet(&launch_request("KEN-1", runner.state_dir())));
+    let mut request = launch_request("KEN-1", runner.state_dir());
+    request["class"] = json!(class);
+    let launched = effect_report(&runner.op_fleet(&request));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
     let mut fleet = runner.fleet();
     fleet["controller"] = json!({"server_socket": server.socket.display().to_string()});
@@ -540,7 +542,7 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
     let sockets = dir.path().join("sockets");
     std::fs::create_dir(&sockets).unwrap();
     let server = Server::start(&sockets, "fleet");
-    let runner = relaunch_world(dir.path(), &server, 5);
+    let runner = relaunch_world(dir.path(), &server, 5, "light");
     let killed = tmux(&server.socket, &["kill-server"]);
     assert!(killed.status.success(), "{}", stderr(&killed));
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -575,8 +577,17 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
         .trim()
         .parse()
         .unwrap_or_else(|_| panic!("no server answers: {}", stderr(&identity)));
-    let lane = runner.fleet()["lanes"][0].clone();
+    let fleet = runner.fleet();
+    let intents = fleet["intents"].as_array().unwrap();
+    let (launch, close) = (&intents[intents.len() - 1], &intents[intents.len() - 2]);
+    assert_eq!(close["op"], "close-resources", "{close}");
+    assert_eq!(close["outcome"], "confirmed", "{close}");
+    assert_eq!(launch["op"], "launch-session", "{launch}");
+    assert_eq!(launch["outcome"], "confirmed", "{launch}");
+    let lane = &fleet["lanes"][0];
     assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["class"], "light", "{lane}");
+    assert_eq!(lane.get("class_missed"), None, "{lane}");
     assert_eq!(lane["launch"]["server"], started, "{lane}");
     let request: Value = serde_json::from_str(
         &std::fs::read_to_string(runner.state_dir().join("restart-relaunch-KEN-1.json")).unwrap(),
@@ -603,7 +614,7 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
 fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = relaunch_world(dir.path(), &server, 99);
+    let runner = relaunch_world(dir.path(), &server, 99, CLASS);
     let fleet = runner.fleet();
     let mut hosted = fleet.clone();
     hosted["lanes"][0]["host"] = json!("/opt/provider");
@@ -679,7 +690,7 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     let sockets = dir.path().join("sockets");
     std::fs::create_dir(&sockets).unwrap();
     let server = Server::start(&sockets, "fleet");
-    let runner = relaunch_world(dir.path(), &server, 5);
+    let runner = relaunch_world(dir.path(), &server, 5, CLASS);
     let killed = tmux(&server.socket, &["kill-server"]);
     assert!(killed.status.success(), "{}", stderr(&killed));
     let deadline = Instant::now() + Duration::from_secs(10);

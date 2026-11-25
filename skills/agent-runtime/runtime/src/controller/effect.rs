@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::transition::{RequestTransfer, StartController, overseer_target};
 use super::{Overseer, TransferCause};
@@ -1984,6 +1984,7 @@ fn publish(
                 server_socket: Some(opened.socket.clone()),
                 home: Some(successor.home.display().to_string()),
                 watch: watch_job,
+                members: Map::from_iter([("tmux_session".to_owned(), json!(pane.session))]),
                 ..Wire::default()
             }))
         }
