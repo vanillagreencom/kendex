@@ -120,8 +120,9 @@ fn harness_list(harnesses: &BTreeSet<crate::model::HarnessId>) -> String {
 }
 
 /// Origin's record a pull would bring the scope, read at most once per
-/// check of it: `Ok(None)` where no pull applies, and git's failure as the
-/// text a line carries as its detail.
+/// check of it: `Ok(None)` where no pull applies, and where git cannot
+/// answer or origin's copy of the install record cannot be read, that
+/// cause as the text a line carries as its detail.
 type Pulled = std::cell::OnceCell<std::result::Result<Option<crate::lock::Lock>, String>>;
 
 /// One scope's lines, and what the caller still needs from it.
@@ -1775,9 +1776,10 @@ impl ScopeCheck<'_> {
     /// reads again before it reaches here; with no readable record there
     /// is nothing to tell a pulled one apart from. Origin's record is read
     /// once per scope, and only for a package that reaches here. A
-    /// checkout git cannot answer for is offered neither, its cause the
-    /// line's detail, since the refresh is the wrong fix exactly where the
-    /// pull is the right one.
+    /// checkout git cannot answer for, or whose origin copy of the install
+    /// record cannot be read, is offered neither, its cause the line's
+    /// detail, since the refresh is the wrong fix exactly where the pull
+    /// is the right one.
     fn stale_remedy(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,

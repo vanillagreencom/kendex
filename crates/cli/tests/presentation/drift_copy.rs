@@ -65,8 +65,10 @@ fn check(home: &Path, project: &Path, extra: &[&str]) -> (Option<i32>, String) {
     )
 }
 
-/// What the default text may never carry: the command, the hash, a path,
-/// what git printed.
+/// What the default text may never carry: the git command behind a
+/// failed comparison, the hash, a path, what git printed. The one git
+/// command it may name is `git pull --ff-only`, as a fix to run, which
+/// this fixture never reaches.
 fn technical(text: &str) -> Vec<&'static str> {
     ["git ", HASH, "fatal:", ":(literal)", "skills/gh"]
         .into_iter()
