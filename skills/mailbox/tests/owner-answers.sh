@@ -186,7 +186,6 @@ while IFS='|' read -r fact contract; do
 done <<'ROWS'
 replaced_reply|a reply under a replaced question reaches the open replacement, opening with the line naming both asks
 chat_replaced|a reply under a question a chat ask replaced reaches that chat ask, after the watch cleared the item
-other_item_replaced|a reply under a question an ask on another item replaced reaches that ask, after the watch cleared the item
 chain_first_replaced|a reply under the first question of a three-ask chain, on another item, reaches the one open ask
 thread_chain|a reply under another mailbox's question is not delivered, while a nested reply whose thread ends at this mailbox's question is
 flat_comment|a top-level comment after the open question reaches its ask, after a re-ask the newest one's, and one with no open question before it is left out

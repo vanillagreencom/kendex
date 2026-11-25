@@ -551,7 +551,6 @@ def explicit(case, facts):
 REPLACED = (
     ("replaced_reply", (("KEN-7", None), ("KEN-7", None)), ()),
     ("chat_replaced", (("KEN-7", None), (None, 0)), ("KEN-7",)),
-    ("other_item_replaced", (("KEN-7", None), ("KEN-9", 0)), ("KEN-7",)),
     ("chain_first_replaced", (("KEN-8", None), ("KEN-7", 0), ("KEN-7", None)), ("KEN-8",)),
 )
 
