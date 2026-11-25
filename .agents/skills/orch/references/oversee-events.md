@@ -621,9 +621,9 @@ A marker beside a lane whose record still reads open is a close the watch cannot
 
 ### `usage-limit`
 
-`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]`: the lane's harness drew a usage-limit banner, or a Pi lane's turn ended on one. The banner and the screen around it follow. The watch left the wall to the overseer: `ORCH_WALL_RELAUNCH=ask`, no account qualified, or a refusal. The lines under it:
+`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]` reports a wall from the lane's pane or session rows. The banner or row message follows when available. The watch left the wall to the overseer because of `ORCH_WALL_RELAUNCH=ask`, a usage wall with no qualifying account, or a refusal. Follow the auth instructions below if the line carries `wall_kind=auth`. These lines may follow the event.
 
-- `pick lane=[DIR]`, `pick none` or `pick unjudged [CAUSE]`: the account judge's answer for the record's model, excluding the spent account.
+- `pick lane=[DIR]`, `pick none` or `pick unjudged [CAUSE]`: the account judge's answer for a usage wall, excluding the spent account.
 - `wall-relaunch-refused lane=[LANE] reason=[REASON]`: the step that stopped the watch's relaunch. Under `stop-failed` or `stop-unanswered`, the harness may still run: start nothing beside it.
 - `account-wall: record-unwritten config_dir=[DIR] cause=[CAUSE]`: the wall's record for that account did not write. Until it writes, launch nothing on that account before the reset.
 
@@ -642,10 +642,7 @@ A marker beside a lane whose record still reads open is a close the watch cannot
    - Keep the window until an account qualifies.
    - The spent account's `account` line or heartbeat roster line says which case it is.
 
-`wall_kind=auth` is a login failure: a wall with no reset.
-
-- Relaunch on another account, never the walled one.
-- When none qualifies, tell the owner and ask the operator to sign in.
+`wall_kind=auth` marks a login failure with no reset. The watch skips the account walk. Under `ORCH_WALL_RELAUNCH=auto`, it asks to resume the lane on its own account so the harness reads current credentials. For a manual recovery, follow [Recovery relaunch](lane-directive.md#recovery-relaunch) with the same account. If the sign-in still fails, ask the operator to sign in again.
 
 ### `lane-relaunched`
 

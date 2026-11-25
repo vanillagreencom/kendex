@@ -2490,7 +2490,7 @@ fn sandbox_ended(lane: &mut Document) {
 /// The `no_landing` reasons that retire an attempt for a cause outside its
 /// outcome, as their closers write them: the model-switch recovery and the
 /// wall route.
-const OUTSIDE_THE_OUTCOME: [&str; 2] = ["model-switch", "usage-limit"];
+const OUTSIDE_THE_OUTCOME: [&str; 3] = ["model-switch", "usage-limit", "auth-wall"];
 
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
@@ -2538,7 +2538,7 @@ pub(super) fn record_close_outcome(
                         record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
                     }
                     // An attempt below `standard` retired for its outcome is
-                    // the item's miss; a model switch, a usage wall and a
+                    // the item's miss; a model switch, a wall and a
                     // park end an attempt for a cause outside it.
                     if let Some(class) = standing.class.filter(|class| class.below_standard())
                         && park.is_none()

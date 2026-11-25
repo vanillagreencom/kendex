@@ -51,6 +51,9 @@ pub fn relaunch_marker_path(watch_state_dir: &Path, lane: &str) -> PathBuf {
     reason = "the wall relaunch marker, the watch's own file the released outcome reader follows, written before the detached relaunch starts"
 )]
 pub fn write_relaunch_marker(marker: &Path, item: &str, since: u64, log: &Path) -> Result<()> {
+    if let Some(dir) = marker.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| agent_runtime::Error::io("mkdir", dir, e))?;
+    }
     let exit = marker.with_extension(
         marker
             .extension()
