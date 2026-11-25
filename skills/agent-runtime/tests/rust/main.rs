@@ -170,7 +170,8 @@ fn pi_captures_judge_idle_at_rest_and_working_mid_turn() {
 
 /// `judge` over a capture file answers the screen's state with exit 0,
 /// `working` as much as `idle`, so a sender reads the state and never the
-/// exit status; a harness it has no rule for is a refusal, exit 1.
+/// exit status; a wall carries its banner rows as drawn, no other row. A
+/// harness it has no rule for is a refusal, exit 1.
 #[test]
 fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     use agent_runtime::effects::prepare::up;
@@ -198,36 +199,41 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
             harness.as_ref(),
         ])
     };
-    for (screen, harness, want, ready) in [
-        (fixtures.join("pi-idle.txt"), "pi", "idle", true),
-        (fixtures.join("pi-working.txt"), "pi", "working", true),
+    for (screen, harness, want, ready, banner) in [
+        (fixtures.join("pi-idle.txt"), "pi", "idle", true, None),
+        (fixtures.join("pi-working.txt"), "pi", "working", true, None),
         (
             fixtures.join("copilot-model-turn-sidebar.txt"),
             "copilot",
             "working",
             true,
+            None,
         ),
         (
             fixtures.join("copilot-model-turn.txt"),
             "copilot",
             "working",
             true,
+            None,
         ),
         (
             runtime.join("../../orch/tests/fixtures/oversee-watch/copilot-dialog-trust.txt"),
             "copilot",
             "asking",
             false,
+            None,
         ),
-        (setup, "copilot", "asking", false),
+        (setup, "copilot", "asking", false, None),
         (
             runtime.join("../../orch/tests/fixtures/oversee-watch/copilot-idle.txt"),
             "copilot",
             "walled",
             false,
+            // The wall line alone, never the blank row drawn above it.
+            Some(" ✗ You must be logged in to send messages. Please run /login "),
         ),
-        (dialog, "copilot", "asking", false),
-        (process_only, "copilot", "unjudged", false),
+        (dialog, "copilot", "asking", false, None),
+        (process_only, "copilot", "unjudged", false, None),
     ] {
         let (code, reply) = ask(&screen, harness);
         assert_eq!(code, Some(0), "{}: {reply}", screen.display());
@@ -236,6 +242,12 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
         assert_eq!(
             reply["result"]["state"],
             want,
+            "{}: {reply}",
+            screen.display()
+        );
+        assert_eq!(
+            reply["result"]["banner"].as_str(),
+            banner,
             "{}: {reply}",
             screen.display()
         );
