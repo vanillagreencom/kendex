@@ -16,7 +16,7 @@
 # refused rather than skipped.
 #
 # Every refusal opens with `block-bare-cd: <key>=<value>`, the fixed set
-# hooks/AGENTS.md names: the first-line table pins the key and the value of
+# hooks/fixed-keys.md names: the first-line table pins the key and the value of
 # each condition beside its exit status, and the English under it is not
 # asserted.
 #

@@ -37,6 +37,10 @@ pub struct HookSource {
     /// Skills required on every harness this hook uses, from the same
     /// catalog. The dependency walk installs their own dependencies too.
     pub requires_skills: Vec<String>,
+    /// The hook reads the registration a Pi carrier names it under,
+    /// `KENDEX_HOOK_SCOPE` and `KENDEX_HOOK_ROOT`, to find its install.
+    /// Declared `reads-registration: true`; [`crate::harness::pi`] reads it.
+    pub reads_registration: bool,
     pub script: String,
 }
 
@@ -55,6 +59,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         requires: Vec::new(),
         requires_on: None,
         requires_skills: Vec::new(),
+        reads_registration: false,
         script: text.to_owned(),
     };
     for line in text.lines() {
@@ -100,6 +105,15 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
             }
             "requires" => hook.requires = names(value),
             "requires-skills" => hook.requires_skills = names(value),
+            // A misspelled value read as `false` would run a hook that
+            // cannot tell its registrations apart as one that needs none.
+            "reads-registration" => {
+                hook.reads_registration = match value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(format!("reads-registration takes true or false: {value}")),
+                }
+            }
             _ => {}
         }
     }
@@ -388,6 +402,26 @@ mod tests {
     fn missing_frontmatter_or_fields_is_an_error() {
         assert!(parse_hook("#!/bin/sh\nexit 0\n").is_err());
         assert!(parse_hook("# ---\n# name: x\n# ---\n").is_err());
+    }
+
+    #[test]
+    fn reads_registration_is_true_false_or_refused() {
+        for (line, expected) in [
+            ("", Ok(false)),
+            ("# reads-registration: true\n", Ok(true)),
+            ("# reads-registration: false\n", Ok(false)),
+            (
+                "# reads-registration: yes\n",
+                Err("reads-registration takes true or false: yes".to_owned()),
+            ),
+        ] {
+            let script = format!("# ---\n# name: x\n# event: Stop\n{line}# ---\n");
+            assert_eq!(
+                parse_hook(&script).map(|hook| hook.reads_registration),
+                expected,
+                "{line}"
+            );
+        }
     }
 
     #[test]
