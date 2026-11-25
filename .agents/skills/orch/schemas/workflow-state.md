@@ -296,7 +296,8 @@ A cloud lane's close writes one more `close` row: `cloud lane closed; session=ID
 
 `controller` is the overseer session's record. Agent-runtime's `controller` module owns the shape:
 
-- its launch identity: `harness`, `account`, `home`, `model`, `class`, `effort`, `cwd`, `permission`, `extra_args`;
+- its launch identity: `harness`, `account`, `home`, `home_implicit`, `model`, `class`, `effort`, `cwd`, `permission`, `extra_args`;
+- `home_implicit`, for a Claude home: `true` for the implicit default config dir, `false` for a named one, absent when unknown;
 - its pane: `server`, `server_start`, `server_socket`, `pane`, `window`, `session_rows`;
 - its process, `harness_pid` and `harness_start`, and its native `session_id`;
 - `generation`, `pending`, `exit`, `off` and `watch`.
@@ -305,8 +306,12 @@ The writers:
 
 - A confirmed `start-controller` or `request-transfer` publishes the record at the next `generation`, from its typed `pending` controller and the identity it observed.
 - `orch-runtime register --fleet` reads the fleet's lane records before it records a hand-opened session through `adopt-controller`. An unreadable row leaves the fleet file unchanged.
-- Where the record names the same pane on the same server, the adoption keeps the record and its generation, replaces each launch field the request names, and drops `pending`, `exit` and `off`.
+- Where the record names the same pane on the same server, the adoption keeps the record and its generation, replaces each launch field the request names, a Claude `home` excepted, and drops `pending`, `exit` and `off`.
 - Otherwise the adoption writes the session's record at the next generation.
+- A Claude adoption records the home its process runs on as `home`, with its mode in `home_implicit`.
+  - A requested home the process does not run on is recorded as named.
+  - Where the process environment is unread, the home a registration read for that process, or the record's home for that same process, stands with its mode where the request names no other home.
+  - With neither, the adoption records the request's home, drops `home_implicit`, and reports `home-unread` with the cause.
 - A succession carries no `watch` and leaves the member as it stands.
 
 `watch` names the fleet watch a confirmed `start-controller` launched or found claimed. The watch's claim `oversee-watch.pid`, beside the fleet record, stays the watch's liveness record.
