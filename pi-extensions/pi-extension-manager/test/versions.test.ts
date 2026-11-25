@@ -103,7 +103,7 @@ test("npm root lookups find the package or name each failed lookup", async () =>
 	const rows = [
 		{ body: `echo "${globalRoot}"`, expected: { kind: "found", dir: packageDir } },
 		{ body: "exit 3", expected: { kind: "missing", lookupFailures: ["npm root -g: exit=3"] } },
-		{ body: "kill -ABRT $$", expected: { kind: "missing", lookupFailures: ["npm root -g: exit=SIGABRT"] } },
+		{ body: "kill -KILL $$", expected: { kind: "missing", lookupFailures: ["npm root -g: exit=SIGKILL"] } },
 		{ body: "true", expected: { kind: "missing", lookupFailures: ["npm root -g: printed no root"] } },
 	];
 	for (const row of rows) {

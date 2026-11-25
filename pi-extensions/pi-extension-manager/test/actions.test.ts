@@ -612,10 +612,9 @@ async function observeFailedUninstall(actions: ActionsModule, inventory: Invento
 }
 
 test("a natural-signal npm crash keeps disk and in-memory installation settings; control: an unchecked failure strips them", async () => {
-	// npm's heap exhaustion ends in SIGABRT with no exit code.
-	const crash = "kill -ABRT $$";
+	const crash = "kill -KILL $$";
 	const real = [await import("../extensions/manager/actions.ts"), await import("../extensions/manager/inventory.ts")] as const;
-	expect(await observeFailedUninstall(...real, crash)).toEqual({ ok: false, firstLine: "pi-extension-manager: npm-uninstall-exit=SIGABRT", diskKept: true, memoryKept: true });
+	expect(await observeFailedUninstall(...real, crash)).toEqual({ ok: false, firstLine: "pi-extension-manager: npm-uninstall-exit=SIGKILL", diskKept: true, memoryKept: true });
 
 	const mutant = mutantManager(join(rootTmp, "mutant-uninstall"), [{
 		file: "actions.ts",
