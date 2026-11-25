@@ -204,7 +204,15 @@ Then report once that the early open failed, with the line submit-pr or the read
 
 3. Read the item's Done-when boxes against the accepted development return. A post-merge box is one whose named evidence only a deployment, installation or live use can give, such as a real create or relaunch sample. An empty listing or other branch output does not stand in for it.
 4. Rewrite each post-merge box on the item in the form of the project-management skill's references/filing.md § Done when (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`), so the merged item reads Verifying.
-5. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
+5. Judge each post-merge box against conditions 2 and 3 of the project-management skill's references/filing.md § Done when: who reads the evidence its `Where:` names, and whether the repository's normal traffic produces the sample inside its `Trigger:` and `Deadline:` window. **Skip if** the item has no post-merge box.
+   - Write one line per box, its reader and window judgement, to `[WORKTREE_PATH]/tmp/post-merge-read-[ISSUE_ID].md` with the harness file tool, and post it on the item.
+   - A box that fails a condition names it there. The judgement is a record, not a gate, and holds nothing.
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [WORKTREE_PATH]/tmp/post-merge-read-[ISSUE_ID].md
+   ```
+
+6. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
 
 **Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
