@@ -645,6 +645,7 @@ def roster(jobs, classifier, step):
     lane_by_job = {}
     needs_by_job = {}
     scan_jobs = set()
+    independent_jobs = {classifier}
     for name, job in jobs.items():
         needs = job.get("needs", [])
         if isinstance(needs, str):
@@ -652,6 +653,8 @@ def roster(jobs, classifier, step):
         require(isinstance(needs, list) and set(needs) <= jobs.keys(), "invalid-job-needs")
         needs_by_job[name] = needs
         condition = " ".join(job.get("if", "").split())
+        if condition in {"always()", "${{ always() }}", "!cancelled()", "${{ !cancelled() }}"}:
+            independent_jobs.add(name)
         match = gate.fullmatch(condition)
         if not match and scan_gate:
             match = scan_gate.fullmatch(condition)
@@ -664,13 +667,20 @@ def roster(jobs, classifier, step):
                     "unmapped-lane-output")
             lane_by_job[name] = lane
         elif re.search(r"outputs.*(?:lane_|lanes)|results.*lane_", condition) or (
-            classifier in needs and condition not in {
-                "", "always()", "${{ always() }}", "!cancelled()", "${{ !cancelled() }}",
-            }
+            classifier in needs and condition and name not in independent_jobs
         ):
             raise Unreadable("unsupported-lane-gate")
+    # The workflow can close its lanes output on Markdown even when the
+    # classifier has no verdicts. Each scan ancestor must stay available.
+    pending = {need for name in scan_jobs for need in needs_by_job[name]}
+    visited = set()
+    while pending:
+        job = pending.pop()
+        require(job in independent_jobs, f"unsupported-scan-prerequisite job={job}")
+        visited.add(job)
+        pending.update(set(needs_by_job[job]) - visited)
     require(lane_by_job, "derived-lanes-absent")
-    return lane_by_job, needs_by_job, scan_jobs
+    return lane_by_job, needs_by_job
 
 
 def literal_job_dispatches(job):
@@ -737,12 +747,12 @@ def derived(evidence, exceptions, settings):
     require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
-    lane_by_job, needs_by_job, scan_jobs = roster(jobs, classifier, step)
+    lane_by_job, needs_by_job = roster(jobs, classifier, step)
 
     def keep_prerequisites(outcomes):
         # A shared lane runs its entire group. Keep each running job's gated
         # ancestors, including dependencies through jobs without gates.
-        selected = scan_jobs | {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
+        selected = {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
         selected.update(name for name in jobs if name not in lane_by_job
                         and jobs[name].get("if", "") not in {"always()", "${{ always() }}"})
         visited = set()

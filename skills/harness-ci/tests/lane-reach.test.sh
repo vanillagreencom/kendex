@@ -492,7 +492,7 @@ YAML
 YAML
   for lane in check-scans check-other check-lane-host; do
     needs=changes
-    if [ "$lane:$shape" = check-scans:scan-prerequisite ]; then
+    if [ "$lane" = check-scans ] && [[ "$shape" = scan-*-prerequisite ]]; then
       needs='[changes, check-other]'
     fi
     cat <<YAML
@@ -503,6 +503,8 @@ YAML
       cat <<'YAML'
     if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.markdown_only == 'true' && github.event_name == 'merge_group') || (needs.changes.outputs.markdown_only != 'true' && ((needs.changes.outputs.change_class != 'render' && needs.changes.outputs.queue_deferred != 'true') || needs.changes.outputs.lane_check-scans != 'false'))) }}
 YAML
+    elif [ "$lane:$shape" = check-other:scan-independent-prerequisite ]; then
+      printf '%s\n' '    if: ${{ !cancelled() }}'
     else
       cat <<YAML
     if: \${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_$lane != 'false')) }}
@@ -553,9 +555,13 @@ write_dispatch_workflow classify local-action >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'the runner computes the script name'
 dispatch_opaque_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-scan-prerequisite "$dispatch_base"
-write_dispatch_workflow classify scan-prerequisite >"$repo/.github/workflows/ci.yml"
-git -C "$repo" commit -qam 'the scan gate depends on a standard gated job'
+write_dispatch_workflow classify scan-independent-prerequisite >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the scan prerequisite runs independently of the lanes output'
 dispatch_scan_prereq_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-gated-scan-prerequisite "$dispatch_scan_prereq_base"
+write_dispatch_workflow classify scan-gated-prerequisite >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the scan depends on a job gated by the lanes output'
+dispatch_gated_scan_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-opaque-prefix "$dispatch_base"
 write_dispatch_workflow classify opaque-prefix >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'opaque steps before literal runner calls'
@@ -599,8 +605,77 @@ VERIFY
 chmod +x "$SANDBOX/bin/kendex"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
+
+# Run the fixture's output steps and evaluate its actual job conditions with
+# the same GitHub expression reader as ci-template.test.sh.
+dispatch_workflow_jobs() { # REPO CLASSIFIER_OUTPUT BASE HEAD EVENT
+  python3 - "$@" "$TEST_DIR/lib/gh-eval.py" "$SANDBOX" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import yaml
+
+repo, classified, base, head, event, evaluator, sandbox = sys.argv[1:]
+jobs = yaml.load((Path(repo) / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)["jobs"]
+control = jobs["changes"]
+github = {"event_name": event, "event": {"merge_group": {"base_sha": base, "head_sha": head}}}
+
+def read_outputs(path):
+    rows = iter(Path(path).read_text().splitlines())
+    values = {}
+    for row in rows:
+        if "<<" in row:
+            key, marker = row.split("<<", 1)
+            lines = []
+            while (line := next(rows)) != marker:
+                lines.append(line)
+            values[key] = "\n".join(lines)
+        elif row:
+            key, value = row.split("=", 1)
+            values[key] = value
+    return values
+
+def expression(text):
+    return text.removeprefix("${{").removesuffix("}}").strip()
+
+def evaluate(text, context):
+    return json.loads(subprocess.check_output(
+        [sys.executable, evaluator, "value", json.dumps(context), expression(text)],
+    ))
+
+steps = {"classify": {"outputs": read_outputs(classified)}}
+job_env = {name: evaluate(value, {"github": github}) for name, value in control["env"].items()}
+for step in control["steps"]:
+    if step.get("id") not in {"markdown", "verdict"}:
+        continue
+    step_env = {name: evaluate(value, {"steps": steps}) for name, value in step.get("env", {}).items()}
+    output = Path(sandbox) / "dispatch-step-output"
+    output.write_text("")
+    subprocess.run(["bash", "-ec", step["run"]], cwd=repo, check=True,
+                   env={**os.environ, **job_env, **step_env, "GITHUB_OUTPUT": str(output)})
+    steps[step["id"]] = {"outputs": read_outputs(output)}
+
+outputs = {name: evaluate(value, {"steps": steps}) for name, value in control["outputs"].items()}
+results = {"changes": {"result": "success", "outputs": outputs}}
+eligible = []
+for name in ("check-other", "check-scans", "check-lane-host"):
+    job = jobs[name]
+    needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+    context = {"github": github, "needs": {need: results[need] for need in needs}}
+    condition = f"{name}\t{','.join(needs)}\t{expression(job['if'])}\n"
+    runs = subprocess.check_output([sys.executable, evaluator, "jobs", json.dumps(context)],
+                                   input=condition, text=True).strip()
+    results[name] = {"result": "success" if runs else "skipped"}
+    if runs:
+        eligible.append(name)
+print(",".join(eligible))
+PY
+}
+
 rows=0
-while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause; do
+while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes; do
   [ -z "${LANE_REACH_CASE:-}" ] || [ "$label" = "$LANE_REACH_CASE" ] || continue
   rows=$((rows + 1))
   base="$opted_base"
@@ -627,7 +702,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-helper|dispatch-host-source|dispatch-unrelated) base="$dispatch_base" ;;
     dispatch-unmapped) base="$dispatch_unmapped_base" ;;
     dispatch-unresolved) base="$dispatch_opaque_base" ;;
-    dispatch-scan-prerequisite) base="$dispatch_scan_prereq_base" ;;
+    dispatch-scan-prerequisite|dispatch-scan-readme) base="$dispatch_scan_prereq_base" ;;
+    dispatch-scan-gated) base="$dispatch_gated_scan_base" ;;
     dispatch-opaque-prefix) base="$dispatch_opaque_prefix_base" ;;
     dispatch-opaque-host) base="$dispatch_opaque_host_base" ;;
     dispatch-wrong-event) base="$dispatch_wrong_event_base" ;;
@@ -727,10 +803,20 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         assert_eq "$label $implementation scans" "$scans" "$(verdict check-scans "$output")"
         assert_eq "$label $implementation lane host" "$host" "$actual"
         assert_eq "$label $implementation other" "$other" "$(verdict check-other "$output")"
-        assert_eq "$label $implementation gate" true "$(sed -n 's/^lanes=//p' "$output")"
+        assert_eq "$label $implementation gate" "${dispatch_lanes:-true}" "$(sed -n 's/^lanes=//p' "$output")"
         assert_eq "$label $implementation roster cause" "$dispatch_cause" \
           "$(sed -n 's/^lanes_cause=//p' "$output")"
         case "$label" in
+          dispatch-scan-readme)
+            assert_eq "$label $implementation class" trivial "$(sed -n 's/^change_class=//p' "$output")"
+            assert_eq "$label $implementation scan and prerequisite run" 'check-other,check-scans' \
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+          dispatch-scan-prerequisite)
+            assert_eq "$label $implementation ordinary eligible jobs" 'check-other,check-scans,check-lane-host' \
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+          dispatch-scan-gated)
+            assert_eq "$label $implementation rejected prerequisite" 'unsupported-scan-prerequisite job=check-other' \
+              "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
           dispatch-unmapped)
             assert_eq "$label $implementation diagnostic" unmapped-lanes-output \
               "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
@@ -805,7 +891,9 @@ dispatch-host-source|bin/markdown.sh|||||||false|true|false|derived-reach
 dispatch-unrelated|bin/other.txt|||||||false|false|true|derived-reach
 dispatch-unmapped|bin/other.txt||||||||||lane-reach-unreadable
 dispatch-unresolved|bin/other.txt|||||||true|true|true|derived-reach
-dispatch-scan-prerequisite|bin/markdown.sh|||||||false|true|true|derived-reach
+dispatch-scan-prerequisite|bin/markdown.sh|||||||false|true||derived-reach
+dispatch-scan-readme|README.md||||||||||trivial|false
+dispatch-scan-gated|bin/markdown.sh||||||||||lane-reach-unreadable
 dispatch-opaque-prefix|bin/other.txt|||||||true|true|true|derived-reach
 dispatch-opaque-host|bin/unplaced.txt|||||||false|true|false|derived-reach
 dispatch-wrong-event|bin/other.txt||||||||||lane-reach-unreadable

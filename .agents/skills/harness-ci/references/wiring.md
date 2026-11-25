@@ -402,6 +402,8 @@ echo "queue_deferred=$deferred" >>"$GITHUB_OUTPUT"
 
 For a repository-wide scan, map the narrowing flag, the classifier's `change_class` and the forwarding step's `queue_deferred` as job outputs. Use the status and verdict terms in this gate to retain the scan's Markdown merge-group and non-render exceptions.
 
+Keep the scan's direct and indirect prerequisites available when the workflow publishes `lanes=false`. Except for the classifier, give each prerequisite a status-only `if: ${{ !cancelled() }}` or `if: ${{ always() }}`. The scan can run on a Markdown merge group whose ordinary lane gate is closed. When deriving lane verdicts, the reader refuses scan wiring that depends on jobs with another gate.
+
 ```yaml
 if: >-
   ${{ !cancelled() && (needs.changes.result != 'success' ||
