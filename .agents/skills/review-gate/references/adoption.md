@@ -112,12 +112,12 @@ The run history check:
 - Renderer, apply, refresh, install, verify, manifest and lock changes, and catalog changes that raise the minimum, wait for their release and the `v1` move.
 - The refresh scripts and classifier still run from the release checkout.
 - A successful full refresh whose complete staged diff contains only the selected projects' `.kendex-lock.json` records makes no commit or pull request. The next refresh with any non-lock change carries the current locks and content through `kendex/refresh` and its rolling pull request.
-- A content-changing refresh that produces a new head publishes it under [§ Publication](#publication), unless the run lands it under [§ Landing a proved render](#landing-a-proved-render).
+- A content-changing refresh that produces a new head publishes it under [§ Publication](#publication), unless the run lands or defers it under [§ Landing a proved render](#landing-a-proved-render).
 - A current consumer opens no pull request.
 
 ### Publication
 
-`refresh/refresh-consumer.sh` rebuilds the rolling refresh branch from the default branch. It opens or updates its pull request on a new head at any measured class or an unmeasured standard class.
+`refresh/refresh-consumer.sh` rebuilds the rolling refresh branch from the default branch. It opens or updates its pull request on a new head that the run neither lands nor defers, at any measured class or an unmeasured standard class.
 
 Before publication:
 
@@ -141,7 +141,7 @@ A run that committed a new head of measured class `render` first tries to land i
 
 - A push GitHub takes reports `refresh-state=landed pr=none class=render head=REVISION` and writes the report to the run summary. The run opens no pull request, and closes a rolling pull request GitHub still shows open.
 - A push git rejects because the default branch moved reports `refresh-state=deferred reason=base-moved`. The next run renders on the new base.
-- A merge queue that holds an entry reports `refresh-state=deferred reason=queued`. The run pushes nothing and opens or updates no pull request. A later run that meets an empty queue lands the render.
+- A merge queue that holds an entry reports `refresh-state=deferred reason=queued`. The run pushes nothing and opens or updates no pull request. A later run that meets an empty queue tries the landing again.
 - A push GitHub refuses keeps the pull request route.
 - Any other precondition the run does not meet keeps that route too.
 - A retained head never lands.
@@ -201,7 +201,8 @@ GitHub's rulesets judge the landing push, and the run reads no ruleset first. A 
 - In the target, one organization ruleset holds `pull_request` and `workflows`, with the landing app as its only bypass actor in mode `always`.
 - The organization ruleset that holds `deletion` and `non_fast_forward` lists no bypass actor.
 - The repository's merge-queue and required-checks rulesets list the landing app.
-- Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request.
+- Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request. There a deferral on a busy merge queue only delays that pull request.
+- In the vanillagreen organization the landing app passes the rulesets: on 2026-11-24 GitHub took a landing push in vgshell, whose run 45449034468 printed `refresh-state=landed pr=none class=render`.
 
 The landing token holds no Workflows permission, which GitHub requires of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). GitHub therefore refuses a landing push whose commit changes the adopted caller `.github/workflows/kendex-refresh.yml`. That update keeps the rolling pull request and its review.
 

@@ -769,7 +769,7 @@ esac
 # A proved render owes no pull request, CI run or approval, and a push into
 # a busy queue rebuilds every running group, so it waits for a run that
 # meets an empty queue: the next daily or release-dispatched run renders
-# again and lands. Nothing re-dispatches this run, so a queue busy at every
+# again and tries the landing. Nothing re-dispatches this run, so a queue busy at every
 # run holds the render until one finds it empty.
 if [ "$land_check" = skipped:queued ]; then
   printf 'refresh-state=deferred reason=queued\n'
