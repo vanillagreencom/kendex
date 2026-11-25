@@ -321,7 +321,7 @@ The writers:
 
 A first `launch-lane` appends the record `{item, tracker, repo, harness, window, account, host, kind, mail_root, surface, model, effort, class, class_reason, permission, session_id, session_since, launched_at, running_at, status, over_cap, allow_all, tier, tier_inputs, launch}`, with `status` `preparing`. `item` is the record's identity. [state.rs](../runtime/src/state.rs) `Lane` is the typed view; [`ops/lane.rs`](../runtime/src/ops/lane.rs) holds the writes.
 
-- A relaunch keeps every member its request leaves out.
+- A relaunch keeps omitted request fields subject to the launch updates below.
 - `host` and `kind` are always the launch's own.
 - `harness`, `account`, `model` and `effort` reach the record when the launch confirms, each null where the request named none.
 - A relaunch keeps `tier` and `tier_inputs`; a launch over a `done` record writes its own brief's.
@@ -358,7 +358,8 @@ The members' rules, in the table's order:
 - `host`: null for this machine, `claude-cloud`, or a provider path.
 - `kind`: `local`, `claude-cloud` or `ssh` ([lane-host.md § Host kinds](lane-host.md#host-kinds)).
 - `mail_root`: the lane's worktree as its host sees it.
-- A hosted launch sets `mail_root_confirmed` when the provider names the root. Without it, a root matching `checkout` is still pending.
+- A launch over an existing record clears `mail_root_confirmed` and sets `mail_root` to the request's checkout during preparation.
+- A confirmed launch with a provider-backed mailbox sets `mail_root_confirmed` to `true` when its outcome names a root. Without confirmation, a root matching `checkout` is pending.
 - `checkout`: the checkout a hosted lane launched from.
 - `checkout_common`: the canonical common git folder admission read from the checkout at `mail_root`.
 - `checkout_common`: a launch writes it on a new record or a changed `mail_root`; a relaunch over the same `mail_root` keeps it.

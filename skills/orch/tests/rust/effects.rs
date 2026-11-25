@@ -9441,6 +9441,8 @@ fn a_shipped_ssh_relaunch_records_the_failed_step_s_refusal_over_its_sync_output
 /// it, which the reconcile holds: the lane stays `preparing`.
 #[test]
 fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_gone() {
+    use orch_runtime::watch::hosted::{self, Answer};
+
     for case in ["started, its create refused", "cut inside its start"] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -9450,6 +9452,9 @@ fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_
         let mut prior = lane("KEN-H", "parked", &world.runner, Value::Null);
         prior["host"] = json!(world.provider());
         prior["kind"] = json!("ssh");
+        prior["checkout"] = json!(world.runner.state_dir().display().to_string());
+        prior["mail_root"] = json!(world.host());
+        prior["mail_root_confirmed"] = json!(true);
         prior["launched_at"] = json!("2026-01-29T15:20:00Z");
         prior["parked"] =
             json!({"repo": "o/r", "pr": 7, "head": "h2", "at": "2026-01-29T15:40:00Z"});
@@ -9466,6 +9471,8 @@ fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_
         .unwrap();
         // The provider is asked directly here, so its parent is the asker.
         answers["start --item KEN-H"] = if case == "cut inside its start" {
+            answers[format!("cat --item KEN-H {account}/tmp/lane-status-KEN-H.md")] =
+                json!({"stdout": "Step: start\n"});
             json!({"kill_ancestor": 1})
         } else {
             json!({"stdout": "sandbox-started item=KEN-H\n"})
@@ -9497,6 +9504,14 @@ fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_
                 "{case}: {reconciled}"
             );
             assert_eq!(lane_now()["status"], "preparing", "{case}");
+            let replacement = serde_json::from_value(lane_now()).unwrap();
+            assert_eq!(
+                hosted::status_file(&world.scripts, &replacement),
+                Answer::Unreadable {
+                    cause: "root-pending".to_owned(),
+                },
+                "{case}"
+            );
             assert_eq!(charges(), json!({ canon.clone(): 1 }), "{case}");
             continue;
         }
