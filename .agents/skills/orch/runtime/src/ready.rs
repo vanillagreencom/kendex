@@ -359,11 +359,6 @@ pub fn report(duties: &[Duty], settings: &Settings) -> Result<(Vec<String>, bool
         lines.extend(lacking.iter().map(Unready::line));
         if duty == Duty::Launch {
             lines.extend(unconfined_lines());
-            lines.extend(
-                crate::effects::linked_seats(settings)?
-                    .iter()
-                    .map(|seat| linked_seat_line(seat)),
-            );
         }
     }
     Ok((lines, ready))
@@ -405,20 +400,6 @@ fn unconfined_lines() -> Vec<String> {
             )),
         })
         .collect()
-}
-
-/// The line naming a configured Codex seat whose lanes run unconfined,
-/// in the form of [`unconfined_lines`] with the seat beside the cause.
-fn linked_seat_line(seat: &Path) -> String {
-    let cause = serde_json::to_value(agent_runtime::confine::Cause::LinkedSeat)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_default();
-    format!(
-        "confinement=off harness={} cause={cause} seat={}",
-        Harness::Codex.name(),
-        seat.display()
-    )
 }
 
 /// The file `name` resolves to on this process's search path, a regular

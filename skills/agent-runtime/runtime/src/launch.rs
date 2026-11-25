@@ -1354,6 +1354,7 @@ mod tests {
         i.grants = Some(Grants {
             writable: vec![root.to_path_buf()],
             seats: Vec::new(),
+            seat_mounts: Vec::new(),
             read_only: Vec::new(),
             runtime_dir: None,
             sockets: Vec::new(),

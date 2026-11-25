@@ -628,15 +628,7 @@ fn prepare_launch(
             session_file: None,
         });
     }
-    let granted = super::grants::of(
-        settings,
-        &r.item,
-        &cwd,
-        harness,
-        r.account.as_deref().map(Path::new),
-        &homes,
-        lane,
-    )?;
+    let granted = super::grants::of(settings, r, harness, &homes, lane)?;
     for (name, value) in granted.env() {
         intent.env.insert(name, value);
     }

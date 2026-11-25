@@ -4756,6 +4756,7 @@ exec '{orch}' --no-private-env launch-job --name confined-row --run '{wt}/job' -
     let grants = Grants {
         writable: vec![wt.clone()],
         seats: Vec::new(),
+        seat_mounts: Vec::new(),
         read_only: Vec::new(),
         runtime_dir: None,
         sockets: Vec::new(),

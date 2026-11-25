@@ -37,13 +37,13 @@ use agent_runtime::effects::{
 };
 use agent_runtime::intent::Intent;
 
-fn remove_local_gh_token(lane: &Lane) -> Result<()> {
+fn remove_local_grant_files(lane: &Lane) -> Result<()> {
     if lane.host.is_none()
         && let Some(root) = lane.mail_root.as_deref()
     {
-        grants::remove_token(
-            &grants::folder(Path::new(root), &lane.item).join(grants::GH_TOKEN_FILE),
-        )?;
+        let private = grants::folder(Path::new(root), &lane.item);
+        grants::remove_views(&private)?;
+        grants::remove_token(&private.join(grants::GH_TOKEN_FILE))?;
     }
     Ok(())
 }
@@ -536,7 +536,7 @@ impl Close<'_> {
         }
         // The close-out and worktree release can carry the mailbox into
         // the main checkout. The lane's credential must leave first.
-        remove_local_gh_token(self.lane)?;
+        remove_local_grant_files(self.lane)?;
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
         if self.ground.is_some_and(CloseGround::ends_item) {
@@ -971,7 +971,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             observation["close_out"] = json!("owed");
             return Ok(hold(operation, observation));
         }
-        remove_local_gh_token(&lane)?;
+        remove_local_grant_files(&lane)?;
         let mut outcome = operation.settle(
             Word::Confirmed,
             reconcile_observation(&item, observation, intent.observation.as_ref()),

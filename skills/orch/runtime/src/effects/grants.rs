@@ -4,10 +4,11 @@
 //! folder the launch hands it files through. The kernel holds them; the
 //! launch record names the answer, the seats and the token's handing.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::confine::{self, Answer, Cause, Grants, Host};
+use agent_runtime::confine::{self, Answer, Grants, Host, SeatMount};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
@@ -15,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::refused;
 use crate::error::Result;
+use crate::ops::LaunchLane;
 use crate::settings::Settings;
 use crate::state::Lane;
 
@@ -68,6 +70,7 @@ const RUNTIME_CACHE_DEFAULT: &str = "agent-runtime";
 /// its mailbox, which a close can archive, since a build there holds a
 /// cargo target folder per key.
 const OWN_RUNTIME_CACHE: &str = "runtime-cache";
+const SEAT_VIEWS: &str = "seat-views";
 
 /// How long `gh auth token` may take.
 const GH_BOUND: Duration = Duration::from_secs(30);
@@ -106,6 +109,7 @@ pub(super) struct Granted {
     /// common git folder and a Codex seat's command rules), and a read-only
     /// seat's session folders, which the harness could not make there.
     kept: Vec<PathBuf>,
+    view_dirs: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
     /// A confined lane's own runtime cache, which its line names as
@@ -204,7 +208,12 @@ fn resolved(path: &Path) -> Option<PathBuf> {
 fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(&path)
-            .and_then(|target| std::fs::File::open(&target).map(|_| target))
+            .and_then(|target| {
+                if std::fs::metadata(&target)?.is_file() {
+                    std::fs::File::open(&target)?;
+                }
+                Ok(target)
+            })
             .map_err(|e| {
                 refused(
                     "grant-link-unreadable",
@@ -214,7 +223,9 @@ fn read_only_bind(path: PathBuf) -> Result<PathBuf> {
                     ],
                 )
             }),
-        Ok(_) | Err(_) => Ok(path),
+        Ok(_) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(e) => Err(seat_read_failed(&path, e)),
     }
 }
 
@@ -283,48 +294,192 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// The grants of a local launch of `item` on `harness` from `mail_root`
-/// under `homes`: writable its checkout (the root, and the common git
-/// folder of a linked worktree with its hooks, its configuration, the main
-/// checkout's per-worktree configuration and the launch records every
-/// lane's hook resolves read-only), the item's own
-/// folder of the state directory, whose other entries stay read-only, and
-/// the room pick's usage records; in the seats its own launch runs under and
-/// every configured account of a harness its second opinion can run on,
-/// what the seat's harness writes there ([`Harness::home_writes`]): a
-/// read-only seat's session folders, or a seat whole with its settings file
-/// and the code entries that stand, or that it writes empty, read-only; the
-/// folders `ORCH_LANE_WRITABLE` names, kendex's folder under the cache
-/// folder and the shared runtime cache read-only wherever they meet a
-/// writable grant; the user's runtime folder hidden; the display where the record holds
-/// `desktop`. A confined launch also takes the `gh` token the operator's
-/// login answers now, handed through the lane's private folder, and a
-/// runtime cache and tool caches of its own in its tree, never the
-/// operator's. A confined launch whose worktree's `tmp` leads outside it is
-/// refused `grant-tmp-linked`: the link's target is shared, the state
-/// directory or another lane's folder among what it can hold. A Codex lane whose home holds a link leading outside these grants
-/// runs unconfined under `linked-seat` ([`linked_seat`]).
+#[derive(Default)]
+struct SeatViews {
+    mounts: Vec<SeatMount>,
+    directories: Vec<PathBuf>,
+    shared_dirs: Vec<PathBuf>,
+    private_targets: Vec<PathBuf>,
+}
+
+impl SeatViews {
+    fn bind(&mut self, source: PathBuf, destination: PathBuf, writable: bool) {
+        self.mounts.push(SeatMount {
+            source,
+            destination,
+            writable,
+        });
+    }
+
+    fn add(
+        &mut self,
+        view_root: &Path,
+        seat: &Path,
+        kind: Harness,
+        claude_cwd: Option<&Path>,
+    ) -> Result<()> {
+        let mut key = DefaultHasher::new();
+        seat.hash(&mut key);
+        let backing = view_root.join(format!("{:016x}", key.finish()));
+        let home = backing.join("home");
+        self.directories.extend([backing.clone(), home.clone()]);
+        self.bind(home, seat.to_path_buf(), true);
+        let shared = match kind {
+            Harness::Claude => None,
+            Harness::Codex => Some("sessions"),
+            Harness::Copilot => Some("session-state"),
+            Harness::Pi => unreachable!("Pi uses its existing grants"),
+        };
+        let local = match kind.home_writes() {
+            HomeWrites::Folders(folders) if kind == Harness::Claude => folders,
+            HomeWrites::Folders(_) | HomeWrites::Whole(_) => &[],
+        };
+        for path in seat_entries(seat, false)?.expect("seat must stand") {
+            let name = path.file_name().and_then(|name| name.to_str());
+            if name.is_some_and(|name| {
+                local.contains(&name)
+                    || Some(name) == shared
+                    || kind == Harness::Codex && codex_state(name)
+            }) {
+                if let Some(target) = resolved(&path).filter(|target| !target.starts_with(seat)) {
+                    self.private_targets.push(target);
+                }
+                continue;
+            }
+            self.bind(read_only_bind(path.clone())?, path, false);
+        }
+        if let Some(name) = shared {
+            let destination = seat.join(name);
+            let source = seat_folder(destination.clone(), &mut self.shared_dirs)?;
+            self.bind(source, destination, true);
+        }
+        if kind == Harness::Claude {
+            self.claude_projects(seat, &backing, claude_cwd)?;
+        }
+        Ok(())
+    }
+
+    fn claude_projects(&mut self, seat: &Path, backing: &Path, cwd: Option<&Path>) -> Result<()> {
+        let projects = seat.join("projects");
+        let source = read_only_bind(projects.clone())?;
+        let standing = seat_entries(&source, true)?;
+        let Some(cwd) = cwd else {
+            if standing.is_some() {
+                self.bind(source, projects, false);
+            }
+            return Ok(());
+        };
+        let slug = agent_runtime::session::claude_slug(cwd);
+        for other in standing.into_iter().flatten() {
+            let name = other.file_name().expect("directory entry has a name");
+            if name != slug.as_str() {
+                let target = projects.join(name);
+                self.bind(read_only_bind(other)?, target, false);
+            }
+        }
+        // Claude rejects a fresh --session-id if its transcript file
+        // already exists. Share the project so it can create the file,
+        // then cover memory so the launcher never shares its writes.
+        let project = seat_folder(source.join(&slug), &mut self.shared_dirs)?;
+        let destination = projects.join(slug);
+        let memory = project.join("memory");
+        let mut memory_at = destination.join("memory");
+        match std::fs::symlink_metadata(&memory) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let link = std::fs::read_link(&memory).map_err(|e| seat_read_failed(&memory, e))?;
+                if link.is_absolute() {
+                    // bwrap resolves an absolute link before switching roots.
+                    // Use its target's name in the new root to mask it there.
+                    memory_at = read_only_bind(memory)?;
+                    if seat.starts_with(&memory_at) || cwd.starts_with(&memory_at) {
+                        return Err(refused(
+                            "grant-memory-link",
+                            &[("path", &memory_at.display().to_string())],
+                        ));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.shared_dirs.push(memory),
+            Err(e) => return Err(seat_read_failed(&memory, e)),
+        }
+        self.bind(project, destination, true);
+        let local = backing.join("memory");
+        self.directories.push(local.clone());
+        self.bind(local, memory_at, true);
+        Ok(())
+    }
+}
+
+fn seat_entries(path: &Path, may_be_absent: bool) -> Result<Option<Vec<PathBuf>>> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(e) if may_be_absent && e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(seat_read_failed(path, e)),
+    };
+    entries
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|e| seat_read_failed(path, e))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+fn seat_read_failed(path: &Path, e: std::io::Error) -> crate::error::Error {
+    refused(
+        "grant-seats-unread",
+        &[
+            ("path", &path.display().to_string()),
+            ("cause", &e.to_string()),
+        ],
+    )
+}
+
+fn codex_state(name: &str) -> bool {
+    if matches!(
+        name,
+        "archived_sessions" | "history.jsonl" | "session_index.jsonl" | "memories"
+    ) {
+        return true;
+    }
+    // Codex's state/src/sqlite.rs versions each database in its name.
+    // Include SQLite's journals so the lane makes each database whole.
+    let Some((stem, suffix)) = name.split_once(".sqlite") else {
+        return false;
+    };
+    let Some((store, version)) = stem.rsplit_once('_') else {
+        return false;
+    };
+    matches!(
+        store,
+        "state" | "logs" | "goals" | "memories" | "memories_v2" | "queue" | "thread_history"
+    ) && !version.is_empty()
+        && version.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(suffix, "" | "-wal" | "-shm" | "-journal")
+}
+
+/// Confined launches give the lane its checkout, item records, caches and
+/// seat views. Each view projects standing entries read-only and binds the
+/// session data the host observes. Pi still takes its root's existing grants.
 ///
-/// A `read_only` record's lane is granted its checkout's `tmp` in place of
-/// the checkout and its common git folder, so it writes no tracked file,
-/// ref or index: its admission held no path on that grant. Its `tmp` must
-/// stand as a folder of its own, since a link would grant what it leads
-/// to, and a launch the confinement cannot hold, a `linked-seat` Codex
-/// lane's among them, refuses `read-only-unconfined`.
+/// The checkout's tmp must stay inside it so its own caches and views
+/// cannot write another lane's files. Read-only lanes write only their tmp.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's reads of the paths it grants and of `gh auth token`, before the window; it writes nothing"
 )]
 pub(super) fn of(
     settings: &Settings,
-    item: &str,
-    mail_root: &Path,
+    request: &LaunchLane,
     harness: Harness,
-    account: Option<&Path>,
     homes: &LaunchHome,
     lane: &Lane,
 ) -> Result<Granted> {
-    let item = crate::marker::item_name(item)?;
+    let item = crate::marker::item_name(&request.item)?;
+    let mail_root = Path::new(&request.mail_root);
+    let account = request.account.as_deref().map(Path::new);
     // The display and the read-only checkout are the record's: a relaunch
     // or a recovery keeps what the first launch was granted.
     let desktop = lane
@@ -428,9 +583,27 @@ pub(super) fn of(
             seats.push((dir, kind));
         }
     }
+    let private = folder(&root, item);
+    let view_root = private.join(SEAT_VIEWS);
+    let mut views = SeatViews::default();
     let mut seat_paths: Vec<PathBuf> = Vec::new();
+    seats.sort_by_key(|(seat, _)| seat.components().count());
+    let native = homes.sessions.as_deref().and_then(resolved);
     for (seat, kind) in seats {
         if seat_paths.contains(&seat) {
+            continue;
+        }
+        if answer == Answer::Confined && kind != Harness::Pi {
+            if root.starts_with(&seat) {
+                return Err(refused(
+                    "grant-seat-contains-checkout",
+                    &[("path", &seat.display().to_string())],
+                ));
+            }
+            let cwd =
+                (harness == Harness::Claude && native.as_ref() == Some(&seat)).then_some(mail_root);
+            views.add(&view_root, &seat, kind, cwd)?;
+            seat_paths.push(seat);
             continue;
         }
         let (name, empty) = settings_file(kind);
@@ -511,19 +684,25 @@ pub(super) fn of(
             kept.push(protected.clone());
         }
     }
-    let linked = answer == Answer::Confined
-        && harness == Harness::Codex
-        && match homes.named.as_deref().and_then(resolved) {
-            Some(home) => linked_seat(&home, &writable, &read_only)?,
-            None => false,
-        };
-    let answer = if linked {
-        Answer::Unconfined {
-            cause: Cause::LinkedSeat,
-        }
-    } else {
-        answer
-    };
+    // A seat's link may point into a writable checkout. Protect the same
+    // contents at their original path as well as at the view's entry name.
+    read_only.extend(
+        views
+            .private_targets
+            .iter()
+            .chain(
+                views
+                    .mounts
+                    .iter()
+                    .filter(|mount| !mount.writable)
+                    .map(|mount| &mount.source),
+            )
+            .filter(|path| writable.iter().any(|grant| path.starts_with(grant)))
+            .cloned(),
+    );
+    if !views.directories.is_empty() {
+        read_only.push(view_root);
+    }
     if lane.read_only
         && let Answer::Unconfined { cause } = answer
     {
@@ -547,7 +726,6 @@ pub(super) fn of(
             .collect(),
         Answer::Unconfined { .. } => Vec::new(),
     };
-    let private = folder(&root, item);
     let token = match answer {
         Answer::Confined => gh_token(),
         Answer::Unconfined { .. } => None,
@@ -559,9 +737,11 @@ pub(super) fn of(
             .collect::<Result<Vec<_>>>()?,
         Answer::Unconfined { .. } => read_only,
     };
+    kept.extend(views.shared_dirs);
     let grants = Grants {
         writable,
         seats: seat_paths,
+        seat_mounts: views.mounts,
         read_only,
         runtime_dir: std::env::var_os(RUNTIME_DIR_VAR)
             .map(PathBuf::from)
@@ -569,7 +749,7 @@ pub(super) fn of(
         sockets: Vec::new(),
         desktop,
         gh_token: token.as_ref().map(|_| private.join(GH_TOKEN_FILE)),
-        unconfined: linked.then_some(Cause::LinkedSeat),
+        unconfined: None,
         file: private.join(GRANTS_FILE),
     };
     Ok(Granted {
@@ -578,6 +758,7 @@ pub(super) fn of(
         missing,
         usage: Some(usage),
         item_dir,
+        view_dirs: views.directories,
         kept,
         lane_writable,
         own_cache,
@@ -622,87 +803,6 @@ pub(crate) fn writable_beside_checkout(settings: &Settings) -> Result<Vec<PathBu
         &[],
     )?);
     Ok(folders)
-}
-
-/// The configured Codex seats whose lanes run unconfined under
-/// `linked-seat`, judged as a launch judges its Codex home: against the
-/// folders [`writable_beside_checkout`] names, the seats among them, with
-/// the seat's settings file and code entries read-only. `orch-runtime
-/// ready` names them.
-pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
-    let writable = writable_beside_checkout(settings)?;
-    let configured = agent_runtime::accounts::listing::configured(
-        &settings.accounts.get()?.account_dirs,
-        settings.home.as_deref(),
-        &mut Vec::new(),
-    )
-    .map_err(|cause| refused("grant-seats-unread", &[("cause", &cause)]))?;
-    let (name, _) = settings_file(Harness::Codex);
-    let code: &[&str] = match Harness::Codex.home_writes() {
-        HomeWrites::Whole(code) => code,
-        HomeWrites::Folders(_) => &[],
-    };
-    let mut linked = Vec::new();
-    for (kind, dir) in configured {
-        if kind != Harness::Codex {
-            continue;
-        }
-        let Some(seat) = resolved(Path::new(&dir)) else {
-            continue;
-        };
-        let read_only: Vec<PathBuf> = std::iter::once(name)
-            .chain(code.iter().copied())
-            .map(|entry| seat.join(entry))
-            .collect();
-        if linked_seat(&seat, &writable, &read_only)? {
-            linked.push(seat);
-        }
-    }
-    Ok(linked)
-}
-
-/// Whether the Codex home `seat` holds a link its harness writes through
-/// that leads outside `writable`, or into `read_only`: the kernel would
-/// refuse the harness's write, so its lane runs unconfined under
-/// [`Cause::LinkedSeat`]. A link `read_only` names, the settings file or a
-/// code entry, is read through, never written. A link whose target does not stand
-/// refuses `grant-link-unreadable` naming it, and a home that cannot be read
-/// `grant-seats-unread`.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch reads the links of the Codex home it grants before the window; it writes nothing"
-)]
-fn linked_seat(seat: &Path, writable: &[PathBuf], read_only: &[PathBuf]) -> Result<bool> {
-    let failed = |key: &'static str, path: &Path, e: std::io::Error| {
-        refused(
-            key,
-            &[
-                ("path", &path.display().to_string()),
-                ("cause", &e.to_string()),
-            ],
-        )
-    };
-    let entries = std::fs::read_dir(seat).map_err(|e| failed("grant-seats-unread", seat, e))?;
-    for entry in entries {
-        let path = entry
-            .map_err(|e| failed("grant-seats-unread", seat, e))?
-            .path();
-        let link = std::fs::symlink_metadata(&path)
-            .map_err(|e| failed("grant-seats-unread", &path, e))?
-            .file_type()
-            .is_symlink();
-        if !link || read_only.contains(&path) {
-            continue;
-        }
-        let target =
-            std::fs::canonicalize(&path).map_err(|e| failed("grant-link-unreadable", &path, e))?;
-        if !writable.iter().any(|grant| target.starts_with(grant))
-            || read_only.iter().any(|kept| target.starts_with(kept))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The variable a variable-named folder is read from, absolute only.
@@ -862,6 +962,12 @@ impl Granted {
             std::fs::create_dir_all(usage).map_err(|e| failed(usage, e))?;
         }
         std::fs::create_dir_all(&self.item_dir).map_err(|e| failed(&self.item_dir, e))?;
+        if !self.view_dirs.is_empty() {
+            own_folder(&self.grants.file.with_file_name(SEAT_VIEWS))?;
+            for dir in &self.view_dirs {
+                own_folder(dir)?;
+            }
+        }
         for dir in &self.kept {
             std::fs::create_dir_all(dir).map_err(|e| failed(dir, e))?;
         }
@@ -986,6 +1092,31 @@ pub(crate) fn remove_token(path: &Path) -> Result<()> {
             ],
         )),
     }
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the close removes the lane's own backing directories after its processes stop"
+)]
+pub(crate) fn remove_views(private: &Path) -> Result<()> {
+    let path = private.join(SEAT_VIEWS);
+    let failed = |cause: &str| {
+        refused(
+            "grant-view-remove-failed",
+            &[("path", &path.display().to_string()), ("cause", cause)],
+        )
+    };
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(failed(&e.to_string())),
+        Ok(meta) if !meta.is_dir() => return Err(failed("not-a-folder")),
+        Ok(_) => {}
+    }
+    let parent = std::fs::canonicalize(private).map_err(|e| failed(&e.to_string()))?;
+    if parent != private {
+        return Err(failed("linked-parent"));
+    }
+    std::fs::remove_dir_all(&path).map_err(|e| failed(&e.to_string()))
 }
 
 #[cfg(test)]

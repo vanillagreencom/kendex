@@ -80,14 +80,13 @@ pub struct Grants {
     /// Folders the lane writes: its worktree, its mailbox, its own state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writable: Vec<PathBuf>,
-    /// Account seats the lane runs on: its own and any its review may run
-    /// on. Named so a launch record names them, since a confined lane still
-    /// holds those accounts' credentials; bound as the rest of the tree is,
-    /// read-only, since a seat's settings, hooks and extensions run code in
-    /// the operator's next session there. What a session writes in a seat
-    /// ([`crate::harness::Harness::home_writes`]) is in `writable`.
+    /// Account seats the lane and its review can read. The launch record
+    /// lists them because the lane still holds those accounts' credentials.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seats: Vec<PathBuf>,
+    /// Seat views and their entry mounts, in parent-first order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seat_mounts: Vec<SeatMount>,
     /// Paths inside a writable grant kept read-only, such as the settings
     /// and the code folders of a seat its harness must write whole.
     /// Each must stand: the wrapper refuses a missing one.
@@ -118,6 +117,14 @@ pub struct Grants {
     pub file: PathBuf,
 }
 
+/// A mount from a host path to a path in the lane's seat view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatMount {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub writable: bool,
+}
+
 /// The variable `gh` takes its token from before any stored login.
 pub const GH_TOKEN_VAR: &str = "GH_TOKEN";
 
@@ -133,12 +140,8 @@ pub enum Cause {
     /// The host is not Linux: only bwrap's words are spelled, so a launch
     /// there runs as it did before any confinement.
     MacosProfileUnbuilt,
-    /// The Codex home holds a link its harness writes through that leads
-    /// outside the grants, as a seat whose state stores and session folders
-    /// link a shared folder does: binding each link's target alone cannot
-    /// hold SQLite, whose `-wal` and `-shm` beside the target another
-    /// session's last close unlinks and makes anew, so a lane's binds
-    /// would keep the old files. The launcher names it in [`Grants::unconfined`].
+    /// A recorded Codex launch from before seat views, when a linked state
+    /// store prevented the wrapper from holding the launch.
     LinkedSeat,
 }
 
@@ -252,6 +255,12 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
         .iter()
         .chain(&grants.seats)
         .chain(&grants.read_only)
+        .chain(
+            grants
+                .seat_mounts
+                .iter()
+                .flat_map(|m| [&m.source, &m.destination]),
+        )
         .chain(&grants.runtime_dir)
         .chain(&grants.sockets)
         .chain(&grants.gh_token)
@@ -260,6 +269,21 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
         if !path.is_absolute() {
             return Err(Error::refused(
                 "grant-relative",
+                &[
+                    ("harness", harness.name()),
+                    ("path", &path.display().to_string()),
+                ],
+            ));
+        }
+    }
+    for path in grants
+        .seat_mounts
+        .iter()
+        .flat_map(|mount| [&mount.source, &mount.destination])
+    {
+        if path.to_str().is_none() {
+            return Err(Error::refused(
+                "grant-path-encoding",
                 &[
                     ("harness", harness.name()),
                     ("path", &path.display().to_string()),
@@ -297,6 +321,14 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
     }
     for path in &grants.read_only {
         pair(&mut words, "--ro-bind", path);
+    }
+    for mount in &grants.seat_mounts {
+        let verb = if mount.writable {
+            "--bind"
+        } else {
+            "--ro-bind"
+        };
+        bind(&mut words, verb, &mount.source, &mount.destination);
     }
     for path in &grants.sockets {
         pair(&mut words, "--bind-try", path);
@@ -343,8 +375,15 @@ fn plain(word: &str) -> Word {
 /// `verb path path`: bwrap's mounts name the host path and the place
 /// inside, the same path here.
 fn pair(words: &mut Vec<Word>, verb: &str, path: &Path) {
-    let path = path.display().to_string();
-    words.extend([plain(verb), plain(&path), plain(&path)]);
+    bind(words, verb, path, path);
+}
+
+fn bind(words: &mut Vec<Word>, verb: &str, source: &Path, destination: &Path) {
+    words.extend([
+        plain(verb),
+        plain(&source.display().to_string()),
+        plain(&destination.display().to_string()),
+    ]);
 }
 
 fn unavailable(cause: &str, detail: Option<&str>) -> Error {
@@ -409,6 +448,7 @@ mod tests {
         Grants {
             writable: vec![PathBuf::from(writable)],
             seats: Vec::new(),
+            seat_mounts: Vec::new(),
             read_only: Vec::new(),
             runtime_dir: None,
             sockets: Vec::new(),

@@ -16,9 +16,10 @@
 printf '\xe2\x9d\xaf\xc2\xa0\n'
 printf '  ? for shortcuts\n'
 session="stub-$$"
+fixed=
 while [ $# -gt 0 ]; do
   case "$1" in
-    --session-id) session="${2:-$session}"; shift ;;
+    --session-id) session="${2:-$session}"; fixed=1; shift ;;
   esac
   shift
 done
@@ -27,6 +28,8 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   slug="${PWD//[\/.]/-}"
   mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
   rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  # A fresh --session-id in Claude Code 2.1.332 refuses any existing JSONL.
+  if [ -n "$fixed" ] && [ -e "$rows" ]; then exit 1; fi
   printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
 fi
 while IFS= read -r line; do
