@@ -282,9 +282,13 @@ if rows=$(find crates -type f -name '*.rs' |
       if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
     }
   }
-  function blank(text) {
-    gsub(/[^\n]/, " ", text)
-    return text
+  # Use the same width unit as substr. Apple awk can replace a multibyte
+  # character in one gsub step while counting that character in bytes.
+  function blank(text,   lines, n, i, masked) {
+    n = split(text, lines, "\n")
+    for (i = 1; i <= n; i++)
+      masked = masked (i == 1 ? "" : "\n") sprintf("%*s", length(lines[i]), "")
+    return masked
   }
   # Mask comments and literals without moving offsets. Braces inside a Rust
   # string, nested comment or char literal do not close a gated item.

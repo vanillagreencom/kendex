@@ -57,7 +57,13 @@ impl Gated {
     }
 }
 const AFTER: &str = include_str!("../../../after-literal.txt");
+
+// This test module follows UTF-8 text — 東京・大阪・京都 — 🍣 and 🦀.
+// The module still starts on the same line boundary as an ordinary test.
+#[cfg(test)]
+mod unicode_tests;
 RS
+  printf 'const FIXTURE: &str = include_str!("../../../unicode-test-only.txt");\n' >"$W/crates/demo/src/unicode_tests.rs"
   printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2024"\n' >"$W/crates/demo/Cargo.toml"
   printf '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n' >"$W/Cargo.toml"
   mkdir -p "$W/crates/cli/src" "$W/crates/cli/tests"
@@ -71,7 +77,7 @@ demo = { path = "../demo" }
 TOML
   printf 'fn main() {}\n' >"$W/crates/cli/src/main.rs"
   printf '#[test]\nfn smoke() {}\n' >"$W/crates/cli/tests/cli_smoke.rs"
-  touch "$W/after-struct.txt" "$W/after-literal.txt" "$W/test-only.txt"
+  touch "$W/after-struct.txt" "$W/after-literal.txt" "$W/test-only.txt" "$W/unicode-test-only.txt"
   scoped="$("$READS" --cli-smoke --ci-targets "$W")" || { bad "checkout field reads are readable"; return; }
   for path in after-struct.txt after-literal.txt; do
     if grep -qxF $'checkout-include\t'"$path" <<<"$scoped"; then
@@ -85,6 +91,12 @@ TOML
     ok "the gated literal field still has a test reader"
   else
     bad "the gated literal field still has a test reader"
+  fi
+  if ! grep -qxF $'checkout-include\tunicode-test-only.txt' <<<"$scoped" &&
+     grep -qxF $'target\tunicode-test-only.txt\tdemo\tlib\tdemo' <<<"$scoped"; then
+    ok "UTF-8 before a gated module preserves its test-only reader"
+  else
+    bad "UTF-8 before a gated module preserves its test-only reader"
   fi
 }
 checkout_field_rows
