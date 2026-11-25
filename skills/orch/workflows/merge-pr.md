@@ -599,6 +599,8 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
 6. **Verify the project and close the item out.**
 
+   Choose one close-out route and run it once. A hosted lane is unconfined and takes **The close-out elsewhere**, which copies the record before the archived close-out. For other runs, take **The close-out in a confined lane** if the environment has `AGENT_RUNTIME_CONFINED=1`. Otherwise take **The close-out elsewhere**.
+
    - Run the build, install and verification work the project's own instructions require after a merge. This workflow defines no generic command and infers none.
    - The route the project's own instructions name records its install record (`.kendex-lock.json`). The lane never records it after a merge or a restack.
    - On failure, report the command and its diagnostic in § 6, and keep the worktree.
@@ -619,12 +621,12 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`.
    - Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed.
    - Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is.
-   - Where an earlier close-out already removed the record, keep the saved copy.
+   - If an earlier close-out removed the record and the saved copy reads as a JSON object, keep the saved copy and go to **The worktree**.
    - Where neither reads as a JSON object, report the failure and keep the worktree.
 
    Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open.
 
-   - A hosted lane is unconfined and runs this close-out itself. It removes the item's records alone, never the sandbox, the worktree or the branch, so a hold on stopping or removing the lane's host does not cover it.
+   - The close-out removes only the item's records, so a hold on stopping or removing a hosted lane's host does not cover it.
    - The overseer's close never runs it for an open item: it refuses `lane-live` while the record stands.
    - Pass no `--state-dir`: the runtime resolves the state folder the run's launch names.
    - Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
