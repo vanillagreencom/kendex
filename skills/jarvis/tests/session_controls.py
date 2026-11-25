@@ -23,8 +23,8 @@ CONTROLS = (
     ("running is live", SESSION, 'if not (status or {}).get("live") or not socket or not pane:',
      "if not socket or not pane:", "test_start_status_stop_and_resume_on_the_controller_record"),
     # Without the seat on its start, the turn end hands Jarvis orch's succession.
-    ("seat", SESSION, "self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private))",
-     "self.detach(dict(pending, window=SESSION_NAME), socket, start_brief(private))",
+    ("seat", SESSION, "self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private), resume_only)",
+     "self.detach(dict(pending, window=SESSION_NAME), socket, start_brief(private), resume_only)",
      "test_start_status_stop_and_resume_on_the_controller_record"),
     # A resume Start opens a new native session.
     ("resume", SESSION, 'resumable = (args.mode == "resume"', 'resumable = (False',
