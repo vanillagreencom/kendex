@@ -15,7 +15,7 @@ use serde::Serialize;
 use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
 use crate::error::{Error, Result};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
-use crate::ops::{self, ReconcileRound, Request, job_ended, run_id_of};
+use crate::ops::{self, ReconcileRound, Request, job_ended};
 use crate::send::{NoticeSend, send_notice};
 use crate::settings::Settings;
 use crate::state::{self, ItemState, Stage, StageKind, StageOutcome, Stop, ValidateJob};
@@ -979,10 +979,8 @@ impl Drop for CommandGroup {
     }
 }
 
-/// What the run left: the outcome its sentinel named, or, with no sentinel
-/// (the child was ended before it wrote one), `stopped` where the stage
-/// records the intentional stop and `lost` where nothing recorded an
-/// intent; the sentinel's own `at=` time where it parses; the run's wall
+/// What the run left: the outcome its sentinel named, or `lost` with no
+/// sentinel; the sentinel's own `at=` time where it parses; the run's wall
 /// time from its `timing` record; and the command's last `validate:`
 /// selection line, which `--record` reads the lanes and selection from.
 struct Left {
@@ -992,11 +990,9 @@ struct Left {
     selection: Option<String>,
 }
 
-/// Read the run directory once the child ended, `stopped` being whether the
-/// stage records a `validate stop`. Only `NotFound` proves no sentinel: a
-/// sentinel that stands unread is refused, so the stage stays open for the
-/// reconcile to read it, never closed `lost`.
-fn read_left(run_dir: &Path, stopped: bool) -> Result<Left> {
+/// Read the run directory once the child ended. Only `NotFound` proves no
+/// sentinel: an unreadable sentinel keeps the stage open for reconcile.
+fn read_left(run_dir: &Path) -> Result<Left> {
     let sentinel = match fs::read_to_string(run_dir.join("exit")) {
         Ok(text) => Some(text.trim_end().to_owned()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -1011,11 +1007,10 @@ fn read_left(run_dir: &Path, stopped: bool) -> Result<Left> {
         .ok()
         .and_then(|run| run.selection().ok())
         .map(|(_, selection)| selection);
-    let outcome = match sentinel.as_deref().and_then(validate::sentinel_outcome) {
-        _ if stopped => StageOutcome::Stopped,
-        Some(word) => word,
-        None => StageOutcome::Lost,
-    };
+    let outcome = sentinel
+        .as_deref()
+        .and_then(validate::sentinel_outcome)
+        .unwrap_or(StageOutcome::Lost);
     let at = sentinel.as_deref().and_then(|line| {
         line.split(' ')
             .find_map(|f| f.strip_prefix("at="))
@@ -1114,11 +1109,7 @@ pub fn run(
     )?;
     // Stamp the close after the command ends.
     let env = &env_now(env);
-    // The stage as it stands once the child ended: a `validate stop` that
-    // ended the child recorded its intent on the stage before it did.
-    let (stages, index) = stage_of(&path, run_dir)?;
-    let left = read_left(&run_dir_path, stages[index].stop.is_some())?;
-    let notice = validate::end_notice(&run_id_of(run_dir), run_dir, left.outcome);
+    let left = read_left(&run_dir_path)?;
     let ended = apply(
         &path,
         Validate::End(RecordEnd {
@@ -1128,7 +1119,7 @@ pub fn run(
             end: left.at,
             seconds: left.seconds,
             selection: left.selection,
-            notice: Some(notice),
+            notify: true,
         }),
         env,
         locking,
@@ -1623,7 +1614,7 @@ mod tests {
     fn a_sentinel_that_stands_unread_is_no_absent_one_and_a_later_read_ends_it() {
         let dir = tempfile::tempdir().unwrap();
         let run = dir.path();
-        let outcome = |run: &Path| read_left(run, false).map(|left| left.outcome);
+        let outcome = |run: &Path| read_left(run).map(|left| left.outcome);
         assert_eq!(outcome(run).unwrap(), StageOutcome::Lost);
         // A directory in the sentinel's place: its read fails while it stands.
         fs::create_dir(run.join("exit")).unwrap();

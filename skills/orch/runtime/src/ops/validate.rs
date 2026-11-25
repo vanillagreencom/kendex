@@ -90,9 +90,9 @@ pub struct RecordLaunch {
 /// them yields to the close's); `seconds` the run's wall time from its
 /// `timing` record, reported, never written. `selection` is the command's
 /// own `validate:` line where the log carries one. A run
-/// that ran nothing closes with no notice: its caller holds the verdict. A
-/// stage already closed changes nothing and reports its recorded close and
-/// notice.
+/// that ran nothing closes with no notice: its caller holds the verdict.
+/// A recorded stop takes precedence over the sentinel's word. A closed
+/// stage keeps its recorded close and notice.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordEnd {
     pub round_id: String,
@@ -105,7 +105,7 @@ pub struct RecordEnd {
     #[serde(default)]
     pub selection: Option<String>,
     #[serde(default)]
-    pub notice: Option<NoticeText>,
+    pub notify: bool,
 }
 
 /// Record an intentional stop on the round's open started run, before its
@@ -398,13 +398,18 @@ fn end(path: &Path, doc: &mut Document, r: &RecordEnd, env: &Env) -> Result<Ende
     // the sentinel's time where it lies in the stage's bounds (a time
     // outside them, a clock the runner and this host disagree on, yields
     // to the close's own, as the reconcile's close does).
+    let outcome = if stage.stop.is_some() {
+        StageOutcome::Stopped
+    } else {
+        r.outcome
+    };
     let accepted = item::accept_result_at(
         path,
         doc,
         &AcceptResult {
             round_id: r.round_id.clone(),
             run_dir: Some(r.run_dir.clone()),
-            outcome: r.outcome,
+            outcome,
             end: None,
             authorization: None,
             summary_file: None,
@@ -425,11 +430,14 @@ fn end(path: &Path, doc: &mut Document, r: &RecordEnd, env: &Env) -> Result<Ende
             notice_owner: stage.notice.as_ref().map(|n| n.owner.clone()),
         });
     }
-    let notice = r.notice.as_ref().map(|n| Notice {
-        key: n.key.clone(),
-        text: n.text.clone(),
-        to: Some(item_of(path)),
-        owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
+    let notice = r.notify.then(|| {
+        let text = end_notice(&item::run_id_of(&r.run_dir), &r.run_dir, outcome);
+        Notice {
+            key: text.key,
+            text: text.text,
+            to: Some(item_of(path)),
+            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
+        }
     });
     let rows = record::array_mut(path, doc, "stages")?;
     let row = record::element_mut(path, rows, index, "stages")?;
