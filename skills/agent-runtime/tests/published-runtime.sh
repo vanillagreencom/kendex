@@ -17,7 +17,7 @@ export HOME="$TMP_ROOT/home"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 export FAKE_CARGO_LOG="$TMP_ROOT/cargo.log" API_LOG="$TMP_ROOT/api.log"
 mkdir -p "$HOME" "$TMP_ROOT/bin" "$TMP_ROOT/cargo" "$TMP_ROOT/publish"
-for tool in awk bash cat chmod cut find jq mkdir mktemp mv rm sha256sum sort timeout uname unzip wc; do
+for tool in awk bash cat chmod cut find jq mkdir mktemp mv rm sha256sum sleep sort timeout uname unzip wc; do
   ln -s "$(command -v "$tool")" "$TMP_ROOT/bin/$tool"
 done
 ln -s "$ROOT/skills/agent-runtime/tests/setup/cargo" "$TMP_ROOT/cargo/cargo"
@@ -64,9 +64,10 @@ for package in agent-runtime orch; do
   wrapper="$SKILLS/$package/scripts/$name"
   key="$(agent_runtime_key "$SKILLS/$package/runtime")"
   export ARTIFACT="$name-$key"
-  for CASE in push queue cache absent download wrong-key expired pr fork other-workflow checksum incompatible run-unread run-invalid; do
+  for CASE in push queue cache absent download wrong-key expired pr fork other-workflow checksum incompatible run-unread run-invalid probe-timeout; do
+    if [ "$CASE" = probe-timeout ] && [ "$package" != agent-runtime ]; then continue; fi
     case "${1:-}:$CASE" in
-      --published-only:push | --publication-errors-only:run-unread | --publication-errors-only:run-invalid | --publication-errors-only:download | :*) ;;
+      --published-only:push | --publication-errors-only:run-unread | --publication-errors-only:run-invalid | --publication-errors-only:download | --probe-timeout-only:probe-timeout | :*) ;;
       *) continue ;;
     esac
     export CASE
@@ -77,7 +78,10 @@ for package in agent-runtime orch; do
     : >"$API_LOG"
     cat >"$TMP_ROOT/publish/$ARTIFACT" <<'BINARY'
 #!/bin/sh
-if [ "${1:-}" = --version ] && [ "$CASE" = incompatible ]; then exit 126; fi
+case "${1:-}:$CASE" in
+  --version:incompatible) exit 126 ;;
+  --version:probe-timeout) exec sleep 30 ;;
+esac
 printf 'published argv=%s account=%s\n' "$*" "$ACCOUNT_FIXTURE"
 BINARY
     (
@@ -110,6 +114,10 @@ BINARY
         # Jarvis's jarvis_bound forwards only this first line.
         assert_eq "$first" "$name: setup-required key=$key run=$SKILLS/$package/scripts/setup" "$name $CASE preserves the first stderr line"
         case "$CASE" in
+          probe-timeout)
+            detail="$(awk '/fetch-unavailable/ { print }' "$TMP_ROOT/err")"
+            assert_eq "$detail" "$name: fetch-unavailable cause=fetch-timeout artifact=$ARTIFACT" "$name reports the probe timeout separately"
+            ;;
           run-unread | run-invalid)
             cause='run-lookup'
             [ "$CASE" != run-invalid ] || cause='run-parse'

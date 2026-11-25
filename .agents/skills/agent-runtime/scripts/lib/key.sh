@@ -123,7 +123,14 @@ agent_runtime_fetch() ( # BINARY
     actual="$(agent_runtime_digest <"$scratch/$name")" &&
       [ "$expected" = "$actual  $name" ] || { unavailable checksum; return 1; }
     chmod -- 755 "$scratch/$name" || { unavailable placement; return 1; }
-    within_budget "$scratch/$name" --version >/dev/null || { unavailable incompatible; return 1; }
+    status=0
+    within_budget "$scratch/$name" --version >/dev/null || status=$?
+    case "$status" in
+      0) ;;
+      124) unavailable fetch-timeout; return 1 ;;
+      137) unavailable probe-interrupted; return 1 ;;
+      *) unavailable incompatible; return 1 ;;
+    esac
     # Both paths are in bin/, so even concurrent installers expose the
     # whole executable in one rename.
     mv -fT -- "$scratch/$name" "$binary" || { unavailable placement; return 1; }
