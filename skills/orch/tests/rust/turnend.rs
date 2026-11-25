@@ -2757,6 +2757,62 @@ fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
     }
 }
 
+/// A Codex session no launch recorded overrides for takes its window from
+/// the compaction settings in its home's config.toml; a home with none
+/// leaves the window unread, and a config that cannot be read is reported
+/// and judged as compaction on.
+#[test]
+fn a_hand_started_codex_reading_takes_its_window_from_its_home_config() {
+    let world = World::launched();
+    let home = world.root.join("codex-home");
+    fs::create_dir_all(&home).unwrap();
+    let config = home.join("config.toml");
+    let dir = home.display().to_string();
+    let env = [("CODEX_HOME", dir.as_str())];
+    let transcript = world.transcript(
+        "rollout.jsonl",
+        &[
+            json!({"type": "turn_context", "payload": {"model": "gpt-6"}}),
+            json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
+                "last_token_usage": {"total_tokens": 950}, "model_context_window": 1000}}}),
+        ],
+    );
+    let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
+    let keeps = "model_auto_compact_token_limit = 9223372036854775807\n\
+        model_auto_compact_token_limit_scope = \"body_after_prefix\"\n\
+        model_post_turn_compact_threshold_percent = 0\n";
+    let rows: &[(Option<&str>, i32, &str, Value)] = &[
+        (Some(keeps), 2, "lane-mail-check: context=950", json!(1000)),
+        (None, 0, "lane-mail-check: window-unread=gpt-6", json!(null)),
+        (
+            Some("model_auto_compact_token_limit = 9223372036854775807\n"),
+            0,
+            "lane-mail-check: window-unread=gpt-6",
+            json!(null),
+        ),
+    ];
+    for (body, code, first, window) in rows {
+        world.untold();
+        match body {
+            Some(body) => fs::write(&config, body).unwrap(),
+            None => {
+                let _ = fs::remove_file(&config);
+            }
+        }
+        let out = world.turn_in(&world.lane, &world.hooks("codex"), &[], &payload, &env);
+        assert_eq!(out.code, *code, "{body:?}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{body:?}");
+        assert_eq!(world.record()["window"], *window, "{body:?}");
+    }
+    world.untold();
+    fs::remove_file(&config).unwrap();
+    fs::create_dir(&config).unwrap();
+    let out = world.turn_in(&world.lane, &world.hooks("codex"), &[], &payload, &env);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: compaction-unread=codex");
+    assert_eq!(world.record()["window"], json!(null));
+}
+
 impl World {
     /// The registry read passes Pi's path, provider and model ID to `node`
     /// under the named Pi user directory in offline mode. The stand-in

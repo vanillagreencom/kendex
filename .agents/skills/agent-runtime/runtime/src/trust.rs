@@ -332,14 +332,20 @@ pub(crate) fn config_value(
     key: &str,
     harness: Harness,
 ) -> Result<Option<String>> {
-    let text = match present(config) {
-        Present::Absent => return Ok(None),
+    Ok(config_text(config, harness)?.and_then(|text| toml_value(&text, section, key)))
+}
+
+/// A harness's TOML config, for a reader that takes several values from it
+/// with [`toml_value`]: `None` where the file is absent, `config-unreadable`
+/// where it stands and cannot be read.
+pub(crate) fn config_text(config: &Path, harness: Harness) -> Result<Option<String>> {
+    match present(config) {
+        Present::Absent => Ok(None),
         Present::Unreadable(cause) => {
-            return Err(refused("config-unreadable", harness, config, Some(&cause)));
+            Err(refused("config-unreadable", harness, config, Some(&cause)))
         }
-        Present::File => read(config, harness)?,
-    };
-    Ok(toml_value(&text, section, key))
+        Present::File => read(config, harness).map(Some),
+    }
 }
 
 fn codex_section(dir: &Path) -> String {
@@ -454,7 +460,7 @@ fn table_of<'a>(line: &'a str, current: &mut &'a str) -> bool {
 /// say (no table, no key, an empty value). Not a TOML parser: a table is its
 /// header line spelled as the caller names it and a key a word left of the
 /// first `=` inside it, which is what every writer of these files emits.
-fn toml_value(text: &str, section: &str, key: &str) -> Option<String> {
+pub(crate) fn toml_value(text: &str, section: &str, key: &str) -> Option<String> {
     let mut current = "";
     for line in text.lines() {
         if table_of(line, &mut current) || current != section {

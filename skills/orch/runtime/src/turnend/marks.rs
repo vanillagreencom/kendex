@@ -770,7 +770,18 @@ impl<'a> Judge<'a> {
             }
             Harness::Codex => {
                 let overrides = std::env::var("ORCH_COMPACTION_OVERRIDES").ok();
-                context::read_file(path, |text| context::codex(text, overrides.as_deref()))
+                let config = model::harness_home(agent_runtime::harness::Harness::Codex, self.vars)
+                    .join("config.toml");
+                let floor = match context::codex_compaction_floor(overrides.as_deref(), &config) {
+                    Ok(floor) => floor,
+                    Err(unread) => {
+                        let cause =
+                            format!("codex-config={}\n{}", unread.file.display(), unread.cause);
+                        turn.note(&Said::CompactionUnread("codex"), &cause);
+                        None
+                    }
+                };
+                context::read_file(path, |text| context::codex(text, floor))
             }
             Harness::Pi | Harness::Copilot | Harness::Unlisted => {
                 let off = match context::pi_compaction_on(
