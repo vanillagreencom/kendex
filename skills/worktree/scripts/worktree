@@ -3076,7 +3076,7 @@ cleanup_native_owned_refs() { # PRIVATE_GIT_DIR
 # refusal aborts the transaction. Git branch -D has no expected-tip check
 # and deletes the ref before attempting to remove branch config.
 cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE_GIT_DIR...
-  perl -MIPC::Open2 -e '
+  perl -MIPC::Open2 -MCwd=realpath -MFile::Basename=dirname -MFile::Spec -e '
     use strict;
     use warnings;
     my ($repo, $base_ref, $base_oid, $ref, $oid, @dirs) = @ARGV;
@@ -3084,8 +3084,60 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE
     my ($branch) = $ref =~ m{^refs/heads/(.+)$};
     my $section = "branch.$branch";
     my $writable = "file:$dirs[0]/config";
+    # One config file read alone: whether it sets a key of the section, then
+    # the files its include directives name. Empty when the file is unread.
+    sub read_source {
+      my ($file) = @_;
+      my ($holds, %directives) = (0);
+      open(my $keys, "-|", @git, "config", "--file", $file, "--null", "--name-only", "--list") or return;
+      {
+        local $/ = "\0";
+        while (my $key = <$keys>) {
+          chomp $key;
+          $holds = 1 if $key =~ /^\Q$section\E\.[^.]+$/;
+          $directives{$key} = 1 if $key =~ /^include(?:if\..*)?\.path$/;
+        }
+      }
+      close($keys) or return;
+      my @files;
+      for my $key (sort keys %directives) {
+        # Git expands a leading ~ in an include path and reads a relative
+        # one beside the file that names it.
+        open(my $paths, "-|", @git, "config", "--file", $file, "--null", "--type=path", "--get-all", $key) or return;
+        local $/ = "\0";
+        push @files, map { chomp; File::Spec->rel2abs($_, dirname($file)) } <$paths>;
+        close($paths) or return;
+      }
+      return ($holds, @files);
+    }
+    # Git lists an includeIf directive whether or not its condition holds and
+    # reads its file only while it does, so a recreated branch or linked
+    # worktree can bring that file back. Returns the first file the directives
+    # in ROOTS reach that sets the section, "" for none, undef when unread.
+    sub conditional_holder { # ROOTS
+      my (@queue, %seen);
+      for my $root (@_) {
+        $seen{realpath($root) // return undef} = 1;
+        my (undef, @files) = read_source($root) or return undef;
+        push @queue, @files;
+      }
+      while (defined(my $file = shift @queue)) {
+        # Git skips an include file that does not exist and fails on any
+        # other unreadable one.
+        unless (stat $file) {
+          next if $!{ENOENT} || $!{ENOTDIR};
+          warn "  Cannot read Git config source $file: $!\n";
+          return undef;
+        }
+        next if $seen{realpath($file) // return undef}++;
+        my ($holds, @files) = read_source($file) or return undef;
+        return $file if $holds;
+        push @queue, @files;
+      }
+      return "";
+    }
     sub retire_settings {
-      my $configured = 0;
+      my ($configured, %roots) = (0);
       for my $dir (@dirs) {
         open(my $keys, "-|", @git, "--git-dir=$dir", "config", "--null", "--show-origin", "--list") or return 0;
         my $outside;
@@ -3094,11 +3146,10 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE
           while (my $origin = <$keys>) {
             my $entry = <$keys> // return 0;
             chomp($origin, $entry);
-            my ($key, $value) = split(/\n/, $entry, 2);
-            # Git lists directives even when their files are inactive. The
-            # condition can expose more settings when the branch is reused.
+            my ($key) = split(/\n/, $entry, 2);
             if ($key =~ /^includeif\..*\.path$/) {
-              $outside //= "$origin ($key includes " . ($value // "") . ")";
+              if ($origin =~ /^file:(.+)$/s) { $roots{File::Spec->rel2abs($1, $repo)} = 1; }
+              else { $outside //= "$origin ($key)"; }
             }
             next unless $key =~ /^\Q$section\E\.[^.]+$/;
             if ($origin eq $writable) { $configured = 1; }
@@ -3108,6 +3159,13 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE
         close($keys) or return 0;
         if (defined $outside) {
           warn "  Cannot retire $section from Git config source $outside\n";
+          return 0;
+        }
+      }
+      if (%roots) {
+        my $holder = conditional_holder(sort keys %roots) // return 0;
+        if (length $holder) {
+          warn "  Cannot retire $section from Git config source file:$holder (conditional include)\n";
           return 0;
         }
       }
