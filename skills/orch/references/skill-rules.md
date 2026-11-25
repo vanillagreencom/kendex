@@ -483,7 +483,7 @@ A verifier the overseer delegates writes its full evidence as one Linear comment
 - Every field is required.
 - Answer question 3 under the project-management skill's `references/filing.md` § Judge the approach in one line on the item in the evidence comment. Include that answer as free text in the return's `Done-when:` field.
 - For an item judged by the filing bar, `kept` means it clears the bar and `canceled` means it falls below the bar.
-- If the Filing record's `Reached by:` line names an owner or Jarvis decision that authorizes the work, return `canceled` only for a duplicate and `kept` otherwise.
+- The Filing record's `Reached by:` line names the behavior the item reaches. If its `Owner:` line names a decision that authorizes the work (the owner's note or ask, or a Jarvis decision), skip the filing bar and return `canceled` only for a duplicate and `kept` otherwise.
 - When the issue team's project inventory is nonempty, name a project from it on every kept row and every row for an item backed by such a decision. With an empty inventory, return `project: none` and skip project validation.
 - When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list. With an empty list, return `agent: none` and skip agent validation.
 - For a kept item whose body has no Location line, return one or more repository-relative paths verified against the source, each in backticks. Return `location: none` for a canceled item or a kept item with a Location line.

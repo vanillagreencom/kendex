@@ -59,10 +59,10 @@ Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory p
 Build one issue-mode [audit-output.md](../schemas/audit-output.md) row:
 
 - `action: "create"`, `identifier: null`, the research title, and the recommended project.
-- `create_fields`: full validated labels, priority 2, estimate 1, `review_born: false`, the ask/run/decision as `reach`, and the topic and questions as description and recommendation.
+- `create_fields`: full validated labels, priority 2, estimate 1, `review_born: false`, `[REACH]` below as `reach`, and the topic and questions as description and recommendation.
 - Its `supersession` follows that schema from the carried comparison and proposed `supersedes[]`. It is not evidence that those actions already ran.
 - Fill Story and Why this matters following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
-- Use the research-specific content below in the body that audit-issues § 7.2 writes.
+- Use the research-specific content below in the body that audit-issues § 7.2 writes. Carry any filled `Owner:` line in `create_fields.description` for the initial filing.
 
 Then:
 
@@ -80,7 +80,8 @@ Then:
 - Continue only with the identifier of a successfully created issue and confirmed authorized outcomes from audit-issues.
 - A failed or incomplete disposition stops here with that owner's diagnostic and applied outcomes preserved.
 - The audit writer supplies `[SUPERSESSION]` from its execution result.
-- `[REACH]` is the ask, run, or decision that raised the question.
+- `[REACH]` names how the research question reached us, such as the ask, run, or decision that raised it.
+- Fill `[OWNER]` with the actual words of the owner or Jarvis explicitly authorizing the research and cite their source. Omit the line when explicit authorization is absent, including when the record gives only the origin of the topic, an ordinary run, or the audit's approval to file.
 - The body keeps the section order of [issue-description-template.md](../templates/issue-description-template.md): the research sections stand where its Done when and Requirements stand, before Filing record.
 
 ```markdown
@@ -105,6 +106,8 @@ Next available ID via `.agents/skills/decider/scripts/decisions next-id`
 ## Filing record
 
 **Reached by**: [REACH]
+
+**Owner**: [OWNER]
 
 **Supersession**: [SUPERSESSION]
 ```
