@@ -942,6 +942,10 @@ print(json.dumps(session.terminal(status)))
         self.assertEqual(self.controller().get("seat"), "jarvis", "the start names the Jarvis seat")
         self.assertEqual(self.call("start")[0]["reason"], "existing")
         self.assertEqual(len(self.started()), 1, "a second launch beside the live one")
+        # A version 1 record kept no report start: the matching start gives it one.
+        self.record.write_text(json.dumps({"v": 1, "home": str(self.home), "state": "running", "reason": "existing"}))
+        self.assertEqual(self.call("start")[0]["reason"], "existing")
+        self.assertIsInstance(json.loads(self.record.read_text())["report_started_at"], int)
         # Delivered work outlives a stop.
         outbox = self.record.with_name("forward.json")
         outbox.write_text('{"entries":[{"id":"k1"}]}\n')
@@ -1196,11 +1200,29 @@ print(json.dumps(session.terminal(status)))
             answer, _ = self.call("start", origin="boot", duplicate_boot=True)
             self.assertEqual((answer["state"], len(self.started())), ("stopped", 2), "the same boot launched again")
 
-    def test_a_record_of_another_form_is_unreadable(self):
-        # No record form but this one is read: a released record is never
-        # taken for a controller.
+    def test_a_version_1_record_is_read_as_the_previous_version(self):
+        # The previous writer's shape: its state, reason and detail at the top.
         self.record.parent.mkdir(parents=True)
-        self.record.write_text(json.dumps({"v": 1, "home": str(self.home), "state": "running", "reason": "existing"}))
+        planted = json.dumps({"v": 1, "home": str(self.home), "harness": None, "account": None, "origin": "boot",
+                              "generation": 0, "terminal": None, "state": "failed", "reason": "launch-failed",
+                              "detail": "fixture launch failed", "boot": "boot-1", "app_off": False})
+        self.record.write_text(planted)
+        answer, code = self.call("status")
+        self.assertEqual((answer["state"], answer["reason"], answer["detail"], answer["origin"], answer["boot"], code),
+                         ("failed", "launch-failed", "fixture launch failed", "boot", "boot-1", 0), answer)
+        self.assertEqual(self.record.read_text(), planted, "the read changed the record")
+        answer, code = self.call("stop")
+        self.assertEqual((json.loads(self.record.read_text())["v"], answer["state"], code), (2, "stopped", 0), answer)
+        self.record.write_text(json.dumps({"v": 1, "home": "/elsewhere", "state": "stopped", "reason": "stopped"}))
+        answer, code = self.call("status")
+        self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 0))
+        self.assertIn("/elsewhere", answer["detail"])
+
+    def test_a_record_of_another_form_is_unreadable(self):
+        # No record form but this one and the previous is read: a record of
+        # another version is never taken for a controller.
+        self.record.parent.mkdir(parents=True)
+        self.record.write_text(json.dumps({"v": 3, "home": str(self.home), "origin": "manual"}))
         answer, code = self.call("status")
         self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 0))
         answer, code = self.call("start")

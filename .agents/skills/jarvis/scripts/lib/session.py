@@ -292,8 +292,12 @@ class Session:
         try:
             with self.path.open() as stream:
                 record = json.load(stream)
-            if not isinstance(record, dict) or record.get("v") != 2 or record.get("home") != self.home:
+            if not isinstance(record, dict) or record.get("v") not in (1, 2):
                 raise ValueError("record")
+            if record.get("home") != self.home:
+                raise Refusal("record-unreadable", short("record names home " + str(record.get("home"))))
+            if record["v"] == 1:
+                record = self.previous(record)
             for field in ("private_brief", "reason", "origin", "boot"):
                 if record.get(field) is not None and not clean(record[field]):
                     raise ValueError(field)
@@ -306,6 +310,16 @@ class Session:
             return None
         except (OSError, ValueError, TypeError, AttributeError):
             raise Refusal("record-unreadable")
+
+    def previous(self, record):
+        """A version 1 record as version 2: its session fields carry over, and
+        a block or failure it recorded becomes the failure."""
+        state = record.get("state")
+        failure = {"state": state, "reason": record.get("reason"), "detail": record.get("detail", "")}
+        return dict(self.fresh(record.get("origin"), record.get("boot")), app_off=bool(record.get("app_off")),
+                    report_started_at=record.get("report_started_at"), private_brief=record.get("private_brief"),
+                    reason=record.get("reason") if state == "running" else None, intent=record.get("intent"),
+                    failure=failure if state in ("blocked", "failed") else None)
 
     def write(self, record):
         # Exclusive scratch acquisition prevents replacement of another
@@ -654,7 +668,7 @@ class Session:
                             and args.model in (None, recorded.get("model")))
                 if matching:
                     record.update(origin=record.get("origin") or args.origin, app_off=False)
-                    record.setdefault("report_started_at", int(time.time()))
+                    record["report_started_at"] = record.get("report_started_at") or int(time.time())
                     self.write(record)
                     return self.answer(record, status, state="running", reason="existing") | {"terminal": answer["terminal"]}, 0
                 # Another selection replaces the running controller: its stop
