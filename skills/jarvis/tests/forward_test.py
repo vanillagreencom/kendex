@@ -146,6 +146,26 @@ class Forward(MailWorld):
                 (self.satellite / ".env.local").write_text(private)
                 self.assertEqual(self.status()["forward_confirm"], expected)
 
+    def test_idle_collection_checks_main_once(self):
+        drain = self.jarvis("forward-drain")
+        self.assertEqual(drain.returncode, 0, drain.stderr)
+        self.assertEqual(self.ssh_calls(), [])
+        self.assertIsNone(self.status()["checked_at"])
+
+        for calls, (mode, reachable, cause) in enumerate(
+            (("up", True, None), ("down", False, "main-unreachable")), start=1
+        ):
+            with self.subTest(mode=mode):
+                self.mode.write_text(mode)
+                started = int(time.time())
+                drain = self.jarvis("forward-drain", "--collection")
+                self.assertEqual(drain.returncode, 0, drain.stderr)
+                status = self.status()
+                self.assertEqual((status["reachable"], status["cause"]), (reachable, cause))
+                self.assertGreaterEqual(calendar.timegm(time.strptime(status["checked_at"], "%Y-%m-%dT%H:%M:%SZ")), started)
+                self.assertEqual(len(self.ssh_calls()), calls)
+                self.assertEqual(self.outbox()["entries"], [])
+
     def drain_failures(self):
         """Existing failure tests inspect failure blocks; answer delivery has its own rows below."""
         result = self.jarvis("forward-drain")

@@ -74,6 +74,13 @@ def short(text):
     return "".join(c for c in text if c.isprintable())[:200]
 
 
+def failed_read(operation, diagnostic, fallback):
+    if isinstance(diagnostic, bytes):
+        diagnostic = diagnostic.decode(errors="replace")
+    first = (diagnostic or "").strip().splitlines()
+    return Refusal("record-unreadable", short(operation + ": " + (first[0] if first else fallback)))
+
+
 def start_brief(private):
     return START_BRIEF + " " + private if private else START_BRIEF
 
@@ -210,35 +217,56 @@ class Session:
         return self.run(["tmux", *target, *map(str, args)], check=check, encoding=encoding)
 
     def runtime(self, *args, timeout=None, track_launch=False):
-        """agent-runtime's reply to ARGS: (result, status, refusal key, stderr).
+        """agent-runtime's reply to ARGS: (result, status, refusal key, diagnostic).
 
         The caller's own environment reaches it, since its settings and its
         installed binary are read from there, with the user manager's
         published policy over it; the window a launch opens inherits the
         private server's environment instead."""
         env = dict(os.environ, **{name: self.env[name] for name in POLICY_NAMES if name in self.env})
-        result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout,
-                          track_launch=track_launch)
+        operation = "agent-runtime " + " ".join(map(str, args[:2]))
+        reading_status = args[:2] == ("controller", "status")
+        try:
+            result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout,
+                              track_launch=track_launch)
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            if reading_status:
+                raise failed_read(operation, getattr(failure, "stderr", None), str(failure)) from failure
+            raise
         try:
             reply = json.loads(result.stdout.splitlines()[-1])
         except (IndexError, ValueError):
-            print("jarvis-session: operation=agent-runtime " + str(args[0]) + " " + str(args[1])
-                  + " exit=" + str(result.returncode), file=sys.stderr)
+            print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, end="", file=sys.stderr)
+            if reading_status:
+                raise failed_read(operation, result.stderr, "exit=" + str(result.returncode))
             raise Refusal("launch-failed", "agent-runtime did not answer. Check the Jarvis session log.", "failed")
-        refusal = (reply.get("refusal") or {}).get("key")
-        return reply.get("result"), result.returncode, refusal, result.stderr
+        refusal = reply.get("refusal") or {}
+        diagnostic = result.stderr
+        if reading_status and not diagnostic.strip():
+            diagnostic = refusal.get("text") or refusal.get("key") or ""
+        return reply.get("result"), result.returncode, refusal.get("key"), diagnostic
 
-    def fleet(self):
+    def fleet(self, *, allow_unstarted=False):
         """The home's controller record: orch's fleet record under its state directory."""
         if self.fleet_path is None:
-            result = self.run([str(ORCH_RUNTIME), "state", "path", "--fleet"], check=False, env=dict(os.environ))
+            operation = "orch-runtime state path"
             try:
-                self.fleet_path = Path(json.loads(result.stdout.splitlines()[-1])["result"]["path"])
+                result = self.run([str(ORCH_RUNTIME), "state", "path", "--fleet"], check=False, env=dict(os.environ))
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                raise failed_read(operation, getattr(failure, "stderr", None), str(failure)) from failure
+            if (allow_unstarted and result.returncode == 69
+                    and result.stderr.startswith("orch-runtime: setup-required ")):
+                return None
+            try:
+                if not result.returncode:
+                    self.fleet_path = Path(json.loads(result.stdout.splitlines()[-1])["result"]["path"])
             except (IndexError, KeyError, TypeError, ValueError):
-                print("jarvis-session: operation=orch-runtime state path exit=" + str(result.returncode), file=sys.stderr)
+                pass
+            if self.fleet_path is None:
+                print("jarvis-session: operation=" + operation + " exit=" + str(result.returncode), file=sys.stderr)
                 print(result.stderr, end="", file=sys.stderr)
-                raise Refusal("record-unreadable")
+                raise failed_read(operation, result.stderr, "exit=" + str(result.returncode))
         return self.fleet_path
 
     def initialized_fleet(self):
@@ -310,21 +338,24 @@ class Session:
         return {"v": 2, "home": self.home, "origin": origin, "boot": boot, "app_off": False,
                 "report_started_at": None, "private_brief": None, "reason": None, "intent": None, "failure": None}
 
-    def status(self, reconcile=True):
+    def status(self, reconcile=True, *, allow_unstarted=False):
         """agent-runtime's status of the home's controller, its open intents
         reconciled first where any stands: an intent whose owner still runs
         is left as it is. None where the home recorded no controller."""
-        result, code, refusal, _ = self.runtime("controller", "status", "--record", self.fleet())
+        fleet = self.fleet(allow_unstarted=allow_unstarted)
+        if fleet is None:
+            return None
+        result, code, refusal, diagnostic = self.runtime("controller", "status", "--record", fleet)
         if refusal == "record-missing":
             return None
         if code:
-            raise Refusal("record-unreadable")
+            raise failed_read("agent-runtime controller status", diagnostic, "exit=" + str(code))
         recorded = result.get("recorded") or {}
         if reconcile and result.get("open_intents"):
             self.runtime("controller", "reconcile", *self.reach(recorded.get("server_socket") or self.socket))
-            result, code, refusal, _ = self.runtime("controller", "status", "--record", self.fleet())
+            result, code, _, diagnostic = self.runtime("controller", "status", "--record", fleet)
             if code:
-                raise Refusal("record-unreadable")
+                raise failed_read("agent-runtime controller status", diagnostic, "exit=" + str(code))
         return result
 
     def terminal(self, status):
@@ -1263,7 +1294,8 @@ def main():
         elif args.verb == "report-due":
             answer, code = session.report_due()
         else:
-            answer, code = session.answer(session.read(), session.status()), 0
+            record = session.read()
+            answer, code = session.answer(record, session.status(allow_unstarted=record is None)), 0
             if answer["terminal"]:
                 print("jarvis-session: attach=" + shlex.quote(str(ENTRY)) + " attach --home " + shlex.quote(session.home),
                       file=sys.stderr)
