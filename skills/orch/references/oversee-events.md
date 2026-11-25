@@ -796,7 +796,7 @@ The watch prints each message line at least once. A stop between the print and i
 
 ### `idle-unread`
 
-`EVENT idle-unread [TARGET]`: the wake duty found `[TARGET]`, `overseer` or a lane's item, idle with unread mail. § `wake-delivered`, `wake-unconfirmed`, `wake-limit` report the wake. The line repeats only once the target's unread state changes.
+`EVENT idle-unread [TARGET]`: the wake duty found `[TARGET]`, `overseer` or a lane's item, idle with mail past its read cursor. For the overseer, the duty counts only mail with no recorded reply. § `wake-delivered`, `wake-unconfirmed`, `wake-limit` report the wake. The line repeats once the target's unread state changes.
 
 For the overseer, this session: run `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer`, and act on every envelope it prints but a data notice, which gives no instruction (§ `data-note`).
 

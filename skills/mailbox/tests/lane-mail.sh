@@ -317,6 +317,10 @@ for row in 'first_inbox|absent|' 'first_peek|absent|--peek' 'first_empty|empty|'
   assert_eq "$FIRST_CURSOR" "0=300a" "a first inbox${FLAG:+ $FLAG} on an empty mailbox with an $SEED cursor leaves a cursor holding 0"
 done
 
+# The hook's local inbox read must work before any mailbox or scratch exists.
+TMPDIR="$TMP_ROOT/absent-scratch" first_inbox first_peek_without_scratch absent --peek
+assert_eq "$FIRST_CURSOR=$(count_line)" '0=300a=count=0' "a first inbox peek succeeds without a scratch directory"
+
 # A peek on a mailbox whose directory takes no write still lists what is
 # unread and exits 0: the hooks peek before every tool call, so a peek refused
 # on a full disk would refuse the call that frees it. The cursor is empty, or
@@ -445,6 +449,43 @@ lm send --item KEN-1 --root "$LANE" --halt --file "$(text d 'Stop.')"
 assert_eq "$RC=$(jq -rs 'map(select(.text == "Stop.")) | map(.halt // false | tostring) | join(",")' \
   < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=false,true" \
   "a halt after an identical plain directive lands, carrying the flag the halt hook reads"
+
+for route in minute delivery-id; do
+  new_lane "reply_$route"
+  lm send --item overseer --directive --delivery-id slack:note --file "$(text q 'Reply to the lane.')"
+  NOTE_ID="${OUT#*id=}"
+  NOTE_ID="${NOTE_ID%% *}"
+  BOX="$LANE/tmp/lane-mail/overseer"
+  TARGET="$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl"
+  ANSWER=(send --item KEN-1 --root "$LANE" --re "$NOTE_ID" --file "$(text a 'Done.')")
+  if [ "$route" = delivery-id ]; then ANSWER+=(--delivery-id reply:note); fi
+  chmod 600 "$BOX"
+  lm "${ANSWER[@]}"
+  chmod 700 "$BOX"
+  assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$BOX" "$route: an unreadable note lookup refuses before delivery"
+  assert_eq "$([ -e "$TARGET" ] && echo written || echo absent)" absent "$route: a refused lookup leaves the recipient untouched"
+  touch "$BOX/to-overseer.jsonl"
+  chmod 400 "$BOX/to-overseer.jsonl"
+  lm "${ANSWER[@]}"
+  chmod 600 "$BOX/to-overseer.jsonl"
+  assert_eq "$RC=${OUT%% id=*}" "2=lane-mail: sent item=KEN-1" "$route: the original receipt survives a journal failure"
+  ORIGINAL="${OUT#*id=}"
+  ORIGINAL="${ORIGINAL%% *}"
+  if [ "$route" = delivery-id ]; then
+    REPEATED="delivery-repeated=reply:note id=$ORIGINAL"
+  else
+    REPEATED="duplicate id=$ORIGINAL"
+  fi
+  for retry in 1 2; do
+    lm "${ANSWER[@]}"
+    assert_eq "$RC=$ERR" "2=lane-mail: $REPEATED" "$route: retry $retry names the original receipt"
+  done
+  assert_eq "$(jq -s -c 'map([.id, has("re_delivery_id")])' <"$TARGET")" "[[\"$ORIGINAL\",false]]" \
+    "$route: the recipient keeps one reply with no copied owner delivery id"
+  assert_eq "$(jq -cS . "$BOX/to-overseer.jsonl")" "$(jq -cS . "$TARGET")" "$route: the local record holds the exact recipient reply once"
+  lm events --item overseer --box to-lane
+  assert_eq "$(sed -n '/^{/p' <<<"$OUT" | jq -r '.answered // false')" true "$route: the recovered reply clears the note"
+done
 
 # An envelope planted in a lane's mailbox carrying the identity that lane's own
 # overseer send writes, so only the field a case is about differs. `from` is
@@ -732,13 +773,29 @@ for re in "${PEER_ASK%%-*}" 1790000000-1-1; do
   assert_eq "$RC=$ERR" "2=lane-mail: ref-unknown=$re" "peer send --re $re, no line this overseer received, is refused"
   assert_eq "$(peer_answer_files)" "$before" "the refused peer answer $re lands on neither side"
 done
-lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$(text a 'It is ours.')"
+PEER_REPLY="$(text a 'It is ours.')"
+PEER_JOURNAL="$PEER_B/tmp/lane-mail/overseer/to-overseer.jsonl"
+touch "$PEER_JOURNAL"
+chmod 400 "$PEER_JOURNAL"
+lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$PEER_REPLY"
+chmod 600 "$PEER_JOURNAL"
 assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .re + " " + .text' \
   < "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" \
-  "0=overseer:peer_b $PEER_ASK It is ours." "peer send --re answers the asker's ask from the peer's own checkout"
+  "2=overseer:peer_b $PEER_ASK It is ours." "peer send lands before reporting an unwritable local answer record"
 assert_eq "${OUT%% id=*}" "lane-mail: sent item=overseer" "peer send prints the receipt send prints"
-assert_eq "$(jq -r 'select(.kind == "answer") | .re' < "$PEER_B/tmp/lane-mail/overseer/to-overseer.jsonl")" \
-  "$PEER_ASK" "the delivered peer answer is recorded in the answerer's own mailbox"
+PEER_REPLY_ID="${OUT#*id=}"
+PEER_REPLY_ID="${PEER_REPLY_ID%% *}"
+lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$PEER_REPLY"
+assert_eq "$RC=$ERR" "2=lane-mail: duplicate id=$PEER_REPLY_ID" "a peer reply retry keeps the original receipt id"
+lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$PEER_REPLY"
+assert_eq "$(jq -r 'select(.kind == "answer") | .id' < "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" "$PEER_REPLY_ID" \
+  "a peer reply retry leaves one delivered answer"
+assert_eq "$(jq -cS . "$PEER_JOURNAL")" \
+  "$(jq -cS 'select(.kind == "answer")' "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "peer reply retries recover the original delivered answer once"
+lm events --item overseer --box to-lane
+assert_eq "$(sed -n '/^{/p' <<<"$OUT" | jq -r --arg id "$PEER_ASK" 'select(.id == $id) | .answered // false')" true \
+  "the recovered peer answer clears the note in the unread reader"
 LANE="$PEER_A"
 lm pending --item overseer
 assert_eq "$RC=$(jq -c 'select(.kind == "ask")' <<<"$OUT")" "0=" "the answered peer ask is no longer pending"

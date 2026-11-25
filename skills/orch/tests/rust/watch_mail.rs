@@ -1248,6 +1248,22 @@ fn the_unread_row_stands_with_the_newest_id_until_the_target_s_own_read_clears_i
     assert!(full.changes.contains(&set(ITEM, "d-2")), "{full:?}");
     assert_eq!(baseline.get(UNREAD_KIND, ITEM), Some("d-2"));
     assert_eq!(baseline.get(UNREAD_KIND, OVERSEER_TARGET), Some("n-2"));
+    let reply = w.root.join("reply.txt");
+    std::fs::write(&reply, "KEN-8 is on hold.\n").unwrap();
+    w.lane_mail(&[
+        "send",
+        "--item",
+        "KEN-2",
+        "--re",
+        "n-2",
+        "--file",
+        reply.to_str().unwrap(),
+    ]);
+    let answered = run(&mut baseline, 41);
+    assert!(
+        answered.changes.contains(&set(OVERSEER_TARGET, "n-1")),
+        "{answered:?}"
+    );
     // The targets read their boxes; only their own reads move the cursors.
     assert_eq!(w.cursor(ITEM), None);
     assert_eq!(w.cursor("overseer"), None);
@@ -1255,7 +1271,7 @@ fn the_unread_row_stands_with_the_newest_id_until_the_target_s_own_read_clears_i
     w.inbox("overseer");
     assert_eq!(w.cursor(ITEM).as_deref(), Some("2\n"));
     assert_eq!(w.cursor("overseer").as_deref(), Some("2\n"));
-    let unmoved = run(&mut baseline, 41);
+    let unmoved = run(&mut baseline, 42);
     assert_eq!(
         unmoved.changes,
         Vec::new(),

@@ -268,7 +268,7 @@ while IFS='~' read -r name old replacement want; do
   fi
 done <<'ROWS'
 live~~~0
-eligibility~[ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ] && [ "${3:-}" != : ]~false && [ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ] && [ "${3:-}" != : ]~1
+eligibility~[ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ]~false && [ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ]~1
 refusal~[ "${report#duplicate id=}" != "$report" ] || return 4~[ "${report#duplicate id=}" != "$report" ] && return 4~1
 ROWS
 PATH="$SAVED_PATH"
@@ -1317,7 +1317,7 @@ assert_eq "$(field "$BOX/to-overseer.jsonl" 'select(has("ref")) | .re_delivery_i
 new_repo control_reply_delivery
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item overseer --directive --file "$(text d 'Voice request.')" --delivery-id voice:request-1
 OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
-mutant reply-unbound '+ (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)' '+ {}'
+mutant reply-unbound '{re_delivery_id: $re_delivery}' '{}'
 lm notice --item overseer --to owner --file "$(text n 'Voice reply.')" --ref "$OWNER_NOTE"
 lm events --item overseer
 # Run the binding assertion against the old envelope behavior. Its failure is

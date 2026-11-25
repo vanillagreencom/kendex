@@ -574,6 +574,24 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         output, _ = self.read_pass(cursor)
         self.assertNotIn("EVENT overseer-unread", output)
 
+    def test_answered_overseer_notes_leave_the_unread_count(self):
+        oldest = self.mail(self.peer, "send", "first note", "--directive")
+        latest = self.mail(self.peer, "send", "second note", "--directive")
+        oldest_id, latest_id = (row.stdout.split("id=", 1)[1].split()[0] for row in (oldest, latest))
+        self.mail(self.peer, "notice", "answer the later note", "--to", "owner", "--ref", latest_id)
+        self.clock(1800)
+        output, records = self.read_pass()
+        with self.subTest("one unanswered note"):
+            self.assertIn(f"EVENT overseer-unread repo=peer unread=1 oldest={oldest_id} ", output)
+            self.assertEqual(records[str(self.peer)]["unread"], oldest_id)
+
+        self.mail(self.peer, "notice", "answer the earlier note", "--to", "owner", "--ref", oldest_id)
+        output, records = self.read_pass()
+        with self.subTest("zero unanswered notes"):
+            self.assertNotIn("EVENT overseer-unread", output)
+            self.assertNotIn("unread", records[str(self.peer)])
+            self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-lane.cursor").exists())
+
     def clock(self, offset):
         """Epoch reads see now plus offset; every other date call is real."""
         self.executable("date", '#!/bin/sh\ncase "$*" in *+%%s*) echo %d;; *) exec %s "$@";; esac\n'

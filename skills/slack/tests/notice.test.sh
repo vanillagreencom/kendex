@@ -13,7 +13,7 @@ set -e
 sk_fake_start
 # Jarvis produces the deadline event; the real mailbox and relay judge each
 # candidate with fake time. Shared send recovery remains in recovery.test.sh.
-for page_case in accepted linked-home read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
+for page_case in accepted linked-home read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-answer hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
   ROOT="$(sk_new_root "page $page_case")"
   sk_bind "$ROOT"
   PAGE_RC=0

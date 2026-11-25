@@ -349,8 +349,8 @@ class Compaction(unittest.TestCase):
     def test_peer_exchange(self):
         self.peer_exchange(SCRIPTS)
         mutant = self.mutant("unrecorded-reply", "lane-mail",
-                             'if [ "$PEER_VERB" = ask ] || [ -n "$MSGID" ]; then',
-                             'if [ "$PEER_VERB" = ask ]; then')
+                             'lm_append_local "$TO_OVERSEER" "$line" lm_guard_reply_record || :',
+                             ': "$line"')
         with self.assertRaisesRegex(AssertionError, "compacted item=overseer to-lane=0 to-overseer=0"):
             self.peer_exchange(mutant)
         frozen = self.mutant("wait-cursor-frozen", "lane-mail",
