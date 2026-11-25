@@ -376,6 +376,207 @@ YAML
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'aggregate-only workflow'
 aggregate_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-dispatch "$queue_base"
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+mkdir -p "$repo/bin" "$repo/.agents/skills/math/scripts/lib"
+cat >"$repo/bin/check" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+lane_table=(
+  "check-scans:
+    scan
+  "
+  "check-lane-host:
+    lane-host
+  "
+  "check-other:
+    other
+  "
+)
+step_scan() {
+  bash ./bin/check-scans.sh
+}
+step_lane_host() {
+  ./bin/check-lane-host.sh
+}
+step_other() {
+  bash ./bin/check-other.sh
+}
+case ${1-} in
+  --lane) run=$2 ;;
+  *) exit 2 ;;
+esac
+for entry in "${lane_table[@]}"; do
+  name=${entry%%:*}
+  [ "$name" = "$run" ] || continue
+  for member in ${entry#*:}; do
+    case $member in
+      @*|+host|+isolated) ;;
+      *) "step_${member//-/_}" ;;
+    esac
+  done
+done
+SH
+cat >"$repo/bin/check-lane-host.sh" <<'SH'
+#!/usr/bin/env bash
+source ./bin/markdown.sh
+SH
+chmod +x "$repo/bin/check" "$repo/bin/check-lane-host.sh"
+fixture_helper=.agents/skills/math/scripts/lib/md-refs.awk
+printf 'BEGIN { print 42 }\n' >"$repo/$fixture_helper"
+printf 'cat ./%s\n' "$fixture_helper" >"$repo/bin/check-scans.sh"
+printf 'cat ./%s\n' "$fixture_helper" >"$repo/bin/markdown.sh"
+printf 'cat ./bin/other.txt\n' >"$repo/bin/check-other.sh"
+printf 'unrelated input\n' >"$repo/bin/other.txt"
+python3 - "$repo/.kendex-generated.json" "$fixture_helper" <<'PY'
+import json
+from pathlib import Path
+import sys
+inventory = Path(sys.argv[1])
+paths = json.loads(inventory.read_text())
+paths.append(sys.argv[2])
+inventory.write_text(json.dumps(paths) + "\n")
+PY
+write_dispatch_workflow() {
+  local gate="$1" shape="${2:-}" lane needs
+  cat <<YAML
+name: CI
+on: [pull_request, merge_group]
+jobs:
+  changes:
+    outputs:
+      lanes: \${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.$gate.outputs.lanes }}
+      markdown_only: \${{ steps.markdown.outputs.markdown_only }}
+      change_class: \${{ steps.classify.outputs.change_class }}
+      queue_deferred: \${{ steps.verdict.outputs.queue_deferred }}
+      lane_check-scans: \${{ steps.verdict.outputs.lane_check-scans }}
+      lane_check-lane-host: \${{ steps.verdict.outputs.lane_check-lane-host }}
+      lane_check-other: \${{ steps.verdict.outputs.lane_check-other }}
+YAML
+  cat <<'YAML'
+    env:
+      EVENT: ${{ github.event_name }}
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: markdown
+        run: |
+          markdown=false
+          paths="$(git diff --name-only "$BASE" "$HEAD")"
+          if [ -n "$paths" ] && ! grep -qv '\.md$' <<<"$paths"; then
+            markdown=true
+          fi
+          echo "markdown_only=$markdown" >>"$GITHUB_OUTPUT"
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+      - id: verdict
+        env:
+          QUEUE_ONLY: ${{ steps.classify.outputs.queue_only }}
+          LANE_VERDICTS: ${{ steps.classify.outputs.lane_verdicts }}
+YAML
+  if [ "$shape" = wrong-event ]; then
+    printf '%s\n' '          EVENT: pull_request'
+  fi
+  cat <<'YAML'
+        run: |
+          printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
+          deferred=false
+          if [ "$EVENT" = pull_request ] && [ "$QUEUE_ONLY" = true ] && grep -q '^lane_[a-z0-9_-]*=false$' <<<"$LANE_VERDICTS"; then
+            deferred=true
+            echo 'lane_check-scans=false' >>"$GITHUB_OUTPUT"
+          fi
+          echo "queue_deferred=$deferred" >>"$GITHUB_OUTPUT"
+YAML
+  for lane in check-scans check-other check-lane-host; do
+    needs=changes
+    if [ "$lane" = check-scans ] && [[ "$shape" = scan-*-prerequisite ]]; then
+      needs='[changes, check-other]'
+    fi
+    cat <<YAML
+  $lane:
+    needs: $needs
+YAML
+    if [ "$lane" = check-scans ]; then
+      cat <<'YAML'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.markdown_only == 'true' && github.event_name == 'merge_group') || (needs.changes.outputs.markdown_only != 'true' && ((needs.changes.outputs.change_class != 'render' && needs.changes.outputs.queue_deferred != 'true') || needs.changes.outputs.lane_check-scans != 'false'))) }}
+YAML
+    elif [ "$lane:$shape" = check-other:scan-independent-prerequisite ]; then
+      printf '%s\n' '    if: ${{ !cancelled() }}'
+    else
+      cat <<YAML
+    if: \${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_$lane != 'false')) }}
+YAML
+    fi
+    cat <<YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+YAML
+    case "$lane:$shape" in
+      check-lane-host:local-action)
+        printf '%s\n' '      - uses: ./.github/actions/package-runtimes' ;;
+      check-lane-host:opaque-host)
+        printf '%s\n' '      - run: bin/check-opaque --lane check-lane-host'
+        continue ;;
+      check-scans:opaque-prefix)
+        cat <<'YAML'
+      - if: needs.changes.outputs.markdown_only == 'true'
+        run: bin/check --markdown-merge
+YAML
+        ;;
+      check-lane-host:opaque-prefix)
+        cat <<'YAML'
+      - run: |
+          printf '%s\n' ready >/dev/null
+          bin/check --lane check-lane-host
+YAML
+        continue ;;
+    esac
+    printf '      - run: bin/check --lane %s\n' "$lane"
+  done
+}
+write_dispatch_workflow classify >"$repo/.github/workflows/ci.yml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a runner dispatches named lanes through a derived workflow gate'
+dispatch_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-unmapped "$dispatch_base"
+write_dispatch_workflow absent >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the workflow gate has no output publisher'
+dispatch_unmapped_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-opaque-dispatch "$dispatch_base"
+cat >"$repo/bin/check" <<'SH'
+#!/usr/bin/env bash
+exec bash "./bin/$2.sh"
+SH
+write_dispatch_workflow classify local-action >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the runner computes the script name'
+dispatch_opaque_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-scan-prerequisite "$dispatch_base"
+write_dispatch_workflow classify scan-independent-prerequisite >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the scan prerequisite runs independently of the lanes output'
+dispatch_scan_prereq_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-gated-scan-prerequisite "$dispatch_scan_prereq_base"
+write_dispatch_workflow classify scan-gated-prerequisite >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'the scan depends on a job gated by the lanes output'
+dispatch_gated_scan_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-opaque-prefix "$dispatch_base"
+write_dispatch_workflow classify opaque-prefix >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'opaque steps before literal runner calls'
+dispatch_opaque_prefix_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-opaque-host "$dispatch_base"
+git -C "$repo" show "$dispatch_opaque_base:bin/check" >"$repo/bin/check-opaque"
+chmod +x "$repo/bin/check-opaque"
+write_dispatch_workflow classify opaque-host >"$repo/.github/workflows/ci.yml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a single opaque lane runner beside resolved peers'
+dispatch_opaque_host_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-wrong-event "$dispatch_base"
+write_dispatch_workflow classify wrong-event >"$repo/.github/workflows/ci.yml"
+git -C "$repo" commit -qam 'a step shadows the job event with a pull request constant'
+dispatch_wrong_event_base="$(git -C "$repo" rev-parse HEAD)"
 git clone --quiet "$repo" "$trusted"
 if [ -x "$root/ui/node_modules/.bin/vitest" ]; then
   modules="$root/ui/node_modules"
@@ -404,7 +605,79 @@ VERIFY
 chmod +x "$SANDBOX/bin/kendex"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
-while IFS='|' read -r label path shell cargo web installed event expected_gate; do
+
+# Run the fixture's output steps and evaluate its actual job conditions with
+# the same GitHub expression reader as ci-template.test.sh.
+dispatch_workflow_jobs() { # REPO CLASSIFIER_OUTPUT BASE HEAD EVENT
+  python3 - "$@" "$TEST_DIR/lib/gh-eval.py" "$SANDBOX" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import yaml
+
+repo, classified, base, head, event, evaluator, sandbox = sys.argv[1:]
+jobs = yaml.load((Path(repo) / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)["jobs"]
+control = jobs["changes"]
+github = {"event_name": event, "event": {"merge_group": {"base_sha": base, "head_sha": head}}}
+
+def read_outputs(path):
+    rows = iter(Path(path).read_text().splitlines())
+    values = {}
+    for row in rows:
+        if "<<" in row:
+            key, marker = row.split("<<", 1)
+            lines = []
+            while (line := next(rows)) != marker:
+                lines.append(line)
+            values[key] = "\n".join(lines)
+        elif row:
+            key, value = row.split("=", 1)
+            values[key] = value
+    return values
+
+def expression(text):
+    return text.removeprefix("${{").removesuffix("}}").strip()
+
+def evaluate(text, context):
+    return json.loads(subprocess.check_output(
+        [sys.executable, evaluator, "value", json.dumps(context), expression(text)],
+    ))
+
+steps = {"classify": {"outputs": read_outputs(classified)}}
+job_env = {name: evaluate(value, {"github": github}) for name, value in control["env"].items()}
+for step in control["steps"]:
+    if step.get("id") not in {"markdown", "verdict"}:
+        continue
+    step_env = {name: evaluate(value, {"steps": steps}) for name, value in step.get("env", {}).items()}
+    output = Path(sandbox) / "dispatch-step-output"
+    output.write_text("")
+    subprocess.run(["bash", "-ec", step["run"]], cwd=repo, check=True,
+                   env={**os.environ, **job_env, **step_env, "GITHUB_OUTPUT": str(output)})
+    steps[step["id"]] = {"outputs": read_outputs(output)}
+
+outputs = {name: evaluate(value, {"steps": steps}) for name, value in control["outputs"].items()}
+results = {"changes": {"result": "success", "outputs": outputs}}
+eligible = []
+for name in ("check-other", "check-scans", "check-lane-host"):
+    job = jobs[name]
+    needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+    context = {"github": github, "needs": {need: results[need] for need in needs}}
+    condition = f"{name}\t{','.join(needs)}\t{expression(job['if'])}\n"
+    runs = subprocess.check_output([sys.executable, evaluator, "jobs", json.dumps(context)],
+                                   input=condition, text=True).strip()
+    results[name] = {"result": "success" if runs else "skipped"}
+    if runs:
+        eligible.append(name)
+print(",".join(eligible))
+PY
+}
+
+rows=0
+while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes; do
+  [ -z "${LANE_REACH_CASE:-}" ] || [ "$label" = "$LANE_REACH_CASE" ] || continue
+  rows=$((rows + 1))
   base="$opted_base"
   push_ref=refs/heads/main
   case "$label" in
@@ -426,6 +699,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     shell-unresolved) base="$shell_base" ;;
     vitest-unresolved-import) base="$import_base" ;;
     vitest-inherited|push-unresolved) base="$config_base" ;;
+    dispatch-helper|dispatch-host-source|dispatch-unrelated) base="$dispatch_base" ;;
+    dispatch-unmapped) base="$dispatch_unmapped_base" ;;
+    dispatch-unresolved) base="$dispatch_opaque_base" ;;
+    dispatch-scan-prerequisite|dispatch-scan-readme) base="$dispatch_scan_prereq_base" ;;
+    dispatch-scan-gated) base="$dispatch_gated_scan_base" ;;
+    dispatch-opaque-prefix) base="$dispatch_opaque_prefix_base" ;;
+    dispatch-opaque-host) base="$dispatch_opaque_host_base" ;;
+    dispatch-wrong-event) base="$dispatch_wrong_event_base" ;;
     queued-render-push) base="$queue_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
@@ -439,6 +720,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
     runtime-only|computed-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     shell-symlink) printf 'physical\n' >"$repo/$path" ;;
+    dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
@@ -467,6 +749,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the base directory" 0 "$base_status"
     assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
+  dispatch-helper)
+    for member in check-scans check-lane-host; do
+      assert_eq "$label $member reads the helper at runtime" "$(cat "$repo/$fixture_helper")" \
+        "$(cd "$repo" && bin/check --lane "$member")"
+    done ;;
   cargo-external-child|cargo-linked-child)
     base_status=0 head_status=0
     (cd "$trusted/cargo" && CARGO_TARGET_DIR="$SANDBOX/base-cargo-target" cargo test --offline --locked -p primary) \
@@ -481,6 +768,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
   head="$(git -C "$repo" rev-parse HEAD)"
+  cli="$CHANGE_CLASS"
+  case "$label" in
+    dispatch-*) cli="${CHANGE_CLASS_UNDER_TEST:-$root/.agents/skills/harness-ci/scripts/change-class}" ;;
+  esac
   printf '{"ref":"%s","before":"%s","after":"%s","forced":false,"repository":{"default_branch":"main"}}\n' \
     "$push_ref" "$base" "$head" >"$SANDBOX/event"
   PATH="$SANDBOX/bin:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" \
@@ -492,7 +783,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   (
     unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
     PATH="$SANDBOX/bin:$PATH" GITHUB_REF="$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
-      "$CHANGE_CLASS" --event "$event" --base "$base" --head "$head" --queue-only-default true \
+      "$cli" --event "$event" --base "$base" --head "$head" --queue-only-default true \
       --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/local"
   ) \
     >"$SANDBOX/stdout" 2>"$SANDBOX/local-log" || { cat "$SANDBOX/local-log"; exit 1; }
@@ -502,6 +793,52 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     assert_eq "$label $lane" "${!lane}" "$actual"
     assert_eq "$label $lane local parity" "$actual" "$(verdict "$lane" "$SANDBOX/local")"
   done
+  case "$label" in
+    dispatch-*)
+      for implementation in action local; do
+        output="$SANDBOX/$implementation"
+        log="$SANDBOX/$implementation-log"
+        actual="$(verdict check-lane-host "$output")"
+        if [ "$actual" != "$host" ]; then cat "$log" >&2; fi
+        assert_eq "$label $implementation scans" "$scans" "$(verdict check-scans "$output")"
+        assert_eq "$label $implementation lane host" "$host" "$actual"
+        assert_eq "$label $implementation other" "$other" "$(verdict check-other "$output")"
+        assert_eq "$label $implementation gate" "${dispatch_lanes:-true}" "$(sed -n 's/^lanes=//p' "$output")"
+        assert_eq "$label $implementation roster cause" "$dispatch_cause" \
+          "$(sed -n 's/^lanes_cause=//p' "$output")"
+        case "$label" in
+          dispatch-scan-readme)
+            assert_eq "$label $implementation class" trivial "$(sed -n 's/^change_class=//p' "$output")"
+            assert_eq "$label $implementation scan and prerequisite run" 'check-other,check-scans' \
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+          dispatch-scan-prerequisite)
+            assert_eq "$label $implementation ordinary eligible jobs" 'check-other,check-scans,check-lane-host' \
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+          dispatch-scan-gated)
+            assert_eq "$label $implementation rejected prerequisite" 'unsupported-scan-prerequisite job=check-other' \
+              "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
+          dispatch-unmapped)
+            assert_eq "$label $implementation diagnostic" unmapped-lanes-output \
+              "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
+          dispatch-wrong-event)
+            assert_eq "$label $implementation diagnostic" unsupported-lanes-emitter \
+              "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
+          dispatch-unresolved|dispatch-opaque-host)
+            runner=bin/check
+            if [ "$label" = dispatch-opaque-host ]; then runner=bin/check-opaque; fi
+            assert_eq "$label $implementation diagnostic" \
+              "job=check-lane-host cause=unresolved-lane-dispatch command=$runner --lane check-lane-host" \
+              "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=unresolved-lane-dispatch command=.*\) reason=.*/\1/p' "$log")" ;;
+          dispatch-opaque-prefix)
+            assert_eq "$label $implementation conditional step diagnostic" \
+              'job=check-scans cause=opaque-step command=bin/check --lane check-scans' \
+              "$(sed -n 's/^lane-reach: \(job=check-scans cause=opaque-step.*\)/\1/p' "$log")"
+            assert_eq "$label $implementation unsupported setup diagnostic" \
+              'job=check-lane-host cause=computed-command command=bin/check --lane check-lane-host' \
+              "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=computed-command.*\)/\1/p' "$log")" ;;
+        esac
+      done ;;
+  esac
   if [ "$label" = queue-prerequisite ]; then
     assert_eq "$label has queue proof" queue_only=true "$(sed -n '/^queue_only=/p' "$SANDBOX/action")"
   fi
@@ -549,5 +886,17 @@ reasoned-exception|external.settings|true|true|true|true
 shared-root-config|package.json|true||true|true
 checkout-attributes|.gitattributes|true|true|true|true
 nested-attributes|tools/.gitattributes|true|true|true|true
+dispatch-helper|.agents/skills/math/scripts/lib/md-refs.awk|||||||true|true|true|derived-reach
+dispatch-host-source|bin/markdown.sh|||||||false|true|false|derived-reach
+dispatch-unrelated|bin/other.txt|||||||false|false|true|derived-reach
+dispatch-unmapped|bin/other.txt||||||||||lane-reach-unreadable
+dispatch-unresolved|bin/other.txt|||||||true|true|true|derived-reach
+dispatch-scan-prerequisite|bin/markdown.sh|||||||false|true||derived-reach
+dispatch-scan-readme|README.md||||||||||trivial|false
+dispatch-scan-gated|bin/markdown.sh||||||||||lane-reach-unreadable
+dispatch-opaque-prefix|bin/other.txt|||||||true|true|true|derived-reach
+dispatch-opaque-host|bin/unplaced.txt|||||||false|true|false|derived-reach
+dispatch-wrong-event|bin/other.txt||||||||||lane-reach-unreadable
 ROWS
+require_rows "derived lane reach" "$rows"
 report "derived lane reach"

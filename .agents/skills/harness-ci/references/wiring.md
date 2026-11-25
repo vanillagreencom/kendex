@@ -368,7 +368,7 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
   - It is `true` on every other diff.
   - `lanes_cause` uses `derived-reach` when derived evidence keeps an eligible lane and `lane-reach-unreadable` when the roster is inconclusive. Other causes are `render`, `trivial`, `docs-only`, `manifest` or `queue-only` where it is `false`; `manifest-claim` where a declared lane claims the manifest's changed path, and `manifest-declaration-unreadable` where the declaration cannot be read; `full-run` on the nightly run; `render-claim` where a declared lane claims a path a render changes; `declared-text` where changed declared product text keeps its protecting checks; `queue-only-reader-absent` where a render lacks the stand-down's reader; `queue-only-lanes-from-unset` where the default was asked for with no `lanes-from`; or the class otherwise.
   - The classify step also prints both on a `lanes:` line in its log.
-  - A workflow gates its lanes on `lanes` and its aggregate's waiver on `lanes == 'false'`, and names no class. A per-lane workflow also reads each verdict as [§ Per-lane verdicts](#per-lane-verdicts) sets out.
+  - Standard job gates read `lanes` and any per-lane verdict, and the aggregate waiver reads `lanes == 'false'`. The repository-wide scan gate in [§ Per-lane verdicts](#per-lane-verdicts) also reads the class to preserve coverage for Markdown merge groups and non-render changes without queue deferral.
   - The shared rules live in the installed `scripts/lib/change-class.sh`, read from the selected classifier checkout.
   - A refused step publishes no `lanes`, and the Shape 1 status function then runs every lane.
 - **An older classifier can lack the shared lane producer.** The action sets `lanes=true`, `lanes_cause=lane-producer-unavailable` and an empty `lane_verdicts`, regardless of the class or docs verdict.
@@ -384,13 +384,67 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 ### Per-lane verdicts
 
-The producer reads the event's base workflow. Push derivation needs runner proof of the default branch and endpoints. Keep the template's outputs, verdict step and gates. Jobs sharing an output share a verdict. Keep gated prerequisites. On eligible runs, a shared input or possible overlap keeps every lane, as do shared root config and checkout attributes. Unreadable per-lane wiring keeps coverage. The docs, trivial and event waivers still apply.
+The producer reads the event's base workflow. Push derivation needs runner proof of the default branch and endpoints. Keep the template's per-lane outputs and job gates. Jobs sharing an output share a verdict. Keep gated prerequisites. On eligible runs, a shared input or possible overlap keeps every lane, as do shared root config and checkout attributes. Unreadable per-lane wiring keeps coverage. The docs, trivial and event waivers still apply.
+
+Map the job's `lanes` output directly from the classifier. To narrow it with a Boolean step output, use `${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.classify.outputs.lanes }}`. Use the IDs and output names from your workflow.
+
+Bind `LANE_VERDICTS` to the classifier's `lane_verdicts` output and forward it with `printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"`. Map each `lane_<name>` job output from that step. The step can follow the forwarding line with this queue deferral block. Bind `QUEUE_ONLY` to the classifier's `queue_only` output and `EVENT` to `github.event_name`. Use literal lane names in the overrides.
+
+```bash
+printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
+deferred=false
+if [ "$EVENT" = pull_request ] && [ "$QUEUE_ONLY" = true ] && grep -q '^lane_[a-z0-9_-]*=false$' <<<"$LANE_VERDICTS"; then
+  deferred=true
+  echo 'lane_scan=false' >>"$GITHUB_OUTPUT"
+fi
+echo "queue_deferred=$deferred" >>"$GITHUB_OUTPUT"
+```
+
+For a repository-wide scan, map the narrowing flag, the classifier's `change_class` and the forwarding step's `queue_deferred` as job outputs. Use the status and verdict terms in this gate to retain the scan's Markdown merge-group and non-render exceptions.
+
+Keep the scan's direct and indirect prerequisites available when the workflow publishes `lanes=false`. Except for the classifier, give each prerequisite a status-only `if: ${{ !cancelled() }}` or `if: ${{ always() }}`. The scan can run on a Markdown merge group whose ordinary lane gate is closed. When deriving lane verdicts, the reader refuses scan wiring that depends on jobs with another gate.
+
+```yaml
+if: >-
+  ${{ !cancelled() && (needs.changes.result != 'success' ||
+  (needs.changes.outputs.markdown_only == 'true' && github.event_name == 'merge_group') ||
+  (needs.changes.outputs.markdown_only != 'true' && ((needs.changes.outputs.change_class != 'render' &&
+  needs.changes.outputs.queue_deferred != 'true') || needs.changes.outputs.lane_scan != 'false'))) }}
+```
 
 **Command evidence**
 
 - Run a literal `cargo test`, `cargo check`, `cargo clippy` or `cargo build`. The reader supports `-p NAME`, `--workspace` and the literal flags in `lane-reach.py`. It asks Cargo for offline package metadata and follows local dependencies and literal Rust includes. A build script, proc macro, external dependency or opaque input keeps the lane.
 - Run a literal `vitest run`, `./node_modules/.bin/vitest run` or `npx --no-install vitest run` in a project using default discovery and static local imports. Provision locked Vitest in `lanes-from` at the event base. The private index supplies changed paths for the static graph. Narrowing accepts one-line named Vitest imports used only as direct calls. Dynamic loading, inherited config and unresolved inputs retain coverage.
 - Use literal shell commands and paths. The shell reader follows `bash FILE`, `./FILE`, `source ./FILE` and `. ./FILE` through their literal reads. An installed package reader also runs when a file listed for that package changes under `.agents`, `.claude`, `.codex` or `.pi`. Each graph must rule out a path on its own evidence.
+- Invoke a tracked executable Bash runner as `PATH/TO/RUNNER --lane NAME`. The reader recognizes the literal lane table and function dispatch below. Put one step name per line in each quoted lane entry. Give each step a `step_<name>` function with underscores in place of hyphens. Use the literal shell commands above in the functions. The reader follows them in the job's working directory. An unresolved dispatch keeps the lane eligible and reports the job and runner command.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+lane_table=(
+  "check-links:
+    markdown-refs
+  "
+)
+step_markdown_refs() {
+  bash ./bin/check-links.sh
+}
+case ${1-} in
+  --lane) run=$2 ;;
+  *) exit 2 ;;
+esac
+for entry in "${lane_table[@]}"; do
+  name=${entry%%:*}
+  [ "$name" = "$run" ] || continue
+  for member in ${entry#*:}; do
+    case $member in
+      @*|+host|+isolated) ;;
+      *) "step_${member//-/_}" ;;
+    esac
+  done
+done
+```
 
 Install Python 3.11 or later and PyYAML in the classifier job. Cargo and Vitest must be available there for their respective readers. A missing tool keeps the affected lanes eligible.
 
@@ -444,7 +498,7 @@ check         fixtures/* # reason: the binary reads fixture names at runtime
           run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
   ```
 
-- **Each lane reads `lanes` and its own verdict, and runs unless either is `false`.** A lane with no verdict, because no declaration was read or the job output misspells its name, is decided by `lanes` alone:
+- **The standard gate reads `lanes` and its own verdict.** After a successful classifier it runs when neither output is `false`. A lane with no verdict, because no declaration was read or the job output misspells its name, is decided by `lanes` alone. Use the [repository-wide scan gate](#per-lane-verdicts) to retain the Markdown merge-group and non-render exceptions.
 
   ```yaml
     check:
