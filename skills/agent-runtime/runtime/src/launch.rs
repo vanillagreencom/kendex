@@ -235,7 +235,7 @@ pub const CLAUDE_BYPASS_ENV: [&str; 3] = [
     "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS",
 ];
 
-/// The Codex config keys the context reader judges compaction by.
+/// The Codex compaction-limit keys a launch records.
 const CODEX_COMPACTION_KEYS: [&str; 3] = [
     "model_auto_compact_token_limit",
     "model_auto_compact_token_limit_scope",

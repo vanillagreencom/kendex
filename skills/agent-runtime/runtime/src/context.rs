@@ -337,12 +337,10 @@ pub fn claude_compaction_off() -> bool {
 /// One reading of a Codex rollout: the last `token_count` event's
 /// `last_token_usage.total_tokens`, the model the last `turn_context` names.
 /// The event's `model_context_window` is the verified point only where
-/// `overrides`, the launch's compaction overrides as the caller recorded
-/// them, are Codex's and keep every compaction at or past that window
-/// (`body_after_prefix` scope, post-turn compaction off, a token limit no
-/// smaller than the window); any other evidence, or none, leaves the point
-/// unresolved and never discards the count.
-pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
+/// `floor`, the count below which the session's settings let no compaction
+/// fire ([`codex_compaction_floor`]), is no smaller than that window; no
+/// floor leaves the point unresolved and never discards the count.
+pub fn codex(text: &str, floor: Option<u64>) -> Result<Usage, String> {
     let mut turn = Named::default();
     let mut last: Option<Option<(u64, Option<u64>)>> = None;
     for line in objects(text) {
@@ -356,7 +354,7 @@ pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
             Some(Response::Spent(spent)) => {
                 last = Some(Some((
                     spent.context,
-                    spent.window.filter(|w| codex_point_verified(overrides, *w)),
+                    spent.window.filter(|w| floor.is_some_and(|f| f >= *w)),
                 )));
             }
         }
@@ -622,26 +620,104 @@ fn session_named(at: &SessionAt) -> Result<Named, RecordUnread> {
     }
 }
 
-/// Whether Codex launched under `overrides` compacts no earlier than
-/// `window`.
-fn codex_point_verified(overrides: Option<&str>, window: u64) -> bool {
-    let Some(Ok(Value::Object(o))) = overrides.map(serde_json::from_str::<Value>) else {
-        return false;
+/// The token count below which a Codex session never compacts, from the
+/// settings it runs with: `overrides`, the compaction settings its launch
+/// recorded (`launch::codex_compaction_overrides`, empty for a launch whose
+/// command carries none and unset for a session no launch started), over
+/// its home's `config`, as Codex layers its session flags over the user
+/// config. `Some` only where those settings name a whole-number
+/// `model_auto_compact_token_limit` under the `body_after_prefix` scope with
+/// a post-turn threshold of 0 and turn background compaction off in a
+/// spelling this reader classifies, or leave it unnamed:
+/// under the `total` scope Codex caps the limit at 90% of the window, a
+/// post-turn threshold compacts at that share of it, and background
+/// compaction starts by default at 65% (openai/codex rust-v0.172.0,
+/// `core/src/session/context_window.rs`,
+/// `protocol/src/openai_models.rs` `auto_compact_token_limit`,
+/// `core/src/session/async_compaction.rs` and `core/src/config/mod.rs`
+/// `DEFAULT_ASYNC_COMPACTION_THRESHOLD_PERCENT`). Any of the three compaction
+/// keys no layer sets counts as unknown, never as Codex's default, so a
+/// default a later release changes verifies no point. An absent background
+/// switch is read at Codex's default, off (`features/src/lib.rs`, the
+/// `async_compaction` `FeatureSpec`, `default_enabled: false`); that reading
+/// stops holding once Codex turns `async_compaction` on by default.
+/// Overrides that are no launch's JSON leave the floor unresolved; a config
+/// that stands and cannot be read is `Err`. Not read: Codex's project,
+/// managed and system layers, the `$CODEX_HOME/<name>.config.toml` profile
+/// layer, a launched session's command words other than the three
+/// compaction keys (feature switches and `-p`/`--profile`), and the command
+/// words of a session no launch recorded.
+pub fn codex_compaction_floor(
+    overrides: Option<&str>,
+    config: &Path,
+) -> Result<Option<u64>, SettingsUnread> {
+    let text = crate::trust::config_text(config, Harness::Codex)
+        .map_err(|e| SettingsUnread {
+            file: config.to_path_buf(),
+            cause: e.to_string(),
+        })?
+        .unwrap_or_default();
+    let flags = match overrides
+        .filter(|o| !o.is_empty())
+        .map(serde_json::from_str)
+    {
+        None => Map::new(),
+        Some(Ok(Value::Object(o))) if o.get("harness").and_then(Value::as_str) == Some("codex") => {
+            match o.get("settings") {
+                Some(Value::Object(s)) => s.clone(),
+                _ => return Ok(None),
+            }
+        }
+        Some(_) => return Ok(None),
     };
-    let Some(Value::Object(s)) = o.get("settings") else {
-        return false;
+    let setting = |key: &str| match flags.get(key) {
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(other) => Some(other.to_string()),
+        None => crate::trust::toml_value(&text, "", key),
     };
-    let limit = match s.get("model_auto_compact_token_limit") {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        _ => return false,
-    };
-    o.get("harness").and_then(Value::as_str) == Some("codex")
-        && word(s, "model_auto_compact_token_limit_scope") == "body_after_prefix"
-        && word(s, "model_post_turn_compact_threshold_percent") == "0"
-        && !limit.is_empty()
-        && limit.bytes().all(|b| b.is_ascii_digit())
-        && limit.parse::<u128>().is_ok_and(|l| l >= u128::from(window))
+    // Codex's own feature writer spells the switch as `[features]`
+    // `async_compaction = true`; its table form carries `enabled`. A legacy
+    // profile the config selects carries its own `features`. Any other
+    // mention of `async_compaction`, such as a dotted key, an inline table,
+    // a quoted header or another profile's switch that `-p` may select, is
+    // a spelling this reader cannot judge, so it verifies no point.
+    let profile = crate::trust::toml_value(&text, "", "profile");
+    let features: Vec<String> = std::iter::once(String::new())
+        .chain(profile.map(|p| format!("profiles.{p}.")))
+        .map(|prefix| format!("{prefix}features"))
+        .collect();
+    let mut table = "";
+    for line in text.lines() {
+        let header = crate::trust::table_of(line, &mut table);
+        let body = line.split('#').next().unwrap_or("");
+        if !body.contains("async_compaction") {
+            continue;
+        }
+        let switch = if header {
+            features
+                .iter()
+                .any(|f| table.strip_prefix(f.as_str()) == Some(".async_compaction"))
+                .then(|| crate::trust::toml_value(&text, table, "enabled"))
+                .flatten()
+        } else {
+            body.split_once('=')
+                .filter(|(key, _)| {
+                    key.trim() == "async_compaction" && features.iter().any(|f| f == table)
+                })
+                .map(|(_, value)| value.trim().to_owned())
+        };
+        if switch.as_deref() != Some("false") {
+            return Ok(None);
+        }
+    }
+    if setting("model_auto_compact_token_limit_scope").as_deref() != Some("body_after_prefix")
+        || setting("model_post_turn_compact_threshold_percent").as_deref() != Some("0")
+    {
+        return Ok(None);
+    }
+    Ok(setting("model_auto_compact_token_limit")
+        .filter(|limit| !limit.is_empty() && limit.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|limit| limit.parse::<u64>().ok()))
 }
 
 /// Pi's usage fields: input, output and both cache counts, the sum Pi's
@@ -685,7 +761,8 @@ pub fn pi(
     Ok(last)
 }
 
-/// A Pi settings file that is there and cannot be read: the file, and why.
+/// A harness's settings file that is there and cannot be read: the file,
+/// and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsUnread {
     pub file: PathBuf,
@@ -1134,8 +1211,6 @@ mod tests {
         )
     }
 
-    const CODEX_OFF: &str = r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#;
-
     #[test]
     fn a_claude_transcript_reads_its_last_usage_line_and_names_its_usable_window() {
         let two = [
@@ -1175,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn a_codex_rollout_names_its_window_only_under_overrides_that_keep_compaction_past_it() {
+    fn a_codex_rollout_names_its_window_only_where_no_compaction_fires_below_it() {
         let last = [
             codex_context("gpt-6-astra"),
             codex_count(1000, 258_400),
@@ -1193,50 +1268,215 @@ mod tests {
             r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{},"model_context_window":258400}}}"#.to_owned(),
         ]
         .join("\n");
-        let rows: [(&str, Option<&str>, Usage); 5] = [
+        let rows: [(&str, Option<u64>, Usage); 7] = [
             (
                 &last,
-                Some(CODEX_OFF),
+                Some(u64::MAX),
                 measured(232_560, Some(258_400), "gpt-6-astra"),
             ),
             (
+                &last,
+                Some(258_400),
+                measured(232_560, Some(258_400), "gpt-6-astra"),
+            ),
+            (&last, Some(258_399), measured(232_560, None, "gpt-6-astra")),
+            (&last, None, measured(232_560, None, "gpt-6-astra")),
+            (
                 &null_info,
-                Some(CODEX_OFF),
+                Some(u64::MAX),
                 measured(1000, Some(258_400), "gpt-6-astra"),
             ),
-            (&unread, Some(CODEX_OFF), Usage::Unread),
-            (
-                &codex_context("gpt-6-astra"),
-                Some(CODEX_OFF),
-                Usage::Absent,
-            ),
-            (&last, None, measured(232_560, None, "gpt-6-astra")),
+            (&unread, Some(u64::MAX), Usage::Unread),
+            (&codex_context("gpt-6-astra"), Some(u64::MAX), Usage::Absent),
         ];
-        for (text, overrides, want) in rows {
-            assert_eq!(codex(text, overrides), Ok(want), "{text}");
+        for (text, floor, want) in rows {
+            assert_eq!(codex(text, floor), Ok(want), "{text} {floor:?}");
         }
-        let unresolved = [
-            "not-json",
-            "[]",
-            r#"{"harness":"codex","settings":false}"#,
-            r#"{"harness":"claude","settings":{}}"#,
-            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807"}}"#,
-            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"200000","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#,
-            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"total","model_post_turn_compact_threshold_percent":"0"}}"#,
-            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"80"}}"#,
+    }
+
+    /// The launch's recorded overrides over the home's config.toml, each row
+    /// one session: a launched one (`Some`, empty where its command carried
+    /// no compaction words) or one started by hand (`None`).
+    #[test]
+    fn a_codex_floor_takes_the_launch_overrides_over_the_home_config() {
+        const MAX: &str = "9223372036854775807";
+        let flags = |settings: &str| format!(r#"{{"harness":"codex","settings":{{{settings}}}}}"#);
+        let off = flags(&format!(
+            r#""model_auto_compact_token_limit":"{MAX}","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0""#
+        ));
+        let keys = format!(
+            "model_auto_compact_token_limit = {MAX}\nmodel_auto_compact_token_limit_scope = \"body_after_prefix\"\nmodel_post_turn_compact_threshold_percent = 0\n"
+        );
+        let total = keys.replace("body_after_prefix", "total");
+        let max = Some(9_223_372_036_854_775_807);
+        // The row, the launch overrides, the config body, the floor.
+        type Row = (&'static str, Option<String>, Option<String>, Option<u64>);
+        let rows: Vec<Row> = vec![
+            ("launch override alone", Some(off.clone()), None, max),
+            (
+                "launch override as numbers",
+                Some(flags(
+                    r#""model_auto_compact_token_limit":258400,"model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":0"#,
+                )),
+                None,
+                Some(258_400),
+            ),
+            (
+                "hand-started, config keeps compaction past",
+                None,
+                Some(keys.clone()),
+                max,
+            ),
+            (
+                "hand-started, quoted limit",
+                None,
+                Some(keys.replace(&format!("= {MAX}"), "= \"300000\"")),
+                Some(300_000),
+            ),
+            ("hand-started, no config", None, None, None),
+            ("hand-started, total scope", None, Some(total.clone()), None),
+            (
+                "hand-started, post-turn compaction on",
+                None,
+                Some(keys.replace("percent = 0", "percent = 80")),
+                None,
+            ),
+            (
+                "hand-started, post-turn threshold unset",
+                None,
+                Some(keys.replace("model_post_turn_compact_threshold_percent = 0\n", "")),
+                None,
+            ),
+            (
+                "hand-started, limit unset",
+                None,
+                Some(keys.replace(&format!("model_auto_compact_token_limit = {MAX}\n"), "")),
+                None,
+            ),
+            (
+                "hand-started, limit with digit separators",
+                None,
+                Some(keys.replace(&format!("= {MAX}"), "= 300_000")),
+                None,
+            ),
+            (
+                "hand-started, keys under a table",
+                None,
+                Some(format!("[projects.\"/w\"]\n{keys}")),
+                None,
+            ),
+            (
+                "hand-started, background compaction on",
+                None,
+                Some(format!("{keys}[features]\nasync_compaction = true\n")),
+                None,
+            ),
+            (
+                "hand-started, background compaction table on",
+                None,
+                Some(format!(
+                    "{keys}[features.async_compaction]\nenabled = true\n"
+                )),
+                None,
+            ),
+            (
+                "hand-started, background compaction off",
+                None,
+                Some(format!(
+                    "{keys}[features.async_compaction] # background\nenabled = false\n"
+                )),
+                max,
+            ),
+            (
+                "hand-started, commented header turns background compaction on",
+                None,
+                Some(format!(
+                    "{keys}[features] # background compaction\nasync_compaction = true\n"
+                )),
+                None,
+            ),
+            (
+                "hand-started, root dotted switch on",
+                None,
+                Some(format!("features.async_compaction = true\n{keys}")),
+                None,
+            ),
+            (
+                "hand-started, selected profile turns background compaction on",
+                None,
+                Some(format!(
+                    "profile = \"p\"\n{keys}[profiles.p.features]\nasync_compaction = true\n"
+                )),
+                None,
+            ),
+            (
+                "launch with no compaction words reads the config",
+                Some(String::new()),
+                Some(keys.clone()),
+                max,
+            ),
+            (
+                "launch scope over the config's",
+                Some(flags(r#""model_auto_compact_token_limit_scope":"total""#)),
+                Some(keys.clone()),
+                None,
+            ),
+            (
+                "launch limit over the config's",
+                Some(flags(r#""model_auto_compact_token_limit":"300000""#)),
+                Some(keys.clone()),
+                Some(300_000),
+            ),
+            (
+                "launch override completes the config",
+                Some(flags(
+                    r#""model_auto_compact_token_limit_scope":"body_after_prefix""#,
+                )),
+                Some(total),
+                max,
+            ),
+            (
+                "override not JSON",
+                Some("not-json".to_owned()),
+                Some(keys.clone()),
+                None,
+            ),
+            (
+                "override an array",
+                Some("[]".to_owned()),
+                Some(keys.clone()),
+                None,
+            ),
+            (
+                "override settings not an object",
+                Some(r#"{"harness":"codex","settings":false}"#.to_owned()),
+                Some(keys.clone()),
+                None,
+            ),
+            (
+                "override of another harness",
+                Some(r#"{"harness":"claude","settings":{}}"#.to_owned()),
+                Some(keys),
+                None,
+            ),
         ];
-        for overrides in unresolved {
+        for (row, overrides, body, want) in rows {
+            let dir = tempfile::tempdir().unwrap();
+            let config = dir.path().join("config.toml");
+            if let Some(body) = body {
+                std::fs::write(&config, body).unwrap();
+            }
             assert_eq!(
-                codex(&last, Some(overrides)),
-                Ok(measured(232_560, None, "gpt-6-astra")),
-                "{overrides}"
+                codex_compaction_floor(overrides.as_deref(), &config),
+                Ok(want),
+                "{row}"
             );
         }
-        let at_window = r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"258400","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#;
-        assert_eq!(
-            codex(&last, Some(at_window)),
-            Ok(measured(232_560, Some(258_400), "gpt-6-astra"))
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        std::fs::create_dir(&config).unwrap();
+        let unread = codex_compaction_floor(Some(&off), &config).unwrap_err();
+        assert_eq!(unread.file, config);
     }
 
     #[test]
