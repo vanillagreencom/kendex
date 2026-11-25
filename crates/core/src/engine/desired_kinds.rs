@@ -555,18 +555,13 @@ pub(crate) fn restated_hook_artifact(
     // so the hook is restated in the reader's words — and whatever their
     // configuration already says about hooks is said now, before
     // anything is registered.
-    let mut hook = match harness {
+    let hook = match harness {
         HarnessId::Gemini => super::gemini::hook(env, scope, name, &hook, state)?,
         HarnessId::Copilot => super::copilot::hook(env, scope, name, &hook, state)?,
         HarnessId::Antigravity => super::antigravity::hook(name, &hook, state)?,
         _ => hook,
     };
     let target = hook_target(env, scope, harness, name, vars)?;
-    if let (HarnessId::Pi, Scope::Project { .. }, HookBody::Script(script)) =
-        (harness, scope, &mut hook.body)
-    {
-        crate::harness::pi::render_project_hook(name, script);
-    }
     state
         .warnings
         .extend(advisory_notice(env, scope, harness, name));
