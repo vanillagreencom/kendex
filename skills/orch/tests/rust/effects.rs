@@ -422,6 +422,7 @@ fn reconcile_completes_a_launch_from_its_recorded_pane() {
     assert_eq!(lane["launch"]["pane"], pane);
     assert_eq!(lane["launch"]["pid"], server.pane_pid(&pane));
     assert_eq!(lane["window"], "fleet:KEN-42");
+    assert_eq!(lane["mail_root"], runner.state_dir().display().to_string());
     let ungrouped = tmux(&server.socket, &["kill-session", "-t", "=view"]);
     assert!(ungrouped.status.success(), "{}", stderr(&ungrouped));
     // The close that follows stops it by that identity and the lane is done,
@@ -7495,6 +7496,238 @@ impl HostedLaunch {
             "repo": "o/r",
         })
     }
+
+    /// Interrupt a real hosted launch at its first pane read, with the
+    /// provider's worktree created and the window ready to reconcile.
+    fn interrupt_launch(&self, server: &Server) {
+        let fifo = self.runner.state_dir().join("capture.fifo");
+        let mark = self.runner.state_dir().join("capture.mark");
+        mkfifo(&fifo);
+        let mut child = self.runner.spawn_op_fleet(
+            &self.request(),
+            &[
+                ("TMUX_REAL", &which_tmux()),
+                ("TMUX_HOLD_FIFO", fifo.to_str().unwrap()),
+                ("TMUX_HOLD_MARK", mark.to_str().unwrap()),
+                ("TMUX_HOLD_VERB", "capture-pane"),
+            ],
+            &fixtures().join("tmux-hold"),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !mark.exists() {
+            if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
+                let _ = child.kill();
+                let out = child.wait_with_output().unwrap();
+                panic!("launch did not reach its pane read: {}", stderr(&out));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+        release_hold(&fifo, Duration::from_secs(10), || {
+            self.runner.fleet().to_string()
+        });
+        let fleet = self.runner.fleet();
+        let pane = fleet["intents"][0]["phase"]["pane"].as_str().unwrap();
+        server.await_composer(pane);
+        assert_eq!(fleet["lanes"][0]["status"], "preparing");
+    }
+
+    fn reconcile_launch(&self) -> Value {
+        let report = self.runner.reconcile_one();
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+        report["lane"].clone()
+    }
+
+    fn hosted_mail(&self, args: &[&str]) -> String {
+        let file = self.runner.state_dir().join("message.txt");
+        std::fs::write(&file, "Which base?\n").unwrap();
+        let out = program(lane_mail())
+            .current_dir(&self.host_path)
+            .args(args)
+            .arg("--file")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn watch_mail(
+        &self,
+    ) -> (
+        orch_runtime::watch::Produced,
+        Vec<orch_runtime::watch::mail::Refused>,
+    ) {
+        use orch_runtime::watch::mail::{Config, MailDuty};
+        use orch_runtime::watch::{Baseline, Tick};
+
+        let state = self.runner.state_dir();
+        let mut duty = MailDuty::new(
+            orch_runtime::mailbox::Mailbox::new(isolated_program(lane_mail())),
+            Config {
+                fleet: state.join(agent_runtime::record::FLEET_FILE_NAME),
+                common_root: state.to_path_buf(),
+                request: state.join("mail-request"),
+                snapshots: state.join("mail-snapshots"),
+                interval: Duration::ZERO,
+                mark_repeat: 1,
+                unread: Duration::ZERO,
+                tracker_asks: false,
+            },
+        );
+        duty.turn(&Tick {
+            duty: orch_runtime::schedule::Duty::Mail,
+            now: Instant::now(),
+            wall: 1_769_700_000,
+            baseline: &Baseline::default(),
+            clock: &FakeClock::new(),
+        })
+        .unwrap()
+    }
+}
+
+#[test]
+fn hosted_mail_root_survives_reconciliation_of_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::ssh(&server, dir.path());
+    world.interrupt_launch(&server);
+    let lane = world.reconcile_launch();
+    assert_eq!(lane["mail_root"], world.host());
+    assert_eq!(
+        lane["checkout"],
+        world.runner.state_dir().display().to_string()
+    );
+}
+
+#[test]
+fn hosted_mail_root_reaches_the_watch_and_context_report() {
+    use orch_runtime::watch::{Event, context, hosted};
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::ssh(&server, dir.path());
+    world.interrupt_launch(&server);
+    let lane = world.reconcile_launch();
+    world.hosted_mail(&["notice", "--item", "KEN-H"]);
+    std::fs::write(
+        world.host_path.join("tmp/lane-mail/KEN-H/context.json"),
+        r#"{"harness":"claude","tokens":1234,"window":200000,"at":"2026-01-29T15:20:00Z"}"#,
+    )
+    .unwrap();
+
+    let (mail, refused) = world.watch_mail();
+    let lane = serde_json::from_value(lane).unwrap();
+    let caps = hosted::capabilities(&world.scripts, &world.provider()).unwrap();
+    let read = context::lane(&lane, caps.files, &world.scripts, 1_769_700_000);
+    assert!(refused.is_empty(), "{refused:?}");
+    assert!(
+        mail.events.iter().any(|e| matches!(
+            e, Event::LaneNotice { item, .. } if item == "KEN-H"
+        )),
+        "mail: {mail:?}; context: {read:?}"
+    );
+    let context::LaneContext::Own { record, .. } = read else {
+        panic!("hosted lane context: {read:?}");
+    };
+    assert_eq!(record.tokens, Some(1234));
+}
+
+#[test]
+fn hosted_mail_root_reaches_close_ask_and_last_mail() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::ssh(&server, dir.path());
+    world.interrupt_launch(&server);
+    world.reconcile_launch();
+    let ask = world.hosted_mail(&["ask", "--item", "KEN-H"]);
+    let id = ask.trim().strip_prefix("id=").unwrap();
+
+    let close = terminal_close("KEN-H");
+    let blocked = effect_report(&world.runner.op_fleet(&close));
+    assert_eq!(
+        blocked["intent"]["observation"]["cause"], "ask-unanswered",
+        "{blocked}"
+    );
+    assert_eq!(blocked["intent"]["observation"]["ask"], id);
+
+    world.hosted_mail(&["send", "--item", "KEN-H", "--re", id]);
+    world.hosted_mail(&["notice", "--item", "KEN-H"]);
+    let closed = effect_report(&world.runner.op_fleet(&close));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    let last = &closed["intent"]["observation"]["mail"];
+    assert_eq!(last["envelopes"][0]["kind"], "notice", "{last}");
+}
+
+#[test]
+fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
+    use orch_runtime::watch::Change;
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::ssh(&server, dir.path());
+    world.interrupt_launch(&server);
+    let mut fleet = world.runner.fleet();
+    // An older launcher recorded this phase without the provider's root.
+    fleet["intents"][0]["phase"]
+        .as_object_mut()
+        .unwrap()
+        .remove("hosted_mail_root");
+    world.runner.write_fleet(&fleet);
+    let lane = world.reconcile_launch();
+    let (mail, refused) = world.watch_mail();
+    assert!(
+        refused
+            .iter()
+            .any(|r| r.target == "KEN-H" && r.cause.contains("mail-root-unrecorded")),
+        "{refused:?}"
+    );
+    assert!(
+        mail.changes.iter().all(|change| match change {
+            Change::Pass { .. } => true,
+            Change::Set { identity, .. } | Change::Clear { identity, .. } => identity != "KEN-H",
+        }),
+        "{mail:?}"
+    );
+    assert!(lane["mail_root"].is_null(), "{lane}");
+}
+
+#[test]
+fn hosted_mail_root_pending_at_close_is_unread() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::new(&server, dir.path(), json!({}));
+    // The provider's create lost its answer, but its listing shows the
+    // sandbox stands. Reconcile holds the launch at host-create.
+    let fixture = world.scripts.join("lane-host.json");
+    let mut answers: Value = serde_json::from_slice(&std::fs::read(&fixture).unwrap()).unwrap();
+    let account = world.runner.state_dir().display();
+    answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] =
+        json!({"exit": 255});
+    answers["list"] = json!({"stdout": "o/r/KEN-H\thosted\t-\tlane.example\n"});
+    std::fs::write(&fixture, answers.to_string()).unwrap();
+    let launch = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(launch["intent"]["outcome"], "unconfirmed", "{launch}");
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let before_close = world.calls().len();
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    let reading = &closed["intent"]["observation"];
+    assert_eq!(closed["intent"]["outcome"], "unconfirmed", "{closed}");
+    assert_eq!(reading["mail"], "unread", "{reading}");
+    let cause = reading["cause"].as_str().unwrap();
+    assert!(
+        cause.split_whitespace().any(|word| word == "root-pending"),
+        "{reading}"
+    );
+    let checkout = world.runner.state_dir().display().to_string();
+    let calls = world.calls();
+    assert!(
+        calls[before_close..]
+            .iter()
+            .all(|line| !line.contains(&checkout)),
+        "{calls:?}"
+    );
 }
 
 #[test]

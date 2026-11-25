@@ -1523,6 +1523,7 @@ mod tests {
                 asked,
                 home: None,
                 home_implicit: false,
+                hosted_mail_root: None,
             },
         }
     }

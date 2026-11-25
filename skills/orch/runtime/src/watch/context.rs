@@ -344,10 +344,13 @@ pub enum LaneContext {
 /// `cat`, or not at all), and judged beside its rows file for the Stop
 /// row the stale rule compares against.
 pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext {
-    let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) else {
-        return LaneContext::Unreadable {
-            cause: "mail-root-unnamed".to_owned(),
-        };
+    let root = match hosted::mail_root(lane) {
+        Ok(root) => root,
+        Err(cause) => {
+            return LaneContext::Unreadable {
+                cause: cause.into(),
+            };
+        }
     };
     let mailbox = Path::new(root)
         .join("tmp")

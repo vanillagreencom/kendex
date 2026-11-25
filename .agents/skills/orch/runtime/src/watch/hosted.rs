@@ -2245,6 +2245,16 @@ fn root_of(lane: &Lane) -> Root<'_> {
     }
 }
 
+/// Mail may exist even when its root is unknown. A mailbox read must
+/// report that as unread.
+pub(crate) fn mail_root(lane: &Lane) -> Result<&str, &'static str> {
+    match root_of(lane) {
+        Root::Host(root) => Ok(root),
+        Root::Unnamed => Err("mail-root-unrecorded"),
+        Root::Pending => Err(ROOT_PENDING),
+    }
+}
+
 /// Whether the record's `mail_root` is still the checkout the launch ran
 /// from (`checkout`), so no path under it is the host's: a launch moves it
 /// to the lane's root on its host only once the host answers, and a launch

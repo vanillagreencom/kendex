@@ -256,7 +256,7 @@ pub fn close_lane(
     if lane.status == LaneStatus::Done && r.mode != CloseMode::TerminalState {
         return Ok(answer(Word::Closed, Some(LaneStatus::Done)));
     }
-    if lane.mail_root.as_deref().is_none_or(str::is_empty) {
+    if !lane.provider_hosted() && lane.mail_root.as_deref().is_none_or(str::is_empty) {
         return Err(refused(
             "record-invalid",
             &[("item", &r.item), ("field", "mail_root")],

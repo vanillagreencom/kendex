@@ -954,11 +954,9 @@ impl std::fmt::Display for Unread {
 /// record's host, never the caller's. `Err` is a read that did not answer
 /// ([`Unread::of`]), or a lane with no recorded root.
 pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, Unread> {
-    let Some(root) = lane.mail_root.as_deref() else {
-        return Err(Unread::Failed {
-            cause: "mail-root-unrecorded".to_owned(),
-        });
-    };
+    let root = crate::watch::hosted::mail_root(lane).map_err(|cause| Unread::Failed {
+        cause: cause.into(),
+    })?;
     let hosted = lane.host.as_deref().filter(|h| !h.is_empty());
     let envelopes = Mailbox::new(cli.to_path_buf())
         .pending(&lane.item, Path::new(root), hosted)
@@ -981,16 +979,22 @@ fn last_mail(
     fleet: &Path,
     lane: &Lane,
 ) -> std::result::Result<Option<crate::watch::mail::ClosingMail>, Unread> {
-    let (Some(host), Some(root)) = (lane.mail_host(), lane.mail_root.as_deref()) else {
+    let Some(host) = lane.mail_host() else {
         return Ok(None);
     };
     let mailbox = Mailbox::new(cli.to_path_buf());
-    match crate::watch::mail::last_mail(&mailbox, fleet, &lane.item, Path::new(root), host) {
+    let read = crate::watch::hosted::mail_root(lane)
+        .map_err(|cause| Unread::Failed {
+            cause: cause.into(),
+        })
+        .and_then(|root| {
+            crate::watch::mail::last_mail(&mailbox, fleet, &lane.item, Path::new(root), host)
+                .map_err(|refusal| Unread::of(&refusal))
+        });
+    match read {
         Ok(mail) => Ok(mail),
-        Err(refusal) => {
-            match Unread::of(&refusal)
-                .listed(|| crate::watch::hosted::lists_item(scripts, host, &lane.item))
-            {
+        Err(unread) => {
+            match unread.listed(|| crate::watch::hosted::lists_item(scripts, host, &lane.item)) {
                 Unread::Gone { .. } => Ok(None),
                 unread @ (Unread::Busy { .. } | Unread::Failed { .. }) => Err(unread),
             }

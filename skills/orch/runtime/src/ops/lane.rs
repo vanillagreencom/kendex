@@ -2306,8 +2306,8 @@ pub(super) fn record_launch_outcome(
             }
             // The root a hosted or cloud lane's files are read under is
             // known only once its host answered.
-            if let Some(mail_root) = &members.mail_root {
-                record::set(lane, "mail_root", mail_root.as_str());
+            if r.members.contains_key("mail_root") {
+                record::set(lane, "mail_root", string_or_null(&members.mail_root));
             }
             record::set(lane, "status", LaneStatus::Running.word());
             sandbox_ended(lane);
@@ -3758,6 +3758,7 @@ mod tests {
             home: None,
             home_implicit: false,
             idle_shell: None,
+            hosted_mail_root: None,
         };
         let session = agent_runtime::intent::BoundSession {
             session_id: "0f6e".into(),

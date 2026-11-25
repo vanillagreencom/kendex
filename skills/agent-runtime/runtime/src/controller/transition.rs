@@ -1618,6 +1618,7 @@ mod tests {
             home: None,
             home_implicit: false,
             idle_shell: None,
+            hosted_mail_root: None,
         };
         run(
             &path,

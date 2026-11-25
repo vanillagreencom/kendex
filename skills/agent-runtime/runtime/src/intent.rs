@@ -219,6 +219,10 @@ pub struct Opening {
     /// implicit default config dir, which a resume repeats.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home_implicit: bool,
+    /// The provider's worktree from the launch reply, when the client opens
+    /// a local window for a hosted lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_mail_root: Option<String>,
 }
 
 impl Opening {
@@ -241,6 +245,7 @@ impl Opening {
             home: self.home.clone(),
             home_implicit: self.home_implicit,
             idle_shell: self.idle_shell.clone(),
+            hosted_mail_root: self.hosted_mail_root.clone(),
         }
     }
 }
@@ -255,6 +260,8 @@ impl Opening {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenedPane {
     pub pane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_mail_root: Option<String>,
     pub server: u64,
     pub server_start: u64,
     /// The server process's start as the one identity reader records it,
