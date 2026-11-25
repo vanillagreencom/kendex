@@ -323,8 +323,22 @@ in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEM
   field "$1" <"$TMP/push-out" | jq --arg m "$2" 'index($m) != null'
 }
 main_checkout_rows() {
-  local synthetic_head="$PUSH_AFTER" path expected got
-  while IFS='|' read -r path expected; do
+  local synthetic_head="$PUSH_AFTER" range_base="$PUSH_BEFORE" path expected skipped got
+  local reader=crates/core/src/author/scaffold.rs template=docs/checkout-mit-template.txt
+  git -C "$PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
+  # The changed include lives outside crates/ so the workspace build row
+  # cannot select the checkout shards when the include is lost.
+  git -C "$PUSH_REPO" mv crates/core/src/author/assets/mit.txt "$template"
+  awk -v template="$template" '
+    /^const MIT_TEXT: / { changes += sub(/"assets\/mit\.txt"/, "\"../../../../" template "\"") }
+    { print }
+    END { exit changes != 1 }
+  ' "$PUSH_REPO/$reader" >"$TMP/scaffold.rs"
+  cp "$TMP/scaffold.rs" "$PUSH_REPO/$reader"
+  git -C "$PUSH_REPO" add -- "$reader"
+  git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'place production include outside crates'
+  PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+  while IFS='|' read -r path expected skipped; do
     git -C "$PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
     printf '\n' >>"$PUSH_REPO/$path"
     git -C "$PUSH_REPO" add -- "$path"
@@ -338,12 +352,16 @@ main_checkout_rows() {
         [.[] | select(. == "refresh" or . == "orch-rest" or . == "rest" or . == "jarvis")]')"
     fi
     check "main push without merge proof selects checkout build shards for $path" "$expected" "$got"
-  done <<'ROWS'
-ui/src/index.css|[]
-skills/bot-instructions/tests/fixtures/canonical.toml|[]
-crates/core/src/author/assets/mit.txt|["refresh","orch-rest","rest","jarvis"]
+    check "main push skipped checkout suites for $path" "$skipped" \
+      "$(field skipped_suites <"$TMP/push-out" | checkout_suites_skipped)"
+    check "main push keeps the unrelated node shard off for $path" false "$(in_list shards node)"
+  done <<ROWS
+ui/src/index.css|[]|4
+skills/bot-instructions/tests/fixtures/canonical.toml|[]|4
+$template|["refresh","orch-rest","rest","jarvis"]|0
 ROWS
   git -C "$PUSH_REPO" reset -q --hard "$synthetic_head"
+  PUSH_BEFORE="$range_base"
   PUSH_AFTER="$synthetic_head"
   PUSH_SHA="$PUSH_AFTER"
 }

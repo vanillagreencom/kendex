@@ -37,6 +37,63 @@ run_reads() { # [READER] — sets OUT and RC; the rows but build as KIND:PATH, j
   OUT="$(printf '%s\n' "$out" | grep -v '^build	' | tr '\t' ':' | paste -sd ';' -)" || OUT=""
 }
 
+checkout_field_rows() {
+  local scoped path
+  seed_world crates/demo/src/lib.rs ''
+  cat >"$W/crates/demo/src/lib.rs" <<'RS'
+struct Gated {
+    #[cfg(test)]
+    fixture: Option<&'static str>,
+}
+impl Gated {
+    fn live() -> &'static str {
+        include_str!("../../../after-struct.txt")
+    }
+    fn create() -> Self {
+        Self {
+            #[cfg(test)]
+            fixture: Some(include_str!("../../../test-only.txt")),
+        }
+    }
+}
+const AFTER: &str = include_str!("../../../after-literal.txt");
+RS
+  printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2024"\n' >"$W/crates/demo/Cargo.toml"
+  printf '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n' >"$W/Cargo.toml"
+  mkdir -p "$W/crates/cli/src" "$W/crates/cli/tests"
+  cat >"$W/crates/cli/Cargo.toml" <<'TOML'
+[package]
+name = "kendex-cli"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+demo = { path = "../demo" }
+TOML
+  printf 'fn main() {}\n' >"$W/crates/cli/src/main.rs"
+  printf '#[test]\nfn smoke() {}\n' >"$W/crates/cli/tests/cli_smoke.rs"
+  touch "$W/after-struct.txt" "$W/after-literal.txt" "$W/test-only.txt"
+  scoped="$("$READS" --cli-smoke --ci-targets "$W")" || { bad "checkout field reads are readable"; return; }
+  for path in after-struct.txt after-literal.txt; do
+    if grep -qxF $'checkout-include\t'"$path" <<<"$scoped"; then
+      ok "checkout keeps the production include in $path"
+    else
+      bad "checkout keeps the production include in $path"
+    fi
+  done
+  if ! grep -qxF $'checkout-include\ttest-only.txt' <<<"$scoped" &&
+     grep -qxF $'target\ttest-only.txt\tdemo\tlib\tdemo' <<<"$scoped"; then
+    ok "the gated literal field still has a test reader"
+  else
+    bad "the gated literal field still has a test reader"
+  fi
+}
+checkout_field_rows
+if [ "${1-}" = --checkout-field-reads ]; then
+  printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
 # LABEL|FILE|SOURCE|ROWS — ROWS is every row the reader prints, in its order.
 SHAPES='an include_str! literal resolves against the including file|crates/demo/src/lib.rs|const A: &str = include_str!("../../../docs/a.md");|include:docs/a.md
 an include_bytes! literal resolves the same way|crates/demo/src/lib.rs|const A: &[u8] = include_bytes!("assets/logo.png");|include:crates/demo/src/assets/logo.png

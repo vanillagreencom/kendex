@@ -638,10 +638,9 @@ PROSE='\.(md|markdown)$'
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|guard|rust-reads|macos-test-contracts|macos-test-contracts\.json)$)'
 # Battery dispatch is by suite name, which the file reach cannot trace.
 RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
-# The repository's catalog layout. The release check also reads Git setup
-# and its driver, using a downloaded engine outside the source reach.
-CATALOG_SOURCE='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.gitmodules$)'
-CATALOG_INPUTS="$CATALOG_SOURCE|^(\.git(ignore|attributes)$|tools/catalog-release-check$)"
+# The release check runs a downloaded engine whose catalog and Git inputs
+# cannot be inspected by the source reach.
+CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
@@ -757,10 +756,93 @@ cargo_job_reads() {
   ' "$PROOF_WORKFLOW"
 }
 
+# The checkout fixture exercises add --all on the explicit default layout.
+# Read the install kinds, layout and exclusions where Rust declares them.
+# An unknown declaration or catalog layout authorizes no narrower matrix.
+catalog_reads() {
+  PATHS="$paths" python3 -I -c '
+import os
+from pathlib import Path, PurePosixPath
+import re
+import sys
+import tomllib
+
+def capture(pattern, source):
+    matches = re.findall(pattern, source, re.M)
+    if len(matches) != 1:
+        raise ValueError(f"cannot read {pattern}")
+    return matches[0]
+
+def literal_list(declaration):
+    if not re.fullmatch(r"\"[\w.-]+\"(?:[ ,|]+\"[\w.-]+\")*", declaration):
+        raise ValueError("unrecognized layout exclusions")
+    return set(re.findall(r"\"([\w.-]+)\"", declaration))
+
+def select():
+    core = Path("crates/core/src")
+    layout = (core / "source/layout.rs").read_text()
+    config = (core / "source/config.rs").read_text()
+    install = (core / "engine/ops/add.rs").read_text()
+    render = (core / "source_read.rs").read_text()
+    plugin = (core / "source/plugin_registry.rs").read_text()
+    registry = capture(r"^pub const REGISTRY: &str = \"([^\"]+)\";$", plugin)
+    with Path("kendex.toml").open("rb") as manifest:
+        if "catalog" in tomllib.load(manifest) or os.path.lexists(registry):
+            raise ValueError("checkout does not use the explicit default catalog layout")
+
+    excluded = literal_list(capture(r"^pub const NOT_RENDERED: \[&str; \d+\] = \[([^\n]+)\];$", render))
+    support = literal_list(capture(r"&& !matches!\(parent, ([^\n]+)\)$", layout))
+    fixed = dict((kind, (root, suffix)) for kind, root, suffix in re.findall(
+        r"^        ItemKind::(\w+) => \(\"([\w-]+)\", \"(\w+)\"\),$", layout, re.M
+    ))
+    marker = capture(r"^        \.entry\(&dir\.join\(\"([\w.-]+)\"\)\)\?$", layout)
+    agent_suffix = capture(r"^    file_stems\(sealed, dir, \"(\w+)\"\)$", layout)
+    for kind, suffix in (("Agent", agent_suffix), ("Skill", "")):
+        root = capture(r"^        " + kind.lower() + r"_dirs: vec!\[\"([\w-]+)\"\.to_owned\(\)\],$", config)
+        fixed[kind] = root, suffix
+    kinds = set(re.findall(r" = selected\(ItemKind::(\w+), &wanted\.\w+\);$", install, re.M))
+    if kinds != fixed.keys():
+        raise ValueError("add --all and catalog layout kinds disagree")
+
+    changes = set(os.environ["PATHS"].splitlines())
+    entries = set(sys.stdin.read().splitlines()) | changes
+    skill_root = fixed.pop("Skill")[0]
+    skill_dirs = set()
+    inputs = {"kendex.toml", registry, ".gitattributes"}
+    # A removed item marker or package definition is still an input.
+    for name in entries:
+        parts = PurePosixPath(name).parts
+        if len(parts) not in (2, 3, 4):
+            continue
+        if parts[0] == skill_root and parts[-1] == marker and len(parts) >= 3:
+            if len(parts) == 3 or parts[1] not in support:
+                skill_dirs.add(parts[:-1])
+                inputs.add(name)
+        for root, suffix in fixed.values():
+            if parts[0] == root and parts[-1].endswith("." + suffix):
+                if len(parts) == 2 or (len(parts) == 3 and parts[1] not in support):
+                    inputs.add(name)
+    for name in changes:
+        path = PurePosixPath(name)
+        if name in inputs or any(
+            root in skill_dirs and path.parts[len(root)] not in excluded
+            for root in (path.parts[:2], path.parts[:3]) if len(root) < len(path.parts)
+        ):
+            print(name)
+        elif path.name == ".gitattributes" and any(path.parent in PurePosixPath(item).parents for item in inputs):
+            print(name)
+
+try:
+    select()
+except (OSError, ValueError) as error:
+    sys.exit(f"ci-job-set: catalog-inputs=unread cause={error}")
+' <<<"$TRACKED_FILES"
+}
+
 # Project source reads onto compiler, smoke and Linux test inputs. An opaque
 # checkout read retains its executable but cannot place a changed path.
 reads() {
-  local rows job_reads not_rendered=""
+  local rows job_reads catalog_inputs=""
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
     return 1
   awk -F '\t' '
@@ -772,26 +854,11 @@ reads() {
   job_reads="$(cargo_job_reads)" ||
     return 1
   if [[ $rows == *$'\ntarget-catalog\t'* ]]; then
-    # Use SealedSource's own fixed top-level render exclusions. A changed
-    # or unreadable declaration authorizes no narrowed Cargo matrix.
-    not_rendered="$(awk '
-      /^pub const NOT_RENDERED: / {
-        count++
-        if (!match($0, /\[&str; [0-9]+\]/)) exit 1
-        size=substr($0, RSTART, RLENGTH)
-        sub(/^.*; /, "", size); sub(/\]$/, "", size)
-        sub(/^.* = \[/, "")
-        if (!sub(/\];$/, "") || $0 !~ /^"[[:alnum:]_.-]+"(, "[[:alnum:]_.-]+")*$/) exit 1
-        gsub(/"|,/, "")
-        if (NF != size) exit 1
-        print
-      }
-      END { if (count != 1) exit 1 }
-    ' crates/core/src/source_read.rs)" || return 1
+    catalog_inputs="$(catalog_reads)" || return 1
   fi
   PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
     EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" \
-    CATALOG_SOURCE="$CATALOG_SOURCE" NOT_RENDERED="$not_rendered" awk -F '\t' '
+    CATALOG_READS="$catalog_inputs" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -804,17 +871,13 @@ reads() {
       for (i = 1; i <= n; i++) placed[paths[i]] = 1
       n = split(ENVIRON["EXCLUDED"], paths, "\n")
       for (i = 1; i <= n; i++) excluded[paths[i]] = 1
-      n = split(ENVIRON["NOT_RENDERED"], entries, " ")
-      for (i = 1; i <= n; i++) not_rendered[entries[i]] = 1
+      n = split(ENVIRON["CATALOG_READS"], entries, "\n")
+      for (i = 1; i <= n; i++) catalog_input[entries[i]] = 1
     }
     $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
     function select_target(r) {
       selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
-    }
-    function catalog_source(path,   segments) {
-      if (path !~ ENVIRON["CATALOG_SOURCE"]) return 0
-      return !(split(path, segments, "/") >= 3 && segments[1] == "skills" && segments[3] in not_rendered)
     }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
@@ -837,7 +900,7 @@ reads() {
             continue
           }
           if (kind[r] == "target-catalog") {
-            if (catalog_source(path)) { select_target(r); mapped = 1 }
+            if (path in catalog_input) { select_target(r); mapped = 1 }
             continue
           }
           if (read[r] == ".") {

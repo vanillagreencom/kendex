@@ -324,25 +324,30 @@ if rows=$(find crates -type f -name '*.rs' |
   }
   # A positive test cfg (or all(test, ...)) is false for cargo build. Keep
   # other predicates conservatively. Scan the whole item before masking it.
-  function production(text,   code, offset, start, end, rest, tok, braces, parens, brackets) {
+  function production(text,   code, offset, start, end, masked_end, rest, tok, braces, parens, brackets) {
     if (text !~ /#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test|all)[ \t]*[),\(]/) return text
     code = structure(text)
     while (match(code, /(^|\n)[ \t]*#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test[ \t]*\)|all[ \t]*\([ \t]*test[ \t]*[,\)])[^]\n]*\]/)) {
       start = RSTART; end = RSTART + RLENGTH - 1
       rest = substr(code, end + 1)
       braces = parens = brackets = 0; tok = ""
-      while (match(rest, /[][(){};]/)) {
+      masked_end = 0
+      while (match(rest, /[][(){},;]/)) {
         tok = substr(rest, RSTART, 1)
         end += RSTART
         rest = substr(rest, RSTART + 1)
         if (tok == "(" || tok == ")") parens += tok == "(" ? 1 : -1
         if (tok == "[" || tok == "]") brackets += tok == "[" ? 1 : -1
+        if (parens < 0 || brackets < 0) return text
         if (parens || brackets) continue
+        # A field ends at a comma or its enclosing brace. Leave the
+        # delimiter for the outer item, and stop at an ambiguous comma.
+        if (!braces && (tok == "," || tok == "}")) { masked_end = end - 1; break }
         if (tok == "{" || tok == "}") braces += tok == "{" ? 1 : -1
-        if (!braces && (tok == ";" || tok == "}")) break
+        if (!braces && (tok == ";" || tok == "}")) { masked_end = end; break }
       }
-      if (braces || tok != ";" && tok != "}") return text
-      text = substr(text, 1, offset + start - 1) blank(substr(text, offset + start, end - start + 1)) substr(text, offset + end + 1)
+      if (!masked_end) return text
+      text = substr(text, 1, offset + start - 1) blank(substr(text, offset + start, masked_end - start + 1)) substr(text, offset + masked_end + 1)
       code = rest
       offset += end
     }
