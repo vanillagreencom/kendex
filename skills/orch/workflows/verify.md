@@ -72,11 +72,13 @@ A GitHub item's writes below take the form [oversee-events.md § Verification](.
 When a box's deadline arrives with no evidence and no proved defect:
 
 - Read the item's comments for an earlier rewrite of this box.
+- A recorded fail is a [verification comment](../references/oversee-events.md#verification-comment) whose `### Box [N]` for this box reads `- **Result**: fail`.
 - Keep the item Verifying throughout.
 - A missing sample creates no fix item.
 
 1. **First deadline: rewrite the box once.**
 
+   - First read the item's comments for a recorded fail. A box with one takes § 1's acceptance rule, citing that comment's evidence, and is not rewritten.
    - Point `Where:` at readable evidence, or set `Trigger:` to the expected sample's UTC time and `Deadline:` within 72 hours of it.
    - Keep the pass condition.
    - Save the current full description under `tmp/`, and write it back with no state option:
@@ -98,8 +100,9 @@ When a box's deadline arrives with no evidence and no proved defect:
 3. **Act on the decision**, and record the decision and the changed fields on the item:
 
    - **Drop.** Retire the box.
-     1. Write `[N]: [AUTHORITY]: [REASON]` to an evidence file; the authority is the owner's answer or this session's recorded ruling.
-     2. Run `.agents/skills/linear/scripts/linear.sh issues complete [ITEM] --post-merge-at [MERGED_AT] --done-when-waived [N] --evidence-file [FILE]`, reading `[MERGED_AT]` as the completion steps read it.
+     1. Read the item's comments for a recorded fail. A box with one takes § 1's acceptance rule, citing that comment's evidence, and is not waived.
+     2. Write `[N]: [AUTHORITY]: [REASON]` to an evidence file; the authority is the owner's answer or this session's recorded ruling.
+     3. Run `.agents/skills/linear/scripts/linear.sh issues complete [ITEM] --post-merge-at [MERGED_AT] --done-when-waived [N] --evidence-file [FILE]`, reading `[MERGED_AT]` as the completion steps read it.
 
      The box keeps its text as `- Waived: …` with a `Reason:` line and is never ticked. The item reaches Done once every other box is met or retired.
 
