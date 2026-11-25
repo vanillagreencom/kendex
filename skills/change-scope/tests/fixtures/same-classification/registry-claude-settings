@@ -2,5 +2,5 @@ exit=0
 stdout=change_class=standard
 changed-path: path=.claude/settings.json
 changed-path: path=runtime/product.ts
-harness-note: cause=product-source-or-unreadable-ownership path=.claude/settings.json
+harness-note: cause=not-render-owned path=.claude/settings.json
 class: class=standard measured=true cause=configuration-source path=.claude/settings.json glob=.claude/settings.json

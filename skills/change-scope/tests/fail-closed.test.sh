@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Inputs the classifier cannot prove answer false with a successful exit. This
-# runs every lane without turning a data problem into a wiring error.
+# Inputs the classifier cannot prove answer false with a successful exit.
+# That verdict authorizes no skip and distinguishes data from wiring errors.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -137,13 +137,13 @@ git -C "$repo" commit -qm "invalid inventory"
 closed invalid-head-inventory "fallback: cause=invalid-generated-paths" \
   --repo "$repo" --event push --base "$base"
 
-product="$(new_repo product-source)"
-commit_paths "$product" baseline README.md
-product_base="$(git -C "$product" rev-parse HEAD)"
-commit_paths "$product" product src/app.rs
-closed product-source \
-  "fallback: cause=product-source-or-unreadable-ownership path=src/app.rs" \
-  --repo "$product" --event push --base "$product_base"
+settings="$(new_repo consumer-settings)"
+commit_paths "$settings" baseline README.md
+settings_base="$(git -C "$settings" rev-parse HEAD)"
+commit_paths "$settings" settings kendex.settings.toml
+closed settings-outside-render-inventory \
+  "fallback: cause=not-render-owned path=kendex.settings.toml" \
+  --repo "$settings" --event push --base "$settings_base"
 
 missing_base_inventory="$(new_repo missing-base-inventory)"
 rm -- "$missing_base_inventory/.kendex-generated.json"
