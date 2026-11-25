@@ -25,58 +25,67 @@ jarvis_load() {
   export COMMUNICATION_TECHNICAL JARVIS_STYLE
 }
 
-# The bound session: the one the native turn end last stamped into the
-# overseer mailbox's context record is the fleet record's controller, live,
-# bound to that pane on its server's recorded start, of that harness, under
-# the native id the record names. agent-runtime's status read answers all of
-# it. A home with no fleet record binds nothing. A status read the runtime
+# The live fleet controller, as agent-runtime's observer status reports it.
+# Its native id and tmux coordinates identify the session and its rows.
+# A home with no fleet record binds nothing. A status read the runtime
 # refuses prints `jarvis: dependency=agent-runtime-refused` and the runtime's
-# first stderr line, such as the wrapper's setup-required, so each caller
+# keyed refusal, such as the wrapper's setup-required, so each caller
 # judges a refusal apart from an unbound session. Sets the caller's locals
-# runtime, box, server, pane, at and status.
+# box, server, pane and status.
 jarvis_bound() {
-  local root="$1" harness session record refusal first code=0
-  runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
+  local root="$1" runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
+  local record refusal diagnostic coordinates code=0
   [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
   [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
   source "$MAILBOX_LIB/common-root.sh"
   box="$(mailbox_common_root "$root")" || box="$root"
-  IFS=$'\t' read -r harness server pane session at < <(jq -er '
-    select(all(.harness, .session_id, .at; type == "string" and length > 0)
-      and (.pane_key | type == "string" and test("^[^ \t]+ [^ \t]+$")))
-    | [.harness, (.pane_key | split(" ") | .[0], .[1]), .session_id, .at] | @tsv' \
-    "$box/tmp/lane-mail/overseer/context.json") || return 1
   record="$(mailbox_fleet_record full "$root")" || return 1
   [[ -e "$record" ]] || return 1
   refusal="$(mktemp)" || return 1
-  status="$("$runtime" controller status --record "$record" --server="$server" --pane="$pane" \
-    --harness="$harness" --session="$session" 2>"$refusal")" || code=$?
-  first="$(head -n 1 -- "$refusal")" || first=""
+  status="$("$runtime" controller status --record "$record" 2>"$refusal")" || code=$?
+  if ((code)); then
+    # The wrapper can print build progress before setup or status refuses.
+    diagnostic="$(awk '
+      /^agent-runtime: setup-building( |$)/ { next }
+      /^agent-runtime(-setup)?: / { keyed = $0 }
+      first == "" { first = $0 }
+      END { print (keyed != "" ? keyed : first) }
+    ' "$refusal")" || diagnostic=""
+  fi
   rm -f -- "${refusal:?}"
   if ((code)); then
-    printf 'jarvis: dependency=agent-runtime-refused %s\n' "${first:-exit=$code}" >&2
+    printf 'jarvis: dependency=agent-runtime-refused %s\n' "${diagnostic:-exit=$code}" >&2
     return 1
   fi
-  jq -e '.result | .live and .binding == "bound" and .native_match
-    and (.recorded.session_id | type == "string" and length > 0)' <<<"$status" >/dev/null || return 1
+  coordinates="$(jq -er '.result | select(.live == true) | .recorded
+    | select(.session_id | type == "string" and length > 0)
+    | [(.server | tostring), (.pane // .session)]
+    | select((.[0] | test("\\A[0-9]+\\z")) and (.[1] | strings | test("\\A%[0-9]+\\z")))
+    | @tsv' <<<"$status")" || return 1
+  IFS=$'\t' read -r server pane <<<"$coordinates"
 }
 
-# Presence: the bound session, with its context stamp.
+# Presence needs a recent activity stamp from the recorded controller.
 jarvis_live() {
-  local runtime box server pane at status
+  local box server pane status
   jarvis_bound "$1" || return 1
   # No native route exposes an external health acknowledgement here. Fresh
   # context is sufficient, including work that only invokes existing hooks.
-  printf '%s\n' "$at"
+  jq -er --argjson status "$status" --arg pane "$server $pane" '
+    $status.result.recorded as $controller
+    | select((.harness | type == "string" and length > 0)
+        and .harness == $controller.harness and .session_id == $controller.session_id
+        and .pane_key == $pane)
+    | .at | select(type == "string" and length > 0)' "$box/tmp/lane-mail/overseer/context.json"
 }
 
-# The bound session, whatever the context stamp's age, with its pane, its
-# recorded account and the rows file its hooks write for that pane: the one
+# The recorded session with its pane, account and the rows file its hooks
+# write for that pane: the one
 # the stop-failure-row hook names, the pane number without its `%`. The
 # caller reads the rows' verdict itself, so a refused verdict read is never
 # taken for an unbound session.
 jarvis_wall() {
-  local runtime box server pane at status
+  local box server pane status
   jarvis_bound "$1" || return 1
   jq -nc --argjson status "$status" --arg pane "$server $pane" \
     --arg rows "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl" \
