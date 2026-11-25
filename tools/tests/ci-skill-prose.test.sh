@@ -15,6 +15,59 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
 
+checkout_rows() {
+  local path reader checkout selected skips
+  while IFS='|' read -r path reader checkout; do
+    selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$path")"
+    skips="$(field skipped_suites <<<"$selected")"
+    if [ -n "$reader" ]; then
+      check "merge group keeps the $reader library reader of $path" true \
+        "$(field cargo_linux_matrix <<<"$selected" | jq --arg reader "$reader" '
+          type == "object" and any(.include[]; .crate == $reader and (.targets | index("--lib") != null))')"
+    else
+      check "merge group keeps all checkout CLI build consumers for $path" true \
+        "$(field shards <<<"$selected" | jq '(["refresh", "orch-rest", "rest", "jarvis"] - .) == []')"
+      check "the production include $path reaches the checkout CLI projection" true \
+        "$(grep -qxF "ci-job-set: rust-read=$path kind=checkout-include path=$path" "$TMP/selection-err" && echo true || echo false)"
+    fi
+    check "merge group skipped checkout suites for $path" "$checkout" "$(checkout_suites_skipped <<<"$skips")"
+  done <<'ROWS'
+ui/src/index.css|kendex-cli|4
+skills/bot-instructions/tests/fixtures/canonical.toml|kendex-core|4
+crates/core/src/author/assets/mit.txt||0
+ROWS
+}
+
+catalog_rows() {
+  local path expected selected
+  # Construct the path so this guard is not itself discovered as its reader.
+  local pi_maintainer="pi-extensions/AGENTS"".md"
+  while IFS='|' read -r path expected; do
+    selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "${path// /$'\n'}")"
+    check "catalog render lint selects $path only if it reads it" "$expected" \
+      "$(field cargo_linux_matrix <<<"$selected" | jq -r '
+        if type != "object" then "unproved" else
+          any(.include[]; .crate == "kendex-cli" and (.targets | index("catalog_render_lint") != null))
+        end')"
+  done <<ROWS
+skills/orch/references/watch-delivery.md|true
+skills/orch/DEVELOPMENT.md|false
+docs/architecture/engine.md|false
+skills/AGENTS.md hooks/README.md hooks/tests/fixtures/marks-replies.json pi-extensions/pi-agents-tmux/README.md|false
+$pi_maintainer|false
+.gitattributes|true
+ROWS
+}
+
+case "${1-}" in
+  --checkout-reads | --catalog-reads)
+    case "$1" in --checkout-reads) checkout_rows ;; --catalog-reads) catalog_rows ;; esac
+    printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+    [ "$FAIL" -eq 0 ]
+    exit ;;
+  '') checkout_rows; catalog_rows ;;
+esac
+
 # Compiled workspace targets and skill runtime targets have separate owners.
 # Include the tracked render in each probe, as a merge-group diff does.
 cargo_rows() {

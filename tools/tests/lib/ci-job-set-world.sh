@@ -41,6 +41,12 @@ check() { # DESC EXPECTED ACTUAL
   if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$2', got '$3')"; fi
 }
 
+# One unrelated suite from each shard whose workflow steps use checkout kendex.
+checkout_suites_skipped() {
+  jq '(["refresh/tests/refresh-report.test.sh", "skills/orch/tests/one_job.sh",
+        "skills/project-management/tests/verification-scope.test.sh", "skills/jarvis/tests/task.test.sh"] - .) | 4 - length'
+}
+
 # ci-job-set reads the Rust source of the checkout it runs in: this one,
 # unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
 # SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the

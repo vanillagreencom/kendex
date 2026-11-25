@@ -32,11 +32,12 @@
 #            package. A shared root constructor alone is not a file read.
 #            It resolves checkout_root() and literal path joins. An
 #            unresolved checkout root emits "." for its executable.
+#   target-catalog  a checkout used as a catalog source by a test target.
 #   target-root    the metadata roster, in target row format, for job setup.
 #   package-root   the manifest directory of a package in that roster.
 #   complete       with --ci-targets, the number of preceding read rows.
 #   package-include  a compile-time include and its owning package.
-#   checkout-include  an include in the checkout CLI build scope.
+#   checkout-include  an include reached by the CLI production roots.
 #
 # The legacy manifest rows use "." for a chain that reaches the checkout
 # root or whose next argument is dynamic. They also retain the chain's
@@ -156,12 +157,12 @@ if [ -n "$cli_scope" ]; then
            | ($package.manifest_path as $p | $checkout | index($p)) as $normal
            | if (.kind | index("lib")) or
                 ($package.name == "kendex-cli" and (.kind | index("bin")))
-             then ["dir", (.src_path | sub("/[^/]+$"; "")), $normal != null]
+             then ["dir", (.src_path | sub("/[^/]+$"; "")), (if $normal != null then .src_path else "" end)]
              elif (.kind | index("custom-build")) or
                   ($package.name == "kendex-cli" and .name == "cli_smoke" and (.kind | index("test")))
-             then ["file", .src_path, ($normal != null and (.kind | index("custom-build") != null))]
+             then ["file", .src_path, (if $normal != null and (.kind | index("custom-build") != null) then .src_path else "" end)]
              else empty end])[]
-      | select(.[1] | startswith($root)) | .[1] |= ltrimstr($root) | @tsv
+      | select(.[1] | startswith($root)) | .[1] |= ltrimstr($root) | .[2] |= (. // "" | ltrimstr($root)) | @tsv
     ' <<<"$metadata"); then
     echo 'rust-reads: unreadable=cli-smoke' >&2
     exit 2
@@ -206,14 +207,13 @@ if rows=$(find crates -type f -name '*.rs' |
   }
   function emit(kind, path, owner) {
     if (path == "") return
-    if (target != "") printf "target\t%s\t%s\n", path, target
+    if (target != "") printf "%s\t%s\t%s\n", (kind == "catalog" ? "target-catalog" : "target"), path, target
     else if (!compiling) {
       if (kind == "manifest") printf "%s\t%s\t%s/Cargo.toml\n", kind, path, owner
       else printf "%s\t%s\n", kind, path
     }
     else if (kind == "include") {
-      printf "cli-include\t%s\n", path
-      if (checkout && ENVIRON["RUST_READS_TARGETS"] != "") printf "checkout-include\t%s\n", path
+      printf "%s\t%s\n", (checkout ? "checkout-include" : "cli-include"), path
     }
   }
   function unquote(tok) {
@@ -230,7 +230,7 @@ if rows=$(find crates -type f -name '*.rs' |
     }
     return ""
   }
-  function scan(file, text,   dir, rest, lit, chain, owner, path) {
+  function scan(file, text,   dir, rest, lit, chain, owner, path, catalog) {
     dir = file
     sub(/\/[^\/]*$/, "", dir)
     owner = manifest_dir(file)
@@ -242,7 +242,7 @@ if rows=$(find crates -type f -name '*.rs' |
         printf "package-include\t%s\t%s\n", path, package_by_dir[owner]
       rest = substr(rest, RSTART + RLENGTH)
     }
-    if (compiling && target == "") {
+    if (compiling && target == "" && !checkout) {
       rest = text
       while (match(rest, /#[ \t\n]*\[[ \t\n]*path[ \t\n]*=[ \t\n]*"[^"]*"/)) {
         visit(resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))
@@ -252,6 +252,12 @@ if rows=$(find crates -type f -name '*.rs' |
     if (owner == "" && target_manifest == "") return
     rest = text
     while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)|checkout_root\(\)/)) {
+      # This binding is the local source passed to kendex add catalog in
+      # catalog_render_lint. A different root expression remains unrestricted.
+      catalog = target == "kendex-cli\ttest\tcatalog_render_lint" && file == "crates/cli/tests/catalog_render_lint.rs" &&
+        substr(rest, 1, RSTART - 1) ~ /let catalog = Path::new\($/ &&
+        substr(rest, RSTART + RLENGTH) ~ /^\)[ \t\n]*\.join\("\.\.\/\.\."\)[ \t\n]*\.canonicalize\(\)[ \t\n]*\.unwrap\(\);/ &&
+        text ~ /test_util::source_path\(&catalog\)/
       lit = substr(rest, RSTART, RLENGTH)
       rest = substr(rest, RSTART + RLENGTH)
       # The closing parentheses of the Path::new or PathBuf::from around it.
@@ -271,15 +277,90 @@ if rows=$(find crates -type f -name '*.rs' |
         rest = substr(rest, RLENGTH + 1)
       }
       path = resolve(target == "" ? owner : target_manifest, chain)
-      if (owner != "" || path != ".") emit("manifest", path, owner)
+      if (owner != "" || path != ".") emit(catalog && path == "." ? "catalog" : "manifest", path, owner)
       # An argument the chain could not read may lead anywhere from there.
       if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
     }
   }
+  # Use the same width unit as substr. Apple awk can replace a multibyte
+  # character in one gsub step while counting that character in bytes.
+  function blank(text,   lines, n, i, masked) {
+    n = split(text, lines, "\n")
+    for (i = 1; i <= n; i++)
+      masked = masked (i == 1 ? "" : "\n") sprintf("%*s", length(lines[i]), "")
+    return masked
+  }
+  # Mask comments and literals without moving offsets. Braces inside a Rust
+  # string, nested comment or char literal do not close a gated item.
+  function structure(text,   code, at, tok, close_at, depth, pattern, span) {
+    while (match(text, /\/\/|\/\*|r#*"|["\047]/)) {
+      at = RSTART; tok = substr(text, at, RLENGTH)
+      code = code substr(text, 1, at - 1)
+      text = substr(text, at)
+      if (tok == "//") {
+        close_at = index(text, "\n")
+        span = close_at ? close_at - 1 : length(text)
+      } else if (tok == "/*") {
+        span = 2; depth = 1
+        while (depth && match(substr(text, span + 1), /\/\*|\*\//)) {
+          depth += substr(text, span + RSTART, 2) == "/*" ? 1 : -1
+          span += RSTART + 1
+        }
+        if (depth) return ""
+      } else if (tok ~ /^r/) {
+        pattern = "\"" substr(tok, 2, length(tok) - 2)
+        close_at = index(substr(text, length(tok) + 1), pattern)
+        if (!close_at) return ""
+        span = length(tok) + close_at + length(pattern) - 1
+      } else if (tok == "\"") {
+        if (!match(text, /^"([^"\\]|\\.)*"/)) return ""
+        span = RLENGTH
+      } else if (match(text, /^\047([^\047\\\n]|\\(x[[:xdigit:]]{2}|u\{[[:xdigit:]_]+\}|.))\047/)) {
+        span = RLENGTH
+      } else {
+        # A lifetime begins with the same punctuation as a char literal.
+        code = code tok; text = substr(text, 2); continue
+      }
+      code = code blank(substr(text, 1, span))
+      text = substr(text, span + 1)
+    }
+    return code text
+  }
+  # A positive test cfg (or all(test, ...)) is false for cargo build. Keep
+  # other predicates conservatively. Scan the whole item before masking it.
+  function production(text,   code, offset, start, end, masked_end, rest, tok, braces, parens, brackets) {
+    if (text !~ /#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test|all)[ \t]*[),\(]/) return text
+    code = structure(text)
+    while (match(code, /(^|\n)[ \t]*#[ \t]*\[[ \t]*cfg[ \t]*\([ \t]*(test[ \t]*\)|all[ \t]*\([ \t]*test[ \t]*[,\)])[^]\n]*\]/)) {
+      start = RSTART; end = RSTART + RLENGTH - 1
+      rest = substr(code, end + 1)
+      braces = parens = brackets = 0; tok = ""
+      masked_end = 0
+      while (match(rest, /[][(){},;]/)) {
+        tok = substr(rest, RSTART, 1)
+        end += RSTART
+        rest = substr(rest, RSTART + 1)
+        if (tok == "(" || tok == ")") parens += tok == "(" ? 1 : -1
+        if (tok == "[" || tok == "]") brackets += tok == "[" ? 1 : -1
+        if (parens < 0 || brackets < 0) return text
+        if (parens || brackets) continue
+        # A field ends at a comma or its enclosing brace. Leave the
+        # delimiter for the outer item, and stop at an ambiguous comma.
+        if (!braces && (tok == "," || tok == "}")) { masked_end = end - 1; break }
+        if (tok == "{" || tok == "}") braces += tok == "{" ? 1 : -1
+        if (!braces && (tok == ";" || tok == "}")) { masked_end = end; break }
+      }
+      if (!masked_end) return text
+      text = substr(text, 1, offset + start - 1) blank(substr(text, offset + start, masked_end - start + 1)) substr(text, offset + masked_end + 1)
+      code = rest
+      offset += end
+    }
+    return text
+  }
   function visit(file, modules,   line, status, closed, text, dir, path, name, attr, count, lines, i) {
     if (file == "" || visited[target, checkout, file]++) return
-    if (target == "") printf "cli-build\t%s\n", file
-    else if (manifest_dir(file) == "") emit("source", file)
+    if (target == "" && !checkout) printf "cli-build\t%s\n", file
+    else if (target != "" && manifest_dir(file) == "") emit("source", file)
     if (file !~ /\.rs$/) return
     if (file in source) text = source[file]
     else {
@@ -294,8 +375,9 @@ if rows=$(find crates -type f -name '*.rs' |
         exit 3
       }
     }
+    if (checkout) text = production(text)
     scan(file, text)
-    if (target == "") return
+    if (target == "" && !checkout) return
     dir = file
     sub(/\/[^\/]*$/, "", dir)
     if (modules == "") modules = dir
@@ -335,11 +417,15 @@ if rows=$(find crates -type f -name '*.rs' |
     for (i = 1; i <= n; i++) {
       split(roots[i], root, "\t")
       if (root[2] == "") continue
-      checkout = root[3] == "true"
+      checkout = 0
       if (root[1] == "file") visit(root[2])
       else if (root[1] == "dir") {
         printf "cli-build\t%s\n", root[2]
         for (file in source) if (index(file, root[2] "/") == 1) visit(file)
+      }
+      if (root[3] != "" && ENVIRON["RUST_READS_TARGETS"] != "") {
+        checkout = 1
+        visit(root[3])
       }
     }
     checkout = 0
