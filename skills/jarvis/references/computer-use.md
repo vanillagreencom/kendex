@@ -5,6 +5,7 @@
 - Use the supported desktop or terminal interface for the delegated task under [decisions.md:Approach](decisions.md#approach).
 - Keep test and scratch windows off the user's visible screen.
   - Use a separate workspace or hidden session the available tool supports.
+  - The home's standing instructions may name one of the home's own computers where the user watches the assistant's browser windows. On that computer, those windows open on the visible desktop without taking keyboard focus.
 - Check the target window or pane before sending input.
   - Never type into one that holds the user's draft.
   - Use a separate empty target for assistant work.
