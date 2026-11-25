@@ -124,7 +124,8 @@ Overseer side:
               with SLACK_THREAD_DAYS (relay default 7) as its minimum.
               to-overseer.jsonl uses age alone because its readers own their
               read records. Keep unread to-lane rows and open exchanges, and
-              the exchanges of the asks a kept open ask replaced.
+              the exchanges of the asks a kept open ask replaced. Keep the
+              latest to-lane directive while that box contains a halt.
               Each FILE.numbering records dropped, first and retained logical
               lines under the same lock. All readers keep logical numbers and
               the original first id, including after every row is removed.

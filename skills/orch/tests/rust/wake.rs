@@ -31,6 +31,7 @@ use agent_runtime::clock::Clock;
 use agent_runtime::process::Identity;
 use agent_runtime::settings::Roots;
 use orch_runtime::error::Error;
+use orch_runtime::mailbox::Mailbox;
 use orch_runtime::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
 use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
@@ -1501,15 +1502,22 @@ fn account_row(weekly: u64, now: u64) -> Value {
 
 /// The lanes duty's resume row for a lane whose wall's reset passed: the
 /// session stands at its usage banner, so a mail wake is refused there. While
-/// its account reads walled nothing is typed or marked; once it reads room
-/// the resume sentence and the inbox line are typed past the banner, once,
+/// its account reads walled nothing is typed or marked. A halt acknowledged
+/// while the resume waits still holds the lane when the account reads room.
+/// After lift the resume sentence and the inbox line are typed past the banner, once,
 /// `wake-delivered <item> resume=usage-limit`; the repeat on the standing row
 /// types nothing, and a later mail wake types the inbox line alone and keeps
 /// the resume in its mark, so the standing row is never typed again.
 #[test]
 fn a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wake_types_no_resume()
 {
+    if !isolated_row(
+        "a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wake_types_no_resume",
+    ) {
+        return;
+    }
     let mut fleet = Fleet::new();
+    git_checkout(&fleet.cwd);
     let clock = FakeClock::new();
     let now = clock.wall_secs();
     let accounts = fleet.root.join("accounts");
@@ -1565,7 +1573,43 @@ fn a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wa
     assert_eq!(rendered(&walled), Vec::<String>::new());
     assert_eq!(turns(), Vec::<String>::new(), "nothing typed into the wall");
     assert_eq!(fleet.mark("KEN-1"), None);
+
+    let directive = fleet.cwd.join("directive.txt");
+    let mail = |args: &[&str]| {
+        let output = program(lane_mail())
+            .current_dir(&fleet.cwd)
+            .args(args)
+            .args(["--item", "KEN-1"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+    };
+    let send = |kind, text| {
+        std::fs::write(&directive, text).unwrap();
+        mail(&["send", kind, "--file", directive.to_str().unwrap()]);
+    };
+    send("--halt", "Hold for the control computer restart.");
+    mail(&["inbox"]);
+    assert!(
+        Mailbox::new(lane_mail().to_path_buf())
+            .inbox_peek("KEN-1", &fleet.cwd)
+            .unwrap()
+            .unread
+            .is_empty(),
+        "the lane acknowledged the halt"
+    );
+
     clock.release(Duration::from_secs(120));
+    let held = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        turns(),
+        Vec::<String>::new(),
+        "an acknowledged halt must hold an already pending wall resume"
+    );
+    assert!(rendered(&held).is_empty());
+    assert_eq!(fleet.mark("KEN-1"), None);
+
+    send("--directive", "The restart is complete. Resume work.");
     let resumed = run_once(&mut body, &baseline, &clock).unwrap();
     assert_eq!(
         rendered(&resumed),

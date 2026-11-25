@@ -37,10 +37,11 @@ use agent_runtime::reading::Reading;
 use agent_runtime::rows;
 use agent_runtime::settings::{Roots, Succession};
 use jiff::tz::TimeZone;
+use orch_runtime::mailbox::{Mailbox, Refusal};
 use orch_runtime::ops;
 use orch_runtime::ops::wall::{self, RecordWallPauses};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
-use orch_runtime::state::{self, FleetState, Record};
+use orch_runtime::state::{self, FleetState, Lane, Record};
 use orch_runtime::watch::context;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
 use orch_runtime::watch::overseer::{
@@ -247,6 +248,7 @@ struct LaneDriver<'a> {
     baseline: Baseline,
     now: u64,
     pick: Pick,
+    halted: fn(&Lane) -> Result<bool, Refusal>,
     relaunches: RefCell<Vec<Relaunch>>,
     /// The scripts directory the provider calls run from: a row's world
     /// with the fixtures linked in, or nowhere for a local fleet.
@@ -278,6 +280,7 @@ impl LaneDriver<'_> {
         let route = WallRoute {
             relaunch: self.settings.watch.get().unwrap().wall_relaunch,
             pick,
+            halted: &self.halted,
             start: &start,
         };
         let roster = || {
@@ -358,6 +361,7 @@ macro_rules! lane_driver {
             baseline: Baseline::default(),
             now: 1_800_000_000,
             pick: Pick::None,
+            halted: |_| Ok(false),
             relaunches: RefCell::new(Vec::new()),
             scripts: PathBuf::from("/nonexistent"),
             gh: PathBuf::from("/nonexistent/gh"),
@@ -1028,7 +1032,11 @@ fn relaunchable(mut record: Value) -> Value {
 /// even under `auto` and starts no replacement.
 #[test]
 fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
+    if !isolated_row("a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask") {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
+    git_checkout(dir.path());
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
@@ -1042,9 +1050,84 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
         dir.path(),
     ))]);
     let state = fleet.read();
-    lane_driver!(server, fleet, readers, driver);
+    lane_driver!(
+        server,
+        fleet,
+        readers,
+        driver,
+        &[("ORCH_WALL_RELAUNCH", "auto")]
+    );
     driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+    driver.halted = |lane| Mailbox::new(lane_mail().to_path_buf()).lane_halted(lane);
     let log = driver.state_dir.join("wall-relaunch-KEN-4.log");
+    let text = dir.path().join("directive.txt");
+    let mail = |args: &[&str]| {
+        let output = program(lane_mail())
+            .current_dir(dir.path())
+            .args(args)
+            .args(["--item", "KEN-4"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+    };
+    let send = |kind, words| {
+        std::fs::write(&text, words).unwrap();
+        mail(&["send", kind, "--file", text.to_str().unwrap()]);
+    };
+    send("--halt", "Hold for the control computer restart.");
+    mail(&["inbox"]);
+    assert!(
+        Mailbox::new(lane_mail().to_path_buf())
+            .inbox_peek("KEN-4", dir.path())
+            .unwrap()
+            .unread
+            .is_empty(),
+        "the lane acknowledged the halt"
+    );
+    for _ in 0..2 {
+        driver.pass(&state);
+        assert!(driver.relaunches.borrow().is_empty(), "standing halt");
+        assert!(
+            !driver
+                .state_dir
+                .join("wall-relaunch-KEN-4.close.json")
+                .exists(),
+            "standing halt must leave the predecessor alone"
+        );
+    }
+    lane_driver!(
+        server,
+        fleet,
+        reset_readers,
+        reset,
+        &[("ORCH_WALL_RELAUNCH", "auto")]
+    );
+    reset.halted = driver.halted;
+    reset.pass(&state);
+    reset.now = BANNER_RESET + 60;
+    for _ in 0..2 {
+        let passed = reset.pass(&state);
+        assert_eq!(
+            reset.baseline.get("resume", "gh-4"),
+            None,
+            "standing halt must withhold the reset resume"
+        );
+        assert!(lines(&passed).is_empty(), "{:?}", lines(&passed));
+    }
+    send("--directive", "The restart is complete. Resume work.");
+    reset.pass(&state);
+    assert_eq!(
+        reset.baseline.get("resume", "gh-4"),
+        Some(
+            format!(
+                "usage-limit|{}:{}|{BANNER_RESET}",
+                identity.pid, identity.start
+            )
+            .as_str()
+        )
+    );
+    assert!(reset.relaunches.borrow().is_empty());
+    let since = driver.now;
     let first = driver.pass(&state);
     assert_eq!(
         lines(&first),
@@ -1129,7 +1212,7 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
             serde_json::from_str(&std::fs::read_to_string(&relaunch.marker).unwrap()).unwrap();
         assert_eq!(
             marker,
-            json!({"item": "KEN-4", "since": 1_800_000_000_u64, "log": log.display().to_string()})
+            json!({"item": "KEN-4", "since": since, "log": log.display().to_string()})
         );
     }
     let row = driver.baseline.get("usage-limit", "gh-4").unwrap();
