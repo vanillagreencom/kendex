@@ -536,6 +536,35 @@ impl<'a> LaneOperation<'a> {
         self.discharge_read(LaneDischarge::Validation(ValidationEnd::LaneMoved))
     }
 
+    pub(super) fn reconcile_landed_map(
+        &mut self,
+        lane: &Lane,
+        delivered: &str,
+    ) -> Result<std::result::Result<(), String>> {
+        let Some(path) = self.lane.worktree().filter(|_| lane.host.is_none()) else {
+            return Ok(Ok(()));
+        };
+        let _signalled = self.engine.signal()?;
+        Ok(worktree::reconcile_landed_map(
+            &path,
+            &self.checkout_common(lane),
+            delivered,
+            &lane.item,
+            self.run.settings,
+            self.run.engine.locking,
+        ))
+    }
+
+    fn checkout_common(&self, lane: &Lane) -> PathBuf {
+        lane.extra
+            .get(ops::lane::CHECKOUT_COMMON)
+            .and_then(Value::as_str)
+            .map_or_else(
+                || self.run.settings.roots.common.join(".git"),
+                PathBuf::from,
+            )
+    }
+
     /// Release the lane's worktree the set records, or keep it with its
     /// reason, by this operation's own reads: the path gone discharges
     /// `worktree-gone`; a linked worktree (its `.git` a file,
@@ -559,14 +588,7 @@ impl<'a> LaneOperation<'a> {
         let Some(path) = self.lane.worktree() else {
             return Ok(None);
         };
-        let common = lane
-            .extra
-            .get(ops::lane::CHECKOUT_COMMON)
-            .and_then(Value::as_str)
-            .map_or_else(
-                || self.run.settings.roots.common.join(".git"),
-                PathBuf::from,
-            );
+        let common = self.checkout_common(lane);
         let release = match worktree::plan(&path, &common) {
             worktree::Plan::Answered(release) => {
                 self.discharge_read(LaneDischarge::Worktree {

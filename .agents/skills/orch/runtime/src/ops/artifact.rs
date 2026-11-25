@@ -340,7 +340,7 @@ fn shared_measure(
     Ok(host::stdout_text(&out).trim().to_owned())
 }
 
-fn base_ref(settings: &Settings, worktree: &Path) -> Result<String> {
+pub(crate) fn base_ref(settings: &Settings, worktree: &Path) -> Result<String> {
     shared_measure(settings, worktree, "branch_growth_base_ref", "")
 }
 

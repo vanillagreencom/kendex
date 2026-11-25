@@ -8,8 +8,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host;
+use agent_runtime::record::Locking;
 
 use crate::marker;
+use crate::ops::push;
+use crate::settings::Settings;
 
 /// How long one git read or one worktree package call may run.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -674,6 +677,61 @@ pub(super) fn plan(path: &str, common: &Path) -> Plan {
             }
         },
     })
+}
+
+/// Use the registration's backlink before touching its map, since the lane's
+/// gitfile alone could name another lane's registration.
+pub(super) fn reconcile_landed_map(
+    path: &str,
+    common: &Path,
+    delivered: &str,
+    item: &str,
+    settings: &Settings,
+    locking: Locking,
+) -> std::result::Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if !matches!(read_worktree(path), WorktreeRead::Linked) {
+        return Ok(());
+    }
+    let Ok(Ok(pinned)) = pin(path, common) else {
+        return Ok(());
+    };
+    let map = pinned.admin.join(push::MAP);
+    if !std::fs::symlink_metadata(&map).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
+        return Ok(());
+    }
+    let Some(root) = canonical(Path::new(path))? else {
+        return Ok(());
+    };
+    let Ok(backlink) = std::fs::read(pinned.admin.join("gitdir")) else {
+        return Ok(());
+    };
+    if backlink.strip_suffix(b"\n").unwrap_or(&backlink) != root.join(".git").as_os_str().as_bytes()
+    {
+        return Ok(());
+    }
+    let Ok(base_ref) = crate::ops::artifact::base_ref(settings, &pinned.main) else {
+        return Ok(());
+    };
+    if !base_ref.starts_with("refs/remotes/origin/") {
+        return Ok(());
+    }
+    push::consume(
+        &crate::state::item_path(&settings.state_dir, item),
+        item,
+        &map,
+        push::MapUse::Landed(&root, &|destinations| {
+            let mut args = vec!["--no-replace-objects", "rev-list", "-1", "HEAD", delivered];
+            args.extend(destinations.iter().map(String::as_str));
+            args.extend(["--not", &base_ref, "--"]);
+            git_output(&pinned, "rebase-map-base", &args).is_ok_and(|out| out.stdout.is_empty())
+        }),
+        locking,
+        &mut || {},
+    )
+    .map(drop)
+    .map_err(|e| format!("{}: {e}", e.key()))
 }
 
 /// The worktree package's removal of `path` from `main`, judged by its

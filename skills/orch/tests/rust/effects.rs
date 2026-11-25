@@ -5097,6 +5097,139 @@ fn assert_released(report: &Value, wt: &Path) {
     assert!(!wt.exists(), "the worktree was not removed");
 }
 
+#[test]
+fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
+    for unlanded in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(runner.state_dir());
+        let orch = repo.join(".agents/skills/orch/scripts");
+        std::fs::create_dir_all(&orch).unwrap();
+        let skills = Path::new(&worktree_cli())
+            .ancestors()
+            .nth(3)
+            .unwrap()
+            .to_path_buf();
+        std::os::unix::fs::symlink(
+            skills.join("orch/scripts/resolve-base-branch"),
+            orch.join("resolve-base-branch"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            skills.join("change-scope"),
+            repo.join(".agents/skills/change-scope"),
+        )
+        .unwrap();
+        std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
+        let origin = dir.path().join("origin.git");
+        git(
+            dir.path(),
+            &["init", "-q", "--bare", origin.to_str().unwrap()],
+        );
+        git(
+            &repo,
+            &["remote", "set-url", "origin", origin.to_str().unwrap()],
+        );
+        git(&repo, &["config", "gc.auto", "0"]);
+        git(&repo, &["config", "maintenance.auto", "false"]);
+        git(&repo, &["push", "-q", "origin", "main"]);
+        let advance_base = || {
+            git(&repo, &["commit", "-qm", "base advances", "--allow-empty"]);
+            git(&repo, &["push", "-q", "origin", "main"]);
+            git(&repo, &["rev-parse", "main"])
+        };
+        let worktree_push = |args: &[&str]| {
+            let out = program(worktree_cli())
+                .arg("push")
+                .args(args)
+                .env("WORKTREE_DEFAULT_BRANCH", "main")
+                .current_dir(&wt)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "push {args:?}: {}", stderr(&out));
+        };
+        std::fs::write(wt.join("landed"), "landed\n").unwrap();
+        git(&wt, &["add", "landed"]);
+        commit(&wt, "work to land");
+        let original = git(&wt, &["rev-parse", "HEAD"]);
+        let base = advance_base();
+        worktree_push(&["--prepare-base"]);
+        worktree_push(&["--to-base", &base]);
+        let delivered = git(&wt, &["rev-parse", "HEAD"]);
+        assert_ne!(original, delivered);
+        assert_eq!(git(&repo, &["rev-parse", "origin/main"]), delivered);
+        let map = PathBuf::from(git(
+            &wt,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "kendex-rebase-map",
+            ],
+        ));
+        if unlanded {
+            git(&repo, &["merge", "-q", "--ff-only", "origin/main"]);
+            std::fs::write(wt.join("unlanded"), "unlanded\n").unwrap();
+            git(&wt, &["add", "unlanded"]);
+            commit(&wt, "work for another landing");
+            advance_base();
+            worktree_push(&["--prepare-base"]);
+            assert_ne!(git(&wt, &["rev-parse", "HEAD"]), delivered);
+            git(&wt, &["reset", "-q", "--hard", &delivered]);
+        }
+        let map_before = std::fs::read(&map).unwrap();
+        let record = item_record(runner.state_dir(), "KEN-M");
+        std::fs::write(
+            &record,
+            json!({
+                "issue_id": "KEN-M", "worktree": wt, "branch": "lane", "fixed_items": [{"commit": original}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut fleet = runner.fleet();
+        let mut lane = worktree_lane("KEN-M", &runner, &wt);
+        lane["status"] = json!("stopped");
+        fleet["lanes"] = json!([lane]);
+        runner.write_fleet(&fleet);
+        let answer = reply(&runner.op_fleet_in(
+            &repo,
+            &json!({"op": "close-lane", "item": "KEN-M", "delivery": {"commit": {"commit": delivered}}}),
+            &[("WORKTREE_CLI", &worktree_cli()), ("WORKTREE_DEFAULT_BRANCH", "main")],
+        ));
+        assert_eq!(answer["result"]["word"], "closed", "{answer}");
+        let lane = &runner.fleet()["lanes"][0];
+        let branch = git(&repo, &["branch", "--list", "lane"]);
+        let saved: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        if unlanded {
+            assert_eq!(
+                answer["result"]["observation"]["worktree"], "kept",
+                "{answer}"
+            );
+            assert!(
+                lane["kept"]
+                    .as_str()
+                    .unwrap()
+                    .contains("worktree-remove-rebase-map: "),
+                "{lane}"
+            );
+            assert_eq!(branch, "+ lane");
+            assert_eq!(std::fs::read(&map).unwrap(), map_before);
+            assert_eq!(saved["fixed_items"][0]["commit"], original);
+        } else {
+            assert_eq!(
+                answer["result"]["observation"]["worktree"], "released",
+                "{answer}"
+            );
+            assert!(!wt.exists());
+            assert_eq!(branch, "");
+            assert_eq!(saved["fixed_items"][0]["commit"], delivered);
+        }
+    }
+}
+
 /// The report of `item`'s terminal close with the worktree package at
 /// `cli` as `WORKTREE_CLI`, run from `checkout`, the repository whose
 /// linked worktree the lane holds: the overseer runs in the checkout its

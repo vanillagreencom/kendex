@@ -537,6 +537,20 @@ impl Close<'_> {
         // The close-out and worktree release can carry the mailbox into
         // the main checkout. The lane's credential must leave first.
         remove_local_gh_token(self.lane)?;
+        // Reconcile the rewrite while the item's record is still writable.
+        if !self.no_landing()
+            && let Some(commit) = self
+                .cycle
+                .and_then(|cycle| cycle.get("commit"))
+                .and_then(Value::as_str)
+                .filter(|sha| {
+                    matches!(sha.len(), 40 | 64) && sha.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+            && let Err(cause) = operation.reconcile_landed_map(self.lane, commit)?
+        {
+            observation["cause"] = json!(cause);
+            return Ok(self.hold(operation, observation));
+        }
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
         if self.ground.is_some_and(CloseGround::ends_item) {
