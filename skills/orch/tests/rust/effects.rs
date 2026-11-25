@@ -5128,10 +5128,21 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         git(&repo, &["checkout", "-qb", "develop"]);
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        // GitHub has moved the default while the checkout still records origin/main.
+        // GitHub's default moved while origin/HEAD stayed stale. The
+        // inherited token is refused, but the saved sign-in can read it.
         write_executable(
             &bin.join("gh"),
-            "#!/bin/sh\ncase \"$1 $2\" in\n 'repo view') echo o/repo ;;\n 'api repos/o/repo') echo develop ;;\n *) exit 1 ;;\nesac\n",
+            r#"#!/bin/sh
+case "$1 $2" in
+    'repo view') echo o/repo ;;
+    'api user') printf 'HTTP/2.0 401 Unauthorized\n\n'; exit 1 ;;
+    'auth status') [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] ;;
+    'api repos/o/repo')
+        [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || exit 1
+        echo develop ;;
+    *) exit 1 ;;
+esac
+"#,
         );
         let path = tool_path(&[&bin]);
         let advance_base = || {
@@ -5205,7 +5216,7 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         let answer = reply(&runner.op_fleet_in(
             &repo,
             &json!({"op": "close-lane", "item": "KEN-M", "delivery": {"commit": {"commit": delivered}}}),
-            &[("WORKTREE_CLI", &worktree_cli()), ("PATH", &path)],
+            &[("WORKTREE_CLI", &worktree_cli()), ("PATH", &path), ("GH_TOKEN", "expired-fixture-token")],
         ));
         assert_eq!(answer["result"]["word"], "closed", "{answer}");
         let lane = &runner.fleet()["lanes"][0];

@@ -698,9 +698,8 @@ pub(super) fn reconcile_landed_map(
     if !std::fs::symlink_metadata(&map).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
         return Ok(());
     }
-    let gitfile = root.join(".git");
     if !std::fs::read(pinned.admin.join("gitdir")).is_ok_and(|link| {
-        link.strip_suffix(b"\n").unwrap_or(&link) == gitfile.as_os_str().as_bytes()
+        link.strip_suffix(b"\n").unwrap_or(&link) == root.join(".git").as_os_str().as_bytes()
     }) {
         return Ok(());
     }
