@@ -536,25 +536,6 @@ impl<'a> LaneOperation<'a> {
         self.discharge_read(LaneDischarge::Validation(ValidationEnd::LaneMoved))
     }
 
-    pub(super) fn reconcile_landed_map(
-        &mut self,
-        lane: &Lane,
-        delivered: &str,
-    ) -> Result<std::result::Result<(), String>> {
-        let Some(path) = self.lane.worktree().filter(|_| lane.host.is_none()) else {
-            return Ok(Ok(()));
-        };
-        let _signalled = self.engine.signal()?;
-        Ok(worktree::reconcile_landed_map(
-            &path,
-            &self.checkout_common(lane),
-            delivered,
-            &lane.item,
-            self.run.settings,
-            self.run.engine.locking,
-        ))
-    }
-
     fn checkout_common(&self, lane: &Lane) -> PathBuf {
         lane.extra
             .get(ops::lane::CHECKOUT_COMMON)
@@ -634,15 +615,33 @@ impl<'a> LaneOperation<'a> {
     /// removal that fails is the cause, and nothing past it runs.
     pub(super) fn close_out_files(
         &mut self,
-        item: &str,
+        lane: &Lane,
+        archive: bool,
+        delivered: Option<&str>,
     ) -> Result<std::result::Result<Option<PathBuf>, String>> {
         let _signalled = self.engine.signal()?;
         let settings = self.run.settings;
+        if lane.host.is_none()
+            && let Some((path, commit)) = self.lane.worktree().zip(delivered)
+            && let Err(cause) = worktree::reconcile_landed_map(
+                &path,
+                &self.checkout_common(lane),
+                commit,
+                &lane.item,
+                settings,
+                self.run.engine.locking,
+            )
+        {
+            return Ok(Err(cause));
+        }
+        if !archive {
+            return Ok(Ok(None));
+        }
         Ok(crate::archive::close_out(
             &settings.archive_root,
             &settings.roots.project,
             &settings.state_dir,
-            item,
+            &lane.item,
             &[],
             self.run.engine.locking,
             self.run.engine.env.now_secs,

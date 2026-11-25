@@ -5099,29 +5099,19 @@ fn assert_released(report: &Value, wt: &Path) {
 
 #[test]
 fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
-    for unlanded in [true, false] {
+    for (unlanded, archived) in [(false, false), (true, false), (false, true)] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let runner = Runner::new(&server, "stub-confirm");
         runner.init_fleet();
         let (repo, wt) = worktree_fixture(runner.state_dir());
-        let orch = repo.join(".agents/skills/orch/scripts");
-        std::fs::create_dir_all(&orch).unwrap();
+        std::fs::create_dir_all(repo.join(".agents")).unwrap();
         let skills = Path::new(&worktree_cli())
             .ancestors()
             .nth(3)
             .unwrap()
             .to_path_buf();
-        std::os::unix::fs::symlink(
-            skills.join("orch/scripts/resolve-base-branch"),
-            orch.join("resolve-base-branch"),
-        )
-        .unwrap();
-        std::os::unix::fs::symlink(
-            skills.join("change-scope"),
-            repo.join(".agents/skills/change-scope"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
         std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
         let origin = dir.path().join("origin.git");
         git(
@@ -5135,16 +5125,25 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         git(&repo, &["config", "gc.auto", "0"]);
         git(&repo, &["config", "maintenance.auto", "false"]);
         git(&repo, &["push", "-q", "origin", "main"]);
+        git(&repo, &["checkout", "-qb", "develop"]);
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // GitHub has moved the default while the checkout still records origin/main.
+        write_executable(
+            &bin.join("gh"),
+            "#!/bin/sh\ncase \"$1 $2\" in\n 'repo view') echo o/repo ;;\n 'api repos/o/repo') echo develop ;;\n *) exit 1 ;;\nesac\n",
+        );
+        let path = tool_path(&[&bin]);
         let advance_base = || {
             git(&repo, &["commit", "-qm", "base advances", "--allow-empty"]);
-            git(&repo, &["push", "-q", "origin", "main"]);
-            git(&repo, &["rev-parse", "main"])
+            git(&repo, &["push", "-q", "origin", "develop"]);
+            git(&repo, &["rev-parse", "develop"])
         };
         let worktree_push = |args: &[&str]| {
             let out = program(worktree_cli())
                 .arg("push")
                 .args(args)
-                .env("WORKTREE_DEFAULT_BRANCH", "main")
+                .env("PATH", &path)
                 .current_dir(&wt)
                 .output()
                 .unwrap();
@@ -5159,7 +5158,14 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         worktree_push(&["--to-base", &base]);
         let delivered = git(&wt, &["rev-parse", "HEAD"]);
         assert_ne!(original, delivered);
-        assert_eq!(git(&repo, &["rev-parse", "origin/main"]), delivered);
+        assert_eq!(git(&repo, &["rev-parse", "origin/develop"]), delivered);
+        assert_eq!(
+            git(
+                &repo,
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+            ),
+            "origin/main"
+        );
         let map = PathBuf::from(git(
             &wt,
             &[
@@ -5170,7 +5176,7 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
             ],
         ));
         if unlanded {
-            git(&repo, &["merge", "-q", "--ff-only", "origin/main"]);
+            git(&repo, &["merge", "-q", "--ff-only", "origin/develop"]);
             std::fs::write(wt.join("unlanded"), "unlanded\n").unwrap();
             git(&wt, &["add", "unlanded"]);
             commit(&wt, "work for another landing");
@@ -5181,14 +5187,16 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         }
         let map_before = std::fs::read(&map).unwrap();
         let record = item_record(runner.state_dir(), "KEN-M");
-        std::fs::write(
-            &record,
-            json!({
-                "issue_id": "KEN-M", "worktree": wt, "branch": "lane", "fixed_items": [{"commit": original}]
-            })
-            .to_string(),
-        )
-        .unwrap();
+        let restack_landing = json!({"original": original, "at": 1, "round": null});
+        if !archived {
+            std::fs::write(
+                &record,
+                json!({
+                    "issue_id": "KEN-M", "worktree": wt, "branch": "lane", "fixed_items": [{"commit": original}],
+                    "restacks": 2, "restack_landing": restack_landing,
+                }).to_string(),
+            ).unwrap();
+        }
         let mut fleet = runner.fleet();
         let mut lane = worktree_lane("KEN-M", &runner, &wt);
         lane["status"] = json!("stopped");
@@ -5197,13 +5205,12 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         let answer = reply(&runner.op_fleet_in(
             &repo,
             &json!({"op": "close-lane", "item": "KEN-M", "delivery": {"commit": {"commit": delivered}}}),
-            &[("WORKTREE_CLI", &worktree_cli()), ("WORKTREE_DEFAULT_BRANCH", "main")],
+            &[("WORKTREE_CLI", &worktree_cli()), ("PATH", &path)],
         ));
         assert_eq!(answer["result"]["word"], "closed", "{answer}");
         let lane = &runner.fleet()["lanes"][0];
         let branch = git(&repo, &["branch", "--list", "lane"]);
-        let saved: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
-        if unlanded {
+        if unlanded || archived {
             assert_eq!(
                 answer["result"]["observation"]["worktree"], "kept",
                 "{answer}"
@@ -5217,7 +5224,6 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
             );
             assert_eq!(branch, "+ lane");
             assert_eq!(std::fs::read(&map).unwrap(), map_before);
-            assert_eq!(saved["fixed_items"][0]["commit"], original);
         } else {
             assert_eq!(
                 answer["result"]["observation"]["worktree"], "released",
@@ -5225,7 +5231,17 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
             );
             assert!(!wt.exists());
             assert_eq!(branch, "");
-            assert_eq!(saved["fixed_items"][0]["commit"], delivered);
+        }
+        if archived {
+            assert!(!record.exists());
+        } else {
+            let saved: Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+            assert_eq!(
+                saved["fixed_items"][0]["commit"],
+                if unlanded { original } else { delivered }
+            );
+            assert_eq!(saved["restacks"], 2);
+            assert_eq!(saved["restack_landing"], restack_landing);
         }
     }
 }

@@ -46,7 +46,7 @@ const LANDING: &str = "restack_landing";
 const PENDING: &str = "kendex-restack-validation";
 const FOLD_MESSAGE: &str = "kendex-fold-message";
 const RESTACK: &str = "restack-reconcile";
-const PUSHED: &str = "sha-reconcile";
+pub(crate) const PUSHED: &str = "sha-reconcile";
 const SLOT_QUEUE: &str = "tmp/nested-slots/queue";
 
 /// One mode of the push, tagged by `mode`. `args` are the worktree skill's
@@ -500,11 +500,7 @@ fn apply_hops(doc: &mut Document, hops: &[Hop], key: &'static str) -> Vec<Reconc
     reports
 }
 
-pub(crate) enum MapUse<'a> {
-    Restack,
-    Push,
-    Landed(&'a Path, &'a dyn Fn(&BTreeSet<String>) -> bool),
-}
+type LandingProof<'a> = (&'a Path, &'a dyn Fn(&BTreeSet<&str>) -> bool);
 
 /// One read of the map: every hop parsed before any is applied, all of
 /// them applied in one transition, then the file removed. A map that does
@@ -520,8 +516,9 @@ pub(crate) fn consume(
     path: &Path,
     item: &str,
     map: &Path,
-    use_as: MapUse<'_>,
+    key: &'static str,
     locking: Locking,
+    landing: Option<LandingProof<'_>>,
     before: &mut dyn FnMut(),
 ) -> Result<Option<Vec<Reconciled>>> {
     let file = map.display().to_string();
@@ -541,7 +538,7 @@ pub(crate) fn consume(
     };
     let hops = proof::hops(&text);
     // The package keeps the unproved map and reports its removal refusal.
-    if matches!(use_as, MapUse::Landed(..)) && hops.is_err() {
+    if landing.is_some() && hops.is_err() {
         return Ok(None);
     }
     let hops = hops.map_err(|e| {
@@ -554,25 +551,20 @@ pub(crate) fn consume(
             ],
         )
     })?;
-    if let MapUse::Landed(_, on_base) = use_as {
+    if let Some((_, on_base)) = landing {
         // Later hops can rewrite a destination that never reached the base.
-        let mut destinations: BTreeSet<String> = BTreeSet::new();
+        let mut destinations = BTreeSet::new();
         for hop in &hops {
-            destinations = destinations
-                .iter()
-                .map(|sha| proof::remap(sha, hop))
-                .chain(hop.iter().map(|(_, new)| new.clone()))
-                .collect();
+            for (old, _) in hop {
+                destinations.remove(old.as_str());
+            }
+            destinations.extend(hop.iter().map(|(_, new)| new.as_str()));
         }
         // A dropped patch has no destination commit to prove against the base.
-        if destinations.iter().any(|sha| sha.starts_with("dropped")) || !on_base(&destinations) {
+        if destinations.contains("dropped") || !on_base(&destinations) {
             return Ok(None);
         }
     }
-    let key = match use_as {
-        MapUse::Push => PUSHED,
-        MapUse::Restack | MapUse::Landed(..) => RESTACK,
-    };
     let state_file = path.display().to_string();
     let reports = record::reread(
         || {
@@ -582,7 +574,7 @@ pub(crate) fn consume(
                     &[("issue", item), ("state", &state_file), ("file", &file)],
                 ));
             };
-            if let MapUse::Landed(worktree, _) = use_as {
+            if let Some((worktree, _)) = landing {
                 bind(&snapshot.doc, item, worktree)?;
             }
             let mut doc = snapshot.doc.clone();
@@ -608,7 +600,11 @@ pub(crate) fn consume(
             Ok(reports)
         },
         Error::key,
-    )?;
+    );
+    let reports = match reports {
+        Err(error) if landing.is_some() && error.key() == "restack-map-nostate" => return Ok(None),
+        result => result?,
+    };
     before();
     fs::remove_file(map).map_err(|e| {
         refuse(
@@ -1284,7 +1280,7 @@ pub fn run(
             let _ = save_pending(&pending, &item, &at, &dir.display().to_string());
         }
     };
-    let restacked = match consume(path, &item, &map, MapUse::Restack, locking, &mut || {
+    let restacked = match consume(path, &item, &map, RESTACK, locking, None, &mut || {
         keep_pending(&worktree)
     })? {
         Some(reports) => {
@@ -1315,7 +1311,7 @@ pub fn run(
     let cli = &settings.worktree_cli;
     if let RecordPush::Prepare { .. } = r {
         let push = prepare_once(cli, &worktree, &item, &map.with_file_name(FOLD_MESSAGE))?;
-        if let Some(reports) = consume(path, &item, &map, MapUse::Restack, locking, &mut || {
+        if let Some(reports) = consume(path, &item, &map, RESTACK, locking, None, &mut || {
             keep_pending(&worktree)
         })
         .map_err(|e| after_push(e, &push))?
@@ -1419,7 +1415,7 @@ pub fn run(
     };
     // The push rebases before it publishes, so its own hop is in the map
     // whatever its answer.
-    if let Some(reports) = consume(path, &item, &map, MapUse::Push, locking, &mut || {})
+    if let Some(reports) = consume(path, &item, &map, PUSHED, locking, None, &mut || {})
         .map_err(|e| after_push(e, &push))?
     {
         reply.reconciled.extend(reports);

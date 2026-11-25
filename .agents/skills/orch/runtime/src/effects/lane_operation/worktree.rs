@@ -4,6 +4,7 @@
 //! preserve.
 
 use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -371,7 +372,6 @@ impl RemoveReply {
 /// with special characters is not quoted) has a `.git` under its path.
 /// `Err` is a read that failed.
 fn holds_submodule(pinned: &Pinned) -> std::result::Result<bool, String> {
-    use std::os::unix::ffi::OsStrExt;
     let modules = git_path(
         pinned,
         "modules-path",
@@ -613,7 +613,6 @@ fn git_path(
     operation: &'static str,
     args: &[&str],
 ) -> std::result::Result<PathBuf, String> {
-    use std::os::unix::ffi::OsStrExt;
     let output = git_output(pinned, operation, args)?;
     let bytes = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
     if bytes.is_empty() {
@@ -689,29 +688,23 @@ pub(super) fn reconcile_landed_map(
     settings: &Settings,
     locking: Locking,
 ) -> std::result::Result<(), String> {
-    use std::os::unix::ffi::OsStrExt;
-
     if !matches!(read_worktree(path), WorktreeRead::Linked) {
         return Ok(());
     }
-    let Ok(Ok(pinned)) = pin(path, common) else {
+    let (Some(root), Ok(Ok(pinned))) = (canonical(Path::new(path))?, pin(path, common)) else {
         return Ok(());
     };
     let map = pinned.admin.join(push::MAP);
     if !std::fs::symlink_metadata(&map).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
         return Ok(());
     }
-    let Some(root) = canonical(Path::new(path))? else {
-        return Ok(());
-    };
-    let Ok(backlink) = std::fs::read(pinned.admin.join("gitdir")) else {
-        return Ok(());
-    };
-    if backlink.strip_suffix(b"\n").unwrap_or(&backlink) != root.join(".git").as_os_str().as_bytes()
-    {
+    let gitfile = root.join(".git");
+    if !std::fs::read(pinned.admin.join("gitdir")).is_ok_and(|link| {
+        link.strip_suffix(b"\n").unwrap_or(&link) == gitfile.as_os_str().as_bytes()
+    }) {
         return Ok(());
     }
-    let Ok(base_ref) = crate::ops::artifact::base_ref(settings, &pinned.main) else {
+    let Ok(base_ref) = crate::repo::publication_base(&settings.roots.project, &pinned.main) else {
         return Ok(());
     };
     if !base_ref.starts_with("refs/remotes/origin/") {
@@ -721,13 +714,14 @@ pub(super) fn reconcile_landed_map(
         &crate::state::item_path(&settings.state_dir, item),
         item,
         &map,
-        push::MapUse::Landed(&root, &|destinations| {
+        push::PUSHED,
+        locking,
+        Some((&root, &|destinations| {
             let mut args = vec!["--no-replace-objects", "rev-list", "-1", "HEAD", delivered];
-            args.extend(destinations.iter().map(String::as_str));
+            args.extend(destinations.iter().copied());
             args.extend(["--not", &base_ref, "--"]);
             git_output(&pinned, "rebase-map-base", &args).is_ok_and(|out| out.stdout.is_empty())
-        }),
-        locking,
+        })),
         &mut || {},
     )
     .map(drop)
