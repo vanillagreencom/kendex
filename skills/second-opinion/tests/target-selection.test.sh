@@ -95,7 +95,7 @@ STOCK_DEFAULTS="ps:none current:claude models:pi-copilot+claude+pi-copilot-gpt+c
 # What the stock commands run: each entry's pi argv and agent-runtime room check, and
 # the suffix of a row in which no stock entry ran.
 pi_argv() { printf -- '-p --no-session --no-extensions --model github-copilot/%s --thinking high --tools read,grep,find,ls' "$1"; }
-pick_argv() { printf 'accounts pick --env --harness pi --native-model github-copilot/%s' "$1"; }
+pick_argv() { printf 'accounts pick --env --max-pct 100 --harness pi --native-model github-copilot/%s' "$1"; }
 OPUS_PI="$(pi_argv claude-opus-5.5)" GPT_PI="$(pi_argv gpt-6.2-sol)"
 OPUS_PICK="$(pick_argv claude-opus-5.5)" GPT_PICK="$(pick_argv gpt-6.2-sol)"
 NO_STOCK="pi=- runtime=- seat=none inline=-"
