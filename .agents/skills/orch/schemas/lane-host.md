@@ -194,7 +194,9 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
 - The wake:
   - It asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`.
   - On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.
-- `lane-mail` reads a hosted mailbox through `cat`, `touch` and `list`, and writes it through `append`.
+- `lane-mail` reads a hosted mailbox through `cat`, `touch` and `list`, and writes a hosted lane's mailbox through `append`.
+  - A hosted peer send or ask asks `capabilities` before it writes. The validated `peer-mail=verb` declaration selects `peer-append`; a line with `files=verb` and no `peer-mail` selects legacy `append`.
+  - A failure of the selected verb, an exit `2` included, is reported on that route and never retried through the other verb.
 - The close (`close-lane` request), whose procedure is [lane-reach.md § Lane close](../references/lane-reach.md#lane-close):
   - It asks `stop`, `cat`, `list` and `close`; a park asks `stop-sandbox --check`, then `stop-sandbox`.
   - A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`.
