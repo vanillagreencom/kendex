@@ -1150,7 +1150,7 @@ while IFS= read -r stub_path; do
   printf 'changed-path: path=%s\n' "$stub_path" >&2
 done <<<"$STUB_ONLY_PATHS"
 printf 'fallback: %s\n' "$STUB_ONLY_CAUSE" >&2
-printf 'harness-only: stubbed refusal; running every lane\n' >&2
+printf 'harness-only: stubbed refusal\n' >&2
 [ -z "$base" ] || printf 'base-rev: %s\n' "$base" >&2
 printf 'harness_only=false\n'
 ONLY
@@ -1181,10 +1181,9 @@ a cause this script has no rule for|cause=not-a-cause-this-script-knows
 STUBCAUSES
 require_rows change-scope-stub-cause "$stub_cause_rows"
 
-# The other side of the same rule: the two causes harness-only raises after it
-# has read every changed path keep their note and take the class the size
-# rules earn, so the default-deny above refuses a refusal and not a diff.
-measured_err="$(STUB_ONLY_CAUSE='cause=product-source-or-unreadable-ownership path=src/one.ts' \
+# A readable ownership finding keeps its note and takes the class the size
+# rules earn.
+measured_err="$(STUB_ONLY_CAUSE='cause=not-render-owned path=src/one.ts' \
   STUB_ONLY_PATHS='src/one.ts' PATH="$stub_bin:$PATH" \
   "$stub_pkg/change-scope/scripts/change-scope" --repo "$stub_repo" \
   --event pull_request --base "$stub_base" --head HEAD 2>&1 >/dev/null)"

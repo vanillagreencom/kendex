@@ -77,8 +77,8 @@
 # goes red and the caller sees it.
 #
 # Fail-closed everywhere. An unknown event, a missing or unresolvable
-# endpoint, an unreadable diff and an empty diff all answer false, which runs
-# every lane.
+# endpoint, an unreadable diff and an empty diff all answer false. The
+# caller decides which checks run from that verdict and its own lane rules.
 #
 # Strict mode throughout. Every failure a verdict can be read from is handled
 # on the spot with an explicit `||`; anything left over is a defect in this
@@ -277,7 +277,7 @@ verdict() { # true|false [FIELDS REASON]
   fi
   if [ "$#" -gt 1 ]; then
     printf 'fallback: %s\n' "$2" >&2
-    echo "$tool_name: $3; running every lane" >&2
+    echo "$tool_name: $3" >&2
   fi
   report_changed_paths
   [ -z "$base_rev" ] || printf 'base-rev: %s\n' "$base_rev" >&2
@@ -638,8 +638,8 @@ while IFS= read -r path; do
     [ "$endpoint" != "$head" ] || inventory="$head_inventory"
     jq -e --arg path "$path" 'index($path) != null' <<<"$inventory" >/dev/null 2>&1 \
       || verdict false \
-        "cause=product-source-or-unreadable-ownership path=$(stable_value "$path")" \
-        "a changed file is product source or its ownership is unreadable"
+        "cause=not-render-owned path=$(stable_value "$path")" \
+        "a changed file is not in the render inventory"
   done
   [ "$seen" = true ] || verdict false \
     "cause=unreadable-changed-path path=$(stable_value "$path")" \

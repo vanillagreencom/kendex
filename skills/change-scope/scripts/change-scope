@@ -967,11 +967,11 @@ unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
 
 # The committed inventory is the file every rule below is judged by: generated
 # ownership is read from it, so the render branch and the size rules both
-# stand on that read. A `false` verdict from harness-only means "run every
-# lane", never "this is a product diff whose size may be measured". Only two
-# of its causes are raised AFTER it has read every changed path against an
-# inventory it could read: a path that inventory does not carry, and an
-# ownership gain. A render class must prove ownership of every changed path.
+# stand on that read. A `false` verdict from harness-only can record either
+# a finding about ownership or a failed read. Two causes record a finding
+# after the inventories validate: a path missing at an endpoint where it
+# exists, and an ownership gain. A render class must prove ownership of
+# every changed path.
 # They keep their `harness-note:` line. Every other cause is a
 # refusal to read something: the inventory at an endpoint, the inventory's
 # shape, a changed path, a path lookup, the diff, the endpoints, the event.
@@ -991,8 +991,7 @@ unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
 # keeps its own cause and stays refused.
 case "$harness_note" in
   '') ;;
-  cause=product-source-or-unreadable-ownership | \
-    cause=product-source-or-unreadable-ownership\ * | \
+  cause=not-render-owned | cause=not-render-owned\ * | \
     cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
   cause=base-inventory-absent | cause=base-inventory-absent\ *)
     answer standard "$harness_note" measured ;;
