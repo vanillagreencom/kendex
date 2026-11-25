@@ -5,7 +5,9 @@
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,33 +23,6 @@ HANDOFF = ("# Handoff\n\n## State\n\nwork: KEN-1\n\n## Sub-agents\n\nnone\n\n## 
            "  - Observed result and source: seen\n  - Decision: kept\n  - State change: none\n\n## Notes\n\nlast\n")
 FIELDS = {"--operation": "Reply to 1791680510", "--result": "sent, receipt id=1",
           "--decision": "answer now", "--state-change": "none"}
-# The tracker boundary: skills/linear `issues bulk-get --stdin --format=compact`.
-# A row takes lib/formatters.sh format_issues_list_compact's shape; a ref
-# Linear has no issue for refuses the whole read with lib/common.sh
-# linear_issue_refs_read's `missing` line, after the lookup's own error line.
-# A ref numbered 0 or 0N fails Linear's argument validation for the whole read.
-LINEAR = """#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-home = Path(os.environ["HOME"])
-world = json.loads((home / "linear-world.json").read_text())
-refs = sys.stdin.read().split()
-with (home / "linear-calls").open("a") as calls:
-    calls.write(json.dumps([sys.argv[1:], refs]) + "\\n")
-if world.get("fail"):
-    print(json.dumps({"error": "HTTP 503"}), file=sys.stderr)
-    sys.exit(1)
-if any(ref.rsplit("-", 1)[-1].startswith("0") for ref in refs):
-    print(json.dumps({"error": "Argument Validation Error"}), file=sys.stderr)
-    sys.exit(1)
-missing = [ref for ref in refs if ref in world.get("missing", ())]
-if missing:
-    print(json.dumps({"error": "Entity not found: Issue"}), file=sys.stderr)
-    print(json.dumps({"error": "Issues not read: " + ", ".join(missing), "missing": missing}), file=sys.stderr)
-    sys.exit(1)
-rows = [world["issues"][ref] for ref in refs if ref in world["issues"]]
-print(json.dumps([{"id": row[0], "title": "", "state": row[1], "state_type": row[2]} for row in rows]))
-"""
 DONE, CANCELED, OPEN = ("Done", "completed"), ("Canceled", "canceled"), ("In Progress", "started")
 DUPLICATE = ("Duplicate", "duplicate")
 BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
@@ -61,23 +36,40 @@ OTHER_COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04249"
 NAMED_READ = [("issues", "get"), ("comments", "list")]
 NAMED_CREATE = NAMED_READ + [("comments", "create")]
 NAMED_READBACK = NAMED_CREATE + [("comments", "list")]
-# Safe reads use lib/formatters.sh. Mutation fields and the trailing body
-# newline come from commands/comments.sh and lib/common.sh's normalizer.
-LINEAR_ACTION = '''#!/usr/bin/env python3
+# Bulk and safe rows use lib/formatters.sh. Missing refs use lib/common.sh's
+# linear_issue_refs_read response. Comment receipts and the trailing newline
+# come from commands/comments.sh and lib/common.sh's normalizer.
+LINEAR = '''#!/usr/bin/env python3
 import json, os, subprocess, sys
 from pathlib import Path
 
 home = Path(os.environ["HOME"])
-store = home / "action-world.json"
+store = home / "linear-world.json"
 world = json.loads(store.read_text())
 args = sys.argv[1:]
 verb = tuple(args[:2])
-refs = sys.stdin.read().splitlines() if verb == ("comments", "bulk-list") else []
-with (home / "action-calls").open("a") as calls:
-    calls.write(json.dumps(args + refs) + "\\n")
-mode = world["mode"]
-issues, comments = world["issues"], world["comments"]
-if verb == ("issues", "list"):
+reads_stdin = verb in (("issues", "bulk-get"), ("comments", "bulk-list"))
+refs = sys.stdin.read().splitlines() if reads_stdin else []
+with (home / "linear-calls").open("a") as calls:
+    calls.write(json.dumps([args, refs]) + "\\n")
+mode = world.get("mode")
+issues, comments = world["issues"], world.get("comments", {})
+if verb == ("issues", "bulk-get"):
+    assert args[2:] == ["--stdin", "--format=compact"] and refs
+    if world.get("fail"):
+        print(json.dumps({"error": "HTTP 503"}), file=sys.stderr)
+        sys.exit(1)
+    if any(ref.rsplit("-", 1)[-1].startswith("0") for ref in refs):
+        print(json.dumps({"error": "Argument Validation Error"}), file=sys.stderr)
+        sys.exit(1)
+    missing = [ref for ref in refs if ref in world.get("missing", ())]
+    if missing:
+        print(json.dumps({"error": "Entity not found: Issue"}), file=sys.stderr)
+        print(json.dumps({"error": "Issues not read: " + ", ".join(missing), "missing": missing}), file=sys.stderr)
+        sys.exit(1)
+    fields = ("id", "title", "state", "state_type")
+    print(json.dumps([{field: issues[ref][field] for field in fields} for ref in refs if ref in issues]))
+elif verb == ("issues", "list"):
     assert args[2:] == ["--project-id", world["project"], "--include-archived", "--max", "--format=safe"]
     print(json.dumps(list(issues.values())))
 elif verb == ("auth-check", "--strict"):
@@ -151,9 +143,46 @@ def state_handoff(state):
             "## Progress log\n\n")
 
 
-class ProgressLog(MailWorld):
+def install_tracker(packages):
+    stub = packages / "linear/scripts/linear.sh"
+    stub.parent.mkdir(parents=True)
+    stub.write_text(LINEAR)
+    stub.chmod(0o755)
+    return stub
+
+
+def rebuild_state(checkpoint, rows, apply=change_state):
+    lines = checkpoint.splitlines(keepends=True)
+    for row in rows:
+        lines = apply(lines, row["State change"], row["id"])
+    return [entry for _, entry in state_entries(lines)]
+
+
+class ProgressLogCommands(MailWorld):
     scripts = SCRIPTS
 
+    def progress(self, *args, cwd=None):
+        return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
+
+    def log(self, fields=FIELDS, cwd=None, handoff=None):
+        args = [arg for pair in fields.items() for arg in pair]
+        if handoff is not None:
+            args += ["--handoff", str(handoff)]
+        return self.progress(*args, cwd=cwd)
+
+    def next_action(self, *, discover=False, action=ACTION, state_key=None, handoff=None):
+        fields = {key: value for key, value in FIELDS.items() if key != "--state-change"}
+        fields["--next-action"] = action
+        if discover:
+            fields.update({"--task-project": PROJECT, "--source": REQUEST, "--outcome": OUTCOME})
+        else:
+            fields["--item"] = "KEN-1"
+        if state_key is not None:
+            fields["--state-key"] = state_key
+        return self.log(fields, handoff=handoff)
+
+
+class ProgressLog(ProgressLogCommands):
     def setUp(self):
         super().setUp()
         self.home = make_project(self.root / "home", overseer=False)
@@ -163,12 +192,6 @@ class ProgressLog(MailWorld):
         self.handoff.parent.mkdir()
         self.executable("date", "#!/bin/sh\necho " + STAMP + "\n")
 
-    def log(self, fields=FIELDS, cwd=None, handoff=None):
-        args = [arg for pair in fields.items() for arg in pair]
-        if handoff is not None:
-            args += ["--handoff", str(handoff)]
-        return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
-
     def action_world(self, issues=None, comments=None, mode=""):
         packages = self.root / "action-packages"
         scripts = packages / "jarvis/scripts"
@@ -176,10 +199,7 @@ class ProgressLog(MailWorld):
         guard = packages / "routing-guard.sh"
         if not scripts.exists():
             shutil.copytree(self.scripts, scripts)
-            sibling = packages / "linear/scripts/linear.sh"
-            sibling.parent.mkdir(parents=True)
-            sibling.write_text(LINEAR_ACTION)
-            sibling.chmod(0o755)
+            install_tracker(packages)
             # The function is shell-only. Keep the checkout's routing check
             # without loading auth or needing Linear's Bash for this stub.
             start = "\nrequire_agent_routing_label() {\n"
@@ -189,8 +209,8 @@ class ProgressLog(MailWorld):
             self.assertTrue(close)
             guard.write_text(start.lstrip() + body + close)
         self.scripts = scripts
-        self.action_store = self.root / "action-world.json"
-        self.action_trace = self.root / "action-calls"
+        self.action_store = self.root / "linear-world.json"
+        self.action_trace = self.root / "linear-calls"
         self.action_trace.write_text("")
         self.action_store.write_text(json.dumps({"project": PROJECT, "created": "KEN-2", "comment": COMMENT,
                                                  "bash": BASH,
@@ -201,19 +221,9 @@ class ProgressLog(MailWorld):
     def issue(self, item="KEN-1", title=OUTCOME, description=""):
         return {"id": item, "title": title, "description": description, "project_id": PROJECT}
 
-    def next_action(self, *, discover=False, action=ACTION, state_key=None):
-        fields = {key: value for key, value in FIELDS.items() if key != "--state-change"}
-        fields["--next-action"] = action
-        if discover:
-            fields.update({"--task-project": PROJECT, "--source": REQUEST, "--outcome": OUTCOME})
-        else:
-            fields["--item"] = "KEN-1"
-        if state_key is not None:
-            fields["--state-key"] = state_key
-        return self.log(fields)
-
     def action_calls(self, full=False):
-        return [tuple(call if full else call[:2]) for call in map(json.loads, self.action_trace.read_text().splitlines())]
+        return [tuple(args + refs if full else args[:2])
+                for args, refs in map(json.loads, self.action_trace.read_text().splitlines())]
 
     def assert_action(self, item, action, state_change):
         row, = json.loads(self.action_store.read_text())["comments"][item]
@@ -869,11 +879,7 @@ class ProgressLog(MailWorld):
                     suffix = '' if index == 0 else '-' + str(index + 1)
                     expected.append(entry + ' (record=P-20261018T230501Z' + suffix + ')\n')
                 actual = self.handoff.read_text()
-                replay = before.splitlines(keepends=True)
-                for record in records(actual):
-                    replay = change_state(replay, record['State change'], record['id'])
-                rebuilt = [entry for _, entry in state_entries(replay)]
-                self.assertEqual(rebuilt, expected)
+                self.assertEqual(rebuild_state(before, records(actual)), expected)
                 self.assertEqual([entry for _, entry in state_entries(actual.splitlines(keepends=True))], expected)
 
     def test_unwritable_and_subdirectory(self):
@@ -1112,13 +1118,13 @@ class ProgressLog(MailWorld):
         shutil.copytree(self.scripts, packages / "jarvis/scripts")
         (self.root / "linear-calls").unlink(missing_ok=True)
         if world is not None:
-            stub = packages / "linear/scripts/linear.sh"
-            stub.parent.mkdir(parents=True)
-            stub.write_text(LINEAR)
-            stub.chmod(0o755)
-            (self.root / "linear-world.json").write_text(json.dumps(
-                {"issues": {ref: [row[0] if len(row) == 3 else ref, *row[-2:]] for ref, row in world.get("issues", {}).items()},
-                 "missing": world.get("missing", []), "fail": world.get("fail", False)}))
+            install_tracker(packages)
+            issues = {}
+            for ref, row in world.get("issues", {}).items():
+                state, state_type = row[-2:]
+                issues[ref] = {"id": row[0] if len(row) == 3 else ref, "title": "",
+                               "state": state, "state_type": state_type}
+            (self.root / "linear-world.json").write_text(json.dumps({**world, "issues": issues}))
         args = ["--check-state"] + (["--handoff", str(handoff)] if handoff else [])
         result = self.command([sys.executable, "-B", packages / "jarvis/scripts/progress-log", *args], self.home)
         calls = self.root / "linear-calls"
@@ -1243,6 +1249,210 @@ class ProgressLog(MailWorld):
                 case.doCleanups()
 
 
+class ConsumerRecovery(ProgressLogCommands):
+    SELECTED = "state/predecessor.md"
+    SESSION = ("session=control", "Control holds review and has reported through C1:1791680510.123")
+    WAKE = ("wake=mail", "Wait for registered mailbox wake in run/mail")
+    ASK = ("ask=C1:1791680510.123", 'Await answer to "Should we ship today?"')
+    OPERATION = ("KEN-3", "Read run/child/result before resuming the operation without a receipt")
+    UNREAD = ("KEN-4", "Retry unavailable tracker read before acting")
+    PENDING = {"KEN-1": "Check the vendor receipt", "KEN-2": "Wait for the rollout approval"}
+    NEXT_ACTION = {("KEN-1", COMMENT): "Jarvis next action: " + ACTION + "\n"}
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name).resolve()
+        packages = self.root / ".agents/skills"
+        package = packages / "jarvis"
+        shutil.copytree(SCRIPTS.parent, package, ignore=shutil.ignore_patterns("tests", "__pycache__"))
+        self.scripts = package / "scripts"
+        self.tracker = install_tracker(packages)
+        self.store = self.root / "linear-world.json"
+        self.trace = self.root / "linear-calls"
+        self.home = self.root
+        self.env = {"HOME": str(self.root), "PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1",
+                    "GIT_CEILING_DIRECTORIES": str(self.root.parent)}
+        for name in ("CONFIG", "DATA", "STATE", "CACHE"):
+            self.env["XDG_" + name + "_HOME"] = str(self.root / name.lower())
+        self.package_paths = {str(path.relative_to(self.root)) for path in (package, *package.rglob("*"))}
+        self.handoffs = []
+        self.addCleanup(self.check_home)
+
+    def check_home(self):
+        allowed = self.package_paths.copy()
+        for path in [self.tracker, self.store, self.trace, *self.handoffs]:
+            while path != self.root:
+                allowed.add(str(path.relative_to(self.root)))
+                path = path.parent
+        inventory = {str(path.relative_to(self.root)): path for path in self.root.rglob("*")}
+        if self._testMethodName == "test_consumer_start_and_handoff":
+            files = sorted(name for name, path in inventory.items() if path.is_file())
+            print("Consumer home files: " + ", ".join(files), flush=True)
+        extra = inventory.keys() - allowed
+        self.assertFalse(extra, "Unexpected paths in the consumer home: " + ", ".join(sorted(extra)))
+        self.assertFalse([name for name, path in inventory.items() if path.is_symlink()],
+                         "Consumer home entries must not point outside the fixture")
+
+    def seed_tracker(self, pending):
+        state, state_type = OPEN
+        issues = {item: {"id": item, "title": title, "project_id": PROJECT,
+                         "state": state, "state_type": state_type} for item, title in pending.items()}
+        self.store.write_text(json.dumps({"project": PROJECT, "issues": issues, "comments": {},
+                                          "comment": COMMENT}))
+
+    def tracker_read(self, home, *args):
+        result = self.command([self.tracker, *args], home)
+        result.check_returncode()
+        return json.loads(result.stdout)
+
+    def handoff(self, home, selected, text):
+        path = home / selected
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        self.handoffs.append(path)
+        return path
+
+    def record_state(self, change, *, handoff=None, home=None, **observations):
+        result = self.log({**FIELDS, **observations, "--state-change": change}, cwd=home, handoff=handoff)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def predecessor(self, *, interrupted):
+        empty = state_handoff("")
+        default = self.handoff(self.home, "state/handoff.md", empty)
+        predecessor = self.handoff(self.home, self.SELECTED, empty)
+        self.seed_tracker({**self.PENDING, "KEN-3": "Resume the operation", "KEN-4": "Read tracker evidence"})
+        outcomes = [(self.SESSION, "retained"), (self.WAKE, "retained"), (self.ASK, "retained")]
+        if interrupted:
+            outcomes.extend([(self.OPERATION, "unread, no receipt"), (self.UNREAD, "unread, tracker unavailable")])
+        expected = {}
+        for (key, text), result in outcomes:
+            self.record_state(f"set State {key} {text}", handoff=self.SELECTED,
+                              **{"--operation": f"Retain {key}", "--result": result, "--decision": text})
+            saved = predecessor.read_text()
+            identity = records(saved)[-1]["id"]
+            expected[key] = f"- {key}: {text} (record={identity})\n"
+            if key == self.SESSION[0]:
+                first = identity
+                checkpoint = saved[:saved.index("## Progress log")]
+                checkpoint = checkpoint.replace("log none", f"log {first} through {first}") + "## Progress log\n\n"
+        result = self.next_action(handoff=self.SELECTED)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = predecessor.read_text()
+        self.assertEqual(default.read_text(), empty)
+        covered, *later = records(text)
+        self.assertEqual(covered["id"], first)
+        return empty, checkpoint, covered, later, text, expected
+
+    def replay_route(self, checkpoint, rows, apply, route):
+        entries = rebuild_state(checkpoint, rows, apply)
+        confirmed = {}
+        # progress-log records the tracker destination in Observed result and source.
+        prefix = "Tracker next action: "
+        for row in rows:
+            for line in row["Observed result and source"].splitlines():
+                if not line.startswith(prefix):
+                    continue
+                item, separator, receipt = line[len(prefix):].partition(" comment=")
+                if not (item and separator and receipt):
+                    continue
+                operation = f"{route} | tracker comments list {item} comment={receipt}"
+                try:
+                    comments = self.tracker_read(self.home, "comments", "list", item, "--format=safe")
+                except subprocess.CalledProcessError as error:
+                    print(f"{operation} | exit={error.returncode} {error.stderr.strip()}".rstrip(), flush=True)
+                    continue
+                except (OSError, subprocess.SubprocessError, ValueError) as error:
+                    print(f"{operation} | {error}", flush=True)
+                    continue
+                if not isinstance(comments, list) or any(
+                    not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
+                    or not isinstance(comment.get("body"), str) for comment in comments
+                ):
+                    print(f"{operation} | invalid tracker response", flush=True)
+                    continue
+                matches = [comment["body"] for comment in comments if comment["id"] == receipt]
+                if len(matches) == 1:
+                    confirmed[item, receipt] = matches[0]
+        return entries, confirmed
+
+    def assert_recovered(self, path, entries, expected, confirmed):
+        outcomes = {
+            "session and wake": all(expected[key] in entries for key in (self.SESSION[0], self.WAKE[0])),
+            "open ask": expected[self.ASK[0]] in entries,
+            "unfinished operation": expected[self.OPERATION[0]] in entries,
+            "unavailable tracker read": expected[self.UNREAD[0]] in entries,
+            "work next action": (confirmed == self.NEXT_ACTION
+                                 and not any("KEN-1" in entry for entry in entries)),
+        }
+        for name, recovered in outcomes.items():
+            print(f"{path} | {name} | {'recovered' if recovered else 'not-recovered'}", flush=True)
+        return [name for name, recovered in outcomes.items() if not recovered]
+
+    def test_consumer_start_and_handoff(self):
+        print("Scripted recovery only. This test does not run the model's prose steps. "
+              "Fixed fixture choices stand in for the model choosing a replay route, "
+              "judging whether an open item supplies a State entry, and writing records to their homes.", flush=True)
+        empty, checkpoint, covered, later, text, expected = self.predecessor(interrupted=True)
+        apply = runpy.run_path(str(self.scripts / "lib/progress.py"))["change_state"]
+        routes = (
+            ("cold Start", checkpoint, later),
+            ("hand-over", empty, [covered, *later]),
+        )
+        missing = []
+        for route, starting_state, rows in routes:
+            entries, confirmed = self.replay_route(starting_state, rows, apply, route)
+            missing.extend(f"{route}: {name}" for name in self.assert_recovered(route, entries, expected, confirmed))
+        self.assertEqual(missing, [])
+        self.assertEqual([entry for _, entry in state_entries(text.splitlines(keepends=True))], list(expected.values()))
+        # A failed live read in Start leaves the selected handoff available for retry.
+        world = json.loads(self.store.read_text())
+        self.store.write_text(json.dumps({**world, "fail": True}))
+        earlier_calls = len(self.trace.read_text().splitlines())
+        check = self.progress("--check-state", "--handoff", self.SELECTED)
+        self.assertEqual(check.returncode, 1, check.stderr)
+        calls = [json.loads(line) for line in self.trace.read_text().splitlines()[earlier_calls:]]
+        self.assertEqual(calls, [[BULK_GET, [self.OPERATION[0], self.UNREAD[0]]]], check.stderr)
+        cause, _, detail = check.stderr.strip().partition(" detail=")
+        self.assertEqual(cause, "progress-log: tracker-unavailable=exit-1", check.stderr)
+        self.assertEqual(json.loads(detail), {"error": "HTTP 503"})
+        self.assertTrue(any(line.startswith("progress-log: unread line=") and line.endswith(" ids=KEN-4")
+                            for line in check.stdout.splitlines()), check.stdout)
+        self.assertEqual((self.home / self.SELECTED).read_text(), text)
+
+    def test_consumer_migrated_pending_work(self):
+        self.seed_tracker(self.PENDING)
+        pending = []
+        for name in ("fresh", "migrated"):
+            home = self.root / name
+            legacy = "" if name == "fresh" else "".join(f"- {key}: {title}\n" for key, title in self.PENDING.items())
+            handoff = self.handoff(home, "state/handoff.md", state_handoff(legacy))
+            check = self.progress("--check-state", cwd=home)
+            self.assertEqual(check.returncode, 0, check.stderr)
+            self.assertIn(f"entries={len(self.PENDING) if legacy else 0} ", check.stdout)
+            items = self.tracker_read(home, "issues", "list", "--project-id", PROJECT,
+                                      "--include-archived", "--max", "--format=safe")
+            pending.append({item["id"]: item["title"] for item in items if item["state_type"] == OPEN[1]})
+            if name == "migrated":
+                for key in pending[-1]:
+                    self.record_state("remove State " + key, home=home)
+            self.assertEqual(state_entries(handoff.read_text().splitlines(keepends=True)), [],
+                             f"{name} home still has tracker work in State")
+        self.assertEqual(pending, [self.PENDING, self.PENDING])
+        print("Pending work in fresh and migrated homes: " + ", ".join(pending[0]) + " | no State pointers", flush=True)
+
+    def test_consumer_transfer_routes(self):
+        apply = runpy.run_path(str(self.scripts / "lib/progress.py"))["change_state"]
+        for scenario, interrupted in (("clean", False), ("interrupted", True)):
+            with self.subTest(transfer=scenario):
+                empty, checkpoint, covered, later, _, expected = self.predecessor(interrupted=interrupted)
+                ordinary = self.replay_route(checkpoint, later, apply, "checkpoint replay")
+                full = self.replay_route(empty, [covered, *later], apply, "full replay")
+                self.assertEqual(ordinary, full, f"{scenario} transfer: replay routes differ")
+                self.assertEqual(full, (list(expected.values()), self.NEXT_ACTION))
+                print(f"{scenario} transfer | checkpoint and full replay agree on State and tracker comments", flush=True)
+
+
 if __name__ == "__main__":
     os.umask(0o022)
-    unittest.main()
+    unittest.main(defaultTest="ProgressLog")
