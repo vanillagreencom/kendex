@@ -326,8 +326,8 @@ git -C "$SETTINGS_REPO" add -A
 git -C "$SETTINGS_REPO" commit -qm base
 SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
 assert_settings_ranges() {
-  local row file before after want base count ci_class ci_note
-  while IFS='|' read -r row file before after want; do
+  local row file before after want raw base count ci_class ci_note checker
+  while IFS='|' read -r row file before after want raw; do
     [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
     case "$row" in
       at-ceiling | over-ceiling)
@@ -343,11 +343,16 @@ assert_settings_ranges() {
       printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
       git -C "$SETTINGS_REPO" add -- kendex.toml
     fi
-    if [ "$row" = installed-map ]; then
-      mkdir -p "$SETTINGS_REPO/.agents/skills"
-      cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$SETTINGS_REPO/.agents/skills/bot-instructions"
-      git -C "$SETTINGS_REPO" add -- .agents/skills/bot-instructions
-    fi
+    case "$row" in
+      installed-map | checker-unusable | checker-refuses)
+        checker=.agents/skills/bot-instructions
+        mkdir -p "$SETTINGS_REPO/.agents/skills"
+        cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$SETTINGS_REPO/$checker"
+        if [ "$row" = checker-unusable ]; then
+          chmod -x "$SETTINGS_REPO/$checker/scripts/bot-instructions"
+        fi
+        git -C "$SETTINGS_REPO" add -- "$checker" ;;
+    esac
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
@@ -362,8 +367,11 @@ assert_settings_ranges() {
       printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\nORDINARY = "new"\n' >"$SETTINGS_REPO/$file"
     fi
     assert_eq "settings range: $row" "$want rc=0" \
-      "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
-    if [ "$row" = installed-map ]; then
+      "$(ARM_RAW="${raw:-false}" run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
+    if [ "$row" = checker-refuses ]; then
+      assert_eq "launch relays the installed checker's findings" reported \
+        "$(if grep -qE '^bot-instructions: findings=[1-9][0-9]*$' "$SANDBOX/arm.err"; then echo reported; fi)"
+    elif [ "$row" = installed-map ]; then
       ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/manifest-ci.err")"
       assert_eq "the installed checker keeps the consumer manifest CI floor" "change_class=small" "$ci_class"
     elif [ "$row" = standalone-consumer ]; then
@@ -383,7 +391,14 @@ local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema =
 map-entry-added|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
 map-entry-removed|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|schema = 8\n[skill-instructions]\nall = "Be concise."|micro cause=settings-only
 local-map|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = 'Use the project map.'|schema = 8\n[skill-instructions]\nproject-management = 'Use the updated project map.'|micro cause=settings-only
+beside-basic|kendex.toml|schema = 8\n[agent-additional-instructions]\nall = """\nRead the local rules.""" # end\n[skill-instructions]\nall = "Be concise."|schema = 8\n[agent-additional-instructions]\nall = """\nRead the local rules.""" # end\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
+beside-literal|kendex-local.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = '''\n### React\n[other]\nORDINARY = "old"\n'''\nproject-management = "Use the project map."|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = '''\n### React\n[other]\nORDINARY = "old"\n'''|micro cause=settings-only
+separate-hunks|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = "Use consistent names."|schema = 8\n[skill-instructions]\ncode-quality = "Use consistent names."\nproject-management = "Use the project map."|standard cause=configuration-source
+two-map-lines|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = "Use consistent names."|schema = 8\n[skill-instructions]\nall = "Be specific."\ncode-quality = "Use clear names."|standard cause=configuration-source
 installed-map|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
+checker-unusable|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Use plain language."|change_class=standard class=standard measured=false delta=- cause=bot-instructions-unread side=base detail=checker-unusable|true
+checker-refuses|kendex.toml|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Be concise."|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Use plain language."|standard cause=bot-instructions-render
+source-catalog-map|kendex.toml|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Be concise."|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Use plain language."|standard cause=source-catalog
 multiline-heading|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React conventions\n'''|standard cause=configuration-source
 multiline-assignment|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "old"\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "new"\n'''|standard cause=configuration-source
 multiline-array|kendex.toml|schema = 8\n[install]\nharnesses = [\n  "codex",\n]|schema = 8\n[install]\nharnesses = [\n  "claude",\n]|standard cause=configuration-source

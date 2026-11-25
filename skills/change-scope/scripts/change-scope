@@ -22,8 +22,8 @@
 # endpoints prove edits to ordinary assignments in existing regular files.
 # HARNESS_CI_*, ORCH_SIZE_* and is_source_catalog are protected. A range
 # editing one line of kendex.toml or kendex-local.toml can also take micro
-# if that line is a plain string entry in [skill-instructions]. Both
-# endpoints must be free of multiline string delimiters. A Location keeps its own
+# if that line is a plain string entry in [skill-instructions] and all
+# multiline content stays byte-identical. A Location keeps its own
 # class. A names-only inventory change under rendered roots is left to the classifier,
 # which answers standard for a range that adds a catalog source (its render
 # proof owns no catalog source) and reads a removal by its size, while a
@@ -277,8 +277,8 @@
 # side=base|head, manifest-not-regular, manifest-unreadable, source-catalog,
 # bot-instructions-render, where that check reported findings, or
 # bot-instructions-unread, where it could not answer, with
-# detail=checkout-failed or detail=checker-absent where the base's copy
-# could not be run.
+# detail=checkout-failed, detail=checker-absent, detail=checker-unreadable
+# or detail=checker-unusable where the base's copy could not be run.
 # A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
@@ -445,35 +445,62 @@ settings_scan() { # FILE RESIDUE [launch|manifest]
     # shellcheck source=lib/kendex-env.sh
     . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
     : >"$2" && : >"$2.read" || exit 1
-    section="" seen=" "
+    section="" seen=" " delimiter=""
     while :; do
       newline=$'\n'
       IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
       printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
       kendex_trim trimmed "${line%$'\r'}"
-      case "$trimmed" in
-        '' | '#'*) [ "${3:-}" = manifest ] || continue ;;
-        '['*) section="$trimmed" ;;
-        *=*)
-          kendex_trim key "${trimmed%%=*}"
-          if [ "${3:-}" = manifest ] && [ "$section" = '[skill-instructions]' ]; then
-            # Quoted or dotted keys can alias a bare key. A table using
-            # those forms is outside this one-line proof.
-            [[ "$key" =~ ^[A-Za-z0-9_-]+$ && "$seen" != *" $key "* ]] &&
-              kendex_decode_value value "${trimmed#*=}" || exit 3
-            seen="$seen$key "
-            continue
-          fi
-          if [ "$section" = '[env]' ] &&
-            { { [ "$#" -eq 2 ] && settings_key_admitted "$key"; } ||
-              { [ "${3:-}" = launch ] && launch_key_admitted "$key"; }; }; then
-            printf '%s\n' "$key" >&3
-            continue
-          fi ;;
-      esac
+      content="$trimmed"
+      if [ -z "$delimiter" ]; then
+        case "$trimmed" in
+          '' | '#'*) [ "${3:-}" = manifest ] || continue ;;
+          '['*) section="$trimmed" ;;
+          *=*)
+            kendex_trim key "${trimmed%%=*}"
+            if [ "${3:-}" = manifest ]; then
+              kendex_trim content "${trimmed#*=}"
+              case "$content" in
+                '"""'* | "'''"*)
+                  delimiter="${content:0:3}"
+                  content="${content:3}" ;;
+              esac
+              if [ "$section" = '[skill-instructions]' ]; then
+                # Quoted or dotted keys can alias a bare key.
+                [[ "$key" =~ ^[A-Za-z0-9_-]+$ && "$seen" != *" $key "* ]] || exit 3
+                seen="$seen$key "
+                if [ -z "$delimiter" ]; then
+                  kendex_decode_value value "$content" || exit 3
+                  continue
+                fi
+              fi
+            elif [ "$section" = '[env]' ] &&
+              { { [ "$#" -eq 2 ] && settings_key_admitted "$key"; } ||
+                { [ "${3:-}" = launch ] && launch_key_admitted "$key"; }; }; then
+              printf '%s\n' "$key" >&3
+              continue
+            fi ;;
+        esac
+        if [ "${3:-}" = manifest ] && [ -z "$delimiter" ]; then
+          case "$trimmed" in '' | '#'*) ;; *'"""'* | *"'''"*) exit 3 ;; esac
+        fi
+      fi
+      if [ -n "$delimiter" ] && [[ "$content" == *"$delimiter"* ]]; then
+        # Resume only at a proven closing delimiter. In a basic string a
+        # backslash can make a quote content, so refuse that boundary.
+        if [ "$delimiter" = '"""' ] && [[ "${content%%"$delimiter"*}" == *\\ ]]; then
+          exit 3
+        fi
+        closing_quote="${delimiter:0:1}"
+        tail="${content#*"$delimiter"}"
+        tail="${tail#"$closing_quote"}"
+        kendex_trim tail "${tail#"$closing_quote"}"
+        case "$tail" in '' | '#'*) delimiter="" ;; *) exit 3 ;; esac
+      fi
       [ "${3:-}" = manifest ] || newline=$'\n'
       printf '%s%s' "$line" "$newline" >>"$2" || exit 1
     done <"$1"
+    [ -z "$delimiter" ] || exit 3
     status=0
     cmp -s -- "$1" "$2.read" || status=$?
     case "$status" in
@@ -528,17 +555,19 @@ settings_file_admitted() { # PATH [launch|manifest]
     }
     [ "$#" -eq 1 ] || [ "$side" = base ] || [ "$mode" = "$REV_FILE_MODE" ] || return 1
     mode="$REV_FILE_MODE"
-    status=0
-    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
-    case "$status" in
-      0)
-        settings_note "cause=multiline-string path=$1 side=$side"
-        return 1 ;;
-      1) ;;
-      *)
-        settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
-        return 1 ;;
-    esac
+    if [ "${2:-}" != manifest ]; then
+      status=0
+      grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+      case "$status" in
+        0)
+          settings_note "cause=multiline-string path=$1 side=$side"
+          return 1 ;;
+        1) ;;
+        *)
+          settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
+          return 1 ;;
+      esac
+    fi
     status=0
     settings_scan "$work/settings-$side" "$work/settings-residue-$side" "${@:2}" \
       >>"$work/settings-keys" || status=$?
@@ -623,7 +652,7 @@ ceiling() { # KEY
 # Reuse the classifier's regular-file and changed-key proof for launch.
 # The PR's base tip owns its exclusions even when its merge base is older.
 launch_settings_range() ( # BASE HEAD REPO WORK
-  local base="$1" head="$2" repo="$3" work="$4" path limit numstat added removed lines=0
+  local base="$1" head="$2" repo="$3" work="$4" path limit numstat added removed lines=0 hunks
   local base_rev head_rev="$2" changed="" mode=launch settings_paths="${BASE_SETTINGS_FILES// /$'\n'}"
   settings_paths+=$'\nkendex.toml\nkendex-local.toml'
   while IFS= read -r -d '' path; do
@@ -659,6 +688,15 @@ launch_settings_range() ( # BASE HEAD REPO WORK
     [ "$mode" != manifest ] || { [ "$added" -le 1 ] && [ "$removed" -le 1 ]; } || return 1
     lines=$((lines + added))
   done <<<"$numstat"
+  if [ "$mode" = manifest ]; then
+    if ! hunks="$(git -C "$repo" diff --unified=0 --inter-hunk-context=0 --no-ext-diff \
+        --no-textconv --no-renames "$base_rev" "$head_rev" -- "$changed" |
+        awk '/^@@ / { count++ } END { print count+0 }')"; then
+      configuration_unread "cause=settings-hunks-unreadable path=$changed"
+      return 1
+    fi
+    [ "$hunks" -eq 1 ] || return 1
+  fi
   [ "$lines" -le "$limit" ]
 )
 
@@ -680,7 +718,7 @@ launch_unread_configuration() { # STDERR_FILE
 # wider, so a ranked class below micro reads as micro; an unranked one reaches
 # launch_consider, which refuses it.
 launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
-  local class rule
+  local class rule refusal
   if ! change_scope_read "$1" "$2" "$3" "$4"; then
     # The classifier's own cause, which the detail cannot carry.
     [ ! -s "$4" ] || cat -- "$4" >&2
@@ -695,15 +733,22 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
     if launch_unread_configuration "$4"; then
       return 0
     fi
-    # A consumer without the optional checker still has a launch proof.
-    # An installed check that failed or could not run keeps its refusal.
-    if awk '/^manifest-admission: admitted=false / &&
-        ! /cause=bot-instructions-unread side=base detail=checker-absent$/ &&
-        ! /cause=source-catalog side=(base|head)$/ { refused=1 }
-        END { exit refused }' "$4"; then
-      launch_consider micro settings-only
-      return 0
+    if ! refusal="$(sed -n 's/^manifest-admission: admitted=false cause=//p' "$4")"; then
+      launch_consider standard configuration-evidence-unreadable unmeasured
+    else
+      case "$refusal" in
+        '' | 'bot-instructions-unread side=base detail=checker-absent')
+          launch_consider micro settings-only ;;
+        *)
+          sed '/^class: /d; /^quick-proof: /d' "$4" >&2
+          case "$refusal" in
+            bot-instructions-unread\ * | manifest-unreadable\ *)
+              launch_consider standard "$refusal" unmeasured ;;
+            *) launch_consider standard "$refusal" ;;
+          esac ;;
+      esac
     fi
+    return 0
   fi
   if change_scope_rank "$class" && ! change_scope_floor "$class"; then
     class=micro
@@ -1289,16 +1334,35 @@ manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
 # a branch cannot choose the code that judges its manifest.
 MANIFEST_CHECKER=""
 manifest_checker() {
-  local tree="$work/manifest-checker" log="$work/manifest-checker-log"
+  local tree="$work/manifest-checker" log="$work/manifest-checker-log" status=0 installed
+  local package=.agents/skills/bot-instructions
+  rev_file "$base_rev" "$package/scripts/bot-instructions" "$work/checker-blob" || status=$?
+  if [ "$status" -eq 2 ]; then
+    # A missing executable within a tracked package is an incomplete install.
+    if ! installed="$(git -C "$repo" ls-tree "$base_rev" -- "$package")"; then
+      status=1
+    elif [ -z "$installed" ]; then
+      manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
+      return 1
+    fi
+  fi
+  if [ "$status" -eq 1 ]; then
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-unreadable"
+    return 1
+  fi
+  if [ "$status" -ne 0 ] || [ "$REV_FILE_MODE" != 100755 ]; then
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-unusable"
+    return 1
+  fi
   if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
     cat -- "$log" >&2 2>/dev/null || true
     manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed"
     return 1
   fi
-  MANIFEST_CHECKER="$tree/.agents/skills/bot-instructions"
+  MANIFEST_CHECKER="$tree/$package"
   if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
     [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-unusable"
     return 1
   fi
 }
