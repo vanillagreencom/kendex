@@ -210,7 +210,7 @@ A request's `over_cap` admits one deliberate launch past its cap; the record kee
 
 ## Tmux session
 
-Every lane window opens in one session on the fleet's tmux server: the one `AGENT_RUNTIME_TMUX_SESSION` names, else the fleet state's `tmux.session`, which the first confirmed launch records.
+Every lane window opens in one session on the fleet's tmux server. The launch uses `AGENT_RUNTIME_TMUX_SESSION` when set, then falls back to the fleet state's `tmux.session`. A confirmed controller start or lane launch fills an absent `tmux.session` and preserves an existing value.
 
 - If no tmux server answers on the controller record's `server_socket`, as after a restart, the launch starts one there and makes that session in it. It first makes the socket's directory, mode `0700`, where it is gone.
 - On any other socket, such as a caller's own `$TMUX`, a launch where no server listens refuses `tmux-server-absent`.

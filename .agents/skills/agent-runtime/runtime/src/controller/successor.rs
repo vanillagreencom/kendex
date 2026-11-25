@@ -19,7 +19,9 @@ use crate::accounts::wall::canon;
 use crate::accounts::{Env, PickAnswer, PickRequest};
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+use crate::intent::EffectOp;
 use crate::launch::Permission;
+use crate::protocol::Outcome;
 use crate::record;
 use crate::settings::{CONTROLLER_PREFERENCE_KEY, ControllerSettings, Judged, LaunchSettings};
 
@@ -330,14 +332,18 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
             )
         })?;
     if successor.account.is_none()
-        && matches!(record.harness, Some(Harness::Claude | Harness::Codex))
+        && let Some(home) = Caller::of(&record).home
     {
-        // The native session belongs to the home the original launch used.
-        successor.home = record
-            .raw
-            .get("home")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        match record.harness {
+            Some(Harness::Claude) => {
+                if let Some(implicit) = claude_home_mode(path, &doc, &record, &id, &home)? {
+                    successor.home = Some(home);
+                    successor.home_implicit = implicit;
+                }
+            }
+            Some(Harness::Codex) => successor.home = Some(home),
+            Some(Harness::Copilot | Harness::Pi) | None => {}
+        }
     }
     if record.harness == Some(Harness::Pi) {
         // The Pi root the launch runs on: the account where its variable is
@@ -368,6 +374,45 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     }
     successor.resume = Some(id);
     Ok(json!({"successor": successor}))
+}
+
+/// A path under HOME can be named explicitly. Only the launch that published
+/// this controller can distinguish that case from the implicit default.
+fn claude_home_mode(
+    path: &Path,
+    doc: &record::Document,
+    record: &Record,
+    id: &str,
+    home: &str,
+) -> Result<Option<bool>> {
+    let Some(predecessor) = record
+        .generation
+        .and_then(|generation| generation.checked_sub(1))
+    else {
+        return Ok(None);
+    };
+    let target = super::transition::overseer_target(predecessor);
+    Ok(crate::journal::intents(path, doc)?
+        .into_iter()
+        .rev()
+        .find_map(|intent| {
+            if !matches!(
+                intent.op,
+                EffectOp::StartController | EffectOp::RequestTransfer
+            ) || intent.outcome != Outcome::Confirmed
+                || intent.reconciled.is_some()
+                || intent.target != target
+            {
+                return None;
+            }
+            let opened = intent.phase.as_ref()?.opened()?;
+            (opened.pane == record.pane
+                && opened.server == record.server
+                && Some(opened.server_start) == record.server_start
+                && opened.home.as_deref() == Some(home)
+                && opened.session_id.as_deref() == Some(id))
+            .then_some(opened.home_implicit)
+        }))
 }
 
 /// The controller member of the record at `path` as the choice reads it;

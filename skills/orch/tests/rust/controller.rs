@@ -8690,35 +8690,84 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
 
 #[test]
 fn a_controller_start_records_the_session_for_resume_without_a_lane() {
-    resume_started_controller(false);
+    resume_started_controller(ResumeHome::Account);
 }
 
 #[test]
 fn an_accountless_controller_resumes_in_its_recorded_home() {
-    resume_started_controller(true);
+    for mode in [
+        ResumeHome::Implicit,
+        ResumeHome::Named,
+        ResumeHome::NamedDefault,
+        ResumeHome::Legacy,
+    ] {
+        resume_started_controller(mode);
+    }
 }
 
-fn resume_started_controller(accountless: bool) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeHome {
+    Account,
+    Implicit,
+    Named,
+    NamedDefault,
+    Legacy,
+}
+
+fn resume_started_controller(mode: ResumeHome) {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-resume");
     runner.init_fleet();
     let (bin, watch_env) = watch_world(runner.state_dir());
     runner.tools = Some(bin);
+    let login_home = dir.path().join("home");
+    std::fs::create_dir(&login_home).unwrap();
+    for (key, subdir) in [
+        ("HOME", ""),
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_STATE_HOME", "state"),
+        ("XDG_CACHE_HOME", "cache"),
+    ] {
+        let value = login_home.join(subdir);
+        runner
+            .env
+            .push((key.to_owned(), value.display().to_string()));
+        let set = tmux(
+            &server.socket,
+            &["set-environment", "-g", key, value.to_str().unwrap()],
+        );
+        assert!(set.status.success(), "{}", stderr(&set));
+    }
     let cwd = runner.state_dir();
     let state = cwd.join(agent_runtime::record::FLEET_FILE_NAME);
     let brief = cwd.join("brief.md");
     std::fs::write(&brief, "START HERE\n").unwrap();
     let mut controller = pending(cwd);
-    let home = if accountless {
+    let home = match mode {
+        ResumeHome::Account => cwd.to_path_buf(),
+        ResumeHome::Named => cwd.join("native-home"),
+        ResumeHome::Implicit | ResumeHome::NamedDefault | ResumeHome::Legacy => {
+            login_home.join(".claude")
+        }
+    };
+    let named = matches!(
+        mode,
+        ResumeHome::Account | ResumeHome::Named | ResumeHome::NamedDefault
+    );
+    if mode != ResumeHome::Account {
         // Isolate the native-home regression from session persistence.
         let mut fleet = runner.fleet();
         fleet["tmux"] = json!({"session": "fleet"});
         runner.write_fleet(&fleet);
         controller.as_object_mut().unwrap().remove("account");
         controller.as_object_mut().unwrap().remove("home");
-        let home = cwd.join("native-home");
         std::fs::create_dir(&home).unwrap();
+    } else {
+        assert!(runner.fleet().get("tmux").is_none());
+    }
+    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
         let set = tmux(
             &server.socket,
             &[
@@ -8729,11 +8778,7 @@ fn resume_started_controller(accountless: bool) {
             ],
         );
         assert!(set.status.success(), "{}", stderr(&set));
-        home
-    } else {
-        assert!(runner.fleet().get("tmux").is_none());
-        cwd.to_path_buf()
-    };
+    }
 
     let run = |args: &[&str]| {
         let mut command = isolated();
@@ -8768,19 +8813,44 @@ fn resume_started_controller(accountless: bool) {
     ]));
     assert_eq!(started["intent"]["outcome"], "confirmed", "{started}");
     stop_live_watch(&runner, &state);
-    let before = runner.fleet();
+    let mut before = runner.fleet();
+    if mode == ResumeHome::Legacy {
+        // An adopted controller has no recorded start or transfer phase.
+        before["intents"] = json!([]);
+        runner.write_fleet(&before);
+    }
     let original = &before["controller"];
     let pane = original["pane"].as_str().unwrap();
     let id = original["session_id"].as_str().unwrap();
-    assert_eq!(original["home"], json!(home));
+    assert_eq!(original["home"], json!(home), "{mode:?}");
     let file = project_dir(&home, cwd).join(format!("{id}.jsonl"));
+    let latest_config_dir_value = || {
+        let rows = std::fs::read_to_string(&file).unwrap();
+        let latest: Value = serde_json::from_str(rows.lines().last().unwrap()).unwrap();
+        latest["configDirSet"].clone()
+    };
     assert_eq!(file_turns(&file), ["START HERE"]);
-    if accountless {
+    assert_eq!(latest_config_dir_value(), named, "{mode:?}");
+    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
         let unset = tmux(
             &server.socket,
             &["set-environment", "-gu", "CLAUDE_CONFIG_DIR"],
         );
         assert!(unset.status.success(), "{}", stderr(&unset));
+    }
+    if mode == ResumeHome::Implicit {
+        let other_home = cwd.join("new-config");
+        std::fs::create_dir(&other_home).unwrap();
+        let set = tmux(
+            &server.socket,
+            &[
+                "set-environment",
+                "-g",
+                "CLAUDE_CONFIG_DIR",
+                other_home.to_str().unwrap(),
+            ],
+        );
+        assert!(set.status.success(), "{}", stderr(&set));
     }
     // Keep the session standing when its controller's only window closes.
     server.open_window("shell", cwd, pane_shell());
@@ -8795,7 +8865,7 @@ fn resume_started_controller(accountless: bool) {
     assert_eq!(
         out.status.code(),
         Some(0),
-        "{} {}",
+        "{mode:?}: {} {}",
         String::from_utf8_lossy(&out.stdout),
         stderr(&out)
     );
@@ -8819,6 +8889,7 @@ fn resume_started_controller(accountless: bool) {
     );
     assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "fleet");
     assert_eq!(file_turns(&file).len(), 2);
+    assert_eq!(latest_config_dir_value(), named, "{mode:?}");
 }
 
 /// The compare-and-swap set of `record`, with no pending standing.

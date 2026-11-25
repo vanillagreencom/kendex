@@ -352,7 +352,7 @@ fn kept(
 ) -> Option<Kept> {
     let home = pending.home.as_deref().map(|home| Kept {
         home: PathBuf::from(home),
-        named: true,
+        named: harness != Harness::Claude || !pending.home_implicit,
     });
     match (harness, pending.account.is_some()) {
         (Harness::Pi, _) => accountless_kept(&settings.inherited(), harness, home, served),

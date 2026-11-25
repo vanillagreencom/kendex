@@ -304,6 +304,7 @@ pub(super) fn successor() -> Pending {
         harness: Some("codex".into()),
         account: Some("/a/c2".into()),
         home: Some("/a/c2".into()),
+        home_implicit: false,
         model: Some("gpt-5.5-codex".into()),
         effort: Some("high".into()),
         cwd: Some("/r".into()),

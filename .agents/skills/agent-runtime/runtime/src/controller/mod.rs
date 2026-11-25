@@ -68,6 +68,9 @@ pub struct Pending {
     pub account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// A Claude resume on its implicit default clears the home variable.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
