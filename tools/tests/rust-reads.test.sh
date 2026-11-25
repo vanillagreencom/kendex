@@ -57,6 +57,10 @@ impl Gated {
     }
 }
 const AFTER: &str = include_str!("../../../after-literal.txt");
+mod comment_carry;
+mod string_carry;
+mod raw_carry;
+mod escape_carry;
 
 // This test module follows UTF-8 text — 東京・大阪・京都 — 🍣 and 🦀.
 // The module still starts on the same line boundary as an ordinary test.
@@ -64,6 +68,45 @@ const AFTER: &str = include_str!("../../../after-literal.txt");
 mod unicode_tests;
 RS
   printf 'const FIXTURE: &str = include_str!("../../../unicode-test-only.txt");\n' >"$W/crates/demo/src/unicode_tests.rs"
+  # Each holds a test-gated item with an unclosed brace inside a comment or
+  # literal that spans lines, then a production include the item would mask
+  # were it read as code.
+  cat >"$W/crates/demo/src/comment_carry.rs" <<'RS'
+impl S {
+    /* outer /* inner */
+    #[cfg(test)]
+    fn old() {
+    */
+    pub fn live() -> &'static str { include_str!("../../../after-comment.txt") }
+}
+RS
+  cat >"$W/crates/demo/src/string_carry.rs" <<'RS'
+impl S {
+    const OLD: &str = "
+    #[cfg(test)]
+    fn old() {
+    ";
+    pub fn live() -> &'static str { include_str!("../../../after-string.txt") }
+}
+RS
+  cat >"$W/crates/demo/src/raw_carry.rs" <<'RS'
+impl S {
+    const OLD: &str = r#"
+    #[cfg(test)]
+    fn old() { "
+    "#;
+    pub fn live() -> &'static str { include_str!("../../../after-raw.txt") }
+}
+RS
+  cat >"$W/crates/demo/src/escape_carry.rs" <<'RS'
+impl S {
+    const OLD: &str = "a\
+    #[cfg(test)]
+    fn old() {\
+";
+    pub fn live() -> &'static str { include_str!("../../../after-escape.txt") }
+}
+RS
   printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2024"\n' >"$W/crates/demo/Cargo.toml"
   printf '[workspace]\nmembers = ["crates/*"]\nresolver = "2"\n' >"$W/Cargo.toml"
   mkdir -p "$W/crates/cli/src" "$W/crates/cli/tests"
@@ -77,9 +120,10 @@ demo = { path = "../demo" }
 TOML
   printf 'fn main() {}\n' >"$W/crates/cli/src/main.rs"
   printf '#[test]\nfn smoke() {}\n' >"$W/crates/cli/tests/cli_smoke.rs"
-  touch "$W/after-struct.txt" "$W/after-literal.txt" "$W/test-only.txt" "$W/unicode-test-only.txt"
+  touch "$W/after-struct.txt" "$W/after-literal.txt" "$W/test-only.txt" "$W/unicode-test-only.txt" \
+    "$W/after-comment.txt" "$W/after-string.txt" "$W/after-raw.txt" "$W/after-escape.txt"
   scoped="$("$READS" --cli-smoke --ci-targets "$W")" || { bad "checkout field reads are readable"; return; }
-  for path in after-struct.txt after-literal.txt; do
+  for path in after-struct.txt after-literal.txt after-comment.txt after-string.txt after-raw.txt after-escape.txt; do
     if grep -qxF $'checkout-include\t'"$path" <<<"$scoped"; then
       ok "checkout keeps the production include in $path"
     else
