@@ -471,10 +471,13 @@ for phase, expected in (
     # The runner owns the TERM trap this row reads, so its hold ignores TERM:
     # the signal stays pending in the runner until the parent releases the
     # hold, the worst order a hold entered around the signal can take. The
-    # pool call holds, not the .test.mjs suite's direct run before it.
+    # pool call holds, not the .test.mjs suite's direct run before it. The
+    # hold names its pid before it opens the FIFO, so the parent ends it with
+    # KILL once TERM is sent: the stop then rests on the runner's handling of
+    # TERM alone, not on the hold seeing the FIFO's end of file.
     marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
     assert text.count(marker) == 1
-    text = text.replace(marker, 'case "$*" in --battery*) sh -c \'trap "" TERM; read -r line < "$FIFO"\' ;; esac\n' + marker)
+    text = text.replace(marker, 'case "$*" in --battery*) sh -c \'trap "" TERM; echo $$ > "$FIFO.pid"; read -r line < "$FIFO"\' ;; esac\n' + marker)
   runner.write_text(text)
   env = dict(os.environ, DEV_VALIDATE_SCOPED="true", FIFO=str(fifo), PHASE=phase,
              PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
@@ -495,10 +498,23 @@ for phase, expected in (
             assert time.monotonic() < deadline, "phase hold deadline"
             time.sleep(0.01)
     os.killpg(process.pid, signal.SIGTERM)
+    if phase == "loading":
+        # The open writer keeps the hold blocked on the FIFO, so this pid is
+        # still the hold's and no other process can have taken it.
+        os.kill(int(Path(str(fifo) + ".pid").read_text()), signal.SIGKILL)
     os.close(writer)
     writer = None
     # The row asserts the cancelled output and exit code, not the stop time, so a loaded runner gets a margin.
-    output, _ = process.communicate(timeout=grace + 20)
+    try:
+        output, _ = process.communicate(timeout=grace + 20)
+    except subprocess.TimeoutExpired as error:
+        # Name what outlived the stop, so a recurrence shows which process held it.
+        table = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,command="],
+                               capture_output=True, text=True).stdout.splitlines()
+        alive = [row for row in table if row.split()[2:3] == [str(process.pid)]]
+        seen = error.output.decode() if isinstance(error.output, bytes) else error.output or ""
+        raise AssertionError("stop outlived %ss in %s; alive:\n%s\noutput:\n%s"
+                             % (error.timeout, phase, "\n".join(alive), seen)) from None
     assert process.returncode == 143, output
     selected = [line.removeprefix("guard-note: selected-suite=") for line in output.splitlines()
                 if line.startswith("guard-note: selected-suite=")]
