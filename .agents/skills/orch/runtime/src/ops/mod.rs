@@ -1622,6 +1622,42 @@ mod tests {
     }
 
     #[test]
+    fn a_launch_refuses_a_moved_fleet_record_and_keeps_the_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let mut doc = object(&path);
+        doc["lanes"][0]["status"] = LaneStatus::Stopped.word().into();
+        fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let reservation = state::Reservation {
+            reason: "keep the slot".into(),
+            until: "2026-01-29T16:20:00Z".into(),
+        };
+        let reserve = std::cell::Cell::new(Some(Request::ReserveLane(ReserveLane {
+            item: "KEN-4437".into(),
+            reason: reservation.reason.clone(),
+            until: reservation.until.clone(),
+        })));
+        // A reservation can commit while the launch holds its launch lock.
+        let refused = apply_interleaved(
+            &path,
+            &launch("KEN-4468"),
+            &env(),
+            LOCK,
+            Some(&host()),
+            &|| {
+                if let Some(request) = reserve.take() {
+                    run(&path, &request).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(refused.key(), "record-changed");
+        let stored = fleet(&path);
+        assert_eq!(stored.lanes[0].reservation, Some(reservation));
+        assert!(stored.intents.is_empty());
+    }
+
+    #[test]
     fn a_directive_settlement_cannot_follow_a_replaced_owed_record() {
         use mail::{Credit, DirectiveSend, DirectiveWrite, RecordDirectiveSend, SendResult, Word};
 
