@@ -98,9 +98,19 @@ impl RunFile {
             (_, Some(StageOutcome::Pass)) => Ok("pass"),
             (_, Some(StageOutcome::NoVerdict | StageOutcome::Stopped)) => Ok("no-verdict"),
             (_, Some(_)) => Ok("FAILING"),
-            (false, None) if lost(self, false)? => Ok("FAILING"),
+            (false, None) if lost(self, false)? => Ok(self.lost_verdict()),
             (false, None) => Ok("unfinished"),
             (true, None) => Err(unreadable("sentinel-unreadable", self.dir.display())),
+        }
+    }
+    /// The verdict of a run that ended with no sentinel: a stop the stop
+    /// file records ended it, as the stage's close reads it `stopped`, or
+    /// nothing did and it failed.
+    fn lost_verdict(&self) -> &'static str {
+        if self.stopped {
+            "no-verdict"
+        } else {
+            "FAILING"
         }
     }
     pub fn selection(&self) -> Result<(Option<String>, String)> {
@@ -540,13 +550,18 @@ fn holds(run: &RunFile, strict: bool) -> Result<Option<u32>> {
     }
 }
 
-/// Whether a run that wrote no sentinel is lost: no work holds it, and its
-/// executor claimed it (`execution`) or its launch grace has passed. A
-/// start, `--wait` and `--record` read such a run here alike; `--record`
-/// reads no clock, so a run its executor never claimed stays unfinished
-/// there.
+/// Whether a run that wrote no sentinel is lost: no work holds it, no
+/// sentinel has landed since `run` was read, and its executor claimed it
+/// (`execution`) or its launch grace has passed. `--wait` and `--record`
+/// read such a run here alike; `--record` reads no clock, so a run its
+/// executor never claimed stays unfinished there.
 fn lost(run: &RunFile, past_grace: bool) -> Result<bool> {
     if holds(run, false)?.is_some() {
+        return Ok(false);
+    }
+    // An executor that wrote its sentinel and exited after `run` was read
+    // holds nothing now: the run ended with its verdict.
+    if fs::metadata(run.dir.join("exit")).is_ok_and(|m| m.len() > 0) {
         return Ok(false);
     }
     if past_grace {
@@ -623,16 +638,18 @@ fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String,
             String::new()
         };
         if lost(&run, elapsed >= poll.max(10))? {
-            if fs::metadata(run_dir.join("exit")).is_ok_and(|m| m.len() > 0) {
-                continue;
-            }
-            return Ok((
-                format!(
+            let line = match run.lost_verdict() {
+                "FAILING" => format!(
                     "state=lost elapsed-secs={elapsed} validate=FAILING run-dir={}{log}",
                     run_dir.display()
                 ),
-                1,
-            ));
+                verdict => format!(
+                    "state=done stopped validate={verdict} run-dir={} log={}/log",
+                    run_dir.display(),
+                    run_dir.display()
+                ),
+            };
+            return Ok((line, 1));
         }
         if clock.now() >= call {
             return Ok((

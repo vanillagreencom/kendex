@@ -1064,9 +1064,11 @@ fn send_and_mark(
     )?;
     Ok(match marked {
         Validated::Mark(m) => m.owner,
-        Validated::Start(_) | Validated::Launch(_) | Validated::End(_) | Validated::Stop(_) => {
-            String::new()
-        }
+        Validated::Settle(_)
+        | Validated::Start(_)
+        | Validated::Launch(_)
+        | Validated::End(_)
+        | Validated::Stop(_) => String::new(),
     })
 }
 

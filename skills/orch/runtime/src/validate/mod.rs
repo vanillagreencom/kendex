@@ -15,7 +15,9 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::ops::validate::{RecordEnd, RecordLaunch, RecordStart, Validate, Validated};
+use crate::ops::validate::{
+    RecordEnd, RecordLaunch, RecordStart, SettleRound, Validate, Validated,
+};
 use crate::ops::{self, Report, Request};
 use crate::settings::Settings;
 use crate::state::{
@@ -1834,20 +1836,48 @@ pub fn start(
         let snapshot = load(&path)?.ok_or_else(|| {
             Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
         })?;
-        let stages = snapshot.view::<ItemState>(&path)?.stages;
+        let mut stages = snapshot.view::<ItemState>(&path)?.stages;
         if let Some((dir, _)) = files::live(&worktree)? {
             return Err(Error::RunLive {
                 round_id: round,
                 run_dir: dir.display().to_string(),
             });
         }
-        // One run at a time per round, judged before the worktree is read;
-        // the start's record closes a run this finds gone.
+        // One run at a time per round, judged before the worktree is read.
+        // An open started run that passes holds nothing: its job is gone, so
+        // its close lands in its own transition whatever the start then
+        // answers, and the owed walk sends its end notice before the next
+        // run launches.
+        let mut gone = false;
         for stage in stages
             .iter()
             .filter(|s| crate::ops::validate::open_started(s, &round))
         {
             crate::ops::validate::hold(&round, stage)?;
+            gone = true;
+        }
+        if gone {
+            apply(
+                &path,
+                Validate::Settle(SettleRound {
+                    round_id: round.clone(),
+                }),
+                env,
+                locking,
+            )?;
+            run::deliver_owed(
+                settings,
+                &crate::effects::fleet_mailbox(settings),
+                &path,
+                env,
+                locking,
+            )?;
+            stages = load(&path)?
+                .ok_or_else(|| {
+                    Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+                })?
+                .view::<ItemState>(&path)?
+                .stages;
         }
         let scratch = Scratch::new(env)?;
         let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;

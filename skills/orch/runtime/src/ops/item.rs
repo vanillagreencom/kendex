@@ -1452,9 +1452,10 @@ pub(super) fn settle_stage(
     };
     close_stage(path, doc, index, stage, end, outcome, env)?;
     // A runtime-started run's close owes its lane the end notice, written
-    // in the same transition; the owed walk after the reconcile sends it.
-    // The job closed a live run itself and already owns its notice; a run
-    // with no runtime job owes none.
+    // in the same transition; the next owed walk sends it, which
+    // `reconcile-round` and the validation start each run right after their
+    // store. The job closed a live run itself and already owns its notice; a
+    // run with no runtime job owes none.
     if stage
         .job
         .as_ref()
