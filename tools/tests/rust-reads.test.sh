@@ -70,7 +70,9 @@ RS
   printf 'const FIXTURE: &str = include_str!("../../../unicode-test-only.txt");\n' >"$W/crates/demo/src/unicode_tests.rs"
   # Each holds a test-gated item with an unclosed brace inside a comment or
   # literal that spans lines, then a production include the item would mask
-  # were it read as code.
+  # were it read as code. The raw string holds a `"` without its hashes and
+  # the plain string an escaped `\"`, so a reader that closes either early
+  # reads the gated item as code.
   cat >"$W/crates/demo/src/comment_carry.rs" <<'RS'
 impl S {
     /* outer /* inner */
@@ -92,18 +94,20 @@ RS
   cat >"$W/crates/demo/src/raw_carry.rs" <<'RS'
 impl S {
     const OLD: &str = r#"
+    "
     #[cfg(test)]
-    fn old() { "
+    fn old() {
+    "
     "#;
     pub fn live() -> &'static str { include_str!("../../../after-raw.txt") }
 }
 RS
   cat >"$W/crates/demo/src/escape_carry.rs" <<'RS'
 impl S {
-    const OLD: &str = "a\
+    const OLD: &str = "a \" b\
     #[cfg(test)]
     fn old() {\
-";
+    \" c";
     pub fn live() -> &'static str { include_str!("../../../after-escape.txt") }
 }
 RS
