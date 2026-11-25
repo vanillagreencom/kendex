@@ -70,6 +70,15 @@ enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous|
 micro|false||exit=2 class-without-paths class=micro|
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
 ROWS
+
+# The Linear shard can already be selected by other suites. The control
+# shard's workflow step must also receive the battery from --suite-list.
+linear_controls_suite=skills/linear/tests/must-fail-controls.sh
+got="$(SELECT_EVENT=merge_group selection micro false skills/linear/scripts/commands/issues.sh)"
+check "a Linear control target alone selects its merge-group shard" '' \
+  "$(shards_miss +linear-controls "$(field shards <<<"$got")")"
+check "a Linear control target alone keeps the control battery" "$linear_controls_suite" \
+  "$(SKIPPED_SUITES="$(field skipped_suites <<<"$got")" "$JOB_SET" --suite-list "$linear_controls_suite")"
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
