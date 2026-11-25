@@ -2,7 +2,8 @@
 # Inputs: tools/guard, tools/ci-job-set, tools/macos-test-contracts, tools/macos-test-contracts.json,
 # skills/orch/*, skills/commit-guards/*,
 # skills/github/*, skills/deep-research/*, skills/slack/*, skills/bot-instructions/*,
-# skills/jarvis/scripts/lib/watch.py, skills/change-scope/tests/change-scope.test.sh
+# skills/jarvis/scripts/lib/session-backend.sh, skills/jarvis/scripts/lib/watch.py,
+# skills/change-scope/tests/change-scope.test.sh
 # Package selection and PATH are exercised through the production guard and
 # battery. The fixture engines model a command added after a release.
 set -euo pipefail
@@ -87,7 +88,7 @@ done
 # The package rows use whole shipped noncallers, including Node comments and
 # shell strings. Positive rows retain actual caller source with short suites
 # to observe dispatch. The prose rows cover comments and quoted separators.
-while IFS='|' read -r kind input expected engine_expected; do
+while IFS='|' read -r kind input expected engine_expected scan_expected; do
   case "$kind" in
     package) printf '\n' >> "$R/skills/$input/README.md" ;;
     prose)
@@ -100,14 +101,27 @@ $input
 exit 97
 SH
       ;;
-    caller)
-      mkdir -p "$R/skills/nonconsumer/scripts"
-      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/${input##*/}"
+    caller|python-variable)
+      mkdir -p "$R/skills/nonconsumer/scripts/lib"
+      cp "$REPO/$input" "$R/skills/nonconsumer/scripts/lib/${input##*/}"
       cat > "$R/skills/nonconsumer/tests/nonconsumer.test.sh" <<'SH'
 #!/bin/sh
 printf 'caller\n' >> "$SUITE_LOG"
 printf 'pass: 1 fail: 0\n'
 SH
+      if [ "$kind" = python-variable ]; then
+        # Jarvis's ddd9aa0f0 chose argv before calling checked. Keep the
+        # shipped shell caller that sorts before watch.py in the same package.
+        cat > "$R/skills/nonconsumer/scripts/lib/watch.py" <<'PY'
+def destination_projects(destination, timeout=60):
+    if destination.host:
+        argv = host_args(destination, "kendex project list --json")
+    else:
+        argv = ["kendex", "project", "list", "--json"]
+    text = checked(argv, operation="project-list", timeout=timeout)
+    return text
+PY
+      fi
       ;;
     empty)
       mkdir -p "$R/skills/nonconsumer/scripts/lib"
@@ -145,6 +159,9 @@ SH
   if [ "$expected" = 0: ]; then
     [[ "$OUT" != *'leg=package-suites package='* ]] || matched=0
   fi
+  if [ -n "$scan_expected" ]; then
+    [[ $'\n'"$OUT"$'\n' == *$'\n'"guard: scan=$scan_expected"$'\n'* ]] || matched=0
+  fi
   [ "$matched" -eq 1 ] && ok "selection $kind: ${input:-no CLI text}" || bad "selection $kind: $input" "$RC $RAN engine=$ENGINE_CALLS $OUT"
   git -C "$R" reset -q --hard "$BASE"
   git -C "$R" clean -qfd
@@ -163,6 +180,7 @@ prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
 caller|skills/change-scope/tests/change-scope.test.sh|0:caller
 python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list --json
+python-variable|skills/jarvis/scripts/lib/session-backend.sh|1:caller||skills/nonconsumer/scripts/lib/watch.py
 ROWS
 
 # The existing runner owns which orch suites run alone, through its ALONE
