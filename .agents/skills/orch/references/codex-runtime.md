@@ -108,7 +108,7 @@ Start and Resume each return an `exit_code` once the command ended inside their 
 - The start prints its `state=started` line once it has launched the run. The line can come on a Wait return. Keep its `run-dir=` value.
 - The start follows the run for its wait budget (`orch-runtime validate entry --help`), then exits 3 with `state=running`.
 - Take Resume only for a run whose `state=started` line was read, when a call exits 3 with `state=running` or its session ended with no verdict line and no refusal line.
-- A call that exits 2 with a `validate: [REASON]` line on stderr was refused; never resume it. `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate).
+- A call that exits 2 with a `validate: [REASON]` line on stderr was refused; never resume it. `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [validation.md § Run-live refusal](../../dev/references/validation.md#run-live-refusal).
 - Once a `state=started` line is read, never end the turn before the run prints `state=done` or `state=lost`.
 
 The dev skill's [SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) says what each line means.

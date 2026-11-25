@@ -164,7 +164,7 @@ Deterministic mapping only:
 - `add_relations`:
   - `depends_on_proposed` titles → `blocked_by: ["#N"]` by index.
   - `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`.
-  - Preserve each relation on the issue named in the plan under linear SKILL.md § Blocked Label vs Issue Relations.
+  - Preserve each relation on the issue named in the plan under linear references/writes.md § Blocked Label vs Issue Relations.
   - Keep valid leaf waits on their leaves.
   - A reference to an entry § 2 omitted follows step 1 below.
 - `hierarchy`:

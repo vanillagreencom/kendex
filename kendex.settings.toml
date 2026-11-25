@@ -231,7 +231,7 @@ WORKTREE_MKDIRS = "tmp"
 WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 
 # A file a Jarvis session touches while it answers the overseer; the hold it
-# sets and its resume: skills/slack/README.md § The Jarvis session hold.
+# sets and its resume: skills/slack/schemas/journal.md § The Jarvis session hold.
 # Empty: no hold.
 SLACK_JARVIS_SESSION_FILE = "~/.fleet/master-live"
 SLACK_JARVIS_SESSION_MAX_AGE = "1800"

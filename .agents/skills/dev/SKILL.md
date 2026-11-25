@@ -107,7 +107,7 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 
 - Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return.
 - Send the `**Return exactly**` body once and go idle.
-- Once the artifact is written, start no validation, test, lint or build run except the admitted stopped-round recovery in [dev-implement.md § 5](workflows/dev-implement.md#5-validate); otherwise the orchestrator validates there next.
+- Once the artifact is written, start no validation, test, lint or build run except the admitted stopped-round recovery in [references/validation.md § Stopped-round recovery](references/validation.md#stopped-round-recovery); otherwise the orchestrator validates there next.
 
 The channel per harness:
 
@@ -117,7 +117,7 @@ The channel per harness:
 
 ## Validation
 
-The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate).
+The validation gate and role ownership are complete in [references/validation.md § The gate](references/validation.md#the-gate). [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) runs it.
 
 A test or sandbox run outside that gate, such as a nested-session smoke run or one test file run alone while investigating, is an investigation run.
 
@@ -144,7 +144,7 @@ A session at its context mark hands over at once, whatever step is open.
 A command that can outlast the harness's tool-call limit never runs as one blocking foreground tool call. There are two exceptions:
 
 - the validation start, whose detached run and on-disk verdict survive a cut-off call and whose `--wait --run-dir` poll resumes it;
-- a project validation entry point on the foreground route [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) gives a project whose own policy forbids orch's validation runner, run under the harness's maximum command timeout.
+- a project validation entry point on the foreground route [references/validation.md § Foreground route](references/validation.md#foreground-route) gives a project whose own policy forbids orch's validation runner, run under the harness's maximum command timeout.
 
 The command routes:
 

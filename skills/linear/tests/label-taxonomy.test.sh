@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# The label-taxonomy refusals ../SKILL.md § Issue Creation Routing states,
-# driven against recorded Linear replies; that section is the one list of the
-# commands that refuse. The rows also pin which project-management renders the
+# The label-taxonomy refusals `issues --help` § Label taxonomy and
+# `labels --help` state, driven against recorded Linear replies; those help
+# sections are the one list of the commands that refuse. The rows also pin which project-management renders the
 # CLI reads: every project skills directory a delivery writes in one project,
 # the nearest one above the working directory up to the project holding a
 # project install or else the git top level, never one past that bound, the

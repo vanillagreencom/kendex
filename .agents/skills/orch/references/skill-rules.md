@@ -331,7 +331,7 @@ A fleet launch's admission applies the gate again, before any lane is recorded. 
 
 - Order by data flow (Creates ↔ Consumes), never by agent order.
 - An existing blocking relation outranks inference.
-- Record relations under linear SKILL.md § Blocked Label vs Issue Relations.
+- Record relations under linear references/writes.md § Blocked Label vs Issue Relations.
 - Only the review audit's in-PR bundle leaves the order inside the bundle to the delegated session.
 
 ### Single-PR bundles

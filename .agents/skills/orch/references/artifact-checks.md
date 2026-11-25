@@ -29,7 +29,7 @@ Read when a workflow writes, checks or recovers a round's completion artifact, o
   1. Exit 3 means host checks were unavailable; name the host cause in the log.
   2. Exit 0 for a pass and another nonzero status for a code defect.
   3. Wrap a test runner that exits with its failure count.
-  4. `orch-runtime validate entry --help` maps exits to verdicts; [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate) owns the `no-verdict` route.
+  4. `orch-runtime validate entry --help` maps exits to verdicts; [validation.md § No-verdict](../../dev/references/validation.md#no-verdict) owns the `no-verdict` route.
 - **Line.** `validate: lanes=<comma-separated names> selection=all|subset|battery`
 - **Names.** Non-empty ASCII names of letters, digits, `.`, `_` or `-`; no empty element.
 - **`selection`.**

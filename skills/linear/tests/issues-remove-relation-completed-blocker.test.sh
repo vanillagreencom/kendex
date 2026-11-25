@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
 # issues remove-relation keeps a blocking relation whose blocker is Done or
-# Canceled: that relation is satisfied history, ../SKILL.md § Blocked Label vs Issue Relations
+# Canceled: that relation is satisfied history, ../references/writes.md § Blocked Label vs Issue Relations
 # says, refused before any write with one keyed line. The one
 # removal route is --peer-rule-violation, tpm-audit's structural repair, which
 # passes only for a pair the rule refuses. Inputs: scripts/commands/issues.sh,

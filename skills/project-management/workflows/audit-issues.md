@@ -489,7 +489,7 @@ In the `**Supersession**:` line:
 Once every create has landed and its relations and parent are attached, never per create, position each created issue in Todo unless any of these hold:
 
 - The project state is not `started`.
-- The issue's `blocked_by_open` names an issue in another project (linear SKILL.md § Blocked Label vs Issue Relations).
+- The issue's `blocked_by_open` names an issue in another project (linear references/writes.md § Blocked Label vs Issue Relations).
 - It is P4 with no blocking relations.
 
 ```bash

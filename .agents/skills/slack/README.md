@@ -23,34 +23,33 @@ kendex add vanillagreencom/kendex --skill slack
 
 The relay connects each checkout's overseer to its private channel. Owners write in Slack; the overseer receives their words and files in its mailbox. Questions, replies and reports return to the channel.
 
-Socket Mode reconnects after a dropped connection. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
+The relay reconnects after a dropped connection: [Reconnects and history](schemas/journal.md#reconnects-and-history) gives what it reads back.
 
-Posts whose response was lost are not repeated. Explicit refusals can retry after their cause is fixed. Use `slack listen --status` for a failed connection, binding or post and its repair.
+A post whose response was lost is not repeated: [Lost responses](schemas/journal.md#lost-responses) gives which posts retry. Use `slack listen --status` for a failed connection, binding or post and its repair.
 
 ## Setup
 
 Requires Python 3.8 or newer. Installation adds the required skills, including orch.
 
+1. Create or update the Slack app and save its tokens, as § Slack app sets out.
+2. Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner. Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part.
+3. Run `slack setup` for each checkout. Use `--name` to choose a name, or `--take` to adopt a private channel the app has joined.
+4. Serve the checkouts with one relay: `slack install --root CHECKOUT_A --root CHECKOUT_B`. It also restarts a running relay. On a host without systemd, run `slack listen` with the same roots.
+
 - Settings go in the project's `kendex.settings.toml` under `[env]`.
 - Tokens go in its private env file or process environment.
 - Installation writes no required settings.
 - [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys.
-- The command is `.agents/skills/slack/scripts/slack`, written `slack` on this page.
+- The command is `.agents/skills/slack/scripts/slack`.
 - `slack --help` gives commands, defaults and diagnostics.
-- Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner.
-- Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part.
 - Setup keeps an existing channel binding and purpose.
-- Use `--name` to choose a name, or `--take` to adopt a private channel the app has joined.
-- Run `slack setup` for each checkout.
-- Then serve the checkouts with one relay: `slack install --root CHECKOUT_A --root CHECKOUT_B`. It also restarts a running relay.
-- On a host without systemd, run `slack listen` with the same roots.
 - Two checkouts cannot share one bound channel.
 - After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner.
 - Restart after changing tokens or other process-wide settings.
 - Package updates reload the running relay in place; they do not replace this configuration step.
 - Process-wide settings use the launch checkout, the first `--root` for an installed unit.
 - Caller exports take precedence.
-- The [Jarvis presence settings](#the-jarvis-session-hold) are per checkout and reload without a restart.
+- To hold ordinary posts while a Jarvis session runs, set `SLACK_JARVIS_SESSION_FILE` to the file the session keeps fresh and `SLACK_JARVIS_SESSION_MAX_AGE` to its freshness limit. Relative paths start at that checkout; `~` expands to the home directory. These settings are per checkout and reload without a restart. [The Jarvis session hold](schemas/journal.md#the-jarvis-session-hold) gives what the hold keeps back and what still posts.
 
 ### Slack app
 
@@ -134,9 +133,7 @@ These are optional and available only to `SLACK_OWNERS`. An empty command settin
 - `/report` requests a report from the overseer at `SLACK_REPORT_ROOT`, which must be one of the served checkouts. Its reply names the checkout and request id. With no recorded overseer, it writes nothing.
 - Home shows `SLACK_HOME_COMMAND` output when an owner opens the tab. It does not refresh on a timer. A failed command shows its cause instead of its output. Home that Slack has not enabled stays off until a restart.
 
-Only configured command lines run. Failed commands show their cause without their output; unknown commands do not run. A command lost after acknowledgement is not recovered: type it again. `/report` avoids duplicate delivery only when Slack resends the same request id; stable ids on resends are an assumption, not a guarantee from Slack.
-
-Oversized command output can be cut or withheld in full. The reply names the cut or refusal. A failed command names its cause; a killed command reports its signal without claiming an OOM cause or victim. See `slack --help` for bounds and diagnostics.
+Only configured command lines run. Failed commands show their cause without their output; unknown commands do not run. A command lost after acknowledgement is not recovered: type it again. [Slash command limits](schemas/journal.md#slash-command-limits) gives duplicate and output limits; `slack --help` gives bounds and diagnostics.
 
 To enable them on an app:
 
@@ -146,27 +143,9 @@ To enable them on an app:
 4. For Home, subscribe to `app_home_opened` under Event Subscriptions.
 5. Reinstall the app to the workspace.
 
-Register `/lanes` for status output. Slack reserves `/status`; the relay accepts the retired name until kendex 2.0.0 and warns with its replacement. If two apps register the same command name in one workspace, Slack uses the most recently installed app.
+Register `/lanes` for status output; Slack reserves `/status` ([Retired names](schemas/journal.md#retired-names)). If two apps register the same command name in one workspace, Slack uses the most recently installed app.
 
-A notice that answers the `/report` request with `lane-mail notice --ref` reaches the channel even during a Jarvis session hold. An ordinary `orch-runtime report write` notice has no request reference: it is held, skipped on resume if the session read it, and not sent during `ORCH_REPORT_QUIET_HOURS`.
-
-## The Jarvis session hold
-
-The relay pages an unread owner message from Jarvis's delivered `owner-unread` event in this root's mailbox. It waits for the session hold to end and checks the original message's read receipt before sending. A read message produces no page, even if it remains unanswered. A definite send refusal stays eligible for retry; an accepted page or an unknown send is not repeated. An unavailable relay cannot deliver a page, and a stopped producer emits no new event. Recovery handles retained events within the relay's existing history limit. [Journal lines](schemas/journal.md#journal-lines) define the event and receipt requirements and the limits of the send-time check.
-
-- Set `SLACK_JARVIS_SESSION_FILE` to the file the session keeps fresh.
-- Set `SLACK_JARVIS_SESSION_MAX_AGE` to its freshness limit.
-- Relative paths start at that checkout; `~` expands to the home directory.
-
-While held, ordinary mailbox posts wait and `--mention` posts without mentions, with a `mention-held` diagnostic. `slack listen --status` shows `held-by=jarvis`.
-
-Owner messages still reach the overseer. Replies to messages the owner typed in Slack still post in their threads. A notice answering `/report` posts as a new channel message; a notice answering a forwarded request posts under its root, creating that root when needed.
-
-Presence setting changes take effect at the next poll without a restart. Emptying or removing the file setting ends the hold. A stale or missing presence file also ends it, except that a running relay retains a renamed file's hold until the replacement is fresh or the retained file is stale. A failed settings read keeps that checkout's hold and fails its post step; other checkouts continue. The retired presence keys stay readable until kendex 2.0.0 with a `setting-renamed` warning; an explicitly set new key takes precedence, including an empty value.
-
-The Jarvis session marks its view read with `lane-mail events --item overseer --box to-overseer --mark-read`. On resume, ordinary notices and questions the session marked read are skipped without a post or mention, including closed questions. Replies to Slack-origin messages, `/report` and forwarded requests still post. Later notices/questions and held answers continue to post. A missing, unreadable or invalid read marker skips nothing; hold times do not decide which messages were read.
-
-The oldest supported mailbox producer is orch 3.0.0. Producers without usable position metadata still route, but cannot supply Jarvis-read suppression or position-based answer read marks.
+A `/report` answer reaches the channel even during a Jarvis session hold; [The Jarvis session hold](schemas/journal.md#the-jarvis-session-hold) gives how other report notices are held.
 
 ## Credential boundary
 
@@ -175,10 +154,6 @@ The oldest supported mailbox producer is orch 3.0.0. Producers without usable po
 - Outgoing text and files pass the orch secret-value pattern. A match refuses the send and leaves a report on disk.
 - The binding stores channel/owner identifiers, names and binding time. The journal stores delivery identifiers and bounded parent excerpts; see [The relay's record](schemas/journal.md).
 - Owner files stay in `tmp/slack/files/`, readable only by the checkout's user, until that user removes them.
-
-## Proof
-
-The [suites](https://github.com/vanillagreencom/kendex/tree/main/skills/slack/tests) use a fake Slack API and the real `lane-mail`. [Live proof](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#live-proof) lists checks that need the owner's Slack app and channel; those checks remain pending there.
 
 ## Licence
 

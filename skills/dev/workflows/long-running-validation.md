@@ -2,7 +2,7 @@
 
 Read [Long-Running Validation](../SKILL.md#long-running-validation) before starting, polling or resuming validation.
 
-`.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` starts the run the round's admission named, `[RUN_ID]` being the id the admission step of [dev-implement.md § 5. Validate](dev-implement.md#5-validate) minted. It starts the admitted directory as `orch-runtime validate start` does: it resolves the mode from the project's declaration, records the run's mode and job on the round's admitted `validate` entry, launches the run's job and prints the `state=started` line. When the run ends, the runtime closes that entry with the run's verdict and sends this lane its end notice, mail on the lane's channel.
+`.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` starts the run the round's admission named, `[RUN_ID]` being the id the admission step of [validation.md § Admission](../references/validation.md#admission) minted. It starts the admitted directory as `orch-runtime validate start` does: it resolves the mode from the project's declaration, records the run's mode and job on the round's admitted `validate` entry, launches the run's job and prints the `state=started` line. When the run ends, the runtime closes that entry with the run's verdict and sends this lane its end notice, mail on the lane's channel.
 
 The bare start without `--run-id`, `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH]`, is the ad-hoc route for a delegation that carries no admission: the runtime mints the id and records the run files.
 
@@ -24,14 +24,14 @@ Every harness row below plans without a spawned harness child, a harness process
     - Take the foreground poll `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]` as the turn's next step, under the same timeout because one call runs for up to nine minutes. Repeat it for as long as it exits 3 and prints `state=running`.
   - Never end the turn while the run is still running and never wait for a completion notice. A subagent whose turn has ended is not woken when the run ends, the runtime's end notice reaches the lane's mailbox and never that subagent, and the harness can kill a background shell on a low-memory heuristic that fires with free memory to spare. Neither loses the verdict, because the sentinel is on disk.
   - Read the verdict, then resume the tail:
-    - The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a command's exit 3 or an unavailable host check, which [dev-implement.md § 5. Validate](dev-implement.md#5-validate) routes. The log holds command output and never an exit status.
+    - The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a command's exit 3 or an unavailable host check, which [validation.md § No-verdict](../references/validation.md#no-verdict) routes. The log holds command output and never an exit status.
     - `state=lost` is a failed validation.
   - A tool-started `claude -p` is the spawned child this workflow forbids: its sign-in is unproven.
 - **Codex.**
   - Start `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` with `exec_command`.
   - While a call returns a `session_id`, hold it inside the turn with empty `write_stdin` polls on it. A return that carries an `exit_code` ended the command.
   - A session that printed `state=started` and then ended without a verdict line or an exit-2 refusal resumes with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]` the same way, repeated while it exits 3 and prints `state=running`.
-  - A refusal routes by [dev-implement.md § 5. Validate](dev-implement.md#5-validate) and is never resumed.
+  - A refusal routes by [validation.md](../references/validation.md) and is never resumed.
   - The calls and their limits are [codex-runtime.md § Validation wait](../../orch/references/codex-runtime.md#validation-wait).
   - Once the run has started, hold the turn until you read the verdict. The validation's end starts no Codex turn by itself.
   - The watch confirms a hosted wake when the provider returns a matching prompt row. A `wake-unconfirmed` event leaves receipt unknown.

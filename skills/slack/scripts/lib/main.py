@@ -148,7 +148,7 @@ with the original caller exports taking precedence. Other settings need
 slack setup or a restart.
 A relative file path starts at its root; ~ expands to the home directory.
 While its file is younger than its age bound, --status shows held-by=jarvis.
-A root naming no file has no hold. README.md defines the Jarvis session hold and resume.
+A root naming no file has no hold. schemas/journal.md defines the Jarvis session hold and resume.
 
 Stalled-worker diagnostic on stderr, exit 2:
   worker-stalled=STAGE age=SECONDS bound=SECONDS

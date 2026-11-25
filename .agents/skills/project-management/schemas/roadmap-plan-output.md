@@ -162,7 +162,7 @@ Bundles:
 
 - A bundle parent sets `is_bundle_parent: true` with `estimate: null`.
 - A bundle parent's children set `parent_title` to the parent's title.
-- Keep each blocking relation on the issue that waits under linear SKILL.md § Blocked Label vs Issue Relations.
+- Keep each blocking relation on the issue that waits under linear references/writes.md § Blocked Label vs Issue Relations.
 - A valid leaf wait on another bundle stays on that leaf.
 - A parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents.
 

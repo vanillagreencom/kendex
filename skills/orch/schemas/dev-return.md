@@ -15,7 +15,7 @@ Each delegation's `Round ID:` line carries the round token orch minted through `
 
 `dev-return --text check --round-id RID` requires the receipt's `round_id` to be `RID` and its `issue` to be the `--issue` key. Otherwise it answers `invalid`.
 
-After a run that ended without a pass, the runtime admits the round's next attempt ([dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate)):
+After a run that ended without a pass, the runtime admits the round's next attempt ([validation.md § Recovery](../../dev/references/validation.md#recovery)):
 
 - That run writes its own receipt under its own run id, beside the first.
 - The writer never replaces a failing receipt: at a path that holds one it refuses `receipt-exists`.
@@ -152,7 +152,7 @@ Each `items[]` element is `{n: number, decision: "Applied"|"Skipped"|"Blocked", 
 
 ## `validate` and its note
 
-`validate` records the final run's verdict. The note never relaxes it. [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate) owns the permitted correction and rerun routes and the notes they require:
+`validate` records the final run's verdict. The note never relaxes it. [validation.md § Recovery](../../dev/references/validation.md#recovery) owns the permitted correction and rerun routes and the notes they require:
 
 ```bash
 --validate "FAILING: cargo test" --validate-note "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load"

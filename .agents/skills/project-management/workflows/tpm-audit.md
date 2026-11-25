@@ -329,7 +329,7 @@ Project relations come from this scope analysis only, never bottom-up from indiv
 - A relation on a Done issue is a valid historical record.
 - Flag it for removal only when the dependency itself is wrong (no creates-consumes), not for the source being Done.
 
-**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations).
+**Completed-blocker relations are auto-satisfied, never stale** (the owning rule: linear references/writes.md § Blocked Label vs Issue Relations).
 
 - Do NOT add such relations to `remove_relations[]` except as a § 4.2 `Violation:` removal.
 - Do NOT report them under any stale-metadata heading.
@@ -337,11 +337,11 @@ Project relations come from this scope analysis only, never bottom-up from indiv
 
 ### 4.2 Scan Relation Violations
 
-Iterate every `blocks`/`blocked_by` on the input issues and their children. A relation is misplaced only when linear SKILL.md § Blocked Label vs Issue Relations refuses it.
+Iterate every `blocks`/`blocked_by` on the input issues and their children. A relation is misplaced only when linear references/writes.md § Blocked Label vs Issue Relations refuses it.
 
 **Preserve blocking relations by fixing the structure**, never by deleting them. For each violation:
 
-1. Add the child relation to `remove_relations[]` with reason `"Violation: [TYPE] — [FROM] [REL] [TO]"`. The apply step removes it with `issues remove-relation --peer-rule-violation`, the one route past the completed-blocker refusal (linear SKILL.md § Blocked Label vs Issue Relations).
+1. Add the child relation to `remove_relations[]` with reason `"Violation: [TYPE] — [FROM] [REL] [TO]"`. The apply step removes it with `issues remove-relation --peer-rule-violation`, the one route past the completed-blocker refusal (linear references/writes.md § Blocked Label vs Issue Relations).
 2. Add the lifted parent-level relation to `add_relations[]`.
 3. Add `related` between the original children.
 
@@ -745,7 +745,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] No completed-blocker relation appears in `remove_relations[]` outside a § 4.2 `Violation:` entry, or under any stale-metadata framing (§ 4.1)
 - [ ] The § 6 cancellation sweep ran against the § 1.5 active set; closed rows took no disposition, and each input item's closed-row findings report and respect any search truncation
 - [ ] TRACKER=linear: when the § 1.4.1 set is non-empty, one comments read covered the input set, candidate duplicate/relation/supersession rows, and every active cancellation candidate; an empty set made no read
-- [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix, except an `add_relations.related` entry, which the linear skill's Blocked Label vs Issue Relations section lets name an issue in another team
+- [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix, except an `add_relations.related` entry, which the linear skill's references/writes.md § Blocked Label vs Issue Relations lets name an issue in another team
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `supersession` record from the comparison that admitted it, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 - [ ] No create is a parent filed for the run's subject, and no create is a `make_child` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)

@@ -269,12 +269,12 @@ Each row's steps:
   3. Accept only when a valid receipt for THIS round appears.
 - **`wait`, fail.** Wait to the deadline, then escalate per [Round Closure](../references/skill-rules.md#round-closure).
 - **`retry`, any.** A receipt for THIS round exists but fails a gate. The reply's `reason` names the gate; the reasons below take their own action.
-  - A structurally valid receipt with a failing `validate` is final under [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), after any permitted in-round correction and rerun:
+  - A structurally valid receipt with a failing `validate` is final under [validation.md § Recovery](../../dev/references/validation.md#recovery), after any permitted in-round correction and rerun:
     1. Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines.
     2. Then end the workflow and report, without another validation round.
   - An identity or schema failure gets the `wait` row's report-only nudge where the receipt's `validate` is not `FAILING`.
     - Over a `FAILING` receipt the writer refuses `receipt-exists`:
-      - Under a run's name, the nudge asks for the round's next admitted attempt under dev-implement.md § 5, whose receipt lands under its own run id.
+      - Under a run's name, the nudge asks for the round's next admitted attempt under the dev skill's validation.md § Recovery, whose receipt lands under its own run id.
       - Under the round's no-run name the receipt is final, and the round closes as a failing `validate` does.
 
 **Retry reasons** with their own action:
