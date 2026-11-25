@@ -59,6 +59,6 @@ npm run check
 ```
 
 - `npm run check` is `typecheck` then `test`.
-- `.github/workflows/skill-tests.yml` runs the same install.
+- Skill Tests installs the same pinned Pi peers from `.github/npm-tests/pi-web-tools/package-lock.json`.
 - Provider suites stub `fetch` and assert request and response shapes.
 - A new provider ships with its shape test and a case in `tests/provider-selection.test.ts` for where it sits in `auto`.

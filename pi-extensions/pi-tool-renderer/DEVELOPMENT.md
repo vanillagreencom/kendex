@@ -46,4 +46,4 @@ npm install --no-save --include=dev --include=peer --include=optional --no-packa
 npm test
 ```
 
-The pinned version is the Pi release the extensions are audited against. `.github/workflows/skill-tests.yml` runs the same install.
+The pinned version is the Pi release the extensions are audited against. Skill Tests installs the same pinned Pi peers from `.github/npm-tests/pi-tool-renderer/package-lock.json`.
