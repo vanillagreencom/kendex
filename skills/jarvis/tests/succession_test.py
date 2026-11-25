@@ -241,9 +241,16 @@ class HandOverBound(unittest.TestCase):
     """The hand-over loop over agent-runtime's replies stood in for: the
     walk offers one account on every call and each failed attempt on it
     stamps a fresh mark, as when a mark the walk let expire during a long
-    round of attempts sends the walk back to an account already tried."""
+    round of attempts sends the walk back to an account already tried.
+    A transfer can report the failure itself or leave it for Jarvis to read."""
 
     def test_an_account_already_tried_in_the_call_ends_it(self):
+        self.assert_failed_hand_over(pin_unfinished=False)
+
+    def test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over(self):
+        self.assert_failed_hand_over(pin_unfinished=True)
+
+    def assert_failed_hand_over(self, *, pin_unfinished):
         path = session_test.SKILLS / "jarvis/scripts/lib/session.py"
         spec = importlib.util.spec_from_file_location("jarvis_session_bound", path)
         module = importlib.util.module_from_spec(spec)
@@ -275,7 +282,13 @@ class HandOverBound(unittest.TestCase):
                 self.transfers += 1
                 if self.transfers > 2:
                     test.fail("the walk's offer of an account already tried relaunched onto it")
-                return {"settled": {"observation": {"note": "successor-not-ready"}}}, 3, None, ""
+                failed = {"settled": {"outcome": "failed", "observation": {"note": "successor-not-ready"}}}
+                if pin_unfinished and self.transfers == 1:
+                    # agent-runtime's Settled::status can report the failed job
+                    # in this reply. Expose it as unfinished first so Jarvis
+                    # must read the settled failure from the controller status.
+                    return {"settled": {"outcome": "unconfirmed"}}, 0, None, ""
+                return failed, 3, None, ""
 
         with tempfile.TemporaryDirectory() as home:
             home = Path(home)
@@ -363,4 +376,5 @@ if __name__ == "__main__":
         # The session rows SuccessionContract inherits run in their own suite.
         unittest.main(defaultTest=["SuccessionContract." + name for name in vars(SuccessionContract) if name.startswith("test_")]
                       + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it",
+                         "HandOverBound.test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over",
                          "SuiteStop.test_a_suite_stopped_by_term_leaves_no_process_of_its_run"])
