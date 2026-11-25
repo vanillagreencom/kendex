@@ -540,6 +540,7 @@ assert_eq "$(WORKTREE_SCRIPT="$map_mutant" run cleanup)" \
 
 local_branch_case() {
   local case_name="$1" branch=topic/merged.v1 ref="" tip="" moved="" source="" rc=0
+  local linked="" probe_dir="" observed_source=""
   local -a config_scope=()
   ROOT="$TMP_ROOT/local-$case_name"
   MAIN="$ROOT/main"
@@ -584,18 +585,42 @@ STUB
         assert_eq failed recreated "the pruned branch name can be recreated"
       fi
       ;;
-    included-config|worktree-config)
-      if [[ "$case_name" == included-config ]]; then
-        source="$ROOT/tracking.conf"
-        git -C "$MAIN" config --add include.path "$source"
-        config_scope=(--file "$source")
-      else
-        source="$MAIN/.git/config.worktree"
-        git -C "$MAIN" config extensions.worktreeConfig true
-        config_scope=(--worktree)
-      fi
+    included-config|worktree-config|branch-conditional|worktree-conditional)
+      source="$ROOT/tracking.conf"
+      config_scope=(--file "$source")
+      case "$case_name" in
+        included-config) git -C "$MAIN" config --add include.path "$source" ;;
+        worktree-config)
+          source="$MAIN/.git/config.worktree"
+          git -C "$MAIN" config extensions.worktreeConfig true
+          config_scope=(--worktree)
+          ;;
+        branch-conditional)
+          git -C "$MAIN" config --add "includeIf.onbranch:$branch.path" "$source"
+          probe_dir="$MAIN"
+          ;;
+        worktree-conditional)
+          linked="$ROOT/linked"
+          git -C "$MAIN" worktree add -q --detach "$linked" "$tip"
+          git -C "$MAIN" config --add "includeIf.worktree:$linked.path" "$source"
+          probe_dir="$linked"
+          ;;
+      esac
       git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.remote" origin
       git -C "$MAIN" config "${config_scope[@]}" "branch.$branch.merge" refs/heads/main
+      if [[ -n "$probe_dir" ]]; then
+        observed_source="$(git -C "$MAIN" config --show-origin "branch.$branch.remote")"
+        [[ "$observed_source" != *"$source"* ]] || return 2
+        if [[ "$case_name" == branch-conditional ]]; then git -C "$MAIN" switch -q "$branch"; fi
+        observed_source="$(git -C "$probe_dir" config --show-origin "branch.$branch.remote")"
+        if [[ "$case_name" == branch-conditional ]]; then
+          git -C "$MAIN" switch -q main
+        elif [[ "$observed_source" != *"$source"* ]]; then
+          printf '%s\n' 'skip: Git does not activate worktree conditional includes'
+          return 0
+        fi
+        [[ "$observed_source" == *"$source"* ]] || return 2
+      fi
       (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
       assert_eq "$rc:$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true):$(git -C "$MAIN" config --local "branch.$branch.remote" || true)" \
         "1:$tip $ref:origin" "$case_name: unretirable tracking keeps the branch and its common config"
@@ -614,14 +639,19 @@ STUB
 }
 
 native_branch_case() {
-  local operation="$1" ref="" private_dir="" old="" base="" rebase_help="" rc=0
+  local operation="$1" ref="" private_dir="" old="" base="" rebase_help="" rc=0 branch=topic reset_rc=0
   local -a refs=()
   ROOT="$TMP_ROOT/native-$operation"
   MAIN="$ROOT/main"
-  WT="$ROOT/trees/topic"
-  make_repo
-  add_branch_tree topic
-  if [[ "$operation" == bisect ]]; then git -C "$WT" commit --allow-empty -qm 'topic: follow-up'; fi
+  if [[ "$operation" == bisect-hex ]]; then
+    branch="$(printf 'a%.0s' {1..64})"
+    GIT_DEFAULT_HASH=sha1 make_repo
+  else
+    make_repo
+  fi
+  WT="$ROOT/trees/$branch"
+  add_branch_tree "$branch"
+  if [[ "$operation" == bisect* ]]; then git -C "$WT" commit --allow-empty -qm 'topic: follow-up'; fi
   old="$(git -C "$WT" rev-parse HEAD)"
   git -C "$MAIN" branch --no-track unowned main
   printf 'main conflict\n' >"$MAIN/topic.txt"
@@ -641,16 +671,17 @@ native_branch_case() {
       [[ -f "$private_dir/rebase-merge/head-name" && -f "$private_dir/rebase-merge/update-refs" ]] || return 2
       refs=(refs/heads/topic refs/heads/dependent)
       ;;
-    bisect)
+    bisect|bisect-hex)
       git -C "$WT" bisect start >/dev/null
       git -C "$WT" bisect bad "$old" >/dev/null
       # The bad commit is two steps above this good commit, so Git detaches.
       git -C "$WT" bisect good "$(git -C "$WT" rev-parse "$old^^")" >/dev/null
-      refs=(refs/heads/topic)
+      [[ "$(cat -- "$private_dir/BISECT_START")" == "$branch" ]] || return 2
+      refs=("refs/heads/$branch")
       ;;
   esac
   [[ -z "$(git -C "$WT" branch --show-current)" ]] || return 2
-  git -C "$MAIN" merge -q --no-ff --no-edit -s ours refs/heads/topic
+  git -C "$MAIN" merge -q --no-ff --no-edit -s ours "refs/heads/$branch"
   git -C "$MAIN" push -q origin main
   for ref in "${refs[@]}"; do git -C "$MAIN" merge-base --is-ancestor "$ref" origin/main; done
   (cd "$MAIN" && "$WORKTREE_SCRIPT" cleanup) >"$ROOT/out" 2>"$ROOT/err" || rc=$?
@@ -659,14 +690,20 @@ native_branch_case() {
   for ref in "${refs[@]}"; do
     assert_eq "$(git -C "$MAIN" show-ref --verify "$ref" 2>/dev/null || true)" "$old $ref" "$operation: cleanup preserves $ref"
   done
+  if [[ "$operation" == bisect-hex ]]; then
+    git -C "$WT" bisect reset >"$ROOT/reset" 2>&1 || reset_rc=$?
+    assert_eq "$reset_rc:$(git -C "$WT" branch --show-current):$(git -C "$WT" rev-parse HEAD)" \
+      "0:$branch:$old" "bisect-hex: reset reattaches the original branch at its starting tip"
+  fi
 }
 
 echo "=== cleanup of merged branches without worktrees ==="
-for case_name in changed-tip config-lock included-config worktree-config missing-perl; do
+for case_name in changed-tip config-lock included-config worktree-config branch-conditional worktree-conditional missing-perl; do
   local_branch_case "$case_name"
 done
 native_branch_case rebase
 native_branch_case bisect
+native_branch_case bisect-hex
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

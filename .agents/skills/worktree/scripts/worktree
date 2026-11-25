@@ -3065,10 +3065,10 @@ cleanup_native_owned_refs() { # PRIVATE_GIT_DIR
   done
   if [[ -e "$dir/BISECT_LOG" || -e "$dir/BISECT_START" || -L "$dir/BISECT_START" ]]; then
     start="$(cat -- "$dir/BISECT_START")" || return 1
-    if [[ ! "$start" =~ $oid ]]; then
-      git check-ref-format "refs/heads/$start" || return 1
-      printf 'refs/heads/%s\n' "$start"
-    fi
+    # Git stores a short branch name or a detached OID. Match the exact local
+    # ref against the candidate list so hex-shaped branch names stay owned.
+    git check-ref-format "refs/heads/$start" || return 1
+    printf 'refs/heads/%s\n' "$start"
   fi
 }
 
@@ -3087,16 +3087,22 @@ cleanup_prune_local_branch() { # BASE_REF BASE_OID BRANCH_REF BRANCH_OID PRIVATE
     sub retire_settings {
       my $configured = 0;
       for my $dir (@dirs) {
-        open(my $keys, "-|", @git, "--git-dir=$dir", "config", "--null", "--show-origin", "--name-only", "--list") or return 0;
+        open(my $keys, "-|", @git, "--git-dir=$dir", "config", "--null", "--show-origin", "--list") or return 0;
         my $outside;
         {
           local $/ = "\0";
           while (my $origin = <$keys>) {
-            my $key = <$keys> // return 0;
-            chomp($origin, $key);
+            my $entry = <$keys> // return 0;
+            chomp($origin, $entry);
+            my ($key, $value) = split(/\n/, $entry, 2);
+            # Git lists directives even when their files are inactive. A
+            # different branch or checkout can expose settings we cannot retire.
+            if ($key =~ m{^includeif\.(?:onbranch|worktree(?:/i)?):.*\.path$}) {
+              $outside //= "$origin ($key includes " . ($value // "") . ")";
+            }
             next unless $key =~ /^\Q$section\E\.[^.]+$/;
             if ($origin eq $writable) { $configured = 1; }
-            else { $outside = $origin; }
+            else { $outside //= $origin; }
           }
         }
         close($keys) or return 0;
