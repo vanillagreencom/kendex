@@ -94,6 +94,7 @@ Notes per placeholder:
 - `[OWNER]`: omit when absent.
 - Story / Why this matters:
   - Story is a simple user or agent story in three or four everyday sentences: who is affected, what they notice today, what changes and its consequence.
+  - Name the person's result. Name a package, program, file or storage location only when the reader must act on it.
   - Why this matters states the big-picture cost and benefit in time, money, failed work or the owner's attention, without retelling the sequence.
   - Authors and reviewers judge the prose.
 - `[OBSERVABLE_ACCEPTANCE]`:
@@ -137,7 +138,7 @@ Notes per placeholder:
 5. Under a declared project map, every create passes `--project` with the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included; an item it routes to none is held as `project_needed`.
 6. Opening and sections:
    - Write Story and Why this matters for the non-engineer product owner who reads only those two blocks.
-   - Story includes no file, function, variable, test, fixture, package or command names, code-site counts or engineering jargon.
+   - Keep function, variable, test, fixture and command names, code-site counts and engineering jargon out of Story.
    - Name a system by what it does.
    - Put technical details in Requirements, Context or Evidence.
    - Keep the quoted blocks before every heading, with an unquoted blank line between them and before the first heading.
