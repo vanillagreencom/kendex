@@ -296,10 +296,8 @@ const CLAUDE_FIELDS: [&str; 4] = [
 const CLAUDE_SYNTHETIC: &str = "<synthetic>";
 
 /// One reading of a Claude Code transcript: the last assistant message
-/// carrying a usage object. Its window is the model's declared capacity
-/// ([`Harness::context_capacity`]) only where `compaction_off`: enabled
-/// compaction has inputs this reader does not see, so its point stays
-/// unresolved.
+/// carrying a usage object, against the model's capacity or its default
+/// auto-compact threshold.
 pub fn claude(text: &str, compaction_off: bool) -> Result<Usage, String> {
     let mut last = Usage::Absent;
     for line in objects(text) {
@@ -309,9 +307,16 @@ pub fn claude(text: &str, compaction_off: bool) -> Result<Usage, String> {
             Some(Response::Spent(spent)) => {
                 last = Usage::Measured {
                     tokens: spent.context,
-                    window: compaction_off
-                        .then(|| Harness::Claude.context_capacity(&spent.model))
-                        .flatten(),
+                    window: Harness::Claude
+                        .context_capacity(&spent.model)
+                        .map(|capacity| {
+                            // Claude Code defaults to 967K on native 1M models: https://code.claude.com/docs/en/model-config#default-auto-compact-thresholds
+                            if !compaction_off && capacity == 1_000_000 {
+                                967_000
+                            } else {
+                                capacity
+                            }
+                        }),
                     model: spent.model,
                 };
             }
@@ -1132,7 +1137,7 @@ mod tests {
     const CODEX_OFF: &str = r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#;
 
     #[test]
-    fn a_claude_transcript_reads_its_last_usage_line_and_names_a_window_only_with_compaction_off() {
+    fn a_claude_transcript_reads_its_last_usage_line_and_names_its_usable_window() {
         let two = [
             claude_line("claude-opus-5-5", 1000),
             "not json".to_owned(),
@@ -1146,7 +1151,11 @@ mod tests {
                 true,
                 measured(300_000, Some(1_000_000), "claude-opus-5-5"),
             ),
-            (&two, false, measured(300_000, None, "claude-opus-5-5")),
+            (
+                &two,
+                false,
+                measured(300_000, Some(967_000), "claude-opus-5-5"),
+            ),
             (
                 r#"{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"prompt_tokens":5}}}"#,
                 true,
@@ -1299,14 +1308,14 @@ mod tests {
         std::fs::write(&path, &text).unwrap();
         assert_eq!(
             read_file(&path, |t| claude(t, false)),
-            Ok(measured(1000, None, "claude-opus-5-5"))
+            Ok(measured(1000, Some(967_000), "claude-opus-5-5"))
         );
         text.push('\n');
         text.push_str(&claude_line("claude-opus-5-5", 5000));
         std::fs::write(&path, &text).unwrap();
         assert_eq!(
             read_file(&path, |t| claude(t, false)),
-            Ok(measured(5000, None, "claude-opus-5-5"))
+            Ok(measured(5000, Some(967_000), "claude-opus-5-5"))
         );
         assert!(read_file(&dir.join("absent"), |t| claude(t, false)).is_err());
     }

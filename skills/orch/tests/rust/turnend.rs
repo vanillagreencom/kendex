@@ -2340,9 +2340,7 @@ impl World {
 /// a reading below the mark passes and is recorded; one strictly past the
 /// share of the window, or at the token count the setting names, whichever
 /// comes first, is held with the commands that record the handoff and told
-/// that count; a share or a count out of its form is held on the setting;
-/// and a reading with no verified window below the count is reported
-/// unmeasured.
+/// that count; a share or a count out of its form is held on the setting.
 #[test]
 fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     let world = World::launched();
@@ -2360,22 +2358,10 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
             2,
             "lane-mail-check: context=100001",
         ),
-        (650_000, &[], 2, "lane-mail-check: context=650000"),
-        (
-            649_999,
-            &[],
-            0,
-            "lane-mail-check: window-unread=claude-haiku-5-5",
-        ),
         (123_457, &[off, cap], 2, "lane-mail-check: context=123457"),
         (123_456, &[off, cap], 0, told),
         (150_000, &[off, cap], 2, "lane-mail-check: context=150000"),
-        (
-            1_000,
-            &[],
-            0,
-            "lane-mail-check: window-unread=claude-haiku-5-5",
-        ),
+        (1_000, &[], 0, told),
         (
             1_000,
             &[("ORCH_HANDOFF_CONTEXT_PCT", "101")],
@@ -2404,7 +2390,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     for (tokens, env, code, first) in rows {
         let row = format!("{tokens} {env:?}");
         world.untold();
-        let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-4-5", *tokens)]);
         let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
         let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, env);
         assert_eq!(out.code, *code, "{row}: {}", out.stderr);
@@ -2423,12 +2409,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
         let record = world.record();
         assert_eq!(record["tokens"], json!(tokens), "{row}");
         assert_eq!(record["session_id"], json!("s1"), "{row}");
-        let window = if env.contains(&off) {
-            json!(200_000)
-        } else {
-            Value::Null
-        };
-        assert_eq!(record["window"], window, "{row}");
+        assert_eq!(record["window"], 200_000, "{row}");
     }
     // A record that cannot be written is reported and the reading still
     // judged; an install naming no harness reads no context and says so.
@@ -2630,18 +2611,12 @@ fn an_attached_launch_keeps_the_reserve_only_while_an_agent_may_be_out() {
             2,
             "lane-mail-check: agent-reserve=Agent tokens=20000 reserve=400000",
         ),
-        (
-            1_000,
-            &none,
-            &[],
-            2,
-            "lane-mail-check: agent-input=context-unmeasured",
-        ),
+        (1_000, &none, &[], 0, ""),
     ];
     for (tokens, agents, env, code, first) in rows {
         let row = format!("{tokens} {} {env:?}", agents.len());
         let mut lines = agents.to_vec();
-        lines.push(claude_usage("claude-haiku-5-5", *tokens));
+        lines.push(claude_usage("claude-haiku-4-5", *tokens));
         let transcript = world.transcript("t.jsonl", &lines);
         let payload = json!({"session_id": "s1", "transcript_path": transcript,
             "tool_name": "Agent", "tool_input": {}})
@@ -2815,7 +2790,7 @@ fn a_helper_from_another_session_keeps_the_reserve_unobserved() {
         ),
     ] {
         let mut lines = claude_launch("a1", Some(launched_in));
-        lines.push(claude_usage("claude-haiku-5-5", 30_000));
+        lines.push(claude_usage("claude-haiku-4-5", 30_000));
         let transcript = world.transcript("t.jsonl", &lines);
         let payload =
             json!({"session_id": "s1", "transcript_path": transcript, "tool_name": "Agent"})
@@ -3589,28 +3564,32 @@ fn admitted(out: &Out) -> (i32, String) {
 fn standalone_admission_judges_native_session_inputs_without_a_lane_record() {
     let world = World::new();
     world.mailbox(ITEM);
-    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
     let input = world.root.join("admission.json");
-    fs::write(
-        &input,
-        json!({"harness": "claude", "session_id": "s1", "transcript_path": transcript}).to_string(),
-    )
-    .unwrap();
-    let output = isolated()
-        .args(["admission", "--item", ITEM, "--attached-launch"])
-        .current_dir(&world.lane)
-        .env("PWD", &world.lane)
-        .env("HOME", &world.home)
-        .env("PATH", tool_path(&[&world.stand_ins()]))
-        .env("DISABLE_AUTO_COMPACT", "1")
-        .stdin(fs::File::open(&input).unwrap())
-        .output()
+    // The isolated subprocess inherits neither compaction-disable flag.
+    for model in ["claude-fable-5-2", "claude-opus-5-5"] {
+        let transcript = world.transcript("t.jsonl", &[claude_usage(model, 300_000)]);
+        fs::write(
+            &input,
+            json!({"harness": "claude", "session_id": "s1", "transcript_path": transcript})
+                .to_string(),
+        )
         .unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(answer["verdict"], "room");
-    assert_eq!(answer["source"]["session_id"], "s1");
-    assert!(!world.mail_root().join(ITEM).join("context.json").exists());
+        let output = isolated()
+            .args(["admission", "--item", ITEM, "--attached-launch"])
+            .current_dir(&world.lane)
+            .env("PWD", &world.lane)
+            .env("HOME", &world.home)
+            .env("PATH", tool_path(&[&world.stand_ins()]))
+            .stdin(fs::File::open(&input).unwrap())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{model}: {}", stderr(&output));
+        let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(answer["verdict"], "room", "{model}");
+        assert_eq!(answer["decision"]["window"], 967_000, "{model}");
+        assert_eq!(answer["source"]["session_id"], "s1", "{model}");
+        assert!(!world.mail_root().join(ITEM).join("context.json").exists());
+    }
 }
 
 /// The admission answers from the record the session's own tool call bound,
@@ -3651,17 +3630,10 @@ fn the_admission_judges_the_session_its_own_tool_call_bound() {
             2,
             "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101",
         ),
-        (
-            20_000,
-            "--checkpoint",
-            Some(("DISABLE_AUTO_COMPACT", "")),
-            2,
-            "lane-mail-check: agent-input=context-unmeasured",
-        ),
     ];
     for (tokens, launch, setting, code, want) in rows {
         let row = format!("{tokens} {launch} {setting:?}");
-        world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        world.transcript("t.jsonl", &[claude_usage("claude-haiku-4-5", *tokens)]);
         let mut env = env.clone();
         env.extend(setting.iter().copied());
         let out = world.admission(launch, &env);

@@ -7856,9 +7856,8 @@ fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_
 /// controller's turn end the hook asks the runtime's judge on the reading
 /// it took off the session's transcript and acts on the reply's key. A
 /// reading past the context cap is refused with the figure the judge read
-/// and the succession route named; a reading under the cap whose window
-/// the transcript does not name is the judge's `mark-unmeasured
-/// kind=context`, reported with the judge's own line and the turn passed.
+/// and the succession route named. A reading below the marks passes with
+/// the session's compaction window recorded.
 #[test]
 fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_end() {
     let dir = tempfile::tempdir().unwrap();
@@ -7959,30 +7958,17 @@ fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_e
         "the refusal names the runtime's succession: {}",
         stderr(&due)
     );
-    let unnamed = stop(1_000);
-    let said = stderr(&unnamed);
-    assert_eq!(
-        (
-            unnamed.status.code(),
-            said.lines().next().unwrap_or_default()
-        ),
-        (Some(0), "lane-mail-check: marks=unmeasured"),
-        "{said}"
-    );
-    let judged: Value = serde_json::from_str(
-        said.lines()
-            .find(|l| l.starts_with('{'))
-            .unwrap_or_else(|| panic!("the judge's own line: {said}")),
+    let below = stop(1_000);
+    let said = stderr(&below);
+    assert_eq!((below.status.code(), said.as_str()), (Some(0), ""));
+    let reading: Value = serde_json::from_slice(
+        &std::fs::read(work.join("tmp/lane-mail/overseer/context.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(
-        (&judged["key"], &judged["kind"], &judged["reason"]),
-        (
-            &json!("mark-unmeasured"),
-            &json!("context"),
-            &json!("window-unnamed")
-        ),
-        "{said}"
+        (&reading["tokens"], &reading["window"]),
+        (&json!(1_000), &json!(967_000)),
+        "{reading}"
     );
     stop_live_watch(&runner, &state);
 }

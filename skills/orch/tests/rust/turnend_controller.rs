@@ -802,12 +802,10 @@ fn a_jarvis_session_past_its_context_mark_is_handed_its_own_succession() {
             );
         } else {
             assert_eq!(out.code, 0, "{name}: {}", out.stderr);
-            // Below the token cap a Claude reading with compaction on names
-            // no window, so the percentage mark is said unmeasured.
             let told = if case.home == "other" {
                 vec![format!("transcript-unowned={}", named.display())]
             } else {
-                vec!["window-unread=claude-opus-4-5".to_owned()]
+                Vec::new()
             };
             assert_eq!(out.keyed(), told, "{name}: {}", out.stderr);
         }
@@ -880,9 +878,9 @@ fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
     }
 }
 
-/// A Claude Haiku usage line summing to `tokens`.
+/// A Claude Haiku 4.5 usage line summing to `tokens`.
 fn haiku_usage(tokens: u64) -> Value {
-    json!({"type": "assistant", "message": {"model": "claude-haiku-5-5", "usage": {
+    json!({"type": "assistant", "message": {"model": "claude-haiku-4-5", "usage": {
         "input_tokens": 1, "cache_read_input_tokens": tokens - 8,
         "cache_creation_input_tokens": 0, "output_tokens": 7}}})
 }

@@ -149,25 +149,23 @@ impl ContextRecord {
         ))
     }
 
-    /// Whether a reading of a `harness` session
-    /// fills the window it names, so the session can take no turn again.
-    /// Only the window a claude, codex or pi reading names is the hard
-    /// limit a session stops at; a copilot reading's window is its
-    /// compaction point, never full. A reading with no window of its own
-    /// takes the harness's declared capacity for its model
-    /// (`Harness::context_capacity`), and one with neither is never full.
-    /// `None` for a harness no adapter reads.
+    /// Whether the session has filled a known hard limit. A Claude record
+    /// can carry its auto-compact point, so prefer the named model's capacity.
+    /// A Claude record with no model can still give its limit, as Codex and Pi
+    /// do. Copilot can compact at its window. `None` if a reading is absent.
     pub fn window_full(&self, harness: Harness) -> Option<bool> {
-        match harness {
+        let window = self.window.filter(|w| *w > 0);
+        let limit = match harness {
             Harness::Copilot => return Some(false),
-            Harness::Claude | Harness::Codex | Harness::Pi => {}
-        }
+            Harness::Claude => self
+                .model
+                .as_deref()
+                .and_then(|model| harness.context_capacity(model))
+                .or(window),
+            Harness::Codex | Harness::Pi => window,
+        };
         let tokens = self.tokens?;
-        let window = self
-            .window
-            .filter(|w| *w > 0)
-            .or_else(|| harness.context_capacity(self.model.as_deref()?));
-        Some(window.is_some_and(|w| tokens >= w))
+        Some(limit.is_some_and(|limit| tokens >= limit))
     }
 }
 
@@ -426,10 +424,6 @@ pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext 
 mod tests {
     use super::*;
 
-    /// The full-window table: the window a claude, codex or pi
-    /// reading names is the hard limit; a copilot reading is never full; a
-    /// reading naming no window takes the declared capacity for its model,
-    /// and one naming neither is never full.
     #[test]
     fn a_window_is_full_at_its_own_figure_or_the_declared_capacity() {
         let record = |tokens: u64, window: Option<u64>, model: Option<&str>| ContextRecord {
@@ -448,6 +442,10 @@ mod tests {
             record(1_000_000, Some(1_000_000), None).window_full(Harness::Claude),
             Some(true)
         );
+        for (tokens, full) in [(970_000, false), (1_000_000, true)] {
+            let reading = record(tokens, Some(967_000), Some("claude-fable-5-2"));
+            assert_eq!(reading.window_full(Harness::Claude), Some(full), "{tokens}");
+        }
         assert_eq!(
             record(999_999, Some(1_000_000), None).window_full(Harness::Codex),
             Some(false)
@@ -457,7 +455,7 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            record(200_000, None, Some("claude-haiku-5-5")).window_full(Harness::Claude),
+            record(200_000, None, Some("claude-haiku-4-5")).window_full(Harness::Claude),
             Some(true)
         );
         assert_eq!(
