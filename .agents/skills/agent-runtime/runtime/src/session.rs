@@ -52,6 +52,10 @@ pub struct SessionRef {
     pub cwd: PathBuf,
 }
 
+pub const CLAUDE_PROJECTS: &str = "projects";
+pub const CODEX_SESSIONS: &str = "sessions";
+pub const COPILOT_SESSION_STATE: &str = "session-state";
+
 /// The home a harness reads when the caller names none.
 pub fn default_home(harness: Harness) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
@@ -97,7 +101,7 @@ fn uuid_v4(mut bytes: [u8; 16]) -> String {
 pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
     match harness {
         Harness::Claude => Some(
-            home.join("projects")
+            home.join(CLAUDE_PROJECTS)
                 .join(claude_slug(cwd))
                 .join(format!("{id}.jsonl")),
         ),
@@ -170,7 +174,7 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
             // store's root is read three-valued through the one listing: no
             // root is a cold home, an absent session; a
             // root that cannot be listed is unreadable, never absent.
-            let root = home.join("sessions");
+            let root = home.join(CODEX_SESSIONS);
             match listed(&root) {
                 Reading::Live(_) => {}
                 Reading::Gone => return Reading::Gone,
@@ -191,7 +195,11 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
                 None => Reading::Gone,
             }
         }
-        Harness::Copilot => present(home.join("session-state").join(id).join("workspace.yaml")),
+        Harness::Copilot => present(
+            home.join(COPILOT_SESSION_STATE)
+                .join(id)
+                .join("workspace.yaml"),
+        ),
         Harness::Pi => {
             // `<stamp>_<id>.jsonl` under the cwd's slug directory.
             let dir = home.join("sessions").join(pi_slug(cwd));
@@ -985,10 +993,10 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
         Reading::Live(files)
     };
     match harness {
-        Harness::Claude => jsonl_files(home.join("projects").join(claude_slug(cwd))),
+        Harness::Claude => jsonl_files(home.join(CLAUDE_PROJECTS).join(claude_slug(cwd))),
         Harness::Pi => jsonl_files(home.join("sessions").join(pi_slug(cwd))),
         Harness::Codex => {
-            let root = home.join("sessions");
+            let root = home.join(CODEX_SESSIONS);
             let mut files = Vec::new();
             match listed(&root) {
                 Reading::Live(paths) => {
@@ -1020,7 +1028,7 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
             Reading::Live(files)
         }
         Harness::Copilot => {
-            let paths = match listed(&home.join("session-state")) {
+            let paths = match listed(&home.join(COPILOT_SESSION_STATE)) {
                 Reading::Live(paths) => paths,
                 Reading::Gone => return Reading::Gone,
                 Reading::Unreadable { cause } => return Reading::Unreadable { cause },

@@ -1181,6 +1181,11 @@ impl EffectOutcome {
             Terminal::Unconfirmed { .. } => false,
         }
     }
+
+    /// Whether the effect settled as failed after discharging its handles.
+    pub fn failed(&self) -> bool {
+        matches!(self.terminal, Terminal::Failed)
+    }
 }
 
 #[cfg(test)]

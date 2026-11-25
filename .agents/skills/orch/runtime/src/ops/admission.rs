@@ -1356,7 +1356,7 @@ pub(super) fn judge(
 
 /// A holder may carry work in its own checkout or outside it when its
 /// launch ran unconfined. The launch effect reports its actual confinement
-/// on the intent. The latest launch
+/// on the intent, including the linked-seat exception. The latest launch
 /// alone can authorize the join: a relaunch can change the confinement,
 /// and a still-opening or recovered launch may have no observation yet.
 fn join_checkout(

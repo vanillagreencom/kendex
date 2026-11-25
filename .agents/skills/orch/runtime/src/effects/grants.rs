@@ -8,10 +8,11 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::confine::{self, Answer, Grants, Host, SeatMount};
+use agent_runtime::confine::{self, Answer, Cause, Grants, Host, SeatMount};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
+use agent_runtime::session::{CLAUDE_PROJECTS, COPILOT_SESSION_STATE, claude_slug};
 use serde_json::{Value, json};
 
 use super::refused;
@@ -84,7 +85,17 @@ const DEFAULT_REVIEW_TARGETS: &str = "claude codex pi-copilot pi-copilot-gpt";
 /// The lane's private folder: its mailbox under its root, made before the
 /// window, written by the lane and its overseer alone.
 pub(crate) fn folder(mail_root: &Path, item: &str) -> PathBuf {
-    crate::marker::mailbox_path(mail_root, item)
+    let root = resolved(mail_root).unwrap_or_else(|| mail_root.to_path_buf());
+    let private = crate::marker::mailbox_path(&root, item);
+    let tmp = root.join("tmp");
+    if let Some(physical) = resolved(&tmp).filter(|path| path.starts_with(&root)) {
+        // Worktree setup can link tmp inside the checkout. The mailbox
+        // below it must still be an ordinary directory when removed.
+        let relative = private.strip_prefix(&tmp).expect("mailbox is under tmp");
+        physical.join(relative)
+    } else {
+        private
+    }
 }
 
 /// What a launch grants, and what it writes before the window so the
@@ -316,7 +327,7 @@ impl SeatViews {
         view_root: &Path,
         seat: &Path,
         kind: Harness,
-        claude_cwd: Option<&Path>,
+        checkout_dirs: (&Path, &Path),
     ) -> Result<()> {
         let mut key = DefaultHasher::new();
         seat.hash(&mut key);
@@ -325,22 +336,17 @@ impl SeatViews {
         self.directories.extend([backing.clone(), home.clone()]);
         self.bind(home, seat.to_path_buf(), true);
         let shared = match kind {
-            Harness::Claude => None,
-            Harness::Codex => Some("sessions"),
-            Harness::Copilot => Some("session-state"),
-            Harness::Pi => unreachable!("Pi uses its existing grants"),
+            Harness::Claude => CLAUDE_PROJECTS,
+            Harness::Copilot => COPILOT_SESSION_STATE,
+            Harness::Codex | Harness::Pi => unreachable!("this harness uses its existing grants"),
         };
         let local = match kind.home_writes() {
             HomeWrites::Folders(folders) if kind == Harness::Claude => folders,
             HomeWrites::Folders(_) | HomeWrites::Whole(_) => &[],
         };
-        for path in seat_entries(seat, false)?.expect("seat must stand") {
+        for path in seat_entries(seat)? {
             let name = path.file_name().and_then(|name| name.to_str());
-            if name.is_some_and(|name| {
-                local.contains(&name)
-                    || Some(name) == shared
-                    || kind == Harness::Codex && codex_state(name)
-            }) {
+            if name.is_some_and(|name| name == shared || local.contains(&name)) {
                 if let Some(target) = resolved(&path).filter(|target| !target.starts_with(seat)) {
                     self.private_targets.push(target);
                 }
@@ -348,48 +354,81 @@ impl SeatViews {
             }
             self.bind(read_only_bind(path.clone())?, path, false);
         }
-        if let Some(name) = shared {
-            let destination = seat.join(name);
+        if kind == Harness::Claude {
+            self.claude_projects(seat, &backing, checkout_dirs)?;
+        } else {
+            let destination = seat.join(shared);
             let source = seat_folder(destination.clone(), &mut self.shared_dirs)?;
             self.bind(source, destination, true);
-        }
-        if kind == Harness::Claude {
-            self.claude_projects(seat, &backing, claude_cwd)?;
         }
         Ok(())
     }
 
-    fn claude_projects(&mut self, seat: &Path, backing: &Path, cwd: Option<&Path>) -> Result<()> {
-        let projects = seat.join("projects");
-        let source = read_only_bind(projects.clone())?;
-        let standing = seat_entries(&source, true)?;
-        let Some(cwd) = cwd else {
-            if standing.is_some() {
-                self.bind(source, projects, false);
-            }
-            return Ok(());
-        };
-        let slug = agent_runtime::session::claude_slug(cwd);
-        for other in standing.into_iter().flatten() {
-            let name = other.file_name().expect("directory entry has a name");
-            if name != slug.as_str() {
-                let target = projects.join(name);
-                self.bind(read_only_bind(other)?, target, false);
-            }
-        }
-        // Claude rejects a fresh --session-id if its transcript file
-        // already exists. Share the project so it can create the file,
-        // then cover memory so the launcher never shares its writes.
+    fn claude_projects(
+        &mut self,
+        seat: &Path,
+        backing: &Path,
+        (cwd, repository): (&Path, &Path),
+    ) -> Result<()> {
+        // The observer reads transcripts under the launch cwd. Claude's
+        // default auto memory is keyed by the Git root across worktrees.
+        let projects = seat.join(CLAUDE_PROJECTS);
+        let source = seat_folder(projects.clone(), &mut self.shared_dirs)?;
+        self.bind(source.clone(), projects.clone(), false);
+        let slug = claude_slug(cwd);
+        let destination = projects.join(&slug);
         let project = seat_folder(source.join(&slug), &mut self.shared_dirs)?;
-        let destination = projects.join(slug);
+        self.bind(project.clone(), destination.clone(), true);
+        let local = backing.join("memory");
+        self.directories.push(local.clone());
+
+        // Claude rejects a fresh --session-id when its transcript already
+        // exists. The shared directory lets it create the transcript itself.
+        self.claude_memory(seat, cwd, &project, destination, &local, true)?;
+        let memory_slug = claude_slug(repository);
+        if memory_slug != slug {
+            let memory = seat_folder(source.join(&memory_slug), &mut self.shared_dirs)?;
+            self.claude_memory(
+                seat,
+                cwd,
+                &memory,
+                projects.join(memory_slug),
+                &local,
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn claude_memory(
+        &mut self,
+        seat: &Path,
+        cwd: &Path,
+        project: &Path,
+        destination: PathBuf,
+        local: &Path,
+        shared_project: bool,
+    ) -> Result<()> {
         let memory = project.join("memory");
         let mut memory_at = destination.join("memory");
         match std::fs::symlink_metadata(&memory) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 let link = std::fs::read_link(&memory).map_err(|e| seat_read_failed(&memory, e))?;
+                // Masking a target leaves its link renameable in a shared
+                // transcript directory. A read-only project holds its links.
+                if shared_project {
+                    return Err(refused(
+                        "grant-memory-link",
+                        &[
+                            ("project", &project.display().to_string()),
+                            ("path", &memory.display().to_string()),
+                            ("target", &link.display().to_string()),
+                        ],
+                    ));
+                }
                 if link.is_absolute() {
-                    // bwrap resolves an absolute link before switching roots.
-                    // Use its target's name in the new root to mask it there.
+                    // An absolute target needs its own name before bwrap
+                    // switches its root.
                     memory_at = read_only_bind(memory)?;
                     if seat.starts_with(&memory_at) || cwd.starts_with(&memory_at) {
                         return Err(refused(
@@ -403,28 +442,20 @@ impl SeatViews {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.shared_dirs.push(memory),
             Err(e) => return Err(seat_read_failed(&memory, e)),
         }
-        self.bind(project, destination, true);
-        let local = backing.join("memory");
-        self.directories.push(local.clone());
-        self.bind(local, memory_at, true);
+        self.bind(local.to_path_buf(), memory_at, true);
         Ok(())
     }
 }
 
-fn seat_entries(path: &Path, may_be_absent: bool) -> Result<Option<Vec<PathBuf>>> {
-    let entries = match std::fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(e) if may_be_absent && e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(seat_read_failed(path, e)),
-    };
-    entries
+fn seat_entries(path: &Path) -> Result<Vec<PathBuf>> {
+    std::fs::read_dir(path)
+        .map_err(|e| seat_read_failed(path, e))?
         .map(|entry| {
             entry
                 .map(|entry| entry.path())
                 .map_err(|e| seat_read_failed(path, e))
         })
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
+        .collect()
 }
 
 fn seat_read_failed(path: &Path, e: std::io::Error) -> crate::error::Error {
@@ -435,29 +466,6 @@ fn seat_read_failed(path: &Path, e: std::io::Error) -> crate::error::Error {
             ("cause", &e.to_string()),
         ],
     )
-}
-
-fn codex_state(name: &str) -> bool {
-    if matches!(
-        name,
-        "archived_sessions" | "history.jsonl" | "session_index.jsonl" | "memories"
-    ) {
-        return true;
-    }
-    // Codex's state/src/sqlite.rs versions each database in its name.
-    // Include SQLite's journals so the lane makes each database whole.
-    let Some((stem, suffix)) = name.split_once(".sqlite") else {
-        return false;
-    };
-    let Some((store, version)) = stem.rsplit_once('_') else {
-        return false;
-    };
-    matches!(
-        store,
-        "state" | "logs" | "goals" | "memories" | "memories_v2" | "queue" | "thread_history"
-    ) && !version.is_empty()
-        && version.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(suffix, "" | "-wal" | "-shm" | "-journal")
 }
 
 /// Confined launches give the lane its checkout, item records, caches and
@@ -588,21 +596,23 @@ pub(super) fn of(
     let mut views = SeatViews::default();
     let mut seat_paths: Vec<PathBuf> = Vec::new();
     seats.sort_by_key(|(seat, _)| seat.components().count());
-    let native = homes.sessions.as_deref().and_then(resolved);
+    let repository = if checkout.common != checkout.git_dir {
+        checkout.common.parent().unwrap_or(&root)
+    } else {
+        &root
+    };
     for (seat, kind) in seats {
         if seat_paths.contains(&seat) {
             continue;
         }
-        if answer == Answer::Confined && kind != Harness::Pi {
+        if answer == Answer::Confined && matches!(kind, Harness::Claude | Harness::Copilot) {
             if root.starts_with(&seat) {
                 return Err(refused(
                     "grant-seat-contains-checkout",
                     &[("path", &seat.display().to_string())],
                 ));
             }
-            let cwd =
-                (harness == Harness::Claude && native.as_ref() == Some(&seat)).then_some(mail_root);
-            views.add(&view_root, &seat, kind, cwd)?;
+            views.add(&view_root, &seat, kind, (mail_root, repository))?;
             seat_paths.push(seat);
             continue;
         }
@@ -684,6 +694,19 @@ pub(super) fn of(
             kept.push(protected.clone());
         }
     }
+    let linked = answer == Answer::Confined
+        && harness == Harness::Codex
+        && match homes.named.as_deref().and_then(resolved) {
+            Some(home) => linked_seat(&home, &writable, &read_only)?,
+            None => false,
+        };
+    let answer = if linked {
+        Answer::Unconfined {
+            cause: Cause::LinkedSeat,
+        }
+    } else {
+        answer
+    };
     // A seat's link may point into a writable checkout. Protect the same
     // contents at their original path as well as at the view's entry name.
     read_only.extend(
@@ -749,7 +772,7 @@ pub(super) fn of(
         sockets: Vec::new(),
         desktop,
         gh_token: token.as_ref().map(|_| private.join(GH_TOKEN_FILE)),
-        unconfined: None,
+        unconfined: linked.then_some(Cause::LinkedSeat),
         file: private.join(GRANTS_FILE),
     };
     Ok(Granted {
@@ -803,6 +826,87 @@ pub(crate) fn writable_beside_checkout(settings: &Settings) -> Result<Vec<PathBu
         &[],
     )?);
     Ok(folders)
+}
+
+/// The configured Codex seats whose lanes run unconfined under
+/// `linked-seat`, judged as a launch judges its Codex home: against the
+/// folders [`writable_beside_checkout`] names, the seats among them, with
+/// the seat's settings file and code entries read-only. `orch-runtime
+/// ready` names them.
+pub(crate) fn linked_seats(settings: &Settings) -> Result<Vec<PathBuf>> {
+    let writable = writable_beside_checkout(settings)?;
+    let configured = agent_runtime::accounts::listing::configured(
+        &settings.accounts.get()?.account_dirs,
+        settings.home.as_deref(),
+        &mut Vec::new(),
+    )
+    .map_err(|cause| refused("grant-seats-unread", &[("cause", &cause)]))?;
+    let (name, _) = settings_file(Harness::Codex);
+    let code: &[&str] = match Harness::Codex.home_writes() {
+        HomeWrites::Whole(code) => code,
+        HomeWrites::Folders(_) => &[],
+    };
+    let mut linked = Vec::new();
+    for (kind, dir) in configured {
+        if kind != Harness::Codex {
+            continue;
+        }
+        let Some(seat) = resolved(Path::new(&dir)) else {
+            continue;
+        };
+        let read_only: Vec<PathBuf> = std::iter::once(name)
+            .chain(code.iter().copied())
+            .map(|entry| seat.join(entry))
+            .collect();
+        if linked_seat(&seat, &writable, &read_only)? {
+            linked.push(seat);
+        }
+    }
+    Ok(linked)
+}
+
+/// Whether the Codex home `seat` holds a link its harness writes through
+/// that leads outside `writable`, or into `read_only`: the kernel would
+/// refuse the harness's write, so its lane runs unconfined under
+/// [`Cause::LinkedSeat`]. A link `read_only` names, the settings file or a
+/// code entry, is read through, never written. A link whose target does not stand
+/// refuses `grant-link-unreadable` naming it, and a home that cannot be read
+/// `grant-seats-unread`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launch reads the links of the Codex home it grants before the window; it writes nothing"
+)]
+fn linked_seat(seat: &Path, writable: &[PathBuf], read_only: &[PathBuf]) -> Result<bool> {
+    let failed = |key: &'static str, path: &Path, e: std::io::Error| {
+        refused(
+            key,
+            &[
+                ("path", &path.display().to_string()),
+                ("cause", &e.to_string()),
+            ],
+        )
+    };
+    let entries = std::fs::read_dir(seat).map_err(|e| failed("grant-seats-unread", seat, e))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|e| failed("grant-seats-unread", seat, e))?
+            .path();
+        let link = std::fs::symlink_metadata(&path)
+            .map_err(|e| failed("grant-seats-unread", &path, e))?
+            .file_type()
+            .is_symlink();
+        if !link || read_only.contains(&path) {
+            continue;
+        }
+        let target =
+            std::fs::canonicalize(&path).map_err(|e| failed("grant-link-unreadable", &path, e))?;
+        if !writable.iter().any(|grant| target.starts_with(grant))
+            || read_only.iter().any(|kept| target.starts_with(kept))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The variable a variable-named folder is read from, absolute only.
@@ -895,6 +999,13 @@ fn gh_token() -> Option<String> {
 }
 
 impl Granted {
+    pub fn remove_failed_views(&self) -> Result<()> {
+        if self.view_dirs.is_empty() {
+            return Ok(());
+        }
+        remove_views(self.grants.file.parent().expect("grants file has a parent"))
+    }
+
     /// The variables the lane's launch line sets for its grants: the Pi
     /// bridge's folder, the lane's own runtime cache and its own tool
     /// caches.

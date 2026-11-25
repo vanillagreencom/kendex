@@ -1012,12 +1012,18 @@ fn local_launch(
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     if let Err(e) = prep.granted.write() {
-        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
+        return Ok(rollback_local_views(
+            operation.settle(Word::Failed, refusal_observation(&e)),
+            &prep.granted,
+        ));
     }
     // The tree's setups run once what the grants bind stands: a confined
     // lane's under its own words, before the window as every launch's.
     if let Err(e) = build_runtimes(run.settings.inherited().setups, &prep.command) {
-        return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
+        return Ok(rollback_local_views(
+            operation.settle(Word::Failed, refusal_observation(&Error::from(e))),
+            &prep.granted,
+        ));
     }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(
@@ -1046,7 +1052,19 @@ fn local_launch(
             outcome.annotate(&key, value);
         }
     }
-    Ok(outcome)
+    Ok(rollback_local_views(outcome, &prep.granted))
+}
+
+fn rollback_local_views(
+    mut outcome: EffectOutcome,
+    granted: &super::grants::Granted,
+) -> EffectOutcome {
+    if outcome.failed()
+        && let Err(e) = granted.remove_failed_views()
+    {
+        outcome.annotate("seat_view_cleanup", refusal_observation(&e));
+    }
+    outcome
 }
 
 /// What a hosted launch's provider answered of the lane's sandbox, whatever

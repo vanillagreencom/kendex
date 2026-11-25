@@ -7135,6 +7135,7 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
         "the setup's own refusal, its first build's: {report}"
     );
     assert_eq!(server.panes().len(), 1, "no window opened");
+    assert!(!root.join("tmp/lane-mail/KEN-B/seat-views").exists());
 
     let report = effect_report(&runner.op_fleet(&launch_request("KEN-C", runner.state_dir())));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
@@ -12492,17 +12493,25 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
     );
     let report = world.launch(&launch_request("KEN-S", world.runner.state_dir()));
     let probe = world.probe("KEN-S", 1);
-    assert!(probe.contains("rules=planted"), "{probe}");
-    assert!(
-        !rules.exists(),
-        "the absent rules folder stays inside the view"
+    assert!(probe.contains("rules=refused"), "{probe}");
+    assert_eq!(
+        std::fs::read_dir(&rules).unwrap().count(),
+        0,
+        "the absent rules folder stands empty"
     );
     assert!(probe.contains("seat=codex1 written"), "{probe}");
     assert!(probe.contains("file=state_5.sqlite written"), "{probe}");
-    assert!(probe.contains("file=hooks.json written"), "{probe}");
-    assert!(probe.contains("file=hooks.json refused"), "{probe}");
+    assert_eq!(
+        probe.matches("file=hooks.json refused").count(),
+        2,
+        "{probe}"
+    );
     assert!(probe.contains("file=AGENTS.md refused"), "{probe}");
-    assert!(!Path::new(&planted[0]).join("hooks.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(Path::new(&planted[0]).join("hooks.json")).unwrap(),
+        "{\n  \"hooks\": {}\n}\n",
+        "the absent registration stands in its empty form"
+    );
     assert_eq!(
         std::fs::read_to_string(standing.join("hooks.json")).unwrap(),
         operators_hooks
@@ -12520,7 +12529,11 @@ fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harn
         named.contains(&codex.display().to_string()),
         "the record names the review seat: {named:?}"
     );
-    assert!(!codex.join("config.toml").exists());
+    assert_eq!(
+        std::fs::read_to_string(codex.join("config.toml")).unwrap(),
+        "",
+        "the seat's settings file stands for its read-only carve-out"
+    );
 }
 
 /// A Claude lane on a seat whose settings file is a link launches, whether
@@ -12685,10 +12698,8 @@ fn a_claude_lane_writes_its_own_snapshot_and_leaves_the_shared_snapshot_alone() 
     assert!(!views.exists());
 }
 
-/// A Claude lane cannot replace its seat's settings: the seat is read-only,
-/// so the link every operator seat holds stands and the settings read
-/// through it stay the operator's. The session folder its harness writes in
-/// the seat, made by the launch, takes the lane's session file.
+/// The projected settings file and projects root stay read-only while
+/// the lane's own project takes its transcript.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
@@ -12723,7 +12734,7 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
         probe.contains(&format!("settings={}", settings.trim_end())),
         "{probe}"
     );
-    assert!(probe.contains("folder=projects written"), "{probe}");
+    assert!(probe.contains("folder=projects refused"), "{probe}");
     assert_eq!(std::fs::read_link(&link).unwrap(), operator);
     assert!(!seat.join("projects/probe").exists());
 }
@@ -12761,6 +12772,7 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
         assert!(!copilot.join(name).exists());
     }
     assert!(probe.contains("folder=session-state written"), "{probe}");
+    assert!(copilot.join("session-state/probe").is_file());
 
     let root = outside.join("pi-root");
     pi_root_ready(&root);
@@ -12768,6 +12780,9 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
+    std::fs::create_dir(seat.join("projects")).unwrap();
+    let slug = agent_runtime::session::claude_slug(world.runner.state_dir());
+    let relative = format!("projects/{slug}/bridge.jsonl");
     let bin = outside.join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     write_executable(
@@ -12786,7 +12801,12 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     ]);
     world.probe_env(
         "PROBE_RUN",
-        &folder_writes(&root, &["extensions", "packages", "sessions"]),
+        &format!(
+            "{}\nprintf 'bridge transcript\\n' > '{}/{}'",
+            folder_writes(&root, &["extensions", "packages", "sessions"]),
+            seat.display(),
+            relative,
+        ),
     );
     let mut request = launch_request("KEN-PR", world.runner.state_dir());
     request["harness"] = json!("pi");
@@ -12806,6 +12826,10 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     }
     assert!(probe.contains("folder=sessions written"), "{probe}");
     assert!(!root.join("extensions/probe").exists());
+    assert_eq!(
+        std::fs::read_to_string(seat.join(relative)).unwrap(),
+        "bridge transcript\n"
+    );
 }
 
 /// A confined launch makes no folder in a Pi root on the host: Pi reads an
@@ -13031,10 +13055,9 @@ fn a_pi_lane_starts_past_pi_s_project_trust_question() {
     world.launch(&request);
 }
 
-/// A seat shares its session folders by link, as an operator's seats do:
-/// the lane writes its transcript where the seat's `projects` leads, outside
-/// the seat, and the seat around the link stays read-only. A link that leads
-/// nowhere refuses the launch by name.
+/// The Claude project projection preserves host transcript readback even
+/// when the host projects directory is linked. Git-root memory stays
+/// private in a linked worktree, and a dangling projects link refuses.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_leads() {
@@ -13077,21 +13100,74 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
             .is_symlink()
     );
 
+    let linked_worktree = world.linked_worktree("ken-sl");
+    let linked_slug = agent_runtime::session::claude_slug(&linked_worktree);
     let linked_seat = outside.join("linked-memory-seat");
     plant_credential(&linked_seat);
-    let linked_project = linked_seat.join("projects").join(&slug);
-    std::fs::create_dir_all(&linked_project).unwrap();
+    let git_root_project = linked_seat.join("projects").join(&slug);
+    std::fs::create_dir_all(&git_root_project).unwrap();
     let linked_memory = outside.join("linked-memory");
     std::fs::create_dir(&linked_memory).unwrap();
-    std::os::unix::fs::symlink(&linked_memory, linked_project.join("memory")).unwrap();
+    std::fs::write(linked_memory.join("standing"), "host memory").unwrap();
+    let link = git_root_project.join("memory");
+    std::os::unix::fs::symlink(&linked_memory, &link).unwrap();
+
+    let setup = linked_worktree.join(".agents/skills/orch/scripts/setup");
+    std::fs::create_dir_all(setup.parent().unwrap()).unwrap();
+    write_executable(&setup, "#!/bin/sh\nexit 0\n");
+    // Long, standing paths used to exhaust the wrapper's per-argument limit.
+    for i in 0..256 {
+        std::fs::create_dir(
+            linked_seat
+                .join("projects")
+                .join(format!("{i}-{}", "p".repeat(180))),
+        )
+        .unwrap();
+    }
+
     let path = format!("projects/{slug}/memory");
-    world.probe_env("PROBE_RUN", &folder_writes(&linked_seat, &[&path]));
-    let mut request = launch_request("KEN-SML", world.runner.state_dir());
+    let probe = format!(
+        "{}\nmv '{}' '{}.moved' 2>/dev/null || echo memory-entry=held",
+        folder_writes(&linked_seat, &[&path]),
+        link.display(),
+        link.display(),
+    );
+    world.probe_env("PROBE_RUN", &probe);
+    let mut request = launch_request("KEN-SML", &linked_worktree);
     request["account"] = json!(linked_seat);
-    world.launch(&request);
-    let probe = world.probe("KEN-SML", 1);
+    let report = world.launch(&request);
+    let probe = world.probe_in(&linked_worktree, "KEN-SML", 1);
     assert!(probe.contains(&format!("folder={path} written")), "{probe}");
+    assert!(probe.contains("memory-entry=held"), "{probe}");
     assert!(!linked_memory.join("probe").exists());
+    assert_eq!(std::fs::read_link(&link).unwrap(), linked_memory);
+    assert_eq!(
+        std::fs::read_to_string(linked_memory.join("standing")).unwrap(),
+        "host memory"
+    );
+    let id = report["lane"]["session_id"].as_str().unwrap();
+    assert!(
+        linked_seat
+            .join("projects")
+            .join(linked_slug)
+            .join(format!("{id}.jsonl"))
+            .is_file()
+    );
+
+    // The same link would be removable when its directory is the
+    // writable transcript project. Refuse that launch before a worker.
+    let panes = world.server.panes().len();
+    let mut request = launch_request("KEN-SLINK", world.runner.state_dir());
+    request["account"] = json!(linked_seat);
+    let report = effect_report(&world.runner.op_fleet(&request));
+    let observation = &report["intent"]["observation"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(observation["cause"], "grant-memory-link", "{report}");
+    assert_eq!(observation["project"], json!(git_root_project), "{report}");
+    assert_eq!(observation["path"], json!(link), "{report}");
+    assert_eq!(observation["target"], json!(linked_memory), "{report}");
+    assert_eq!(std::fs::read_link(link).unwrap(), linked_memory);
+    assert_eq!(world.server.panes().len(), panes);
 
     let gone = outside.join("seat-gone");
     plant_credential(&gone);
@@ -13110,27 +13186,30 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
     assert!(std::fs::symlink_metadata(outside.join("shared/absent")).is_err());
 }
 
-/// The Codex worker sees a writable state file of its own. Its actual
-/// rollout still reaches the host observer through the linked session store.
+/// A Codex seat whose state store and session folder are links into a
+/// folder no grant names, as every operator Codex seat's are, cannot hold a
+/// confined lane: Codex writes through the links into the read-only tree.
+/// The lane on it launches unconfined under the cause `linked-seat`, which
+/// its record names even after reconciliation, and writes through the links.
+/// A seat whose one link is its settings file, read-only by design, keeps its
+/// lane confined.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_codex_lane_on_a_seat_keeps_linked_state_stores_local_and_shares_its_rollout() {
+fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
     use std::os::unix::fs::symlink;
     let mut world = Confined::new();
+    world.runner.verify = Some(1);
     let (_outside, outside) = outside_tmp();
     let codex = world.runner.state_dir().join("probe-codex").join("codex");
     std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
-    write_executable(
-        &codex,
-        probe_script(&fixtures().join("stub-session-late/codex")),
-    );
+    write_executable(&codex, probe_script(&fixtures().join("stub-record/codex")));
     world.runner.env.push((
         "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("codex={}", codex.display()),
     ));
     let shared = outside.join("shared");
     std::fs::create_dir_all(shared.join("sessions")).unwrap();
-    for name in ["state_5.sqlite", "logs_2.sqlite-wal", "config.toml"] {
+    for name in ["state_5.sqlite", "config.toml"] {
         std::fs::write(shared.join(name), "").unwrap();
     }
     let linked = outside.join("codex-linked");
@@ -13140,30 +13219,59 @@ fn a_codex_lane_on_a_seat_keeps_linked_state_stores_local_and_shares_its_rollout
         std::fs::write(seat.join("auth.json"), "{}").unwrap();
         symlink(shared.join("config.toml"), seat.join("config.toml")).unwrap();
     }
-    for name in ["state_5.sqlite", "logs_2.sqlite-wal", "sessions"] {
+    for name in ["state_5.sqlite", "sessions"] {
         symlink(shared.join(name), linked.join(name)).unwrap();
     }
-    for (item, seat) in [("KEN-CL", &linked), ("KEN-CU", &plain)] {
-        world.probe_env("PROBE_RUN",
-            r#"test ! -e "$CODEX_HOME/state_5.sqlite" && test ! -e "$CODEX_HOME/logs_2.sqlite-wal" &&
-             printf 'lane state' > "$CODEX_HOME/state_5.sqlite" && echo state=local"#);
+    for (item, seat, confinement) in [
+        (
+            "KEN-CL",
+            &linked,
+            json!({"state": "unconfined", "cause": "linked-seat"}),
+        ),
+        ("KEN-CU", &plain, json!({"state": "confined"})),
+    ] {
+        world.file_env(&seat.join("state_5.sqlite").display().to_string());
+        world.probe_env("PROBE_RUN", &folder_writes(seat, &["sessions"]));
         let mut request = launch_request(item, world.runner.state_dir());
         request["harness"] = json!("codex");
-        request["account"] = json!(seat);
-        let report = world.launch(&request);
+        request["account"] = json!(seat.display().to_string());
+        let report = effect_report(&world.runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
         assert_eq!(
-            report["intent"]["observation"]["confinement"],
-            json!({"state": "confined"})
+            report["intent"]["observation"]["confinement"], confinement,
+            "{item}: {report}"
         );
-        assert!(report["lane"]["session_id"].is_string(), "{report}");
+        if seat == &linked {
+            assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+            let replay = world.runner.reconcile_one();
+            assert_eq!(replay["intent"]["id"], report["intent"]["id"], "{replay}");
+            assert_eq!(
+                world.runner.fleet()["intents"][0]["observation"]["confinement"],
+                confinement,
+                "{replay}"
+            );
+        }
         let probe = world.probe(item, 1);
-        assert!(probe.contains("state=local"), "{probe}");
+        assert!(
+            probe.contains("file=state_5.sqlite written"),
+            "{item}: {probe}"
+        );
+        assert!(probe.contains("folder=sessions written"), "{item}: {probe}");
     }
+    assert!(shared.join("sessions/probe").is_file());
+    // A read-only lane holds no path only while its grants hold it.
+    let mut request = launch_request("KEN-CR", world.runner.state_dir());
+    request["harness"] = json!("codex");
+    request["account"] = json!(linked.display().to_string());
+    request["read_only"] = json!(true);
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
     assert_eq!(
-        std::fs::read_to_string(shared.join("state_5.sqlite")).unwrap(),
-        ""
+        (&observation["cause"], &observation["detail"]),
+        (&json!("read-only-unconfined"), &json!("linked-seat")),
+        "{report}"
     );
-    assert!(!plain.join("state_5.sqlite").exists());
 }
 
 /// The pane hands the lane a temporary-folder variable naming a host folder,
@@ -13635,4 +13743,41 @@ fn a_confined_launch_refuses_a_worktree_tmp_that_links_outside_it() {
         "{report}"
     );
     assert_eq!(world.server.panes().len(), 1, "no window opened");
+}
+
+/// The worktree's own tmp target holds the backing until its lane closes.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_close_removes_its_view_through_an_in_tree_tmp_link() {
+    let world = Confined::new();
+    let root = world.runner.state_dir();
+    let wt = world.linked_worktree("ken-linked-tmp");
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../worktree/scripts/worktree");
+    std::fs::write(
+        root.join(".env.local"),
+        format!(
+            "WORKTREE_BASE_DIR=\"{}\"\nWORKTREE_MKDIRS=\"scratch\"\nWORKTREE_RELATIVE_SYMLINKS=\"tmp=scratch\"\n",
+            world.dir.path().display()
+        ),
+    ).unwrap();
+    let out = program("bash")
+        .current_dir(root)
+        .args([script.as_os_str(), "fix-links".as_ref(), wt.as_os_str()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "fix-links: {}", stderr(&out));
+    assert_eq!(
+        std::fs::read_link(wt.join("tmp")).unwrap(),
+        Path::new("scratch")
+    );
+    world.launch(&launch_request("KEN-TMP", &wt));
+    let views = wt.join("scratch/lane-mail/KEN-TMP/seat-views");
+    assert!(views.is_dir());
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-TMP")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    assert!(!views.exists());
+    assert_eq!(
+        std::fs::read_link(wt.join("tmp")).unwrap(),
+        Path::new("scratch")
+    );
 }

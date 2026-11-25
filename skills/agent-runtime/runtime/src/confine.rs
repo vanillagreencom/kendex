@@ -140,8 +140,12 @@ pub enum Cause {
     /// The host is not Linux: only bwrap's words are spelled, so a launch
     /// there runs as it did before any confinement.
     MacosProfileUnbuilt,
-    /// A recorded Codex launch from before seat views, when a linked state
-    /// store prevented the wrapper from holding the launch.
+    /// The Codex home holds a link its harness writes through that leads
+    /// outside the grants, as a seat whose state stores and session folders
+    /// link a shared folder does: binding each link's target alone cannot
+    /// hold SQLite, whose `-wal` and `-shm` beside the target another
+    /// session's last close unlinks and makes anew, so a lane's binds
+    /// would keep the old files. The launcher names it in [`Grants::unconfined`].
     LinkedSeat,
 }
 

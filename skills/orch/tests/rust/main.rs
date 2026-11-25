@@ -135,6 +135,50 @@ fn ready_names_a_host_without_the_confinement_and_its_fix() {
     );
 }
 
+/// A configured Codex seat whose state links lead outside the grants holds
+/// its lanes unconfined: `ready` names it beside the launch duty, and a seat
+/// whose links are its settings file and the hook registration and
+/// instructions it keeps read-only goes unnamed.
+#[test]
+#[cfg(target_os = "linux")]
+fn ready_names_a_codex_seat_linked_outside_its_grants() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let shared = root.join("shared");
+    fs::create_dir_all(shared.join("sessions")).unwrap();
+    write(&shared, "config.toml", "");
+    write(&shared, "hooks.json", "{\"hooks\": {}}\n");
+    write(&shared, "AGENTS.md", "operator\n");
+    let [linked, plain] = ["codex-linked", "codex-plain"].map(|name| root.join(name));
+    for seat in [&linked, &plain] {
+        fs::create_dir_all(seat).unwrap();
+        write(seat, "auth.json", "{}");
+        for name in ["config.toml", "hooks.json", "AGENTS.md"] {
+            symlink(shared.join(name), seat.join(name)).unwrap();
+        }
+    }
+    symlink(shared.join("sessions"), linked.join("sessions")).unwrap();
+    let dirs = std::ffi::OsString::from(format!("{}:{}", linked.display(), plain.display()));
+    let (lines, _) = ready_in(
+        &root,
+        &["--duty", "launch"],
+        &[("AGENT_RUNTIME_ACCOUNT_DIRS", &dirs)],
+    );
+    let named: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("confinement=off harness=codex"))
+        .collect();
+    assert_eq!(
+        named,
+        [&format!(
+            "confinement=off harness=codex cause=linked-seat seat={}",
+            linked.display()
+        )],
+        "{lines:?}"
+    );
+}
+
 /// `orch-runtime ready` judges every duty's programs on this computer:
 /// agent-runtime's real wrapper finding its key unbuilt on a computer
 /// without cargo, where it builds nothing, names orch's setup,

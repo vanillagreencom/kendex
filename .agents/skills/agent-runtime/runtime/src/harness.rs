@@ -113,7 +113,7 @@ impl Harness {
     pub fn home_writes(self) -> HomeWrites {
         match self {
             Harness::Claude => HomeWrites::Folders(&[
-                "projects",
+                crate::session::CLAUDE_PROJECTS,
                 "sessions",
                 "shell-snapshots",
                 "session-env",
@@ -124,7 +124,7 @@ impl Harness {
                 "paste-cache",
                 "telemetry",
             ]),
-            Harness::Copilot => HomeWrites::Folders(&["session-state"]),
+            Harness::Copilot => HomeWrites::Folders(&[crate::session::COPILOT_SESSION_STATE]),
             // Codex opens its state databases at the home's top level as it
             // starts, and refuses to start where it cannot. It only reads
             // its hook registration and scripts, its instructions and its

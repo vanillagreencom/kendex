@@ -379,7 +379,11 @@ fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
     // is missing under the home it is given, and a rollout written inside
     // the private home is one no relaunch scan finds. Made in the account
     // first so the loop below links it like any other entry.
-    private_dir(&account.join("sessions"), "account-store", h)?;
+    private_dir(
+        &account.join(crate::session::CODEX_SESSIONS),
+        "account-store",
+        h,
+    )?;
     // The account's own files by link, never by copy: a token the harness
     // renews under this lane is renewed in the account's auth.json. The
     // config is written below and `lane-launch` holds this home, so linking
