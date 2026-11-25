@@ -81,7 +81,7 @@ name: Skill Tests
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
 # the `timeout-minutes` expression of the skill-suites-shard job: every
-# macOS leg takes 40 minutes, the Linux legs it lists 30 and every other
+# macOS leg takes 35 minutes, the Linux legs it lists 30 and every other
 # leg 15. The per-shard figures behind each budget are in the
 # comment above it.
 # Every merge group runs its selected Linux and macOS shards. A selected
@@ -341,11 +341,11 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.bot_instructions == 'true') }}
     runs-on: ubuntu-latest
-    # The secrets step scans each pull-request commit apart, so its time grows
-    # with the commit count: a 450-commit pull request held the job 7.2 and
-    # 7.5 minutes in merge-group runs 44692469604 and 44718539691, its scan of
-    # 13,387 commit files alone 370s.
-    timeout-minutes: 12
+    # The credential step took 406 s in merge-group run 44718539691, with
+    # installation and both ranges. A local replay of both ranges took
+    # 541.899 s before and 305.977 s after batching. Add 30 s for surrounding
+    # work (run 44692469604) and 25% headroom, rounded up to a minute.
+    timeout-minutes: 7
     steps:
       # The whole history: the secrets scan judges every commit the group
       # and its pull request add against that commit's own parents, which a
@@ -552,9 +552,10 @@ jobs:
     # runtimes' Rust targets: it takes the 30-minute ceiling until the first
     # merge group that runs the orch legs records each leg's per-suite seconds and
     # step times here, the measurement every orch budget is owed.
-    # The macOS `rest` leg ran 22.7 and 28.0 minutes in merge-group runs
-    # 44692469604 and 44718539691, so every macOS leg takes 40.
-    timeout-minutes: &skill-suite-timeout ${{ matrix.os == 'macos-latest' && 40 || (matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
+    # The longest macOS leg took 948 s in dispatch run 45537351959. The
+    # historical high of 1,679 s in merge-group run 44718539691 sets the
+    # ceiling with 25% headroom, rounded up to a minute.
+    timeout-minutes: &skill-suite-timeout ${{ matrix.os == 'macos-latest' && 35 || (matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'jarvis' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-tools') && 30 || 15 }}
     # change-scope's change-scope suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
