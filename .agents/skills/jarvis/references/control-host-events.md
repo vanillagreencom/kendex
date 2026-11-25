@@ -79,9 +79,9 @@ The loop prints one batch pointer without its body; the [session workflow](../wo
 - For hosted repository discovery and the account used on the control host, see [Control host setup](agent-reach.md#control-host-setup).
 - It skips an entry whose `worktree` is set, and one whose `state` is neither `ok` nor `git-unclassified`.
 - A root that lists but cannot be reached reports its failure once, and the other roots continue.
-- A folder git cannot classify, `state` `git-unclassified`, such as a linked worktree whose main checkout was moved or deleted, is such a root.
+- A folder git cannot classify, `state` `git-unclassified`, such as a linked worktree whose main checkout was moved or deleted, is such a root for the mail pass.
   - The mail pass reports `root-unreachable` once for it, with `root=` the folder and `cause=` the state then kendex's Git error.
-  - The presence pass renews its hold as for any other root.
+  - The presence pass renews no hold for it. Its result lists the folder as `unclassified`, never as a failed renewal, so no `presence-renew-failed` event names it. Once the hold it renewed before ages past `SLACK_JARVIS_SESSION_MAX_AGE`, the Slack relay posts that folder's notices, and `slack post --mention` keeps its mention, while Jarvis runs. The machine's other roots keep their holds.
 - A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`. No other listing failure does.
 
 ## Restart and destination identity
@@ -163,3 +163,4 @@ The producer's declared Slack package resolves each target root's `SLACK_JARVIS_
 - An empty path creates no hold.
 - The path can be absolute, start with `~/`, or be relative to that root, and its parent directory must exist.
 - A failed renewal reports once, until a successful renewal clears it.
+- A machine whose presence pass fails as a whole reports once. Its next answer clears that report, whatever any one root reports.
