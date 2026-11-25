@@ -1702,16 +1702,16 @@ assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.
   "control: the old root behavior writes the question where no overseer reads"
 
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant checked-reads 'ask | notice | send | resolve | peer)' \
-  'ask | notice | send | resolve | peer | pending | drain | inbox | events | watch | wait)'
+mutant checked-reads 'ask | notice | send | resolve | peer | peer-receive)' \
+  'ask | notice | send | resolve | peer | peer-receive | pending | drain | inbox | events | watch | wait)'
 LANE="$TMP_ROOT/root-lane"
 ROOT_ASSERT_RC=0
 ( FAIL=0; root_reads; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/read-root-control.out" || ROOT_ASSERT_RC=$?
 assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to reads fails the same read-root assertions'
 
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant checked-compact 'ask | notice | send | resolve | peer)' \
-  'ask | notice | send | resolve | compact | peer)'
+mutant checked-compact 'ask | notice | send | resolve | peer | peer-receive)' \
+  'ask | notice | send | resolve | compact | peer | peer-receive)'
 ROOT_ASSERT_RC=0
 ( FAIL=0; root_compact; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/compact-root-control.out" || ROOT_ASSERT_RC=$?
 assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to compact fails the same outside-Git assertion'
