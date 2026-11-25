@@ -1,9 +1,11 @@
 """Succession over agent-runtime's controller record, with real tmux and the fixture harness."""
+import errno
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import runpy
 import shlex
 import shutil
 import signal
@@ -154,6 +156,36 @@ class SuccessionContract(SessionContract):
         answer, code = self.succeed(account_walled=True, usage_wall=before)
         self.assertEqual((answer["state"], answer["account"], code), ("running", str(alternative), 0), self.stderr)
         self.assertNotEqual(self.handed_over(before)["session_id"], before["session_id"])
+
+    def test_resume_distinguishes_failures_before_and_after_the_child_starts(self):
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+            session_type = runpy.run_path(str(session_test.SKILLS / "jarvis/scripts/lib/session.py"))["Session"]
+            recorded = {"account": "/accounts/a", "harness": "claude", "server_socket": "/socket",
+                        "server": 1, "server_start": 2, "pane": "%3", "cwd": str(self.home),
+                        "harness_pid": 4, "harness_start": "ticks:5", "session_id": "s1"}
+
+            class Resume(session_type):
+                def fleet(self):
+                    return self.path.with_name("fleet.json")
+
+                def runtime(self, *args, **kwargs):
+                    if args[:2] == ("accounts", "pick"):
+                        return {"exit": 0}, 0, None, ""
+                    return super().runtime(*args, **kwargs)
+
+            for phase, expected, launch_count in (("deadline", "waiting", 0), ("spawn", "waiting", 1),
+                                                   ("after-spawn", "pending", 1)):
+                with self.subTest(phase=phase), patch.object(subprocess, "Popen") as launch:
+                    session = Resume(self.home, self.env)
+                    error = OSError(errno.EAGAIN, "fixture temporarily unavailable")
+                    if phase == "deadline":
+                        session.deadline = time.monotonic() - 1
+                    elif phase == "spawn":
+                        launch.side_effect = error
+                    else:
+                        launch.return_value.communicate.side_effect = error
+                    self.assertEqual(session.resume_wall(recorded)["wall_recovery"], expected)
+                    self.assertEqual(launch.call_count, launch_count)
 
     def test_live_window_stays_in_front_through_handover(self):
         before = self.running()

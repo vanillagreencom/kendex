@@ -61,6 +61,10 @@ class Refusal(Exception):
         self.reason, self.detail, self.state = reason, detail, state
 
 
+class CommandNotStarted(Exception):
+    """The shared deadline elapsed or spawning the command was refused."""
+
+
 def clean(value):
     return isinstance(value, str) and all(c.isprintable() for c in value)
 
@@ -157,13 +161,27 @@ class Session:
         self.emitted = False
         self.fleet_path = None
 
-    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None):
+    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None, track_launch=False):
         remaining = self.deadline - time.monotonic() if timeout is None else timeout
         if remaining <= 0:
+            if track_launch:
+                raise CommandNotStarted("deadline")
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         try:
-            result = subprocess.run(argv, input=input, text=True, encoding=encoding, capture_output=True,
-                                    cwd=self.home, env=env or self.env, timeout=remaining)
+            process = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else None,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding=encoding,
+                                       cwd=self.home, env=env or self.env)
+        except OSError as error:
+            if track_launch:
+                raise CommandNotStarted("spawn") from error
+            raise
+        try:
+            with process:
+                try:
+                    stdout, stderr = process.communicate(input, timeout=remaining)
+                except BaseException:
+                    process.kill()
+                    raise
         except subprocess.TimeoutExpired as error:
             # A call past its deadline keeps the stderr it held, such as a
             # runtime wrapper's setup-building line for the build it waited
@@ -174,6 +192,7 @@ class Session:
             print(held.decode(errors="backslashreplace") if isinstance(held, bytes) else held, end="",
                   file=sys.stderr)
             raise
+        result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
         if check and result.returncode:
             print("jarvis-session: operation=" + " ".join(argv[:3]) + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, end="", file=sys.stderr)
@@ -190,7 +209,7 @@ class Session:
         target = ["-S", socket] if socket else ["-L", self.label]
         return self.run(["tmux", *target, *map(str, args)], check=check, encoding=encoding)
 
-    def runtime(self, *args, timeout=None):
+    def runtime(self, *args, timeout=None, track_launch=False):
         """agent-runtime's reply to ARGS: (result, status, refusal key, stderr).
 
         The caller's own environment reaches it, since its settings and its
@@ -198,7 +217,8 @@ class Session:
         published policy over it; the window a launch opens inherits the
         private server's environment instead."""
         env = dict(os.environ, **{name: self.env[name] for name in POLICY_NAMES if name in self.env})
-        result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout)
+        result = self.run([str(AGENT_RUNTIME), *map(str, args)], check=False, env=env, timeout=timeout,
+                          track_launch=track_launch)
         try:
             reply = json.loads(result.stdout.splitlines()[-1])
         except (IndexError, ValueError):
@@ -835,7 +855,10 @@ class Session:
         if recorded.get("home"):
             args.extend(("--home", recorded["home"]))
         try:
-            result, code, refusal, errors = self.runtime(*args)
+            result, code, refusal, errors = self.runtime(*args, track_launch=True)
+        except CommandNotStarted as failure:
+            print("jarvis-session: resume-not-started cause=" + str(failure), file=sys.stderr)
+            return {"wall_recovery": "waiting" if cursor is None else "pending"}
         except (Refusal, OSError, subprocess.SubprocessError) as failure:
             print("jarvis-session: resume-answer=unavailable cause=" + type(failure).__name__, file=sys.stderr)
             return {"wall_recovery": "pending"}

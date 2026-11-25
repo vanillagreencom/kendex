@@ -2374,16 +2374,18 @@ with open(sys.argv[1], "ab") as out:
         # watch passes the session command returns the account decision.
         at, reset = 1795496400, 1795496520  # 2026-11-24, 05:00 and 05:02 UTC.
         waiting = {"state": "running", "wall_recovery": "waiting"}
-        for window, ready, answer in (
-            ("five-hour", reset, {"state": "running", "wall_recovery": "confirmed"}),
-            ("weekly", at + 60, {"state": "running", "account": "/accounts/b"}),
+        resumed = {"state": "running", "wall_recovery": "confirmed"}
+        for name, window, ready, answer in (
+            ("five-hour", "five-hour", reset, resumed),
+            ("spent-after-reset", "five-hour", reset + 30, resumed),
+            ("weekly", "weekly", at + 60, {"state": "running", "account": "/accounts/b"}),
         ):
-            with self.subTest(window=window), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
-                self.home = self.project("home-" + window)
+            with self.subTest(case=name), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + name)
                 banner = "5-hour" if window == "five-hour" else "weekly"
                 self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at,
                                 "message": "You've hit your " + banner + " limit · resets Nov 24, 5:02am (UTC)"})
-                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + window))
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + name))
                 watch = self.watch()
                 self.wall_passes(watch, at, succeeding=False)
                 notices = self.owner_notice_rows()
@@ -2392,7 +2394,10 @@ with open(sys.argv[1], "ab") as out:
                 self.assertIn("2026-11-24 05:02:00 UTC", notices[0]["text"])
                 self.assertNotIn("ref", notices[0])
                 watch.wall_pending[1].set_result(waiting)
-                for now, result in ((at + 30, waiting), (ready, answer), (ready + 30, answer)):
+                steps = [(at + 30, waiting)]
+                if ready > reset:
+                    steps.append((reset, waiting))
+                for now, result in steps + [(ready, answer), (ready + 30, answer)]:
                     log = self.session_command(result, 0)
                     self.wall_passes(watch, now)
                     commands = log.read_text().splitlines() if log.exists() else []
@@ -2408,6 +2413,8 @@ with open(sys.argv[1], "ab") as out:
                     if now >= ready:
                         self.assertEqual(sent[1]["ref"], notices[0]["id"])
                         self.assertIn("resumed" if window == "five-hour" else "/accounts/b", sent[1]["text"])
+                    if now == reset and result is waiting:
+                        watch = self.watch()
 
     def test_usage_wall_reuses_the_notice_from_before_upgrade(self):
         at = 1795496400
@@ -2415,18 +2422,46 @@ with open(sys.argv[1], "ab") as out:
                   "outcome": "No replacement started.", "noticed": True}
         text = ("Jarvis session s1 has no room left on /accounts/a (read at 2026-11-24 05:00:00 UTC): "
                 "every turn it tries fails. No replacement started.")
-        self.mail(self.home, "notice", text, "--to", "owner")
-        original, = self.owner_notice_rows()
-        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
-            self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at - 1})
-            watch = self.watch()
-            watch.state["wall"] = legacy
-            watch.save()
-            self.session_command({"state": "running", "account": "/accounts/b"}, 0)
-            self.wall_passes(self.watch(), at + 30)
-            root, outcome = self.owner_notice_rows()
-            self.assertEqual(root["id"], original["id"])
-            self.assertEqual(outcome["ref"], original["id"])
+        waiting = {"state": "running", "wall_recovery": "waiting"}
+        for parent in ("retained", "compacted-before-upgrade", "compacted-after-upgrade"):
+            with self.subTest(parent=parent), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + parent)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + parent))
+                self.mail(self.home, "notice", text, "--to", "owner")
+                original, = self.owner_notice_rows()
+                self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at - 1})
+                watch = self.watch()
+                watch.state["wall"] = dict(legacy)
+                watch.save()
+                if parent == "compacted-after-upgrade":
+                    self.session_command(waiting, 0)
+                    self.wall_passes(self.watch(), at + 30)
+                    self.assertEqual([row["id"] for row in self.owner_notice_rows()], [original["id"]])
+                if parent != "retained":
+                    self.age_owner_notices(60 * 86400)
+                    result = self.command([self.mail_command, "compact", "--item", "overseer"], self.home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.owner_notice_rows(), [])
+                self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+                self.wall_passes(self.watch(), at + 60)
+                if parent == "retained":
+                    root, outcome = self.owner_notice_rows()
+                    self.assertEqual(root["id"], original["id"])
+                    self.assertEqual(outcome["ref"], original["id"])
+                    continue
+                notices = self.owner_notice_rows()
+                self.assertEqual(len(notices), 1, notices)
+                outcome, = notices
+                self.assertIn("/accounts/b", outcome["text"])
+                self.assertNotIn("ref", outcome)
+                self.controller("s2", "/accounts/b", {"event": "StopFailure", "error": "rate_limit", "at": at + 70})
+                log = self.session_command(waiting, 0)
+                watch = self.watch()
+                self.wall_passes(watch, at + 90)
+                self.wall_passes(watch, at + 120)
+                self.assertTrue(log.read_text().splitlines()[0].endswith("--usage-wall s2 4242 %3"))
+                self.assertEqual([row["id"] for row in self.owner_notice_rows()][:1], [outcome["id"]])
+                self.assertEqual(len(self.owner_notice_rows()), 2)
 
     def test_unconfirmed_usage_resume_reconciles_across_watch_restart_and_keeps_handover_eligible(self):
         at, reset = 1795496400, 1795496520

@@ -1139,7 +1139,7 @@ class Watch:
             self.notify(memory)
             if same:
                 return kind if memory["outcome"] is None else None
-            if reading is None or not (memory["noticed"] or memory.get("notice_missing")):
+            if reading is None or not memory["noticed"]:
                 return None
             del self.state["wall"]
             memory = None
@@ -1247,17 +1247,16 @@ class Watch:
                 memory["notice_id"] = receipt
             elif legacy["reported"]:
                 memory["notice_missing"] = True
-                self.failed_pass("wall-notice", Failure("wall-notice", "mailbox", "legacy-notice-missing",
-                                                        "The previous usage notice is unavailable.").record)
             self.save()
-        if memory["noticed"] or memory.get("notice_missing"):
+        if memory["noticed"]:
             return
         at = wall_time(memory["at"])
         account = memory["account"] or "its default account"
         session = "Jarvis session " + memory["session"]
-        ref = memory.get("notice_id")
+        ref = None if memory.get("notice_missing") else memory.get("notice_id")
         usage = "row_at" in memory
-        if usage and ref:
+        outcome_notice = usage and (ref is not None or memory.get("notice_missing"))
+        if outcome_notice:
             if memory["outcome"] is None:
                 return
             text = session + " (stop read at " + at + "): " + memory["outcome"]
@@ -1271,8 +1270,13 @@ class Watch:
             payload.write(text + "\n")
             payload.flush()
             try:
-                result = run([self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner",
-                              "--file", payload.name, *(["--ref", ref] if ref else [])], self.home, operation="wall-notice")
+                send = [self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner", "--file", payload.name]
+                result = run([*send, *(["--ref", ref] if ref else [])], self.home, operation="wall-notice")
+                if outcome_notice and ref and result.returncode and child_failure("wall-notice", result).record["key"][1:] == [
+                        "refusal", "ref-unknown"]:
+                    memory["notice_missing"] = True
+                    self.save()
+                    result = run(send, self.home, operation="wall-notice")
                 receipt = re.search(
                     r"^lane-mail: (?:duplicate|owner-notice-repeated=overseer) id=(\S+)", result.stderr, re.M
                 ) if result.returncode else re.search(r"^lane-mail: sent item=overseer id=(\S+)", result.stdout, re.M)
@@ -1281,7 +1285,7 @@ class Watch:
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 self.failed_pass("wall-notice", failure("wall-notice", error).record)
                 return
-        if usage and not ref:
+        if usage and not outcome_notice:
             memory["notice_id"] = receipt[1]
         else:
             memory["noticed"] = True
