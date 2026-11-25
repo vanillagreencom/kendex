@@ -914,10 +914,10 @@ echo "session-drift-check: the enumerations the hook copies out of Rust"
 # the vocabulary the lane polices. A skip here would be green in CI while the
 # copy drifted.
 CORE_SRC="$(cd "$TEST_DIR/../.." && pwd)/crates/core/src"
-rust_list() { # FILE CONST -> the quoted entries of a `const NAME...[ ... ];`
+rust_list() { # FILE CONST -> the quoted entries of a `[pub[(..)]] const NAME...[ ... ];`
   local file="$1" const="$2" entries
   [ -r "$file" ] || { printf 'the Rust source this suite reads could not be read at %s\n' "$file" >&2; exit 2; }
-  entries="$(sed -n "/^const $const/,/^];/p" "$file" |
+  entries="$(sed -n "/^\(pub\(([^)]*)\)\? \)\?const $const\b/,/^];/p" "$file" |
     sed -n 's/^[[:space:]]*"\([^"]*\)",$/\1/p')"
   # The floor: an extractor that matched nothing would agree with every copy,
   # so an empty read is this lane being broken, not Rust declaring no entries.

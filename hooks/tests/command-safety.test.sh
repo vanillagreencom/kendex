@@ -2572,13 +2572,27 @@ fi
 fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for rendered in .claude/hooks/command-safety.sh .codex/hooks/command-safety.sh .github/hooks/command-safety.sh .pi/kendex/hooks/command-safety.sh; do
+  for rendered in .claude/hooks/command-safety.sh .codex/hooks/command-safety.sh .github/hooks/command-safety.sh; do
     if cmp -s -- "$hook_source" "$ROOT/$rendered"; then
       printf 'PASS render matches source: %s\n' "$rendered"; passed=$((passed + 1))
     else
       printf 'FAIL render differs from source: %s\n' "$rendered"; failed=$((failed + 1))
     fi
   done
+  # The Pi render inserts the engine's registration stamp after the header
+  # (harness/pi.rs::stamp_hook), so it is the source's header, any stamp, then
+  # the source's body; the stamp's own bytes are the engine's tests' to hold.
+  rendered=.pi/kendex/hooks/command-safety.sh
+  header_lines=$(awk '/^# ---$/ && ++n == 2 { print NR; exit }' "$hook_source")
+  body_lines=$(($(wc -l <"$hook_source") - ${header_lines:-0}))
+  if [ -z "$header_lines" ]; then
+    printf 'FAIL render source has no closing header line: %s\n' "$hook_source"; failed=$((failed + 1))
+  elif cmp -s -- <(head -n "$header_lines" "$hook_source") <(head -n "$header_lines" "$ROOT/$rendered") &&
+    cmp -s -- <(tail -n "+$((header_lines + 1))" "$hook_source") <(tail -n "$body_lines" "$ROOT/$rendered"); then
+    printf 'PASS render matches source: %s\n' "$rendered"; passed=$((passed + 1))
+  else
+    printf 'FAIL render differs from source: %s\n' "$rendered"; failed=$((failed + 1))
+  fi
 fi
 if [ "${1:-}" = --environment-rows ]; then
   shift
