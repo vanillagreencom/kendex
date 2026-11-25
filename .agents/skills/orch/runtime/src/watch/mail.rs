@@ -252,8 +252,8 @@ struct Read<'a> {
     envelopes: &'a [Envelope],
 }
 
-/// The envelope's payload under its line: the text line by line, then its
-/// options.
+/// Each physical line of text and options must render as payload so it
+/// cannot start a watch event.
 fn payload(envelope: &Envelope, events: &mut Vec<Event>) {
     if let Some(text) = envelope.text.as_deref()
         && !text.is_empty()
@@ -265,9 +265,12 @@ fn payload(envelope: &Envelope, events: &mut Vec<Event>) {
         }
     }
     if !envelope.options.is_empty() {
-        events.push(Event::Payload {
-            line: format!("options: {}", envelope.options.join(", ")),
-        });
+        let options = format!("options: {}", envelope.options.join(", "));
+        for line in options.lines() {
+            events.push(Event::Payload {
+                line: line.to_owned(),
+            });
+        }
     }
 }
 

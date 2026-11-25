@@ -750,7 +750,7 @@ fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
 
 // --- the host verb ---
 
-/// The static ssh kind's whole line, as a provider declares it.
+/// The static ssh kind's capability line before a peer-mail declaration.
 const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
 
 /// A planted provider at `dir/provider`: each call logged to
@@ -857,6 +857,9 @@ fn host_verb_answers_as_the_dispatcher() {
     let provider = plant_provider(dir.path());
     let absent = dir.path().join("absent").display().to_string();
     let no_pane = SSH_LINE.trim_end_matches("\tpane=local");
+    let peer_mail = format!("{SSH_LINE}\tpeer-mail=verb");
+    let invalid_peer_mail = format!("{SSH_LINE}\tpeer-mail=none");
+    let repeated_peer_mail = format!("{peer_mail}\tpeer-mail=verb");
     let cases: Vec<HostCase> = vec![
         (
             "resolve unset",
@@ -947,6 +950,33 @@ fn host_verb_answers_as_the_dispatcher() {
             0,
             format!("{SSH_LINE}\n"),
             String::new(),
+        ),
+        (
+            "provider declares peer mail",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_LINE", &peer_mail)],
+            0,
+            format!("{peer_mail}\n"),
+            String::new(),
+        ),
+        (
+            "invalid peer-mail value",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_LINE", &invalid_peer_mail)],
+            1,
+            String::new(),
+            "orch-runtime: capability-invalid key=peer-mail value=none\n".into(),
+        ),
+        (
+            "repeated peer-mail declaration",
+            Some(&provider),
+            vec!["capabilities"],
+            vec![("PROVIDER_LINE", &repeated_peer_mail)],
+            1,
+            String::new(),
+            "orch-runtime: capability-invalid key=peer-mail value=verb\n".into(),
         ),
         (
             "line without pane",

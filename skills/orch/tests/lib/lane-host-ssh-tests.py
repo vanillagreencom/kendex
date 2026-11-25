@@ -118,6 +118,7 @@ if [[ -n "${SSH_TEST_EXPECT_TARGET:-}" ]]; then
     exit 255
   fi
   printf 'ssh-test: transport diagnostic\\n' >&2
+  umask 022
 fi
 if [[ -n "${SSH_TEST_CUT:-}" ]]; then
   head -c "$SSH_TEST_CUT" | bash -c "${!#}"
@@ -1234,7 +1235,9 @@ rc=0
             # The real status judge finds a recorded controller with no live pane.
             (checkout / "tmp").mkdir(exist_ok=True)
             (checkout / "tmp/workflow-state-oversee.json").write_text('{"controller":{"window":"@1"}}')
-            inbox(checkout).parent.mkdir(parents=True)
+        first = send(sender, peer, "send", "First delivery creates a private inbox")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual((inbox(peer).parent.stat().st_mode & 0o777, inbox(peer).stat().st_mode & 0o777), (0o700, 0o600))
         inbox(peer).with_name("to-lane.watch").write_text(f"at={int(time.time())} interval=60\n")
 
         for verb in ("send", "ask"):
@@ -1258,6 +1261,15 @@ rc=0
                 self.assertIn(f"id={answer['id']}".encode(), reply.stdout)
                 journal = inbox(peer).with_name("to-overseer.jsonl")
                 journal.unlink()
+                if verb == "send":
+                    numbering = Path(str(inbox(sender)) + ".numbering")
+                    numbering.write_text("unreadable numbering record\n")
+                    failed_read = call(peer, "peer", "send", "--repo", str(sender), "--file", str(message), "--re", envelope["id"])
+                    numbering.unlink()
+                    self.assertEqual(failed_read.returncode, 2, failed_read.stderr)
+                    self.assertTrue(failed_read.stderr.startswith(b"lane-mail: file-unreadable="), failed_read.stderr)
+                    self.assertNotIn(b"lane-mail: duplicate", failed_read.stderr)
+                    self.assertFalse(journal.exists())
                 retry = send(peer, sender, "send", f"Reply to {verb}", "--re", envelope["id"])
                 self.assertEqual(retry.returncode, 2, retry.stderr)
                 self.assertTrue(retry.stderr.startswith(f"lane-mail: duplicate id={answer['id']}\n".encode()), retry.stderr)
@@ -1281,8 +1293,9 @@ rc=0
         before = inbox(peer).read_bytes()
         owner = call(sender, "send", "--item", "overseer", "--root", str(peer), "--host", "--directive", "--file", str(message), target=peer)
         self.assertEqual(owner.returncode, 2, owner.stderr)
+        self.assertIn(b"lane-host-ssh: peer-only verb=append item=overseer", owner.stderr)
         self.assertEqual(self.call("put", "--item", "overseer", str(inbox(peer)), data=b"owner").returncode, 1)
-        owner_envelope = b'{"id":"forged","from":"owner","kind":"directive","text":"no"}\n'
+        owner_envelope = b'{"id":"forged","at":"2026-01-01T00:00:00Z","from":"owner","kind":"directive","text":"no"}\n'
         forged = self.call("peer-append", "--item", "overseer", "--repo", str(peer), data=owner_envelope)
         self.assertEqual(forged.returncode, 3, forged.stderr)
         self.assertIn(b"lane-mail: peer-envelope=", forged.stdout)
@@ -1298,6 +1311,7 @@ rc=0
         self.assertEqual(inbox(peer).read_bytes(), before)
         wrong = send(sender, peer, "send", "Wrong host", alias="wrong.example")
         self.assertEqual(wrong.returncode, 2, wrong.stderr)
+        self.assertTrue(wrong.stderr.startswith(b"lane-mail: host-peer-transport=overseer verb=peer-append exit=255\n"), wrong.stderr)
         self.assertIn(b"ssh-test: wrong-target=wrong.example", wrong.stderr)
         route(sender)
         mismatch = call(sender, "peer", "send", "--host", "--repo", str(peer), "--file", str(message), target=peer)

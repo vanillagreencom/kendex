@@ -342,6 +342,7 @@ hosted_send() { # TEXT
   RC=0
   OUT="$(cd "$TMP_ROOT/sender" && env -u TMUX -u TMUX_PANE ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK" \
+    LANE_HOST_STUB_CAPABILITIES="${HOSTED_CAPABILITIES:-}" \
     LANE_HOST_STUB_LIB="$REPO_ROOT/skills/mailbox/scripts/lib" \
     "${LANE_MAIL_BIN:-$LANE_MAIL}" peer send --repo "$REMOTE_ROOT" --host --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
 }
@@ -349,6 +350,25 @@ hosted_send 'Hosted.'
 assert_eq "$RC ${OUT%% id=*} $(first_err)" \
   "0 lane-mail: sent item=overseer lane-mail: reader-unjudged=$REMOTE_ROOT cause=hosted" \
   "a hosted peer's reader is unjudged" "$TMP_ROOT/err"
+assert_eq "$(grep -c '^append ' "$TMP_ROOT/host.log" || :) $(grep -c '^peer-append ' "$TMP_ROOT/host.log" || :)" \
+  '1 0' 'a valid older provider takes the legacy append route directly'
+
+legacy_capabilities="$("$ORCH_RUNTIME" host --host "$FIXTURE_HOST" capabilities)"
+: >"$TMP_ROOT/host.log"
+HOSTED_CAPABILITIES="$legacy_capabilities"$'\tpeer-mail=verb'
+hosted_send 'Refused direct peer delivery.'
+assert_eq "$RC=$OUT=$(first_err)" '2==lane-mail: host-peer-call=overseer verb=peer-append exit=2' \
+  'an advertised peer operation reports its refusal' "$TMP_ROOT/err"
+assert_eq "$(grep -c '^append ' "$TMP_ROOT/host.log" || :) $(grep -c '^peer-append ' "$TMP_ROOT/host.log" || :)" \
+  '0 1' 'an advertised peer refusal takes no legacy append'
+
+: >"$TMP_ROOT/host.log"
+HOSTED_CAPABILITIES="$legacy_capabilities"$'\tpeer-mail=verbish'
+hosted_send 'Malformed peer capability.'
+assert_eq "$RC=$OUT=$(first_err)" '2==lane-mail: host-peer-call=overseer verb=capabilities exit=1' \
+  'the dispatcher rejects a lookalike capability' "$TMP_ROOT/err"
+assert_eq "$(wc -l <"$TMP_ROOT/host.log" | tr -d ' ')" 0 'an invalid declaration sends nothing'
+unset HOSTED_CAPABILITIES
 
 # --- must-fail controls ------------------------------------------------------
 # mutant NAME OLD NEW: a private lane-mail with OLD, which occurs once,

@@ -28,7 +28,8 @@ LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
 # The static host kind's capability line, this provider's answer to the
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
-                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local"))
+                          "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local",
+                          "peer-mail=verb"))
 
 
 def notice(key, **values):

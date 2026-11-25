@@ -184,8 +184,8 @@ impl CreditPool {
     }
 }
 
-/// The closed set of values each key of a capability line takes; a key
-/// outside it is no capability (`schemas/lane-host.md` § Host kinds).
+/// The closed value sets for the required keys of a capability line
+/// (`schemas/lane-host.md` § Host kinds).
 const CAPABILITY_SETS: [(&str, &[&str]); 12] = [
     ("kind", &["local", "ssh", "claude-cloud", "codex-cloud"]),
     ("launch", &["window", "ssh", "cloud-session", "cloud-task"]),
@@ -238,10 +238,9 @@ impl Capabilities {
     }
 
     /// One tab-separated `key=value` line holding every key of
-    /// [`CAPABILITY_SETS`] once, each with a value from its set: a line
-    /// with a key missing, repeated or outside the sets, or a value outside
-    /// its key's set, is refused `capability-invalid key=KEY value=VALUE`,
-    /// so no line is half read and no key guessed.
+    /// [`CAPABILITY_SETS`] once, with an optional `peer-mail=verb` for the
+    /// mailbox sender. Missing required keys, repeated or unknown keys,
+    /// and invalid values are refused `capability-invalid key=KEY value=VALUE`.
     pub fn parse(line: &str) -> Result<Capabilities, String> {
         let line = line.strip_suffix('\n').unwrap_or(line);
         if line.contains('\n') {
@@ -250,10 +249,13 @@ impl Capabilities {
         let mut given: BTreeMap<&str, &str> = BTreeMap::new();
         for field in line.split('\t') {
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            let allowed = CAPABILITY_SETS
-                .iter()
-                .find(|(k, _)| *k == key)
-                .is_some_and(|(_, set)| set.contains(&value));
+            let allowed = match key {
+                "peer-mail" => value == "verb",
+                _ => CAPABILITY_SETS
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .is_some_and(|(_, set)| set.contains(&value)),
+            };
             if !allowed || given.insert(key, value).is_some() {
                 return Err(format!("capability-invalid key={key} value={value}"));
             }

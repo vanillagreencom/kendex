@@ -28,7 +28,7 @@ An overseer that runs the watch reads a peer's answer as its `kind=answer` event
 
 - `--repo` names another repository's checkout; `lane-mail --help` states how it resolves and refuses.
 - A note to this overseer's own mailbox is `lane-mail send --item overseer --directive --file PATH`.
-- For a peer on another host, use `peer send` or `peer ask` with `--host --repo PATH`. `PATH` is the absolute path to the peer's main checkout on that host. Set `ORCH_LANE_HOST` to the provider for that host. Static SSH uses `peer-append` and requires an `overseer` inventory row for the receiving checkout. Reply through the same route with the original sender's checkout as `--repo`. See [Static SSH provider](../schemas/lane-host.md#static-ssh-provider).
+- For a peer on another host, use `peer send` or `peer ask` with `--host --repo PATH`. `PATH` is the absolute path to the peer's main checkout on that host. Set `ORCH_LANE_HOST` to the provider for that host. Static SSH declares `peer-mail=verb` for `peer-append` and requires an `overseer` inventory row for the receiving checkout. Reply through the same route with the original sender's checkout as `--repo`. See [Static SSH provider](../schemas/lane-host.md#static-ssh-provider).
 - `lane-mail send` writes only the caller's own repository's mailboxes: its lanes' and its overseer's. `peer` is the only write across repositories.
 - Every message carries its sender.
 - The watch reports an owner's note as an owner message and a peer's as `peer-note REPOSITORY`; `lane-mail --help` states how the repository is named.
