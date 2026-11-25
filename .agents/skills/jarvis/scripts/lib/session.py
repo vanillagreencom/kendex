@@ -668,7 +668,7 @@ class Session:
                             and args.model in (None, recorded.get("model")))
                 if matching:
                     record.update(origin=record.get("origin") or args.origin, app_off=False)
-                    record.setdefault("report_started_at", int(time.time()))
+                    record["report_started_at"] = record.get("report_started_at") or int(time.time())
                     self.write(record)
                     return self.answer(record, status, state="running", reason="existing") | {"terminal": answer["terminal"]}, 0
                 # Another selection replaces the running controller: its stop

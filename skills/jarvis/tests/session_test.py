@@ -942,6 +942,10 @@ print(json.dumps(session.terminal(status)))
         self.assertEqual(self.controller().get("seat"), "jarvis", "the start names the Jarvis seat")
         self.assertEqual(self.call("start")[0]["reason"], "existing")
         self.assertEqual(len(self.started()), 1, "a second launch beside the live one")
+        # A version 1 record kept no report start: the matching start gives it one.
+        self.record.write_text(json.dumps({"v": 1, "home": str(self.home), "state": "running", "reason": "existing"}))
+        self.assertEqual(self.call("start")[0]["reason"], "existing")
+        self.assertIsInstance(json.loads(self.record.read_text())["report_started_at"], int)
         # Delivered work outlives a stop.
         outbox = self.record.with_name("forward.json")
         outbox.write_text('{"entries":[{"id":"k1"}]}\n')
