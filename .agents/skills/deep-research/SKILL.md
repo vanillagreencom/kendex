@@ -32,9 +32,11 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - Given no path, write it to `tmp/plans/<slug>-research.md`, never under a tracked `docs/` path. The full rule is `agents/planner.md` § Plan Artifacts.
 - The report reaches other sessions as an attachment on its tracker issue.
 - Research on building against another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
+- For a vendor comparison, ask the research query for provider documentation that shows how each product performs the consumer's actual task.
 - Cite sources for material claims.
 - Provider payloads go in the sidecar JSON, never inline. By default the sidecar sits beside the report, named as the report with `.raw.json` in place of its extension: `findings.raw.json` for `findings.md`.
 - Sanitize evidence excerpts: source-page headings must not render as headings.
+- Revise any generated vendor comparison using [Vendor comparisons](#vendor-comparisons) before running `validate`.
 - Once the report and its sidecar exist, run `validate` and stop.
 - A report written by hand on the approved fallback route has no sidecar: run `validate` on the report alone.
 - Do no local reproduction, benchmarks, tests, code inspection or implementation unless the caller asked for it.
@@ -81,3 +83,11 @@ The flags can override a mode's settings.
 - `templates/findings.md` carries exactly the sections `validate` requires, in order.
 - `Key Findings` holds distinct claims, not a restatement of the summary.
 - Record mode and source counts in `## Research Metadata`.
+
+### Vendor comparisons
+
+- Start the recommendation with how each product performs the consumer's actual task, verified against the provider's documentation.
+- Rank features, price or popularity after presenting that evidence.
+- If the task involves contacting someone, name who the recipient sees as the sender and describe what the recipient experiences on first contact.
+- Mark gaps in the evidence under `Risks / Unknowns`.
+- If an unanswered question could change the choice, recommend a purchase only if the answer supports that choice.
