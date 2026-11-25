@@ -257,12 +257,6 @@ step() {
       git -C "$WT" branch -q -D side
       ;;
     second) commit_wt second.txt second ;;
-    cleanup-landed)
-      git -C "$MAIN" merge -q --no-ff --no-edit -s ours "refs/heads/$ISSUE"
-      git -C "$MAIN" push -q origin main
-      git -C "$MAIN" merge-base --is-ancestor "refs/heads/$ISSUE" origin/main
-      (cd "$MAIN" && PATH="$NOREBASE_PATH" "$WORKTREE_SCRIPT" cleanup >/dev/null 2>&1)
-      ;;
     raw-checkout) git -C "$WT" checkout -f "$ISSUE" >/dev/null 2>&1 ;;
     raw-quit) git -C "$WT" cherry-pick --quit ;;
     raw-abort) git -C "$WT" cherry-pick --abort ;;
@@ -510,7 +504,6 @@ continue completes the resolved replay and authorizes its exact head|conflict pu
 push after a completed replay publishes the rewritten head|conflict publish restack-replay resolve continue|push topic|0|-|skip-rebase|engine=none branch=topic head=end ref=end ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=- remote=end map=1
 skip drops the represented commit and replays the refresh-only commit|merged restack-replay|restack skip topic|0|completed|map:2d|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:already merged plus main follow-up,other.txt:orig,refresh-only.txt:refresh only restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2d
 abort restores the pre-replay branch and clears the record|conflict restack-replay|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
-cleanup keeps the merged original ref that a paused replay needs to abort|conflict restack-replay cleanup-landed|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ref=pre ahead=0 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 continue with HEAD checked out onto the branch is refused|conflict second restack-replay raw-checkout|restack continue topic|1|-|refusal:replay-mismatch|engine=replay branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=remote:origin,branch:topic,expected:-,orig:end,base:base,pending:true,token:bound,mode:replay remote=- map=unmapped-head
 abort with HEAD checked out onto the branch restores it|conflict second restack-replay raw-checkout|restack abort topic|0|aborted|-|engine=none branch=topic head=end ref=end ahead=2 dirty=- tree=file.txt:feature,other.txt:orig,second.txt:second restack=- remote=- map=-
 abort after a hand cherry-pick quit refuses to force the checkout over the unmerged index|conflict restack-replay raw-quit|restack abort topic|1|-|unreattachable|engine=none branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound,mode:replay remote=- map=unmapped
