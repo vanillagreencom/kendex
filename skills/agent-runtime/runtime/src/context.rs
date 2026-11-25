@@ -627,7 +627,8 @@ fn session_named(at: &SessionAt) -> Result<Named, RecordUnread> {
 /// its home's `config`, as Codex layers its session flags over the user
 /// config. `Some` only where those settings name a whole-number
 /// `model_auto_compact_token_limit` under the `body_after_prefix` scope with
-/// a post-turn threshold of 0 and do not turn background compaction on:
+/// a post-turn threshold of 0 and turn background compaction off in a
+/// spelling this reader classifies, or leave it unnamed:
 /// under the `total` scope Codex caps the limit at 90% of the window, a
 /// post-turn threshold compacts at that share of it, and background
 /// compaction starts by default at 65% (openai/codex rust-v0.172.0,
@@ -676,19 +677,40 @@ pub fn codex_compaction_floor(
     };
     // Codex's own feature writer spells the switch as `[features]`
     // `async_compaction = true`; its table form carries `enabled`. A legacy
-    // profile the config selects carries its own `features`.
+    // profile the config selects carries its own `features`. Any other
+    // mention of `async_compaction`, such as a dotted key, an inline table,
+    // a quoted header or another profile's switch that `-p` may select, is
+    // a spelling this reader cannot judge, so it verifies no point.
     let profile = crate::trust::toml_value(&text, "", "profile");
-    let background = std::iter::once(String::new())
+    let features: Vec<String> = std::iter::once(String::new())
         .chain(profile.map(|p| format!("profiles.{p}.")))
-        .any(|prefix| {
-            let on = |section: &str, key| {
-                crate::trust::toml_value(&text, &format!("{prefix}{section}"), key).as_deref()
-                    == Some("true")
-            };
-            on("features", "async_compaction") || on("features.async_compaction", "enabled")
-        });
-    if background
-        || setting("model_auto_compact_token_limit_scope").as_deref() != Some("body_after_prefix")
+        .map(|prefix| format!("{prefix}features"))
+        .collect();
+    let mut table = "";
+    for line in text.lines() {
+        let header = crate::trust::table_of(line, &mut table);
+        let body = line.split('#').next().unwrap_or("");
+        if !body.contains("async_compaction") {
+            continue;
+        }
+        let switch = if header {
+            features
+                .iter()
+                .any(|f| table.strip_prefix(f.as_str()) == Some(".async_compaction"))
+                .then(|| crate::trust::toml_value(&text, table, "enabled"))
+                .flatten()
+        } else {
+            body.split_once('=')
+                .filter(|(key, _)| {
+                    key.trim() == "async_compaction" && features.iter().any(|f| f == table)
+                })
+                .map(|(_, value)| value.trim().to_owned())
+        };
+        if switch.as_deref() != Some("false") {
+            return Ok(None);
+        }
+    }
+    if setting("model_auto_compact_token_limit_scope").as_deref() != Some("body_after_prefix")
         || setting("model_post_turn_compact_threshold_percent").as_deref() != Some("0")
     {
         return Ok(None);
@@ -1361,9 +1383,23 @@ mod tests {
                 "hand-started, background compaction off",
                 None,
                 Some(format!(
-                    "{keys}[features.async_compaction]\nenabled = false\n"
+                    "{keys}[features.async_compaction] # background\nenabled = false\n"
                 )),
                 max,
+            ),
+            (
+                "hand-started, commented header turns background compaction on",
+                None,
+                Some(format!(
+                    "{keys}[features] # background compaction\nasync_compaction = true\n"
+                )),
+                None,
+            ),
+            (
+                "hand-started, root dotted switch on",
+                None,
+                Some(format!("features.async_compaction = true\n{keys}")),
+                None,
             ),
             (
                 "hand-started, selected profile turns background compaction on",

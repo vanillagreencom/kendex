@@ -444,12 +444,17 @@ fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
     })
 }
 
-/// The table a line belongs to: the header's text between the brackets, or
-/// `None` for a line that is itself a header.
-fn table_of<'a>(line: &'a str, current: &mut &'a str) -> bool {
+/// Whether `line` is a table header, and if so the table it opens into
+/// `current`: the text up to the first `]` that only blanks or a `#`
+/// comment follow, so `[features] # note` opens `features`.
+pub(crate) fn table_of<'a>(line: &'a str, current: &mut &'a str) -> bool {
     let trimmed = line.trim_start();
     if let Some(rest) = trimmed.strip_prefix('[') {
-        *current = rest.trim_end().strip_suffix(']').unwrap_or(rest).trim_end();
+        let close = rest.match_indices(']').map(|(at, _)| at).find(|&at| {
+            let tail = rest[at + 1..].trim_start();
+            tail.is_empty() || tail.starts_with('#')
+        });
+        *current = close.map_or(rest, |at| &rest[..at]).trim_end();
         return true;
     }
     false
