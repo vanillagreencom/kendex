@@ -25,7 +25,8 @@ from mail_world import BASH, LANE_MAIL, REPO, SCRIPTS, MailWorld, make_project
 ORCH_RUNTIME = REPO / "skills/orch/scripts/orch-runtime"
 
 # Independent of the producer: the status --main shape a consumer validates.
-SATELLITE_KEYS = {"v", "role", "main", "reachable", "checked_at", "cause", "last_answer", "requests", "answers"}
+SATELLITE_KEYS = {"v", "role", "main", "reachable", "checked_at", "cause", "last_answer", "requests", "answers",
+                  "forward_confirm"}
 REQUEST_KEYS = {"request", "key", "state", "cause", "forwarded", "queued_at", "attempts"}
 STATES = {"queued", "delivered", "read"}
 SSH = r'''#!/bin/sh
@@ -132,6 +133,18 @@ class Forward(MailWorld):
         result = self.jarvis("status", "--main")
         self.assertEqual(result.returncode, 0, result.stderr)
         return satellite_status(result.stdout)
+
+    def test_status_reports_the_resolved_forward_confirmation_setting(self):
+        enabled = '[env]\nJARVIS_FORWARD_CONFIRM = "on"\n'
+        for settings, private, expected in (
+            ("", "", "off"),
+            (enabled, "", "on"),
+            (enabled, "JARVIS_FORWARD_CONFIRM=yes\n", "invalid"),
+        ):
+            with self.subTest(forward_confirm=expected):
+                (self.satellite / "kendex.settings.toml").write_text(settings)
+                (self.satellite / ".env.local").write_text(private)
+                self.assertEqual(self.status()["forward_confirm"], expected)
 
     def drain_failures(self):
         """Existing failure tests inspect failure blocks; answer delivery has its own rows below."""

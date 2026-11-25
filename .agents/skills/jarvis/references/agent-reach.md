@@ -336,6 +336,8 @@ The provenance cites satellite records Jarvis main cannot check. The owner or a 
 
 `jarvis-session status --home HOME --main` reads the local outbox and settings.
 
+On a satellite, `forward_confirm` reports the resolved `JARVIS_FORWARD_CONFIRM` that `forward` uses. It is `off` by default and `on` when `forward` requires confirmation. A setting rejected as `setting-invalid` reports `invalid`. Older packages omit `forward_confirm`.
+
 - Its `reachable`, `cause` and `checked_at` come from the watch-loop's last collection that called Jarvis main, the `forward-drain --collection` the loop runs.
 - A `forward` call or a drain without `--collection` records no reach.
 - The fields read null before the first collection.

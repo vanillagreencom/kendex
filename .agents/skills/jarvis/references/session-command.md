@@ -57,7 +57,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](agent-reach.md#status).
 - Wait for one forward's answer with `jarvis-session forward-wait --home HOME --key KEY` under [Agent reach: Forward](agent-reach.md#forward).
 - Read `jarvis-session status --home HOME --main` for forwarding status.
-- Follow [Agent reach: Status](agent-reach.md#status) for kept answers.
+- See [Agent reach: Status](agent-reach.md#status) for the satellite's `forward_confirm` field and kept answers.
 - While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it.
 - Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`.
   - An app that turns Jarvis off uses `--origin app-off`.
