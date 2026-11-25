@@ -1840,7 +1840,8 @@ lm_plain() {
   local unsafe
   command -v python3 >/dev/null 2>&1 || refuse command-missing python3
   # Local inbox validates before its fast read, which needs no scratch directory.
-  unsafe="$(python3 "$SCRIPT_DIR/lib/lane-mail-store.py" plain "$BOX" 2>&1)" ||
+  # Replace the substitution shell so capturing stderr adds no process.
+  unsafe="$(exec python3 "$SCRIPT_DIR/lib/lane-mail-store.py" plain "$BOX" 2>&1)" ||
     refuse file-unreadable "$BOX" "$unsafe"
   [ -z "$unsafe" ] || refuse mailbox-unsafe "$unsafe"
 }
