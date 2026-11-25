@@ -1673,20 +1673,24 @@ jobs:
           echo "verify document version: $printed"
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: lane-reach-python
         if: matrix.shard == 'rest'
         with:
           python-version: '3.12'
+          update-environment: false
 
       - name: PyYAML for the lane-reach suite
         if: matrix.shard == 'rest'
+        env:
+          LANE_REACH_PYTHON: ${{ steps.lane-reach-python.outputs.python-path }}
         run: |
-          python3 -m venv "$RUNNER_TEMP/lane-reach-python"
-          python_bin="$RUNNER_TEMP/lane-reach-python/bin"
-          "$python_bin/python" -m pip install --disable-pip-version-check 'PyYAML==6.0.2'
-          printf '%s\n' "$python_bin" >>"$GITHUB_PATH"
+          "$LANE_REACH_PYTHON" -m venv "$RUNNER_TEMP/lane-reach-python"
+          "$RUNNER_TEMP/lane-reach-python/bin/python" -m pip install --disable-pip-version-check 'PyYAML==6.0.2'
 
       - name: all other skill suites
         if: matrix.shard == 'rest'
+        env:
+          LANE_REACH_PYTHON_BIN: ${{ runner.temp }}/lane-reach-python/bin
         run: |
           set -u
           wf=.github/workflows/skill-tests.yml

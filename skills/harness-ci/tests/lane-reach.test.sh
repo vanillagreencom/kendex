@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Inputs: harness-ci scripts, change-scope and the change-class action.
 set -euo pipefail
+# The action and CLI spawn python3. Scope their venv to this suite's process tree.
+if [ -n "${LANE_REACH_PYTHON_BIN:-}" ]; then
+  export PATH="$LANE_REACH_PYTHON_BIN:$PATH"
+fi
 # shellcheck source=../../change-scope/tests/lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
 
