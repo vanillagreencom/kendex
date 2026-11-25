@@ -81,9 +81,9 @@ suite_expected_secs() { # PATH
   [ -n "${suite_timing_lines+set}" ] || suite_timing_lines=$(suite_timings) || suite_timing_lines=""
   LC_ALL=C awk -v path="$1" '$1 == path && $3 == 2 { printf "%d\n", int(($2 * 125 + 99) / 100) }' <<<"$suite_timing_lines"
 }
-say() { # KEY VALUE
+say() { # KEY VALUE [CAUSE]
   printf 'guard: %s=%s\n' "$1" "$2"
-  finding_text "$1" "$2"
+  finding_text "$@"
   fail=1
 }
 note() { # KEY VALUE — the same shape for a notice, which is not a finding
@@ -112,12 +112,16 @@ reach_progress() { # PHASE DONE TOTAL [TREE]
 reach_tick() { # PHASE DONE TOTAL [TREE] — reach_progress, 30 seconds after the last line
   [ $((SECONDS - progress_at)) -lt 30 ] || reach_progress "$@"
 }
-finding_text() { # KEY VALUE — the English for one key, and the whole of it
+finding_text() { # KEY VALUE [CAUSE] — the English for one key, and the whole of it
   case "$1" in
     no-verdict)
       echo 'the check could not run; its cause follows.' ;;
     scan)
-      echo 'the source scan could not read that input; no match or clean result was produced.' ;;
+      if [ "${3:-}" = unresolved-python-argv ]; then
+        echo 'the source scan found a kendex argv outside a recognized Python call. Pass the argv as a literal list or tuple directly at the call.'
+      else
+        echo 'the source scan could not read that input; no match or clean result was produced.'
+      fi ;;
     doc-limits)
       echo "the document byte-ceiling check refused the working tree; its own report above names the cause." ;;
     bot-instructions)
@@ -1767,8 +1771,10 @@ reach_runtime() { # TREE
 # Source language selects a reader, never suite eligibility. In particular,
 # Jarvis shell suites execute Python whose argv list calls the installed CLI.
 # Status 1 is no call (including empty source); status 2 is unread or unresolved.
+# RELEASE_SCAN_CAUSE distinguishes a parsed but unresolved Python argv.
 release_file_calls_kendex() { # FILE
   local f=$1 code header language=other command candidates line answer hit=0
+  RELEASE_SCAN_CAUSE=
   code=$(cat -- "$f") || return 2
   [ -n "$code" ] || return 1
   header=${code%%$'\n'*}
@@ -1786,27 +1792,32 @@ release_file_calls_kendex() { # FILE
   case "$language" in
     python)
       # Match literal argv at any call, including watch.py's checked() wrapper.
-      # An executable name outside that shape cannot prove the package has no caller.
+      # An argv built elsewhere needs a finding. A shim's filename is not an argv.
       answer=$(python3 - "$f" <<'PY'
 import ast
 from pathlib import Path
 import sys
 
 tree = ast.parse(Path(sys.argv[1]).read_bytes(), filename=sys.argv[1])
-names = {node for node in ast.walk(tree)
-         if isinstance(node, ast.Constant) and node.value == 'kendex'}
-if not names:
-    print('absent')
-elif any(isinstance(node, ast.Call) and node.args
-         and isinstance(node.args[0], (ast.List, ast.Tuple))
-         and node.args[0].elts and node.args[0].elts[0] in names
-         for node in ast.walk(tree)):
+arg_vectors = {node for node in ast.walk(tree)
+               if isinstance(node, (ast.List, ast.Tuple)) and node.elts
+               and isinstance(node.elts[0], ast.Constant) and node.elts[0].value == 'kendex'}
+resolved = {node.args[0] for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and node.args and node.args[0] in arg_vectors}
+if arg_vectors - resolved:
+    print('unresolved')
+elif resolved:
     print('call')
 else:
-    print('unresolved')
+    print('absent')
 PY
       ) || return 2
-      case "$answer" in call) return 0 ;; absent) return 1 ;; *) return 2 ;; esac
+      case "$answer" in
+        call) return 0 ;;
+        absent) return 1 ;;
+        unresolved) RELEASE_SCAN_CAUSE=unresolved-python-argv; return 2 ;;
+        *) return 2 ;;
+      esac
       ;;
     shell)
       code=$(sed '/^[[:space:]]*#/d' <<<"$code") || return 2
@@ -2888,9 +2899,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         release_hit=0
         release_file_calls_kendex "$f" || release_hit=$?
         case "$release_hit" in
-          0) calls_kendex=1; break ;;
+          0) calls_kendex=1 ;;
           1) ;;
-          *) say scan "$f" ;;
+          *) say scan "$f" "$RELEASE_SCAN_CAUSE" ;;
         esac
       done <<<"$release_inputs"
       [ "$calls_kendex" -eq 1 ] || continue
