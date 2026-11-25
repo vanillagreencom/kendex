@@ -42,7 +42,19 @@ For every item:
 
 - For acceptance and failed checks, apply [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. It governs a scheduled session's reading too.
 - A merged item never returns to In Progress, also after a failed check: never select that state with `linear.sh issues update`.
-- Read the evidence `Where:` names. Never run `Where:` text as a command line.
+- Read the evidence `Where:` names or follow **Reading lanes** when it names that reader. Never run `Where:` text as a command line.
+
+### Reading lanes
+
+When an open post-merge box is `due` or `overdue` and its live `Where:` starts with `reading lane at `, use this route before the missing-evidence steps. A container outcome or an outside-authored GitHub item reported as `verifying-unjudged` stays on its existing route.
+
+1. Use `verify-[ITEM]-box-[N]` as the lane key for a Linear item. For GitHub use `verify-gh-[REPO_HASH]-[ISSUE_NUMBER]-box-[N]`, where `REPO_HASH` is `git hash-object --stdin` over the lowercase `OWNER/REPO` with no trailing newline. Use the live checklist's box number and keep its slot through rewrites. The original item's development lane has its own key and record.
+2. The overseer owns the start where one is running. Otherwise, the scheduled pass owns it. The launch owner handles one pass at a time. Before sending a launch, read the original item's live comments and `orch-runtime state inspect --fleet` for the same key, including `result.open_intents` and `result.state.lanes` at every status. Initialize an absent fleet record through [oversee.md § Controller start and adoption](oversee.md#controller-start-and-adoption) step 1. An unread source leaves the launch blocked.
+   - A reading lane's result for this box holds the start even after fleet pruning. This includes a comment that identifies an earlier reading lane for the same box. Take its result through step 5.
+   - A matching launch intent or lane record also holds the start. A preparing or running lane leaves the box pending. Reconcile an open launch through the existing launch route. Retry a refusal under the same key only after resolving it and proving the worker never started. If the worker ended without a result, record an unread result on the original item in the same form as step 4, with the cause.
+3. Send one `launch-lane` request under [lane-launch.md § Lane directive](../references/lane-launch.md#lane-directive). A standalone hosted pass uses the terminal launch in [handoff.md § 2](handoff.md#2-launch). Use the reading lane key as the request's `item` and as the worktree key where the launch requires a local worktree. Omit `tracker` so admission does not look up the reading key as a tracker item. Set `read_only: true` where [the read-only launch contract](../references/lane-directive.md#a-read-only-launch) admits it.
+4. Put the original tracker item, box number, exact `Post-merge:`, `Where:` and `Why after merge:` text, merge revision and deadline in `brief_file`. The brief tells the lane to perform that reading only, use scratch for its output, and leave code, commits, pull requests, and the item's state and checklist to their owners. Tell the lane to post the artifact or its durable link on the original item, in the [verification comment](../references/oversee-events.md#verification-comment) form. Include `Reading lane: [LANE_KEY]` under `### Box [N]`. If the reading cannot be made, post the same comment with the unread result and the cause. For a GitHub item, use its existing verification comment route.
+5. Read the result and its artifact on the original item. Close any still-open reading lane through `close-owned-resources` using its reading key and `ended.source` set to the result comment URL. Apply **Completion** to a proved box. A failed check follows this section's acceptance rules. An inconclusive result follows § 2 at the deadline. Keep a pending reading open even after its deadline passes.
 
 **Completion.**
 

@@ -89,6 +89,7 @@ Add a post-merge box on the same item only when all three conditions hold:
 
 1. The box needs something the branch cannot give: a deployment or installation (a release, a consumer refresh or a host), live use over time, or a person's screen or hands. `Why after merge:` names that class.
 2. `Where:` names the evidence location and its reader, under [orch communication-modes.md § Owner-only verification](../../orch/references/communication-modes.md#owner-only-verification).
+   - If a worker needs to run the reading, write `Where: reading lane at <evidence source and where the result belongs>`. For example, `Where: reading lane at the deployed service logs, with the sample report attached to this item`. The [verification pass](../../orch/workflows/verify.md#reading-lanes) launches the lane and reads its result on the same item.
    - For owner-side account, browser and home steps, write "Jarvis, the owner's delegate" in `Where:`, only where the jarvis skill is installed.
 3. The repository's normal traffic produces the sample inside the window.
    - A release trigger names a release the repository publishes within 72 hours of merge.
