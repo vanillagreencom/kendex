@@ -109,28 +109,17 @@ cat >"$note"
 TRACKER_QUESTIONS = r"""set -euo pipefail
 . "$1"
 exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
-  # The tracker watch writes the ruling as a direct reply from the account
-  # that posted the mailbox question. Match its body format as well as its author.
-  def close_mark($questions):
-    .parent_id as $parent
-    | if $parent == null or .user_id == "" or .user_id != $questions[$parent].comment.user_id then false
-      else .lines
-      | def ruling($at): length == $at or (.[$at] == "" and (.[$at + 1] // "" | startswith("**Ruling**: ")));
-      if .[0] == "This question closed with no answer." then length == 1
-      elif .[0] == "This question closed on its answer." then ruling(1)
-      elif .[0] == "This question closed on your answer." then .[1:3] == ["", "**Decided by**: owner"] and ruling(3)
-      elif .[0] == "This question closed at its deadline with no answer, so its recommendation stands."
-        then .[1:3] == ["", "**Decided by**: recommendation"] and ruling(3)
-      else false end end;
   .tracker as $tracker | .closed as $closed | .replaced as $replaced | .replies as $replies
   | {workspace: $tracker.workspace, requests: [
       $tracker.requests | group_by(.issueUuid)[] | . as $requests | .[0].issueUuid as $issue
       | ($tracker.discussions[$issue] | INDEX(.id)) as $rows
       | (INDEX($requests[]; .comment.id)) as $questions
-      | (reduce ($rows[] | .id as $id | select(
-                    if $replies | has($id) then [$issue, .parent_id] == $replies[$id]
-                    else close_mark($questions) or (.user_id == $tracker.owner and .lines[0] != $done) end)
-                        | owner_question_parent($rows; $questions; false) | select(. != null)) as $id
+      | (reduce ($rows[] | .id as $id
+                 | if $replies | has($id) then select([$issue, .parent_id] == $replies[$id]) | .parent_id
+                   elif .ruling then .parent_id
+                   else select(.user_id == $tracker.owner and .opening != $done)
+                     | owner_question_parent($rows; $questions; false) end
+                 | select(. != null)) as $id
            ({}; .[$id] = true)) as $answers
       | $requests[] | .comment.id as $id
       | select(.comment | owner_question_settled($answers[$id]; ($closed | has($id)) and

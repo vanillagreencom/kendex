@@ -1782,8 +1782,8 @@ fn mark_closed_owner_asks(
                 .rfind(|e| e.kind() == "answer" && e.re.as_deref() == Some(ask.id()));
             let body = ruling_comment(answer);
             let mut args = vec!["comments", "create", issue, "--body", &body];
-            if let Some(question) = &ask.tracker_comment {
-                args.extend(["--parent", question.as_str()]);
+            if let Some(question) = ask.tracker_comment.as_deref().filter(|id| !id.is_empty()) {
+                args.extend(["--parent", question, "--owner-ruling"]);
             }
             let written = linear.call("owner-ruling", &args).map(|a| match a {
                 Answered::Value(_) => Answered::Value(()),
