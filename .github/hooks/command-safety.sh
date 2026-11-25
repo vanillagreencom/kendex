@@ -3158,7 +3158,19 @@ hook_dir=${BASH_SOURCE[0]%/*}
 # relocated inside a checkout cannot use that checkout's support library.
 shared_root=${HOME:+$HOME/.agents}
 install_roots=()
+# A registered Codex home can also end in kendex.
+install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$hook_dir" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$hook_dir" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$hook_dir" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    else
+      install_harness=pi
+    fi
+    ;;
+esac
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
   global:* | project:*)
     pi_root=${KENDEX_HOOK_ROOT:-}
     [ -n "$pi_root" ] || refuse settings no-loader
@@ -3169,7 +3181,7 @@ case "${KENDEX_HOOK_SCOPE:-}:$hook_dir" in
       install_roots=("$pi_root")
     fi
     ;;
-  *:*/kendex/hooks | *:kendex/hooks) refuse settings no-loader ;; # An older Pi carrier supplies no install.
+  *:pi) refuse settings no-loader ;; # An older Pi carrier supplies no install.
   *)
     # Other harnesses can keep native skills alongside hooks and shared
     # skills in the registered project. A relocated harness home remains

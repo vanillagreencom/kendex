@@ -118,7 +118,19 @@ root=$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/nul
 reader=""
 # The Pi carrier names the scope it ran. A relocated global root can sit
 # inside a checkout, so its parent cannot choose the mailbox reader.
+# A registered Codex home can also end in kendex.
+install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$dir" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$dir" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$dir" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    else
+      install_harness=pi
+    fi
+    ;;
+esac
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
   global:* | project:*)
     pi_root=${KENDEX_HOOK_ROOT:-}
     if [ -n "$pi_root" ]; then
@@ -134,7 +146,7 @@ case "${KENDEX_HOOK_SCOPE:-}:$dir" in
       done
     fi
     ;;
-  *:*/kendex/hooks | *:kendex/hooks) ;; # An older Pi carrier supplies no install.
+  *:pi) ;; # An older Pi carrier supplies no install.
   *)
     home=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || home=""
     hook=$(cd -- "$dir" 2>/dev/null && pwd -P) || hook=""

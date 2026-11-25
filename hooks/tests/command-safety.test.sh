@@ -1835,7 +1835,7 @@ history_rows() {
   # hook and its loader in Codex and Pi project layouts, and a project scope
   # below a Git top level that selects the policy and holds a loader that
   # fails. Then a global install whose harness homes CODEX_HOME, COPILOT_HOME
-  # and the carrier's global Pi root move to data/.codex, .github and .pi.
+  # and the carrier's global Pi root move to data/kendex, .github and .pi.
   # Only HOME has a loader. The checkout's adjacent support files are empty.
   # The Codex project layout in bare has no loader.
   if [ ! -d "$other" ]; then
@@ -1855,12 +1855,12 @@ history_rows() {
     cp -R "$ROOT/skills/commit-guards/scripts/lib" "$mono/sub/.agents/skills/commit-guards/scripts/lib"
     mkdir -p "$foreign/.pi/kendex/hooks"
     cp "$hook" "$foreign/.pi/kendex/hooks/command-safety.sh"
-    mkdir -p "$relocated/.codex/hooks" "$relocated/.github/hooks" "$relocated/.pi/kendex/hooks" \
+    mkdir -p "$relocated/kendex/hooks" "$relocated/.github/hooks" "$relocated/.pi/kendex/hooks" \
       "$relocated/.agents/skills/commit-guards/scripts/lib" "$loader_home/.agents/skills/commit-guards/scripts" "$bare/.codex/hooks"
     git -C "$relocated" init -q
     git -C "$relocated" config gc.auto 0
     git -C "$relocated" config maintenance.auto false
-    cp "$hook" "$relocated/.codex/hooks/command-safety.sh"
+    cp "$hook" "$relocated/kendex/hooks/command-safety.sh"
     cp "$hook" "$relocated/.github/hooks/command-safety.sh"
     cp "$hook" "$relocated/.pi/kendex/hooks/command-safety.sh"
     : >"$relocated/.agents/skills/commit-guards/scripts/lib/common.sh"
@@ -1905,9 +1905,15 @@ history_rows() {
       relocated-codex | relocated-copilot | relocated-pi | bare-codex)
         home=$loader_home
         case "$shape" in
-          relocated-codex) run_hook="$relocated/.codex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/.codex" ;;
+          relocated-codex) run_hook="$relocated/kendex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/kendex" ;;
           relocated-copilot) run_hook="$relocated/.github/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/.github" ;;
-          relocated-pi) run_hook="$relocated/.pi/kendex/hooks/command-safety.sh"; pi_scope=global; pi_root="$relocated/.pi" ;;
+          relocated-pi)
+            pi_scope=global; pi_root="$relocated/.pi"
+            run_hook="$pi_root/kendex/hooks/command-safety.sh"
+            # package-config.ts resolves the absolute override lexically.
+            # process.ts passes the original override through to the hook.
+            harness_var="PI_CODING_AGENT_DIR=$relocated/missing/../.pi"
+            ;;
           bare-codex) run_hook="$bare/.codex/hooks/command-safety.sh" ;;
         esac
         payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;

@@ -435,10 +435,10 @@ EOF
 timeout_rows
 
 unexpected_rows() {
-  local mode rc result saved_hook="$HOOK"
+  local mode rc result saved_hook="$HOOK" anchor='    AT=$HOOK_DIR'
   # An unhandled command failure exercises the production EXIT handler.
-  assert_eq "$(grep -cxF 'AT=$HOOK_DIR' "$HOOK" || :)" 1 "unexpected fault anchor"
-  awk '{ print } $0 == "AT=$HOOK_DIR" { print "false" }' "$HOOK" >"$TMP_ROOT/unexpected.sh"
+  assert_eq "$(grep -cxF -- "$anchor" "$HOOK" || :)" 1 "unexpected fault anchor"
+  awk -v anchor="$anchor" '{ print } $0 == anchor { print "    false" }' "$HOOK" >"$TMP_ROOT/unexpected.sh"
   HOOK="$TMP_ROOT/unexpected.sh"
   for mode in advisory required; do
     release_all

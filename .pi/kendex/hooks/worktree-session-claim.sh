@@ -197,7 +197,19 @@ HOOK_DIR=${BASH_SOURCE[0]%/*}
 FOUND=""
 # Use the Pi carrier's registration so a global root inside a checkout
 # cannot select the checkout's guard.
+# A registered Codex home can also end in kendex.
+install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$HOOK_DIR" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$HOOK_DIR" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    else
+      install_harness=pi
+    fi
+    ;;
+esac
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
   global:* | project:*)
     pi_root=${KENDEX_HOOK_ROOT:-}
     if [ -n "$pi_root" ]; then
@@ -213,7 +225,7 @@ case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
       done
     fi
     ;;
-  *:*/kendex/hooks | *:kendex/hooks) ;; # An older Pi carrier supplies no install.
+  *:pi) ;; # An older Pi carrier supplies no install.
   *)
     # Other harnesses find the guard by the same walk that lane-mail-check
     # uses for its reader, bounded by the home and the open repository.

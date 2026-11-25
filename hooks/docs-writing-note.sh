@@ -124,7 +124,19 @@ done <<<"$TARGETS"
 HOOK_DIR=${BASH_SOURCE[0]%/*}
 NATIVE_ROOT=""
 SHARED_ROOT=""
+# A registered Codex home can also end in kendex.
+install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$HOOK_DIR" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$HOOK_DIR" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    else
+      install_harness=pi
+    fi
+    ;;
+esac
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
   global:* | project:*)
     HARNESS=pi
     pi_root=${KENDEX_HOOK_ROOT:-}
@@ -138,7 +150,7 @@ case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
       fi
     fi
     ;;
-  *:*/kendex/hooks | *:kendex/hooks) HARNESS=pi ;; # An older Pi carrier supplies no install.
+  *:pi) HARNESS=pi ;; # An older Pi carrier supplies no install.
   *)
     # Other harnesses name the marker by the install directory. Their skill
     # walk stops at the repository or home and never uses catalog sources
@@ -148,7 +160,7 @@ case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
       */.claude/hooks) HARNESS=claude ;;
       */.codex/hooks | "${CODEX_HOME:-/nonexistent}/hooks") HARNESS=codex ;;
       "") HARNESS=unknown ;;
-      *) HARNESS=source ;;
+      *) if [ "$install_harness" = codex ]; then HARNESS=codex; else HARNESS=source; fi ;;
     esac
     HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
     [ -n "$ROOT" ] || ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
@@ -196,6 +208,12 @@ ROUTE=""
 ROUTE_STATUS=0
 JUDGE=""
 if GUARDS=$(in_scope commit-guards); then JUDGE="$GUARDS/scripts/md-type"; fi
+# A project docs-writing install can use the user's shared md-type even
+# when commit-guards was installed only at global scope.
+if [ ! -f "$JUDGE" ] && [ "${KENDEX_HOOK_SCOPE:-}" = project ] &&
+   [ -n "${KENDEX_HOOK_ROOT:-}" ] && [ -n "${HOME:-}" ]; then
+  JUDGE="$HOME/.agents/skills/commit-guards/scripts/md-type"
+fi
 if [ -n "$JUDGE" ] && [ -f "$JUDGE" ]; then
   ROUTE=$("$BASH" "$JUDGE" --route "$TARGET" 2>&1) || ROUTE_STATUS=$?
 else
