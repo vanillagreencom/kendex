@@ -639,8 +639,9 @@ STUB
 }
 
 # A gitdir condition that holds only while the linked worktree is registered
-# reaches the branch's settings through a relative include. Cleanup runs once
-# that worktree is gone, beside a merged branch no config file names. The
+# reaches the branch's settings through a relative include, beside an include
+# of a file that does not exist. Cleanup runs once that worktree is gone,
+# beside a merged branch no config file names. The
 # summary reads the branches and common settings cleanup left, then the
 # upstream a recreated branch and linked worktree see.
 conditional_reuse_case() { # NAME SCRIPT
@@ -657,7 +658,7 @@ conditional_reuse_case() { # NAME SCRIPT
   git -C "$MAIN" worktree add -q "$linked" "$branch"
   git_dir="$(git -C "$linked" rev-parse --absolute-git-dir)"
   mkdir "$ROOT/conf"
-  printf '[include]\n\tpath = tracking.conf\n' >"$ROOT/conf/conditional.conf"
+  printf '[include]\n\tpath = tracking.conf\n\tpath = absent.conf\n' >"$ROOT/conf/conditional.conf"
   printf '[branch "%s"]\n\tremote = origin\n\tmerge = refs/heads/main\n' "$branch" >"$tracking"
   git -C "$MAIN" config --add "includeIf.gitdir:$git_dir.path" "$ROOT/conf/conditional.conf"
   if [[ "$(git -C "$linked" config --show-origin "branch.$branch.remote")" != *"$tracking"* ||
