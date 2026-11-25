@@ -153,11 +153,11 @@ def check(job):
     tokens = [s for s in steps if s.get('uses', '').startswith('actions/create-github-app-token@')]
     assert len(tokens) == 3
     repository, land, upstream = tokens
-    # The landing token: the consumer repository alone, contents: write
-    # alone, minted only from a complete landing pair, a failed mint leaving
-    # it empty, and read by the refresh step alone. The job also says
-    # whether either name is set, so the refresh step reports a token that
-    # did not arrive.
+    # The landing token: the consumer repository alone, contents: write and
+    # workflows: write alone, minted only from a complete landing pair, a
+    # failed mint leaving it empty, and read by the refresh step alone. The
+    # job also says whether either name is set, so the refresh step reports
+    # a token that did not arrive.
     assert job['env'] == {'KENDEX_LAND_PAIR': "${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}",
                           'KENDEX_LAND_CONFIGURED': "${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}"}, job['env']
     assert land['id'] == 'land-token' and land.get('continue-on-error') is True
@@ -166,7 +166,7 @@ def check(job):
     assert land['with']['repositories'] == '${{ github.event.repository.name }}'
     assert land['with']['app-id'] == '${{ secrets.KENDEX_LAND_APP_ID }}'
     assert land['with']['private-key'] == '${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}'
-    assert {k: v for k, v in land['with'].items() if k.startswith('permission-')} == {'permission-contents': 'write'}
+    assert {k: v for k, v in land['with'].items() if k.startswith('permission-')} == {'permission-contents': 'write', 'permission-workflows': 'write'}
     landing = [s for s in steps if 'steps.land-token.outputs.token' in json.dumps(s)]
     assert len(landing) == 1 and landing[0]['env']['KENDEX_LAND_TOKEN'] == '${{ steps.land-token.outputs.token }}'
     assert 'refresh-consumer.sh' in landing[0]['run']
@@ -204,7 +204,7 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
 for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
                  'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure',
                  'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization',
-                 'land-workflows', 'land-exposure', 'land-shared', 'land-required'):
+                 'land-pull-requests', 'land-exposure', 'land-shared', 'land-required'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -225,8 +225,8 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
         next(s for s in steps if s.get('id') == 'token')['with']['private-key'] = '${{ secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}'
     elif mutation == 'unconditional-organization':
         next(s for s in steps if s.get('id') == 'token')['with']['permission-organization-secrets'] = 'read'
-    elif mutation == 'land-workflows':
-        next(s for s in steps if s.get('id') == 'land-token')['with']['permission-workflows'] = 'write'
+    elif mutation == 'land-pull-requests':
+        next(s for s in steps if s.get('id') == 'land-token')['with']['permission-pull-requests'] = 'write'
     elif mutation == 'land-exposure':
         next(s for s in steps if 'refresh-reviews.sh' in s.get('run', ''))['env']['KENDEX_LAND_TOKEN'] = '${{ steps.land-token.outputs.token }}'
     elif mutation == 'land-shared':

@@ -185,9 +185,12 @@ jobs:
       # The landing app's token, which pushes a render the refresh committed
       # to the default branch, where the rulesets there let that app
       # through, and which refresh-consumer.sh uses for nothing else. It
-      # holds contents: write alone. A caller without the pair, or a failed
-      # mint, leaves the token empty and every update on the rolling pull
-      # request.
+      # holds contents: write and workflows: write: GitHub refuses an app's
+      # push that changes a file under .github/workflows without the
+      # second, and a render can rewrite the adopted caller there. A caller
+      # without the pair, a failed mint, or an installation that has not
+      # accepted both permissions leaves the token empty and every update on
+      # the rolling pull request.
       - name: Mint the landing token
         if: steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'
         id: land-token
@@ -199,6 +202,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          permission-workflows: write
       # The REST jobs reader recognizes this name: its skip proves a run left
       # the recorded render alone.
       - name: Refresh and arm the rolling pull request
