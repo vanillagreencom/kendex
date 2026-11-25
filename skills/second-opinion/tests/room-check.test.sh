@@ -81,6 +81,7 @@ a room check set empty is no check|marker:SECOND_OPINION_CODEX_ROOM_CMD=|review|
 an unresolved class leaves the harness default, said once, and a pick naming no model|tier:none|review|0|<out>|same:claude:claude unresolved:codex stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=accounts pick --env --max-pct 100 --harness codex --binding-floor seat=claude:none,codex:runtime-seat model=codex:
 a global install has no project, so no check, though orch and agent-runtime sit under the working directory|install:global|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
 a forced target is held to the built-in check too|runtime:walled|review --target codex|1|-|roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 refused:claude:1|$NONE runtime=$CODEX_PICK seat=claude:none,codex:none model=-
+the stock Pi Copilot pick carries the same 100 percent bound|models:claude+pi-copilot-gpt pi:stub|review|0|<out>|same:claude:claude stockroom:pi-copilot-gpt:PI_COPILOT_GPT:runtime-seat single:pi-copilot-gpt:review:claude written|calls=claude:0,codex:0,extra:1 art=external-pi-copilot-gpt/$OWN files=out runtime=accounts pick --env --max-pct 100 --harness pi --native-model github-copilot/gpt-6.2-sol seat=claude:none,codex:none model=-
 "
 
 run_table "stock claude and codex room checks" "$STOCK_DEFAULTS" "$STOCK_ROWS" stock_cli_state

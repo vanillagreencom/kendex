@@ -628,8 +628,8 @@ run() {
 stock_pick() {
   local pick='.agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env'
   case "$1" in
-    PI_COPILOT) printf '%s --harness pi --native-model github-copilot/claude-opus-5.5' "$pick" ;;
-    PI_COPILOT_GPT) printf '%s --harness pi --native-model github-copilot/gpt-6.2-sol' "$pick" ;;
+    PI_COPILOT) printf '%s --max-pct 100 --harness pi --native-model github-copilot/claude-opus-5.5' "$pick" ;;
+    PI_COPILOT_GPT) printf '%s --max-pct 100 --harness pi --native-model github-copilot/gpt-6.2-sol' "$pick" ;;
     CLAUDE) printf '%s --max-pct 100 --harness claude --native-model opus' "$pick" ;;
     CODEX) printf '%s --max-pct 100 --harness codex --native-model gpt-6.2-sol --binding-floor' "$pick" ;;
     *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
