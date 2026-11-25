@@ -1,0 +1,1 @@
+- A consumer refresh whose render would land through the landing app but meets a busy merge queue no longer opens a pull request. The run prints `refresh-land=skipped value=queued` and `refresh-state=deferred reason=queued`. A later refresh run that meets an empty queue lands the render with no pull request, CI run or review, where the repository's rulesets take the landing push.

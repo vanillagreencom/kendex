@@ -112,12 +112,12 @@ The run history check:
 - Renderer, apply, refresh, install, verify, manifest and lock changes, and catalog changes that raise the minimum, wait for their release and the `v1` move.
 - The refresh scripts and classifier still run from the release checkout.
 - A successful full refresh whose complete staged diff contains only the selected projects' `.kendex-lock.json` records makes no commit or pull request. The next refresh with any non-lock change carries the current locks and content through `kendex/refresh` and its rolling pull request.
-- A content-changing refresh that produces a new head publishes it under [§ Publication](#publication), unless the run lands it under [§ Landing a proved render](#landing-a-proved-render).
+- A content-changing refresh that produces a new head publishes it under [§ Publication](#publication), unless the run lands or defers it under [§ Landing a proved render](#landing-a-proved-render).
 - A current consumer opens no pull request.
 
 ### Publication
 
-`refresh/refresh-consumer.sh` rebuilds the rolling refresh branch from the default branch. It opens or updates its pull request on a new head at any measured class or an unmeasured standard class.
+`refresh/refresh-consumer.sh` rebuilds the rolling refresh branch from the default branch. It opens or updates its pull request on a new head that the run neither lands nor defers, at any measured class or an unmeasured standard class.
 
 Before publication:
 
@@ -141,8 +141,9 @@ A run that committed a new head of measured class `render` first tries to land i
 
 - A push GitHub takes reports `refresh-state=landed pr=none class=render head=REVISION` and writes the report to the run summary. The run opens no pull request, and closes a rolling pull request GitHub still shows open.
 - A push git rejects because the default branch moved reports `refresh-state=deferred reason=base-moved`. The next run renders on the new base.
+- A merge queue that holds an entry reports `refresh-state=deferred reason=queued`. The run pushes nothing and opens or updates no pull request. A later run that meets an empty queue tries the landing again.
 - A push GitHub refuses keeps the pull request route.
-- A precondition the run does not meet keeps that route too.
+- Any other precondition the run does not meet keeps that route too.
 - A retained head never lands.
 
 The verify outcomes:
@@ -200,11 +201,12 @@ GitHub's rulesets judge the landing push, and the run reads no ruleset first. A 
 - In the target, one organization ruleset holds `pull_request` and `workflows`, with the landing app as its only bypass actor in mode `always`.
 - The organization ruleset that holds `deletion` and `non_fast_forward` lists no bypass actor.
 - The repository's merge-queue and required-checks rulesets list the landing app.
-- Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request.
+- Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request. There a deferral on a busy merge queue only delays that pull request.
+- In the vanillagreen organization the landing app passes the rulesets: on 2026-11-24 GitHub took a landing push in vgshell, whose run 45449034468 printed `refresh-state=landed pr=none class=render`.
 
 The landing token holds no Workflows permission, which GitHub requires of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). GitHub therefore refuses a landing push whose commit changes the adopted caller `.github/workflows/kendex-refresh.yml`. That update keeps the rolling pull request and its review.
 
-A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record.
+A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record. A run that deferred on a busy merge queue prints its line ahead of `refresh-state=deferred reason=queued`.
 
 - The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value.
 - A run that received neither name prints no landing line.
@@ -228,7 +230,7 @@ A run that committed a new head and kept the pull request route prints one landi
 - On `value=verify`, the head goes to a draft pull request that names each finding.
 - On `value=lock-read`, stderr holds the md-refs lock reader's `refresh-lock:` line and its cause.
 - On `value=sources-read`, stderr holds what kendex printed, then `refresh-sources=unread value=PROJECT`, then the cause.
-- On `value=queued`, the run does not push because a push to that branch makes GitHub rebuild each running merge group.
+- On `value=queued`, the run does not push because a push to that branch makes GitHub rebuild each running merge group. It defers the render with no pull request. Nothing starts another run for it, so the render waits for the next daily or release-dispatched run that meets an empty queue.
 - On `refresh-land=refused`, `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset and workflow-file paragraphs above name the refusals this route expects.
 - On `refresh-error=land-check`, the run prints the answer to stderr, exits 1 and publishes no head.
 
