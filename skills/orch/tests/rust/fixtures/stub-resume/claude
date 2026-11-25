@@ -1,7 +1,7 @@
 #!/bin/bash
 # A stub harness for the relaunch rows, named `claude`: on `--resume ID` it
-# requires the session file that id names under CLAUDE_CONFIG_DIR (or the
-# default under HOME) for this directory, and exits 3 without one, so a resume of a
+# requires the session file that id names under CLAUDE_CONFIG_DIR for this
+# directory, as Claude Code does, and exits 3 without one, so a resume of a
 # session the destination account never held fails as the real harness would.
 # Otherwise it behaves as stub-confirm: draws the composer, takes
 # `--session-id`, records each line it reads as a user turn.
@@ -15,11 +15,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 slug="${PWD//[\/.]/-}"
-store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-config_dir_set=false
-[ -z "${CLAUDE_CONFIG_DIR+x}" ] || config_dir_set=true
 if [ -n "$resume" ]; then
-  if [ ! -f "$store/projects/$slug/$resume.jsonl" ]; then
+  if [ ! -f "${CLAUDE_CONFIG_DIR:-/nonexistent}/projects/$slug/$resume.jsonl" ]; then
     printf 'No conversation found with session ID: %s\n' "$resume" >&2
     exit 3
   fi
@@ -27,12 +24,16 @@ if [ -n "$resume" ]; then
 fi
 printf '\xe2\x9d\xaf\xc2\xa0\n'
 printf '  ? for shortcuts\n'
-mkdir -p "$store/projects/$slug"
-rows="$store/projects/$slug/$session.jsonl"
-[ -n "$resume" ] || printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  [ -n "$resume" ] || printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
 while IFS= read -r line; do
+  [ -n "$rows" ] || continue
   escaped="${line//\\/\\\\}"
   escaped="${escaped//\"/\\\"}"
-  printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s","configDirSet":%s}\n' \
-    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" "$config_dir_set" >> "$rows"
+  printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
 done

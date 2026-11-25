@@ -68,9 +68,6 @@ pub struct Pending {
     pub account: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
-    /// A Claude resume on its implicit default clears the home variable.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub home_implicit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,7 +263,6 @@ pub struct AdoptController {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdoptionRead {
     pub identity: Identity,
-    pub home: Option<crate::effects::prepare::Kept>,
     pub server: u64,
     pub server_start: u64,
     pub socket: String,
@@ -274,17 +270,6 @@ pub struct AdoptionRead {
     /// Whether the record already names this pane on this server:
     /// the record is healed, not replaced.
     pub same: bool,
-}
-
-/// Record the mode alongside the active home. A legacy path alone cannot
-/// distinguish Claude's implicit default from an explicitly named path.
-pub(crate) fn record_home_mode(record: &mut crate::record::Document, implicit: Option<bool>) {
-    match implicit {
-        Some(implicit) => crate::record::set(record, "home_implicit", implicit),
-        None => {
-            crate::record::delete(record, "home_implicit");
-        }
-    }
 }
 
 /// A controller bound.

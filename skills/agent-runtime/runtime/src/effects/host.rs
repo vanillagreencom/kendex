@@ -20,7 +20,6 @@ use crate::session;
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
-use super::prepare::Kept;
 use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
@@ -1638,7 +1637,7 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
-    adopt_on(path, r, None, Unnamed::Launched, None, settings, locking)
+    adopt_on(path, r, None, Unnamed::Launched, settings, locking)
 }
 
 /// The posture an adoption records where its request names neither the
@@ -1660,7 +1659,6 @@ fn adopt_on(
     r: &AdoptController,
     confirmed: Option<tmux::Server>,
     unnamed: Unnamed,
-    registered_home: Option<(&Identity, Kept)>,
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
@@ -1756,15 +1754,6 @@ fn adopt_on(
     };
     let read = Recorded {
         value: AdoptionRead {
-            home: if harness == Harness::Claude && r.home.is_none() {
-                adopted_claude_home(&identity).or_else(|| {
-                    registered_home
-                        .filter(|(registered, _)| *registered == &identity)
-                        .map(|(_, home)| home)
-                })
-            } else {
-                None
-            },
             identity,
             server: server.pid as u64,
             server_start: server.start,
@@ -1774,22 +1763,6 @@ fn adopt_on(
         },
     };
     super::adoption::apply_adoption(path, r, &read, &settings.account_state, locking)
-}
-
-/// Read the adopted process's config mode, including the default path from
-/// that process's HOME. A replaced PID cannot vouch for the new reading.
-fn adopted_claude_home(identity: &Identity) -> Option<Kept> {
-    let (home, named) = match process_var(identity.pid, Harness::Claude.home_var()).ok()? {
-        Some(home) => (PathBuf::from(home), true),
-        None => {
-            let home = process_var(identity.pid, "HOME").ok()??;
-            (
-                session::default_home_at(Harness::Claude, Path::new(&home)),
-                false,
-            )
-        }
-    };
-    matches!(process::still_runs(identity), Reading::Live(_)).then_some(Kept { home, named })
 }
 
 /// Whether the record names `pane` on `server`, with a matching start
@@ -1859,9 +1832,6 @@ pub fn heal_controller(
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);
     }
-    let home = (harness_word != Harness::Claude.name())
-        .then(|| word("home").or_else(|| word("account")))
-        .flatten();
     let request = AdoptController {
         pane,
         socket: Some(socket),
@@ -1870,7 +1840,7 @@ pub fn heal_controller(
         // included, is written back as it stands.
         session_id: overseer.session_id.clone(),
         account: word("account"),
-        home,
+        home: word("home").or_else(|| word("account")),
         model: word("model"),
         effort: word("effort"),
         cwd: word("cwd"),
@@ -1884,7 +1854,6 @@ pub fn heal_controller(
         &request,
         Some(server),
         Unnamed::Kept,
-        None,
         settings,
         locking,
     )
@@ -2289,21 +2258,12 @@ pub fn register_controller(
     let account = given
         .or(stated_account)
         .or_else(|| account_of_home(seat_harness, seat_var));
-    let registered_home = if harness == Harness::Claude && spelled.is_none() {
-        let named = home_var.is_some();
-        home_var
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| session::default_home(harness))
-            .map(|home| (&identity, Kept { home, named }))
-    } else {
-        None
-    };
     let home = match harness {
-        Harness::Claude => None,
         Harness::Codex => home_var.or_else(|| account.clone()),
-        Harness::Copilot | Harness::Pi if seat == harness.home_var() => account.clone(),
-        Harness::Copilot | Harness::Pi => home_var
+        Harness::Claude | Harness::Copilot | Harness::Pi if seat == harness.home_var() => {
+            account.clone()
+        }
+        Harness::Claude | Harness::Copilot | Harness::Pi => home_var
             .or_else(|| session::default_home(harness).map(|home| home.display().to_string())),
     };
     let effort = spelled.and_then(|s| s.effort);
@@ -2321,15 +2281,7 @@ pub fn register_controller(
         permission: None,
         extra_args: None,
     };
-    let adopted = adopt_on(
-        path,
-        &request,
-        None,
-        Unnamed::Launched,
-        registered_home,
-        settings,
-        locking,
-    )?;
+    let adopted = adopt_controller(path, &request, settings, locking)?;
     Ok((
         json!({
             "adopted": adopted,

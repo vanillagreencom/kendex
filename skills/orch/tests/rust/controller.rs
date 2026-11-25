@@ -2652,7 +2652,6 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     // The account the harness process runs under, not the caller's own.
     assert_eq!(record["account"], pane_home.as_str());
     assert_eq!(record["home"], pane_home.as_str());
-    assert_eq!(record["home_implicit"], false);
     assert_eq!(record["permission"], "native");
     assert_eq!(record["extra_args"], json!([]));
     assert_eq!(
@@ -8691,111 +8690,17 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
 
 #[test]
 fn a_controller_start_records_the_session_for_resume_without_a_lane() {
-    resume_started_controller(ResumeHome::Account);
-}
-
-#[test]
-fn an_accountless_controller_resumes_in_its_recorded_home() {
-    for mode in [
-        ResumeHome::Implicit,
-        ResumeHome::Named,
-        ResumeHome::NamedDefault,
-        ResumeHome::Legacy,
-        ResumeHome::LegacyPhase,
-    ] {
-        resume_started_controller(mode);
-    }
-}
-
-#[test]
-fn an_adopted_controller_resumes_in_its_named_home_without_the_variable() {
-    resume_started_controller(ResumeHome::Adopted);
-}
-
-#[test]
-fn a_same_pane_adoption_keeps_the_current_process_home_mode() {
-    resume_started_controller(ResumeHome::Readopted);
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResumeHome {
-    Account,
-    Implicit,
-    Named,
-    NamedDefault,
-    Legacy,
-    LegacyPhase,
-    Adopted,
-    Readopted,
-}
-
-fn resume_started_controller(mode: ResumeHome) {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-resume");
     runner.init_fleet();
     let (bin, watch_env) = watch_world(runner.state_dir());
     runner.tools = Some(bin);
-    let login_home = dir.path().join("home");
-    std::fs::create_dir(&login_home).unwrap();
-    for (key, subdir) in [
-        ("HOME", ""),
-        ("XDG_CONFIG_HOME", "config"),
-        ("XDG_DATA_HOME", "data"),
-        ("XDG_STATE_HOME", "state"),
-        ("XDG_CACHE_HOME", "cache"),
-    ] {
-        let value = login_home.join(subdir);
-        runner
-            .env
-            .push((key.to_owned(), value.display().to_string()));
-        let set = tmux(
-            &server.socket,
-            &["set-environment", "-g", key, value.to_str().unwrap()],
-        );
-        assert!(set.status.success(), "{}", stderr(&set));
-    }
     let cwd = runner.state_dir();
     let state = cwd.join(agent_runtime::record::FLEET_FILE_NAME);
     let brief = cwd.join("brief.md");
     std::fs::write(&brief, "START HERE\n").unwrap();
-    let mut controller = pending(cwd);
-    let home = match mode {
-        ResumeHome::Account => cwd.to_path_buf(),
-        ResumeHome::Named | ResumeHome::Adopted => cwd.join("native-home"),
-        ResumeHome::Implicit
-        | ResumeHome::NamedDefault
-        | ResumeHome::Legacy
-        | ResumeHome::LegacyPhase
-        | ResumeHome::Readopted => login_home.join(".claude"),
-    };
-    let named = matches!(
-        mode,
-        ResumeHome::Account | ResumeHome::Named | ResumeHome::NamedDefault | ResumeHome::Adopted
-    );
-    if mode != ResumeHome::Account {
-        // Isolate the native-home regression from session persistence.
-        let mut fleet = runner.fleet();
-        fleet["tmux"] = json!({"session": "fleet"});
-        runner.write_fleet(&fleet);
-        controller.as_object_mut().unwrap().remove("account");
-        controller.as_object_mut().unwrap().remove("home");
-        std::fs::create_dir(&home).unwrap();
-    } else {
-        assert!(runner.fleet().get("tmux").is_none());
-    }
-    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
-        let set = tmux(
-            &server.socket,
-            &[
-                "set-environment",
-                "-g",
-                "CLAUDE_CONFIG_DIR",
-                home.to_str().unwrap(),
-            ],
-        );
-        assert!(set.status.success(), "{}", stderr(&set));
-    }
+    assert!(runner.fleet().get("tmux").is_none());
 
     let run = |args: &[&str]| {
         let mut command = isolated();
@@ -8806,155 +8711,35 @@ fn resume_started_controller(mode: ResumeHome) {
         runner.apply_env(&mut command);
         command.envs(watch_env.iter().map(|(key, value)| (key, value)));
         command.env_remove("AGENT_RUNTIME_TMUX_SESSION");
-        command.env_remove("CLAUDE_CONFIG_DIR");
         command.output().unwrap()
     };
-    if mode == ResumeHome::Adopted {
-        let id = "a8bf284a-7556-42a7-98de-20c7660878b8";
-        plant_claude_session(&home, cwd, id);
-        let pane = server.open_window(
-            "manual-controller",
-            cwd,
-            &format!(
-                "exec env CLAUDE_CONFIG_DIR={} {} --resume {id}",
-                home.display(),
-                stub("stub-resume").display()
-            ),
-        );
-        server.await_composer(&pane);
-        let out = adopt(
-            &runner,
-            &pane,
-            cwd,
-            &["--session-id", id, "--home", home.to_str().unwrap()],
-        );
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert!(
-            runner.fleet()["intents"]
-                .as_array()
-                .is_none_or(Vec::is_empty)
-        );
-        let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
-        std::fs::write(
-            &paths.flags,
-            serde_json::to_vec(&orch_runtime::watch::claim::StartFlags {
-                interval: 240,
-                max_loops: 25,
-                since: None,
-                repos: Vec::new(),
-            })
-            .unwrap(),
-        )
-        .unwrap();
-    } else {
-        let request = cwd.join("request.json");
-        std::fs::write(
-            &request,
-            json!({
-                "op": "start-controller",
-                "controller": controller,
-                "session": "fleet",
-                "brief_file": brief,
-                "watch": watch_words(&state),
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let started = effect_report(&run(&[
-            "op",
-            "--fleet",
-            "--request",
-            request.to_str().unwrap(),
-        ]));
-        assert_eq!(started["intent"]["outcome"], "confirmed", "{started}");
-        stop_live_watch(&runner, &state);
-    }
-    let mut before = runner.fleet();
-    if matches!(mode, ResumeHome::Legacy | ResumeHome::LegacyPhase) {
-        before["controller"]
-            .as_object_mut()
-            .unwrap()
-            .remove("home_implicit");
-        if mode == ResumeHome::Legacy {
-            before["intents"] = json!([]);
-        }
-        runner.write_fleet(&before);
-    }
-    let readoption_modes = if mode == ResumeHome::Readopted {
-        let original = &before["controller"];
-        let pane = original["pane"].as_str().unwrap();
-        let id = original["session_id"].as_str().unwrap();
-        let original_pid = original["harness_pid"].as_u64().unwrap();
-        let healed = adopt(&runner, pane, cwd, &["--session-id", id]);
-        assert!(healed.status.success(), "{}", stderr(&healed));
-        let healed_mode = runner.fleet()["controller"]["home_implicit"].clone();
-        let respawned = tmux(
-            &server.socket,
-            &[
-                "respawn-pane",
-                "-k",
-                "-t",
-                pane,
-                &format!(
-                    "exec env CLAUDE_CONFIG_DIR={} {} --resume {id}",
-                    home.display(),
-                    stub("stub-resume").display()
-                ),
-            ],
-        );
-        assert!(respawned.status.success(), "{}", stderr(&respawned));
-        server.await_composer(pane);
-        let mut flags = vec!["--session-id", id];
-        if !cfg!(target_os = "linux") {
-            flags.extend(["--home", home.to_str().unwrap()]);
-        }
-        let readopted = adopt(&runner, pane, cwd, &flags);
-        assert!(readopted.status.success(), "{}", stderr(&readopted));
-        let after = runner.fleet();
-        assert_eq!(after["controller"]["generation"], original["generation"]);
-        assert_ne!(after["controller"]["harness_pid"], original_pid);
-        let modes = (healed_mode, after["controller"]["home_implicit"].clone());
-        before = after;
-        Some(modes)
-    } else {
-        None
-    };
+    let request = cwd.join("request.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "start-controller",
+            "controller": pending(cwd),
+            "session": "fleet",
+            "brief_file": brief,
+            "watch": watch_words(&state),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let started = effect_report(&run(&[
+        "op",
+        "--fleet",
+        "--request",
+        request.to_str().unwrap(),
+    ]));
+    assert_eq!(started["intent"]["outcome"], "confirmed", "{started}");
+    stop_live_watch(&runner, &state);
+    let before = runner.fleet();
     let original = &before["controller"];
     let pane = original["pane"].as_str().unwrap();
     let id = original["session_id"].as_str().unwrap();
-    assert_eq!(original["home"], json!(home), "{mode:?}");
-    let file = project_dir(&home, cwd).join(format!("{id}.jsonl"));
-    let latest_config_dir_value = || {
-        let rows = std::fs::read_to_string(&file).unwrap();
-        let latest: Value = serde_json::from_str(rows.lines().last().unwrap()).unwrap();
-        latest["configDirSet"].clone()
-    };
-    let original_turns = usize::from(mode != ResumeHome::Adopted);
-    if original_turns != 0 {
-        assert_eq!(file_turns(&file), ["START HERE"]);
-        assert_eq!(latest_config_dir_value(), named, "{mode:?}");
-    }
-    if matches!(mode, ResumeHome::Named | ResumeHome::NamedDefault) {
-        let unset = tmux(
-            &server.socket,
-            &["set-environment", "-gu", "CLAUDE_CONFIG_DIR"],
-        );
-        assert!(unset.status.success(), "{}", stderr(&unset));
-    }
-    if matches!(mode, ResumeHome::Implicit | ResumeHome::LegacyPhase) {
-        let other_home = cwd.join("new-config");
-        std::fs::create_dir(&other_home).unwrap();
-        let set = tmux(
-            &server.socket,
-            &[
-                "set-environment",
-                "-g",
-                "CLAUDE_CONFIG_DIR",
-                other_home.to_str().unwrap(),
-            ],
-        );
-        assert!(set.status.success(), "{}", stderr(&set));
-    }
+    let file = project_dir(cwd, cwd).join(format!("{id}.jsonl"));
+    assert_eq!(file_turns(&file), ["START HERE"]);
     // Keep the session standing when its controller's only window closes.
     server.open_window("shell", cwd, pane_shell());
     let killed = tmux(&server.socket, &["kill-pane", "-t", pane]);
@@ -8968,7 +8753,7 @@ fn resume_started_controller(mode: ResumeHome) {
     assert_eq!(
         out.status.code(),
         Some(0),
-        "{mode:?}: {} {}",
+        "{} {}",
         String::from_utf8_lossy(&out.stdout),
         stderr(&out)
     );
@@ -8978,7 +8763,6 @@ fn resume_started_controller(mode: ResumeHome) {
     let successor_pane = successor["pane"].as_str().unwrap();
     assert_ne!(successor_pane, pane);
     assert_eq!(successor["session_id"], id);
-    assert_eq!(successor["home"], json!(home));
     assert_eq!(after["tmux"]["session"], "fleet");
     let opened = tmux(
         &server.socket,
@@ -8991,16 +8775,7 @@ fn resume_started_controller(mode: ResumeHome) {
         ],
     );
     assert_eq!(String::from_utf8_lossy(&opened.stdout).trim(), "fleet");
-    assert_eq!(file_turns(&file).len(), original_turns + 1);
-    assert_eq!(
-        latest_config_dir_value(),
-        named || mode == ResumeHome::Readopted,
-        "{mode:?}"
-    );
-    if let Some((same_process, replaced_process)) = readoption_modes {
-        assert_eq!(same_process, true);
-        assert_eq!(replaced_process, false);
-    }
+    assert_eq!(file_turns(&file).len(), 2);
 }
 
 /// The compare-and-swap set of `record`, with no pending standing.
