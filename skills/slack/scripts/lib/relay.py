@@ -748,7 +748,7 @@ class RootRelay:
         envelope = thread.envelope if thread is not None else ""
         notice("thread-read-failed", f"ts={thread_ts} id={envelope} reason={err.key} {err.value}")
         missing = err.key == "slack-api-failed" and err.error == "thread_not_found"
-        if missing and thread is not None and thread.open:
+        if missing and thread is not None and not thread.missing and (thread.open or thread.kind == "notice"):
             self.journal.append(t="resolved", id=thread.envelope, reason="thread_not_found")
         return missing
 
@@ -1074,6 +1074,17 @@ class RootRelay:
         by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
+        owner_notices = {str(e["id"]): e for e in events
+                         if e.get("box") == "to-overseer" and e.get("kind") == "notice"
+                         and e.get("from") == "overseer" and e.get("to") == "owner"}
+        # An unread follow-up keeps its parent eligible even if an earlier
+        # hold already carried that parent as read by the Jarvis session.
+        notice_parents = {e["ref"] for env_id, e in owner_notices.items()
+                          if e.get("ref") in owner_notices and env_id not in state.carried
+                          and env_id not in self.skipped and (e["line"] is None or e["line"] > seen)
+                          and at_epoch(str(e["at"])) >= horizon
+                          and not before(state.start_at, state.start_ids, at_epoch(str(e["at"])), env_id)}
+        pending_files = set(state.pending_files.values())
 
         routed = []
         for envelope in events:
@@ -1091,7 +1102,10 @@ class RootRelay:
                     and env_id not in answered and overdue_id(env_id) not in state.carried
                     and at_epoch(str(envelope["deadline"])) <= self.clock()):
                 routed.append((envelope, "overdue", {}))
-            if env_id in state.carried or env_id in self.skipped:
+            parent_needed = (env_id in notice_parents and env_id not in state.by_envelope
+                             and env_id not in state.unknown and env_id not in state.refused
+                             and env_id not in pending_files)
+            if (env_id in self.skipped or env_id in state.carried) and not parent_needed:
                 continue
             at = at_epoch(str(envelope["at"]))
             box = envelope.get("box")
@@ -1110,13 +1124,12 @@ class RootRelay:
             # a root that quotes the request, posted with its first answer.
             delivery_id = str(reference.get("delivery_id", ""))
             citation = forwarded(reference) if owner and kind == "notice" else None
-            notice_parent = (reference.get("kind") == "notice" and reference.get("box") == "to-overseer"
-                             and reference.get("from") == "overseer" and reference.get("to") == "owner")
+            notice_parent = ref in owner_notices or envelope.get("re_owner_notice") is True
             reply = owner and kind == "notice" and bool(
-                notice_parent or citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
                 or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
             if (owner and kind in ("notice", "ask") and not reply
-                    and envelope["line"] is not None and envelope["line"] <= seen):
+                    and envelope["line"] is not None and envelope["line"] <= seen and not parent_needed):
                 route = "seen"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
@@ -1131,7 +1144,7 @@ class RootRelay:
             elif owner and kind == "notice":
                 # Owner asks originate here too, so their rulings still post.
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "notice" if not ref or owner_ask else "skip"
+                route = "notice" if not ref or owner_ask or notice_parent else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "skip" if (envelope.get("answer_source") == "resolve"
                                    and envelope.get("re") in slack_answered) else "answer"
@@ -1141,8 +1154,8 @@ class RootRelay:
                 record = by_id.get(str(envelope.get("re", "")), {})
             elif route == "reply" and citation is not None:
                 record = dict(reference, citation=citation)
-            elif route == "reply" and notice_parent:
-                record = reference
+            elif route == "notice" and notice_parent:
+                record = {"notice_parent": owner_notices.get(ref)}
             else:
                 record = {}
             routed.append((envelope, route, record))
@@ -1160,6 +1173,7 @@ class RootRelay:
             elif route == "overdue":
                 self.post_overdue(envelope)
             elif route in ("notice", "reply"):
+                self.skipped.discard(str(envelope["id"]))
                 self.post_notice(envelope, record)
             elif route == "answer":
                 self.post_answer(envelope, record)
@@ -1193,7 +1207,8 @@ class RootRelay:
             self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
-              attach: str = "", admission: Optional[Callable[[], bool]] = None) -> Optional[str]:
+              attach: str = "", admission: Optional[Callable[[], bool]] = None,
+              notice_followup: bool = False) -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
@@ -1240,6 +1255,8 @@ class RootRelay:
                     self._out(envelope, kind, "progress", thread=root, next=index + 1, hash=digest)
             return root
         except Refusal as err:
+            if notice_followup and thread_ts is not None and err.error == "thread_not_found":
+                self.thread_refused(err, thread_ts)
             self.post_refused(err, envelope, kind)
             return None
 
@@ -1338,10 +1355,16 @@ class RootRelay:
             return
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
-        if record and record.get("kind") == "notice" and thread_ts is None:
-            return
+        followup = record is not None and "notice_parent" in record
+        if followup and thread_ts is None:
+            parent = record["notice_parent"]
+            state = self.state
+            if (parent is not None and ref not in state.by_envelope and ref not in state.unknown
+                    and ref not in state.refused and ref not in self.skipped):
+                return
+            notice("notice-parent-unavailable", f"id={envelope['id']} ref={ref}", file=sys.stderr)
         attach = str(envelope.get("attach") or "")
-        landed = self._send(envelope, "notice", envelope.get("text", ""), thread_ts, attach)
+        landed = self._send(envelope, "notice", envelope.get("text", ""), thread_ts, attach, notice_followup=followup)
         if landed is None:
             return
         if attach:

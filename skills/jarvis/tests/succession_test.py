@@ -15,8 +15,8 @@ import unittest
 from unittest.mock import patch
 import session_test
 from session_test import START_BRIEF, SessionContract
-from fixtures.harness import native_launcher
-from fixtures.tmux_scope import SCOPE
+from fixtures.harness import native_launcher, USAGE_WALL
+from fixtures.tmux_scope import SCOPE, reached_through_path
 
 
 class SuccessionContract(SessionContract):
@@ -35,17 +35,19 @@ class SuccessionContract(SessionContract):
             argv += ["--usage-wall", before["session_id"], f'{before["server"]} {before["pane"]}']
             if kwargs.get("reset_passed"):
                 argv.append("--reset-passed")
+            if "resume_cursor" in kwargs:
+                argv += ["--resume-cursor", str(kwargs["resume_cursor"])]
         result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=300)
         self.stderr = result.stderr
         try:
             output, recovery = result.stdout, None
             if before:
                 fields = json.loads(output)
-                recovery = fields.pop("wall_recovery", None)
+                recovery = {key: fields.pop(key) for key in ("wall_recovery", "wall_resume") if key in fields}
                 output = json.dumps(fields)
             answer = session_test.validate(output, result.returncode, "succeed")
             if recovery is not None:
-                answer["wall_recovery"] = recovery
+                answer.update(recovery)
         except (AssertionError, ValueError):
             self.fail("succeed exit=" + str(result.returncode) + " answered " + result.stdout + result.stderr
                       + "\n" + self.diagnostics())
@@ -92,16 +94,59 @@ class SuccessionContract(SessionContract):
         self.assertEqual([path.read_text() for path in archived], ["# Handoff\nWhere the work stands.\n"])
 
     def test_usage_wall_with_no_alternative_resumes_the_same_session_after_reset(self):
+        scoped_tmux = reached_through_path(self.root)
+        fault = self.root / "resume-fault"
+        shim = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
+        shim.write_text("#!" + sys.executable + "\n"
+                        "import os, subprocess, sys\nfrom pathlib import Path\n"
+                        "fault = Path(" + repr(str(fault)) + ")\n"
+                        "mode = fault.read_text() if fault.exists() else ''\n"
+                        "real = [" + repr(scoped_tmux) + ", *sys.argv[1:]]\n"
+                        "if mode == 'paste' and 'paste-buffer' in real:\n"
+                        "    real[2] = str(fault.with_name('absent.sock'))\n"
+                        "if mode == 'enter' and 'send-keys' in real and real[-1] == 'Enter':\n"
+                        "    subprocess.run(real, check=True)\n"
+                        "    sys.exit(1)\n"
+                        "os.execv(real[0], real)\n")
+        shim.chmod(0o755)
         before = self.running()
+        self.fixture["usage_wall_at_prompt"] = "Reach usage limit"
+        self.write_fixture()
+        socket, pane = before["server_socket"], before["pane"]
+        sent = self.tmux_read(socket, "send-keys", "-t", pane, self.fixture["usage_wall_at_prompt"], "Enter")
+        self.assertEqual(sent.returncode, 0, sent.stderr)
+        deadline = time.monotonic() + 5
+        while True:
+            screen = self.tmux_read(socket, "capture-pane", "-p", "-t", pane)
+            if USAGE_WALL.strip() in screen.stdout:
+                break
+            self.assertLess(time.monotonic(), deadline, screen.stdout + screen.stderr)
+            time.sleep(0.02)
         self.assertEqual(len(self.started()), 1)
         prompts = self.prompts()
-        for reset_passed, expected in ((False, "waiting"), (True, "confirmed")):
-            answer, code = self.succeed(account_walled=True, usage_wall=before, reset_passed=reset_passed)
-            self.assertEqual((answer.get("wall_recovery"), code), (expected, 0), self.stderr + self.diagnostics())
-            self.assertEqual(self.controller()["session_id"], before["session_id"])
-            self.assertEqual(len(self.started()), 1)
-            self.assertEqual(len(self.prompts()), len(prompts) + int(reset_passed))
-            self.assertEqual(list((self.home / "state/archive").glob("handoff-*.md")), [])
+        answer, code = self.succeed(account_walled=True, usage_wall=before)
+        self.assertEqual((answer.get("wall_recovery"), code), ("waiting", 0), self.stderr)
+        self.assertEqual(self.prompts(), prompts)
+        fault.write_text("paste")
+        answer, code = self.succeed(account_walled=True, usage_wall=before, reset_passed=True)
+        self.assertEqual((answer["reason"], code), ("handover-failed", 1), self.stderr)
+        self.assertIn("paste-unsent", answer["detail"])
+        self.assertEqual(self.prompts(), prompts)
+        fault.write_text("enter")
+        answer, code = self.succeed(account_walled=True, usage_wall=before, reset_passed=True)
+        self.assertEqual((answer.get("wall_recovery"), code), ("unconfirmed", 0), self.stderr)
+        cursor = answer["wall_resume"]["turns_before"]
+        fault.unlink()
+        deadline = time.monotonic() + 5
+        while len(self.prompts()) == len(prompts):
+            self.assertLess(time.monotonic(), deadline, self.diagnostics())
+            time.sleep(0.02)
+        answer, code = self.succeed(account_walled=True, usage_wall=before, reset_passed=True, resume_cursor=cursor)
+        self.assertEqual((answer.get("wall_recovery"), code), ("confirmed", 0), self.stderr + self.diagnostics())
+        self.assertEqual(self.controller()["session_id"], before["session_id"])
+        self.assertEqual(len(self.started()), 1)
+        self.assertEqual(len(self.prompts()), len(prompts) + 1)
+        self.assertEqual(list((self.home / "state/archive").glob("handoff-*.md")), [])
 
     def test_usage_wall_hands_over_to_a_free_account_before_reset(self):
         alternative = self.plant_account("claude-b", 20)

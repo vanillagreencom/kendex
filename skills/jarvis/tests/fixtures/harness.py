@@ -22,6 +22,7 @@ import time
 COMPOSER = "❯ \n  ? for shortcuts"
 # Claude Code's login wall below a turn (agent-runtime observe.rs AUTH_FAILURE).
 LOGIN_WALL = "  ⎿  Not logged in · Please run /login\n"
+USAGE_WALL = "  ⎿  You've hit your 5-hour limit · resets 9:50am (UTC)\n"
 # Claude Code 2.1.330's folder-trust question, as recorded under
 # agent-runtime's tests/rust/fixtures/claude-folder-trust.txt.
 FOLDER_TRUST = (" Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n"
@@ -92,8 +93,11 @@ def main():
         print("❯ " + prompt, flush=True)
         # The list is read at each turn, so a row can sign an account out
         # after the session on it started.
-        if account in json.loads(Path(".fixture.json").read_text()).get("unsigned", []):
+        fixture = json.loads(Path(".fixture.json").read_text())
+        if account in fixture.get("unsigned", []):
             print(LOGIN_WALL, flush=True)
+        if prompt == fixture.get("usage_wall_at_prompt"):
+            print(USAGE_WALL, flush=True)
         print(COMPOSER, flush=True)
 
 

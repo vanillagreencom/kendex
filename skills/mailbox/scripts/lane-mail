@@ -2197,6 +2197,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
+    --arg re_owner_notice "$RE_OWNER_NOTICE" \
     --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --slurpfile parent "$WORK_DIR/parent.json" \
     --argjson replaces "$REPLACES_FIELD" --argjson identity "$IDENTITY_FIELD" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
@@ -2221,6 +2222,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $delivery == "" then {} else {delivery_id: $delivery} end)
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if ($kind == "ask" or $kind == "notice") and $re_delivery != "" then {re_delivery_id: $re_delivery} else {} end)
+      + (if $re_owner_notice == "1" then {re_owner_notice: true} else {} end)
       + (if $by == "" then {} else {by: $by} end)
       + (if $kind == "answer" and $by != "" then {closes: false, answer_source: $verb} else {} end)
       + (if $draft == [] then {} else {draft: $draft[0]} end)
@@ -2231,6 +2233,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
 }
 BY=""
 RE_DELIVERY_ID=""
+RE_OWNER_NOTICE=""
 RECORD_REPLY=0 REPEAT_ID=""
 
 lm_duplicate() { # ID
@@ -2463,6 +2466,9 @@ lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]; empty CLASS accepts any line
     fi
     if [ -n "$ref_json" ]; then
       RE_DELIVERY_ID="$(jq -r '.delivery_id // empty' <<<"$ref_json")" || refuse file-unreadable "$path"
+      if [ "$path" != "$lane" ] && jq -e '.kind == "notice"' <<<"$ref_json" >/dev/null; then
+        RE_OWNER_NOTICE=1
+      fi
     fi
     LM_HELD_PATH=""
     exec 9<&-

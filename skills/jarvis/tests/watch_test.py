@@ -2409,6 +2409,50 @@ with open(sys.argv[1], "ab") as out:
                         self.assertEqual(sent[1]["ref"], notices[0]["id"])
                         self.assertIn("resumed" if window == "five-hour" else "/accounts/b", sent[1]["text"])
 
+    def test_usage_wall_reuses_the_notice_from_before_upgrade(self):
+        at = 1795496400
+        legacy = {"session": "s1", "pane": "4242 %3", "account": "/accounts/a", "kind": "usage", "at": at,
+                  "outcome": "No replacement started.", "noticed": True}
+        text = ("Jarvis session s1 has no room left on /accounts/a (read at 2026-11-24 05:00:00 UTC): "
+                "every turn it tries fails. No replacement started.")
+        self.mail(self.home, "notice", text, "--to", "owner")
+        original, = self.owner_notice_rows()
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at - 1})
+            watch = self.watch()
+            watch.state["wall"] = legacy
+            watch.save()
+            self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+            self.wall_passes(self.watch(), at + 30)
+            root, outcome = self.owner_notice_rows()
+            self.assertEqual(root["id"], original["id"])
+            self.assertEqual(outcome["ref"], original["id"])
+
+    def test_unconfirmed_usage_resume_reconciles_across_watch_restart_and_keeps_handover_eligible(self):
+        at, reset = 1795496400, 1795496520
+        receipt = {"cause": "paste-unanswered", "turns_before": 0}
+        for delivery in ("unconfirmed", "unanswered"):
+            with self.subTest(delivery=delivery), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-" + delivery)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + delivery))
+                self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at,
+                                "message": "You've hit your 5-hour limit · resets Nov 24, 5:02am (UTC)"})
+                watch = self.watch()
+                first = {"state": "running", "wall_recovery": "unconfirmed", "wall_resume": receipt}
+                self.session_command(first, 0) if delivery == "unconfirmed" else self.session_command(None, 1)
+                self.wall_passes(watch, reset)
+                root, = self.owner_notice_rows()
+                watch = self.watch()
+                for when, result in ((reset + 30, {"state": "running", "wall_recovery": "waiting"}),
+                                     (reset + 60, {"state": "running", "account": "/accounts/b"})):
+                    log = self.session_command(result, 0)
+                    self.wall_passes(watch, when)
+                    suffix = "--reset-passed --resume-cursor 0" if delivery == "unconfirmed" else "4242 %3"
+                    self.assertTrue(log.read_text().strip().endswith(suffix), log.read_text())
+                _, outcome = self.owner_notice_rows()
+                self.assertEqual(outcome["ref"], root["id"])
+                self.assertIn("/accounts/b", outcome["text"])
+
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
         class Submitted:

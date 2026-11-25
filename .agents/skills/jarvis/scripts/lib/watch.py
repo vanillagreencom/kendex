@@ -475,6 +475,14 @@ def wall_time(at):
     return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def legacy_wall_notice(memory):
+    cause = {"auth": "is signed out on %s", "usage": "has no room left on %s"}[memory["kind"]]
+    account = memory["account"] or "its default account"
+    at = wall_time(memory["at"])
+    return ("Jarvis session " + memory["session"] + " " + cause % account
+            + " (read at " + at + "): every turn it tries fails. " + memory["outcome"])
+
+
 def mailbox_header(line):
     """The `count=N first=ID` header lane-mail's drain and events print, as (count, first), or None."""
     match = re.fullmatch(r"count=(\d+) first=(\S*)", line)
@@ -1113,6 +1121,14 @@ class Watch:
         self.state.pop("wall_failure", None)
         memory = self.state.get("wall")
         session, pane, account, kind, rows = reading or (None, None, None, None, {})
+        if (memory is not None and "row_at" not in memory and memory["kind"] == kind == "usage"
+                and session == memory["session"] and pane == memory["pane"]
+                and (rows.get("at") is None or rows["at"] <= memory["at"])):
+            if memory["outcome"] is not None:
+                memory["legacy_notice"] = {"text": legacy_wall_notice(memory), "reported": memory["noticed"]}
+            memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"),
+                          outcome=None, noticed=False)
+            self.save()
         if memory is not None and "row_at" in memory:
             same = (kind == "usage" and (session, pane, rows.get("at")) ==
                     (memory["session"], memory["pane"], memory["row_at"]))
@@ -1123,7 +1139,7 @@ class Watch:
             self.notify(memory)
             if same:
                 return kind if memory["outcome"] is None else None
-            if reading is None or not memory["noticed"]:
+            if reading is None or not (memory["noticed"] or memory.get("notice_missing")):
                 return None
             del self.state["wall"]
             memory = None
@@ -1173,23 +1189,28 @@ class Watch:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("succeed", error)
 
-    def accept_succession(self, answer):
+    def accept_succession(self, answer, requested):
         memory = self.state["wall"]
         if "row_at" in memory:
             recovery = answer.get("wall_recovery") if not isinstance(answer, Failure) else None
-            if recovery == "waiting" or not isinstance(answer, Failure) and answer.get("state") == "handing-over":
-                return
-            if recovery in ("confirmed", "unconfirmed"):
-                memory["outcome"] = ("The session resumed after the reset." if recovery == "confirmed" else
-                                     "The resume was sent after the reset. Its outcome is unconfirmed.")
-                self.save()
-                self.notify(memory)
-                return
-            if isinstance(answer, Failure) or answer.get("state") != "running":
+            state = answer.get("state") if not isinstance(answer, Failure) else None
+            if requested and not isinstance(answer, Failure) and recovery not in ("unconfirmed", "pending"):
+                memory.pop("resume_requested", None)
+            if state not in ("running", "handing-over"):
                 self.failed_pass("wall-recovery", answer.record if isinstance(answer, Failure) else
                                  Failure("wall-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record)
+                self.save()
                 return
             self.state.pop("wall-recovery_failure", None)
+            if recovery == "unconfirmed" and "wall_resume" in answer:
+                memory["resume"] = answer["wall_resume"]
+            elif recovery == "confirmed":
+                memory["outcome"] = "The session resumed after the reset."
+            if recovery is not None or state == "handing-over":
+                self.save()
+                if recovery == "confirmed":
+                    self.notify(memory)
+                return
         if isinstance(answer, Failure):
             memory["outcome"] = "No replacement started: " + answer.record["detail"][:200] + "."
         elif answer.get("state") == "running":
@@ -1210,7 +1231,26 @@ class Watch:
         day, so the session and the time make each episode's text its own; a
         refusal of that same text is the receipt of the notice that landed, as
         after a stop before this save."""
-        if memory["noticed"]:
+        legacy = memory.get("legacy_notice")
+        if legacy is not None:
+            try:
+                _, rows = mailbox_events(self.bash, self.home, "to-overseer")
+            except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+                self.failed_pass("wall-notice", failure("wall-notice", error).record)
+                return
+            receipt = next((row["id"] for row in rows
+                            if row.get("kind") == "notice" and row.get("to") == "owner"
+                            and row.get("from") == "overseer" and not row.get("ref")
+                            and row.get("text") == legacy["text"]), None)
+            del memory["legacy_notice"]
+            if receipt:
+                memory["notice_id"] = receipt
+            elif legacy["reported"]:
+                memory["notice_missing"] = True
+                self.failed_pass("wall-notice", Failure("wall-notice", "mailbox", "legacy-notice-missing",
+                                                        "The previous usage notice is unavailable.").record)
+            self.save()
+        if memory["noticed"] or memory.get("notice_missing"):
             return
         at = wall_time(memory["at"])
         account = memory["account"] or "its default account"
@@ -1226,9 +1266,7 @@ class Watch:
             reset = "resets at " + wall_time(memory["reset"]) if memory["reset"] is not None else "reset time unknown"
             text = session + f" hit its {window} limit on {account} (read at {at}, {reset})."
         else:
-            cause = {"auth": "is signed out on %s", "usage": "has no room left on %s"}[memory["kind"]]
-            text = (session + " " + cause % account
-                    + " (read at " + at + "): every turn it tries fails. " + memory["outcome"])
+            text = legacy_wall_notice(memory)
         with tempfile.NamedTemporaryFile(mode="w", dir=self.directory) as payload:
             payload.write(text + "\n")
             payload.flush()
@@ -1535,17 +1573,25 @@ class Watch:
         if wall is not None and wall[1].done():
             self.wall_pending = None
             if wall[0] == "succession":
-                self.accept_succession(wall[1].result())
+                self.accept_succession(wall[1].result(), wall[2])
             else:
                 kind = self.accept_wall(wall[1].result(), now)
                 if kind is not None:
                     usage = []
+                    requested = False
                     if kind == "usage":
                         memory = self.state["wall"]
                         usage = ["--usage-wall", memory["session"], memory["pane"]]
                         if memory["reset"] is not None and now >= memory["reset"]:
-                            usage.append("--reset-passed")
-                    self.wall_pending = ("succession", passes.submit(self.succeed, usage))
+                            if "resume" in memory:
+                                usage.extend(("--reset-passed", "--resume-cursor", str(memory["resume"]["turns_before"])))
+                            elif not memory.get("resume_requested"):
+                                # A child lost after launch might already have pasted.
+                                memory["resume_requested"] = True
+                                self.save()
+                                requested = True
+                                usage.append("--reset-passed")
+                    self.wall_pending = ("succession", passes.submit(self.succeed, usage), requested)
         if self.wall_pending is None and now >= self.next_wall:
             self.next_wall = now + 30
             self.wall_pending = ("read", passes.submit(self.wall))
