@@ -116,9 +116,22 @@ Do not create a separate item to carry the verification check.
 
 ## One landing per subsystem
 
-A body that lists batches, each able to land alone, is filed as one item per batch.
+File one approved design or plan as one group: one parent with sub-issues, or one project, whichever fits the work.
 
-An item whose work changes more than one subsystem is filed as one item per subsystem, each able to land and take review alone. The change-scope skill's SKILL.md § Classes defines a subsystem, under the `small` class.
+- File a parent when the design is one deliverable accepted as one thing, the case § Group by project or label, never by parent admits.
+- File a project when the work is larger: it runs over weeks with its own milestones, or it holds several deliverables. A project the map does not list takes the `project_needed` route of [project-map.md](project-map.md) § Routing.
+- A parent that only bundles related open work stays forbidden under § Group by project or label, never by parent.
 
+Split the work into items no further than one reasonable pull request:
+
+- A body that lists batches, each able to land alone, is filed as one item per batch.
+- An item whose work changes more than one subsystem is filed as one item per subsystem, each able to land and take review alone. The change-scope skill's SKILL.md § Classes defines a subsystem, under the `small` class.
+- Parts that change the same files, or that cannot be reviewed apart, stay one item.
+- A design whose parts all stay one item is filed as that one item, with no parent.
 - Between the items, add a blocking relation only where one item needs another's change.
 - An item that cannot land in parts says why in its body.
+
+Example: an approved design makes six decisions that edit two files. It is never filed as six items, one per decision.
+
+- If the edits to each file can be reviewed apart, file one parent with two sub-issues, one per file.
+- If they cannot, file one item whose Done-when lists the six decisions.

@@ -139,6 +139,8 @@
    - Omit Evidence when empty.
    - Paste no log lines.
    - Mailbox and Slack ids outside the marked directive appear only in Source.
+8. Splitting:
+   - When to split one body into several items, and when one design's items go under a parent or a project: [filing.md](../references/filing.md) § One landing per subsystem.
 
 ## Opening example
 
