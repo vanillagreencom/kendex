@@ -72,6 +72,8 @@ operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', '
                                    'IssueRefs', 'BulkGetComments', 'CreateComment', 'OwnerReply', 'OwnerRuling') if name in query)
 if operation == 'IssueRefs':
     operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
+elif operation == 'ListIssues' and 'comments {' in query:
+    operation += ' with comments'
 with path.with_suffix('.log').open('a') as log:
     log.write(operation + '\n')
 if len(path.with_suffix('.log').read_text().splitlines()) > int(os.environ.get('TRACKER_REQUEST_LIMIT', '1000000')):
@@ -140,6 +142,9 @@ elif 'ListIssues' in query:
         sys.exit(0)
     issues = connection([] if mode == 'omitted' else [issue(identifier, updatedAt='2026-11-01T01:00:00Z')
                                                       for identifier in database['assigned']])
+    if 'comments {' in query:
+        for node in issues['nodes']:
+            node['comments'] = comments(node['identifier'])
     if mode == 'incomplete':
         issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
     data = {'issues': issues}
@@ -963,6 +968,26 @@ os.execvp(argv[0], argv)
                 self.assertEqual([row["what"] for row in rows[login]], ["Remote original"])
                 self.assertEqual(rows[login], rows["sh"])
 
+    def test_mailbox_frames_keep_owner_evidence_without_outward_bodies(self):
+        active = self.mail(self.home, "ask", "Question still open", "--to", "owner", "--options", "a,b", "--reserved")
+        closed = self.mail(self.home, "ask", "Question already resolved", "--to", "owner", "--options", "a,b", "--reserved")
+        self.mirror(self.home, closed, "closed-mirror")
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        self.command([BASH, mail, "resolve", "--item", "overseer", "--id", closed], self.home).check_returncode()
+        self.mail(self.home, "notice", "Unrelated outward body", "--to", "owner")
+        full = self.command([BASH, mail, "events", "--item", "overseer", "--box", "to-overseer"], self.home)
+        full.check_returncode()
+        with patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
+            reader = owner_asks.Sources(Session(str(self.home)), {})
+            record, = reader.mailboxes(owner_asks.watch.Destination("local", None, None), [str(self.home)])
+        self.assertEqual([(ask["id"], ask["text"]) for ask in map(json.loads, record["pending"].splitlines())],
+                         [(active, "Question still open")])
+        outward = reader.events(record["outward"])
+        self.assertEqual(outward["header"], full.stdout.partition("\n")[0])
+        self.assertEqual([(ask["id"], ask.get("tracker_comment")) for ask in outward["rows"]],
+                         [(active, None), (closed, "closed-mirror")])
+        self.assertTrue(all("text" not in ask for ask in outward["rows"]))
+
     def test_mailbox_reads_leave_their_stdin_unread(self):
         # A host read runs them with bash -s's script stream as stdin, where
         # a read would take the bytes after their own command.
@@ -1480,8 +1505,8 @@ sys.exit(result.returncode)
                 self.assertEqual([read['after'] for read in reads], [None, str(comment_page_size)] * 2)
                 for read in reads:
                     self.assertEqual(sorted(read['ids']), expected_ids)
-                self.assertEqual([operation for operation in operations if operation.startswith("IssueRefs")],
-                                 ["IssueRefs OWN"] * (2 * -(-assigned // 50)))
+                self.assertEqual([operation for operation in operations if operation.startswith(("ListIssues", "IssueRefs"))],
+                                 ["ListIssues with comments"] * 2)
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")

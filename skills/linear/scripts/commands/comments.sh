@@ -259,7 +259,7 @@ bulk_get_comments() {
 }
 
 owner_requests() {
-    local email="" label="" owner items comments workspace identifiers refs=() ref
+    local email="" label="" owner workspace comment_fields variables items
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --email|--label)
@@ -275,22 +275,35 @@ owner_requests() {
         echo '{"error":"owner-profile-unavailable"}' >&2; return 1;
     }
     workspace=$("$BASH" "$SCRIPT_DIR/teams.sh" keys) || return 1
-    items=$("$BASH" "$SCRIPT_DIR/issues.sh" list --assignee "$email" --label "$label" --max --format=safe) || return 1
-    identifiers=$(jq -r '.[].id' <<<"$items") || return 1
-    while IFS= read -r ref; do [[ -z "$ref" ]] || refs+=("$ref"); done <<<"$identifiers"
-    comments='{}'
-    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments --format=safe "${refs[@]}") || return 1; fi
-    jq -cs "$OWNER_RULING_JQ"'
-      .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
+    # Read each issue and its discussion in the same paginated query.
+    # The pager uses the same comment fields to complete each open connection.
+    linear_list_option --max
+    parse_filter --assignee "$email" --label "$label" || return 1
+    variables=$(jq -cn --argjson filter "$FILTER_JSON" --argjson archive "$INCLUDE_ARCHIVED_JSON" \
+        '{filter: $filter, includeArchived: $archive}') || return 1
+    comment_fields=$(linear_connection_fields issue comments) || return 1
+    items=$(linear_list_read '
+      query ListIssues($filter: IssueFilter, $first: Int, $includeArchived: Boolean, $after: String) {
+        issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id identifier
+            comments { pageInfo { hasNextPage endCursor } nodes { '"$comment_fields"' } }
+          }
+        }
+      }' "$variables" issues) || return 1
+    jq -cs "$COMMENT_SAFE_JQ$OWNER_RULING_JQ"'
+      .[0] as $owner | .[1] as $workspace |
+      (.[2].issues.nodes | map(.comments |= (.nodes | map(comment_safe)))) as $items |
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
       {workspace: $workspace.urlKey, owner: $owner.id,
-       discussions: ($items | map({key: .uuid, value: ($comments[.id] | map({id, parent_id, user_id,
+       discussions: ($items | map({key: .id, value: (.comments | map({id, parent_id, user_id,
           ruling: ((.parent_id | ruling_id) as $id | $id != null and .id == $id and (.body | ruling_body)),
           opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
-       requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
+       requests: [$items[] | . as $issue | .comments[] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
-          | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
-      <<<"$owner"$'\n'"$workspace"$'\n'"$items"$'\n'"$comments"
+          | {issue: $issue.identifier, issueUuid: $issue.id, comment: ., thread: (.parent_id // .id)}]}' \
+      <<<"$owner"$'\n'"$workspace"$'\n'"$items"
 }
 
 # The line a new comment opens with, naming who posts it, read once per post

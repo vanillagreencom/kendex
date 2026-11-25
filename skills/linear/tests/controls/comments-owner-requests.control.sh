@@ -1,21 +1,21 @@
 # Admit another profile so an unrelated comment becomes an owner request.
 control_expect "distinct same-issue asks and exact profile mention"
 control_replace scripts/commands/comments.sh 1 \
-    '       requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))' \
-    '       requests: [$items[] | . as $issue | $comments[.id][] | select((.body | mentions($owner.url)) or true)'
+    '       requests: [$items[] | . as $issue | .comments[] | select(.body | mentions($owner.url))' \
+    '       requests: [$items[] | . as $issue | .comments[] | select((.body | mentions($owner.url)) or true)'
 
 # Drop continued metadata while keeping the original request selection intact.
-control_expect "continued author, thread and URL survive projection"
+control_expect "both issue and comment continuations preserve requests"
 control_replace scripts/lib/pages.sh 1 \
     "    issue:comments) printf '%s' 'id body createdAt updatedAt user { name email } user { id } parent { id } url' ;;" \
     "    issue:comments) printf '%s' 'id body createdAt updatedAt user { name email }' ;; # user { id } parent { id } url"
 
 control_expect "raw preference retains safe evidence"
 control_replace scripts/commands/comments.sh 1 \
-    '    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments --format=safe "${refs[@]}") || return 1; fi' \
-    '    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments "${refs[@]}") || return 1; fi'
+    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'" \
+    "    jq -cs --arg format \"\$DEFAULT_FORMAT\" \"\$COMMENT_SAFE_JQ\"'def safe: comment_safe; def comment_safe: if \$format == \"raw\" then . else safe end;'\"\$OWNER_RULING_JQ\"'"
 
-control_expect "large-comments complete document succeeds"
+control_expect "large comment document succeeds"
 control_replace scripts/commands/comments.sh 1 \
-    "    jq -cs \"\$OWNER_RULING_JQ\"'" \
-    "    jq -cs --argjson carried \"\$comments\" \"\$OWNER_RULING_JQ\"'"
+    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'" \
+    "    jq -cs --argjson carried \"\$items\" \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'"

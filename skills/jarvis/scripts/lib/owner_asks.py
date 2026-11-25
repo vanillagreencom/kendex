@@ -42,6 +42,10 @@ DELIVERY_UNCONFIRMED = "Delivery is not confirmed; retry with the same request i
 # prove the read complete. jq carries every path and payload as a JSON
 # string: the line framing never meets a path's own bytes, and jq -c leaves
 # U+2028/U+2029 raw in strings, so each record ends at LF only.
+# Pending carries current questions and their text. The outward read carries
+# the original snapshot header and the evidence that joins an ask to its
+# tracker comment or records a replacement. Both collections compare this
+# projection, including the header's logical count and first id.
 MAILBOX_READS = r"""set -euo pipefail
 mail=$1
 shift
@@ -88,7 +92,14 @@ for root in "$@"; do
     "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/outward"
   )
   jq -cn --arg root "$common" --rawfile pending "$work/pending" --rawfile outward "$work/outward" \
-    '{root: $root, pending: $pending, outward: $outward}'
+    '{root: $root, pending: $pending,
+      outward: ($outward | split("\n")
+        | [.[0], (.[1:][] | select(length > 0) | fromjson
+            | select(.kind == "ask" and .to == "owner")
+            | with_entries(select(.key | IN(
+                "id", "tracker_posted", "tracker_comment", "identity", "replacement", "replaces")))
+            | tojson), ""]
+        | join("\n"))}'
 done
 """
 # The owner's answer to one mailbox ask, through the caller's lane-mail as the
@@ -311,7 +322,7 @@ class Sources:
         return roots
 
     def mailboxes(self, target, roots):
-        """Each distinct overseer mailbox of ROOTS with its raw reads, in one call per destination."""
+        """Owner-ask evidence from each distinct overseer mailbox, in one call per destination."""
         if not roots:
             return []
         result = self.call(target, None, "mailbox", "lane-mail", roots, shell_args=["-c", MAILBOX_READS, "owner-asks"])

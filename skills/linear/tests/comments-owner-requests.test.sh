@@ -28,12 +28,24 @@ def comments: {pageInfo:{hasNextPage:false,endCursor:null},nodes:[
   comment("ask-b";"https://linear.app/example/profiles/owner second question"),
   comment("unrelated";"https://linear.app/example/profiles/owner-other is another user")]}
   | if $mode == "large-comments" then .nodes += [range(80) | comment("history-"+tostring; "retained conversation " * 150)] else . end;
+def issue_page($nodes; $next): {data:{issues:{nodes:$nodes,pageInfo:{hasNextPage:($next != null),endCursor:$next}}}};
+def first_issue: {id:"issue-uuid",identifier:"KEN-1",comments:(comments |
+  if $mode == "paginated" then .pageInfo = {hasNextPage:true,endCursor:"comment-page-2"} |
+    .nodes |= map(select(.id != "ask-b")) else . end)};
 if (.query | contains("GetUserByEmail")) then
   {data:{users:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[user]}}}
 elif (.query | contains("TeamKeys")) then {data:{organization:{urlKey:"example",teams:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}
 elif (.query | contains("ListIssues")) then
-  {data:{issues:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"issue-uuid",identifier:"KEN-1",url:"https://linear.app/example/issue/KEN-1",updatedAt:"2026-11-01T01:00:00Z",
-    description:(if $mode == "large-items" then "retained issue history " * 9000 else "" end)}]}}}
+  if (.query | contains("comments {") | not) then issue_page([first_issue | del(.comments)]; null)
+  elif $mode == "failed-comments" then {errors:[{message:"failed",extensions:{code:"INPUT_ERROR"}}]}
+  elif $mode == "empty" then issue_page([]; null)
+  elif $mode == "paginated" then
+    if .variables.after == null then issue_page([first_issue]; "issue-page-2")
+    elif .variables.after == "issue-page-2" then
+      issue_page([{id:"other-uuid",identifier:"KEN-2",comments:{pageInfo:{hasNextPage:false,endCursor:null},
+        nodes:[comment("ask-c";"https://linear.app/example/profiles/owner another issue") | .url |= sub("KEN-1";"KEN-2")]}}]; null)
+    else error("unexpected issue continuation") end
+  else issue_page([first_issue]; null) end
 elif (.query | contains("ContinueConnection")) then
   if .variables.id != "issue-uuid" or .variables.after != "comment-page-2" then error("unexpected continuation")
   else
@@ -47,10 +59,7 @@ elif (.query | contains("ContinueConnection")) then
       if $parent then . else del(.parent) end | if $url then . else del(.url) end))}}}}
   end
 elif (.query | contains("comments")) then
-  if $mode == "failed-comments" then {errors:[{message:"failed",extensions:{code:"INPUT_ERROR"}}]}
-  else {data:{issues:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"issue-uuid",identifier:"KEN-1",comments:(comments |
-    if $mode == "paginated" then .pageInfo = {hasNextPage:true,endCursor:"comment-page-2"} |
-      .nodes |= map(select(.id != "ask-b")) else . end)}]}}} end
+  issue_page([first_issue]; null)
 else error("unexpected query") end' <<<"$payload")
 printf '%s' "$response" >>"$RESPONSES"
 printf '%s___HTTP_CODE___200' "$response"
@@ -75,18 +84,22 @@ assert_jq "distinct same-issue asks and exact profile mention" "$OUT" '[.request
 assert_jq "original attribution, date, thread and URL" "$OUT" \
     '.workspace == "example" and all(.requests[]; .issueUuid == "issue-uuid" and .comment.user_id == "original-author" and .comment.user == "Original asker" and .comment.created_at == "2026-11-01T01:00:00Z" and .thread == "original-thread" and (.comment.url | startswith("https://linear.app/example/issue/KEN-1#comment-")))'
 assert_jq "existing list filter owner receives assignment and label" "$(jq -s 'map(select(.query | contains("ListIssues")))[0]' "$TMP_ROOT/calls")" \
-    '.variables.filter.assignee.email.eqIgnoreCase == "owner@example.test" and .variables.filter.labels.name.eq == "owner-waiting"'
+    '.variables.filter.assignee.email.eqIgnoreCase == "owner@example.test" and .variables.filter.labels.name.eq == "owner-waiting"
+     and .variables.includeArchived == false'
+assert_jq "one issue request on a single page supplies membership and discussions" "$(jq -s '.' "$TMP_ROOT/calls")" \
+    'map(select(.query | test("issues\\("))) | length == 1'
 run_requests normal raw
 assert_eq "internal projection ignores raw presentation preference" "$RC" 0
 assert_jq "raw preference retains safe evidence" "$OUT" \
     '[.requests[].comment.id] == ["ask-a","ask-b"] and all(.requests[]; .comment.user_id == "original-author" and .thread == "original-thread" and .comment.created_at == "2026-11-01T01:00:00Z")'
-for mode in large-comments large-items; do
-    run_requests "$mode"
-    assert_eq "$mode complete document succeeds" "$RC" 0
-    assert_jq "$mode retains every request" "$OUT" '[.requests[].comment.id] == ["ask-a","ask-b"]'
-    # The answers the reader carried exceed a single process argument.
-    assert_not "$mode answers fit one process argument" test "$(wc -c <"$TMP_ROOT/responses")" -le 180000
-done
+run_requests large-comments
+assert_eq "large comment document succeeds" "$RC" 0
+assert_jq "large comment document retains every request" "$OUT" '[.requests[].comment.id] == ["ask-a","ask-b"]'
+# The answers the reader carried exceed a single process argument.
+assert_not "large comment answers fit one process argument" test "$(wc -c <"$TMP_ROOT/responses")" -le 180000
+run_requests empty
+assert_eq "an empty assigned view succeeds" "$RC" 0
+assert_jq "an empty assigned view has no requests or discussions" "$OUT" '.requests == [] and .discussions == {}'
 printf '[env]\nKENDEX_ENV_FILE="fixture-private.env"\nLINEAR_FORMAT="raw"\n' >"$TMP_ROOT/kendex.settings.toml"
 printf 'LINEAR_RETRY_BASE_DELAY=0\n' >"$TMP_ROOT/fixture-private.env"
 run_requests normal
@@ -96,10 +109,11 @@ assert_jq "project raw preference retains safe evidence" "$OUT" \
 : >"$TMP_ROOT/kendex.settings.toml"
 run_requests paginated
 assert_eq "continued projection succeeds" "$RC" 0
-assert_jq "continued author, thread and URL survive projection" "$OUT" \
-    '[.requests[].comment.id] == ["ask-a","ask-b"] and
+assert_jq "both issue and comment continuations preserve requests" "$OUT" \
+    '[.requests[].comment.id] == ["ask-a","ask-b","ask-c"] and
      any(.requests[]; .comment.id == "ask-b" and .comment.user_id == "original-author" and
-       .thread == "original-thread" and .comment.url == "https://linear.app/example/issue/KEN-1#comment-ask-b")'
+       .thread == "original-thread" and .comment.url == "https://linear.app/example/issue/KEN-1#comment-ask-b") and
+     any(.requests[]; .comment.id == "ask-c" and .issueUuid == "other-uuid" and .issue == "KEN-2")'
 run_requests failed-comments
 assert_not "an unread configured source fails" test "$RC" -eq 0
 assert_eq "an unread source publishes no partial projection" "$OUT" ''
