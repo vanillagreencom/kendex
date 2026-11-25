@@ -308,6 +308,7 @@ impl LaneDriver<'_> {
         };
         let produced = lanes::observe(&lanes::Pass {
             fleet,
+            fleet_path: &self.fleet_path,
             readers: &self.readers,
             baseline: &self.baseline,
             settings: &self.settings.watch.get().unwrap(),
@@ -2218,6 +2219,114 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     assert!(server.panes().contains(&stray), "the stray stands");
     assert!(server.panes().contains(&receipted));
     assert!(server.panes().contains(&viewer));
+}
+
+/// A window opened after the pass's snapshot, named `name`, and what its
+/// opener recorded: its pane.
+type OpensAfterSnapshot = fn(&Server, &Fleet, &Path, &str) -> String;
+
+/// A confirmed hosted launch's viewer window and the lane record it writes.
+fn hosted_viewer(server: &Server, fleet: &Fleet, dir: &Path, name: &str) -> String {
+    let pane = server.open_window(name, dir, "bash --norc --noprofile");
+    fleet.set_lanes(vec![json!({
+        "item": "KEN-H", "window": "fleet:KEN-H", "harness": "claude", "status": "running",
+        "host": "lane-host-ssh", "kind": "ssh", "viewer": true,
+        "mail_root": dir.display().to_string(),
+        "launch": {"pane": pane, "server": server.pid, "server_start": server.start,
+            "pid": null, "start": null},
+    })]);
+    pane
+}
+
+/// A succession's new controller pane and the controller record it writes.
+fn succeeding_overseer(server: &Server, fleet: &Fleet, dir: &Path, name: &str) -> String {
+    let pane = server.open_window(name, dir, "bash --norc --noprofile");
+    fleet.set_overseer(overseer_at(server, &pane, &window_of(server, &pane), dir));
+    pane
+}
+
+/// An open launch whose window was asked on server `pid`, its pane not yet
+/// recorded, as the window acquisition writes it before `new-window`.
+fn window_asked(server: &Server, fleet: &Fleet, dir: &Path, name: &str, pid: u64) -> String {
+    let mut doc = fleet.runner.fleet();
+    doc["intents"] = json!([{
+        "id": "launch-session:KEN-W:1-1", "op": "launch-session", "target": "KEN-W",
+        "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "phase": {"phase": "preparing", "step": "host-exec", "at": "provider"},
+        "obligations": {"standing": [{"kind": "window", "server": pid,
+            "server_start": server.start, "role": "harness"}], "discharged": []}
+    }]);
+    fleet.runner.write_fleet(&doc);
+    server.open_window(name, dir, "bash --norc --noprofile")
+}
+
+/// The stray sweep judges a window by the records it reads after its
+/// listing, never by the pass's older snapshot: a hosted launch's viewer or
+/// a succession's controller pane opened and recorded after the snapshot is
+/// no stray. A window an open launch asked on the listed server, its pane
+/// not yet recorded, is held that pass and reported on the next that still
+/// finds it unnamed; one asked on another server holds nothing, and a
+/// window nothing records is reported at once. None is ever closed.
+#[test]
+fn a_window_is_judged_by_the_records_read_after_its_listing() {
+    let cases: [(&str, OpensAfterSnapshot, [bool; 3]); 5] = [
+        ("KEN-H", hosted_viewer, [false, false, false]),
+        ("overseer", succeeding_overseer, [false, false, false]),
+        (
+            "asked-here",
+            |s, f, d, n| window_asked(s, f, d, n, u64::from(s.pid)),
+            [false, true, false],
+        ),
+        (
+            "asked-elsewhere",
+            |s, f, d, n| window_asked(s, f, d, n, u64::from(s.pid) + 1),
+            [true, false, false],
+        ),
+        (
+            "unrecorded",
+            |s, _, d, n| s.open_window(n, d, "bash --norc --noprofile"),
+            [true, false, false],
+        ),
+    ];
+    for (name, opens, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let snapshot = fleet.read();
+        let opened: RefCell<Option<String>> = RefCell::new(None);
+        // The window opens and its record is written after the snapshot,
+        // as the pass's own lane reads run, and before the sweep lists.
+        let listing = |recorded: Option<&Path>, session: &str| {
+            if opened.borrow().is_none() {
+                *opened.borrow_mut() = Some(opens(&server, &fleet, dir.path(), name));
+            }
+            lanes::windows_at(recorded.unwrap_or(&server.socket), session)
+        };
+        lane_driver!(server, fleet, readers, driver);
+        driver.readers.windows = &listing;
+        let strays = |produced: Produced| -> Vec<String> {
+            event_lines(&produced)
+                .into_iter()
+                .filter(|l| l.starts_with("EVENT stray-window"))
+                .collect()
+        };
+        let mut passes = vec![strays(driver.pass(&snapshot))];
+        for _ in 1..expected.len() {
+            passes.push(strays(driver.pass(&fleet.read())));
+        }
+        let pane = opened.borrow().clone().expect("the sweep listed");
+        let line = format!(
+            "EVENT stray-window {pane} window={} server={} name={name}",
+            window_of(&server, &pane),
+            server.pid
+        );
+        let want: Vec<Vec<String>> = expected
+            .iter()
+            .map(|&reported| if reported { vec![line.clone()] } else { vec![] })
+            .collect();
+        assert_eq!(passes, want, "{name}");
+        assert!(server.panes().contains(&pane), "{name}: the window stands");
+    }
 }
 
 /// The overseer duty's driver: the pass over the fleet with planted judge
