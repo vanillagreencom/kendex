@@ -2540,6 +2540,7 @@ mod tests {
             host: None,
             kind: None,
             mail_root: mail_root.map(|p| p.display().to_string()),
+            mail_root_confirmed: false,
             surface: None,
             model: None,
             effort: None,

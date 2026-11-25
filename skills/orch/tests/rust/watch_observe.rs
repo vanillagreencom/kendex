@@ -6394,17 +6394,23 @@ fn the_prepare_records_are_said_once_per_key() {
         }
         json!({"item": item, "harness": "claude", "host": provider(dir.path()), "kind": "ssh", "status": status, "prepare": record})
     };
-    let lanes = vec![
+    let mut lanes = vec![
         prepare("KEN-1", "preparing", now - 1801, "/l1", None),
         prepare("KEN-2", "running", now - 10, "/l2", None),
         prepare("KEN-3", "stopped", now - 20, "/l3", Some("create-failed")),
         prepare("KEN-4", "preparing", now - 100, "/l4", None),
     ];
-    fleet.set_lanes(lanes.clone());
-    let state = fleet.read();
     let running = ["KEN-1", "KEN-2", "KEN-4"];
     let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &running);
     let _lanes = running.map(|item| host.lead(item, "claude"));
+    let checkout = fleet.runner.state_dir().display().to_string();
+    for index in [0, 3] {
+        lanes[index]["checkout"] = json!(checkout);
+        lanes[index]["mail_root"] = json!(checkout);
+    }
+    lanes[1]["mail_root"] = json!(host.lane_root("KEN-2").display().to_string());
+    fleet.set_lanes(lanes.clone());
+    let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     let prepare_lines = |produced: &Produced| -> Vec<String> {

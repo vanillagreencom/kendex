@@ -1579,6 +1579,7 @@ pub(super) fn launch_lane(
                 record_checkout_common(lane, checkout_common.as_deref(), r, host);
             }
             record::set(lane, "mail_root", r.mail_root.as_str());
+            record::delete(lane, "mail_root_confirmed");
             for (key, value) in r.prepared() {
                 if let Some(value) = value {
                     record::set(lane, key, value.as_str());
@@ -2282,6 +2283,8 @@ pub(super) fn record_launch_outcome(
             if let Some(session) = &members.tmux_session {
                 record_tmux_session(path, doc, session)?;
             }
+            let hosted_root =
+                members.mail_root.is_some() && lane_at(path, doc, index)?.mail_host().is_some();
             let lane = lane_doc_mut(path, doc, index)?;
             // The whole selection, null where the request named none: the
             // session that runs is this request's, so no account, model or
@@ -2308,6 +2311,9 @@ pub(super) fn record_launch_outcome(
             // known only once its host answered.
             if r.members.contains_key("mail_root") {
                 record::set(lane, "mail_root", string_or_null(&members.mail_root));
+            }
+            if hosted_root {
+                record::set(lane, "mail_root_confirmed", true);
             }
             record::set(lane, "status", LaneStatus::Running.word());
             sandbox_ended(lane);

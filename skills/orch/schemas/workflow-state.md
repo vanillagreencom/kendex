@@ -331,7 +331,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `tracker`, `repo`, `harness` | What the close reads the item and stops the harness by. |
 | `window`, `launch` | The lane's tmux window and its confirmed identity `{pane, server, server_start, pid, start}`. |
 | `account`, `home`, `home_implicit` | The account the lane spends, the home its sessions ran under, and `true` where the launch named no home. |
-| `host`, `kind`, `mail_root`, `checkout`, `checkout_common` | Where the lane runs. |
+| `host`, `kind`, `mail_root`, `mail_root_confirmed`, `checkout`, `checkout_common` | Where the lane runs. |
 | `surface` | `tmux`, the lane operations' one surface. |
 | `model`, `effort`, `permission`, `allow_all` | The launch line's model, effort word and permission word, each null where the line names none, and the Copilot allow-all grant. |
 | `class`, `class_reason`, `class_missed` | The model class the assignment runs at (`top`, `standard`, `light`, `fast`), its reason, and a retired attempt below `standard`. |
@@ -358,6 +358,7 @@ The members' rules, in the table's order:
 - `host`: null for this machine, `claude-cloud`, or a provider path.
 - `kind`: `local`, `claude-cloud` or `ssh` ([lane-host.md § Host kinds](lane-host.md#host-kinds)).
 - `mail_root`: the lane's worktree as its host sees it.
+- A hosted launch sets `mail_root_confirmed` when the provider names the root. Without it, a root matching `checkout` is still pending.
 - `checkout`: the checkout a hosted lane launched from.
 - `checkout_common`: the canonical common git folder admission read from the checkout at `mail_root`.
 - `checkout_common`: a launch writes it on a new record or a changed `mail_root`; a relaunch over the same `mail_root` keeps it.

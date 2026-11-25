@@ -7609,7 +7609,14 @@ fn hosted_mail_root_reaches_the_watch_and_context_report() {
     let server = Server::start(dir.path(), "fleet");
     let world = HostedLaunch::ssh(&server, dir.path());
     world.interrupt_launch(&server);
+    // The provider's disk and the control checkout can have identical
+    // path text. Give the preparing record the checkout from that case.
+    let mut fleet = world.runner.fleet();
+    fleet["lanes"][0]["checkout"] = json!(world.host());
+    fleet["lanes"][0]["mail_root"] = json!(world.host());
+    world.runner.write_fleet(&fleet);
     let lane = world.reconcile_launch();
+    assert_eq!(lane["mail_root"], lane["checkout"]);
     world.hosted_mail(&["notice", "--item", "KEN-H"]);
     std::fs::write(
         world.host_path.join("tmp/lane-mail/KEN-H/context.json"),
@@ -7662,7 +7669,7 @@ fn hosted_mail_root_reaches_close_ask_and_last_mail() {
 
 #[test]
 fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
-    use orch_runtime::watch::Change;
+    use orch_runtime::watch::{Change, hosted};
 
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -7691,6 +7698,13 @@ fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
         "{mail:?}"
     );
     assert!(lane["mail_root"].is_null(), "{lane}");
+    let lane = serde_json::from_value(lane).unwrap();
+    assert_eq!(
+        hosted::record_left(&world.scripts, &lane),
+        hosted::Answer::Unreadable {
+            cause: "mail-root-unrecorded".to_owned(),
+        }
+    );
 }
 
 #[test]
