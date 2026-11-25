@@ -9745,7 +9745,6 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
         match expected {
             Ok(written) => {
                 assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
-                assert_eq!(report["lane"]["session_rows_at_launch"], 0, "{case}");
                 assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
                 assert_eq!(
                     after.map(|bytes| serde_json::from_str::<Value>(&bytes).unwrap()),
@@ -9779,43 +9778,6 @@ fn a_bypassed_hosted_claude_lane_records_the_hosts_bypass_consent_and_honours_a_
             }
         }
     }
-}
-
-#[test]
-fn hosted_claude_launch_refuses_an_unreadable_checkpoint_and_retries() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let world = HostedLaunch::ssh(&server, dir.path());
-    let ssh = world.tools.join("ssh");
-    let original = std::fs::read_to_string(&ssh).unwrap();
-    let (shebang, script) = original.split_once('\n').unwrap();
-    let failed = world.tools.join("checkpoint-read-failed");
-    write_executable(
-        &ssh,
-        format!(
-            "{shebang}\ncase \"$*\" in\n  *session-rows.jsonl*) if [ ! -e '{failed}' ]; then : > '{failed}'; printf '%s\\n' 'checkpoint transport interrupted' >&2; exit 255; fi ;;\nesac\n{script}",
-            failed = failed.display(),
-        ),
-    );
-    let request = world.request();
-    let before = server.panes().len();
-    let refused = effect_report(&world.runner.op_fleet(&request));
-    assert_eq!(refused["intent"]["outcome"], "failed", "{refused}");
-    let cause = refused["intent"]["observation"]["cause"].as_str().unwrap();
-    assert!(
-        cause.starts_with("host-session-rows-unreadable "),
-        "{cause}"
-    );
-    assert!(
-        cause.contains("checkpoint transport interrupted"),
-        "{cause}"
-    );
-    assert_eq!(server.panes().len(), before);
-
-    let retried = effect_report(&world.runner.op_fleet(&request));
-    assert_eq!(retried["intent"]["outcome"], "confirmed", "{retried}");
-    assert_eq!(retried["lane"]["session_rows_at_launch"], 0);
-    assert_eq!(server.panes().len(), before + 1);
 }
 
 /// Through the real launch: a Codex lane and a Copilot lane whose harness

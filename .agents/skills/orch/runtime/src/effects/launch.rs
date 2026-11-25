@@ -888,17 +888,14 @@ fn open_and_confirm(
     // The relaunch has retired the predecessor. Read its last possible
     // row now, before the new window can start a hook, and keep the
     // boundary through reconciliation of this opening.
-    if harness == Harness::Claude {
-        opening.session_rows_at_launch = match &sessions {
-            Sessions::Store { cwd, .. } => {
-                let file = marker::mailbox_path(cwd, &r.item).join(rows::LANE_FILE);
-                match rows::last_position(&file) {
-                    Reading::Live(position) => Some(position),
-                    Reading::Gone => Some(0),
-                    Reading::Unreadable { .. } => None,
-                }
-            }
-            Sessions::Hosted { rows_at_launch, .. } => *rows_at_launch,
+    if harness == Harness::Claude
+        && let Sessions::Store { cwd, .. } = &sessions
+    {
+        let file = marker::mailbox_path(cwd, &r.item).join(rows::LANE_FILE);
+        opening.session_rows_at_launch = match rows::last_position(&file) {
+            Reading::Live(position) => Some(position),
+            Reading::Gone => Some(0),
+            Reading::Unreadable { .. } => None,
         };
     }
     operation.record_phase(Phase::Opening {
@@ -1107,12 +1104,6 @@ fn hosted_launch(
     let Some(harness) = Harness::parse(&r.harness) else {
         return failed(operation, "harness-unknown");
     };
-    if harness == Harness::Claude && caps.files != hosted::Files::Verb {
-        return failed(
-            operation,
-            &format!("host-session-rows-unreadable host={provider} cause=files-verb-required"),
-        );
-    }
     if let Err(cause) = gate::before_create(harness, r.model.as_deref(), provider) {
         return failed(operation, &cause);
     }
@@ -1299,20 +1290,6 @@ fn hosted_launch(
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
-    let rows_at_launch = if harness == Harness::Claude {
-        match hosted::session_rows_at(&scripts, provider, &r.item, &created.path) {
-            hosted::Answer::Live(text) => Some(text.lines().count()),
-            hosted::Answer::Gone => Some(0),
-            hosted::Answer::Unreadable { cause } => {
-                return failed(
-                    operation,
-                    &format!("host-session-rows-unreadable host={provider} cause={cause}"),
-                );
-            }
-        }
-    } else {
-        None
-    };
     let mut outcome = match client {
         Client::Window => {
             let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
@@ -1327,22 +1304,12 @@ fn hosted_launch(
                 &|name| name == "ssh" || target.owns(name),
                 Sessions::Hosted {
                     mail_root: created.path.clone(),
-                    rows_at_launch,
                 },
             )?
         }
         Client::Detached => detached_launch(
-            run,
-            operation,
-            &scripts,
-            provider,
-            &r.item,
-            harness,
-            &server,
-            &session,
-            &created,
+            run, operation, &scripts, provider, &r.item, harness, &server, &session, &created,
             &command,
-            rows_at_launch,
         )?,
     };
     if created.unrebased {
@@ -1571,7 +1538,6 @@ fn detached_launch(
     session: &str,
     created: &hosted::Created,
     command: &LaunchCommand,
-    rows_at_launch: Option<usize>,
 ) -> Result<EffectOutcome> {
     operation.record_phase(Phase::Preparing {
         step: HOST_EXEC.to_owned(),
@@ -1635,7 +1601,7 @@ fn detached_launch(
                     mail_root: Some(created.path.clone()),
                     home_implicit: false,
                     viewer: true,
-                    session_rows_at_launch: rows_at_launch,
+                    ..Default::default()
                 }
                 .members(),
                 ..Wire::default()
@@ -2166,7 +2132,6 @@ enum Sessions<'a> {
     },
     Hosted {
         mail_root: String,
-        rows_at_launch: Option<usize>,
     },
 }
 
@@ -2189,7 +2154,7 @@ fn launch_outcome(
             // session id never runs under a neighbour's. A hosted lane's
             // sessions are on its host and bind nothing here.
             let (session_id, mail_root) = match sessions {
-                Sessions::Hosted { mail_root, .. } => {
+                Sessions::Hosted { mail_root } => {
                     observation["note"] = json!("session-hosted");
                     (None, Some(mail_root))
                 }
@@ -2511,7 +2476,6 @@ fn judge_opened(
         let sessions = if hosted {
             Sessions::Hosted {
                 mail_root: cwd.display().to_string(),
-                rows_at_launch: opened.session_rows_at_launch,
             }
         } else {
             Sessions::Store {

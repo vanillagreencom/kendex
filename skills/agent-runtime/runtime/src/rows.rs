@@ -155,7 +155,7 @@ pub fn observe_session(row: Row) -> SessionObservation {
 
 /// Claude's StopFailure carries the error kind. Pi's StopFailure comes
 /// from the carrier only for an error, with no separate kind.
-pub fn failure_cause(row: &Row) -> Option<&str> {
+fn failure_cause(row: &Row) -> Option<&str> {
     match (row.harness.as_deref(), row.event.as_deref()) {
         (Some("claude"), Some("StopFailure")) => row.error.as_deref(),
         (Some("pi"), Some("StopFailure")) => Some("error"),

@@ -2586,23 +2586,11 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
         Ok(root) => root,
         Err(answer) => return answer,
     };
-    session_rows_at(scripts, host_of(lane), &lane.item, root)
-}
-
-pub(crate) fn session_rows_at(
-    scripts: &Path,
-    host: &str,
-    item: &str,
-    root: &str,
-) -> Answer<String> {
     fetch(
         scripts,
-        host,
-        item,
-        &format!(
-            "{root}/tmp/lane-mail/{item}/{}",
-            agent_runtime::rows::LANE_FILE
-        ),
+        host_of(lane),
+        &lane.item,
+        &format!("{root}/tmp/lane-mail/{}/session-rows.jsonl", lane.item),
     )
 }
 
