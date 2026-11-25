@@ -7,7 +7,7 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::harness::Enforcement;
 use kendex_core::pi_ext::carrier;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::process::Command;
 
@@ -60,6 +60,19 @@ fn catalog_skills(catalog: &Path, repo: &Path) {
         let file = file.unwrap();
         fs::copy(file.path(), libraries.join(file.file_name())).unwrap();
     }
+    // Require the command guard's metadata independently of the mail guard.
+    // The actual loader still reads the configured command policy below.
+    let settings = libraries.join("settings.sh");
+    let loader = fs::read_to_string(&settings).unwrap();
+    fs::write(
+        settings,
+        format!(
+            r#"[[ "${{KENDEX_HOOK_SCOPE:-}}" = project &&
+      "${{KENDEX_HOOK_ROOT:-}}" = "$FIXTURE_PROJECT" ]] || return 1
+{loader}"#
+        ),
+    )
+    .unwrap();
     executable(
         &catalog.join("skills/mailbox/scripts/lane-mail"),
         "#!/bin/sh\nexit 1\n",
@@ -74,7 +87,7 @@ set -eu
 # orch-runtime: hook-entry-no-build
 if [[ "$#" = 4 && "$1:$2:$4" = turn-end:--hook-dir:halt &&
       "${KENDEX_HOOK_SCOPE:-}" = project && "${KENDEX_HOOK_ROOT:-}" = "$FIXTURE_PROJECT" &&
-      "$3" = "$FIXTURE_PROJECT/.pi/kendex/hooks" && -f "$FIXTURE_PROJECT/halt" ]]; then
+      "$3" -ef "$FIXTURE_PROJECT/.pi/kendex/hooks" && -f "$FIXTURE_PROJECT/halt" ]]; then
   printf 'lane-mail-check: halt=fixture\n' >&2
   exit 2
 fi
@@ -98,10 +111,25 @@ fn refresh_project(world: &World, catalog: &Path, repo: &Path, refreshed: bool) 
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn a_project_refresh_keeps_both_pi_guards_enforced_with_or_without_carrier_metadata() {
     let Some(bun) = carrier_runner() else { return };
+    for (layout, linked) in [
+        ("ordinary Pi directory", false),
+        ("linked Pi directory", true),
+    ] {
+        assert_project_refresh(&bun, layout, linked);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_project_refresh(bun: &Path, layout: &str, linked: bool) {
     let w = world();
+    if linked {
+        let pi = w.project.join(".pi");
+        let shared = w.project.join("shared-pi");
+        fs::rename(&pi, &shared).unwrap();
+        symlink(&shared, &pi).unwrap();
+    }
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = w.home.join("cat");
     fs::create_dir_all(catalog.join("hooks")).unwrap();
@@ -154,7 +182,7 @@ fn a_project_refresh_keeps_both_pi_guards_enforced_with_or_without_carrier_metad
         ("published 0.19.2 spawn environment", old_spawn),
         ("carrier metadata", path),
     ] {
-        let run = Command::new(&bun)
+        let run = Command::new(bun)
             .args(["run", "--no-install"])
             .arg(&driver)
             .arg(&entry)
@@ -170,7 +198,7 @@ fn a_project_refresh_keeps_both_pi_guards_enforced_with_or_without_carrier_metad
             .unwrap();
         assert!(
             run.status.success(),
-            "{mode}: {}",
+            "{layout}, {mode}: {}",
             String::from_utf8_lossy(&run.stderr)
         );
     }

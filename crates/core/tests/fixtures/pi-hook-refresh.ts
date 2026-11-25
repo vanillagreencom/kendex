@@ -27,12 +27,10 @@ const halt = join(process.env.FIXTURE_PROJECT, "halt");
 
 assert.equal(await bash("echo allowed"), undefined);
 assert.equal(await read(), undefined);
+const policy = firstLine(await bash("echo configured-policy"));
 writeFileSync(halt, "");
 try {
-	const [policy, hold] = [
-		firstLine(await bash("echo configured-policy")),
-		firstLine(await read()),
-	];
+	const hold = firstLine(await read());
 	assert.deepEqual([policy, hold], ["command-safety: refused=policy", "lane-mail-check: halt=fixture"]);
 } finally {
 	unlinkSync(halt);
