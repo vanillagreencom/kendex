@@ -436,25 +436,70 @@ fn apply_interleaved(
         })?;
         Ok(Applied { kind, report })
     };
-    let commit = || match request {
+    let rejudge = match request {
         // The journal's progress and outcome receipts can yield to a new
         // owner only when the writer supplied the owner it acted under.
-        Request::RecordProgress(r) if r.while_owner.is_none() => transition(),
-        Request::RecordLaneProgress(r) if r.while_owner.is_none() => transition(),
-        Request::RecordOutcome(r) if r.while_owner.is_none() => transition(),
+        Request::RecordProgress(r) => r.while_owner.is_some(),
+        Request::RecordLaneProgress(r) => r.while_owner.is_some(),
+        Request::RecordOutcome(r) => r.while_owner.is_some(),
+        // A launch can send its join directive before the fleet store.
+        Request::LaunchLane(_) => false,
+        // Settlements belong to an earlier owed send. The sender also reads
+        // the lane's delivery route before it records a new send as owed.
+        Request::RecordDirectiveSend(_) => false,
         // These record observations supplied by the caller. Reapplying can
         // overwrite a receipt or observation the caller never saw.
         Request::RecordPhase(_)
         | Request::RecordVerification(_)
         | Request::RecordWallPauses(_)
-        | Request::RecordQueueWatch(_) => transition(),
+        | Request::RecordQueueWatch(_)
+        | Request::CloseOwnedResources(_)
+        | Request::ParkLane(_) => false,
+        // A superseding write or a resume can act on a handoff the caller
+        // read before the transition. A replacement needs its own decision.
+        Request::RecordHandoff(_) | Request::ResumeHandoff(_) => false,
         // Retention archives before it commits. A fresh snapshot may carry
         // old log rows outside that archive, so the next pass must replan.
-        Request::PruneRecords(_) => transition(),
-        // A transition that judges the record it commits against can judge
-        // a fresh snapshot. For example, an already closed validation stage
-        // returns the first closer's outcome and leaves its notice alone.
-        _ => record::reread(transition, Error::key),
+        Request::PruneRecords(_) => false,
+        // The effects for these requests own their writes.
+        Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::CloseLane(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => false,
+        // These judge the record they commit against. Effects, if any,
+        // follow the store. Path admission checks holders without joining.
+        Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::RequestTransfer(_)
+        | Request::StartController(_)
+        | Request::StopController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::ReconcileRound(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::AdmitPaths(_)
+        | Request::RecoverLaneModel(_)
+        | Request::StopModelPredecessor(_) => true,
+        // An already closed or marked stage keeps the first result.
+        Request::Validate(step) => match step {
+            validate::Validate::Start(_)
+            | validate::Validate::Launch(_)
+            | validate::Validate::End(_)
+            | validate::Validate::Mark(_)
+            | validate::Validate::Stop(_) => true,
+        },
+    };
+    let commit = || {
+        if rejudge {
+            record::reread(transition, Error::key)
+        } else {
+            transition()
+        }
     };
     if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
         // A lane admission, and the path admission that judges against the
@@ -1574,6 +1619,55 @@ mod tests {
         };
         assert_eq!(t.expected.pane, Value::Null);
         assert_eq!(t.expected.pending, Value::Null);
+    }
+
+    #[test]
+    fn a_directive_settlement_cannot_follow_a_replaced_owed_record() {
+        use mail::{Credit, DirectiveSend, DirectiveWrite, RecordDirectiveSend, SendResult, Word};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let mut doc = object(&path);
+        doc["lanes"][0]["kind"] = "claude-cloud".into();
+        fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let request = |write| {
+            Request::RecordDirectiveSend(RecordDirectiveSend {
+                item: "KEN-4437".into(),
+                write,
+            })
+        };
+        let owed = |key: &str| {
+            request(DirectiveWrite::Owed {
+                text: key.into(),
+                key: Some(key.into()),
+            })
+        };
+        let settled = request(DirectiveWrite::Settled {
+            at: NOW_SECS,
+            send: DirectiveSend {
+                result: SendResult::Sent,
+                text: String::new(),
+                credit: Credit::Unread(Word::Unread),
+            },
+        });
+        let failed = request(DirectiveWrite::Failed {
+            cause: "receipt missing".into(),
+        });
+        run(&path, &owed("first")).unwrap();
+        for (settlement, next) in [(&settled, "second"), (&failed, "third")] {
+            let replace = std::cell::Cell::new(true);
+            let refused = apply_interleaved(&path, settlement, &env(), LOCK, None, &|| {
+                if replace.replace(false) {
+                    run(&path, &settled).unwrap();
+                    run(&path, &owed(next)).unwrap();
+                }
+            })
+            .unwrap_err();
+            assert_eq!(refused.key(), "record-changed");
+            let send = &object(&path)["lanes"][0]["directive_send"];
+            assert_eq!(send["key"], next);
+            assert_eq!(send["result"], mail::OWED);
+        }
     }
 
     fn validation_awaits_its_launch(path: &Path, run_dir: &Path) -> validate::RecordEnd {
