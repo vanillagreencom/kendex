@@ -343,9 +343,11 @@ jobs:
     runs-on: ubuntu-latest
     # The credential step took 406 s in merge-group run 44718539691, with
     # installation and both ranges. A local replay of both ranges took
-    # 541.899 s before and 305.977 s after batching. Add 30 s for surrounding
-    # work (run 44692469604) and 25% headroom, rounded up to a minute.
-    timeout-minutes: 7
+    # 541.899 s before and 305.977 s after batching. Run 44692469604 spent
+    # 30 s outside the credential step. Budget up to 48 s more for installation,
+    # PR fetch and checkout, and the candidate instructions check. Add 25%
+    # headroom, rounded up to a minute.
+    timeout-minutes: 8
     steps:
       # The whole history: the secrets scan judges every commit the group
       # and its pull request add against that commit's own parents, which a
