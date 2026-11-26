@@ -52,6 +52,7 @@ Each key, its values, and what the runtime does with it:
 - `pool`: `plan`, `cloud-credit`. The account judge's tier: a Claude row on a `cloud-credit` host is judged on cloud credit.
 - `land`: `lane`, `handoff`. The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md).
 - `peer-mail`: optional, `verb` only. It selects `peer-append` for a hosted peer send or ask. A valid line with `files=verb` and no `peer-mail` selects legacy `append`.
+- `validate`: optional, `verb` only. `verb`: the provider serves `validate`. `validate entry --host` refuses `host-validate-undeclared` for a host whose line names no `validate`.
 
 ## Provider protocol
 
@@ -168,13 +169,13 @@ Each verb, its arguments, and its answer:
   - Optional, asked only of a `pane=verb` host.
   - One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session.
   - Exit `2`: no viewer.
-- `validate --item ID --run-id RUN --commit SHA --source DIR --into STAGE --follow-secs SECS --validate-mode MODE [--base BASE]`, optional.
+- `validate --item ID --run-id RUN --commit SHA --source DIR --into STAGE --validate-mode MODE [--base BASE]`, asked only of a `validate=verb` host.
   - Runs one validation unit on the host at `SHA`, the HEAD of the lane's worktree `DIR`.
-  - The first call for `RUN` starts the host's run with `MODE` and `BASE`. Every call follows the run for `SECS` seconds.
-  - Exit `3` with a `state=running` line on stdout is a run still going. The caller asks again with the same arguments.
-  - Exit `0` is a run that ended with its sentinel. Its folder stands at `STAGE`, a folder the call creates on the control machine, and `STAGE/host` holds `host=NAME`, the host it ran on. The host keeps no copy.
+  - Each call takes one step of the unit: it prepares the unit, starts its run with `MODE` and `BASE`, or reads the run's state. It waits for no run inside the call.
+  - Exit `3` with `state=preparing` on stdout is a unit one step further along. Exit `3` with `state=running` is a run still going. The caller asks again with the same arguments.
+  - Exit `0` is a run that ended with its sentinel. Its folder stands at `STAGE`, a folder the call creates on the control machine, and `STAGE/host` holds `host=NAME`, the host it ran on. The host removes its copy, and names on stderr one it could not remove.
   - A run that ended with no sentinel fails, and the host keeps its folder for its log.
-  - Exit `2`: the verb is absent.
+  - A start that may have launched a run keeps the unit, and the next call reads that run.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
@@ -210,7 +211,7 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
   - A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`.
   - A Copilot lane on a `pane=local` host gets them in its window after the close transition, then is asked `stop` and `status`.
 - The account listing asks `accounts`.
-- `validate entry --host` asks `validate`, one call at a time, until the host's run ends. It reads exit `2` as a host that cannot run a unit and refuses `host-verb-absent`.
+- `validate entry --host` asks `capabilities`, then `validate`, one call at a time, until the host's run ends.
 
 ## Call bound
 
@@ -222,6 +223,8 @@ Every provider call except `capabilities` first takes a slot in one of two pools
 | short | every other verb | `ORCH_LANE_HOST_SHORT_MAX_CALLS` | `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` |
 
 [settings.md § Fleet lanes](../references/settings.md#fleet-lanes) holds the settings.
+
+`validate` waits on no run inside its call, so its slot is held for one step: the call reads the run's state and returns, and its caller waits between calls with no slot taken.
 
 ## Launch on a provider
 
@@ -331,7 +334,8 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 - Static SSH declares `peer-mail=verb`.
 - For peer mail, reserve one inventory row with `item` set to `overseer`, `target` set to the recipient's SSH alias and `clone` set to the absolute path of its main checkout with mailbox and agent-runtime installed. The sender passes that same path as `peer-append --repo`. Keep the `repo` field equal to the inventory's repository, including when the recipient checkout belongs to a different repository. The existing absolute `account` field is required by the inventory and peer mail does not use it.
 - The `overseer` row serves `peer-append`, `touch`, and `cat` and `read-many` for files directly in that checkout's overseer mailbox directory. Reads outside the directory fail with status `1`. The row is omitted from lane listings.
-- For validation units, reserve one inventory row with `item` set to `validation`, `target` set to the host and `clone` set to a clone of the repository that no lane row names. `validate` runs every item's unit on that row, in a detached worktree under `<clone>/tmp/validate-host/`. Without the row, `validate` exits `1` with `item-unconfigured item=validation`.
+- For validation units, reserve one inventory row with `item` set to `validation`, `target` set to the host and `clone` set to a clone of the repository that no lane row names. Keep the `repo` field equal to the inventory's repository, and set the absolute `account` field the inventory requires, which `validate` does not use. `validate` runs every item's unit on that row, in a detached worktree under `<clone>/tmp/validate-host/`. Without the row, `validate` exits `1` with `item-unconfigured item=validation`.
+- A unit runs the orch runtime its own tree builds, through that tree's `setup --detach`, never the clone's.
 
 ## Test provider
 

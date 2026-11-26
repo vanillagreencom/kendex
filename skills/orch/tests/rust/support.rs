@@ -2458,34 +2458,42 @@ impl TurnWorld {
     }
 }
 
-/// The runtime cache `cache` holding this suite's own `orch-runtime` under
-/// the key the shipped wrapper computes for this checkout's sources
-/// (agent-runtime's `lib/key.sh`, read once per run): a row that runs the
-/// shipped wrapper with `AGENT_RUNTIME_CACHE` naming `cache` runs the binary
-/// under test, the wrapper as real as the binary.
+/// The runtime cache `cache` holding this suite's own `orch-runtime` and
+/// `agent-runtime` under the keys the shipped setup computes for this
+/// checkout's sources (agent-runtime's `lib/key.sh`, read once per run): a
+/// row that runs the shipped wrapper or setup with `AGENT_RUNTIME_CACHE`
+/// naming `cache` runs the binaries under test and builds nothing, the
+/// scripts as real as the binaries.
 pub fn place_built_runtime(cache: &Path) {
-    static KEY: OnceLock<String> = OnceLock::new();
-    let key = KEY.get_or_init(|| {
+    static KEYS: OnceLock<[String; 2]> = OnceLock::new();
+    let keys = KEYS.get_or_init(|| {
         let skills = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let out = program("/bin/bash")
-            .args([
-                "-c",
-                "refuse() { echo \"$*\" >&2; exit 1; }; . \"$1\"; agent_runtime_key \"$2\"",
-                "_",
-            ])
-            .arg(skills.join("agent-runtime/scripts/lib/key.sh"))
-            .arg(skills.join("orch/runtime"))
-            .output()
-            .expect("bash");
-        assert!(out.status.success(), "the runtime key: {}", stderr(&out));
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        ["orch/runtime", "agent-runtime/runtime"].map(|crate_dir| {
+            let out = program("/bin/bash")
+                .args([
+                    "-c",
+                    "refuse() { echo \"$*\" >&2; exit 1; }; . \"$1\"; agent_runtime_key \"$2\"",
+                    "_",
+                ])
+                .arg(skills.join("agent-runtime/scripts/lib/key.sh"))
+                .arg(skills.join(crate_dir))
+                .output()
+                .expect("bash");
+            assert!(out.status.success(), "the runtime key: {}", stderr(&out));
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        })
     });
     std::fs::create_dir_all(cache.join("bin")).unwrap();
-    let link = cache.join("bin").join(format!("orch-runtime-{key}"));
-    match std::os::unix::fs::symlink(binary(), &link) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => panic!("linking {}: {e}", link.display()),
+    for (name, key, built) in [
+        ("orch-runtime", &keys[0], binary()),
+        ("agent-runtime", &keys[1], agent_runtime().to_path_buf()),
+    ] {
+        let link = cache.join("bin").join(format!("{name}-{key}"));
+        match std::os::unix::fs::symlink(built, &link) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("linking {}: {e}", link.display()),
+        }
     }
 }
 
@@ -2555,7 +2563,7 @@ impl SshHost {
         write_executable(
             &tools.join("ssh"),
             format!(
-                "#!/bin/bash\n# `ssh -t|-T -o OPTION ... -- TARGET LINE` runs LINE on this disk through bash in the host's home, this directory first on the search path; the window's `-t` is logged to ssh.log, the provider's `-T` to ssh-provider.log. A file `cut` here ends the provider's caller at the next `-T`, which fails as a dropped connection.\nset -u\nhere='{tools}'\ncase \"${{1:-}}\" in\n  -t) printf '%s\\n' \"$*\" >> \"$here/ssh.log\" ;;\n  -T) printf '%s\\n' \"$*\" >> \"$here/ssh-provider.log\"\n    if [ -e \"$here/cut\" ]; then rm -f \"$here/cut\"; kill -KILL $(ps -o ppid= -p \"$PPID\"); exit 255; fi ;;\n  *) exit 255 ;;\nesac\nshift\nwhile [ \"${{1:-}}\" = -o ]; do shift 2; done\n[ \"${{1:-}}\" = -- ] || exit 255\nshift 2\ncd '{home}' || exit 255\nexport HOME='{home}' PATH=\"$here:$PATH\"\nexec bash -c \"$*\"\n",
+                "#!/bin/bash\n# `ssh -t|-T -o OPTION ... -- TARGET LINE` runs LINE on this disk through bash in the host's home, this directory first on the search path; the window's `-t` is logged to ssh.log, the provider's `-T` to ssh-provider.log. A file `cut` here ends the provider's caller at the next `-T`, which fails as a dropped connection. A file `drop-on` here holding TEXT runs the next `-T` whose line holds TEXT to its end, then drops its output and exits 255, as a connection lost after the host acted.\nset -u\nhere='{tools}'\ndrop=\ncase \"${{1:-}}\" in\n  -t) printf '%s\\n' \"$*\" >> \"$here/ssh.log\" ;;\n  -T) printf '%s\\n' \"$*\" >> \"$here/ssh-provider.log\"\n    if [ -e \"$here/cut\" ]; then rm -f \"$here/cut\"; kill -KILL $(ps -o ppid= -p \"$PPID\"); exit 255; fi\n    if [ -e \"$here/drop-on\" ] && [[ \"$*\" == *\"$(cat \"$here/drop-on\")\"* ]]; then rm -f \"$here/drop-on\"; drop=1; fi ;;\n  *) exit 255 ;;\nesac\nshift\nwhile [ \"${{1:-}}\" = -o ]; do shift 2; done\n[ \"${{1:-}}\" = -- ] || exit 255\nshift 2\ncd '{home}' || exit 255\nexport HOME='{home}' PATH=\"$here:$PATH\"\nif [ -n \"$drop\" ]; then bash -c \"$*\" > /dev/null 2>&1 < /dev/null; exit 255; fi\nexec bash -c \"$*\"\n",
                 tools = tools.display(),
                 home = home.display(),
             ),
