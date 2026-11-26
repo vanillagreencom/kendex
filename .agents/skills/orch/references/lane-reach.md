@@ -105,14 +105,16 @@ A full close that answered `unconfirmed` leaves its intent open, and a keep refu
 - On `failed`, nothing moved; fix the cause in `result.observation`.
 - A refusal exits 1 with its key in `refusal.key`; nothing past the read it names has changed.
 
-A full close of an ended item writes `result.observation.branches` when origin holds a branch named for the item (§ What the close does):
+A full close of an ended item writes `result.observation.branches` (§ What the close does):
 
-- `deleted` lists each branch the close deleted.
-- `kept` lists each branch it kept, with its `tip` and its `cause`:
-  - `unmerged`: the base lacks its work. Merge or delete it by hand.
-  - `recovery`: a `recovery/*` branch, which fleet's reap releases once the base holds its work.
-  - `delete-failed` or `unread`, with the git failure. Fix the cause, then delete it by hand.
-- `unread` alone, with its cause, means the close judged no branch.
+- `deleted` and `kept` where origin holds a branch named for the item.
+  - `deleted` lists each branch the close deleted.
+  - `kept` lists each branch it kept, with its `tip` and its `cause`:
+    - `unmerged`: the base lacks its work. Merge or delete it by hand.
+    - `recovery`: a `recovery/*` branch, which fleet's reap releases once the base holds its work.
+    - `symbolic`: a branch alias. Delete it by hand.
+    - `delete-failed` or `unread`, with the git failure. Fix the cause, then delete it by hand.
+- `unread` alone, with its cause, where a read judged no branch, whether or not origin holds one. Its cause is `repo-other` for a lane whose record names another repository.
 
 A kept branch holds no other part of the close. `result.observation.branches_comment` is the answer of the one comment the confirming close posts on a Linear item, naming each `unmerged` branch and its tip.
 
@@ -167,7 +169,7 @@ A full close of an ended item also releases the item's origin branches. The item
 - An item's branch carries its key, in any case, bounded by `/`, `-` or the name's ends.
 - The close deletes each branch whose work the base holds: its tip is an ancestor of the base, or merging it into the base changes nothing, as a squash merge or a superseding change leaves it.
 - The base is the one `worktree push` publishes to.
-- The delete runs through the github skill's `git-https-auth`, under the credential a push takes.
+- The worktree package's `release-branches` judges and deletes each branch, under the credential a push takes (`worktree release-branches --help`).
 - A lane whose record names a repository other than the checkout's `origin` releases no branch.
 
 Where the clone or the item's worktree on the host holds a dirty path it cannot set aside, the provider's close answers `host_close: refused` with `path` ([lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol), `close`). Clean or commit what that checkout holds, then close again.

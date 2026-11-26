@@ -266,5 +266,82 @@ assert_eq "$(grep -c '^worktree-merge-unverified: ' "$TMP_ROOT/mutant.err" || tr
   "control: the mutant leaves the unanswered question unrecorded"
 
 echo
+echo "=== worktree release-branches: what a local setting cannot make the base hold ==="
+
+# orch's close test runs the release through a lane close: a squash-merged
+# head, a probe at an ancestor, an unmerged branch, a recovery/ branch, a
+# refused delete and a branch named for another item. These rows hold what
+# the checkout's own Git state could otherwise turn into a delete of work the
+# base lacks. Each row is a fresh checkout whose origin holds main and the
+# item's branch ken-r at a commit whose change conflicts with main's.
+release_world() { # NAME -> RELEASE_MAIN RELEASE_ORIGIN RELEASE_TIP
+  local root="$TMP_ROOT/release-$1"
+  RELEASE_MAIN="$root/main"
+  RELEASE_ORIGIN="$root/origin.git"
+  git init -q -b main "$RELEASE_MAIN"
+  git init -q --bare "$RELEASE_ORIGIN"
+  git -C "$RELEASE_MAIN" config user.email test@example.com
+  git -C "$RELEASE_MAIN" config user.name Test
+  git -C "$RELEASE_MAIN" config commit.gpgsign false
+  git -C "$RELEASE_MAIN" remote add origin "$RELEASE_ORIGIN"
+  printf 'orig\n' >"$RELEASE_MAIN/file.txt"
+  git -C "$RELEASE_MAIN" add file.txt
+  git -C "$RELEASE_MAIN" commit -q -m base
+  git -C "$RELEASE_MAIN" switch -q -c ken-r
+  printf 'item\n' >"$RELEASE_MAIN/file.txt"
+  git -C "$RELEASE_MAIN" commit -q -a -m 'item work'
+  RELEASE_TIP="$(git -C "$RELEASE_MAIN" rev-parse HEAD)"
+  git -C "$RELEASE_MAIN" switch -q main
+  printf 'main\n' >"$RELEASE_MAIN/file.txt"
+  git -C "$RELEASE_MAIN" commit -q -a -m 'main work'
+  git -C "$RELEASE_MAIN" push -q origin main ken-r
+}
+
+release_run() { # -> rc, stdout records, origin heads
+  local rc=0
+  ( cd "$RELEASE_MAIN" && "$WORKTREE_SCRIPT" release-branches KEN-R \
+      >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" ) || rc=$?
+  printf 'rc=%s out=%s err=%s heads=%s' "$rc" \
+    "$(message_records <"$TMP_ROOT/out" | sed "s|$RELEASE_TIP|<tip>|g" | paste -s -d ';' -)" \
+    "$(message_records <"$TMP_ROOT/err" | paste -s -d ';' -)" \
+    "$(git --git-dir="$RELEASE_ORIGIN" for-each-ref --format='%(refname:short)' refs/heads/ | paste -s -d , -)"
+}
+
+# A keep-current merge driver the checkout configures resolves the trial
+# merge's conflict to main's own tree.
+release_world driver
+printf 'file.txt merge=keep\n' >"$RELEASE_MAIN/.git/info/attributes"
+git -C "$RELEASE_MAIN" config merge.keep.driver true
+assert_eq "$(release_run)" \
+  "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged err= heads=ken-r,main" \
+  "a checkout's keep-current merge driver does not make the base hold a conflicting branch"
+
+# A graft the checkout records makes the item's tip a parent of main's.
+release_world graft
+git -C "$RELEASE_MAIN" replace --graft main main~1 "$RELEASE_TIP"
+assert_eq "$(release_run)" \
+  "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged err= heads=ken-r,main" \
+  "a checkout's graft does not make the base hold a branch the stored history keeps apart"
+
+# origin's fetch URL names a repository whose main holds the item's tip; its
+# push URL, which the deletes reach, names one whose main lacks it.
+release_world split
+git init -q --bare "$TMP_ROOT/release-split/fetch.git"
+git -C "$RELEASE_MAIN" push -q "$TMP_ROOT/release-split/fetch.git" "$RELEASE_TIP:refs/heads/main" "$RELEASE_TIP:refs/heads/ken-r"
+git -C "$RELEASE_MAIN" remote set-url origin "$TMP_ROOT/release-split/fetch.git"
+git -C "$RELEASE_MAIN" remote set-url --push origin "$RELEASE_ORIGIN"
+assert_eq "$(release_run)" \
+  "rc=2 out= err=worktree-branch-release-unread: origin-split heads=ken-r,main" \
+  "split fetch and push URLs judge no branch, and the push destination keeps the item's branch"
+
+# A branch alias named for the item, whose target is main.
+release_world alias
+git --git-dir="$RELEASE_ORIGIN" symbolic-ref refs/heads/ken-r-alias refs/heads/main
+git -C "$RELEASE_MAIN" push -q origin --delete ken-r
+assert_eq "$(release_run | sed "s|$(git -C "$RELEASE_MAIN" rev-parse main)|<main>|g")" \
+  "rc=0 out=worktree-branch-kept: ken-r-alias <main> symbolic err= heads=ken-r-alias,main" \
+  "a branch alias named for the item is kept, and its target with it"
+
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

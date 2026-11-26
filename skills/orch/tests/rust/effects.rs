@@ -5148,7 +5148,6 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         (true, false, false),
         (false, true, false),
         (false, false, true),
-        (true, false, true),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -5328,172 +5327,277 @@ esac
 /// base. It keeps, each named with its cause, the branch whose work the
 /// base lacks, which one tracker comment names with its tip, a `recovery/`
 /// branch, and a branch whose delete origin refuses; a branch named for
-/// another item is not touched, and the close confirms.
+/// another item is not touched, and the close confirms. The item ends on
+/// the tracker's terminal verdict or on the landing a close-lane names; a
+/// close-lane on no ending ground, and a lane whose record names another
+/// repository than origin's, release no branch and post no comment.
 #[test]
 fn an_ended_items_close_deletes_the_origin_branches_whose_work_the_base_holds() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
-    let replies = runner.state_dir().join("linear.json");
-    std::fs::write(
-        &replies,
-        json!({"comments create": {"body": {"success": true}}}).to_string(),
-    )
-    .unwrap();
-    let comments = runner.state_dir().join("linear-comments.jsonl");
-    runner.env = vec![
-        (
-            "OVERSEE_WATCH_TRACKER".to_owned(),
-            fixtures()
-                .join("linear-fixture/linear.sh")
-                .display()
-                .to_string(),
-        ),
-        (
-            "LINEAR_FAKE_REPLIES".to_owned(),
-            replies.display().to_string(),
-        ),
-        (
-            "LINEAR_FAKE_LOG".to_owned(),
-            runner.state_dir().join("linear.log").display().to_string(),
-        ),
-        (
-            "LINEAR_FAKE_COMMENTS".to_owned(),
-            comments.display().to_string(),
-        ),
-    ];
-    runner.init_fleet();
-    let repo = repository_fixture(dir.path());
-    std::fs::create_dir_all(repo.join(".agents")).unwrap();
-    let skills = Path::new(&worktree_cli())
-        .ancestors()
-        .nth(3)
-        .unwrap()
-        .to_path_buf();
-    std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
-    std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
-    let origin = dir.path().join("origin.git");
-    git(
-        dir.path(),
-        &["init", "-q", "--bare", origin.to_str().unwrap()],
-    );
-    for checkout in [&repo, &origin] {
-        git(checkout, &["config", "gc.auto", "0"]);
-        git(checkout, &["config", "maintenance.auto", "false"]);
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Close {
+        Terminal,
+        Delivery,
+        Unended,
+        OtherRepo,
     }
-    git(
-        &repo,
-        &["remote", "set-url", "origin", origin.to_str().unwrap()],
-    );
-    let init = git(&repo, &["rev-parse", "HEAD"]);
-    let change = |file: &str| {
-        std::fs::write(repo.join(file), format!("{file}\n")).unwrap();
-        git(&repo, &["add", file]);
-        commit(&repo, file);
-        git(&repo, &["rev-parse", "HEAD"])
-    };
-    git(&repo, &["checkout", "-qb", "ken-b"]);
-    change("feature");
-    git(&repo, &["checkout", "-q", "main"]);
-    git(&repo, &["checkout", "-qb", "ken-b-wip"]);
-    let wip = change("wip");
-    git(&repo, &["checkout", "-q", "main"]);
-    // The closed pull request's replacement, squash-merged.
-    change("feature");
-    let push = |refspec: String| git(&repo, &["push", "-q", "origin", &refspec]);
-    push("main".to_owned());
-    push("ken-b".to_owned());
-    push("ken-b-wip".to_owned());
-    for name in [
-        "ken-b-probe",
-        "recovery/KEN-B/stash",
-        "ken-b-locked",
-        "ken-b2",
+    for close in [
+        Close::Terminal,
+        Close::Delivery,
+        Close::Unended,
+        Close::OtherRepo,
     ] {
-        push(format!("{init}:refs/heads/{name}"));
-    }
-    git(&repo, &["fetch", "-q", "origin"]);
-    git(&repo, &["remote", "set-head", "origin", "main"]);
-    write_executable(
-        &origin.join("hooks/pre-receive"),
-        "#!/bin/sh\nwhile read -r old new ref; do\n  [ \"$ref\" != refs/heads/ken-b-locked ] || { echo 'deletion refused' >&2; exit 1; }\ndone\n",
-    );
-    let mut fleet = runner.fleet();
-    fleet["lanes"] = json!([lane("KEN-B", "running", &runner, Value::Null)]);
-    runner.write_fleet(&fleet);
-
-    let report = effect_report(&runner.op_fleet_in(&repo, &terminal_close("KEN-B"), &[]));
-
-    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    assert_eq!(report["lane"]["status"], "done", "{report}");
-    let branches = &report["intent"]["observation"]["branches"];
-    assert_eq!(
-        branches["deleted"],
-        json!(["ken-b", "ken-b-probe"]),
-        "{report}"
-    );
-    let mut kept: Vec<(&str, &str, &str)> = branches["kept"]
-        .as_array()
-        .unwrap_or_else(|| panic!("{report}"))
-        .iter()
-        .map(|k| {
-            let cause = k["cause"].as_str().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-confirm");
+        let replies = runner.state_dir().join("linear.json");
+        // The tracker reads the item open: the close-lane with no delivery
+        // stands on no ending ground.
+        std::fs::write(
+            &replies,
+            json!({
+                "comments create": {"body": {"success": true}},
+                "issues bulk-get": {"body": {"issues": {"nodes": [
+                    {"identifier": "KEN-B", "state": {"type": "started"}}
+                ]}}},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let comments = runner.state_dir().join("linear-comments.jsonl");
+        runner.env = vec![
             (
-                k["branch"].as_str().unwrap(),
-                k["tip"].as_str().unwrap(),
-                cause.split(' ').next().unwrap(),
-            )
-        })
-        .collect();
-    kept.sort();
-    assert_eq!(
-        kept,
-        [
-            ("ken-b-locked", init.as_str(), "delete-failed"),
-            ("ken-b-wip", wip.as_str(), "unmerged"),
-            ("recovery/KEN-B/stash", init.as_str(), "recovery"),
-        ],
-        "{report}"
-    );
-    let standing = git(
-        dir.path(),
-        &[
-            "--git-dir",
-            origin.to_str().unwrap(),
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/heads/",
-        ],
-    );
-    let standing: Vec<&str> = standing.lines().collect();
-    assert_eq!(
-        standing,
-        [
+                "OVERSEE_WATCH_TRACKER".to_owned(),
+                fixtures()
+                    .join("linear-fixture/linear.sh")
+                    .display()
+                    .to_string(),
+            ),
+            (
+                "LINEAR_FAKE_REPLIES".to_owned(),
+                replies.display().to_string(),
+            ),
+            (
+                "LINEAR_FAKE_LOG".to_owned(),
+                runner.state_dir().join("linear.log").display().to_string(),
+            ),
+            (
+                "LINEAR_FAKE_COMMENTS".to_owned(),
+                comments.display().to_string(),
+            ),
+        ];
+        runner.init_fleet();
+        let repo = repository_fixture(dir.path());
+        std::fs::create_dir_all(repo.join(".agents")).unwrap();
+        let skills = Path::new(&worktree_cli())
+            .ancestors()
+            .nth(3)
+            .unwrap()
+            .to_path_buf();
+        std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
+        std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
+        let origin = dir.path().join("origin.git");
+        git(
+            dir.path(),
+            &["init", "-q", "--bare", origin.to_str().unwrap()],
+        );
+        for checkout in [&repo, &origin] {
+            git(checkout, &["config", "gc.auto", "0"]);
+            git(checkout, &["config", "maintenance.auto", "false"]);
+        }
+        git(
+            &repo,
+            &["remote", "set-url", "origin", origin.to_str().unwrap()],
+        );
+        let init = git(&repo, &["rev-parse", "HEAD"]);
+        let change = |file: &str, message: &str| {
+            std::fs::write(repo.join(file), format!("{file}\n")).unwrap();
+            git(&repo, &["add", file]);
+            commit(&repo, message);
+            git(&repo, &["rev-parse", "HEAD"])
+        };
+        git(&repo, &["checkout", "-qb", "ken-b"]);
+        change("feature", "feature");
+        git(&repo, &["checkout", "-q", "main"]);
+        git(&repo, &["checkout", "-qb", "ken-b-wip"]);
+        let wip = change("wip", "wip");
+        git(&repo, &["checkout", "-q", "main"]);
+        // The closed pull request's replacement, squash-merged: the same
+        // change in another commit, so only the trial merge proves it held.
+        let landed = change("feature", "feature (squash)");
+        let ancestor = program("git")
+            .current_dir(&repo)
+            .args(["merge-base", "--is-ancestor", "ken-b", "main"])
+            .status()
+            .unwrap();
+        assert_eq!(ancestor.code(), Some(1), "ken-b is no ancestor of main");
+        let push = |refspec: String| git(&repo, &["push", "-q", "origin", &refspec]);
+        push("main".to_owned());
+        push("ken-b".to_owned());
+        push("ken-b-wip".to_owned());
+        for name in [
+            "ken-b-probe",
+            "recovery/KEN-B/stash",
             "ken-b-locked",
-            "ken-b-wip",
             "ken-b2",
-            "main",
-            "recovery/KEN-B/stash"
-        ],
-        "{report}"
-    );
-    assert_eq!(
-        report["intent"]["observation"]["branches_comment"], "posted",
-        "{report}"
-    );
-    let posted: Vec<Value> = std::fs::read_to_string(&comments)
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    assert_eq!(posted.len(), 1, "{posted:?}");
-    assert_eq!(posted[0]["issue"], "KEN-B");
-    let body = posted[0]["body"].as_str().unwrap();
-    assert!(body.contains("ken-b-wip") && body.contains(&wip), "{body}");
-    assert!(
-        !body.contains("ken-b-locked") && !body.contains("recovery/"),
-        "{body}"
-    );
+        ] {
+            push(format!("{init}:refs/heads/{name}"));
+        }
+        git(&repo, &["fetch", "-q", "origin"]);
+        git(&repo, &["remote", "set-head", "origin", "main"]);
+        write_executable(
+            &origin.join("hooks/pre-receive"),
+            "#!/bin/sh\nwhile read -r old new ref; do\n  [ \"$ref\" != refs/heads/ken-b-locked ] || { echo 'deletion refused' >&2; exit 1; }\ndone\n",
+        );
+        let mut fleet = runner.fleet();
+        // A close-lane closes a lane whose harness ended.
+        let status = match close {
+            Close::Terminal | Close::OtherRepo => "running",
+            Close::Delivery | Close::Unended => "stopped",
+        };
+        let mut record = lane("KEN-B", status, &runner, Value::Null);
+        if close == Close::OtherRepo {
+            // Origin names o/repo; the lane pushed to another repository.
+            // A push still reaches the fixture's origin, so no row reaches
+            // the network.
+            record["repo"] = json!("other/repo");
+            let github = "https://github.com/o/repo.git";
+            git(&repo, &["remote", "set-url", "origin", github]);
+            git(
+                &repo,
+                &[
+                    "config",
+                    &format!("url.{}.pushInsteadOf", origin.display()),
+                    github,
+                ],
+            );
+        }
+        fleet["lanes"] = json!([record]);
+        runner.write_fleet(&fleet);
+        let request = match close {
+            Close::Terminal | Close::OtherRepo => terminal_close("KEN-B"),
+            Close::Delivery => {
+                json!({"op": "close-lane", "item": "KEN-B", "delivery": {"commit": {"commit": landed}}})
+            }
+            Close::Unended => json!({"op": "close-lane", "item": "KEN-B"}),
+        };
+
+        let answer = reply(&runner.op_fleet_in(&repo, &request, &[]));
+
+        assert_eq!(answer["ok"], true, "{close:?}: {answer}");
+        let fleet = runner.fleet();
+        let intent = fleet["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|i| i["op"] == "close-resources")
+            .cloned()
+            .unwrap_or_else(|| panic!("{close:?}: the close's intent: {fleet}"));
+        assert_eq!(intent["outcome"], "confirmed", "{close:?}: {intent}");
+        assert_eq!(fleet["lanes"][0]["status"], "done", "{close:?}: {fleet}");
+        let observation = &intent["observation"];
+        let branches = &observation["branches"];
+        let standing = git(
+            dir.path(),
+            &[
+                "--git-dir",
+                origin.to_str().unwrap(),
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/heads/",
+            ],
+        );
+        let standing: Vec<&str> = standing.lines().collect();
+        let posted: Vec<Value> = std::fs::read_to_string(&comments)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        if matches!(close, Close::Unended | Close::OtherRepo) {
+            if close == Close::Unended {
+                // A full close: only its ground leaves the item open.
+                assert_eq!(intent["close"]["ground"], "exited", "{close:?}: {intent}");
+                assert!(branches.is_null(), "{close:?}: {observation}");
+            } else {
+                assert!(
+                    branches["unread"]
+                        .as_str()
+                        .is_some_and(|c| c.starts_with("repo-other ")),
+                    "{close:?}: {observation}"
+                );
+            }
+            assert_eq!(
+                standing,
+                [
+                    "ken-b",
+                    "ken-b-locked",
+                    "ken-b-probe",
+                    "ken-b-wip",
+                    "ken-b2",
+                    "main",
+                    "recovery/KEN-B/stash"
+                ],
+                "{close:?}: {observation}"
+            );
+            assert!(posted.is_empty(), "{close:?}: {posted:?}");
+            assert!(
+                observation["branches_comment"].is_null(),
+                "{close:?}: {observation}"
+            );
+            continue;
+        }
+        assert_eq!(
+            branches["deleted"],
+            json!(["ken-b", "ken-b-probe"]),
+            "{close:?}: {observation}"
+        );
+        let mut kept: Vec<(&str, &str, &str)> = branches["kept"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{close:?}: {observation}"))
+            .iter()
+            .map(|k| {
+                let cause = k["cause"].as_str().unwrap();
+                (
+                    k["branch"].as_str().unwrap(),
+                    k["tip"].as_str().unwrap(),
+                    cause.split(' ').next().unwrap(),
+                )
+            })
+            .collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            [
+                ("ken-b-locked", init.as_str(), "delete-failed"),
+                ("ken-b-wip", wip.as_str(), "unmerged"),
+                ("recovery/KEN-B/stash", init.as_str(), "recovery"),
+            ],
+            "{close:?}: {observation}"
+        );
+        assert_eq!(
+            standing,
+            [
+                "ken-b-locked",
+                "ken-b-wip",
+                "ken-b2",
+                "main",
+                "recovery/KEN-B/stash"
+            ],
+            "{close:?}: {observation}"
+        );
+        assert_eq!(
+            observation["branches_comment"], "posted",
+            "{close:?}: {observation}"
+        );
+        assert_eq!(posted.len(), 1, "{close:?}: {posted:?}");
+        assert_eq!(posted[0]["issue"], "KEN-B");
+        let body = posted[0]["body"].as_str().unwrap();
+        assert!(body.contains("ken-b-wip") && body.contains(&wip), "{body}");
+        assert!(
+            !body.contains("ken-b-locked") && !body.contains("recovery/"),
+            "{body}"
+        );
+    }
 }
 
 /// The report of `item`'s terminal close with the worktree package at

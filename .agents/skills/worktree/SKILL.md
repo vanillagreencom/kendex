@@ -40,6 +40,7 @@ Every command's contract is its `--help`: flags, exit codes, failure semantics a
 | `path --hosted` | Print the hosted lane path |
 | `exists` | Check the worktree path for an issue ID |
 | `merged` | Print the commit the issue tree's pull request merged as |
+| `release-branches` | Delete the origin branches named for an ended item whose work the default branch holds |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch to remote |
 | `fix-links` | Restore configured symlinks |
