@@ -2086,19 +2086,47 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
 
 /// A wait on a run another seat starts holds one call from before the run's
 /// directory exists: a run that starts and ends inside the budget answers
-/// its verdict line alone, and one that never starts ends at the budget
-/// with its own `state=queued` line.
+/// its verdict line alone; one that never starts ends at the budget with
+/// its own `state=queued` line; one that starts late is followed only for
+/// what is left of the budget; one whose admission closes with no start
+/// record ends with the admission's cause; an id no round admitted is
+/// refused.
 #[test]
 fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budget() {
     use std::sync::{Arc, mpsc};
-    for (starts, want, exit) in [(true, "done", 0), (false, "queued", 3)] {
+    #[derive(PartialEq)]
+    enum Seat {
+        Ends,
+        Never,
+        Late,
+        Refused,
+        Unadmitted,
+    }
+    let rows = [
+        (Seat::Ends, Ok(("done", 0))),
+        (Seat::Never, Ok(("queued", 3))),
+        (Seat::Late, Ok(("running", 3))),
+        (Seat::Refused, Err("run-ended-unstarted")),
+        (Seat::Unadmitted, Err("run-unadmitted")),
+    ];
+    for (seat, want) in rows {
         let w = World::new();
-        let dir = w.worktree.join("tmp/dev-validate-20300101T000000Z-queued");
+        let dir = if seat == Seat::Unadmitted {
+            w.worktree
+                .join("tmp/dev-validate-20300101T000000Z-unadmitted")
+        } else {
+            let admitted = ok(&w.op(
+                &json!({"op":"record-validation-admission","round_id":ROUND}),
+                &[],
+            ));
+            PathBuf::from(admitted["report"]["run_dir"].as_str().unwrap())
+        };
         let clock = Arc::new(support::FakeClock::new());
-        let (c, d) = (clock.clone(), dir.clone());
+        let (c, d, state) = (clock.clone(), dir.clone(), w.state.clone());
         let (sent, received) = mpsc::channel();
         let task = std::thread::spawn(move || {
             sent.send(orch_runtime::validate::files::wait_queued(
+                &state,
                 &d,
                 60,
                 30,
@@ -2106,36 +2134,102 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
             ))
             .unwrap()
         });
-        clock.await_sleepers(1);
-        if starts {
-            // The seat's start lands whole, its command already ended.
-            let staged = executor_dir(&w, "true", 20);
-            fs::write(
-                staged.join("exit"),
-                "guard-exit=0 at=2026-01-30T15:20:00Z\n",
-            )
-            .unwrap();
-            fs::write(
-                staged.join("timing"),
-                "started-at=2026-01-30T15:20:00Z\nended-at=2026-01-30T15:20:00Z\nseconds=0\n",
-            )
-            .unwrap();
-            fs::rename(&staged, &dir).unwrap();
-        } else {
-            clock.pass(Duration::from_secs(30));
+        // The run's holder, alive through the window of the late start.
+        let mut holder = None;
+        if seat != Seat::Unadmitted {
+            clock.await_sleepers(1);
         }
-        clock.release(Duration::from_secs(30));
-        let (text, code) = received.recv_timeout(JOB_BOUND).unwrap().unwrap();
+        match seat {
+            Seat::Ends => {
+                // The seat's start lands whole, its command already ended.
+                let staged = executor_dir(&w, "true", 20);
+                fs::write(
+                    staged.join("exit"),
+                    "guard-exit=0 at=2026-01-30T15:20:00Z\n",
+                )
+                .unwrap();
+                fs::write(
+                    staged.join("timing"),
+                    "started-at=2026-01-30T15:20:00Z\nended-at=2026-01-30T15:20:00Z\nseconds=0\n",
+                )
+                .unwrap();
+                fs::rename(&staged, &dir).unwrap();
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::Never => {
+                clock.pass(Duration::from_secs(30));
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::Late => {
+                // The start lands before the poll at second 30 of the 60,
+                // its command held through the window.
+                let staged = executor_dir(&w, "true", 20);
+                let held = Owned::sleep();
+                fs::write(staged.join("job.err"), "").unwrap();
+                fs::write(
+                    staged.join("runner"),
+                    format!(
+                        "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+                        held.pid(),
+                        held.start()
+                    ),
+                )
+                .unwrap();
+                holder = Some(held);
+                fs::rename(&staged, &dir).unwrap();
+                clock.pass(Duration::from_secs(30));
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::Refused => {
+                // The seat's start is refused after its admission: a
+                // directory already stands where the run was to be written.
+                fs::create_dir(&dir).unwrap();
+                let wt = w.worktree.display().to_string();
+                let id = dir
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix("dev-validate-")
+                    .unwrap()
+                    .to_owned();
+                let out = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
+                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                assert!(
+                    stderr(&out).starts_with("validate: launch-failed"),
+                    "{}",
+                    stderr(&out)
+                );
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::Unadmitted => {}
+        }
+        let answer = received.recv_timeout(JOB_BOUND).unwrap();
         task.join().unwrap();
-        let states: Vec<_> = text.lines().filter(|l| l.starts_with("state=")).collect();
-        assert_eq!(states.len(), 1, "{text}");
-        assert_eq!(field(states[0], "state"), want, "{text}");
-        assert_eq!(field(states[0], "run-dir"), dir.display().to_string());
-        assert_eq!(code, exit, "{text}");
-        if starts {
-            assert_eq!(field(states[0], "validate"), "pass", "{text}");
-        } else {
-            assert_eq!(field(states[0], "waited-secs"), "60", "{text}");
+        drop(holder);
+        match (want, answer) {
+            (Ok((want, exit)), Ok((text, code))) => {
+                let states: Vec<_> = text.lines().filter(|l| l.starts_with("state=")).collect();
+                assert_eq!(states.len(), 1, "{text}");
+                assert_eq!(field(states[0], "state"), want, "{text}");
+                assert_eq!(field(states[0], "run-dir"), dir.display().to_string());
+                assert_eq!(code, exit, "{text}");
+                match want {
+                    "done" => assert_eq!(field(states[0], "validate"), "pass", "{text}"),
+                    "queued" => assert_eq!(field(states[0], "waited-secs"), "60", "{text}"),
+                    _ => assert_eq!(field(states[0], "elapsed-secs"), "60", "{text}"),
+                }
+            }
+            (Err(want), Err(error)) => {
+                assert_eq!(error.key(), want, "{error}");
+                let fields: std::collections::BTreeMap<_, _> = error.fields().into_iter().collect();
+                assert_eq!(fields["run_dir"], dir.display().to_string());
+                if want == "run-ended-unstarted" {
+                    assert_eq!(fields["outcome"], "stopped", "{error}");
+                    assert_eq!(fields["cause"], "run-exists", "{error}");
+                }
+            }
+            (want, answer) => panic!("want {want:?}, answered {answer:?}"),
         }
     }
 }

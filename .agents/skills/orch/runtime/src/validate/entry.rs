@@ -16,9 +16,9 @@ const VALIDATE: &str = "validate";
 
 #[derive(ClapArgs)]
 #[command(
-    long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues: it prints state=running with the run directory, and --wait --run-dir follows the run on.
+    long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues or before it started: it prints state=running with the run directory, which --wait --run-dir follows on, or, for a run not yet started, state=queued, which the next paragraph routes.
 
---wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on.
+--wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on. An id no round admitted refuses run-unadmitted, and a run whose admission closed with no start record, such as a start refused after the admission, refuses run-ended-unstarted with the admission's outcome and cause.
 
 A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
@@ -301,12 +301,16 @@ fn entry(
     };
     if args.wait {
         let (text, exit) = match &args.run_id {
-            Some(id) => files::wait_queued(
-                &super::run_dir_of(&worktree()?, id),
-                budget,
-                super::POLL_DEFAULT,
-                &SystemClock,
-            )?,
+            Some(id) => {
+                let worktree = worktree()?;
+                files::wait_queued(
+                    &resolve_at(&worktree, flags)?.state_dir,
+                    &super::run_dir_of(&worktree, id),
+                    budget,
+                    super::POLL_DEFAULT,
+                    &SystemClock,
+                )?
+            }
             None => files::wait(dir()?, budget, &SystemClock)?,
         };
         return Ok(TextReply::new(text, exit));

@@ -133,6 +133,13 @@ pub(crate) fn text_cmd(settings: &crate::settings::ValidateSettings) -> Option<S
 /// the directory are read for a validate stage naming it. The forwards,
 /// the start's and the stop's, name the directory alone.
 pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
+    let (item, stage) = admitted_stage(state_dir, run_dir)?;
+    Ok((item, stage.round_id.unwrap_or_default()))
+}
+
+/// The item and the validate stage that admitted the run under `run_dir`,
+/// or `run-unadmitted` where no stage names it.
+pub(crate) fn admitted_stage(state_dir: &Path, run_dir: &str) -> Result<(String, Stage)> {
     // A state directory that does not stand holds no item, so nothing
     // admitted the run; any other failed read is no answer.
     let entries = match fs::read_dir(state::items_dir(state_dir)) {
@@ -169,10 +176,10 @@ pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String
         };
         let stages = snapshot.view::<ItemState>(&path)?.stages;
         if let Some(stage) = stages
-            .iter()
+            .into_iter()
             .find(|s| s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(run_dir))
         {
-            return Ok((item.to_owned(), stage.round_id.clone().unwrap_or_default()));
+            return Ok((item.to_owned(), stage));
         }
     }
     Err(Error::RunUnadmitted {

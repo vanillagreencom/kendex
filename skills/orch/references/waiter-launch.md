@@ -48,7 +48,7 @@ A session with no owner that waits on a validation run another seat starts launc
 
 - It holds the run with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, from before the run's directory exists to its `state=done` or `state=lost` line.
 - It runs that command in its harness's one wait call, which [long-running-validation.md § A run another seat starts](../../dev/workflows/long-running-validation.md#a-run-another-seat-starts) names per harness.
-- It runs the same command again only when a call exits 3 with `state=queued` or `state=running`, and never polls the run directory between calls.
+- It runs the same command again as that section states, and never polls the run directory between calls.
 
 A missing or empty `wait.exit` means the waiter has no recorded exit: keep waiting. Never read that state as a verdict or start a duplicate waiter. Once it is nonempty, read it and the log:
 

@@ -62,9 +62,14 @@ When another seat starts the admitted run, such as the overseer for a confined l
 
 - The call reads the run as queued until the run's start record stands, then follows it as the `--wait --run-dir` poll does, under one budget.
 - A budget that ends before the start prints `state=queued` and exits 3.
+- An id no round admitted is refused `run-unadmitted`. An admission that closed with no start record, such as one whose start was refused after it, is refused `run-ended-unstarted` with the admission's outcome and cause. Both exit 2 and route as a refused start does.
+- A start the other seat runs that is refused before it records the run, such as `run-live` or an unreadable read, leaves the run queued. That seat owns the refusal:
+  - It routes `run-live` by [validation.md § Run-live refusal](../references/validation.md#run-live-refusal) and starts again under the same id.
+  - It sends any other refusal line to the lane by the mailbox skill.
+  - A round whose caller passes it that line ends the wait and routes the line as a refused start.
 - Each harness holds the call as its row above holds the start:
   - Claude Code runs the bare command in the foreground under the maximum command timeout.
   - Codex takes the Follow step of [codex-runtime.md § Validation wait](../../orch/references/codex-runtime.md#validation-wait).
   - Pi spawns it through `bg_task` with `notifyOnExit: true`.
-- Run the same command again only when a call exits 3 with `state=queued` or `state=running`. Never poll the run directory between calls.
+- Run the same command again when a call ends with no `state=done`, `state=lost` or refusal line: an exit 3 with `state=queued` or `state=running`, or a call cut off, moved to the background or ended with no verdict. Never poll the run directory between calls.
 - Read the verdict as the Claude Code row reads it.

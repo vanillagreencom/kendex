@@ -343,6 +343,16 @@ pub enum Error {
     /// No item records an admitted run under the directory.
     #[error("no admitted validation run names {run_dir}")]
     RunUnadmitted { run_dir: String },
+    /// The admitted run's stage closed with no start record in its
+    /// directory: the start that was to run it was refused after its
+    /// admission, or the round closed the admission unstarted. A wait that
+    /// follows the run by its id ends here, since no verdict will come.
+    #[error("the run {run_dir} closed {outcome} before it started")]
+    RunEndedUnstarted {
+        run_dir: String,
+        outcome: &'static str,
+        cause: Option<String>,
+    },
     /// The stage names a run the runtime never started: no job on it.
     #[error("the run {run_dir} was never started by the runtime")]
     RunUnstarted { run_dir: String },
@@ -542,6 +552,7 @@ impl Error {
             Error::RunLive { .. } => "run-live",
             Error::RunEnded { .. } => "run-ended",
             Error::RunUnadmitted { .. } => "run-unadmitted",
+            Error::RunEndedUnstarted { .. } => "run-ended-unstarted",
             Error::RunUnstarted { .. } => "run-unstarted",
             Error::RunClosed { .. } => "run-closed",
             Error::ValidateStopFailed { .. } => "stop-failed",
@@ -826,6 +837,18 @@ impl Error {
             Error::RunUnadmitted { run_dir }
             | Error::RunUnstarted { run_dir }
             | Error::ValidateLaunchFailed { run_dir, .. } => vec![pair("run_dir", run_dir.clone())],
+            Error::RunEndedUnstarted {
+                run_dir,
+                outcome,
+                cause,
+            } => {
+                let mut fields = vec![
+                    pair("run_dir", run_dir.clone()),
+                    pair("outcome", (*outcome).to_owned()),
+                ];
+                fields.extend(cause.iter().map(|c| pair("cause", c.clone())));
+                fields
+            }
             Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
                 vec![pair("run_dir", run_dir.clone())]
             }

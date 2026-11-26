@@ -595,26 +595,51 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
 /// exists, for `budget` seconds in all: queued while its `start` record is
 /// absent, read every `poll` seconds, then followed as [`wait`] follows it.
 /// A budget that ends before the start prints `state=queued` and exits 3.
+/// A run no stage in `state_dir` admitted refuses `run-unadmitted`, and one
+/// whose stage closed with no start record refuses `run-ended-unstarted`
+/// with the stage's word and cause, as no verdict will come.
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"
 )]
 pub fn wait_queued(
+    state_dir: &Path,
     run_dir: &Path,
     budget: u64,
     poll: u64,
     clock: &dyn Clock,
 ) -> Result<(String, i32)> {
+    let started = || match fs::symlink_metadata(run_dir.join("start")) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(unreadable("start", e)),
+    };
+    let follow = |call: std::time::Instant| {
+        wait(
+            run_dir,
+            call.saturating_duration_since(clock.now()).as_secs(),
+            clock,
+        )
+    };
     let begun = clock.now();
     let call = begun + Duration::from_secs(budget);
     loop {
-        match fs::symlink_metadata(run_dir.join("start")) {
-            Ok(_) => {
-                let left = call.saturating_duration_since(clock.now()).as_secs();
-                return wait(run_dir, left, clock);
+        if started()? {
+            return follow(call);
+        }
+        let (_, stage) = super::admitted_stage(state_dir, &run_dir.display().to_string())?;
+        if stage.end.is_some() {
+            // The start writes the record before it records the launch that
+            // can close the stage, so a record that stands after the close
+            // landed between the two reads.
+            if started()? {
+                return follow(call);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(unreadable("start", e)),
+            return Err(Error::RunEndedUnstarted {
+                run_dir: run_dir.display().to_string(),
+                outcome: stage.outcome.map_or("none", StageOutcome::word),
+                cause: stage.job.and_then(|job| job.cause),
+            });
         }
         let now = clock.now();
         if now >= call {
