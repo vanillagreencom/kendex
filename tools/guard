@@ -1853,10 +1853,10 @@ PY
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
 # spells and each `/<module>.py` and dotted `/<package>.<module>` a test
-# program imports, and SCAN_SOURCED, each
-# `/<name>` its `source` and `.` lines spell, one per line between newlines,
-# and SCAN_INPUTS, the repository path patterns in its input notes, as
-# INPUTS_NOTE_AWK reads them.
+# program imports, and SCAN_SOURCED, each `/<name>` its `source` and `.`
+# lines spell, each between spaces, since no name holds one, and SCAN_INPUTS,
+# the repository path patterns in its input notes, as INPUTS_NOTE_AWK reads
+# them.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
@@ -1943,8 +1943,10 @@ scan_load() { # DIR
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
         name = substr(rest, RSTART, RLENGTH)
-        if (!name_seen[kind, reader, name]++)
-          print kind "\t" reader "\t" name
+        if (!name_seen[kind, reader, name]++) {
+          if (kind == "N") file_names = file_names " " name
+          else file_sourced = file_sourced " " name
+        }
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
@@ -1955,7 +1957,7 @@ scan_load() { # DIR
       while (match(rest, /"[[:alnum:]._-]*[[:alnum:]_-]"/)) {
         name = "/" substr(rest, RSTART + 1, RLENGTH - 2)
         if (!name_seen["N", reader, name]++)
-          print "N\t" reader "\t" name
+          file_names = file_names " " name
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
@@ -1981,13 +1983,14 @@ scan_load() { # DIR
         sub(/\..*/, "", name)
         name = name ".py"
         if (!name_seen["N", reader, name]++)
-          print "N\t" reader "\t" name
+          file_names = file_names " " name
         if (dotted ~ /\./ && !name_seen["N", reader, dotted]++)
-          print "N\t" reader "\t" dotted
+          file_names = file_names " " dotted
       }
     }
-    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources) {
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources, joined) {
       path = scan_paths[reader]; role = scan_roles[reader]
+      file_names = file_sourced = ""
       while ((status = (getline text < path)) > 0) {
         if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
@@ -2035,8 +2038,11 @@ scan_load() { # DIR
       for (i = 1; i <= count; i++)
         if (keep[i]) {
           reader_lines[reader, ++reader_counts[reader]] = code[i]
-          reader_texts[reader] = reader_texts[reader] "\n" code[i]
+          joined = joined "\n" code[i]
         }
+      if (reader in reader_counts) reader_texts[reader] = joined
+      if (file_names != "") print "N\t" reader "\t" substr(file_names, 2)
+      if (file_sourced != "") print "S\t" reader "\t" substr(file_sourced, 2)
       return 1
     }
     $1 == "F" {
@@ -2115,8 +2121,8 @@ scan_load() { # DIR
     kind=${record%%$'\t'*}; record=${record#*$'\t'}
     i=${record%%$'\t'*}; value=${record#*$'\t'}
     case "$kind" in
-      N) SCAN_NAMES[i]+="$nl$value$nl" ;;
-      S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
+      N) SCAN_NAMES[i]=" $value " ;;
+      S) SCAN_SOURCED[i]=" $value " ;;
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
       W) SCAN_ROW_QUERIES[i]=$value ;;
@@ -2466,7 +2472,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
       hit=0
       for n in ${any[@]+"${any[@]}"}; do
         [ "$n:${SCAN_ROLE[i]}" != "$folder:test-program" ] || continue
-        if [[ $names == *"$nl/$n$nl"* ]]; then
+        if [[ $names == *" /$n "* ]]; then
           hit=1
           break
         fi
@@ -2477,7 +2483,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
           *) names=${SCAN_SOURCED[i]} ;;
         esac
         for n in ${scripts[@]+"${scripts[@]}"}; do
-          if [[ $names == *"$nl/$n$nl"* ]]; then
+          if [[ $names == *" /$n "* ]]; then
             hit=1
             break
           fi
