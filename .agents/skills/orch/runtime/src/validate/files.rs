@@ -291,13 +291,13 @@ impl RunFile {
         let seconds = timing
             .get("seconds")
             .and_then(|v| v.parse::<u64>().ok())
-            .ok_or_else(|| unreadable("timing-unreadable", "seconds"))?;
+            .ok_or_else(|| unread_value("timing-unreadable", "cause", "seconds"))?;
         let time = |key: &'static str| {
             timing
                 .get(key)
                 .filter(|v| agent_runtime::clock::epoch_secs(v).is_some())
                 .cloned()
-                .ok_or_else(|| unreadable("timing-unreadable", key))
+                .ok_or_else(|| unread_value("timing-unreadable", "cause", key))
         };
         Ok(Some(Timing {
             seconds,

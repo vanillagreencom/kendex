@@ -1565,12 +1565,12 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         ),
         (
             vec!["--record", "--run-dir", &unstarted],
-            "validate-unreadable read=timing-unreadable",
+            "validate-unreadable read=timing-unreadable cause=started-at",
             None,
         ),
         (
             vec!["--record", "--run-dir", &unsecond],
-            "validate-unreadable read=timing-unreadable",
+            "validate-unreadable read=timing-unreadable cause=seconds",
             None,
         ),
     ] {
@@ -2352,18 +2352,23 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                     .unwrap()
                 };
                 mode(0o555);
-                let out = w.entry(
+                let short = w.entry(
                     &["--worktree", &wt, "--run-id", &id],
                     &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")],
                 );
+                // With room for the run, the start fails at its own record
+                // write, which fails the refusal's write the same way.
+                let unwritten = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
                 mode(0o755);
-                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-                let line = keyed(&out);
-                let line = line.as_str();
-                assert!(line.starts_with("validate: refusal-unrecorded "), "{line}");
-                assert_eq!(field(line, "refused"), "memory-short", "{line}");
-                assert_eq!(field(line, "run_dir"), dir.display().to_string());
-                assert_eq!(field(line, "cause"), "io-failed", "{line}");
+                for (out, refused) in [(short, "memory-short"), (unwritten, "io-failed")] {
+                    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                    let line = keyed(&out);
+                    let line = line.as_str();
+                    assert!(line.starts_with("validate: refusal-unrecorded "), "{line}");
+                    assert_eq!(field(line, "refused"), refused, "{line}");
+                    assert_eq!(field(line, "run_dir"), dir.display().to_string());
+                    assert_eq!(field(line, "cause"), "io-failed", "{line}");
+                }
                 clock.pass(Duration::from_secs(30));
                 clock.release(Duration::from_secs(30));
             }

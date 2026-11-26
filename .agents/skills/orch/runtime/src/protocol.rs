@@ -53,10 +53,10 @@ pub fn refusal(error: &Error) -> Refusal {
     }
 }
 
-/// The one keyed line a refusal opens with on stderr:
-/// `orch-runtime: <key> field=value ...`. Values are written as they are,
-/// as agent-runtime's line writes them; every field this crate emits is a
-/// path, an identifier or a word, never free text.
+/// A refusal's one keyed line, `orch-runtime: <key> field=value ...`.
+/// Values are written as they are, as agent-runtime's line writes them;
+/// every field this crate emits is a path, an identifier or a word, never
+/// free text.
 pub fn diagnostic_line(error: &Error) -> String {
     let mut line = format!("orch-runtime: {}", error.key());
     for (field, value) in error.fields() {

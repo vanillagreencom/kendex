@@ -1835,8 +1835,8 @@ pub(super) fn launch_refusal(run_dir: String, launch: Launch) -> Result<()> {
 /// run's admitted stage, the named one or the round's open admission, which
 /// stays open for the next start under the same id. A refusal that cannot
 /// be written refuses `refusal-unrecorded`, holding the refusal, since a
-/// wait on the run would read it as queued; a write refused under the
-/// refusal's own key leaves the refusal as it stood.
+/// wait on the run would read it as queued; a write refused because the
+/// record cannot be read leaves the refusal as it stood.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1874,14 +1874,19 @@ pub fn start(
         locking,
     );
     match write {
-        // A missing record holds no admission for a wait to follow. A write
-        // refused as the start was failed for the cause the refusal already
-        // names, so the refusal answers as itself.
+        // A missing record holds no admission for a wait to follow, and a
+        // wait's own read of a record that will not parse refuses as the
+        // write did, so neither leaves a wait reading the run as queued. A
+        // write-side failure, I/O or the lock, leaves the record reading.
         Err(write)
             if !matches!(
                 write,
-                Error::Runtime(agent_runtime::Error::RecordMissing { .. })
-            ) && write.key() != error.key() =>
+                Error::Runtime(
+                    agent_runtime::Error::RecordMissing { .. }
+                        | agent_runtime::Error::Json { .. }
+                        | agent_runtime::Error::RecordShape { .. }
+                )
+            ) =>
         {
             Err(Error::RefusalUnrecorded {
                 round_id: round,
