@@ -17,8 +17,9 @@ Every selected item takes a tier before it launches:
 
 1. `[ESTIMATE]` is this session's estimate of the production lines the item adds, from the body read once under § Lane directive step 2.
    - Save that body as `[ITEM_BODY_FILE]`: its Location lines name the paths, and its Expected delta floors the estimate.
+   - For a Linear item whose description has no Location line, the body is the description followed by the item's newest comment whose first line is `Triage contract:`, read once with `linear.sh comments list [ID] --format=safe`. Copy that comment's `**Location**:` line into the launch brief, so the launch admission's touched set holds its paths.
    - `orch-runtime tier --help` owns the rule.
-2. For a body with no Location, `tier` exits 1 with `orch-runtime: tier cause=no-location route=per-subsystem-split` and no tier. For a Linear item eligible for triage, have the verifier find the Location and [triage step 8](oversee-events.md#triage) write it before retrying the launch. Send every other item back to filing for a per-subsystem split.
+2. For a body with no Location, `tier` exits 1 with `orch-runtime: tier cause=no-location route=per-subsystem-split` and no tier. For a Linear item eligible for triage, have the verifier find the Location and [triage step 8](oversee-events.md#triage) write it, in the description or a GitHub-synced item's `Triage contract:` comment, before retrying the launch. Send every other item back to filing for a per-subsystem split.
 3. Copy the complete output line into the launch brief once, alone on its line. The line's `brief=` word sets the brief § Lane directive builds:
    - `micro`: `/orch micro [ISSUE_ID]`, which runs [micro.md](../workflows/micro.md): no dev subagent, no review cycle, no QA cycle.
    - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](../workflows/small.md): the standard session under thin review bounds.

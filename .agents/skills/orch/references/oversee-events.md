@@ -893,12 +893,13 @@ A refused `write`:
 8. For each valid kept item, read its current description, project and labels with `linear.sh issues get [ID]`. Set only what is missing in one `linear.sh issues update [ID]`:
    - `--project` only where the team inventory is nonempty and the item has none.
    - `--labels` only where `LINEAR_AGENT_LABELS` is nonempty and the item has no agent label. Merge the chosen agent label with every current label under the linear skill's `--labels` rule.
-   - `--description-file tmp/triage-description-[ID].md` only where the current description has no Location line. Require the verifier's paths.
+   - `--description-file tmp/triage-description-[ID].md` only where the current description has no Location line and the item is not GitHub-synced, by its `syncedWith` read under [§ Outside contributions](#outside-contributions). Require the verifier's paths.
      - Start after any existing owner action line with nonempty quoted `> **Story:**` and `> **Why this matters:**` blocks in that order. Use the issue and the verifier's evidence to supply missing or incomplete blocks. Separate the blocks with an unquoted blank line and leave another unquoted blank line before the first Markdown heading, as the Linear Reach guard requires.
      - Preserve the original report. Add a Markdown heading before the retained report if it starts without one. Put the `**Location**:` line with the verifier's paths below a heading.
-   - When writing the description, check `syncedWith` using the read under [§ Outside contributions](#outside-contributions). Add `--synced-description` to the same update for a GitHub-synced item.
 
-   Leave an existing Location, project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. If a required read, Location check or update fails, write no `triaged` record for that item.
+   A GitHub-synced item whose description has no Location line keeps its description. Read its comments once with `linear.sh comments list [ID] --format=safe`. Where its newest comment whose first line is `Triage contract:` holds a `**Location**:` line, the item already has its Location. Otherwise post one comment on it with `linear.sh comments create [ID] --body-file tmp/triage-contract-[ID].md`. The comment's first line is `Triage contract:`, and it holds the `**Location**:` line with the verifier's paths. [lane-launch.md § Item Tier](lane-launch.md#item-tier) reads it.
+
+   Leave an existing Location, project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. If a required read, Location check, update or comment fails, write no `triaged` record for that item.
 
 9. Route each item in this triage pass before recording its final verdict.
    - Read the verifier's answer to question 3 as prose. If it names a source the item does not fix, decide go, change or drop under the project-management skill's `references/filing.md` § Judge the approach before changing the item's tracker state or recording its verdict. Record the decision in the item's triage reason in your own words.
