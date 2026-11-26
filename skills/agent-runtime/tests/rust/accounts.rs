@@ -1299,24 +1299,24 @@ fn a_held_rate_reads_none_once_a_flat_spell_outlasts_twice_its_time_to_rise_a_st
 }
 
 /// An overseer's choice charges each other controller seated on an
-/// account to its reset as it charges its own candidate, so an account
-/// takes one more controller only where the controllers there leave it
-/// room: with none or one other on it the account is chosen; with four the
+/// account one hour as it charges its own candidate, so an account takes
+/// one more controller only where the controllers there leave it room:
+/// with none or one other on it the account is chosen; with nine the
 /// charge spends its headroom and it is left out `walled`. Each controller
-/// is charged the weekly window's burn, 10 points of five hours scaled to
-/// 168, for the 60 hours to its reset.
+/// is charged one hour of the 5-hour window's burn, 10 points, the window
+/// with the less room.
 #[test]
 fn an_overseers_choice_takes_an_account_another_controller_sits_on_where_it_has_room() {
     let world = World::new(&[("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "10")]);
     let settings = world.settings.accounts.get().unwrap();
     let rows = rows(&[measured("other", 10, 5)], &world.settings);
     let (dir, canon) = (rows[0].config_dir.clone(), rows[0].canon.clone());
-    let controller = 10.0 * 5.0 / 168.0 * 60.0;
+    let controller = 10.0;
     let req = PickRequest {
         for_overseer: true,
         ..claude(None)
     };
-    for (others, verdict) in [(0u32, "room"), (1, "room"), (4, "walled")] {
+    for (others, verdict) in [(0u32, "room"), (1, "room"), (9, "walled")] {
         let facts = FleetFacts {
             seats: [(canon.clone(), others)].into_iter().collect(),
             others: [(canon.clone(), others)].into_iter().collect(),
@@ -1325,7 +1325,7 @@ fn an_overseers_choice_takes_an_account_another_controller_sits_on_where_it_has_
         let judged = accounts::judge_one(&rows[0], &req, &facts, &settings, now());
         assert_eq!(judged.verdict, verdict, "{others}");
         let headroom = judged.projection.as_ref().unwrap().headroom;
-        let expected = 90.0 - f64::from(1 + others) * controller;
+        let expected = 95.0 - f64::from(1 + others) * controller;
         assert!((headroom - expected).abs() < 1e-9, "{others}: {headroom}");
         let answer = accounts::pick(&rows, &req, &facts, &settings, &no_tokens(), now());
         match verdict {
@@ -1883,14 +1883,13 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
     );
 }
 
-/// A lane is charged one hour of burn and a controller its spend to the
+/// A lane and a controller are each charged one hour of burn, whatever the
 /// reset: on an account at 83 percent of its week with 154 hours to the
 /// reset and the default burn of 5 × 5/168 a point an hour, a lane's
-/// launch has room (17 less one hour's 0.149), while a controller's,
-/// charged the 22.9 points it spends to the reset, is walled. A full
-/// window of another model walls neither.
+/// launch and a controller's each have room, 17 less one hour's 0.149. A
+/// full window of another model walls neither.
 #[test]
-fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
+fn a_lane_and_a_controller_are_each_charged_one_hour_whatever_the_reset() {
     let world = World::new(&[]);
     let reset = stamp(now() + 154 * 3600);
     let mut week = measured("2claude", 83, 0);
@@ -1919,24 +1918,11 @@ fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
         ..claude(Some("opus"))
     };
     let chosen = accounts::pick(&rows, &controller, &facts, &settings, &no_tokens(), now());
-    assert_eq!(
-        exclusions(&chosen),
-        vec![("/home/me/.2claude".to_owned(), "walled".to_owned())],
-        "{chosen:?}"
-    );
-    let named = accounts::pick(
-        &rows,
-        &named("/home/me/.2claude", controller),
-        &facts,
-        &settings,
-        &no_tokens(),
-        now(),
-    );
-    let PickAnswer::Walled(judged) = &named else {
-        panic!("a controller on the account is walled: {named:?}");
+    let PickAnswer::Lane(judged) = &chosen else {
+        panic!("a controller on the account has room: {chosen:?}");
     };
     let headroom = judged.projection.as_ref().unwrap().headroom;
-    assert!((-6.0..-5.8).contains(&headroom), "to the reset: {headroom}");
+    assert!((16.8..16.9).contains(&headroom), "one hour: {headroom}");
 }
 
 /// The `accounts pick` verb: the reply a shell caller reads carries the
