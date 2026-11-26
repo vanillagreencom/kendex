@@ -279,6 +279,12 @@ static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
+/// Codex 0.172.0's dialog at a workspace member's usage limit, which offers
+/// to ask the owner for more (`fixtures/stops/codex-limit-increase.txt`). It
+/// stands only while the account is at its limit, so a caller's assertion of
+/// room never judges past it: no key or line is ever typed into it.
+static LIMIT_OFFER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*Request a limit increase from your owner").unwrap());
 /// A login wall's line, anchored at the row start so a quoted copy is not
 /// one. Claude Code 2.1.332 draws the expired-token error under its `●`
 /// answer bullet, and a pane narrower than the line wraps it onto an
@@ -683,6 +689,14 @@ fn judge_slice(
         }
         match account_room {
             None | Some(false) => {
+                return State::Walled {
+                    kind: WallKind::Usage,
+                    banner,
+                };
+            }
+            // An asserted room judges past a stale banner, never past a
+            // dialog that stands only on a limited account.
+            Some(true) if slice.lines().any(|row| LIMIT_OFFER.is_match(row)) => {
                 return State::Walled {
                     kind: WallKind::Usage,
                     banner,

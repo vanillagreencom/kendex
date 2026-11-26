@@ -180,9 +180,14 @@ fn turn_event<'a>(turn: &Turn, payload: &'a Payload, held: bool) -> Option<TurnE
         Some(Arm::Prompt) if turn.harness != Harness::Pi => Some(TurnEvent::Prompt {
             digest: text(payload, "prompt").map(agent_runtime::session::text_digest),
         }),
+        // The lane row keeps no message, so the word names a safety
+        // refusal apart from the other `invalid_request` refusals.
         Some(Arm::Row { event }) if event == "StopFailure" && turn.harness == Harness::Claude => {
             Some(TurnEvent::StopFailure {
-                error: text(payload, "error"),
+                error: agent_runtime::stop::claude_failure_word(
+                    text(payload, "error"),
+                    text(payload, "last_assistant_message").unwrap_or_default(),
+                ),
             })
         }
         Some(
@@ -375,6 +380,54 @@ mod tests {
             Err(Unwritten::TableUnread("proc-unreadable")),
         );
         assert_eq!(boxless.stderr, "");
+    }
+
+    /// Claude Code 2.1.332's StopFailure payload for a safety refusal
+    /// (`claude-safety.json`, recorded against an injected refusal) writes a
+    /// lane row the lane verdict reads as idle on a refusal, which the
+    /// fleet watch continues like any provider stop.
+    #[test]
+    fn a_claude_safety_refusal_writes_a_lane_row_read_as_a_refusal() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("lane");
+        let common = checkout.join(".git");
+        let mailbox = checkout.join("tmp/lane-mail/ken-1");
+        std::fs::create_dir_all(&mailbox).unwrap();
+        let marker = crate::marker::marker_path(&common, "ken-1");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, format!("{}\n", checkout.display())).unwrap();
+        let lane = Lane {
+            root: checkout.clone(),
+            common: Some(common),
+            mail_root: checkout.join("tmp/lane-mail"),
+            item: Some("ken-1".to_owned()),
+        };
+        let payload = Payload::decode(
+            include_bytes!(
+                "../../../../agent-runtime/tests/rust/fixtures/stops/claude-safety.json"
+            ),
+            false,
+        )
+        .unwrap_or_else(|_| panic!("the payload decodes"));
+        let mut failed = turn(
+            Harness::Claude,
+            Arm::Row {
+                event: "StopFailure".to_owned(),
+            },
+        );
+        lane_row(&mut failed, &Vars::read(false), &lane, &payload, false)
+            .unwrap_or_else(|_| panic!("passes"));
+        let agent_runtime::reading::Reading::Live(row) =
+            rows::last_row(&mailbox.join(rows::LANE_FILE))
+        else {
+            panic!("no lane row written");
+        };
+        assert_eq!(
+            rows::judge_lane(&row),
+            agent_runtime::reading::Reading::Live(rows::LaneVerdict::Idle {
+                cause: Some(agent_runtime::stop::REFUSAL.to_owned()),
+            })
+        );
     }
 
     fn keyed(turn: &Turn) -> Vec<String> {

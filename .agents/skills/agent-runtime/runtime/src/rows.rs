@@ -47,6 +47,16 @@ pub const SPAN: usize = 64;
 /// the row's `message` and `error_details`.
 const PROMPT_TOO_LONG: [&str; 1] = ["prompt is too long"];
 
+/// The words a Codex or Copilot record types a request refused for its
+/// context's length with, the same refusal as [`PROMPT_TOO_LONG`]: Codex
+/// 0.172.0's `codex_error_info` variant `context_window_exceeded`, which its
+/// binary names, and Copilot CLI 1.0.116's `errorType` `context_limit`, which
+/// its SDK's `ErrorData.errorType` names.
+const FULL_CONTEXT: [(Harness, &str); 2] = [
+    (Harness::Codex, "context_window_exceeded"),
+    (Harness::Copilot, "context_limit"),
+];
+
 /// A Pi lane's ordinary turn end, which an idle verdict carries no cause
 /// for: Pi's own `stop`, which both providers write for a finished turn
 /// (`pi-claude-bridge/src/assistant-stream.ts` `mapStopReason`,
@@ -167,12 +177,10 @@ pub fn observe_session(row: Row) -> SessionObservation {
 /// error, with no separate kind.
 fn failure_cause(row: &Row) -> Option<&str> {
     match (row.harness.as_deref(), row.event.as_deref()) {
-        (Some("claude"), Some("StopFailure"))
-            if stop::claude_refusal(row.error.as_deref(), row.message.as_deref().unwrap_or("")) =>
-        {
-            Some(stop::REFUSAL)
+        (Some("claude"), Some("StopFailure")) => {
+            stop::claude_failure_word(row.error.as_deref(), row.message.as_deref().unwrap_or(""))
         }
-        (Some("claude" | "codex" | "copilot"), Some("StopFailure")) => row.error.as_deref(),
+        (Some("codex" | "copilot"), Some("StopFailure")) => row.error.as_deref(),
         (Some("pi"), Some("StopFailure")) => Some("error"),
         _ => None,
     }
@@ -353,10 +361,16 @@ pub fn judge_session(row: &Row) -> SessionVerdict {
     }
     match harness {
         Harness::Codex | Harness::Copilot => {
-            return if failed {
-                SessionVerdict::Live
-            } else {
+            return if !failed {
                 SessionVerdict::Unsupported
+            } else if row
+                .error
+                .as_deref()
+                .is_some_and(|word| FULL_CONTEXT.contains(&(harness, word)))
+            {
+                SessionVerdict::Wedged
+            } else {
+                SessionVerdict::Live
             };
         }
         Harness::Claude | Harness::Pi => {}
@@ -1012,7 +1026,7 @@ mod tests {
     /// without a limit message, a Copilot row, and the too-long prompt.
     #[test]
     fn the_session_verdict_reads_each_harness_s_end_failure_and_stop_forms() {
-        let rows: [(&str, SessionVerdict); 15] = [
+        let rows: [(&str, SessionVerdict); 17] = [
             (
                 r#"{"harness":"claude","event":"SessionEnd","reason":"exit"}"#,
                 SessionVerdict::Ended,
@@ -1087,6 +1101,15 @@ mod tests {
             (
                 r#"{"harness":"codex","event":"StopFailure","error":"internal_server_error","message":"500"}"#,
                 SessionVerdict::Live,
+            ),
+            // A full context, which no continuation clears.
+            (
+                r#"{"harness":"codex","event":"StopFailure","error":"context_window_exceeded","message":"full"}"#,
+                SessionVerdict::Wedged,
+            ),
+            (
+                r#"{"harness":"copilot","event":"StopFailure","error":"context_limit","message":"full"}"#,
+                SessionVerdict::Wedged,
             ),
         ];
         for (json, expected) in rows {
@@ -1210,6 +1233,10 @@ mod tests {
             ("Prompt is too long", None),
             (
                 "API Error: Sonnet 4.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup",
+                Some(Kind::Provider),
+            ),
+            (
+                "This model's safeguards flagged this message. This sometimes happens with safe, normal conversations.",
                 Some(Kind::Provider),
             ),
         ] {

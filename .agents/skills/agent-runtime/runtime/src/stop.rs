@@ -97,16 +97,31 @@ const WORDS: &[(Harness, &str, Kind)] = &[
 /// The rows reader's word for Claude Code's safety refusal.
 pub const REFUSAL: &str = "refusal";
 
-/// The usage-policy link every Claude Code 2.1.332 safety refusal carries,
-/// "Learn more: …" under its "can't help with this" (`claude-safety.json`)
-/// and in its "safeguards flagged this message (…)" form. A prompt too long
-/// and the other `invalid_request` refusals carry none.
-const POLICY_LINK: &str = "https://www.anthropic.com/legal/aup";
+/// The marks of Claude Code 2.1.332's safety refusal, each a string its
+/// bundle builds: the usage-policy link, under "can't help with this"
+/// (`claude-safety.json`) and in "safeguards flagged this message (…)", and
+/// that sentence's own words, which one form prints without the link. A
+/// prompt too long and the other `invalid_request` refusals carry neither.
+const REFUSAL_MARKS: [&str; 2] = [
+    "https://www.anthropic.com/legal/aup",
+    "safeguards flagged this message",
+];
 
-/// Whether a Claude Code StopFailure with this `error` and message is its
-/// safety refusal.
-pub fn claude_refusal(error: Option<&str>, message: &str) -> bool {
-    error == Some("invalid_request") && message.contains(POLICY_LINK)
+/// Whether a Claude Code StopFailure's message is its safety refusal.
+pub fn claude_refusal(message: &str) -> bool {
+    REFUSAL_MARKS.iter().any(|mark| message.contains(mark))
+}
+
+/// The word a Claude Code StopFailure's row carries: [`REFUSAL`] for its
+/// safety refusal, which Claude Code types `invalid_request` like refusals no
+/// continuation clears, else the harness's own `error`. The turn-end writer
+/// writes it, so the lane row names the refusal without the message.
+pub fn claude_failure_word<'a>(error: Option<&'a str>, message: &str) -> Option<&'a str> {
+    if claude_refusal(message) {
+        Some(REFUSAL)
+    } else {
+        error
+    }
 }
 
 /// Copilot's HTTP status for a refused sign-in.

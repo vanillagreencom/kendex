@@ -130,12 +130,17 @@ fn every_recorded_stop_reads_as_its_kind() {
 /// offers Pro and more credits at a Plus plan's 5-hour limit. An
 /// observation, which asserts no account room, reads each as that account's
 /// limit, and no action for a limit resumes the session, so no turn is
-/// typed into it.
+/// typed into it. The dialog stays a wall even where a caller asserts room
+/// after a reset, so no key answers it.
 #[test]
 fn a_limit_increase_prompt_is_a_usage_limit_that_is_never_resumed() {
-    for name in ["codex-limit-increase.txt", "codex-purchase-offer.txt"] {
+    for (name, room) in [
+        ("codex-limit-increase.txt", None),
+        ("codex-limit-increase.txt", Some(true)),
+        ("codex-purchase-offer.txt", None),
+    ] {
         let screen = std::fs::read_to_string(fixture(name)).unwrap();
-        let state = observe::judge(&screen, Harness::Codex, &ProcessReading::HarnessUp, None);
+        let state = observe::judge(&screen, Harness::Codex, &ProcessReading::HarnessUp, room);
         assert!(
             matches!(
                 state,
@@ -144,7 +149,7 @@ fn a_limit_increase_prompt_is_a_usage_limit_that_is_never_resumed() {
                     ..
                 }
             ),
-            "{name}: {state:?}"
+            "{name} room {room:?}: {state:?}"
         );
     }
     for session in [Session::Worker, Session::Overseer, Session::Jarvis] {

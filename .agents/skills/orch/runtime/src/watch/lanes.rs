@@ -68,7 +68,7 @@ use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::session;
-use agent_runtime::stop::{self, reset};
+use agent_runtime::stop::reset;
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -521,6 +521,18 @@ pub fn classify(inputs: &Inputs) -> LaneState {
     screen_state
 }
 
+/// Whether a local Claude lane's StopFailure `row` is its own session's.
+/// A stop the stop reading names at or before the launch position is the
+/// predecessor's. Legacy records without one use the pane as evidence of a
+/// Claude rate limit.
+fn launch_current(lane: &Lane, row: &rows::Row) -> bool {
+    match lane.session_rows_at_launch {
+        Some(at) if row.position <= at => rows::stop_of(row).is_none(),
+        None => row.error.as_deref() != Some("rate_limit"),
+        Some(_) => true,
+    }
+}
+
 /// One pass's inputs beyond the readers.
 pub struct Pass<'a> {
     pub fleet: &'a FleetState,
@@ -731,8 +743,6 @@ fn read_lane<'a>(
                 (readers.rows)(&file)
             }),
     };
-    // A launch position excludes failures from the predecessor. Legacy
-    // records without one use the pane as evidence of a Claude rate limit.
     let current_rows = row_reading.as_ref().filter(|reading| {
         let Reading::Live(row) = reading else {
             return true;
@@ -744,16 +754,7 @@ fn read_lane<'a>(
         {
             return true;
         }
-        match lane.session_rows_at_launch {
-            // A failure the stop reading names before the launch is the
-            // predecessor's.
-            Some(at) if row.position <= at => row
-                .error
-                .as_deref()
-                .is_none_or(|cause| stop::of_cause(Harness::Claude, cause).is_none()),
-            None => row.error.as_deref() != Some("rate_limit"),
-            Some(_) => true,
-        }
+        launch_current(lane, row)
     });
     let live_row = |reading| match reading {
         Some(Reading::Live(row)) => Some(row),
@@ -3458,6 +3459,31 @@ mod tests {
     /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
     /// index each case plants): each row's five words, and `None` for the
     /// shape the count refuses.
+    /// A predecessor's safety refusal, at or before the launch position,
+    /// is not the relaunched lane's state; the same row after it is.
+    #[test]
+    fn a_predecessor_s_safety_refusal_is_not_the_relaunched_lane_s_row() {
+        let lane: Lane = serde_json::from_value(json!({
+            "item": "KEN-1",
+            "harness": "claude",
+            "status": "running",
+            "session_rows_at_launch": 2,
+        }))
+        .unwrap();
+        let refusal = |position| {
+            rows::Row {
+            position,
+            harness: Some("claude".to_owned()),
+            event: Some("StopFailure".to_owned()),
+            error: Some("invalid_request".to_owned()),
+            message: Some("API Error: Sonnet 4.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup".to_owned()),
+            ..rows::Row::default()
+        }
+        };
+        assert!(!launch_current(&lane, &refusal(2)));
+        assert!(launch_current(&lane, &refusal(3)));
+    }
+
     #[test]
     fn the_counts_read_from_each_state() {
         let four = Some(4);
