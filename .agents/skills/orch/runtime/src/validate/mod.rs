@@ -1365,7 +1365,7 @@ fn resolve(
             ));
         }
         if crate::ready::on_path("perl").is_none() {
-            return Err(files::unreadable("missing-command", "perl"));
+            return Err(files::unread_value("missing-command", "commands", "perl"));
         }
     }
     let selection = match preview.selection.as_deref() {
@@ -1819,12 +1819,24 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
     }
 }
 
+/// The refusal a start answers for a launch that did not start its run:
+/// `launch-failed` for a refused one, `launch-unanswered` for one that may
+/// run, whose handle the error's text keeps.
+pub(super) fn launch_refusal(run_dir: String, launch: Launch) -> Result<()> {
+    match launch {
+        Launch::Started { .. } => Ok(()),
+        Launch::Refused { cause } => Err(Error::ValidateLaunchFailed { run_dir, cause }),
+        Launch::Unanswered { cause } => Err(Error::ValidateLaunchUnanswered { run_dir, cause }),
+    }
+}
+
 /// Start a validation run: read, record, launch. A start refused before it
 /// records the run, other than `run-live`, leaves the refusal's key on the
 /// run's admitted stage, the named one or the round's open admission, which
 /// stays open for the next start under the same id. A refusal that cannot
-/// be written refuses `refusal-unrecorded` with its key, since a wait on the
-/// run would read it as queued.
+/// be written refuses `refusal-unrecorded`, holding the refusal, since a
+/// wait on the run would read it as queued; a write refused under the
+/// refusal's own key leaves the refusal as it stood.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1842,32 +1854,44 @@ pub fn start(
     };
     let path = state::item_path(&settings.state_dir, &item);
     let recorded = std::cell::Cell::new(false);
-    let reply = start_admitted(settings, req, env, locking, item, round.clone(), &recorded);
+    let error = match start_admitted(settings, req, env, locking, item, round.clone(), &recorded) {
+        Ok(reply) => return Ok(reply),
+        Err(error) => error,
+    };
     // A `run-live` refusal ends no wait on the run: its seat waits for the
     // live run and starts again under the same id, so the run stays queued.
-    if let (Err(error), false) = (&reply, recorded.get())
-        && !matches!(error, Error::RunLive { .. })
-        && let Err(write) = apply(
-            &path,
-            Validate::Refuse(RecordRefusal {
-                round_id: round.clone(),
-                run_dir: req.run_dir.clone(),
-                cause: error.key().to_owned(),
-            }),
-            env,
-            locking,
-        )
-        // A missing record holds no admission for a wait to follow.
-        && !matches!(write, Error::Runtime(agent_runtime::Error::RecordMissing { .. }))
-    {
-        return Err(Error::RefusalUnrecorded {
-            round_id: round,
-            run_dir: req.run_dir.clone(),
-            refused: error.key(),
-            write: Box::new(write),
-        });
+    if recorded.get() || matches!(error, Error::RunLive { .. }) {
+        return Err(error);
     }
-    reply
+    let write = apply(
+        &path,
+        Validate::Refuse(RecordRefusal {
+            round_id: round.clone(),
+            run_dir: req.run_dir.clone(),
+            cause: error.key().to_owned(),
+        }),
+        env,
+        locking,
+    );
+    match write {
+        // A missing record holds no admission for a wait to follow. A write
+        // refused as the start was failed for the cause the refusal already
+        // names, so the refusal answers as itself.
+        Err(write)
+            if !matches!(
+                write,
+                Error::Runtime(agent_runtime::Error::RecordMissing { .. })
+            ) && write.key() != error.key() =>
+        {
+            Err(Error::RefusalUnrecorded {
+                round_id: round,
+                run_dir: req.run_dir.clone(),
+                refused: Box::new(error),
+                write: Box::new(write),
+            })
+        }
+        _ => Err(error),
+    }
 }
 
 /// The start of an admitted run; `recorded` turns true once the run's stage
@@ -2036,18 +2060,7 @@ fn start_admitted(
         let Validated::Launch(recorded) = recorded else {
             unreachable!("a launch reports its launch")
         };
-        match launched {
-            Launch::Refused { cause } => {
-                return Err(Error::ValidateLaunchFailed { run_dir, cause });
-            }
-            Launch::Unanswered { cause } => {
-                return Err(Error::Runtime(agent_runtime::Error::refused(
-                    "launch-unanswered",
-                    &[("run_dir", &run_dir), ("cause", &cause)],
-                )));
-            }
-            Launch::Started { .. } => {}
-        }
+        launch_refusal(run_dir.clone(), launched)?;
         let mut outcome = recorded.outcome;
         if resolved.ran_nothing.is_some() {
             // The run ran nothing and its sentinel stands: the stage closes now,

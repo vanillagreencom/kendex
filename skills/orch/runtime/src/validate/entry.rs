@@ -168,14 +168,14 @@ fn arguments(args: &Args) -> Result<()> {
             || args.restack
             || (args.run_id.is_some() && !queued))
     {
-        Some("start-options")
+        return Err(files::unreadable("option-unused", "start options"));
     } else if !start && !args.resolve_mode && !args.restack_check && args.base.is_some() {
         Some("--base")
     } else {
         None
     };
     if let Some(option) = unused {
-        return Err(files::unreadable("option-unused", option));
+        return Err(files::unread_value("option-unused", "cause", option));
     }
     if let Some(id) = &args.run_id {
         let bytes = id.as_bytes();
@@ -213,7 +213,10 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
                 &format!("{VALIDATE}:"),
                 1,
             );
-            let _ = writeln!(std::io::stderr(), "{diagnostic}");
+            // The text carries a cause's own words and comes first, so the
+            // keyed line ends stderr: `lane-host-ssh` records the last line
+            // of a report whose lines open with none of the prefixes it keys.
+            let _ = writeln!(std::io::stderr(), "{error}\n{diagnostic}");
             exit
         }
     }
@@ -267,14 +270,14 @@ fn entry(
     let dir = || {
         args.run_dir
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--run-dir"))
+            .ok_or_else(|| files::unread_value("required", "cause", "--run-dir"))
     };
     if args.child {
         let dir = dir()?;
         let start = files::fields(&dir.join("start"))?;
         let worktree = start
             .get("worktree")
-            .ok_or_else(|| files::unreadable("no-run", "worktree"))?;
+            .ok_or_else(|| files::unread_value("no-run", "cause", "worktree"))?;
         let settings = resolve_at(Path::new(worktree), flags)?;
         run::execute(dir, &SystemClock, &super::group_leader(&settings))?;
         return Ok(TextReply::new(String::new(), 0));
@@ -286,7 +289,7 @@ fn entry(
         let worktree = args
             .worktree
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--worktree"))?;
+            .ok_or_else(|| files::unread_value("required", "cause", "--worktree"))?;
         let worktree =
             fs::canonicalize(worktree).map_err(|e| files::unreadable("not-directory", e))?;
         if !worktree.is_dir() {
@@ -325,7 +328,7 @@ fn entry(
         let base = args
             .base
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--base"))?;
+            .ok_or_else(|| files::unread_value("required", "cause", "--base"))?;
         let (text, exit) =
             crate::ops::proof::restack(&worktree, base, env).map_err(unanswered_refusal)?;
         return Ok(TextReply::new(text, exit));
@@ -362,10 +365,10 @@ fn entry(
         );
     }
     if args.reproduce && mode == ValidateMode::Ci {
-        return Err(files::unreadable("reproduce-ci", "ci").into());
+        return Err(files::unread_value("reproduce-ci", "cause", "ci").into());
     }
     if args.restack && mode != ValidateMode::Ci {
-        return Err(files::unreadable("option-unused", "--restack").into());
+        return Err(files::unread_value("option-unused", "cause", "--restack").into());
     }
     let base = if mode == ValidateMode::Full {
         if args.base.is_some() {
@@ -459,21 +462,7 @@ fn entry(
                     },
                     &SystemClock,
                 );
-                match launch.answer() {
-                    agent_runtime::effects::job::Launch::Started { .. } => {}
-                    agent_runtime::effects::job::Launch::Refused { cause } => {
-                        return Err(Error::ValidateLaunchFailed {
-                            run_dir: run_dir.display().to_string(),
-                            cause,
-                        });
-                    }
-                    agent_runtime::effects::job::Launch::Unanswered { .. } => {
-                        return Err(Error::Runtime(agent_runtime::Error::refused(
-                            "launch-unanswered",
-                            &[("run_dir", &run_dir.display().to_string())],
-                        )));
-                    }
-                }
+                super::launch_refusal(run_dir.display().to_string(), launch.answer())?;
             }
             if req.foreground {
                 fs::write(
@@ -482,7 +471,7 @@ fn entry(
                         "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
                         env.owner
                             .as_ref()
-                            .ok_or_else(|| files::unreadable("owner", "absent"))?
+                            .ok_or_else(|| files::unread_value("owner", "cause", "absent"))?
                             .pid,
                         env.owner.as_ref().unwrap().start,
                     ),

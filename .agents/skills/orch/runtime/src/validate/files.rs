@@ -16,6 +16,16 @@ pub fn unreadable(read: &'static str, cause: impl ToString) -> Error {
     }
 }
 
+/// The refusal of a read whose cause is one word the caller holds, kept on
+/// the keyed line as `field=value`.
+pub fn unread_value(read: &'static str, field: &'static str, value: impl ToString) -> Error {
+    Error::ValidateValue {
+        read,
+        field,
+        value: value.to_string(),
+    }
+}
+
 pub fn fields(path: &Path) -> Result<BTreeMap<String, String>> {
     let text = fs::read_to_string(path)
         .map_err(|e| unreadable("record", format!("{}: {e}", path.display())))?;
@@ -693,7 +703,7 @@ fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String,
         .parse::<u64>()
         .ok()
         .filter(|n| *n > 0)
-        .ok_or_else(|| unreadable("no-run", "poll-secs"))?;
+        .ok_or_else(|| unread_value("no-run", "cause", "poll-secs"))?;
     let call = clock.now() + Duration::from_secs(budget);
     loop {
         let run = RunFile::read(run_dir)?;

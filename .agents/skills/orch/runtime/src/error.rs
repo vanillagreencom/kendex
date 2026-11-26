@@ -363,12 +363,16 @@ pub enum Error {
     /// A start refused before it recorded the run could not write its
     /// refusal on the run's admitted stage: a wait on the run reads it as
     /// queued, so the start names both the refusal and the failed write.
-    /// `run_dir` is the run the start named, none for a start by round.
-    #[error("round {round_id}: the start's refusal {refused} could not be recorded: {write}")]
+    /// `run_dir` is the run the start named, none for a start by round. The
+    /// fields name the refusal's key and the write's; their own facts are
+    /// the text.
+    #[error(
+        "round {round_id}: the start's refusal could not be recorded: {write}; the refusal: {refused}"
+    )]
     RefusalUnrecorded {
         round_id: String,
         run_dir: Option<String>,
-        refused: &'static str,
+        refused: Box<Error>,
         write: Box<Error>,
     },
     /// The admitted run's last start was refused before it recorded the run,
@@ -392,10 +396,23 @@ pub enum Error {
     /// written; the stage is closed `stopped` with the cause.
     #[error("the run {run_dir} could not be started: {cause}")]
     ValidateLaunchFailed { run_dir: String, cause: String },
+    /// The launcher gave no answer, so the job may run: `cause`, its handle
+    /// or the failed read of it, is free text and stays out of the fields.
+    #[error("the run {run_dir}'s launcher gave no answer: {cause}")]
+    ValidateLaunchUnanswered { run_dir: String, cause: String },
     /// A read the start needs before it records the run failed: the
     /// worktree's HEAD, its snapshot, a scratch directory.
     #[error("the validation start could not read its {read}: {cause}")]
     ValidateUnreadable { read: &'static str, cause: String },
+    /// As `ValidateUnreadable`, where the producer holds the one value it
+    /// refused as a word, such as the option a call left out: the value is
+    /// a field under the producer's name for it.
+    #[error("the validation start could not read its {read}: {value}")]
+    ValidateValue {
+        read: &'static str,
+        field: &'static str,
+        value: String,
+    },
     // The acceptance's authorization and its summary record.
     /// An acceptance for a directed item names no owner directive, or
     /// another's; the item's key carries the id it needs.
@@ -583,7 +600,8 @@ impl Error {
             Error::RunClosed { .. } => "run-closed",
             Error::ValidateStopFailed { .. } => "stop-failed",
             Error::ValidateLaunchFailed { .. } => "launch-failed",
-            Error::ValidateUnreadable { .. } => "validate-unreadable",
+            Error::ValidateLaunchUnanswered { .. } => "launch-unanswered",
+            Error::ValidateUnreadable { .. } | Error::ValidateValue { .. } => "validate-unreadable",
             Error::AuthorizationMissing { .. } => "authorization-missing",
             Error::AuthorizationDiffers { .. } => "authorization-differs",
             Error::SummaryCommentDiffers { .. } => "summary-comment-differs",
@@ -591,8 +609,9 @@ impl Error {
         }
     }
 
-    /// The values the refusal acted on, as `field=value` pairs. A cause or
-    /// a parser's message is not among them.
+    /// The values the refusal acted on, as `field=value` pairs. Free text,
+    /// such as an I/O cause or a parser's message, stays in the error's
+    /// text.
     pub fn fields(&self) -> Vec<(String, String)> {
         let pair = |k: &str, v: String| (k.to_owned(), v);
         match self {
@@ -888,7 +907,7 @@ impl Error {
             } => {
                 let mut fields = vec![pair("round_id", round_id.clone())];
                 fields.extend(run_dir.clone().map(|d| pair("run_dir", d)));
-                fields.push(pair("refused", (*refused).to_owned()));
+                fields.push(pair("refused", refused.key().to_owned()));
                 fields.push(pair("cause", write.key().to_owned()));
                 fields
             }
@@ -898,17 +917,14 @@ impl Error {
                     pair("cause", cause.clone()),
                 ]
             }
-            Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
+            Error::RunClosed { run_dir }
+            | Error::ValidateStopFailed { run_dir, .. }
+            | Error::ValidateLaunchUnanswered { run_dir, .. } => {
                 vec![pair("run_dir", run_dir.clone())]
             }
-            Error::ValidateUnreadable { read, cause } => {
-                let mut fields = vec![pair("read", (*read).to_owned())];
-                // A cause of one token, such as the option a call left out,
-                // is a value; a reader's message stays in the text.
-                if !cause.is_empty() && !cause.contains(|c: char| c.is_whitespace() || c == '=') {
-                    fields.push(pair("cause", cause.clone()));
-                }
-                fields
+            Error::ValidateUnreadable { read, .. } => vec![pair("read", (*read).to_owned())],
+            Error::ValidateValue { read, field, value } => {
+                vec![pair("read", (*read).to_owned()), pair(field, value.clone())]
             }
             Error::AuthorizationMissing { directive } => {
                 vec![pair("directive", directive.clone())]
@@ -964,13 +980,12 @@ impl From<Error> for agent_runtime::effects::prepare::Unready {
 }
 
 /// The key a refused launch's cause leads with, else `launch-failed`. The
-/// cause is text: the validation start's own refusals (`run-exists`,
-/// `run-dir-unwritable file=…`, `owner-unreadable`) and agent-runtime's
-/// launcher refusals (`launch-failed status=…`, `unit-launch-failed
-/// detail=…`, `record-unwritable path=…`, `launcher-unrecorded`, a status
-/// word such as `exited-7`) each open with a hyphenated key. A cause that
-/// opens with anything else, such as an I/O message, whose lower-case forms
-/// (`entity not found`) hold no hyphen, has no key of its own.
+/// cause is text whose producers, the validation start and agent-runtime's
+/// launcher, open each refusal with its key: a lower-case word of letters,
+/// digits and hyphens holding at least one hyphen, as `run-exists` or
+/// `exited-7`, then any fields. A cause that opens with anything else, such
+/// as an I/O message, whose lower-case forms (`entity not found`) hold no
+/// hyphen, has no key of its own.
 pub(crate) fn launch_refusal_key(cause: &str) -> &str {
     let lead = cause.split_whitespace().next().unwrap_or_default();
     let keyed = lead.contains('-')
@@ -1000,6 +1015,14 @@ mod tests {
                 "run-dir-unwritable",
             ),
             ("owner-unreadable", "owner-unreadable"),
+            (
+                "exe-unreadable cause=No such file or directory (os error 2)",
+                "exe-unreadable",
+            ),
+            (
+                "runner-unwritable cause=Permission denied (os error 13)",
+                "runner-unwritable",
+            ),
             (
                 "launch-failed cause=No such file or directory (os error 2)",
                 "launch-failed",
