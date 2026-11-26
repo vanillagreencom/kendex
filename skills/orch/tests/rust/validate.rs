@@ -5455,31 +5455,41 @@ fn a_worktree_stop_of_a_gone_run_leaves_its_readers_with_the_stage_word() {
     }
 }
 
-/// A lost systemd run, its unit and command gone with no sentinel, as a
-/// follower reads it. Inside the wrapper the user manager is hidden, so
-/// past the launch grace the follower is refused `liveness-unreadable`
-/// with its cause, never `state=running`; within the grace the run is
-/// held. Unconfined, a manager that does not answer holds the run, since
-/// a later read can answer it, and one that has no record of the unit
-/// reads it lost.
+/// A systemd run whose command has ended with no sentinel, as a follower
+/// reads it. Inside the wrapper the user manager is hidden, so the
+/// executor's own record answers for the unit: a gone executor leaves the
+/// run lost (a live one is the next test's, as the executor writes it). With
+/// no executor record, past the launch grace the follower is refused
+/// `liveness-unreadable` with its cause, never `state=running`; within the
+/// grace the run is held. Unconfined, a manager that does not answer holds
+/// the run, since a later read can answer it, and one that has no record
+/// of the unit reads it lost. A start never overlaps a run whose work is
+/// held or cannot be read, and `--live` reads it so.
 #[test]
 fn a_follower_that_cannot_read_a_unit_runs_liveness_says_so_and_never_reads_it_running() {
     let systemctl = fixtures().join("systemctl-unit");
     let path = tool_path(&[&systemctl]);
     let command = Owned::sleep();
-    // Each row's answer: `Ok` the wait's state, `Err` its keyed refusal.
-    for (confined, manager_rc, age, answer) in [
+    let executor = Owned::sleep();
+    // Each row's executor record (`none`, or a held process under another
+    // start), the wait's answer (`Ok` its
+    // state, `Err` its keyed refusal), and whether `--live` reads the run.
+    for (confined, manager_rc, age, recorded, answer, live) in [
         (
             "1",
             "1",
             20,
+            "none",
             Err("validate: validate-unreadable read=liveness-unreadable cause=manager-hidden"),
+            true,
         ),
-        ("1", "1", 0, Ok("running")),
-        ("", "1", 20, Ok("running")),
-        ("", "0", 20, Ok("lost")),
+        ("1", "1", 0, "none", Ok("running"), true),
+        ("1", "1", 20, "gone", Ok("lost"), false),
+        ("", "1", 20, "none", Ok("running"), true),
+        ("", "0", 20, "none", Ok("lost"), false),
     ] {
-        let row = format!("confined={confined} manager-rc={manager_rc} age={age}");
+        let row =
+            format!("confined={confined} manager-rc={manager_rc} age={age} executor={recorded}");
         let w = World::new();
         let dir = w.worktree.join("tmp/dev-validate-unit-lost");
         fs::create_dir_all(&dir).unwrap();
@@ -5506,15 +5516,23 @@ fn a_follower_that_cannot_read_a_unit_runs_liveness_says_so_and_never_reads_it_r
             json!({"pid": command.pid(), "start": "ticks:1"}).to_string(),
         )
         .unwrap();
+        // An executor gone in its tail: its command's group ended, its
+        // sentinel never written.
+        if recorded == "gone" {
+            fs::write(dir.join("own-exit"), "").unwrap();
+            fs::write(
+                dir.join("executor"),
+                json!({"pid": executor.pid(), "start": "ticks:1"}).to_string(),
+            )
+            .unwrap();
+        }
         let run_dir = dir.display().to_string();
-        let out = w.entry(
-            &["--wait", "--run-dir", &run_dir, "--budget", "1"],
-            &[
-                ("PATH", &path),
-                ("AGENT_RUNTIME_CONFINED", confined),
-                ("SYSTEMCTL_RC", manager_rc),
-            ],
-        );
+        let env = [
+            ("PATH", path.as_str()),
+            ("AGENT_RUNTIME_CONFINED", confined),
+            ("SYSTEMCTL_RC", manager_rc),
+        ];
+        let out = w.entry(&["--wait", "--run-dir", &run_dir, "--budget", "1"], &env);
         match answer {
             Ok(state) => {
                 assert_eq!(field(&text(&out), "state"), state, "{row}: {}", text(&out));
@@ -5526,7 +5544,56 @@ fn a_follower_that_cannot_read_a_unit_runs_liveness_says_so_and_never_reads_it_r
                 assert_eq!(keyed(&out), refused, "{row}: {}", stderr(&out));
             }
         }
+        let wt = w.worktree.display().to_string();
+        let out = w.entry(&["--live", "--worktree", &wt], &env);
+        if live {
+            assert_eq!(out.status.code(), Some(0), "{row}: {}", stderr(&out));
+            assert_eq!(field(&text(&out), "run-dir"), run_dir, "{row}");
+        } else {
+            assert_eq!(out.status.code(), Some(1), "{row}: {}", stderr(&out));
+            assert_eq!(text(&out), "live=none", "{row}");
+        }
     }
+}
+
+/// The record a real executor writes holds its unit's run, in the tail
+/// where its command has ended and its sentinel has not landed, for a
+/// follower whose wrapper hides the unit's manager: the wait reads it
+/// running, and `--live` reads it live.
+#[test]
+fn a_confined_follower_holds_a_unit_run_in_its_tail_by_the_executors_own_record() {
+    let w = World::new();
+    let dir = executor_dir(&w, "true", 20);
+    fs::write(
+        dir.join("runner"),
+        "runner=systemd\nunit=orch-validate-wt-tail\nline=runner=systemd unit=orch-validate-wt-tail\n",
+    )
+    .unwrap();
+    fs::write(dir.join("job.err"), "").unwrap();
+    orch_runtime::validate::run::execute(
+        &dir,
+        &agent_runtime::clock::SystemClock,
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/group-leader.sh"),
+    )
+    .unwrap();
+    // The executor was this test's process, which still runs: without its
+    // sentinel the run stands in the executor's tail.
+    fs::remove_file(dir.join("exit")).unwrap();
+    let systemctl = fixtures().join("systemctl-unit");
+    let path = tool_path(&[&systemctl]);
+    let env = [
+        ("PATH", path.as_str()),
+        ("AGENT_RUNTIME_CONFINED", "1"),
+        ("SYSTEMCTL_RC", "1"),
+    ];
+    let run_dir = dir.display().to_string();
+    let out = w.entry(&["--wait", "--run-dir", &run_dir, "--budget", "1"], &env);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert_eq!(field(&text(&out), "state"), "running", "{}", text(&out));
+    let wt = w.worktree.display().to_string();
+    let out = w.entry(&["--live", "--worktree", &wt], &env);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(field(&text(&out), "run-dir"), run_dir);
 }
 
 /// Ends the group a row's detached child leads, whatever the row's answer.

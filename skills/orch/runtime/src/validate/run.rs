@@ -127,6 +127,7 @@ fn execute_reading_tree(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(fail("sentinel", e.to_string())),
     }
+    executor_mark(run_dir)?;
     let mut claim = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -858,6 +859,73 @@ fn execution_mark(file: &mut fs::File, status: &str) -> Result<()> {
 struct CommandRecord {
     pid: u32,
     start: Option<String>,
+}
+
+/// The executor's own identity, which stands from before its claim to after
+/// its sentinel. A follower whose wrapper hides the run's unit holds the
+/// run by it, through the window where the command's group has ended and
+/// the sentinel has not yet landed. It is linked in whole and exclusively,
+/// so a reader never sees part of it and a second executor of the run
+/// never names itself in the first one's place.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ExecutorRecord {
+    pid: u32,
+    start: String,
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the executor reads its own identity to record it"
+)]
+fn executor_mark(run_dir: &Path) -> Result<()> {
+    use agent_runtime::reading::Reading;
+    let fail = |cause: String| Error::ValidateUnreadable {
+        read: "executor-identity",
+        cause,
+    };
+    let start = match agent_runtime::process::identity(std::process::id()) {
+        Reading::Live(identity) => identity.start,
+        Reading::Gone => return Err(fail("own-identity-gone".to_owned())),
+        Reading::Unreadable { cause } => return Err(fail(cause.to_owned())),
+    };
+    let record = ExecutorRecord {
+        pid: std::process::id(),
+        start,
+    };
+    let part = run_dir.join("executor.part");
+    fs::write(&part, serde_json::to_string(&record)?)
+        .and_then(|_| fs::hard_link(&part, run_dir.join("executor")))
+        .map_err(|e| fail(e.to_string()))?;
+    fs::remove_file(&part).map_err(|e| fail(e.to_string()))
+}
+
+/// The executor's reading by the identity it recorded, `None` where the run
+/// holds no record: its executor never started, or predates the record.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a run's executor is read by its recorded identity; nothing is signalled"
+)]
+pub(crate) fn executor_reading(
+    run_dir: &Path,
+) -> Result<Option<agent_runtime::reading::Reading<()>>> {
+    let bytes = match fs::read(run_dir.join("executor")) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(super::files::unreadable("executor-identity", e)),
+    };
+    let record: ExecutorRecord = serde_json::from_slice(&bytes)?;
+    Ok(Some(
+        match agent_runtime::process::still_runs(&agent_runtime::process::Identity {
+            pid: record.pid,
+            start: record.start,
+        }) {
+            agent_runtime::reading::Reading::Live(_) => agent_runtime::reading::Reading::Live(()),
+            agent_runtime::reading::Reading::Gone => agent_runtime::reading::Reading::Gone,
+            agent_runtime::reading::Reading::Unreadable { cause } => {
+                agent_runtime::reading::Reading::Unreadable { cause }
+            }
+        },
+    ))
 }
 
 #[allow(

@@ -458,13 +458,13 @@ pub fn last_pass(worktree: &Path) -> Result<LastPass> {
 
 /// Whether the directory is a start whose child never ran: the runtime's
 /// start creates the job's error log, `job.err`, with the run directory and
-/// before any other record, and its executor claims the directory
-/// (`execution`, `command`) before it runs anything, so a directory holding
-/// none of the three is never live, holds nothing to stop, and is lost once
-/// the launch grace has passed. Any other directory is read by the
-/// executor's and the launcher's records.
+/// before any other record, and its executor records itself (`executor`)
+/// and claims the directory (`execution`, `command`) before it runs
+/// anything, so a directory holding none of the four is never live, holds
+/// nothing to stop, and is lost once the launch grace has passed. Any other
+/// directory is read by the executor's and the launcher's records.
 pub(crate) fn unstarted(run: &RunFile) -> Result<bool> {
-    for record in ["execution", "command", "job.err"] {
+    for record in ["executor", "execution", "command", "job.err"] {
         match fs::symlink_metadata(run.dir.join(record)) {
             Ok(_) => return Ok(false),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -557,11 +557,13 @@ fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
 
 /// The work that holds a run with no sentinel, by the pid it names: its
 /// command's group by the identity its executor recorded, else its runner
-/// by the launcher's record. A run whose child never ran holds nothing.
-/// Under `strict` an unreadable reading refuses with its cause. Otherwise
-/// a hidden manager's reading stays unreadable, and any other unreadable
-/// reading holds the run, since a later read can answer it: unconfined,
-/// `unit-unsettled` is also the reading of a unit that still runs.
+/// by the launcher's record, or by the executor's own record where the
+/// wrapper hides the unit's manager. A run whose child never ran holds
+/// nothing. Under `strict` an unreadable reading refuses with its cause.
+/// Otherwise a hidden manager's reading with no executor record stays
+/// unreadable, and any other unreadable reading holds the run, since a
+/// later read can answer it: unconfined, `unit-unsettled` is also the
+/// reading of a unit that still runs.
 fn holds(run: &RunFile, strict: bool) -> Result<Reading<u32>> {
     let command = super::run::command_reading(&run.dir)
         .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
@@ -581,7 +583,22 @@ fn holds(run: &RunFile, strict: bool) -> Result<Reading<u32>> {
     if unstarted(run)? {
         return Ok(Reading::Gone);
     }
-    match runner_reading(run) {
+    let reading = match runner_reading(run) {
+        Reading::Unreadable {
+            cause: MANAGER_HIDDEN,
+        } => match super::run::executor_reading(&run.dir)
+            .map_err(|e| unreadable("executor-identity", format!("{}: {e}", run.dir.display())))?
+        {
+            Some(Reading::Live(())) => Reading::Live(0),
+            Some(Reading::Gone) => Reading::Gone,
+            Some(Reading::Unreadable { cause }) => Reading::Unreadable { cause },
+            None => Reading::Unreadable {
+                cause: MANAGER_HIDDEN,
+            },
+        },
+        reading => reading,
+    };
+    match reading {
         Reading::Unreadable { cause } if strict => Err(unreadable(
             "runner",
             format!("{}: {cause}", run.dir.display()),
@@ -596,9 +613,11 @@ fn holds(run: &RunFile, strict: bool) -> Result<Reading<u32>> {
 /// (`execution`) or its launch grace has passed. `--wait` and `--record`
 /// read such a run here alike; `--record` reads no clock, so a run its
 /// executor never claimed stays unfinished there. Work [`holds`] cannot
-/// read holds the run within its launch grace, where the executor may not
-/// yet have claimed it, and past the grace refuses `liveness-unreadable`
-/// with its cause: no later poll here answers it.
+/// read, a unit whose manager the wrapper hides and whose executor left no
+/// record, holds the run within its launch grace, where the executor may
+/// not yet have started, and past the grace refuses `liveness-unreadable`
+/// with its cause: its executor predates the record or never ran, and no
+/// later poll here answers it.
 fn lost(run: &RunFile, past_grace: bool) -> Result<bool> {
     let unread = match holds(run, false)? {
         Reading::Live(_) => return Ok(false),
