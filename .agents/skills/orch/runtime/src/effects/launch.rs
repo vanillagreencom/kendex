@@ -804,9 +804,8 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 const CREATE_STDERR: &str = "create_stderr";
 const CREATE_STDERR_ELIDED: &str = "create_stderr_elided";
 
-/// The launch observation's members the launcher established and a
-/// reconcile's window read cannot read again: the confinement of the pane
-/// and the stderr of the provider's create.
+/// The launch observation's members only the launcher establishes: the
+/// confinement of the pane and the stderr of the provider's create.
 const LAUNCHER_READINGS: [&str; 3] = ["confinement", CREATE_STDERR, CREATE_STDERR_ELIDED];
 
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
@@ -2320,16 +2319,21 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     if created {
         outcome.annotate(SANDBOX, json!(STANDING));
     }
-    // The window read replaces the intent's observation, but it cannot
-    // read again what the launcher established for this pane.
-    if let Some(observation) = intent.observation.as_ref() {
-        for key in LAUNCHER_READINGS {
-            if let Some(value) = observation.get(key) {
-                outcome.annotate(key, value.clone());
-            }
+    keep_launcher_readings(&mut outcome, intent.observation.as_ref());
+    Ok(outcome)
+}
+
+/// Every outcome recorded over a launch after its launcher ran replaces the
+/// intent's observation, and no later read can establish again what the
+/// launcher did for the pane: `outcome` carries those readings over from
+/// `prior`, and nothing else of it, since its window readings are stale.
+pub(super) fn keep_launcher_readings(outcome: &mut EffectOutcome, prior: Option<&Value>) {
+    let Some(prior) = prior else { return };
+    for key in LAUNCHER_READINGS {
+        if let Some(value) = prior.get(key) {
+            outcome.annotate(key, value.clone());
         }
     }
-    Ok(outcome)
 }
 
 fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {

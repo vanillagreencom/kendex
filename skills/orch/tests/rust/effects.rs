@@ -8308,10 +8308,10 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
 }
 
 /// A create that answers keeps its stderr on the launch's observation, line
-/// for line, whatever later step fails and through the reconcile of a
-/// launch left unconfirmed: a provider's notices of the cross-model
-/// reviewer and the login seed it gave, and a transcript too long for the
-/// record, kept by its two ends with the count between.
+/// for line, whatever later step fails and through the reconcile and the
+/// superseding close of a launch left unconfirmed: a provider's notices of
+/// the cross-model reviewer and the login seed it gave, and a transcript
+/// too long for the record, kept by its two ends with the count between.
 #[test]
 fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
     let cross = "lane-host-daytona: claude-cross-none cause=no-eligible-target";
@@ -8387,14 +8387,39 @@ fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
             observation["create_stderr_elided"], elided,
             "{case}: {report}"
         );
+        let launch_id = report["intent"]["id"].clone();
+        let launch = |world: &HostedLaunch| -> Value {
+            world.runner.fleet()["intents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == launch_id)
+                .unwrap()
+                .clone()
+        };
         if outcome == "unconfirmed" {
             let replay = world.runner.reconcile_one();
-            assert_eq!(replay["intent"]["id"], report["intent"]["id"], "{case}: {replay}");
-            let kept = &world.runner.fleet()["intents"][0]["observation"];
+            assert_eq!(replay["intent"]["id"], launch_id, "{case}: {replay}");
+            let kept = &launch(&world)["observation"];
             assert_eq!(kept["create_stderr"], lines, "{case}: {replay}");
             assert_eq!(kept["create_stderr_elided"], elided, "{case}: {replay}");
         }
-        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+        let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+        let ended = launch(&world);
+        if outcome == "unconfirmed" {
+            assert_eq!(
+                ended["observation"]["cause"], "superseded-by-close",
+                "{case}: {closed}"
+            );
+        }
+        assert_eq!(
+            ended["observation"]["create_stderr"], lines,
+            "{case}: {ended}"
+        );
+        assert_eq!(
+            ended["observation"]["create_stderr_elided"], elided,
+            "{case}: {ended}"
+        );
     }
 }
 
