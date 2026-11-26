@@ -25,8 +25,8 @@
 #      request and a merge group whatever its needs did.
 #   3. the aggregate: over the real published list, a job the list left out
 #      may skip and one it named may not; a held job missing from CI's needs,
-#      a list that is not one, a job no row selects, a dead classifier and a
-#      helper that is not there are each refused.
+#      a list that is not one, a dead classifier and a helper that is not
+#      there are each refused.
 # Inputs: .github/workflows/skill-tests.yml tools/ci-aggregate tools/ci-job-set tools/lib/* tools/rust-reads skills/* .agents/skills/* crates/* Cargo.toml Cargo.lock clippy.toml .cargo/*
 set -euo pipefail
 
@@ -223,9 +223,10 @@ ctx() { # EVENT RESULT SELECTION — what a job condition reads
 }
 
 # --- 2.1. Every gated job reads its own row --------------------------------
-# A job that needs the changes job runs exactly where the `jobs` list names
-# it, on every event, and a job the table holds that starts before the
-# classifier runs on every merge group alone. Each condition is evaluated
+# Every job but the classifier and CI is a LANES row. A job that needs the
+# changes job runs exactly where the `jobs` list names it, on every event,
+# and a job that starts before the classifier runs on each event its row
+# runs on, a pull request aside. Each condition is evaluated
 # with its own id listed alone, with every other row listed, with an empty
 # list and with no list, so a condition that reads anything but its own id
 # disagrees with one of them.
@@ -235,9 +236,9 @@ lane_cell() { # JOB COLUMN — that LANES cell, empty where no row names the job
 }
 GATED="$(job_needs "$WORKFLOW" | awk -F '\t' -v ci="$CI_JOB" '$1 != ci && ("," $2 ",") ~ /,changes,/ { print $1 }')"
 grep -qx ui-tests <<<"$GATED" || { echo "ui-tests read as no gated job, so the needs reader is broken" >&2; exit 1; }
-LANE_JOBS="$(printf '%s\n' "$LANE_ROWS" | awk -F '|' '$3 != "fixed" { print $1 }')"
-check "every job that needs the classifier is a LANES row, and every row such a job" "missing= extra=" \
-  "$(set_gap "$LANE_JOBS" "$GATED")"
+check "every job but the classifier and CI is a LANES row, and every row such a job" "missing= extra=" \
+  "$(set_gap "$(printf '%s\n' "$LANE_ROWS" | cut -d '|' -f 1)" \
+    "$(job_needs "$WORKFLOW" | cut -f 1 | grep -vxF -e changes -e "$CI_JOB")")"
 job_ifs "$WORKFLOW" >"$TMP/job-ifs"
 job_needs "$WORKFLOW" >"$TMP/job-needs"
 gated_lines() { # the `JOB<tab>NEEDS<tab>EXPR` lines of the gated jobs
@@ -268,19 +269,19 @@ reads_own_row() { # WORKFLOW_IF_LINES — `missing=` and `extra=` jobs over ever
   printf '%s' "${gap# }"
 }
 check "each gated job runs exactly where the jobs list names it" "" "$(reads_own_row "$(gated_lines)")"
-FIXED="$(printf '%s\n' "$LANE_ROWS" | awk -F '|' '$3 == "fixed" { print $1 }')"
-[ -n "$FIXED" ] || { echo "LANES holds no fixed job, so the table reader is broken" >&2; exit 1; }
+EARLY="$(printf '%s\n' "$LANE_ROWS" | cut -d '|' -f 1 | grep -vxF -f <(printf '%s\n' "$GATED"))" ||
+  { echo "every LANES job needs the classifier, so the needs reader is broken" >&2; exit 1; }
 while IFS= read -r job; do
-  check "fixed $job starts before the classifier" "" \
-    "$(awk -F '\t' -v j="$job" '$1 == j { print $2 }' "$TMP/job-needs")"
-  for event in merge_group push schedule workflow_dispatch pull_request; do
+  # EVENT:COLUMN, the LANES cell each event reads.
+  for pair in merge_group:3 push:4 schedule:5 workflow_dispatch:6 pull_request:3; do
+    event="${pair%:*}"
     runs=false
-    [ "$event" != merge_group ] || runs=true
-    check "fixed $job runs on $event: $runs" "$runs" \
+    [ "$(lane_cell "$job" "${pair#*:}")" = - ] || [ "$event" = pull_request ] || runs=true
+    check "$job, which starts before the classifier, runs on $event: $runs" "$runs" \
       "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e}}')" \
         "$(awk -F '\t' -v j="$job" '$1 == j { print $2 }' "$TMP/job-ifs")")"
   done
-done <<<"$FIXED"
+done <<<"$EARLY"
 
 # --- 2.2. The jobs output --------------------------------------------------
 # The selection where the select step succeeded, the fallback step's list
@@ -357,7 +358,6 @@ orch_script="$(fetched orch_script)"
 jarvis_change="$(fetched jarvis_change)"
 push_unread="$(fetched push_unread)"
 night_unread="$(fetched night_unread)"
-GROUP_LANES="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog changes ci markdown preflight skill-suites-macos-queue skill-suites-shard smoke ui-tests"
 MAIN_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos-queue skill-suites-shard smoke"
 NIGHT_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke"
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone, whatever
@@ -371,14 +371,18 @@ pull_request|skipped||ci
 merge_group|success|$readme|bot-instructions cargo-linux changes ci markdown preflight
 merge_group|success|$one_skill|bot-instructions cargo-linux catalog changes ci markdown preflight skill-suites-shard
 merge_group|success|$standard_code|bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog changes ci markdown preflight skill-suites-macos-queue skill-suites-shard smoke
-merge_group|failure||$GROUP_LANES
 push|success|$push_unread|$MAIN_JOBS
 push|failure||$MAIN_JOBS
 schedule|success|$night_unread|$NIGHT_JOBS
 schedule|failure||$NIGHT_JOBS
 workflow_dispatch|success||$NIGHT_JOBS
 ROWS
-[ "$event_rows" -ge 10 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
+[ "$event_rows" -ge 9 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
+# A dead classifier's merge group runs exactly CI's needs, besides CI: a
+# merge-group job CI does not hold, or a need no merge group runs, is a gap.
+check "a dead classifier's merge group runs every job CI needs, and only those" "missing= extra=" \
+  "$(set_gap "$(job_needs "$WORKFLOW" | awk -F '\t' -v j="$CI_JOB" '$1 == j { print $2 }' | tr ',' '\n')" \
+    "$(event_jobs "$WORKFLOW" merge_group failure '' | tr ' ' '\n' | grep -vxF -- "$CI_JOB")")"
 
 # --- 2.4. The matrices -----------------------------------------------------
 legs() { # WORKFLOW SELECTION [RESULT] [EVENT] [KEY] [JOB] — what a matrix key expands to, `os` by default
@@ -897,7 +901,7 @@ published_jobs() { # EVENT RESULT SELECTION — the changes job's jobs output
 RESULTS="$(job_needs "$WORKFLOW" | awk -F '\t' -v j="$CI_JOB" '$1 == j { print $2 }' | tr ',' '\n' |
   jq -Rnc '[inputs | select(length > 0) | {key: ., value: {result: "success"}}] | from_entries')"
 check "CI's needs hold every job the table holds" 0 \
-  "$(aggregate "$AGGREGATE" "$(printf '%s\n' "$LANE_ROWS" | awk -F '|' '$3 != "-" && $3 != "fixed" { print $1 }' | jq -Rnc '[inputs]')")"
+  "$(aggregate "$AGGREGATE" "$(printf '%s\n' "$HELD" | jq -Rnc '[inputs]')")"
 
 # A job the selection left out may skip, one it named may not, and a dead
 # classifier's fallback list holds every one: README skips catalog and
@@ -953,9 +957,9 @@ aggregate "$AGGREGATE" "$(published_jobs merge_group success "$readme")" >/dev/n
 check "a held job missing from the needs is named" 1 \
   "$(grep -c '^ci-aggregate: needed-result=absent job=skill-suites-macos-queue$' "$TMP/aggregate-err" || true)"
 
-# The list itself. A waiver for one job reaches no other, and the list is
-# the classifier's: anything else is refused before it can authorize a skip.
-LISTED="$(printf '%s\n' "$LANE_ROWS" | awk -F '|' '$3 != "-" && $3 != "fixed" { print $1 }')"
+# The list itself. A waiver for one job reaches no other, and a list that is
+# not one is refused before it can authorize a skip.
+LISTED="$HELD"
 RESULTS="$(results_of ui-tests=skipped)"
 check "a job the list leaves out may skip" 0 \
   "$(aggregate "$AGGREGATE" "$(grep -vx ui-tests <<<"$LISTED" | jq -Rnc '[inputs]')")"
@@ -968,8 +972,6 @@ RESULTS="$(results_of $(sed 's/$/=skipped/' <<<"$LISTED"))"
 check "an empty list authorizes every lane's skip" 0 "$(aggregate "$AGGREGATE" '[]')"
 check "a list that is no JSON list of names is refused" "2 jobs-unreadable value={}" \
   "$(aggregate "$AGGREGATE" '{}')"
-check "a listed job no table row selects is refused" "2 unknown-job job=preflight" \
-  "$(aggregate "$AGGREGATE" '["preflight"]')"
 
 # A copy of the script parked where the harness-ci scripts are not, and one
 # beside a scripts directory that holds no helper. Exit 1 is the helper's

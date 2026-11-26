@@ -285,21 +285,24 @@ die() { # CAUSE MESSAGE
 #             the cell for that event.
 # A cell is `-` where the job never runs on that event, `on` where it always
 # does and otherwise the selection line that decides it: `true` or a
-# non-empty JSON list runs the job, `false` or `[]` stands it down. `fixed`
-# marks a job CI holds on every merge group that starts before the
-# classifier and reads no selection; its `if:` names the event alone.
-LANES='bot-instructions|Bot instructions|bot_instructions|-|-|-
+# non-empty JSON list runs the job, `false` or `[]` stands it down. A list
+# cell names a shard matrix, whose check name carries the shard at its `*`.
+# Preflight and Markdown start before the classifier, so their `if:` names
+# the merge group alone; their `on` cell lists them for CI to hold.
+# The class cells that are neither `-`, `on` nor a shard list are the
+# boolean lanes select_row writes, in this order.
+LANES='ui-tests|UI (vitest, tsc, biome)|ui|-|-|-
+bot-instructions|Bot instructions|bot_instructions|-|-|-
 skill-suites-shard|Skill suites shard (*, ubuntu-latest)|shards|shards|-|-
 skill-suites-macos|-|-|-|nightly|on
 skill-suites-macos-queue|Skill suites shard (*, macos-latest)|queue_macos_shards|queue_macos_shards|-|-
-ui-tests|UI (vitest, tsc, biome)|ui|-|-|-
-preflight|Preflight (diff-scoped deterministic checks)|fixed|-|-|-
-markdown|Markdown (shape + references)|fixed|-|-|-
+preflight|Preflight (diff-scoped deterministic checks)|on|-|-|-
+markdown|Markdown (shape + references)|on|-|-|-
 cargo-linux|Cargo * (Linux)|cargo_linux|cache_compile|nightly|on
 cargo-macos|macOS cargo *|cargo_macos|cache_compile|nightly|on
 cargo-lint|Cargo lints (clippy, fmt, doc)|cargo_lint|-|-|-
-cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|on|nightly|on
 cargo-tests-windows|Windows cargo (workspace tests)|cargo_windows|cache_compile|nightly|on
+cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|on|nightly|on
 catalog|catalog (*|catalog|on|nightly|on
 smoke|real-CLI round trip|smoke|on|nightly|on'
 
@@ -326,7 +329,7 @@ lane_jobs() { # EVENT WORDS
     job="${row%%|*}"
     cell="$(printf '%s\n' "$row" | cut -d '|' -f "$column")"
     case "$cell" in
-      - | fixed) continue ;;
+      -) continue ;;
       on) ;;
       *)
         if [ "$2" != '*' ]; then
@@ -349,12 +352,12 @@ lane_jobs() { # EVENT WORDS
 }
 
 if [ "${1-}" = --lanes ]; then
-  [ "$#" -eq 1 ] || exit 2
+  [ "$#" -eq 1 ] || die "unexpected-argument mode=--lanes" "--lanes takes no argument"
   printf '%s\n' "$LANES"
   exit 0
 fi
 if [ "${1-}" = --fallback ]; then
-  [ "$#" -eq 1 ] || exit 2
+  [ "$#" -eq 1 ] || die "unexpected-argument mode=--fallback" "--fallback takes no argument"
   [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
     "GITHUB_OUTPUT is unset, so no lane could read the selection"
   fallback="$(lane_jobs "${EVENT:-}" '*')" || exit 2
@@ -364,9 +367,10 @@ if [ "${1-}" = --fallback ]; then
 fi
 
 # select_row prints a class selection as one `name=value` word per lane: the
-# macOS shell bit, `macos`, then one per gated job, JOBS, then `shards=`.
+# macOS shell bit, `macos`, then one per boolean lane, JOBS, then `shards=`.
 # emit() writes the step output derived from it.
-JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check catalog smoke"
+JOBS="$(printf '%s\n' "$LANES" | awk -F '|' '$3 != "-" && $3 != "on" && $3 != "shards" && $3 != "queue_macos_shards" { print $3 }' | paste -sd ' ' -)" &&
+  [ -n "$JOBS" ] || die lanes-unread "LANES names no boolean lane"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The workflow fallback and scheduled matrices are GitHub's entry points

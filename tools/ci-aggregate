@@ -15,9 +15,8 @@
 #
 # RESULTS is `toJSON(needs)`. JOBS is the classifier's `jobs` output, the
 # JSON list of the jobs it selected. Each LANES row whose class cell is not
-# `-` is a job CI holds: a listed one must have succeeded, an unlisted one is
-# authorized to skip, and a `fixed` one must have succeeded whatever the
-# list. GitHub reads CI's `needs:` before any job runs, so a held job absent
+# `-` is a job CI holds: a listed one must have succeeded, and an unlisted
+# one is authorized to skip. GitHub reads CI's `needs:` before any job runs, so a held job absent
 # from RESULTS exits 1 with `ci-aggregate: needed-result=absent job=<name>`:
 # no output can add the edge, and toJSON(needs) omits a job the needs list
 # does not name even while it runs.
@@ -28,8 +27,7 @@
 # dead classifier rather than a parse failure here.
 #
 # Argument refusals start `ci-aggregate: cause=<name>` and exit 2: a JOBS
-# that is not a JSON list of strings, a listed job no LANES row holds, an
-# unreadable table and a helper this script cannot find among them. The
+# that is not a JSON list of strings, an unreadable table and a helper this script cannot find among them. The
 # helper's status rejections pass through unchanged.
 set -euo pipefail
 
@@ -78,26 +76,20 @@ done
 
 lanes="$("$(dirname "$0")/ci-job-set" --lanes)" ||
   die "lanes-unread" "tools/ci-job-set --lanes printed no table"
-# `JOB CELL` for every job CI holds.
-held="$(printf '%s\n' "$lanes" | awk -F '|' 'NF == 6 && $3 != "-" { print $1, $3 }')" && [ -n "$held" ] ||
+# Every job CI holds.
+held="$(printf '%s\n' "$lanes" | awk -F '|' 'NF == 6 && $3 != "-" { print $1 }')" && [ -n "$held" ] ||
   die "lanes-unread" "tools/ci-job-set --lanes held no job"
 
 if [ -n "$jobs" ]; then
   jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 <<<"$jobs" ||
     die "jobs-unreadable value=$jobs" "--jobs is a JSON list of job names"
-  unknown="$(jq -r --arg held "$held" '
-    ($held | split("\n") | map(split(" ") | select(.[1] != "fixed") | .[0])) as $lanes
-    | .[] | select(. as $job | $lanes | index($job) | not)' <<<"$jobs")" ||
-    die "jobs-unreadable value=$jobs" "--jobs is a JSON list of job names"
-  [ -z "$unknown" ] || die "unknown-job job=${unknown%%$'\n'*}" \
-    "the classifier listed a job no LANES row selects"
 fi
 
 authorized=""
 declared=""
-while read -r job cell; do
+while read -r job; do
   declared="$declared --skippable $job"
-  [ -n "$jobs" ] && [ "$cell" != fixed ] || continue
+  [ -n "$jobs" ] || continue
   jq -e --arg job "$job" 'index($job) != null' >/dev/null <<<"$jobs" ||
     authorized="$authorized --skippable $job"
 done <<<"$held"
@@ -119,7 +111,7 @@ accepted="$("$HELPER" --results "$results" --classifier "$classifier" \
   --waiver "$waiver" $authorized)" || exit "$?"
 
 missing="$(jq -r --arg held "$held" '
-  . as $results | $held | split("\n")[] | split(" ")[0] | select(. != "") |
+  . as $results | $held | split("\n")[] | select(. != "") |
   select(. as $job | $results | has($job) | not) |
   "ci-aggregate: needed-result=absent job=\(.)"
 ' <<<"$results")" || exit "$?"

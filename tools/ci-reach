@@ -71,7 +71,7 @@ selected() { # KEY — the selection's value for KEY
 lanes="$("$TOOLS_DIR/ci-job-set" --lanes)" || die lanes-unread
 
 answer() { # NAME — within, outside, or nothing for a name no job maps to
-  local row job="" check jobs shard="" crate="" matrix value
+  local row job="" check="" class rest jobs part crate matrix value
   while IFS= read -r row; do
     check="${row#*|}" check="${check%%|*}"
     [ "$check" != - ] || continue
@@ -79,26 +79,27 @@ answer() { # NAME — within, outside, or nothing for a name no job maps to
     case "$1" in $check) job="${row%%|*}"; break ;; esac
   done <<<"$lanes"
   [ -n "$job" ] || return 0
+  rest="${row#*|}" rest="${rest#*|}" class="${rest%%|*}"
   jobs="$(selected jobs)" || return 2
   value="$(jq -r --arg job "$job" 'index($job) != null' <<<"$jobs")" || die jobs-unread
-  # The matrix inside a selected job: its shard or its crate.
-  case "$value:$job" in
-    true:skill-suites-shard | true:skill-suites-macos-queue)
-      shard="${1#Skill suites shard (}" shard="${shard%, *)}"
-      if [ "$job" = skill-suites-shard ]; then
-        matrix="$(selected shards)" || return 2
-      else
-        matrix="$(selected queue_macos_shards)" || return 2
-      fi
-      value="$(jq -r --arg shard "$shard" 'index($shard) != null' <<<"$matrix")" || die shards-unread
-      ;;
-    true:cargo-linux)
-      crate="${1#Cargo }" crate="${crate% (Linux)}"
-      matrix="$(selected cargo_linux_matrix)" || return 2
-      value="$(jq -r --arg crate "$crate" '. == null or any(.include[]; .crate == $crate)' <<<"$matrix")" ||
-        die cargo-matrix-unread
-      ;;
-  esac
+  if [ "$value" = true ] && [ "$class" != on ]; then
+    matrix="$(selected "$class")" || return 2
+    # A list cell names a shard matrix: the check names its shard at the
+    # glob's `*`.
+    case "$matrix" in
+      '['*)
+        part="${1#"${check%%\**}"}" part="${part%"${check#*\*}"}"
+        value="$(jq -r --arg part "$part" 'index($part) != null' <<<"$matrix")" || die shards-unread
+        ;;
+    esac
+  fi
+  # The cargo-linux matrix narrows its crates inside a selected job.
+  if [ "$value:$job" = true:cargo-linux ]; then
+    crate="${1#Cargo }" crate="${crate% (Linux)}"
+    matrix="$(selected cargo_linux_matrix)" || return 2
+    value="$(jq -r --arg crate "$crate" '. == null or any(.include[]; .crate == $crate)' <<<"$matrix")" ||
+      die cargo-matrix-unread
+  fi
   case "$value" in
     true) echo within ;;
     false) echo outside ;;

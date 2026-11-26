@@ -171,26 +171,13 @@ jobs:
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
-      shell_shards: ${{ steps.select.outputs.shell_shards }}
-      shell_os: ${{ steps.select.outputs.shell_os }}
-      ui: ${{ steps.select.outputs.ui }}
-      bot_instructions: ${{ steps.select.outputs.bot_instructions }}
-      cargo_linux: ${{ steps.select.outputs.cargo_linux }}
       cargo_linux_matrix: ${{ steps.select.outputs.cargo_linux_matrix }}
-      cargo_macos: ${{ steps.select.outputs.cargo_macos }}
-      cargo_lint: ${{ steps.select.outputs.cargo_lint }}
-      cargo_windows: ${{ steps.select.outputs.cargo_windows }}
-      cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
-      catalog: ${{ steps.select.outputs.catalog }}
-      smoke: ${{ steps.select.outputs.smoke }}
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
       skipped_suites_macos: ${{ steps.select.outputs.skipped_suites_macos }}
       rust_targets: ${{ steps.select.outputs.rust_targets }}
-      cache_compile: ${{ steps.select.outputs.cache_compile }}
       runtime_publish: ${{ steps.select.outputs.runtime_publish }}
-      nightly: ${{ steps.select.outputs.nightly }}
       # The jobs every gated job's `if:` reads its own id in: the selection
       # where it was made, else the event's whole job set the fallback step
       # wrote first. GitHub evaluates a job's outputs after its steps
@@ -226,9 +213,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # Every job the event can run, written before anything can fail, so a
-      # classification that dies still runs them. A manual dispatch runs it
-      # alone, since its night is always whole.
+      # Every job the event can run, written as soon as the checkout that
+      # carries tools/ci-job-set is in place, so a classification that dies
+      # still runs them. A changes job lost before this step runs no lane,
+      # and CI is red on `changes`. A manual dispatch runs it alone, since
+      # its night is always whole.
       - id: fallback
         run: tools/ci-job-set --fallback
       - name: the classifier, from the default branch
