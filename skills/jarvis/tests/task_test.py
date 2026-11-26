@@ -293,21 +293,30 @@ class TaskContract(unittest.TestCase):
     def screen_launch(self, harness, name):
         # The startup bound ends at the first reading agent-runtime takes once
         # the screen native has drawn its fixture, so a pane that never draws
-        # a ready prompt answers then rather than at CALL_SECONDS.
+        # a ready prompt answers then rather than at CALL_SECONDS. The bound
+        # cuts once, so rollback's close keeps its own 3-second budget, and
+        # a stop held past 0.5 s still closes the window inside it.
         code = """
 import sys,time
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 import task
 original=task.Task.inspected
+runtime=task.Task.runtime
 home=Path(sys.argv[2])
 def inspected(self):
     drawn=home.joinpath('drawn-'+self.path.stem).exists()
     seen=original(self)
-    if drawn and seen['state']['state'] not in ('idle','working'):
+    if drawn and seen['state']['state'] not in ('idle','working') and not getattr(self,'bounded',False):
+        self.bounded=True
         self.deadline=time.monotonic()+0.5
     return seen
+def held(self,*args,**options):
+    if args[:1]==('stop',):
+        time.sleep(0.6)
+    return runtime(self,*args,**options)
 task.Task.inspected=inspected
+task.Task.runtime=held
 sys.argv=[sys.argv[0],*sys.argv[3:]]
 sys.exit(task.main())
 """
