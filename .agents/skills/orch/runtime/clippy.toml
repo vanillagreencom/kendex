@@ -68,6 +68,7 @@ disallowed-methods = [
     { path = "agent_runtime::session::user_turns", reason = "a session file is read only through the operation handle" },
     { path = "agent_runtime::session::identify", reason = "a session file is read only through the operation handle" },
     { path = "agent_runtime::session::fixed_file", reason = "a session file is named only through the operation handle" },
+    { path = "agent_runtime::session::fixed_id_file", reason = "a session file is named only through the operation handle" },
     { path = "agent_runtime::session::default_home", reason = "a harness home is resolved only through the operation handle" },
     { path = "agent_runtime::session::fresh_session_id", reason = "a session id is minted only through the operation handle" },
     # the job launcher's record

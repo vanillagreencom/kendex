@@ -161,12 +161,13 @@ pub fn recovery_walk(caller: &Caller, harness: Harness, leaving: Leaving) -> Wal
 /// The company whose service a session on `harness` running `model` sends
 /// its turns to, which every account and harness on that service shares: a
 /// Pi model's `provider/` word names it, a `pi-claude/` model running on a
-/// Claude seat and a `github-copilot/` one on the Copilot pool
+/// Claude seat, an `openai-codex/` one on the ChatGPT Codex service Codex
+/// itself spends, and a `github-copilot/` one on the Copilot pool
 /// (`Harness::billed`, `Harness::pool`).
 fn provider(harness: Harness, model: &str) -> &str {
     match (harness, model.split_once('/')) {
         (Harness::Claude, _) | (Harness::Pi, Some(("pi-claude" | "anthropic", _))) => "anthropic",
-        (Harness::Codex, _) | (Harness::Pi, Some(("openai", _))) => "openai",
+        (Harness::Codex, _) | (Harness::Pi, Some(("openai" | "openai-codex", _))) => "openai",
         (Harness::Copilot, _) | (Harness::Pi, Some(("github-copilot", _))) => "github",
         (Harness::Pi, Some((service, _))) => service,
         (Harness::Pi, None) => "pi",
@@ -641,7 +642,7 @@ mod tests {
             &'a [&'a str],
             bool,
         );
-        let rows: [Row; 4] = [
+        let rows: [Row; 5] = [
             (
                 "claude account",
                 caller(Harness::Claude, "/a/a1", "opus"),
@@ -667,6 +668,19 @@ mod tests {
                 Some(
                     "claude:standard:high,pi:pi-claude/opus:high,pi:anthropic/claude-x:high,codex:standard:high,pi:openai/gpt-5:high,pi:google/gemini:high",
                 ),
+                &[],
+                false,
+            ),
+            // Pi's `openai-codex/` model is the ChatGPT Codex service Codex
+            // spends (harness.rs's real-example row names
+            // `openai-codex/gpt-5.5`).
+            (
+                "codex provider",
+                caller(Harness::Codex, "/c/c1", ""),
+                Leaving::Provider {
+                    preference: "codex:standard:high,pi:openai-codex/gpt-5.5:high,copilot:standard:high",
+                },
+                Some("copilot:standard:high"),
                 &[],
                 false,
             ),

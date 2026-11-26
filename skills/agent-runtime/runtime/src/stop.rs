@@ -56,7 +56,7 @@ pub enum Kind {
 ///   a 429, which is `rate_limit` (`copilot-*.jsonl`). Its sign-in and quota
 ///   types are the categories Copilot CLI 1.0.116's SDK names
 ///   (`copilot-sdk/generated/session-events.d.ts`, `ErrorData.errorType`).
-/// - `api-error`: the watch's word for a Codex or Copilot turn whose pane
+/// - [`API_ERROR`]: the watch's word for a Codex or Copilot turn whose pane
 ///   shows the provider's error (`crate::observe::IdleTurn::ApiError`).
 /// - Pi's `error`: the carrier's StopFailure and a lane Stop row's
 ///   `stop_reason`. Pi's limit and sign-in are read from the message
@@ -83,19 +83,23 @@ const WORDS: &[(Harness, &str, Kind)] = &[
     (Harness::Codex, "server_overloaded", Kind::Provider),
     (Harness::Codex, "other", Kind::Provider),
     (Harness::Codex, "invalid_prompt", Kind::Provider),
-    (Harness::Codex, "api-error", Kind::Provider),
+    (Harness::Codex, API_ERROR, Kind::Provider),
     (Harness::Copilot, "rate_limit", Kind::Usage),
     (Harness::Copilot, "quota", Kind::Usage),
     (Harness::Copilot, "session_limits", Kind::Usage),
     (Harness::Copilot, "authentication", Kind::Auth),
     (Harness::Copilot, "authorization", Kind::Auth),
     (Harness::Copilot, "query", Kind::Provider),
-    (Harness::Copilot, "api-error", Kind::Provider),
+    (Harness::Copilot, API_ERROR, Kind::Provider),
     (Harness::Pi, "error", Kind::Provider),
 ];
 
 /// The rows reader's word for Claude Code's safety refusal.
 pub const REFUSAL: &str = "refusal";
+
+/// The watch's word for a Codex or Copilot turn whose pane shows the
+/// provider's error: the cause its resume row names.
+pub const API_ERROR: &str = "api-error";
 
 /// The marks of Claude Code 2.1.332's safety refusal, each a string its
 /// bundle builds: the usage-policy link, under "can't help with this"

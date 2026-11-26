@@ -1,7 +1,9 @@
 //! The owner's alert through the overseer mailbox: a watch duty's one way
 //! to tell the owner of an overseer condition nobody in the session can act
-//! on. Three duties take it: the overseer duty for a context gap that stands
-//! and for an overseer whose session has ended (`watch::overseer`), the
+//! on. Three duties take it: the overseer duty for a context gap that stands,
+//! for an overseer whose session has ended, for an ended sign-in it moves
+//! the overseer off and for a succession that found no successor
+//! (`watch::overseer`), the
 //! wake duty for an idle overseer holding the owner's unread mail that no
 //! wake reached (`watch::wake`), and the GitHub duty for a sign-in the
 //! credential ladder cannot renew (`watch::github`).

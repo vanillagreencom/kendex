@@ -68,7 +68,7 @@ use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::session;
-use agent_runtime::stop::reset;
+use agent_runtime::stop::{self, reset};
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -265,7 +265,7 @@ impl Readers<'static> {
             cwd: &Path,
             id: &str,
         ) -> Reading<Option<session::Failure>> {
-            match session::fixed_id_file(harness, home, cwd, id) {
+            match agent_runtime::effects::fixed_id_file(harness, home, cwd, id) {
                 Reading::Live(file) => session::last_failure(harness, &file),
                 Reading::Gone => Reading::Gone,
                 Reading::Unreadable { cause } => Reading::Unreadable { cause },
@@ -464,7 +464,7 @@ pub fn classify(inputs: &Inputs) -> LaneState {
     let screen_state = match pane.state {
         State::Idle => LaneState::Idle {
             capacity: pane.idle == Some(IdleTurn::Capacity),
-            cause: (pane.idle == Some(IdleTurn::ApiError)).then(|| "api-error".to_owned()),
+            cause: (pane.idle == Some(IdleTurn::ApiError)).then(|| stop::API_ERROR.to_owned()),
         },
         State::Working => LaneState::Working,
         State::Asking { .. } => LaneState::Asking,
@@ -1915,7 +1915,7 @@ fn wall(
                 out.changes.push(set(
                     wake::RESUME_KIND,
                     lane,
-                    format!("usage-limit|{identity}|{at}"),
+                    format!("{}|{identity}|{at}", wake::WALL_CAUSE),
                 ));
             } else {
                 notes.push("resume unreached".to_owned());

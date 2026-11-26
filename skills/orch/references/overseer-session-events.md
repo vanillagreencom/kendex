@@ -8,7 +8,7 @@ Once per pass, the watch judges the recorded controller's session, account and c
 
 - Dead controller: the watch requests `request-transfer` with `cause: dead`, from the pending successor or the recorded launch fields and handoff. A record that supplies neither, the line's `record=`, gets no request.
 - Walled controller, or live controller on its credit reserve: the watch requests `request-transfer` with `cause: walled`, and the overseer walk excludes the spent account.
-- Under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, the watch requests no recovery for a dead, walled or reserve controller.
+- Under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, the watch requests no recovery for a dead, walled or reserve controller, and a provider stop is only resumed.
 
 Recovery opens a fresh session, never a native resume. A Codex or Copilot controller's failed turn is read from its own session record, so a Copilot 429 rate limit walls it whatever its account reads.
 
@@ -16,11 +16,13 @@ Recovery opens a fresh session, never a native resume. A Codex or Copilot contro
 
 The watch recovers a stopped overseer by the stop's kind, which agent-runtime names, with nobody typing:
 
-1. A usage limit, spent credit or an empty pool is the account's limit. The overseer moves to the first account with room in the walk. If no account has room and the account's reset is known, the watch waits for the reset and the wake resumes the overseer on its own account once that account reads room.
-2. An ended or refused sign-in moves the overseer to another account at once, never back to the same one. The owner gets one notice naming the account to sign in again.
-3. An overload, a server error, a broken stream, a network drop, a safety flag or Codex's capacity refusal is the provider not answering. The wake resumes the overseer on its own account once per pass. The first turn that returns ends the episode. After 30 minutes the overseer moves to the first entry with room on another provider. With no such entry it is resumed still.
-4. A case nothing recovers reaches the owner once, with its cause: a wall the walk finds no successor for and no known reset, or a transfer the watch asks no more.
-5. The owner's notices go through the overseer mailbox's owner channel, once per episode.
+1. A usage limit, spent credit or an empty pool is the account's limit. The overseer moves to the first account with room in the walk. If no account has room, the watch waits for the known reset and the wake resumes the overseer on its own account once that account reads room. The reset is the one the wall's own words state, else, for a wall the account reading confirmed, that account's reset. A failed turn the session's own record holds, such as Copilot's 429 rate limit, takes its own words alone. Once the reset passes, the watch judges the wall again.
+2. An ended or refused sign-in moves the overseer to another account at once, never back to the same one. The owner gets one notice naming the account to sign in again. With no other account, the owner is told at once: the watch waits for no reset.
+3. An overload, a server error, a broken stream, a network drop, a safety flag or Codex's capacity refusal is the provider not answering. The wake resumes the overseer on its own account once per pass. The first turn that returns ends the episode, and so does a failure read after 30 minutes with none read. After 30 minutes the overseer moves to the first entry with room on another provider, a move asked and retried as any recovery is. With no such entry, or a move refused or asked no more, it is resumed still.
+4. A case nothing recovers reaches the owner once, with its cause: a usage wall the walk finds no successor for and no known reset, an ended sign-in with no other account, or a transfer the watch asks no more.
+5. The owner's notices go through the overseer mailbox's owner channel, once per episode. A notice the channel did not take is sent again on each pass until it lands.
+
+A walk that is refused or cannot read a provider's accounts, or an account reading that cannot answer, decides nothing: the watch judges the stop again on the next pass.
 
 A usage-limit banner on the overseer's pane proves no wall by itself: the pane also relays lane banners. A current login wall needs no usage confirmation.
 
@@ -29,9 +31,11 @@ A usage-limit banner on the overseer's pane proves no wall by itself: the pane a
 The line announces a recovery; the duty's next run submits its request. An admitted transfer is not confirmed: its open intent owns completion. The outcomes land on the watch's stderr, `oversee-watch.err` beside the fleet state:
 
 - `transfer-refused cause=[KEY]` under a `watch-step-failed` line: the request was refused. The recovery stays announced, and the next pass asks again.
+- `successor-unread cause=[LINE]` or `account-unread cause=[CAUSE]` under a `watch-step-failed` line: the walk or the account reading could not answer. The recovery stays as it was, and the next pass judges again.
 - `overseer-relaunch-failed pane=[PANE] attempt=[N] retry=[pending|exhausted] step=[STEP]`, or `overseer-capacity-failed` for a reserve recovery: the transfer failed. `retry=pending` asks again on the duty's next run: a dead recovery once more, a walked recovery while each failure leaves its successor's account unproved, which the next walk holds out. Read the failed intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
 - `overseer-provider-move pane=[PANE] cause=[CAUSE] since=[EPOCH] intent=[INTENT]`: a provider stop past 30 minutes asked the move to another provider.
-- `overseer-notice-sent pane=[PANE] notice=[auth|no-successor]`: the owner got the episode's notice, `overseer-auth-wall.txt` or `overseer-no-successor.txt` in the fleet state directory.
+- `overseer-notice-sent pane=[PANE] notice=[auth|no-successor]`: the owner got the episode's notice, `overseer-auth-wall.txt` or `overseer-no-successor.txt` in the fleet state directory. `overseer-notice-failed` says a send the next pass repeats.
+- `overseer-record-unreadable pane=[PANE] harness=[HARNESS] cause=[CAUSE]`: a Codex or Copilot controller's own session record could not be read, so its hook rows were judged alone.
 
 Replace the overseer by hand ([oversee.md § Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption)):
 
