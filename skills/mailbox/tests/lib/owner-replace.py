@@ -144,6 +144,8 @@ elif args[:2] == ["comments", "update"]:
     row["body"] = Path(option("--body-file")).read_text()
     save()
     print(json.dumps({"success": True, "identifier": None, "url": None, "data": {"success": True}}))
+elif args[:2] == ["comments", "react"]:
+    print(json.dumps({"success": True, "data": {"reaction": {"emoji": option("--emoji")}}}))
 elif args[:2] == ["comments", "bulk-get"]:
     print(json.dumps({row["id"]: {"url": row["url"]} for row in comments
                       if row["id"] in positional() and row["issue"] != "deleted"}))

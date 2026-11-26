@@ -74,6 +74,9 @@ case "$1:$2" in
       *) exit 1 ;;
     esac ;;
   comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n' ;;
+  comments:react)
+    if [[ -e "$FIXTURE/react-fails" ]]; then cat "$FIXTURE/react-fails" >&2; exit 1; fi
+    printf '{"success":true,"data":{"reaction":{"emoji":"eyes"}}}\\n' ;;
   comments:bulk-list)
     [[ ! -e "$FIXTURE/unread-comments" ]] || exit 1
     cat "$FIXTURE/comments" ;;
@@ -110,6 +113,8 @@ esac
     assert again == rows, again
     calls = (root / 'calls').read_text().splitlines()
     assert sum(line.startswith('comments bulk-list ') for line in calls) == len(root_cases) + 1
+    # The answer's first delivery marks it; every later pass delivers nothing new and marks nothing.
+    assert [line for line in calls if line.startswith('comments react ')] == ['comments react answer --emoji eyes'], calls
     assert any(line.startswith('issues update KEN-7 --description **Owner, what you do:** Approve change') for line in calls)
     for name, malformed in [('non-string-id', [dict(id=42, description='Body', assignee='Owner')]),
                              ('non-string-description', [dict(id='KEN-7', uuid='uuid-KEN-7', description=42, assignee='Owner')]),
@@ -151,12 +156,28 @@ esac
         unread = call('owner-answers', '--item', 'overseer')
         assert unread.stdout.splitlines()[-1] == 'owner-answers: read=unread', unread
         assert unread.stderr == 'KEN-3624-unread cause=comments-format\n', unread
-    comments.append(dict(id='later-answer', body='later', user_email='owner@example.test', created_at='2026-01-04T00:00:00Z'))
-    (root / 'comments').write_text(json.dumps({'KEN-7': comments}))
-    for _ in range(2):
-        call('owner-answers', '--item', 'overseer')
-        rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')]
-        assert [row['text'] for row in rows] == ['answer', 'later'], rows
+    # A failed reaction keeps the delivery and prints one keyed line, never the
+    # tracker's stderr: a quota receipt there would read as a held pass.
+    quota = json.dumps(dict(code='RATELIMITED', quota=dict(status='missing', reset='unavailable', reset_epoch=None, limit='requests')))
+    texts = ['answer']
+    for day, (cause, refusal) in enumerate([('quota', quota), ('reaction-failed', '{"error":"Entity not found: Comment"}')], 4):
+        id = f'answer-{cause}'
+        comments.append(dict(id=id, body=cause, user_email='owner@example.test', created_at=f'2026-01-0{day}T00:00:00Z'))
+        (root / 'comments').write_text(json.dumps({'KEN-7': comments}))
+        (root / 'react-fails').write_text(refusal + '\n')
+        texts.append(cause)
+        for attempt in range(2):
+            before = len((root / 'calls').read_text().splitlines())
+            result = call('owner-answers', '--item', 'overseer')
+            reacts = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('comments react ')]
+            assert reacts == ([f'comments react {id} --emoji eyes'] if attempt == 0 else []), (cause, attempt, reacts)
+            assert result.stderr == (f'owner-answers: unmarked issue=KEN-7 comment={id} cause={cause}\n' if attempt == 0 else ''), result
+            assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
+            receipts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+            assert [r['comment'] for r in receipts if r['kind'] == 'delivered'] == ([id] if attempt == 0 else []), result
+            rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')]
+            assert [row['text'] for row in rows] == texts, rows
+    (root / 'react-fails').unlink()
     message.write_text('Approve the explicit-root change?\n')
     call('ask', '--item', 'overseer', '--root', str(worktree), '--to', 'owner', '--issue', 'KEN-7',
          '--do', 'Approve explicit-root change', '--options', 'approve,hold', '--recommend', 'approve',
