@@ -348,6 +348,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `class`, `class_reason`, `class_missed` | The model class the assignment runs at (`top`, `standard`, `light`, `fast`), its reason, and a retired attempt below `standard`. |
 | `session_id`, `session_since`, `launched_at`, `running_at` | The bound harness session; the UTC time the launch or relaunch started; the first launch's time; the time the lane read `running`. |
 | `status` | `preparing`, `running`, `stopped`, `parked` or `done`. |
+| `restart_closed` | The intent id of the `restart-recovery` close that left the lane `stopped` with no successor launch. |
 | `over_cap`, `reservation` | The over-cap reason a launch passed, and `{reason, until}`, a finite hold on the cap slot. |
 | `touched`, `in_scope`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
 | `obligation` | `{repo, item, parent_repo, parent_item}`, the item's original lineage. |
@@ -380,6 +381,8 @@ The members' rules, in the table's order:
 - `allow_all`: whether a Copilot lane's line grants the full allow-all mode; it is null on every other harness.
 - `class_missed`, `{class, cause, at}`, stands after a `no_landing` close retired an attempt below `standard`. While it stands, no launch below `standard` runs the item.
 - `launched_at`: the first record's `launched_at` is the fleet start the watch's `--since` takes.
+- `restart_closed`: a confirmed `restart-recovery` close writes it. A confirmed launch and a confirmed close on any other ground remove it.
+- `restart_closed`: on a `stopped` lane, `lane relaunch` sends the launch alone, and `jarvis-session resume` selects the lane beside the `running` ones ([lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch)).
 - `reservation`: `reserve-lane` or `park-lane` writes it; a relaunch, `release-lane` and a confirmed close drop it.
 - `touched`, `in_scope`, `carried`: [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) and [§ Caps](../references/lane-directive.md#caps) state the judgement.
 - `obligation`: the parent pair is named together or null together.

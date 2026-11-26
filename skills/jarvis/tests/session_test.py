@@ -1362,13 +1362,20 @@ print(json.dumps(session.terminal(status)))
         # live lane (skills/orch/tests/rust/effects.rs lane-live): nothing
         # starts and it succeeds, a linked worktree of a checkout passed over.
         # A checkout not mounted yet then fails it, beside an overseer whose
-        # start failed for another cause.
+        # start failed for another cause. KEN-6's relaunch closed it and then
+        # failed its launch, so orch left it stopped and marked with that
+        # close (skills/orch/tests/rust/effects.rs
+        # lane_relaunch_whose_launch_fails_after_the_close_names_the_close):
+        # each rerun relaunches it.
+        subprocess.run([str(SKILLS / "orch/scripts/orch-runtime"), "state", "set", "--fleet", "/lanes",
+                        json.dumps([lane("KEN-6", status="stopped", restart_closed="i8")])],
+                       cwd=c, env=clean, check=True, capture_output=True)
         lane_live = lambda item: {"code": 1, "stdout": json.dumps({"protocol": "orch-runtime-v1", "ok": False, "refusal": {
             "key": "lane-live", "fields": [["item", item], ["status", "running"]]}}) + "\n"}
         resume_failed = lambda intent, note: {"code": 3, "stdout": "controller-resume-failed intent=" + intent + " note="
                                                                    + note + " cause=x\n"}
         live = [delegate("resumed"), ("resumed", {"kind": "overseer", "checkout": str(a)}),
-                lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2")]
+                lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"), lane_line("resumed", c, "KEN-6")]
         unmounted = self.root / "unmounted"
         for listed, overseer_answer, expected, exit in (
                 ([{"folder": str(self.root / "a-linked"), "state": "ok", "worktree": {"main": str(a)}}],
@@ -1382,9 +1389,10 @@ print(json.dumps(session.terminal(status)))
             answers.write_text(json.dumps({
                 str(a) + " resume-controller --fleet": overseer_answer,
                 str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
-                str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2")}))
+                str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2"),
+                str(c) + " lane relaunch --fleet KEN-6": resumed_line("resumed item=KEN-6 route=resume account=-")}))
             registry.write_text(json.dumps([{"folder": str(folder), "state": "ok", "worktree": None}
-                                            for folder in (self.home, a)] + listed))
+                                            for folder in (self.home, a, c)] + listed))
             lines, code, err = resume()
             self.assertEqual((lines, code), (expected, exit), err + self.diagnostics())
             self.assertEqual(len(self.started()), 2, self.started())

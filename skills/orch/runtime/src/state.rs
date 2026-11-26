@@ -751,6 +751,16 @@ impl Lane {
         (!self.read_only).then(|| format!("Admitted paths: {list}"))
     }
 
+    /// The [`RESTART_CLOSED`] close that left this lane stopped with no
+    /// successor launch, by its intent id; none while a launch is on the
+    /// lane, whose outcome settles the mark.
+    pub fn restart_closed(&self) -> Option<&str> {
+        if self.status != LaneStatus::Stopped {
+            return None;
+        }
+        self.extra.get(RESTART_CLOSED).and_then(Value::as_str)
+    }
+
     /// Whether the lane delivers `item`: its own, or one joined to it.
     pub fn carries(&self, item: &str) -> bool {
         self.item == item || self.carried.iter().any(|c| c.item == item)
@@ -901,6 +911,14 @@ pub const STANDING: &str = "standing";
 /// not confirmed: a stopped lane whose sandbox stands because its park
 /// failed, told apart from one an operator kept.
 pub const PARK_OWED: &str = "park_owed";
+
+/// The lane field a confirmed `restart-recovery` close writes, holding that
+/// close's intent id: orch's own restart relaunch left the lane `stopped`
+/// and no successor launch has confirmed. `lane relaunch` sends the launch
+/// alone over it, and Jarvis resume selects such a lane beside the running
+/// ones. A confirmed launch and a confirmed close on any other ground
+/// remove it.
+pub const RESTART_CLOSED: &str = "restart_closed";
 
 /// What a close does with its lane's sandbox: ends it (`full`), keeps it
 /// standing (`keep`), or keeps it for the park's stop (`park`). A repeated

@@ -23,12 +23,22 @@ type Brief = fn(&Lane, Harness) -> std::result::Result<String, String>;
 /// relaunch names them: its brief and its two requests.
 const STEM: &str = "restart-relaunch";
 
-/// A composed restart relaunch: its close and launch requests, in the
-/// order they apply, and the account the launch names.
+/// A composed restart relaunch: its close, then its launch request, and
+/// the account the launch names.
 pub struct Relaunch {
-    pub close: PathBuf,
+    pub close: Close,
     pub launch: PathBuf,
     pub account: Option<String>,
+}
+
+/// What retires the lane's last attempt before the launch.
+pub enum Close {
+    /// The `restart-recovery` close request, sent first.
+    Request(PathBuf),
+    /// The `restart-recovery` close an earlier relaunch confirmed before its
+    /// launch failed, by its intent id: the lane stands stopped, so the
+    /// launch goes alone.
+    Confirmed(String),
 }
 
 /// The relaunch of `item`'s local lane from its record, once its session
@@ -40,8 +50,10 @@ pub struct Relaunch {
 /// retires anything; then the
 /// record's own relaunch on that account and the start brief, which
 /// continues from the item's standing handoff, retiring the predecessor on
-/// the `restart-recovery` ground. Where no handoff stands, the session
-/// ended mid-work, so the brief is the interrupted start brief; a handoff
+/// the `restart-recovery` ground; on a lane such a close already left
+/// stopped with no successor launch, the launch goes alone. Where no
+/// handoff stands, the session ended mid-work, so the brief is the
+/// interrupted start brief; a handoff
 /// place that cannot be read refuses `handoff-unreadable`, since either
 /// brief would state a reading that was never made. A record with no
 /// account is judged on none and launches on none. A hosted lane runs
@@ -108,6 +120,10 @@ pub fn composed(
         &settings.state_dir,
     )
     .map_err(|cause| refused("relaunch-unprepared", &[("item", item), ("cause", &cause)]))?;
+    let close = match lane.restart_closed() {
+        Some(id) => Close::Confirmed(id.to_owned()),
+        None => Close::Request(close),
+    };
     Ok(Relaunch {
         close,
         launch,

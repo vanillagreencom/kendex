@@ -812,7 +812,10 @@ enum LaneOp {
     /// `close-failed` on stderr at exit 3, one still open `close-unconfirmed`
     /// at 75, with nothing launched; a launch that failed or was refused
     /// after the close is `launch-failed ... close=ID` at 3, one still open
-    /// `launch-unconfirmed ... close=ID` at 75. Every refusal at exit 1
+    /// `launch-unconfirmed ... close=ID` at 75. A lane whose relaunch close
+    /// confirmed and whose launch failed reads stopped with
+    /// `restart_closed`; its next relaunch sends the launch alone, its lines
+    /// naming that close as `close=ID`. Every refusal at exit 1
     /// closes nothing: `server-socket-unrecorded`, `lane-missing`,
     /// `lane-hosted`, `lane-live` where the lane's session still runs,
     /// `handoff-unreadable` where a handoff place cannot be read,
@@ -3867,9 +3870,10 @@ fn applied_live(
 /// The local lane `item` relaunched from its record on the controller
 /// record's server: both requests composed and admitted before the close,
 /// so every refusal at exit 1 leaves the lane as it stood; then the close,
-/// and only after a confirmed close the launch. Every answer after the
-/// close names its outcome, the line printed and the process ended by its
-/// status.
+/// and only after a confirmed close the launch. A lane an earlier
+/// relaunch's close left stopped takes the launch alone, its lines naming
+/// that close. Every answer after the close names its outcome, the line
+/// printed and the process ended by its status.
 fn relaunch_lane(
     path: &Path,
     item: &str,
@@ -3880,37 +3884,18 @@ fn relaunch_lane(
 ) -> Result<serde_json::Value> {
     let settings = on_recorded_server(settings, path)?;
     let relaunch = effects::relaunch::composed(&settings, path, item, host, now)?;
-    let close = admitted(path, read_request(&relaunch.close)?, &settings)?;
-    let launch = admitted(path, read_request(&relaunch.launch)?, &settings)?;
-    let closed = match applied_live(path, close, &settings, locking) {
-        Ok(closed) => closed,
-        Err(Error::Persisted { intent, error }) => answered(
-            false,
-            &format!(
-                "orch-runtime: close-unconfirmed item={item} intent={intent} {}",
-                refusal_words(&error)
-            ),
-            agent_runtime::effects::UNCONFIRMED_EXIT,
-        ),
-        Err(e) => return Err(e),
+    let close = match relaunch.close {
+        effects::relaunch::Close::Request(request) => {
+            let close = admitted(path, read_request(&request)?, &settings)?;
+            Retire::Send(Box::new(close))
+        }
+        effects::relaunch::Close::Confirmed(id) => Retire::Sent(id),
     };
-    let close_id = &closed.intent().id;
-    match closed.status() {
-        0 => {}
-        3 => answered(
-            false,
-            &format!(
-                "orch-runtime: close-failed item={item} intent={close_id} {}",
-                observed(closed.intent())
-            ),
-            3,
-        ),
-        status => answered(
-            false,
-            &format!("orch-runtime: close-unconfirmed item={item} intent={close_id}"),
-            status,
-        ),
-    }
+    let launch = admitted(path, read_request(&relaunch.launch)?, &settings)?;
+    let close_id = match close {
+        Retire::Send(close) => relaunch_closed(path, item, *close, &settings, locking)?,
+        Retire::Sent(id) => id,
+    };
     // The lane is closed: a refusal of its launch from here on is a failed
     // launch, never an exit 1 that reads as nothing done.
     let launched = match applied_live(path, launch, &settings, locking) {
@@ -3963,6 +3948,53 @@ fn relaunch_lane(
                 "orch-runtime: launch-unconfirmed item={item} intent={} close={close_id}",
                 intent.id
             ),
+            status,
+        ),
+    }
+}
+
+/// A relaunch's close: one to send before its launch, or the confirmed
+/// close, by its intent id, that already left the lane stopped.
+enum Retire {
+    Send(Box<Admitted>),
+    Sent(String),
+}
+
+/// The relaunch's close applied, its intent id once confirmed. A close that
+/// failed or stays open ends the process on its line, with nothing launched.
+fn relaunch_closed(
+    path: &Path,
+    item: &str,
+    close: Admitted,
+    settings: &Settings,
+    locking: Locking,
+) -> Result<String> {
+    let closed = match applied_live(path, close, settings, locking) {
+        Ok(closed) => closed,
+        Err(Error::Persisted { intent, error }) => answered(
+            false,
+            &format!(
+                "orch-runtime: close-unconfirmed item={item} intent={intent} {}",
+                refusal_words(&error)
+            ),
+            agent_runtime::effects::UNCONFIRMED_EXIT,
+        ),
+        Err(e) => return Err(e),
+    };
+    let close_id = &closed.intent().id;
+    match closed.status() {
+        0 => Ok(close_id.clone()),
+        3 => answered(
+            false,
+            &format!(
+                "orch-runtime: close-failed item={item} intent={close_id} {}",
+                observed(closed.intent())
+            ),
+            3,
+        ),
+        status => answered(
+            false,
+            &format!("orch-runtime: close-unconfirmed item={item} intent={close_id}"),
             status,
         ),
     }

@@ -788,7 +788,9 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
 /// A relaunch whose launch fails after a confirmed close, here on a
 /// recorded socket whose directory its server may not bind in, answers
 /// `launch-failed` at exit 3 naming the close's intent and the server's own
-/// line: the one signal that the lane now stands closed.
+/// line, and leaves the lane stopped and marked with that close. The next
+/// relaunch, once the server can bind, sends the launch alone and runs the
+/// lane, with no second close.
 #[test]
 fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     use std::os::unix::fs::PermissionsExt;
@@ -831,11 +833,24 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
         .find(|l| !l.trim().is_empty())
         .unwrap_or_else(|| panic!("the server said nothing: {line}"));
     assert!(line.ends_with(&format!(" detail={said}")), "{line}");
-    assert_ne!(
-        fleet["lanes"][0]["status"], "running",
-        "{}",
-        fleet["lanes"][0]
-    );
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["restart_closed"], closes[0], "{lane}");
+    let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();
+    assert_eq!(again.status.code(), Some(0), "{line} {}", stderr(&again));
+    assert!(line.starts_with("resumed item=KEN-1 "), "{line}");
+    let fleet = runner.fleet();
+    let closes = fleet["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-1")
+        .count();
+    assert_eq!(closes, 1, "the rerun sends no second close");
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane.get("restart_closed"), None, "{lane}");
 }
 
 /// A launch whose server is gone from a socket the controller record does
