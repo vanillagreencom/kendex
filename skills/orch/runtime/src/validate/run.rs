@@ -1405,13 +1405,17 @@ pub fn stop_worktree(
     Ok(stopped)
 }
 
-/// End a run's command group, then its runner, by the identities its own
-/// files record. The `stop` file tells `--record` and `--wait` a stop ended
-/// the run, so they read it `stopped`: it is written before the end it
-/// records, first on a run whose stage records the stop (`staged`), since
-/// that stage's close reads `stopped` whatever the stop finds, and
-/// otherwise only where live work is found to end. A run that ended before
-/// a stop no stage records keeps the word its own ending reads.
+/// End a run's command group, then its runner unless that runner is
+/// attached, by the identities its own files record. The `stop` file makes
+/// the run's ending read a stop, so `--record` reads it `verdict=no-verdict`,
+/// and `--wait` reads it `state=done stopped`, not `lost`, where the run
+/// wrote no sentinel, and `state=done guard-exit=N ... validate=no-verdict`
+/// where it wrote one. It is written
+/// before the end it records: at once on a run whose stage records the stop
+/// (`staged`), since that stage's close reads `stopped` whatever the stop
+/// finds, and otherwise only where the command group, or a runner that is
+/// not attached, does not read gone. A run whose work reads gone at a stop
+/// no stage records keeps the word its own ending reads.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"

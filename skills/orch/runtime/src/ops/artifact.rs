@@ -650,14 +650,9 @@ fn run_record(path: &Path) -> Result<Run> {
         ..Run::default()
     };
     if let Some(t) = file.timing().map_err(unreadable)? {
-        if let (Some(b), Some(e)) = (
-            clock::epoch_secs(&t.started_at),
-            clock::epoch_secs(&t.ended_at),
-        ) && e.checked_sub(b) == Some(t.seconds)
-        {
-            run.time =
-                json!({"started_at": t.started_at, "ended_at": t.ended_at, "seconds": t.seconds});
-        } else {
+        run.time =
+            json!({"started_at": t.started_at, "ended_at": t.ended_at, "seconds": t.seconds});
+        if !span_holds(&run.time) {
             return Err(refuse("timing-unreadable", path.display()));
         }
     }
@@ -1524,7 +1519,7 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         }
         // The receipt of a verdict carries the run's timing, which a run a
         // stop ended before its sentinel never wrote.
-        if matches!(r.validate.as_str(), "pass" | "no-verdict") && run.time.is_null() {
+        if !timing_holds(&r.validate, &run.time) {
             return Err(refuse(
                 "timing-unreadable",
                 format!(
@@ -1632,21 +1627,38 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     ))
 }
 
+/// The words whose receipt may carry no run timing: a failure, whose run may
+/// have ended before its sentinel, and the words no run backs.
+fn untimed(validate: &str) -> bool {
+    validate.starts_with("FAILING:") || matches!(validate, "not-run" | "handed-over")
+}
+
+/// Whether a run's timing record is one span: its seconds are the
+/// difference of its two ends.
+fn span_holds(time: &Value) -> bool {
+    let at = |key: &str| time[key].as_str().and_then(clock::epoch_secs);
+    matches!((at("started_at"), at("ended_at"), time["seconds"].as_u64()), (Some(s), Some(e), Some(n)) if e.checked_sub(s) == Some(n))
+}
+
+/// Whether a receipt's `validate_time` holds for its `validate` word: a
+/// span, or null for an [`untimed`] word.
+fn timing_holds(validate: &str, time: &Value) -> bool {
+    if time.is_null() {
+        untimed(validate)
+    } else {
+        span_holds(time)
+    }
+}
+
 fn scalars(v: &Value) -> bool {
     let kind = v["kind"].as_str().unwrap_or_default();
     let validate = v["validate"].as_str().unwrap_or_default();
-    let failing = validate.starts_with("FAILING:");
     let not_run = validate == "not-run";
-    let unrun = failing || not_run || validate == "handed-over";
+    let unrun = untimed(validate);
     let timing = &v["validate_time"];
-    let time_ok = if timing.is_null() {
-        unrun && v.get("validate_time").is_some()
-    } else {
-        let start = timing["started_at"].as_str().and_then(clock::epoch_secs);
-        let end = timing["ended_at"].as_str().and_then(clock::epoch_secs);
-        matches!((start, end, timing["seconds"].as_u64()), (Some(s), Some(e), Some(n)) if e.checked_sub(s) == Some(n))
-            && !v["validate_mode"].is_null()
-    };
+    let time_ok = v.get("validate_time").is_some()
+        && timing_holds(validate, timing)
+        && (timing.is_null() || !v["validate_mode"].is_null());
     v["issue"].as_str().is_some_and(|s| token(s).is_ok())
         && ["implement", "fix"].contains(&kind)
         && ["issue", "branch", "round_id", "commit", "validate"]
@@ -2751,11 +2763,14 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
                 .collect();
         }
     }
+    // A run a stop ended before its sentinel reads `no-verdict` with no
+    // timing, which no receipt of that word carries.
     let run = recovery_run(settings, &r.id)?;
     if !validate.starts_with("FAILING:")
         && run.as_ref().is_none_or(|(_, r)| {
-            r.verdict != validate
-                && !(r.mode == "ci" && r.verdict == "pending" && validate == "pass")
+            (r.verdict != validate
+                && !(r.mode == "ci" && r.verdict == "pending" && validate == "pass"))
+                || !timing_holds(&validate, &r.time)
         })
     {
         return redelegate(settings, r, "validate-unproven", env);

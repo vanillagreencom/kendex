@@ -99,9 +99,10 @@ impl RunFile {
                 .and_then(crate::ops::validate::sentinel_outcome),
         )
     }
-    /// How the run ended, `None` while work may still hold it: its
-    /// sentinel's word, else `lost` once [`lost`] reads it so under
-    /// `past_grace`.
+    /// How the run ended. With a sentinel, its word, `None` where it names
+    /// none. Without one, `lost` where [`lost`] reads it so under
+    /// `past_grace`, else `None`. Either word reads `stopped` where the stop
+    /// file records a stop.
     fn ending(&self, past_grace: bool) -> Result<Option<StageOutcome>> {
         if self.sentinel.is_some() {
             return Ok(self.outcome());

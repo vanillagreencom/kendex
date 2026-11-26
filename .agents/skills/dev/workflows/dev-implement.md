@@ -221,7 +221,7 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository
 3. Start the validation entry (§ Validation entry). A project whose own policy forbids orch's validation runner takes § Foreground route in its place. A start refused `run-live` takes § Run-live refusal.
 4. On the runner route, wait for the entry's verdict before running the delegation's required verification commands and the must-fail controls (§ Verification scope, § Must-fail controls). On the project foreground route, run those commands and controls before the project's entry point. Use [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) to run the checks.
 5. Where the Apple gate names the item, run `fleet-mac-run test` (§ Apple gate).
-6. A `validate=no-verdict` takes § No-verdict. If a check fails after the runner starts, use § Recovery for any in-scope repair; a test-only PR also takes § Test-only validation ceiling. An earlier verdict cannot prove the repaired contents.
+6. A `validate=no-verdict` takes § No-verdict, a `state=done stopped` line included. If a check fails after the runner starts, use § Recovery for any in-scope repair; a test-only PR also takes § Test-only validation ceiling. An earlier verdict cannot prove the repaired contents.
 7. Read the run's selection and per-check time (§ Selection and time readings).
 8. Run the commit-time checks and Visual QA below.
 9. Record the validation result in the completion artifact for submit to reuse on the same contents.
