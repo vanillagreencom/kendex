@@ -12,10 +12,10 @@ control_replace scripts/lib/pages.sh 1 \
 
 control_expect "raw preference retains safe evidence"
 control_replace scripts/commands/comments.sh 1 \
-    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'" \
-    "    jq -cs --arg format \"\$DEFAULT_FORMAT\" \"\$COMMENT_SAFE_JQ\"'def safe: comment_safe; def comment_safe: if \$format == \"raw\" then . else safe end;'\"\$OWNER_RULING_JQ\"'"
+    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\$STATE_TYPE_CLOSED_JQ\"'" \
+    "    jq -cs --arg format \"\$DEFAULT_FORMAT\" \"\$COMMENT_SAFE_JQ\"'def safe: comment_safe; def comment_safe: if \$format == \"raw\" then . else safe end;'\"\$OWNER_RULING_JQ\$STATE_TYPE_CLOSED_JQ\"'"
 
 control_expect "large comment document succeeds"
 control_replace scripts/commands/comments.sh 1 \
-    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'" \
-    "    jq -cs --argjson carried \"\$items\" \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\"'"
+    "    jq -cs \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\$STATE_TYPE_CLOSED_JQ\"'" \
+    "    jq -cs --argjson carried \"\$items\" \"\$COMMENT_SAFE_JQ\$OWNER_RULING_JQ\$STATE_TYPE_CLOSED_JQ\"'"
