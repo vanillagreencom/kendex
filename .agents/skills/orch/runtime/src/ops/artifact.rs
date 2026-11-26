@@ -782,27 +782,84 @@ fn run_tree(id: &Identity, run: &Run) -> Result<String> {
     committed_tree(&id.worktree, &run.head)
 }
 
+/// Whether the round's base carries to the run: the run's HEAD contains it,
+/// its tree is the run's, the run compared from it, or a recorded rewrite
+/// maps it into the run's HEAD.
+fn carries(settings: &Settings, id: &Identity, run: &Run, base: &str, tree: &str) -> Result<bool> {
+    if ancestor(&id.worktree, base, &run.head)?
+        || committed_tree(&id.worktree, base)? == tree
+        || run.compared_from.as_deref() == Some(base)
+    {
+        return Ok(true);
+    }
+    match projected_base(settings, &id.issue, &id.worktree, base)? {
+        Some(mapped) => ancestor(&id.worktree, &mapped, &run.head),
+        None => Ok(false),
+    }
+}
+
+/// The commit's merge base with the base branch on origin: the newest
+/// commit that holds none of the branch's work, wherever a rebase, fold or
+/// restack moved the branch. A local base branch names none, since it can
+/// lag or lead what has landed.
+fn merge_base(settings: &Settings, worktree: &Path, commit: &str) -> Result<Option<String>> {
+    let base = base_ref(settings, worktree)?;
+    if !base.starts_with("refs/remotes/origin/") {
+        return Ok(None);
+    }
+    let out = git_call(worktree, "merge-base", &["merge-base", &base, commit])?;
+    match out.status.code() {
+        Some(0) => Ok(Some(host::stdout_text(&out).trim().to_owned())),
+        Some(1) => Ok(None),
+        _ => Err(refuse("merge-base-unreadable", host::stderr_text(&out))),
+    }
+}
+
+/// Whether the cited row alone proves `tree` as a range pass from
+/// `merge_base`. The merge base needs no record of how the branch was
+/// rewritten, so this binds a completed pass across any rewrite of the
+/// round's base. The reader keeps its admission, its declared command and
+/// a later red's voiding. It reads no chain, and a newer uncited pass at
+/// the tree refuses rather than stands in for the cited run.
+fn merge_base_pass(
+    rows: &[Stage],
+    request: &proof::ReadProof,
+    declared: &proof::Declaration,
+    cited: usize,
+    merge_base: &str,
+) -> bool {
+    let request = proof::ReadProof {
+        base: Some(merge_base.to_owned()),
+        ..request.clone()
+    };
+    let answer = proof::read(rows, &[], &request, declared, &mut |_| None);
+    answer.proof == proof::Verdict::Complete
+        && matches!(answer.rows.as_slice(), [row]
+            if row.index == cited && row.mode == ValidateMode::Range && row.base == merge_base)
+}
+
+const OFF_BASE: &str = "the run head does not contain the round base";
+
 /// Binds a fix receipt's run to its round and answers the tree the run
 /// validated.
 fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Result<String> {
     let round = round_record(&r.id)?;
     let base = round["base_sha"].as_str().expect("round schema");
     let tree = run_tree(&r.id, run)?;
-    if !ancestor(&r.id.worktree, base, &run.head)? {
-        let equivalent = committed_tree(&r.id.worktree, base)? == tree;
-        if !equivalent && run.compared_from.as_deref() != Some(base) {
-            let mapped = projected_base(settings, &r.id.issue, &r.id.worktree, base)?;
-            let contains = match mapped {
-                Some(mapped) => ancestor(&r.id.worktree, &mapped, &run.head)?,
-                None => false,
-            };
-            if !contains {
-                return Err(refuse(
-                    "run-off-round",
-                    "the run head does not contain the round base",
-                ));
-            }
-        }
+    let carried = carries(settings, &r.id, run, base, &tree)?;
+    // A completed range pass of a round whose base the receipt commit no
+    // longer contains may still bind from the merge base
+    // (`merge_base_pass`). Where the commit still holds the round's base, a
+    // range from the merge base can omit a path the round restored to the
+    // base branch's content, so only the round's own base proves it. A
+    // failure, a no-verdict and a pass left to CI bind only where the
+    // round's base carries.
+    let range_pass = r.validate == "pass"
+        && run.verdict == "pass"
+        && run.mode == "range"
+        && !ancestor(&r.id.worktree, base, commit)?;
+    if !carried && !range_pass {
+        return Err(refuse("run-off-round", OFF_BASE));
     }
     // A failure is reported over the tree that ran, staged work included,
     // and asks for no proof of it.
@@ -822,8 +879,10 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
             .position(|s| s.run_dir.as_deref() == dir.to_str())
             .filter(|&index| rows[index].proof.is_some())
     });
-    let bound_run = if let Some(index) = recorded {
-        index
+    // The base the cited run recorded, before an unrecorded one is read
+    // from the round's; a foreground record names none.
+    let (bound_run, run_base) = if let Some(index) = recorded {
+        (index, rows[index].proof.as_ref().map(|p| p.base.clone()))
     } else {
         let mut stage = match &r.validate_run_dir {
             // An unrecorded run directory is the proof row its run file
@@ -856,11 +915,12 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
             ));
         };
         proof.tree = tree.clone();
+        let run_base = r.validate_run_dir.is_some().then(|| proof.base.clone());
         if proof.base.is_empty() {
             proof.base = base.to_owned();
         }
         rows.insert(0, stage);
-        0
+        (0, run_base)
     };
     let request = proof::ReadProof {
         need: proof::Need::Round,
@@ -870,28 +930,48 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
         round: None,
         exception: None,
     };
-    let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
-    let (answer, unproved_range_base) = proof::read_with_bound_run(
-        &rows,
-        &[],
-        &request,
-        &declared,
-        &mut tree_of,
-        Some(bound_run),
-    );
-    match (r.validate.as_str(), answer.proof) {
-        ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => Ok(tree),
-        ("no-verdict", _) if run.verdict == "no-verdict" => Ok(tree),
-        _ => {
-            let cause = match unproved_range_base {
-                Some(from) => format!(
-                    "the range base differs from the round base and its tree has no applicable proof. range-base={from} round-base={base}"
-                ),
-                None => "Need::Round has no applicable proof of the tree".to_owned(),
-            };
-            Err(refuse("run-off-round", cause))
+    let mut cause = if carried {
+        let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
+        let (answer, unproved_range_base) = proof::read_with_bound_run(
+            &rows,
+            &[],
+            &request,
+            &declared,
+            &mut tree_of,
+            Some(bound_run),
+        );
+        match (r.validate.as_str(), answer.proof) {
+            ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => return Ok(tree),
+            ("no-verdict", _) if run.verdict == "no-verdict" => return Ok(tree),
+            _ => {}
         }
+        match unproved_range_base {
+            Some(from) => format!(
+                "the range base differs from the round base and its tree has no applicable proof. range-base={from} round-base={base}"
+            ),
+            None => "Need::Round has no applicable proof of the tree".to_owned(),
+        }
+    } else {
+        OFF_BASE.to_owned()
+    };
+    if range_pass {
+        let merge_base = merge_base(settings, &r.id.worktree, commit)?;
+        let run_base = run_base.filter(|b| !b.is_empty());
+        let docs_only = rows[bound_run].proof.as_ref().is_some_and(|p| p.docs_only);
+        if let Some(merge_base) = &merge_base
+            && run_base.as_ref() == Some(merge_base)
+            && !docs_only
+            && merge_base_pass(&rows, &request, &declared, bound_run, merge_base)
+        {
+            return Ok(tree);
+        }
+        cause.push_str(&format!(
+            " run-base={} merge-base={}",
+            run_base.as_deref().unwrap_or("none"),
+            merge_base.as_deref().unwrap_or("none")
+        ));
     }
+    Err(refuse("run-off-round", cause))
 }
 
 /// A project file's lexical token: a quoted string whose escape the reader
@@ -1811,17 +1891,31 @@ fn check_answer(
 fn select_receipt(settings: &Settings, id: &Identity) -> Result<(PathBuf, Option<ValidateMode>)> {
     let bare = bare_path(id);
     let rows = stages(settings, &id.issue)?;
-    if let Some((_, row)) = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| {
-            s.kind == StageKind::Validate
-                && s.round_id.as_deref() == Some(&id.round_id)
-                && s.run_dir.is_some()
-        })
-        .max_by_key(|(index, s)| (s.start, *index))
+    // The round's runs are its own validate rows, and any other row whose
+    // run this round's receipt is keyed to. The writer binds a recorded run
+    // by its directory whatever round the row names, and a restack import
+    // names none.
+    let mut runs = Vec::new();
+    for (index, s) in rows.iter().enumerate() {
+        let Some(dir) = s
+            .run_dir
+            .as_deref()
+            .filter(|_| s.kind == StageKind::Validate)
+        else {
+            continue;
+        };
+        if s.round_id.as_deref() == Some(&id.round_id) {
+            runs.push((index, s, keyed_path(id, Path::new(dir))?));
+        } else if let Ok(keyed) = keyed_path(id, Path::new(dir))
+            && fs::symlink_metadata(&keyed).is_ok()
+        {
+            runs.push((index, s, keyed));
+        }
+    }
+    if let Some((_, row, keyed)) = runs
+        .into_iter()
+        .max_by_key(|(index, s, _)| (s.start, *index))
     {
-        let keyed = keyed_path(id, Path::new(row.run_dir.as_deref().expect("selected run")))?;
         let mode = row.proof.as_ref().map(|p| p.mode);
         if mode.is_some()
             || fs::symlink_metadata(&keyed).is_ok()

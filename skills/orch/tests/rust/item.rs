@@ -3133,6 +3133,10 @@ mod dev_artifacts {
     #[test]
     fn fix_receipt_names_the_unproved_range_base() {
         let w = World::new();
+        // The range base is the merge base with origin/main, and the round
+        // base stays in the work's history: the merge-base route does not
+        // apply to an unrewritten round.
+        w.with_origin();
         let range_base = w.head();
         w.commit("app.txt");
         let round_base = w.head();
@@ -3217,6 +3221,191 @@ mod dev_artifacts {
         w.record_start(&run, &format!("validate-base={round_base}"));
         let out = write(cmd);
         assert!(out.status.success(), "{}", stderr(&out));
+    }
+
+    const RANGE_CMD: &str = "printf 'validate: lanes=unit selection=all\\n'";
+
+    impl World {
+        /// A bare origin holding `main`, so the base branch reads as
+        /// `refs/remotes/origin/main`.
+        fn with_origin(&self) {
+            let origin = self.root.join("origin.git");
+            git(
+                &self.root,
+                &["init", "-q", "--bare", origin.to_str().unwrap()],
+            );
+            git(&origin, &["config", "gc.auto", "0"]);
+            git(&origin, &["config", "maintenance.auto", "false"]);
+            git(
+                &self.wt,
+                &["remote", "add", "origin", origin.to_str().unwrap()],
+            );
+            git(&self.wt, &["push", "-q", "origin", "main"]);
+        }
+        /// The base moves on origin: a commit on `main`, pushed.
+        fn upstream(&self, path: &str) {
+            git(&self.wt, &["switch", "-q", "main"]);
+            self.commit(path);
+            git(&self.wt, &["push", "-q", "origin", "main"]);
+            git(&self.wt, &["switch", "-q", "work"]);
+        }
+        /// A finished range run of HEAD's tree from `base` under the
+        /// declared range command.
+        fn range_run(&self, name: &str, base: &str) -> PathBuf {
+            let run = self.finished_run(name, "range");
+            fs::write(run.join("cmd"), RANGE_CMD).unwrap();
+            fs::write(run.join("log"), "validate: lanes=unit selection=all\n").unwrap();
+            self.record_start(&run, &format!("tree={}", self.tree()));
+            self.record_start(&run, &format!("validate-base={base}"));
+            run
+        }
+        /// The run's own stage as the round's ledger admits it.
+        fn ledger_stage(run: &Path) -> Value {
+            let stage = orch_runtime::validate::files::RunFile::read(run)
+                .unwrap()
+                .stage()
+                .unwrap();
+            json!({
+                "kind": "validate", "round_id": "r1", "start": stage.start, "end": stage.end,
+                "outcome": "pass", "run_dir": run, "proof": stage.proof,
+            })
+        }
+        fn range_write(&self, round: &str, run: &Path) -> Output {
+            self.command()
+                .env("DEV_VALIDATE_RANGE_CMD", RANGE_CMD)
+                .args(["dev-return", "write"])
+                .args(self.identity(round))
+                .args(["--kind", "fix", "--branch", "work", "--commit"])
+                .arg(self.head())
+                .args(["--validate", "pass", "--validate-run-dir"])
+                .arg(run)
+                .args(["--item", "1", "Applied", "x"])
+                .output()
+                .unwrap()
+        }
+    }
+
+    /// A fix round rebased twice by plain `git rebase`, so no rebase map
+    /// records where it began, binds the cited range pass from the receipt
+    /// commit's merge base with `origin/main`.
+    #[test]
+    fn a_range_run_from_the_merge_base_binds_a_round_rebased_without_a_map() {
+        let w = World::new();
+        w.with_origin();
+        w.commit("first.txt");
+        let round_base = w.head();
+        w.stamp("r1");
+        for path in ["up1.txt", "up2.txt"] {
+            w.upstream(path);
+            git(&w.wt, &["rebase", "-q", "origin/main"]);
+        }
+        let rebased_first = w.head();
+        w.commit("fix.txt");
+        let head = w.head();
+        let contains = program("git")
+            .arg("-C")
+            .arg(&w.wt)
+            .args(["merge-base", "--is-ancestor", &round_base, &head])
+            .status()
+            .unwrap();
+        assert_eq!(contains.code(), Some(1), "the rebases moved the round base");
+        let merge_base = git(&w.wt, &["merge-base", &head, "origin/main"]);
+        let run = w.range_run("merge-base", &merge_base);
+
+        // Beside an uncited pass from the merge base, a cited run from
+        // another base binds nothing.
+        let before = w.doc();
+        let mut doc = before.clone();
+        let uncited = w.range_run("uncited", &merge_base);
+        doc["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(World::ledger_stage(&uncited));
+        fs::write(w.item(), doc.to_string()).unwrap();
+        let off_base = w.range_run("off-base", &rebased_first);
+        refused(&w.range_write("r1", &off_base), "run-off-round");
+        fs::write(w.item(), before.to_string()).unwrap();
+
+        // A local base branch names no merge base to bind from, though its
+        // merge base here is the run's.
+        let tracking = git(&w.wt, &["rev-parse", "refs/remotes/origin/main"]);
+        git(&w.wt, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        assert_eq!(git(&w.wt, &["merge-base", &head, "main"]), merge_base);
+        refused(&w.range_write("r1", &run), "run-off-round");
+        git(
+            &w.wt,
+            &["update-ref", "refs/remotes/origin/main", &tracking],
+        );
+        assert!(!w.receipt_path("r1").exists());
+
+        let written = result(&w.range_write("r1", &run));
+        let receipt: Value =
+            serde_json::from_str(&fs::read_to_string(written["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(receipt["commit"], head);
+        assert_eq!(receipt["validate"], "pass");
+    }
+
+    /// Base preparation folds the round onto `origin/main`, and the overseer
+    /// runs the confined lane's validation from the prepared base: the round
+    /// binds that run, and the check accepts its receipt.
+    #[test]
+    fn an_overseer_range_run_from_the_prepared_base_binds_a_folded_round() {
+        let w = World::new();
+        w.with_origin();
+        w.commit("first.txt");
+        let round_base = w.head();
+        w.stamp("r1");
+        w.upstream("up.txt");
+        let prepared_base = git(&w.wt, &["rev-parse", "origin/main"]);
+        w.commit("fix.txt");
+        let fixed = w.head();
+        git(&w.wt, &["rebase", "-q", "origin/main"]);
+        git(&w.wt, &["reset", "-q", "--soft", "origin/main"]);
+        git(&w.wt, &["commit", "-qm", "fold"]);
+        let fold = w.head();
+        // The fold's record as base preparation writes it: every folded
+        // commit maps to the fold.
+        let mut doc = w.doc();
+        doc["rebase_map"] = json!({ round_base: fold, fixed: fold });
+
+        // A docs-only snapshot that ran the range command from the prepared
+        // base, the only pass at the tree, proves no code.
+        let docs = w.range_run("docs", &prepared_base);
+        w.record_start(&docs, "docs-only=true");
+        doc["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(World::ledger_stage(&docs));
+        fs::write(w.item(), doc.to_string()).unwrap();
+        refused(&w.range_write("r1", &docs), "run-off-round");
+
+        // A reuse is cited in place of the overseer's run beside it. The
+        // overseer's run reaches the ledger as `record-restack-validation`
+        // imports it, naming no round.
+        let overseer = w.range_run("overseer", &prepared_base);
+        let reused = w.range_run("reused", &prepared_base);
+        w.record_start(&reused, &format!("pass-run={}", overseer.display()));
+        let mut imported = World::ledger_stage(&overseer);
+        imported["round_id"] = Value::Null;
+        imported["reason"] = json!("restack");
+        let stages = doc["stages"].as_array_mut().unwrap();
+        stages.push(World::ledger_stage(&reused));
+        stages.push(imported);
+        fs::write(w.item(), doc.to_string()).unwrap();
+        refused(&w.range_write("r1", &reused), "run-off-round");
+
+        let written = result(&w.range_write("r1", &overseer));
+        // A newer round-less run this round's receipt is not keyed to
+        // leaves the selection where it was.
+        let mut later = World::ledger_stage(&w.range_run("later", &prepared_base));
+        later["round_id"] = Value::Null;
+        doc["stages"].as_array_mut().unwrap().push(later);
+        fs::write(w.item(), doc.to_string()).unwrap();
+        let check = w.check("r1");
+        assert_eq!(check["reason"], "valid", "{check}");
+        assert_eq!(check["verdict"], "accept");
+        assert_eq!(check["path"], written["path"]);
     }
 
     /// A fix round's red run over staged work keeps its result against the
