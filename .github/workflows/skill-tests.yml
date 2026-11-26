@@ -1778,8 +1778,17 @@ jobs:
           bun-version-file: .bun-version
 
       # The lockfiles under .github/npm-tests hold these CI-only dependency
-      # graphs. Regenerate a lock with npm install --package-lock-only in
-      # its directory and use a clean npm ci to verify the tarballs.
+      # graphs. pi-coding-agent ships npm-shrinkwrap.json, and npm ignores
+      # the package.json overrides inside a shrinkwrapped dependency, so a
+      # plain npm install --package-lock-only brings back the alerted
+      # versions. To regenerate a lock, in its directory:
+      #   1. Run npm install --package-lock-only.
+      #   2. Remove the shrinkwrapped tree from the lock:
+      #      jq '.packages |= with_entries(select(.key | startswith("node_modules/@earendil-works/pi-coding-agent/node_modules/") | not) | del(.value.hasShrinkwrap))' package-lock.json > lock.tmp && mv lock.tmp package-lock.json
+      #   3. Run npm install --package-lock-only again. npm now resolves that
+      #      tree flat and applies the overrides.
+      #   4. Use a clean npm ci to verify the tarballs.
+      #   5. Run npm audit --package-lock-only.
       # Every peer installs at pi-qol's coding-agent peer floor. The suite
       # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
       # a peer installed at any other version.
