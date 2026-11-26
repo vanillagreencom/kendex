@@ -522,11 +522,17 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.mail(self.peer, "notice", "after restore", "--to", "owner")
         output, cursor = self.read_pass(cursor)
         self.assertIn("after restore", output)
-        # The public marker includes rows the event filter does not emit.
+        # The public marker includes rows the event filter does not emit: a
+        # killed producer's fragment, which the next send closes with the
+        # mark readers skip it by.
+        before = cursor[str(self.home)]["to-overseer"]["count"]
         with (self.home / "tmp/lane-mail/overseer/to-overseer.jsonl").open("a") as out:
-            out.write("interrupted producer left a terminated invalid row\n")
-        _, cursor = self.read_pass(cursor)
-        self.assertEqual(marker.read_text().strip(), str(cursor[str(self.home)]["to-overseer"]["count"]))
+            out.write('{"id":"interrupted","kind":"notice"')
+        self.mail(self.home, "notice", "after the interrupted producer", "--to", "owner")
+        output, cursor = self.read_pass(cursor)
+        self.assertIn("after the interrupted producer", output)
+        self.assertEqual(cursor[str(self.home)]["to-overseer"]["count"], before + 2)
+        self.assertEqual(marker.read_text().strip(), str(before + 2))
 
     def test_compaction_and_failed_read(self):
         for value in ("old a", "old b"):
