@@ -412,6 +412,15 @@ if: >-
   needs.changes.outputs.queue_deferred != 'true') || needs.changes.outputs.lane_scan != 'false'))) }}
 ```
 
+**Workflow shape**
+
+- A top-level `env:` holds literal values. The reader splits each value but `BASH_ENV`'s at blanks, `=`, `:`, `,` and `;`, and reads each word as a path every run step reads from its working directory.
+- Only `BASH_ENV` is read as a script, since bash sources it before each run step. Its value is one whole path from the step's working directory, and a file that script sources is an input too. A script line the shell reader cannot follow keeps that job's lane eligible with `cause=opaque-workflow-env key=BASH_ENV path=SCRIPT`.
+- An `env:` value leaves the roster unreadable with `cause=opaque-workflow-env` when it holds a `${{ }}` expression, or when one of its words starts with `/` or `~`, starts with `-` and holds `/` or `.`, or holds any character outside letters, digits, `_`, `.`, `/`, `+` and `-`. A `BASH_ENV` value that is not one such word, such as an absolute path or one with a blank, leaves it unreadable with `cause=opaque-workflow-env key=BASH_ENV path=VALUE`.
+- A top-level `defaults:` leaves the roster unreadable with `cause=opaque-workflow-defaults`.
+- A gated job uses only the job keys, step keys and `actions/checkout` inputs `job_reads` in `lane-reach.py` accepts. Any other key or action, a job or step `env:` among them, keeps that lane eligible.
+- A lane the declaration names that gates no job reads `true` when one of its globs claims a changed path. It also reads `true` when any workflow key or value names its `lane_NAME` output, such as a step `if:` or a `with:` input. The classifier job's own `outputs:` entry that maps `lane_NAME` from a step defines the output and does not count, so a lane mapped under [§ Per-lane verdicts](#per-lane-verdicts) that nothing reads still gets `false`. Otherwise it reads `false` with the cause any lane no change reaches gets. Where the reader keeps every lane, as on a shared input or a change to the workflow, it reads `true`.
+
 **Command evidence**
 
 - Run a literal `cargo test`, `cargo check`, `cargo clippy` or `cargo build`. The reader supports `-p NAME`, `--workspace` and the literal flags in `lane-reach.py`. It asks Cargo for offline package metadata and follows local dependencies and literal Rust includes. A build script, proc macro, external dependency or opaque input keeps the lane.

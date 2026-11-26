@@ -295,6 +295,62 @@ printf 'cat ./tools/cache/../input.txt\n' >"$repo/tools/check.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'shell input through a tracked directory and a parent component'
 parent_hop_base="$(git -C "$repo" rev-parse HEAD)"
+edit_workflow() { # OLD NEW...: replace the first OLD of each pair, which must be present
+  python3 - "$repo/.github/workflows/ci.yml" "$@" <<'PY'
+from pathlib import Path
+import sys
+path, *pairs = sys.argv[1:]
+path = Path(path)
+source = path.read_text()
+for old, new in zip(pairs[::2], pairs[1::2]):
+    old, new = old.replace("\\n", "\n"), new.replace("\\n", "\n")
+    assert old in source, old
+    source = source.replace(old, new, 1)
+path.write_text(source)
+PY
+}
+git -C "$repo" checkout -qb fixture-workflow-env "$static_base"
+# A consumer ci.yml shape: literal workflow env that every job inherits.
+edit_workflow '\njobs:\n' \
+  '\nenv:\n  CARGO_TERM_COLOR: always\n  RUSTFLAGS: -D warnings\n  CI_CONFIG: ci/settings.toml\n  BASH_ENV: ./tools/env.sh\njobs:\n'
+printf 'source ./tools/env-lib.sh\n' >"$repo/tools/env.sh"
+# Only BASH_ENV is sourced: this file is no shell the reader can follow.
+mkdir -p "$repo/ci"
+printf '[ci]\nmode = "strict"\n' >"$repo/ci/settings.toml"
+printf 'true\n' >"$repo/tools/env-lib.sh"
+printf 'setting\n' >"$repo/orphan.settings"
+printf '%s\n' 'orphan orphan.settings # reason: a job in another workflow reads the setting' \
+  >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a literal workflow env and a declared lane that gates no job'
+workflow_env_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-workflow-env-step "$workflow_env_base"
+edit_workflow '      - run: test -f ./README.md\n' \
+  "      - run: test -f ./README.md\n      - if: needs.changes.outputs.lane_orphan != 'false'\n        run: cat ./orphan.settings\n"
+git -C "$repo" commit -qam 'a step in an ungated job reads the ungated lane'
+git -C "$repo" checkout -qb fixture-workflow-env-mapped "$workflow_env_base"
+edit_workflow '      lane_installed: ${{ steps.lanes.outputs.lane_installed }}\n' \
+  '      lane_installed: ${{ steps.lanes.outputs.lane_installed }}\n      lane_orphan: ${{ steps.lanes.outputs.lane_orphan }}\n'
+git -C "$repo" commit -qam 'the classifier maps the ungated lane and nothing reads it'
+git -C "$repo" checkout -qb fixture-workflow-env-unreadable "$workflow_env_base"
+# The dispatch would otherwise name the job's own command in the diagnostic.
+edit_workflow '        run: bash ./tools/check.sh\n' \
+  '        run: bash ./tools/check.sh\n      - run: bin/check --lane shell\n'
+printf 'export PATH="$PWD/bin:$PATH"\n' >"$repo/tools/env.sh"
+git -C "$repo" commit -qam 'a BASH_ENV script the shell reader cannot follow'
+# Each workflow shape the reader refuses, as branch fixture-LABEL.
+while IFS='|' read -r refusal old new; do
+  git -C "$repo" checkout -qb "fixture-$refusal" "$workflow_env_base"
+  edit_workflow "$old" "$new"
+  git -C "$repo" commit -qam "$refusal"
+done <<'ROWS'
+workflow-env-expression|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: ${{ vars.RUSTFLAGS }}\n
+workflow-env-absolute|  CI_CONFIG: ci/settings.toml\n|  CI_CONFIG: /home/runner/work/R/R/ci/settings.toml\n
+workflow-env-bash-env-absolute|  BASH_ENV: ./tools/env.sh\n|  BASH_ENV: /home/runner/work/R/R/tools/env.sh\n
+workflow-env-bash-env-blank|  BASH_ENV: ./tools/env.sh\n|  BASH_ENV: ./tools/env ci.sh\n
+workflow-env-option|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: -C link-arg=-Tlink.x\n
+workflow-defaults|\nenv:\n|\ndefaults:\n  run:\n    working-directory: tools\nenv:\n
+ROWS
 git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
 cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
 #[path = "../../spare/src/mod.rs"]
@@ -780,7 +836,7 @@ PY
 }
 
 rows=0
-while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes; do
+while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes ungated; do
   [ -z "${LANE_REACH_CASE:-}" ] || [ "$label" = "$LANE_REACH_CASE" ] || continue
   rows=$((rows + 1))
   base="$opted_base"
@@ -795,6 +851,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
+    workflow-env|workflow-env-sourced|workflow-env-config|workflow-env-claimed) base="$workflow_env_base" ;;
+    workflow-env-*|workflow-defaults) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -958,6 +1016,33 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         esac
       done ;;
   esac
+  if [ -n "$ungated" ]; then
+    for implementation in action local; do
+      assert_eq "$label $implementation ungated lane" "$ungated" \
+        "$(verdict orphan "$SANDBOX/$implementation")"
+    done
+  fi
+  refusal=""
+  case "$label" in
+    workflow-env-expression|workflow-env-absolute|workflow-env-option) refusal=opaque-workflow-env ;;
+    workflow-env-bash-env-absolute)
+      refusal='opaque-workflow-env key=BASH_ENV path=/home/runner/work/R/R/tools/env.sh' ;;
+    workflow-env-bash-env-blank) refusal="opaque-workflow-env key=BASH_ENV path='./tools/env ci.sh'" ;;
+    workflow-defaults) refusal=opaque-workflow-defaults ;;
+  esac
+  if [ -n "$refusal" ]; then
+    for implementation in action local; do
+      assert_eq "$label $implementation diagnostic" "$refusal" \
+        "$(sed -n 's/^lane-reach: cause=//p' "$SANDBOX/$implementation-log")"
+    done
+  fi
+  if [ "$label" = workflow-env-unreadable ]; then
+    for implementation in action local; do
+      assert_eq "$label $implementation diagnostic" \
+        'cause=opaque-workflow-env key=BASH_ENV path=tools/env.sh reason=computed-command' \
+        "$(sed -n 's/^lane-reach: job=shell //p' "$SANDBOX/$implementation-log")"
+    done
+  fi
   if [ "$label" = vitest-disabled-sibling ]; then
     # Package ownership selects the reader; the unowned-marker fallback
     # would keep the lane as unread instead.
@@ -984,6 +1069,19 @@ shell-workdir|tools/other/context.sh|true||false|false
 shell-symlink|other/input.txt|true||false|false
 deleted-workdir|check-cwd/only.txt|true||false|false
 shell-parent-hop|tools/cache/only.txt|true||false|false
+workflow-env|tools/input.sh|true||false|false||||||||false
+workflow-env-sourced|tools/env-lib.sh|true||true|true||||||||true
+workflow-env-config|ci/settings.toml|true||true|true||||||||true
+workflow-env-claimed|orphan.settings|false||false|false||||||||true
+workflow-env-step|tools/input.sh|true||false|false||||||||true
+workflow-env-mapped|tools/input.sh|true||false|false||||||||false
+workflow-env-unreadable|tools/input.sh|true||true|true||||||||true
+workflow-env-expression|tools/input.sh||||
+workflow-env-absolute|tools/input.sh||||
+workflow-env-bash-env-absolute|tools/input.sh||||
+workflow-env-bash-env-blank|tools/input.sh||||
+workflow-env-option|tools/input.sh||||
+workflow-defaults|tools/input.sh||||
 agent-pair|.codex/agents/auditor.toml|true||false|false
 command-pair|.claude/commands/audit.md.disabled|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
