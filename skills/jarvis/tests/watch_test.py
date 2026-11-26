@@ -61,8 +61,11 @@ class Producer(unittest.TestCase):
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
                     and key != "COMMUNICATION_TECHNICAL"
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
+        # gh samples a call's telemetry into a detached `gh send-telemetry`
+        # that can still be writing under HOME, the scratch directory, at cleanup.
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
-                        REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
+                        REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE,
+                        GH_TELEMETRY="false")
         self.executable("kendex", KENDEX)
         self.module = load(self.scripts / "lib/watch.py")
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
@@ -2010,6 +2013,23 @@ with open(sys.argv[1], "ab") as out:
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             self.controller("s1", "/accounts/a", {"event": "Stop"}, setup=False)
             self.assertEqual(self.watch().presence("local"), [(None, "skipped", None)])
+
+    @unittest.skipUnless(os.uname()[::4] == ("Linux", "x86_64"), "the wrapper's fetch calls gh on Linux x86_64 alone")
+    def test_a_refused_status_read_leaves_no_writer_at_cleanup(self):
+        # This gh starts gh's telemetry writer on every call the wrapper's
+        # fetch makes: detached, it writes into HOME for as long as HOME stands.
+        writer = ("import os, sys, time\nend = time.monotonic() + 10\n"
+                  "while time.monotonic() < end and os.path.isdir(sys.argv[1]):\n"
+                  "    open(os.path.join(sys.argv[1], 'sent-%d' % time.monotonic_ns()), 'w').close()\n"
+                  "    time.sleep(0.001)\n")
+        called = self.root / "gh-called"
+        self.executable("gh", '#!/bin/sh\n: > ' + shlex.quote(str(called)) + '\ncase "${GH_TELEMETRY:-}" in false | 0) ;; *)\n'
+                        '  setsid ' + shlex.quote(sys.executable) + ' -I -c ' + shlex.quote(writer)
+                        + ' "$HOME" </dev/null >/dev/null 2>&1 & ;;\nesac\nexit 4\n')
+        self.test_a_refused_status_read_denies_presence_without_a_report()
+        self.assertTrue(called.exists())
+        self.scratch.cleanup()
+        self.assertFalse(self.root.exists())
 
     def test_dependency_failure_denies_presence_with_cause(self):
         self.packages.joinpath("agent-runtime").unlink()
