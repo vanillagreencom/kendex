@@ -7,10 +7,12 @@
 # `<lane>=true|false` line per gated lane, plus one `shards=` line naming the
 # shell shards the diff selects as a JSON list, one `queue_macos_shards=`
 # line naming the selected macOS-capable shards and one `skipped_suites=`
-# line, the JSON list of suites the narrowed row skips. Every lane condition in
-# that workflow reads one of those lines, the Linux shard matrix `shards` and
-# the queue's macOS matrix `queue_macos_shards` on a classified group, so the
-# selection is made once instead of re-derived in each `if:`. Where
+# line, the JSON list of suites the narrowed row skips. Every route also
+# writes one `jobs=` line, the JSON list of the workflow jobs it runs, which
+# LANES below derives from those lines. Every gated job's `if:` in that
+# workflow reads its own id in that list, and the shard matrices read
+# `shards` and `queue_macos_shards` on a classified group, so the selection
+# is made once instead of re-derived in each `if:`. Where
 # CI_SELECTION names a file, a class selection also writes its
 # `skipped_suites` and `rust_targets` there as one JSON object, which the
 # merge group publishes for the push at its head.
@@ -21,6 +23,17 @@
 # Usage: tools/ci-job-set [--event-parity] [--runtime-publish]
 #        tools/ci-job-set --suite-list CANDIDATE...
 #        tools/ci-job-set --all-rust-targets
+#        tools/ci-job-set --lanes
+#        tools/ci-job-set --fallback
+#
+#   --lanes         print LANES, one `|`-separated row per job, for
+#                   tools/ci-aggregate and tools/ci-reach, which read the
+#                   lane set from it.
+#   --fallback      write the `jobs=` line for EVENT that runs every job the
+#                   event can run. The changes job writes it before it
+#                   classifies, so a classification that fails still runs
+#                   the event's whole job set; on workflow_dispatch it is
+#                   the whole selection.
 #
 #   --event-parity  also derive the selection at every other event and refuse
 #                   `event-parity` where one differs. The `changes` job of
@@ -52,7 +65,7 @@
 #                  merge_group alone; tools/guard --full asks at
 #                  pull_request. `push` takes the push route and `schedule`
 #                  the night route, which read none of the three variables
-#                  above.
+#                  above. --fallback also takes workflow_dispatch.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #   CI_SELECTION   the file a class selection writes its skips and targets
 #                  to, where set
@@ -149,11 +162,14 @@
 #                       empty, the `shards=` list holds PUBLISH_SHARD, whose
 #                       Linux leg builds the runtimes and publishes each
 #                       listed build.
+#   jobs                every route's: the JSON list of the LANES jobs the
+#                       route's lines run at EVENT, in table order. The
+#                       night route derives it from `nightly`.
 #
 # Every refusal starts `ci-job-set: cause=<name>` and exits 2. A class this
-# table does not name is one of those: the step goes red, every lane's status
-# function runs it, and the required contexts refuse the skip, which is the
-# loud way to learn a sixth class shipped. An unread reach is no refusal:
+# table does not name is one of those: the step goes red, the fallback step's
+# list runs every lane, and the required contexts refuse the dead classifier,
+# which is the loud way to learn a sixth class shipped. An unread reach is no refusal:
 # the governed lanes run whole.
 set -euo pipefail
 
@@ -248,6 +264,105 @@ fi
 
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+die() { # CAUSE MESSAGE
+  printf 'ci-job-set: cause=%s\n' "$1" >&2
+  printf 'ci-job-set: %s\n' "$2" >&2
+  exit 2
+}
+
+# THE LANE TABLE: one row per job of .github/workflows/skill-tests.yml that
+# CI holds or a selection runs, `job|check|class|push|schedule|dispatch`.
+# Each gated job's `if:` reads its own id in the `jobs=` list these rows
+# derive, tools/ci-aggregate holds CI's needs to them and tools/ci-reach maps
+# a failed check to its job through them, so a new lane is one row here
+# beside its job.
+#   check     the glob a failed check's name matches, `-` for a job no merge
+#             group runs; GitHub names a check by its job's `name:`.
+#   class     the merge-group and pull-request cell, which select alike;
+#             a pull request runs no lane because the changes job does not
+#             run on one.
+#   push, schedule, dispatch
+#             the cell for that event.
+# A cell is `-` where the job never runs on that event, `on` where it always
+# does and otherwise the selection line that decides it: `true` or a
+# non-empty JSON list runs the job, `false` or `[]` stands it down. `fixed`
+# marks a job CI holds on every merge group that starts before the
+# classifier and reads no selection; its `if:` names the event alone.
+LANES='bot-instructions|Bot instructions|bot_instructions|-|-|-
+skill-suites-shard|Skill suites shard (*, ubuntu-latest)|shards|shards|-|-
+skill-suites-macos|-|-|-|nightly|on
+skill-suites-macos-queue|Skill suites shard (*, macos-latest)|queue_macos_shards|queue_macos_shards|-|-
+ui-tests|UI (vitest, tsc, biome)|ui|-|-|-
+preflight|Preflight (diff-scoped deterministic checks)|fixed|-|-|-
+markdown|Markdown (shape + references)|fixed|-|-|-
+cargo-linux|Cargo * (Linux)|cargo_linux|cache_compile|nightly|on
+cargo-macos|macOS cargo *|cargo_macos|cache_compile|nightly|on
+cargo-lint|Cargo lints (clippy, fmt, doc)|cargo_lint|-|-|-
+cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|on|nightly|on
+cargo-tests-windows|Windows cargo (workspace tests)|cargo_windows|cache_compile|nightly|on
+catalog|catalog (*|catalog|on|nightly|on
+smoke|real-CLI round trip|smoke|on|nightly|on'
+
+# The LANES column an event reads: 3 class, 4 push, 5 schedule, 6 dispatch.
+lane_column() { # EVENT
+  case "$1" in
+    pull_request | merge_group) echo 3 ;;
+    push) echo 4 ;;
+    schedule) echo 5 ;;
+    workflow_dispatch) echo 6 ;;
+    *) die "unsupported-event event=$1" "EVENT is one of: pull_request merge_group push schedule workflow_dispatch" ;;
+  esac
+}
+
+# The `jobs=` line for EVENT: each row whose cell is `on`, or names a line of
+# WORDS (`key=value`, one per line) whose value runs it. With WORDS `*`,
+# every row the event can run. A key WORDS lacks, or a value that is neither
+# a boolean nor a JSON list, refuses: an omitted lane would otherwise stand
+# its job down and authorize its own skip.
+lane_jobs() { # EVENT WORDS
+  local column row job cell line value list=""
+  column="$(lane_column "$1")" || exit 2
+  while IFS= read -r row; do
+    job="${row%%|*}"
+    cell="$(printf '%s\n' "$row" | cut -d '|' -f "$column")"
+    case "$cell" in
+      - | fixed) continue ;;
+      on) ;;
+      *)
+        if [ "$2" != '*' ]; then
+          value=""
+          while IFS= read -r line; do
+            [ "${line%%=*}" != "$cell" ] || { value="${line#*=}"; break; }
+          done <<<"$2"
+          case "$value" in
+            true | '["'*) ;;
+            false | '[]') continue ;;
+            *) die "lane-key-unread job=$job key=$cell value=$value" \
+              "the selection has no readable $cell line for $job" ;;
+          esac
+        fi
+        ;;
+    esac
+    list="${list:+$list,}\"$job\""
+  done <<<"$LANES"
+  printf 'jobs=[%s]\n' "$list"
+}
+
+if [ "${1-}" = --lanes ]; then
+  [ "$#" -eq 1 ] || exit 2
+  printf '%s\n' "$LANES"
+  exit 0
+fi
+if [ "${1-}" = --fallback ]; then
+  [ "$#" -eq 1 ] || exit 2
+  [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+    "GITHUB_OUTPUT is unset, so no lane could read the selection"
+  fallback="$(lane_jobs "${EVENT:-}" '*')" || exit 2
+  printf '%s\n' "$fallback" >>"$GITHUB_OUTPUT"
+  printf '%s\n' "$fallback" >&2
+  exit 0
+fi
+
 # select_row prints a class selection as one `name=value` word per lane: the
 # macOS shell bit, `macos`, then one per gated job, JOBS, then `shards=`.
 # emit() writes the step output derived from it.
@@ -274,12 +389,6 @@ for shard in $SHARDS; do
   case " $LINUX_ONLY_SHARDS " in *" $shard "*) ;; *) MACOS_SHARDS="${MACOS_SHARDS:+$MACOS_SHARDS }$shard" ;; esac
 done
 
-die() { # CAUSE MESSAGE
-  printf 'ci-job-set: cause=%s\n' "$1" >&2
-  printf 'ci-job-set: %s\n' "$2" >&2
-  exit 2
-}
-
 # A mistyped mode would drop the parity check or the publication the
 # workflow relies on.
 parity=false publish=false
@@ -300,9 +409,10 @@ done
 # merge group and a main push read alike. The JOB=VALUE words of a class row
 # follow, and RUST, the `rust_targets=` value, comes last. SKIPPED_MACOS is
 # the push route's alone: a class row passes it empty and every leg reads
-# SKIPPED.
+# SKIPPED. The `jobs=` line LANES derives from these lines at EVENT closes
+# the selection.
 emit() { # SHARDS QUEUE SKIPPED SKIPPED_MACOS RUST [JOB=VALUE ...]
-  local shards="$1" queue="$2" skipped="$3" skipped_macos="$4" rust="$5" legs="" shell=false
+  local shards="$1" queue="$2" skipped="$3" skipped_macos="$4" rust="$5" legs="" shell=false jobs_line
   shift 5
   [ "$shards" = "[]" ] || legs='"ubuntu-latest"'
   [ "$queue" = "[]" ] || legs="${legs:+$legs,}\"macos-latest\""
@@ -310,6 +420,8 @@ emit() { # SHARDS QUEUE SKIPPED SKIPPED_MACOS RUST [JOB=VALUE ...]
   set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue" "skipped_suites=$skipped"
   [ -z "$skipped_macos" ] || set -- "$@" "skipped_suites_macos=$skipped_macos"
   set -- "$@" "rust_targets=$rust"
+  jobs_line="$(lane_jobs "${EVENT:-}" "$(printf '%s\n' "$@")")" || exit 2
+  set -- "$@" "$jobs_line"
   printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
   printf '%s\n' "$@" >&2
 }
@@ -1418,7 +1530,8 @@ if [ "${EVENT:-}" = schedule ]; then
       [ "$previous" != "$GITHUB_SHA" ] || nightly=false
     fi
   fi
-  printf 'nightly=%s\n' "$nightly" >>"$GITHUB_OUTPUT"
+  night_jobs="$(lane_jobs schedule "nightly=$nightly")" || exit 2
+  printf 'nightly=%s\n%s\n' "$nightly" "$night_jobs" >>"$GITHUB_OUTPUT"
   exit 0
 fi
 

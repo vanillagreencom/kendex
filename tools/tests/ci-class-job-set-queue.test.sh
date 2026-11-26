@@ -35,15 +35,15 @@ queue_selection() { # EVENT WORLD CLASS PATHS
   SELECT_IN="$world" SELECT_EVENT="$1" \
     selection "$3" false "$(printf '%s\n' $4)"
 }
+# The merge group alone: ci-class-job-set-events' parity rows hold the pull
+# request's selection equal to it.
 queue_rows=0
 while IFS='|' read -r world class paths macos; do
-  for event in pull_request merge_group; do
-    queue_rows=$((queue_rows + 1))
-    got="$(queue_selection "$event" "$world" "$class" "$paths")"
-    expected='[]'
-    [ "$macos" = false ] || expected="$(macos_shards "$(field shards <<<"$got")")"
-    check "queue legs: $class on $event over '$paths'" "$expected" "$(field queue_macos_shards <<<"$got")"
-  done
+  queue_rows=$((queue_rows + 1))
+  got="$(queue_selection merge_group "$world" "$class" "$paths")"
+  expected='[]'
+  [ "$macos" = false ] || expected="$(macos_shards "$(field shards <<<"$got")")"
+  check "queue legs: $class over '$paths'" "$expected" "$(field queue_macos_shards <<<"$got")"
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

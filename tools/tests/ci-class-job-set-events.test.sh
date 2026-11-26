@@ -453,6 +453,10 @@ M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
 check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
 check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
 check "push route: all-proved publishes no runtime build main has" '[]' "$(field runtime_publish <"$TMP/push-out")"
+# The jobs a push runs come from what it owes: no shard job where none is
+# owed, and every job main runs whatever it owes.
+check "push route: all-proved runs no shard job and main's fixed jobs" "false false true true true" \
+  "$(for job in skill-suites-shard skill-suites-macos-queue catalog smoke cargo-check-windows; do in_list jobs "$job"; done | paste -sd ' ' -)"
 # WORLD|EXPECTED. A suite counts only where no selection left it out and
 # every same-head leg that runs it on its runner succeeded; a target only
 # where every selection listed it and the orch-rest Linux leg succeeded; any
@@ -489,6 +493,14 @@ jobs-missing|$WHOLE $UNREAD
 jobs-partial|$WHOLE $UNREAD
 ROWS
 [ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+# A push owing only macOS shards runs the macOS job alone of the two.
+macos_owed_row() {
+  push_world linux-only "linux-only$ROW_TAG"
+  push_select "linux-only$ROW_TAG" >/dev/null
+  check "push route: macOS shards alone run the macOS shard job alone" "false true" \
+    "$(in_list jobs skill-suites-shard) $(in_list jobs skill-suites-macos-queue)"
+}
+row_spawn macos_owed_row
 # The probes: a red Linux leg owes its suites on Linux alone, and a group
 # that left a suite out proves its every other suite.
 red_leg_row() {
@@ -571,6 +583,9 @@ publish_row() { # STATES OWED
   push_select "publish$ROW_TAG" >/dev/null
   check "runtime publication: $1" "shards=[\"orch-state\"] runtime_publish=$(owed_publish "$2")" \
     "shards=$(field shards <"$TMP/push-out$ROW_TAG") runtime_publish=$(field runtime_publish <"$TMP/push-out$ROW_TAG")"
+  # The publishing leg alone still runs the Linux shard job.
+  check "runtime publication: $1 runs the Linux shard job alone" "true false" \
+    "$(in_list jobs skill-suites-shard) $(in_list jobs skill-suites-macos-queue)"
 }
 while IFS='|' read -r states owed; do
   publish_rows=$((publish_rows + 1))
@@ -834,11 +849,14 @@ while IFS='|' read -r row mutation expected; do
   jq "$mutation" "$TMP/night-runs.json" >"$TMP/push/no-run/runs.json"
   : >"$TMP/nightly-out"
   PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-out" "$JOB_SET"
-  check "nightly $row" "nightly=$expected" "$(cat "$TMP/nightly-out")"
+  check "nightly $row" "nightly=$expected" "$(sed -n '/^nightly=/p' "$TMP/nightly-out")"
+  # A night stood down runs no job; one owed runs the nightly macOS roster.
+  night_jobs="$(sed -n 's/^jobs=//p' "$TMP/nightly-out" | jq -c 'if . == [] then "none" else index("skill-suites-macos") != null end')"
+  check "nightly $row jobs" "$([ "$expected" = true ] && echo true || echo '"none"')" "$night_jobs"
   if [ "$row" = older-match-newest-different ]; then
     : >"$TMP/nightly-control-out"
     PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-control-out" "$TMP/trusting/tools/ci-job-set"
-    check "must-fail: oldest successful night skips a head the latest night did not test" nightly=false "$(cat "$TMP/nightly-control-out")"
+    check "must-fail: oldest successful night skips a head the latest night did not test" nightly=false "$(sed -n '/^nightly=/p' "$TMP/nightly-control-out")"
   fi
 done <<'ROWS'
 equal|.workflow_runs[0] += {event:"schedule",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-15T02:00:00Z"}|false

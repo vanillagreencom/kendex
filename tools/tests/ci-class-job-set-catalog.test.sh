@@ -19,13 +19,13 @@ catalog_bits() { # SELECTION — only the two independently selected jobs
 
 # CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent. Catalog
 # paths alone do not affect the smoke test's own fixture.
-catalog_rows() { # SCRIPT — every row must agree on both events
-  local class path selected smoke event
+# The merge group alone: ci-class-job-set-events' parity rows hold the pull
+# request's selection equal to it.
+catalog_rows() { # SCRIPT
+  local class path selected smoke
   while IFS='|' read -r class path selected smoke; do
-    for event in pull_request merge_group; do
-      check "catalog inputs: $event $class $path" "catalog=$selected
-smoke=${smoke:-$selected}" "$(catalog_bits "$(SELECT_IN="$READ_WORLD" SELECT_WITH="$1" SELECT_EVENT="$event" selection "$class" false "$(printf '%s\n' $path)")")"
-    done
+    check "catalog inputs: $class $path" "catalog=$selected
+smoke=${smoke:-$selected}" "$(catalog_bits "$(SELECT_IN="$READ_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection "$class" false "$(printf '%s\n' $path)")")"
   done <<ROWS
 trivial|README.md|false
 standard|README.md|false

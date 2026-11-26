@@ -34,10 +34,12 @@ ui="UI (vitest, tsc, biome)"
 macos="macOS cargo kendex-core"
 bot="Bot instructions"
 unmapped="Classify the diff"
+mac_rest="Skill suites shard (orch-rest, macos-latest)"
+mac_mail="Skill suites shard (mailbox, macos-latest)"
 
 check "each check answered by its lane or shard, CI by the others" \
-  "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within CI${nl}exit=0" \
-  "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$unmapped${nl}CI")"
+  "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within $mac_rest${nl}outside $mac_mail${nl}within CI${nl}exit=0" \
+  "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$mac_rest$nl$mac_mail$nl$unmapped${nl}CI")"
 printf '%s\n' .kendex-lock.json >"$TMP/paths"
 check "an install record selects no suite shard" \
   "outside $orch_rest${nl}outside $oversee${nl}outside CI${nl}exit=0" \

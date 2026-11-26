@@ -5,32 +5,32 @@
 # `skills/harness-ci/scripts/aggregate-needs` authorizes a skip through one
 # waiver and the set of jobs it covers, or through `--lane`, which reads each
 # job's verdict from the classifier job's `lane_<name>` outputs. This
-# repository's selections come from `tools/ci-job-set` under names of its own,
-# not `lane_<name>` outputs, so each aggregate of
-# `.github/workflows/skill-tests.yml` takes the waiver route with its own set:
-# exactly the lanes `tools/ci-job-set` selected `false`. This script builds
-# that set from the selections and runs the helper, which keeps each
-# aggregate from spelling the same derivation.
+# repository's selection is one `jobs` list, not `lane_<name>` outputs, so
+# the aggregate of `.github/workflows/skill-tests.yml` takes the waiver route
+# with its own set: the LANES jobs of `tools/ci-job-set --lanes` the list
+# leaves out. This script builds that set and runs the helper.
 #
 # Usage:
-#   ci-aggregate --results JSON --classifier JOB --lane SELECTION:JOB [--lane ...]
+#   ci-aggregate --results JSON --classifier JOB --jobs JSON
 #
-# SELECTION is the `true` or `false` the classifying job published for that
-# lane. A lane selected `false` is authorized to skip; every other lane must
-# have succeeded.
+# RESULTS is `toJSON(needs)`. JOBS is the classifier's `jobs` output, the
+# JSON list of the jobs it selected. Each LANES row whose class cell is not
+# `-` is a job CI holds: a listed one must have succeeded, an unlisted one is
+# authorized to skip, and a `fixed` one must have succeeded whatever the
+# list. GitHub reads CI's `needs:` before any job runs, so a held job absent
+# from RESULTS exits 1 with `ci-aggregate: needed-result=absent job=<name>`:
+# no output can add the edge, and toJSON(needs) omits a job the needs list
+# does not name even while it runs.
 #
-# An EMPTY selection is the classifying job having published nothing, which is
+# An EMPTY JOBS is the classifying job having published nothing, which is
 # that job having failed. It authorizes no skip, so the run reaches
-# `aggregate-needs` with the waiver off and is rejected there, naming the dead
-# classifier rather than a parse failure here. A lane held to an event rather
-# than a class, never empty, can still select `false` beside a dead
-# classifier and turn the waiver on; `aggregate-needs` rejects that run on the
-# classifier's own result.
+# `aggregate-needs` with the waiver off and is rejected there, naming the
+# dead classifier rather than a parse failure here.
 #
-# Argument refusals start `ci-aggregate: cause=<name>` and exit 2, a helper
-# this script cannot find included. A missing selected result exits 1 with
-# `ci-aggregate: selected-result=absent job=<name>`. The helper's status
-# rejections pass through unchanged.
+# Argument refusals start `ci-aggregate: cause=<name>` and exit 2: a JOBS
+# that is not a JSON list of strings, a listed job no LANES row holds, an
+# unreadable table and a helper this script cannot find among them. The
+# helper's status rejections pass through unchanged.
 set -euo pipefail
 
 die() { # CAUSE MESSAGE
@@ -49,10 +49,8 @@ HELPER="$helper_dir/aggregate-needs"
 
 results=""
 classifier=""
-lanes=""
-authorized=""
-declared=""
-selected=""
+jobs=""
+jobs_given=false
 
 need_value() { # FLAG REMAINING NEXT
   [ "$2" -ge 2 ] || die "missing-value option=$1" "$1 needs a value"
@@ -66,7 +64,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --results) need_value "$1" "$#" "${2:-}"; results="$2"; shift 2 ;;
     --classifier) need_value "$1" "$#" "${2:-}"; classifier="$2"; shift 2 ;;
-    --lane) need_value "$1" "$#" "${2:-}"; lanes="$lanes $2"; shift 2 ;;
+    # An empty list is the dead classifier's, so it is a value here.
+    --jobs) [ "$#" -ge 2 ] || die "missing-value option=$1" "$1 needs a value"
+      jobs="$2"; jobs_given=true; shift 2 ;;
     *) die "unknown-option option=$1" "unknown argument '$1'" ;;
   esac
 done
@@ -74,30 +74,33 @@ done
 [ -n "$results" ] || die "missing-option option=--results" "--results is required"
 [ -n "$classifier" ] || die "missing-option option=--classifier" \
   "--classifier is required"
-[ -n "$lanes" ] || die "missing-option option=--lane" \
-  "at least one --lane is required"
+[ "$jobs_given" = true ] || die "missing-option option=--jobs" "--jobs is required"
 
-for lane in $lanes; do
-  job="${lane#*:}"
-  selection="${lane%%:*}"
-  [ "$job" != "$lane" ] && [ -n "$job" ] || die "malformed-lane lane=$lane" \
-    "a lane is SELECTION:JOB"
-  # Two selections for one job would leave the verdict to whichever the
-  # helper read last, so a lane the class selected could skip under the
-  # other's `false`.
-  case "$declared --skippable " in
-    *" --skippable $job "*) die "duplicate-lane job=$job" \
-      "this job is named by more than one --lane" ;;
-  esac
+lanes="$("$(dirname "$0")/ci-job-set" --lanes)" ||
+  die "lanes-unread" "tools/ci-job-set --lanes printed no table"
+# `JOB CELL` for every job CI holds.
+held="$(printf '%s\n' "$lanes" | awk -F '|' 'NF == 6 && $3 != "-" { print $1, $3 }')" && [ -n "$held" ] ||
+  die "lanes-unread" "tools/ci-job-set --lanes held no job"
+
+if [ -n "$jobs" ]; then
+  jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 <<<"$jobs" ||
+    die "jobs-unreadable value=$jobs" "--jobs is a JSON list of job names"
+  unknown="$(jq -r --arg held "$held" '
+    ($held | split("\n") | map(split(" ") | select(.[1] != "fixed") | .[0])) as $lanes
+    | .[] | select(. as $job | $lanes | index($job) | not)' <<<"$jobs")" ||
+    die "jobs-unreadable value=$jobs" "--jobs is a JSON list of job names"
+  [ -z "$unknown" ] || die "unknown-job job=${unknown%%$'\n'*}" \
+    "the classifier listed a job no LANES row selects"
+fi
+
+authorized=""
+declared=""
+while read -r job cell; do
   declared="$declared --skippable $job"
-  case "$selection" in
-    false) authorized="$authorized --skippable $job" ;;
-    true) selected="$selected $job" ;;
-    '') ;;
-    *) die "invalid-selection job=$job value=$selection" \
-      "a selection is true, false, or empty where the classifier published none" ;;
-  esac
-done
+  [ -n "$jobs" ] && [ "$cell" != fixed ] || continue
+  jq -e --arg job "$job" 'index($job) != null' >/dev/null <<<"$jobs" ||
+    authorized="$authorized --skippable $job"
+done <<<"$held"
 
 # The helper needs a --skippable to parse even where no lane may skip. With
 # the waiver off that list authorizes nothing, so naming every lane there is
@@ -115,14 +118,11 @@ printf 'ci-aggregate: waiver=%s authorized=%s\n' "$waiver" \
 accepted="$("$HELPER" --results "$results" --classifier "$classifier" \
   --waiver "$waiver" $authorized)" || exit "$?"
 
-# GitHub toJSON(needs) omits a selected job dropped from CI's needs graph,
-# even while its independent matrix runs. The helper judges present statuses;
-# this selection owner must also require each selected job's result.
-missing="$(printf '%s\n' "$results" | jq -r --arg selected "$selected" '
-  . as $results | $selected | split(" ")[] | select(. != "") |
+missing="$(jq -r --arg held "$held" '
+  . as $results | $held | split("\n")[] | split(" ")[0] | select(. != "") |
   select(. as $job | $results | has($job) | not) |
-  "ci-aggregate: selected-result=absent job=\(.)"
-')" || exit "$?"
+  "ci-aggregate: needed-result=absent job=\(.)"
+' <<<"$results")" || exit "$?"
 if [ -n "$missing" ]; then
   printf '%s\n' "$missing" >&2
   exit 1
