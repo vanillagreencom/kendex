@@ -328,8 +328,12 @@ require_issue_launch_read() {
 	[[ -n "$skills" ]] || return 0
 	reader="$skills/orch/scripts/orch-runtime"
 	local lower body="" out line cause="" rc=0
-	lower="${1,,}"
-	[[ "$lower" == *location* || "$lower" == *delta* ]] || return 0
+	# Folded with tr, not Bash 4's case expansion: the Jarvis progress-log
+	# suite sources this lib under macOS's Bash 3.2. A failed fold reads the
+	# body rather than skip it.
+	if lower=$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'); then
+		[[ "$lower" == *location* || "$lower" == *delta* ]] || return 0
+	fi
 
 	if ! body=$(mktemp 2>/dev/null) || ! printf '%s\n' "$1" >"$body"; then
 		[[ -z "$body" ]] || rm -f -- "$body"
