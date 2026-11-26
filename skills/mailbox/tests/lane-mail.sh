@@ -708,13 +708,15 @@ assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(.text) | join(",")')" "whole,aft
 # send closes through mailbox_terminate. In the passed world, the overseer's
 # mailbox, both boxes' consumers already stand past the damage, as after an
 # upgrade over a fragment an older writer closed unmarked: to-lane.cursor at
-# 9, and to-overseer.seen at 9 from the Jarvis read.
+# 9, and to-overseer.seen at 9 from the Jarvis read. The lane-passed world is
+# that mailbox before any Jarvis read: the lane's cursor stands past the damage
+# and the overseer's own count does not, so each box's floor is its own count.
 WORLD_ITEM=""
-damaged_world() { # NAME damaged|torn|passed
+damaged_world() { # NAME damaged|torn|passed|lane-passed
   local box i
   new_lane "$1"
   WORLD_ITEM=KEN-1
-  [ "$2" != passed ] || WORLD_ITEM=overseer
+  case $2 in passed | lane-passed) WORLD_ITEM=overseer ;; esac
   box="$LANE/tmp/lane-mail/$WORLD_ITEM"
   mkdir -p "$box"
   for i in 1 2 3 4 5 6 7; do
@@ -726,8 +728,8 @@ damaged_world() { # NAME damaged|torn|passed
     printf '{"id":"lost","kind":"directive"\n' | tee -a "$box/to-overseer.jsonl" >> "$box/to-lane.jsonl"
     printf '{"id":"n9","kind":"notice","at":"2026-11-26T00:00:00Z","text":"n9"}\n' >> "$box/to-overseer.jsonl"
     printf '{"id":"a9","kind":"answer","re":"n1","at":"2026-11-26T00:00:00Z","text":"a9"}\n' >> "$box/to-lane.jsonl"
+    case $2 in passed | lane-passed) printf '9\n' > "$box/to-lane.cursor" ;; esac
     if [ "$2" = passed ]; then
-      printf '9\n' > "$box/to-lane.cursor"
       lm events --item overseer --root "$LANE" --box to-overseer --after 9 --mark-read
       assert_eq "$RC=$(cat "$box/to-overseer.seen")" "0=9" "the passed world's Jarvis read saves its count"
     fi
@@ -760,6 +762,8 @@ DAMAGED_ROWS=(
   "drain --after 0 --receipts|passed|0==count=9 first=n1 n1 n2 n3 n4 n5 n6 n7 n9|9"
   "events --box to-overseer --after 0|passed|0==count=9 first=n1 n1 n2 n3 n4 n5 n6 n7 n9|9"
   "events --box to-lane --after 0|passed|0==count=9 first=d1 d1 d2 d3 d4 d5 d6 d7 a9|9"
+  "drain --after 0|lane-passed|2=lane-mail: envelope-invalid path=@BOX@/to-overseer.jsonl line=8=|9"
+  "events --box to-overseer --after 0|lane-passed|2=lane-mail: envelope-invalid path=@BOX@/to-overseer.jsonl line=8=|9"
 )
 DAMAGED_SERIAL=0
 for row in "${DAMAGED_ROWS[@]}"; do
