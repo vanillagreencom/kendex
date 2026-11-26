@@ -8,13 +8,16 @@
 //! it at run time, so brief newlines never cross terminal input.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::confine::{Confinement, Grants};
 use crate::error::{Error, Result};
-use crate::harness::{Harness, PermissionMeaning};
+use crate::harness::{
+    COPILOT_LONG_TIER, Harness, PermissionMeaning, copilot_long_tier_at_par, copilot_model_list,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -390,6 +393,9 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
     args.extend(h.settings_words().into_iter().map(str::to_owned));
     if let Some(model) = &intent.model {
         args.extend(h.model_words(model, intent.effort.as_deref()));
+        if h == Harness::Copilot && copilot_long_tier(intent, model, &env, &env_remove) {
+            args.extend(COPILOT_LONG_TIER.map(str::to_owned));
+        }
     } else if let Some(effort) = &intent.effort {
         args.extend(h.effort_words(effort));
     }
@@ -544,6 +550,41 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         brief_path,
         confinement,
     })
+}
+
+/// Whether a Copilot launch of `model` starts on the long-context tier: where
+/// Copilot's own model list, read at this launch, prices the model the same
+/// at both tiers ([`copilot_long_tier_at_par`]). The read runs the launch's
+/// configured program, else the `copilot` on `PATH`, under the environment
+/// the session gets: each `env_remove` name and the `COPILOT_GITHUB_TOKEN`
+/// the launch clears set empty, which Copilot CLI 1.0.116 reads as unset,
+/// then `env` set over them. So it reads the list of the account the session
+/// signs in as. A unit-test build reads only a program its test planted, so
+/// no test starts the host's own Copilot.
+fn copilot_long_tier(
+    intent: &LaunchIntent,
+    model: &str,
+    env: &BTreeMap<String, String>,
+    env_remove: &[String],
+) -> bool {
+    let executable = match &intent.program {
+        Some(program) => program.as_path(),
+        None if cfg!(test) => return false,
+        None => Path::new(Harness::Copilot.binary()),
+    };
+    let cleared = env_remove
+        .iter()
+        .map(String::as_str)
+        .chain(["COPILOT_GITHUB_TOKEN"])
+        .map(|name| (name, OsStr::new("")));
+    let read_env: Vec<(&str, &OsStr)> = cleared
+        .chain(
+            env.iter()
+                .map(|(name, value)| (name.as_str(), OsStr::new(value))),
+        )
+        .collect();
+    copilot_model_list(executable, &read_env)
+        .is_some_and(|list| copilot_long_tier_at_par(&list, model))
 }
 
 /// Whether a launch of `harness` under `permission` with the caller's
@@ -985,8 +1026,6 @@ mod tests {
                     "--autopilot",
                     "--max-autopilot-continues",
                     "3",
-                    "--context",
-                    "long_context",
                     "--no-auto-update",
                 ],
                 &["--no-ask-user"],
@@ -1010,6 +1049,86 @@ mod tests {
             assert!(
                 args.windows(question.len()).any(|w| w == question),
                 "{h}: the question-tool words: {args:?}"
+            );
+        }
+    }
+
+    /// A Copilot launch reads Copilot's own model list at launch and starts
+    /// on the long tier only for a model priced the same at both tiers. The
+    /// stand-in is the CLI's SDK server: it answers only its server form
+    /// under the launch's home, reads one framed `models.list` request, and
+    /// sends an event before the answer carrying the request's id, then
+    /// waits for its input to end. The prices are Copilot CLI 1.0.116's own
+    /// for these two models. A CLI that gives no answer leaves the tier to
+    /// Copilot's own setting.
+    #[test]
+    fn a_copilot_launch_takes_the_long_tier_only_for_a_model_its_list_prices_alike_at_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".1copilot");
+        let list = dir.path().join("list.json");
+        fs::write(
+            &list,
+            serde_json::json!({"models": [
+                {"id": "claude-opus-5.5", "billing": {"tokenPrices": {
+                    "inputPrice": 400, "outputPrice": 2000, "cacheReadPrice": 20,
+                    "cacheWritePrice": 500, "cacheWrite1hPrice": 800,
+                    "longContext": {
+                        "inputPrice": 400, "outputPrice": 2000, "cacheReadPrice": 20,
+                        "cacheWritePrice": 500, "cacheWrite1hPrice": 800}}}},
+                {"id": "gpt-6.2-sol", "billing": {"tokenPrices": {
+                    "inputPrice": 200, "outputPrice": 1000, "cacheReadPrice": 10,
+                    "cacheWritePrice": 250,
+                    "longContext": {
+                        "inputPrice": 400, "outputPrice": 1500, "cacheReadPrice": 20,
+                        "cacheWritePrice": 500}}}},
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let server = dir.path().join("copilot");
+        crate::host::write_executable(
+            &server,
+            format!(
+                r#"#!/bin/sh
+[ "$*" = "--headless --stdio --no-auto-update" ] || exit 2
+[ "$COPILOT_HOME" = '{home}' ] || exit 3
+IFS= read -r head
+IFS= read -r blank
+length=${{head#Content-Length: }}
+body=$(head -c "${{length%?}}")
+case $body in *'"method":"models.list"'*) ;; *) exit 4 ;; esac
+id=$(printf '%s' "$body" | sed 's/.*"id":\([0-9]*\).*/\1/')
+frame() {{ printf 'Content-Length: %s\r\n\r\n%s' "${{#1}}" "$1"; }}
+frame '{{"jsonrpc":"2.0","method":"session.event","params":{{}}}}'
+frame "{{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":$(cat '{list}')}}"
+cat > /dev/null
+"#,
+                home = home.display(),
+                list = list.display(),
+            ),
+        );
+        let silent = dir.path().join("silent");
+        crate::host::write_executable(&silent, "#!/bin/sh\nexit 1\n");
+        let rows = [
+            ("claude-opus-5.5", &server, true),
+            ("gpt-6.2-sol", &server, false),
+            ("claude-opus-5.5", &silent, false),
+        ];
+        for (model, program, long) in rows {
+            let mut i = bare(Harness::Copilot);
+            i.home = Some(home.clone());
+            i.program = Some(program.clone());
+            i.model = Some(model.to_owned());
+            let args = build(&i).unwrap().args;
+            assert_eq!(
+                args.windows(2).any(|w| w == COPILOT_LONG_TIER),
+                long,
+                "{model} through {}: {args:?}",
+                program.display()
+            );
+            assert!(
+                args.iter().filter(|a| *a == "--context").count() <= 1,
+                "{args:?}"
             );
         }
     }
