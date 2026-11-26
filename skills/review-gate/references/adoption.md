@@ -22,7 +22,7 @@ For the organization refresh exception, the organization owner reads and updates
 - Pin `sha` to the merged commit that holds the reviewed workflow, with `ref: refs/heads/main` and kendex's repository ID.
 - At each stable kendex release, re-pin `sha` when the workflow changed, by the step in kendex's app-deploy skill § Major tag.
 - Replace the `copilot_code_review` rule only after that commit exists.
-- Preserve every other rule, condition and the empty bypass list.
+- Preserve every other rule, condition and the bypass list.
 
 Review-gate owns that central workflow in kendex's own `.github/workflows/`, beside `refresh-consumer.yml`. Consumers copy and render none of it.
 
