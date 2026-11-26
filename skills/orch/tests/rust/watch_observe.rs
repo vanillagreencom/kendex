@@ -9332,12 +9332,15 @@ fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_r
     }
 }
 
-/// A pending account wall whose pane then runs a turn, as one the owner
-/// resumed by hand, ends with no resume and no transfer whatever its own
-/// account reads, a successor with room standing by: room, an unreadable
-/// account or an unmeasured one.
+/// A pending wall whose pane then runs a turn, as one the owner resumed by
+/// hand, ends with no resume and no transfer whatever its own account
+/// reads, a successor with room standing by: room, an unreadable or
+/// unmeasured account, zero headroom on the plan or on the reserve, under
+/// the hook's standing failure row, and on a Pi screen that still shows
+/// the last turn's usage error above the working one.
 #[test]
 fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
+    let reset = 1_800_000_000 + 3600;
     let room = || marks(MarkKey::Below, "", "", Succession::On, "");
     let unread = |own: AccountState, reason: &str| {
         let mut m = marks(
@@ -9351,40 +9354,127 @@ fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
         m.reason = reason.to_owned();
         m
     };
+    let zero_on = |reserve_only: bool| {
+        let mut m = marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        );
+        m.resets = clock::iso_utc(reset);
+        m.reserve_only = reserve_only;
+        m
+    };
     let unreadable = || unread(AccountState::Unreadable, "headroom-unreadable");
     let unmeasured = || unread(AccountState::Unmeasured, "headroom-none");
+    let zero = || zero_on(false);
+    let reserve_zero = || zero_on(true);
+    let pi_working = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/oversee-watch/pi-working.txt"),
+    )
+    .unwrap();
+    let turn = " Resume the orch workflow for CC-1 from where this session stopped.";
+    assert!(pi_working.contains(turn));
+    let pi_stale = pi_working.replace(
+        turn,
+        &format!(" Error: You've hit your usage limit · resets 6pm (UTC)\n\n{turn}"),
+    );
+    let claude_working = "❯ Resume the work\n✻ Working… (esc to interrupt)\n";
     type Reading<'a> = &'a dyn Fn() -> Marks;
-    let cases: [(&str, Reading); 3] = [
-        ("room", &room),
-        ("account unreadable", &unreadable),
-        ("account unmeasured", &unmeasured),
+    // case, the harness, its first screen, the reading once it works, the
+    // screen it works on, whether the hook's failure row still stands
+    let cases: [(&str, Harness, &str, Reading, &str, bool); 8] = [
+        (
+            "room",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &room,
+            claude_working,
+            false,
+        ),
+        (
+            "account unreadable",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &unreadable,
+            claude_working,
+            false,
+        ),
+        (
+            "account unmeasured",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &unmeasured,
+            claude_working,
+            false,
+        ),
+        (
+            "zero headroom",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &zero,
+            claude_working,
+            false,
+        ),
+        (
+            "zero headroom on the reserve",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &reserve_zero,
+            claude_working,
+            false,
+        ),
+        (
+            "standing failure row, account unreadable",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &unreadable,
+            claude_working,
+            true,
+        ),
+        (
+            "standing failure row, zero headroom",
+            Harness::Claude,
+            "❯\u{a0}\n",
+            &zero,
+            claude_working,
+            true,
+        ),
+        (
+            "Pi, the last turn's usage error on screen, account unreadable",
+            Harness::Pi,
+            &pi_working,
+            &unreadable,
+            &pi_stale,
+            false,
+        ),
     ];
-    for (case, reading) in cases {
+    for (case, harness, first, reading, working, standing) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
-        let (pane, identity) = redrawing(&server, dir.path(), "overseer", "claude", "❯\u{a0}\n");
-        await_drawn(&server, &pane, "❯");
+        let (pane, identity) = redrawing(&server, dir.path(), "overseer", harness.name(), first);
+        await_named(&server, &pane, harness.name());
         let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), dir.path());
+        record["harness"] = json!(harness.name());
         record["harness_pid"] = json!(identity.pid.to_string());
         record["harness_start"] = json!(identity.start);
+        if standing {
+            let rows = dir.path().join("session-rows.jsonl");
+            std::fs::write(
+                &rows,
+                "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"rate_limit\",\"message\":\"You've hit your weekly limit\"}\n",
+            )
+            .unwrap();
+            record["session_rows"] = json!(rows.display().to_string());
+        }
         fleet.set_overseer(record);
         let key = format!("{} {pane}", server.pid);
         let resumed = Cell::new(false);
-        let judge = |_: &Caller, _: Option<&str>| {
-            if resumed.get() {
-                return Ok(reading());
-            }
-            let mut m = marks(
-                MarkKey::Reached(MarkKind::Headroom),
-                "0",
-                "5",
-                Succession::On,
-                "/home/me/.eclaude",
-            );
-            m.resets = clock::iso_utc(1_800_000_000 + 3600);
-            Ok(m)
-        };
+        let judge =
+            |_: &Caller, _: Option<&str>| Ok(if resumed.get() { reading() } else { zero() });
         let walk = |request: &WalkRequest| {
             if resumed.get() {
                 walk_b(request)
@@ -9408,8 +9498,8 @@ fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
             &pane,
             dir.path(),
             "overseer-working.txt",
-            "❯ Resume the work\n✻ Working… (esc to interrupt)\n",
-            "esc to interrupt",
+            working,
+            "Working",
         );
         resumed.set(true);
         driver.pass(&state);

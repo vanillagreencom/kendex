@@ -10575,6 +10575,19 @@ fn judged_memory(
         agent_runtime::process::Level,
     ) -> agent_runtime::reading::Reading<Option<agent_runtime::process::Memory>>,
 ) -> orch_runtime::watch::overseer::Marks {
+    judged(world, extra, None, memory)
+}
+
+/// [`judged_memory`] with the context reading `context`, `TOKENS:WINDOW`.
+fn judged(
+    world: &MarksWorld,
+    extra: &[(&str, &str)],
+    context: Option<&str>,
+    memory: &dyn Fn(
+        &agent_runtime::process::Identity,
+        agent_runtime::process::Level,
+    ) -> agent_runtime::reading::Reading<Option<agent_runtime::process::Memory>>,
+) -> orch_runtime::watch::overseer::Marks {
     let roots = agent_runtime::settings::Roots {
         project: world.path().to_path_buf(),
         common: world.path().to_path_buf(),
@@ -10611,11 +10624,132 @@ fn judged_memory(
         fleet_path: &world.path().join(agent_runtime::record::FLEET_FILE_NAME),
         host: &host,
         caller: &caller,
-        context: None,
+        context,
         memory,
         now: now_secs(),
     })
     .unwrap()
+}
+
+/// The own account as each answer of the account judge read it, the one
+/// reading a pending wall lifts on and its reset's notice reads: a room
+/// read keeps its room whether the rate is unmeasured just past a reset or
+/// measured below every mark, a headroom mark reads at the trigger, an
+/// account whose provider refused reads unreadable even under a memory
+/// mark answered before its state is judged, and a due context reading
+/// answers before the account is read at all.
+#[test]
+fn each_marks_answer_carries_the_own_account_as_the_judge_read_it() {
+    use agent_runtime::controller::views::{AccountState, MarkKind};
+    use agent_runtime::process::Memory;
+    use agent_runtime::reading::Reading;
+    use orch_runtime::watch::overseer::MarkKey;
+    let inert = |_: &agent_runtime::process::Identity, _: agent_runtime::process::Level| {
+        Reading::Live(None)
+    };
+    let capped = |_: &agent_runtime::process::Identity, _: agent_runtime::process::Level| {
+        Reading::Live(Some(Memory {
+            current: 900,
+            anon: 900,
+            max: 1000,
+            oom_kill: None,
+        }))
+    };
+    let mut sampled = measured_account("eclaude", 10);
+    sampled["usage_rate_state"] = json!("one-sample");
+    sampled["usage_rate_pct_per_min"] = Value::Null;
+    type MemoryRead<'a> = &'a dyn Fn(
+        &agent_runtime::process::Identity,
+        agent_runtime::process::Level,
+    ) -> Reading<Option<Memory>>;
+    // case, the account planted, whether its provider refuses the read,
+    // the settings, the context reading, the memory reader, the answer's
+    // key, the own account it read
+    type Row<'a> = (
+        &'a str,
+        Value,
+        bool,
+        &'a [(&'a str, &'a str)],
+        Option<&'a str>,
+        MemoryRead<'a>,
+        MarkKey,
+        Option<AccountState>,
+    );
+    let rows: [Row; 6] = [
+        (
+            "rate one sample past a reset, under the default wall minutes",
+            sampled,
+            false,
+            &[],
+            None,
+            &inert,
+            MarkKey::Unmeasured(MarkKind::Rate),
+            Some(AccountState::HasRoom),
+        ),
+        (
+            "room below every mark",
+            measured_account("eclaude", 10),
+            false,
+            &[("ORCH_OVERSEER_WALL_MINUTES", "0")],
+            None,
+            &inert,
+            MarkKey::Below,
+            Some(AccountState::HasRoom),
+        ),
+        (
+            "headroom at the trigger",
+            measured_account("eclaude", 97),
+            false,
+            &[],
+            None,
+            &inert,
+            MarkKey::Reached(MarkKind::Headroom),
+            Some(AccountState::AtTrigger),
+        ),
+        (
+            "provider refused the account read",
+            measured_account("eclaude", 10),
+            true,
+            &[],
+            None,
+            &inert,
+            MarkKey::Unmeasured(MarkKind::Headroom),
+            Some(AccountState::Unreadable),
+        ),
+        (
+            "memory mark over an account the provider refused",
+            measured_account("eclaude", 10),
+            true,
+            &[("ORCH_OVERSEER_MEMORY_PCT", "80")],
+            None,
+            &capped,
+            MarkKey::Reached(MarkKind::Memory),
+            Some(AccountState::Unreadable),
+        ),
+        (
+            "context due",
+            measured_account("eclaude", 10),
+            false,
+            &[],
+            Some("650000:1000000"),
+            &inert,
+            MarkKey::Reached(MarkKind::Context),
+            None,
+        ),
+    ];
+    for (case, account, refused, extra, context, memory, key, own) in rows {
+        let mut world = MarksWorld::new();
+        world.plant(refused.then_some("vm"), &[account]);
+        world.write_fleet(&world.dir("eclaude"));
+        if refused {
+            let answers = world.path().join("lane-host.json");
+            let mut map: Value = serde_json::from_slice(&std::fs::read(&answers).unwrap()).unwrap();
+            map["vm accounts"] = json!({"exit": 1, "stderr": "lane-host-fixture: refused\n"});
+            std::fs::write(&answers, map.to_string()).unwrap();
+        }
+        let marks = judged(&world, extra, context, memory);
+        assert_eq!((marks.key, marks.own), (key, own), "{case}");
+    }
 }
 
 // ---------------------------------------------------------------------------

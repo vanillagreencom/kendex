@@ -1343,7 +1343,31 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             None,
         ))
     });
+    // A pending case's pane is judged first: a pane that runs a turn, read
+    // without room or with it (Pi keeps the last turn's usage error on its
+    // screen while the next turn works), is the overseer resumed, so no
+    // standing failure row, account reading or reserve walls or moves it.
+    let pending = pass.baseline.get("overseer-walled", &key) == Some(PENDING);
+    let with_room = || {
+        reads.as_ref().and_then(|reads| {
+            Some(
+                observe::observe_pane(
+                    reads.screen.as_ref().ok()?,
+                    record.harness?,
+                    &reads.process,
+                    Some(true),
+                )
+                .state,
+            )
+        })
+    };
+    let working = pending
+        && (pane
+            .as_ref()
+            .is_some_and(|pane| pane.state == State::Working)
+            || with_room() == Some(State::Working));
     let mut verdict = match &reads {
+        Some(_) if working => Verdict::Live,
         Some(reads) => judge(
             &record,
             reads,
@@ -1356,6 +1380,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     };
     let mut reserve = false;
     if verdict == Verdict::Live
+        && !working
         && let Some(m) = marks()
         && m.key == MarkKey::Reached(MarkKind::Headroom)
         && m.value == "0"
@@ -1397,39 +1422,23 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         };
     }
     let marks_now = marks_read.clone().and_then(Result::ok);
-    // A pending wall read live lifts on a pane that runs a turn, whatever
-    // the account reads, and otherwise only where the own account reads
-    // room and the pane, judged with that room, stands idle for the resume.
-    // A screen or account wall reads live where the account read failed or
-    // left its headroom unread, and a banner screen reads walled until room
-    // is judged on it: on any other pass the wall stands, so it is walked
-    // and its reset read as on a walled one.
+    // A pending wall read live, its pane running no turn, lifts only where
+    // the own account reads room and the pane, judged with that room,
+    // stands idle for the resume. A screen or account wall reads live where
+    // the account read failed or left its headroom unread, and a banner
+    // screen reads walled until room is judged on it: on any other pass the
+    // wall stands, so it is walked and its reset read as on a walled one.
     let mut resume = false;
-    if verdict == Verdict::Live && pass.baseline.get("overseer-walled", &key) == Some(PENDING) {
+    if verdict == Verdict::Live && pending && !working {
         let room = marks_now.as_ref().is_some_and(Marks::reads_room);
-        let working = pane
-            .as_ref()
-            .is_some_and(|pane| pane.state == State::Working);
-        let idle = || {
-            reads.as_ref().is_some_and(|reads| {
-                reads.screen.as_ref().is_ok_and(|screen| {
-                    record.harness.is_some_and(|harness| {
-                        observe::observe_pane(screen, harness, &reads.process, Some(true)).state
-                            == State::Idle
-                    })
-                })
-            })
-        };
-        if !working {
-            if room && idle() {
-                resume = true;
-            } else {
-                verdict = Verdict::Walled {
-                    source: Source::Account,
-                    kind: WallKind::Usage,
-                    text: format!("pending-wall room={room}"),
-                };
-            }
+        if room && with_room() == Some(State::Idle) {
+            resume = true;
+        } else {
+            verdict = Verdict::Walled {
+                source: Source::Account,
+                kind: WallKind::Usage,
+                text: format!("pending-wall room={room}"),
+            };
         }
     }
     let (case, source, passes_needed) = match &verdict {
