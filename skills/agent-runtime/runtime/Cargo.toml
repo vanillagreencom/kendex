@@ -31,6 +31,9 @@ clap = { version = "4.6", features = ["derive"] }
 regex = "1"
 fd-lock = "4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "io-util", "sync"] }
+# The reset a usage-limit banner names, resolved in the zone it names or the
+# runner's own, with the fall-back hour's two instants (`stop::reset`).
+jiff = "0.2"
 
 # proc_pidpath, the one call that names a running tmux server's program on
 # macOS (host::tmux).
@@ -63,6 +66,10 @@ path = "../tests/rust/session.rs"
 [[test]]
 name = "load"
 path = "../tests/rust/load.rs"
+
+[[test]]
+name = "stop"
+path = "../tests/rust/stop.rs"
 
 [lints.rust]
 # Denied, not forbidden, so the one FFI call macOS needs carries its own

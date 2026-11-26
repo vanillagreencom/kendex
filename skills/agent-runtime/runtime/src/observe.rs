@@ -485,15 +485,6 @@ pub fn start_epoch(identity: &Identity) -> Reading<u64> {
     Reading::Live(btime + ticks / process::USER_HZ)
 }
 
-/// The StopFailure error kinds that refuse every turn on the account until
-/// a person acts: a login wall, never a usage mark.
-pub const AUTH_FAILURE_ERRORS: [&str; 4] = [
-    "authentication_failed",
-    "oauth_org_not_allowed",
-    "account_on_hold",
-    "billing_error",
-];
-
 /// The last twelve nonblank rows of a captured pane, in their drawn order.
 pub fn screen_tail(screen: &str) -> Vec<String> {
     let mut tail: Vec<_> = screen
@@ -624,12 +615,14 @@ fn wrapped_auth_failure(row: &str, next: &str) -> bool {
         && AUTH_FAILURE.is_match(&format!("{} {}", row.trim_end(), next.trim_start()))
 }
 
-pub fn is_auth_failure(banner: &str, error_kind: Option<&str>) -> bool {
-    if let Some(kind) = error_kind
-        && AUTH_FAILURE_ERRORS.contains(&kind)
-    {
-        return true;
-    }
+/// Whether a failed Pi turn's `errorMessage` is a refused sign-in. Pi writes
+/// a provider's refusal as its HTTP status, a space and the body
+/// (`pi-auth.jsonl`, an expired OAuth token's 401).
+pub fn pi_auth_failure(message: &str) -> bool {
+    message.starts_with("401 ")
+}
+
+pub fn is_auth_failure(banner: &str) -> bool {
     banner.lines().any(|l| AUTH_FAILURE.is_match(l))
         || banner
             .lines()
@@ -670,7 +663,7 @@ fn judge_slice(
         | ProcessReading::Unread { .. } => {}
     }
     if let Some(banner) = limit_banner(slice) {
-        if is_auth_failure(&banner, None) {
+        if is_auth_failure(&banner) {
             return State::Walled {
                 kind: WallKind::Auth,
                 banner,

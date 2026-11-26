@@ -85,6 +85,7 @@ use std::time::Duration;
 use agent_runtime::harness::Harness;
 use agent_runtime::host;
 use agent_runtime::reading::Reading;
+use agent_runtime::stop::{self, Kind};
 use serde_json::Value;
 
 use super::claim;
@@ -107,17 +108,11 @@ pub const UNREAD_KIND: &str = "unread";
 /// The baseline row kind the lane and controller duties ask a resume with.
 pub const RESUME_KIND: &str = "resume";
 
-/// The turn-end causes that can spend a continuation. Claude and Pi
-/// supply row words. Codex and Copilot supply a pane-classified API error.
-const PROVIDER_STOPS: &[(Harness, &str)] = &[
-    (Harness::Claude, "server_error"),
-    (Harness::Pi, "error"),
-    (Harness::Copilot, "api-error"),
-    (Harness::Codex, "api-error"),
-];
-
+/// Whether a turn that ended on `cause` can spend a continuation: a
+/// provider stop as agent-runtime names it, from a row word or a
+/// pane-classified API error, or a reading lane's output limit.
 pub(super) fn can_continue(harness: Harness, cause: &str, reading: bool) -> bool {
-    PROVIDER_STOPS.contains(&(harness, cause)) || (reading && cause == "length")
+    stop::of_cause(harness, cause) == Some(Kind::Provider) || (reading && cause == "length")
 }
 
 /// Preserve one continuation through repeated failures until a finished
@@ -200,9 +195,16 @@ impl Resume {
         let (cause, _) = row.split_once('|')?;
         let ended = match cause {
             "usage-limit" => "its account's usage limit, which has since reset",
+            "told" => return None,
             "length" => "the output limit",
             "api-error" => "an API error",
-            cause if PROVIDER_STOPS.iter().any(|(_, word)| *word == cause) => "a provider error",
+            cause
+                if Harness::ALL
+                    .iter()
+                    .any(|harness| stop::of_cause(*harness, cause) == Some(Kind::Provider)) =>
+            {
+                "a provider error"
+            }
             _ => return None,
         };
         Some(Resume {

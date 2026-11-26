@@ -1,0 +1,1 @@
+{"session_id": "s1", "transcript_path": "/home/u/.claude/projects/-work/s1.jsonl", "cwd": "/work", "prompt_id": "p1", "hook_event_name": "StopFailure", "error": "server_error", "last_assistant_message": "API Error: 529 Overloaded. This is a server-side issue, usually temporary \u2014 try again in a moment. If it persists, check your inference gateway (127.0.0.1:18555)."}

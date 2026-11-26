@@ -1,0 +1,1 @@
+{"session_id": "s1", "transcript_path": "/home/u/.claude/projects/-work/s1.jsonl", "cwd": "/work", "prompt_id": "p1", "hook_event_name": "StopFailure", "error": "invalid_request", "last_assistant_message": "API Error: Sonnet 4.5 can't help with this. Start a new session to continue.\n\nLearn more: https://www.anthropic.com/legal/aup\n\nMessage ID: msg_fake"}

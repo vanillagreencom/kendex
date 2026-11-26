@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "fd-lock",
+ "jiff",
  "libc",
  "regex",
  "serde",

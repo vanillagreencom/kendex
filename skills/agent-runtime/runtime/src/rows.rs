@@ -5,7 +5,9 @@
 //! an overseer's rows and one for a lane's, which `agent-runtime rows
 //! verdict --kind session|lane` prints; the row shapes follow Claude Code's
 //! hook inputs, Pi's carrier and Copilot's camelCase payloads as that
-//! library names them.
+//! library names them. Codex and Copilot write no failure row: their
+//! failed turn is read from their own session record
+//! (`session::last_failure`) and judged as the row [`failure_row`] makes.
 //!
 //! Every read is three-valued: `Live(row)` is the last row, `Gone` a file
 //! that is absent or holds no row, `Unreadable` a file or a last row that
@@ -32,6 +34,8 @@ use crate::observe::{self, WallKind};
 use crate::process;
 use crate::reading::Reading;
 use crate::record::Wait;
+use crate::session::Failure;
+use crate::stop::{self, Kind};
 
 /// The rows a reader looks back over for the last one: a session appends a
 /// start, an end, a failure per wall and a Stop per turn
@@ -72,6 +76,9 @@ pub struct Row {
     pub message: Option<String>,
     #[serde(default)]
     pub error_details: Option<String>,
+    /// The HTTP status of a failure read from a Copilot session record.
+    #[serde(default)]
+    pub status: Option<u16>,
     #[serde(default)]
     pub stop_reason: Option<String>,
     /// The carrier's count of working agents on a Pi Stop row; `null` is
@@ -97,21 +104,21 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "verdict", rename_all = "kebab-case")]
 pub enum SessionVerdict {
-    /// The row carries no evidence this verdict reads: a harness other than
-    /// Claude Code or Pi, or a Pi row that is neither a SessionEnd nor a
-    /// StopFailure with a `message`.
+    /// The row carries no evidence this verdict reads: an unknown harness, a
+    /// Codex or Copilot row that is no failure, or a Pi row that is neither a
+    /// SessionEnd nor a StopFailure with a `message`.
     Unsupported,
     /// A SessionEnd for any reason but `clear` and `resume`.
     Ended,
-    /// A StopFailure the account refused: the error kinds that refuse every
-    /// turn until a person acts (`auth`), or a usage limit (`usage`).
+    /// A StopFailure the account refused: an ended or refused sign-in
+    /// (`auth`), or a usage limit or spent credit (`usage`).
     Walled { kind: WallKind },
     /// A StopFailure for a prompt too long: every turn fails the same way
     /// while the harness stays up.
     Wedged,
-    /// Any other Claude Code row, a SessionEnd for `clear` or `resume`, or a
-    /// Pi StopFailure whose message names neither a limit nor a prompt too
-    /// long.
+    /// Any other Claude Code row, a SessionEnd for `clear` or `resume`, a Pi
+    /// StopFailure whose message names no limit, no sign-in and no prompt too
+    /// long, or a Codex or Copilot failure the provider made.
     Live,
 }
 
@@ -153,13 +160,49 @@ pub fn observe_session(row: Row) -> SessionObservation {
     }
 }
 
-/// Claude's StopFailure carries the error kind. Pi's StopFailure comes
-/// from the carrier only for an error, with no separate kind.
+/// Claude's StopFailure, and the one a Codex or Copilot record gives,
+/// carries the error kind. Pi's StopFailure comes from the carrier only for
+/// an error, with no separate kind.
 fn failure_cause(row: &Row) -> Option<&str> {
     match (row.harness.as_deref(), row.event.as_deref()) {
-        (Some("claude"), Some("StopFailure")) => row.error.as_deref(),
+        (Some("claude" | "codex" | "copilot"), Some("StopFailure")) => row.error.as_deref(),
         (Some("pi"), Some("StopFailure")) => Some("error"),
         _ => None,
+    }
+}
+
+/// The kind of stop an overseer's last row names, read from the verdict
+/// table: a wall's kind, an ended session as an exited harness, and a
+/// failed turn's word ([`stop::of_cause`]). A prompt too long, an ordinary
+/// turn and a row no verdict reads name none.
+pub fn stop_of(row: &Row) -> Option<Kind> {
+    match judge_session(row) {
+        SessionVerdict::Walled {
+            kind: WallKind::Usage,
+        } => Some(Kind::Usage),
+        SessionVerdict::Walled {
+            kind: WallKind::Auth,
+        } => Some(Kind::Auth),
+        SessionVerdict::Ended => Some(Kind::Exited),
+        SessionVerdict::Wedged => None,
+        SessionVerdict::Live | SessionVerdict::Unsupported => {
+            let harness = Harness::parse(row.harness.as_deref()?)?;
+            stop::of_cause(harness, failure_cause(row)?)
+        }
+    }
+}
+
+/// The StopFailure row a failed turn in a Codex or Copilot session record
+/// stands for, judged by the same table as a hook's row.
+pub fn failure_row(harness: Harness, failure: &Failure) -> Row {
+    Row {
+        harness: Some(harness.name().to_owned()),
+        event: Some("StopFailure".to_owned()),
+        error: failure.error.clone(),
+        message: Some(failure.message.clone()),
+        status: failure.status,
+        at: failure.at,
+        ..Row::default()
     }
 }
 
@@ -265,19 +308,40 @@ pub fn session_verdict(file: &Path) -> Reading<SessionVerdict> {
 
 /// The overseer verdict table, over one row.
 pub fn judge_session(row: &Row) -> SessionVerdict {
-    let harness = row.harness.as_deref().unwrap_or("");
     let event = row.event.as_deref().unwrap_or("");
     let message = row.message.as_deref().unwrap_or("");
-    if harness == "claude"
-        && event == "StopFailure"
-        && observe::is_auth_failure("", row.error.as_deref())
-    {
-        return SessionVerdict::Walled {
-            kind: WallKind::Auth,
-        };
-    }
-    if harness != "claude" && harness != "pi" {
+    let Some(harness) = row.harness.as_deref().and_then(Harness::parse) else {
         return SessionVerdict::Unsupported;
+    };
+    let failed = event == "StopFailure";
+    let wall = match harness {
+        Harness::Claude | Harness::Codex | Harness::Copilot if failed => {
+            stop::of_failure(harness, row.error.as_deref(), row.status)
+        }
+        Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi => None,
+    };
+    match wall {
+        Some(Kind::Usage) => {
+            return SessionVerdict::Walled {
+                kind: WallKind::Usage,
+            };
+        }
+        Some(Kind::Auth) => {
+            return SessionVerdict::Walled {
+                kind: WallKind::Auth,
+            };
+        }
+        Some(Kind::Provider | Kind::Exited) | None => {}
+    }
+    match harness {
+        Harness::Codex | Harness::Copilot => {
+            return if failed {
+                SessionVerdict::Live
+            } else {
+                SessionVerdict::Unsupported
+            };
+        }
+        Harness::Claude | Harness::Pi => {}
     }
     if event == "SessionEnd" {
         return match row.reason.as_deref() {
@@ -285,12 +349,7 @@ pub fn judge_session(row: &Row) -> SessionVerdict {
             Some(_) | None => SessionVerdict::Ended,
         };
     }
-    if event == "StopFailure" && harness == "claude" && row.error.as_deref() == Some("rate_limit") {
-        return SessionVerdict::Walled {
-            kind: WallKind::Usage,
-        };
-    }
-    if harness == "pi" && (event != "StopFailure" || message.is_empty()) {
+    if harness == Harness::Pi && (!failed || message.is_empty()) {
         return SessionVerdict::Unsupported;
     }
     if event == "StopFailure" {
@@ -300,7 +359,12 @@ pub fn judge_session(row: &Row) -> SessionVerdict {
             return SessionVerdict::Wedged;
         }
     }
-    if harness == "pi" {
+    if harness == Harness::Pi {
+        if observe::pi_auth_failure(message) {
+            return SessionVerdict::Walled {
+                kind: WallKind::Auth,
+            };
+        }
         return match observe::limit_banner(message) {
             Some(_) => SessionVerdict::Walled {
                 kind: WallKind::Usage,
@@ -325,8 +389,11 @@ pub fn lane_verdict(file: &Path) -> Reading<LaneVerdict> {
 pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
     let event = row.event.as_deref().unwrap_or("");
     if event == "StopFailure" && row.harness.as_deref() == Some("claude") {
-        return if row.error.as_deref() == Some("rate_limit")
-            || observe::is_auth_failure("", row.error.as_deref())
+        return if row
+            .error
+            .as_deref()
+            .and_then(|cause| stop::of_cause(Harness::Claude, cause))
+            .is_some_and(|kind| matches!(kind, Kind::Usage | Kind::Auth))
         {
             Reading::Live(LaneVerdict::Walled)
         } else {
@@ -361,9 +428,11 @@ pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
     match (event, row.stop_reason.as_deref()) {
         ("UserPromptSubmit" | "PreToolUse", _) => Reading::Live(LaneVerdict::Working),
         ("Stop", Some("error")) => {
-            match observe::limit_banner(row.message.as_deref().unwrap_or("")) {
-                Some(_) => Reading::Live(LaneVerdict::Walled),
-                None => idle(),
+            let message = row.message.as_deref().unwrap_or("");
+            if observe::pi_auth_failure(message) || observe::limit_banner(message).is_some() {
+                Reading::Live(LaneVerdict::Walled)
+            } else {
+                idle()
             }
         }
         ("Stop", Some(_) | None) => idle(),
