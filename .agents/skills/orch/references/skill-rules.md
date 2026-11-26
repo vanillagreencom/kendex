@@ -189,7 +189,7 @@ On Codex, a dev round that writes a dev-return artifact holds its watchdog throu
 
 - Its CI-fix and integration-analysis delegations mint `ci_round_id`, which opens no dev stage.
 - They record the delegation time and arm step 5's watchdog with the CI token; its missing-artifact `wait` is expected.
-- They accept on the return message plus a pushed commit.
+- They accept on the return message plus a new commit on the branch.
 - When no return arrives, they take [§ Escalation](#escalation).
 
 **Handoff at a mark.**
