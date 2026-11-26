@@ -430,6 +430,28 @@ printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain action picks th
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'claimed Cargo and Vitest jobs refused after their readers ran'
 refused_scope_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-config "$refused_scope_base"
+# Vite reads a TypeScript config under the root, which the Vitest reader
+# refuses before its walk.
+printf '{}\n' >"$repo/web/tsconfig.json"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'the refused Vitest root holds a TypeScript config'
+refused_config_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-import-package "$refused_scope_base"
+# The Vitest reader resolves a TypeScript module outside its root, then
+# refuses the next import in the same file before the walk reaches that module.
+mkdir -p "$repo/lib"
+printf '%s\n' '{"type":"module"}' >"$repo/lib/package.json"
+printf '%s\n' 'export const lib: number = 42' >"$repo/lib/lib.ts"
+cat >"$repo/web/check.test.mjs" <<'JS'
+import { expect, test } from 'vitest'
+import { lib } from '../lib/lib.ts'
+import { other } from 'other'
+test('module', () => expect(lib + other).toBe(84))
+JS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'the refused Vitest job imports a module beside its own package file'
+refused_import_package_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-refused-runner "$refused_scope_base"
 # The claimed shell job dispatches a lane through a runner whose interpreter
 # the reader refuses.
@@ -1110,7 +1132,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   base="$opted_base"
   push_ref=refs/heads/main
   case "$label" in
-    source|removed-source|shared-gate|shell-workdir|vitest-import|vitest-unread|vitest-external|installed|installed-push|shared-root-config)
+    source|removed-source|shared-gate|shell-workdir|vitest-import|vitest-unread|vitest-external|installed|installed-push|shared-root-config|vitest-ancestor-config)
       base="$static_base" ;;
     vitest-package-sibling) base="$vitest_package_base" ;;
     vitest-copilot-sibling) base="$vitest_copilot_base" ;;
@@ -1125,7 +1147,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     shell-symlink) base="$symlink_base" ;;
     refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
-    refused-shell-only|refused-vitest-package) base="$refused_scope_base" ;;
+    refused-shell-only|refused-vitest-package|refused-build-script|refused-added-target|refused-added-test)
+      base="$refused_scope_base" ;;
+    refused-vitest-config) base="$refused_config_base" ;;
+    refused-import-package|refused-import-tsconfig) base="$refused_import_package_base" ;;
     refused-runner) base="$refused_runner_base" ;;
     cargo-registry-dependency) base="$cargo_registry_base" ;;
     refused-executable) base="$refused_executable_base" ;;
@@ -1181,6 +1206,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
     restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
+    refused-added-target|cargo-added-target) mkdir -p "$repo/${path%/*}"; printf '\n' >"$repo/$path" ;;
     symlink-workdir) ln -s cargo "$repo/$path" ;;
     linked-workdir-swap)
       git -C "$repo" rm -q -- "$path"; mkdir "$repo/$path"; printf 'restored\n' >"$repo/$path/restored.txt" ;;
@@ -1361,8 +1387,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   case "$label" in
     cargo-external-child) refused_jobs='job=cargo cause=computed-path' ;;
     cargo-registry-dependency) refused_jobs='job=cargo cause=cargo-external-dependency' ;;
-    refused-shell-only|refused-vitest-package)
+    refused-shell-only|refused-vitest-package|refused-build-script|refused-added-target|refused-added-test)
       refused_jobs='job=cargo cause=opaque-action,job=web cause=vitest-opaque-source' ;;
+    refused-vitest-config) refused_jobs='job=cargo cause=opaque-action,job=web cause=vitest-opaque-config' ;;
+    refused-import-package|refused-import-tsconfig)
+      refused_jobs='job=cargo cause=opaque-action,job=web cause=vitest-opaque-import' ;;
     refused-runner)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unresolved-lane-dispatch,job=web cause=vitest-opaque-source' ;;
     refused-executable)
@@ -1441,6 +1470,7 @@ cargo-parent-hop|cargo/spare/cache/only.txt|false|true|false|false
 cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 cargo-registry-dependency|tools/input.sh|true|true|true|true
+cargo-added-target|cargo/primary/tests/added.rs|false|true|false|false
 refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
@@ -1449,6 +1479,12 @@ refused-ordinary-read|ops/notes.txt|false|false|true|false
 refused-executable|tools/run.py|true|false|false|false
 refused-shell-only|cargo/primary/notes.txt|true|false|false|false
 refused-vitest-package|web/package-lock.json|false|false|true|false
+refused-build-script|cargo/primary/build.rs|false|true|false|false
+refused-added-target|cargo/primary/tests/added.rs|false|true|false|false
+refused-added-test|web/added.test.mjs|false|false|true|false
+refused-vitest-config|web/tsconfig.json|false|false|true|false
+refused-import-package|lib/package.json|false|false|true|false
+refused-import-tsconfig|lib/tsconfig.json|false|false|true|false
 refused-runner|bin/run|true|false|false|false
 checkout-path|tools/input.sh|true|false|false|false
 restored-workdir|subject/restored.txt|false|true|false|false
@@ -1465,6 +1501,7 @@ vitest-copilot-sibling|.github/skills/math/sibling.mjs|||true||merge_group|true,
 vitest-disabled-sibling|.github/skills/math/sibling.mjs|||true|
 vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
+vitest-ancestor-config|vite.config.mjs|false||true|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
 vitest-refused-import|shared.mjs|false||true|false
@@ -1482,7 +1519,7 @@ feature-render-push|.codex/skills/math/SKILL.md|false||||push|false,render
 aggregate-render|.codex/skills/math/SKILL.md|false||||merge_group|false,render
 indexed-render|.codex/skills/math/SKILL.md|||||merge_group|true,lane-reach-unreadable
 aliased-render|.codex/skills/math/SKILL.md|||||merge_group|true,lane-reach-unreadable
-unplaced-addition|unplaced.txt|true|true|true|true
+unplaced-addition|unplaced.txt|false|true|false|false
 reasoned-exception|external.settings|true|true|true|true
 shared-root-config|package.json|true||true|true
 checkout-attributes|.gitattributes|true|true|true|true
