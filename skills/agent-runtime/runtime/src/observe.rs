@@ -309,9 +309,31 @@ static FRAME_RULE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[─━]{10,
 static PI_WORKING_BORDER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^── \S+ Working ─+\s*$").unwrap());
 /// Pi's prompt line under the editor: the working directory, then the
-/// branch in parentheses when there is one.
+/// branch in parentheses when there is one, then ` • <name>` once the
+/// session has a name (Pi 1.6.1 `modes/interactive/components/footer.js`).
 static PI_PROMPT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[~/]\S*( \(.+\))?\s*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[~/]\S*( \(.+\))?( • .+)?\s*$").unwrap());
+/// pi-qol's compact composer, which replaces Pi's editor: `π`, then a space
+/// and the draft once one is typed (pi-qol `qol/editor.ts`,
+/// `QolCompactPromptEditor`).
+static QOL_PROMPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^π( |$)").unwrap());
+/// pi-qol's status line, drawn above its composer in place of Pi's footer:
+/// it ends with the context left, `<n>%` or `…%` before any reading, then,
+/// in a subagent, two spaces and its name cut to 24 columns (pi-qol
+/// `qol/statusline.ts` `renderStatusLine`, `qol/agent-statusline.ts`).
+static QOL_STATUS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s(?:[0-9]+|…)%(?:  .{1,24})?\s*$").unwrap());
+/// A row of the panels kendex's Pi extensions stack above the editor
+/// (`stacked-widget.ts` in pi-agents-tmux, pi-task-panel and
+/// pi-background-tasks): each panel is a heavy-framed box. They register
+/// after pi-qol's status line, so under pi-qol they stand between it and the
+/// composer.
+static QOL_PANEL_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[┏┃┗]").unwrap());
+/// pi-qol draws Pi's working indicator at the head of its status line while
+/// a turn runs: its own static `●` (`applyWorkingIndicatorMode`), or a frame
+/// of Pi's default spinner (pi-tui `components/loader.js`), then a space. At
+/// rest the line opens on the project's name.
+static QOL_TURN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ").unwrap());
 /// Pi's footer carries the context token `<used>%/<window>` from the first
 /// draw; the token counts before it and the model after it come and go.
 static PI_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
@@ -537,16 +559,34 @@ pub fn is_working(slice: &str) -> bool {
     WORKING.is_match(slice)
 }
 
-/// Whether Pi's editor border says a turn is running.
+/// Whether Pi's editor border, or pi-qol's status line, says a turn is
+/// running.
 pub fn pi_working(slice: &str) -> bool {
     slice.lines().any(|l| PI_WORKING_BORDER.is_match(l))
+        || qol_status(slice).is_some_and(|status| QOL_TURN.is_match(status))
 }
 
-/// Whether Pi's default composer is drawn and open: the editor's bottom
-/// rule is the last rule drawn, with the prompt line and the footer
-/// directly under it. Pi draws its extensions' status lines below the
-/// footer, `pi-session-bridge`'s `bridge:<pid>` in every lane among them,
-/// so whatever stands under the footer is not read.
+/// pi-qol's status line when its composer is drawn: the last `π` line, with
+/// the status line the first row above it that is no panel row. A draft's
+/// further lines and the completion list draw indented below the `π` line.
+/// Any other row there, a blank one included, is a drawing this rule does
+/// not know, and settles nothing.
+fn qol_status(slice: &str) -> Option<&str> {
+    let lines: Vec<&str> = slice.lines().collect();
+    let prompt = lines.iter().rposition(|l| QOL_PROMPT.is_match(l))?;
+    let status = *lines[..prompt]
+        .iter()
+        .rev()
+        .find(|l| !QOL_PANEL_ROW.is_match(l))?;
+    QOL_STATUS.is_match(status).then_some(status)
+}
+
+/// Whether Pi's composer is drawn and open. Pi's default composer is the
+/// editor's bottom rule as the last rule drawn, with the prompt line and
+/// the footer directly under it. Pi draws its extensions' status lines below
+/// the footer, `pi-session-bridge`'s `bridge:<pid>` in every lane among
+/// them, so whatever stands under the footer is not read. pi-qol replaces
+/// that editor and footer with its status line above a `π` composer.
 ///
 /// Pi's native interface for turn state is its session file, which ends a
 /// turn with an assistant row whose `stopReason` is `stop`. That file cannot
@@ -556,13 +596,16 @@ pub fn pi_working(slice: &str) -> bool {
 /// other harnesses use never fires here.
 pub fn pi_composer_drawn(slice: &str) -> bool {
     let drawn: Vec<&str> = slice.lines().filter(|l| !l.trim().is_empty()).collect();
-    let Some(rule) = drawn.iter().rposition(|l| FRAME_RULE.is_match(l)) else {
-        return false;
-    };
-    matches!(
-        drawn.get(rule + 1..rule + 3),
-        Some([prompt, footer]) if PI_PROMPT.is_match(prompt) && PI_FOOTER.is_match(footer)
-    )
+    let stock = drawn
+        .iter()
+        .rposition(|l| FRAME_RULE.is_match(l))
+        .is_some_and(|rule| {
+            matches!(
+                drawn.get(rule + 1..rule + 3),
+                Some([prompt, footer]) if PI_PROMPT.is_match(prompt) && PI_FOOTER.is_match(footer)
+            )
+        });
+    stock || qol_status(slice).is_some()
 }
 
 /// At rest the composers draw Claude's marker padded with U+00A0, Codex's

@@ -161,10 +161,10 @@ class Task(Session):
                     # before it draws. A reading that failed decides nothing
                     # and is taken again. The last read must finish inside the
                     # bound, so the refusal keeps its screen. A screen that
-                    # settles nothing, such as Pi's under an extension that
-                    # draws its own prompt and status line, is ready once the
-                    # harness recorded the brief as its user turn: every setup
-                    # screen stands before that turn, and the task's own
+                    # settles nothing, such as a Pi dialog drawn in place of
+                    # its composer, is ready once the harness recorded the
+                    # brief as its user turn: every setup screen stands before
+                    # that turn, and the task's own
                     # completion waits on this lock.
                     while True:
                         try:

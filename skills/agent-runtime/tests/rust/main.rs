@@ -202,6 +202,42 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     for (screen, harness, want, ready, banner) in [
         (fixtures.join("pi-idle.txt"), "pi", "idle", true, None),
         (fixtures.join("pi-working.txt"), "pi", "working", true, None),
+        // Pi 1.6.1 with a session name, whose prompt line ends ` • <name>`.
+        (fixtures.join("pi-named-idle.txt"), "pi", "idle", true, None),
+        (
+            fixtures.join("pi-named-working.txt"),
+            "pi",
+            "working",
+            true,
+            None,
+        ),
+        // Pi 1.6.1 under pi-qol: its status line over a `π` composer, the
+        // working indicator at the head of that line mid-turn.
+        (fixtures.join("pi-qol-idle.txt"), "pi", "idle", true, None),
+        (
+            fixtures.join("pi-qol-working.txt"),
+            "pi",
+            "working",
+            true,
+            None,
+        ),
+        // pi-qol mid-turn with the agents panel stacked between its status
+        // line and its composer.
+        (
+            runtime.join("../../orch/tests/fixtures/oversee-watch/pi-current.txt"),
+            "pi",
+            "working",
+            true,
+            None,
+        ),
+        // Pi's trust question, drawn in place of the composer.
+        (
+            runtime.join("../../jarvis/tests/fixtures/pi-trust.txt"),
+            "pi",
+            "unjudged",
+            false,
+            None,
+        ),
         (
             fixtures.join("copilot-model-turn-sidebar.txt"),
             "copilot",
