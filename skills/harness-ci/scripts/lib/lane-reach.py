@@ -15,7 +15,8 @@ from functools import cached_property
 class Unreadable(Exception):
     # A shape refusal judges the job's own text and sources at the base, which
     # a lane's reasoned claims describe. Any other refusal, from a tool on this
-    # run or from a read of the change itself, leaves the job's reads unknown.
+    # run, from a read of the change itself or from inside the Cargo reader,
+    # leaves the job's reads unknown.
     shape = False
 
 
@@ -479,35 +480,29 @@ class Evidence:
             parts = [*Path(target).parts, *parts]
         reads.update(name for name in self.changed if under(name, "/".join(current) or "."))
 
-    def cargo_reads(self, args, directory, reads):
-        # Any Cargo command reads the toolchain files and Cargo configuration.
-        reads.update(path for path in self.changed | self.files.keys()
-                     if any(part == ".cargo" for part in Path(path).parts)
-                     or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
-                                             ".clippy.toml"})
-        require_shape(args[:1] in [["test"], ["check"], ["clippy"], ["build"]],
-                      "unsupported-cargo-command")
+    def cargo_reads(self, args, directory):
+        require(args[:1] in [["test"], ["check"], ["clippy"], ["build"]],
+                "unsupported-cargo-command")
         options = args[1:]
         package = None
         workspace = False
         while options:
             option, *options = options
             if option in {"-p", "--package"}:
-                require_shape(package is None and options, "unsupported-package-selector")
+                require(package is None and options, "unsupported-package-selector")
                 package, *options = options
             elif option == "--workspace":
                 workspace = True
             else:
-                require_shape(option in {"--locked", "--offline", "--all-features",
-                                         "--no-default-features", "--all-targets"},
-                              "unsupported-cargo-option")
+                require(option in {"--locked", "--offline", "--all-features",
+                                   "--no-default-features", "--all-targets"},
+                        "unsupported-cargo-option")
 
         cwd = self.checkout / directory
         manifests = {}
-        workspaces = set()
-        require_shape(not (package and workspace), "ambiguous-cargo-package-selection")
-        require_shape(not any(re.search(r"(?:^|/)\.cargo/config(?:\.toml)?$", path)
-                              for path in self.files), "cargo-config-unresolved")
+        require(not (package and workspace), "ambiguous-cargo-package-selection")
+        require(not any(re.search(r"(?:^|/)\.cargo/config(?:\.toml)?$", path)
+                        for path in self.files), "cargo-config-unresolved")
 
         def inventory(manifest=None):
             argv = ["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline", "--locked"]
@@ -519,15 +514,21 @@ class Evidence:
                     ids == set(found["workspace_members"]), "incomplete-cargo-inventory")
             root = self.relative(found["workspace_root"])
             workspace_file = "Cargo.toml" if root == "." else root + "/Cargo.toml"
+            config = tomllib.loads(self.blob(workspace_file))
+            require(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
             reads.add(workspace_file)
             reads.add("Cargo.lock" if root == "." else root + "/Cargo.lock")
-            workspaces.add(workspace_file)
             for entry in found["packages"]:
                 path = self.relative(entry["manifest_path"])
-                reads.add(path)
+                self.blob(path)
                 manifests[path] = entry
+                reads.add(path)
             return found
 
+        reads = {path for path in self.changed | self.files.keys()
+                 if any(part == ".cargo" for part in Path(path).parts)
+                 or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
+                                         ".clippy.toml"}}
         found = inventory()
         defaults = set(found["workspace_default_members"])
         if not workspace and not package:
@@ -539,110 +540,64 @@ class Evidence:
         roots = [self.relative(entry["manifest_path"]) for entry in found["packages"]
                  if (entry["name"] == package if package else
                      workspace or entry["id"] in defaults)]
-        require_shape(roots and (not package or len(roots) == 1), "cargo-package-unresolved")
-        # Pass 1 records every read the metadata proves across the selected
-        # packages' path-dependency closure, and raises no shape refusal, so
-        # a check in pass 2 cannot drop a read of a package still unvisited.
-        package_sources = {}
-        external = False
+        require(roots and (not package or len(roots) == 1), "cargo-package-unresolved")
+        scanned = set()
+        # Other evidence also lands in reads, so reads cannot mark a scan.
+        scanned_sources = set()
         pending = roots[:]
         while pending:
             manifest = pending.pop()
-            if manifest in package_sources:
+            if manifest in scanned:
                 continue
             if manifest not in manifests:
                 inventory(str(self.checkout / manifest))
             entry = manifests[manifest]
-            require(entry["targets"], "cargo-targets-unreadable")
-            # Cargo reads a package's whole tree once the package is in the build.
+            scanned.add(manifest)
             scope = Path(manifest).parent.as_posix()
-            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
-            # A target's source can sit outside the package tree, and the scan
-            # takes each Rust file beside it as a source of the target. A path
-            # the change adds there can resolve a module of the target, but has
-            # no base bytes to scan.
+            for dependency in entry["dependencies"]:
+                local = dependency["path"]
+                require(isinstance(local, str), "cargo-external-dependency")
+                pending.append(self.relative(Path(local) / "Cargo.toml"))
             sources = set()
+            require(entry["targets"], "cargo-targets-unreadable")
             for target in entry["targets"]:
+                require(not ({"custom-build", "proc-macro"} & set(target["kind"])),
+                        "cargo-opaque-target")
                 source = self.relative(target["src_path"])
                 sources.add(source)
-                beside = Path(source).parent.as_posix()
                 sources.update(path for path in self.files if path.endswith(".rs") and
-                               under(path, beside))
-                reads.update(path for path in self.changed if under(path, beside))
-            reads.update(sources)
-            package_sources[manifest] = sources
-            named = [dependency["path"] for dependency in entry["dependencies"]]
-            dependencies = [self.relative(Path(path) / "Cargo.toml") for path in named
-                            if isinstance(path, str)]
-            external = external or len(dependencies) != len(named)
-            pending.extend(dependencies)
-
-        # Pass 2 scans every source before it raises the first shape refusal
-        # it met, since only a scan finds an include edge and a refusal must
-        # not drop an edge a later scan records. A read that fails ends only
-        # the scan that needed it.
-        refusals = []
-
-        def judge(condition, cause):
-            if not condition:
-                refusals.append(cause)
-
-        def attempt(operation, *args):
-            try:
-                return operation(*args)
-            except ShapeUnreadable as error:
-                refusals.append(str(error))
-                return None
-
-        # Other evidence also lands in reads, so reads cannot mark a scan.
-        scanned_sources = set()
-        for manifest, target_sources in package_sources.items():
-            scope = Path(manifest).parent.as_posix()
-            for target in manifests[manifest]["targets"]:
-                judge(not ({"custom-build", "proc-macro"} & set(target["kind"])), "cargo-opaque-target")
-            sources = target_sources.copy()
+                               under(path, Path(source).parent.as_posix()))
+            target_sources = sources.copy()
             while sources:
                 source = sources.pop()
                 if source in scanned_sources:
                     continue
                 scanned_sources.add(source)
                 reads.add(source)
-                rust = attempt(self.blob, source)
-                if rust is None:
-                    continue
+                rust = self.blob(source)
                 # Literal includes and #[path] modules can leave the package tree.
                 includes = r'\b(?:(include(?:_str|_bytes)?)\s*!\s*\(\s*|path\s*=\s*)"([^"\\]+)"'
                 for macro, target in re.findall(includes, rust):
-                    resolved = attempt(self.resolve, Path(source).parent.as_posix(), target)
-                    if resolved is None:
-                        continue
-                    edge, passed = resolved
-                    reads.update({edge} | passed)
+                    edge, passed = self.resolve(Path(source).parent.as_posix(), target)
+                    reads.update(passed)
                     if macro in {"", "include"}:
-                        judge(under(edge, scope), "cargo-external-module")
-                        judge(edge in target_sources, "cargo-opaque-source")
-                    # A Rust edge's own scan reads its bytes.
+                        require(under(edge, scope), "cargo-external-module")
+                        require(edge in target_sources, "cargo-opaque-source")
+                    self.blob(edge)
                     if edge.endswith(".rs"):
                         sources.add(edge)
                     else:
-                        attempt(self.blob, edge)
-                judge(not re.search(
+                        reads.add(edge)
+                require(not re.search(
                     r"\b(?:include(?:_str|_bytes)?\s*!|path\s*=|(?:env|option_env)\s*!)"
                     r"|\b(?:fs|process|File|Path|PathBuf|Command|extern|unsafe)\b",
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
-        if refusals:
-            raise ShapeUnreadable(refusals[0])
-        for workspace_file in sorted(workspaces):
-            config = tomllib.loads(self.blob(workspace_file))
-            require_shape(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
-        for path in manifests:
-            self.blob(path)
-        require_shape(not external, "cargo-external-dependency")
+            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
         covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
-        return covered | reads
+        return reads, covered | reads
 
     def vitest_reads(self, directory, reads):
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
@@ -992,8 +947,8 @@ def declared_lanes(work):
 
 def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
     """Fill ordinary with the job's shell reads and readers with one read set
-    per graph reader, each path as it is proved, so a refusal keeps what was
-    proved before it. Return each graph reader's covered paths."""
+    per graph reader, so a shape refusal keeps what was proved before it.
+    Return each graph reader's covered paths."""
     covered = []
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                               "permissions", "steps", "defaults"}, "opaque-job")
@@ -1036,8 +991,14 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
             if not args:
                 continue
             if args[0] == "cargo":
-                readers.append(set())
-                covered.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
+                try:
+                    cargo, paths = evidence.cargo_reads(args[1:], directory)
+                except Unreadable as error:
+                    # A refusal drops every read the Cargo reader made, so no
+                    # claim stands in for what it could not rule out.
+                    raise Unreadable(str(error)) from error
+                readers.append(cargo)
+                covered.append(paths)
             elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())

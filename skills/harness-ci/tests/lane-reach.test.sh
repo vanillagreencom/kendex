@@ -379,25 +379,6 @@ edit_workflow '      - uses: dtolnay/rust-toolchain@stable\n      - working-dire
   '      - uses: actions/checkout@v7\n        with:\n          path: subject\n      - working-directory: subject\n'
 git -C "$repo" commit -qam 'a refused job runs in the directory its checkout creates'
 checkout_path_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-refused-cargo-source "$refused_claims_base"
-# The Cargo reader refuses this source after it has read the toolchain file.
-printf 'use std::fs as _;\npub fn value() -> u8 { 42 }\n' >"$repo/cargo/primary/src/lib.rs"
-git -C "$repo" commit -qam 'the Cargo reader refuses a claimed crate source'
-refused_cargo_source_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-refused-cargo-closure "$refused_cargo_source_base"
-# The refused crate's dependency compiles its library from a file outside its
-# package, beside a module of that file, and itself depends on leaf. The claim
-# names neither.
-printf '\n[lib]\npath = "../shared/bridge.rs"\n' >>"$repo/cargo/bridge/Cargo.toml"
-git -C "$repo" rm -q -- cargo/bridge/src/lib.rs
-mkdir -p "$repo/cargo/shared"
-printf 'mod util;\npub fn value() -> u8 { util::VALUE }\n' >"$repo/cargo/shared/bridge.rs"
-printf 'pub const VALUE: u8 = 42;\n' >"$repo/cargo/shared/util.rs"
-sed 's|^cargo cargo/\* |cargo rust-toolchain.toml |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
-mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'the refused crate builds a transitive dependency and an out-of-package module'
-refused_cargo_closure_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-refused-executable "$refused_claims_base"
 # The claimed shell job runs a script whose interpreter the reader refuses.
 edit_workflow '        run: bash ../shared.sh\n' '        run: bash ../shared.sh\n      - run: ./tools/run.py\n'
@@ -406,39 +387,6 @@ chmod +x "$repo/tools/run.py"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a claimed shell job runs a Python script'
 refused_executable_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-refused-cargo-workspace "$refused_claims_base"
-# The scan refuses the first selected crate it visits before it reaches the
-# others, one of which includes a file outside every package.
-edit_workflow 'cargo test -p primary' 'cargo test --workspace'
-printf 'use std::fs as _;\npub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/lib.rs"
-printf '%s\n' 'pub fn value() -> u8 { 42 }' \
-  'pub const SCHEMA: &str = include_str!("../../../assets/schema.txt");' >"$repo/cargo/primary/src/lib.rs"
-mkdir -p "$repo/assets"
-printf 'schema\n' >"$repo/assets/schema.txt"
-sed 's|^cargo cargo/\* |cargo cargo/spare/* |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
-mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'the Cargo reader refuses one crate of a claimed workspace'
-refused_cargo_workspace_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-refused-cargo-override "$refused_claims_base"
-# The refused crate includes a file outside every package and depends on a
-# crate of another workspace, whose source override the reader refuses.
-mkdir -p "$repo/libs/core/src" "$repo/libs/foo/src" "$repo/assets"
-printf '[workspace]\nresolver = "2"\nmembers = ["core"]\n\n[patch.crates-io]\nfoo = { path = "foo" }\n' \
-  >"$repo/libs/Cargo.toml"
-printf '[package]\nname = "corelib"\nversion = "0.1.0"\nedition = "2021"\n' >"$repo/libs/core/Cargo.toml"
-printf 'pub fn value() -> u8 { 42 }\n' >"$repo/libs/core/src/lib.rs"
-printf '[package]\nname = "foo"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n' >"$repo/libs/foo/Cargo.toml"
-: >"$repo/libs/foo/src/lib.rs"
-printf 'corelib = { path = "../../libs/core" }\n' >>"$repo/cargo/primary/Cargo.toml"
-printf '%s\n' 'pub fn value() -> u8 { 42 }' \
-  'pub const SCHEMA: &str = include_str!("../../../assets/schema.txt");' >"$repo/cargo/primary/src/lib.rs"
-printf 'schema\n' >"$repo/assets/schema.txt"
-(cd "$repo/libs" && cargo generate-lockfile --offline)
-(cd "$repo/cargo" && cargo generate-lockfile --offline)
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'a claimed Cargo crate depends on a workspace with a source override'
-refused_cargo_override_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-linked-workdir "$refused_claims_base"
 # The claimed Cargo job runs in its crates through a tracked link.
 ln -s cargo "$repo/crates"
@@ -487,6 +435,10 @@ fn checks_child() {
 RS
 printf 'pub mod child;\n' >"$repo/cargo/spare/src/mod.rs"
 printf 'pub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/child.rs"
+# The Cargo reader refuses the out-of-package module. The claim names no
+# child of it, so only the refusal keeps the lane.
+printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain file picks the compiler' \
+  >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'Cargo compiles a child of an out-of-package module'
 cargo_child_base="$(git -C "$repo" rev-parse HEAD)"
@@ -1122,11 +1074,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     shell-symlink) base="$symlink_base" ;;
     refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
-    refused-cargo-source) base="$refused_cargo_source_base" ;;
-    refused-cargo-leaf|refused-cargo-sibling|refused-cargo-added-sibling) base="$refused_cargo_closure_base" ;;
     refused-executable) base="$refused_executable_base" ;;
-    refused-cargo-workspace|refused-cargo-scan-order) base="$refused_cargo_workspace_base" ;;
-    refused-cargo-override) base="$refused_cargo_override_base" ;;
     linked-workdir-*) base="$linked_workdir_base" ;;
     vitest-refused-import) base="$vitest_refused_import_base" ;;
     checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
@@ -1178,7 +1126,6 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
-    refused-cargo-added-sibling) mkdir -p "$repo/${path%/*}"; printf 'pub const VALUE: u8 = 43;\n' >"$repo/$path" ;;
     restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
     symlink-workdir) ln -s cargo "$repo/$path" ;;
     linked-workdir-swap)
@@ -1357,10 +1304,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   fi
   refused_jobs=""
   case "$label" in
-    refused-cargo-source|refused-cargo-workspace|refused-cargo-scan-order|refused-cargo-leaf|refused-cargo-sibling|refused-cargo-added-sibling)
-      refused_jobs='job=cargo cause=cargo-opaque-source,job=web cause=opaque-shell-command' ;;
-    refused-cargo-override)
-      refused_jobs='job=cargo cause=cargo-source-overrides,job=web cause=opaque-shell-command' ;;
+    cargo-external-child) refused_jobs='job=cargo cause=cargo-external-module' ;;
     refused-executable)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
     refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
@@ -1438,15 +1382,8 @@ refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
 refused-proved-read|rust-toolchain.toml|false|true|false|false
-refused-cargo-source|rust-toolchain.toml|false|true|false|false
 refused-ordinary-read|ops/notes.txt|false|false|true|false
 refused-executable|tools/run.py|true|false|false|false
-refused-cargo-workspace|cargo/primary/src/lib.rs|false|true|false|false
-refused-cargo-leaf|cargo/leaf/src/lib.rs|false|true|false|false
-refused-cargo-sibling|cargo/shared/util.rs|false|true|false|false
-refused-cargo-added-sibling|cargo/shared/util/mod.rs|false|true|false|false
-refused-cargo-scan-order|assets/schema.txt|false|true|false|false
-refused-cargo-override|assets/schema.txt|false|true|false|false
 checkout-path|tools/input.sh|true|false|false|false
 restored-workdir|subject/restored.txt|false|true|false|false
 symlink-workdir|subject|false|true|false|false
