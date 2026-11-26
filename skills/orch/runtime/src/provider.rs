@@ -155,10 +155,7 @@ impl fmt::Display for Failure {
 /// refusal that carries no `fix=` and is not the first line goes
 /// unrecorded: that call records its first line.
 pub(crate) fn cause_line(stderr: &str) -> &str {
-    let mut lines = stderr
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty());
+    let mut lines = stderr_lines(stderr);
     lines
         .clone()
         .rfind(|line| {
@@ -167,6 +164,47 @@ pub(crate) fn cause_line(stderr: &str) -> &str {
         })
         .or_else(|| lines.next())
         .unwrap_or("stderr=empty")
+}
+
+/// A call's stderr as the runtime keeps it: each line trimmed, blank ones
+/// dropped.
+fn stderr_lines(stderr: &str) -> impl DoubleEndedIterator<Item = &str> + Clone {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+}
+
+/// The lines a record keeps of an answered call's stderr. A create's
+/// stderr can be a build transcript of any length (the shipped ssh
+/// provider runs its clone, base sync and dependency install there), and a
+/// provider's notices may stand before or after it, so the record keeps
+/// both ends and counts what it left out.
+const NOTICE_ENDS: usize = 10;
+
+/// What [`notices`] kept: the lines, and how many it left out between the
+/// two ends.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Notices {
+    pub lines: Vec<String>,
+    pub elided: usize,
+}
+
+/// An answered call's stderr lines ([`stderr_lines`]), never parsed: every
+/// line where there are at most twice [`NOTICE_ENDS`], else that many from
+/// each end.
+pub(crate) fn notices(stderr: &str) -> Notices {
+    let lines: Vec<&str> = stderr_lines(stderr).collect();
+    let elided = lines.len().saturating_sub(2 * NOTICE_ENDS);
+    let kept = if elided == 0 {
+        lines
+    } else {
+        [&lines[..NOTICE_ENDS], &lines[lines.len() - NOTICE_ENDS..]].concat()
+    };
+    Notices {
+        lines: kept.into_iter().map(str::to_owned).collect(),
+        elided,
+    }
 }
 
 fn refused(key: &'static str, fields: Vec<(&'static str, String)>, exit: i32) -> Failure {

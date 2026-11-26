@@ -799,6 +799,15 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
     crate::watch::overseer::scripts_dir(&settings.roots.project)
 }
 
+/// The launch observation's members holding the stderr of the provider's
+/// create that answered.
+const CREATE_STDERR: &str = "create_stderr";
+const CREATE_STDERR_ELIDED: &str = "create_stderr_elided";
+
+/// The launch observation's members only the launcher establishes: the
+/// confinement of the pane and the stderr of the provider's create.
+const LAUNCHER_READINGS: [&str; 3] = ["confinement", CREATE_STDERR, CREATE_STDERR_ELIDED];
+
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = super::lane_operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
@@ -837,6 +846,12 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
                 hosted_launch(run, operation, r, &lane, provider, relaunch, &mut sandbox)?;
             if sandbox.stands {
                 outcome.annotate(SANDBOX, json!(STANDING));
+            }
+            if !sandbox.notices.lines.is_empty() {
+                outcome.annotate(CREATE_STDERR, json!(sandbox.notices.lines));
+            }
+            if sandbox.notices.elided > 0 {
+                outcome.annotate(CREATE_STDERR_ELIDED, json!(sandbox.notices.elided));
             }
             // A parked lane whose provider holds no sandbox for it resumed
             // nothing: its disk, session and mailbox went with the sandbox.
@@ -1068,6 +1083,9 @@ fn local_launch(
 /// the launch's word.
 #[derive(Default)]
 struct HostSandbox {
+    /// The stderr of the create that answered, which the record keeps
+    /// whatever later step fails.
+    notices: crate::provider::Notices,
     /// The provider's start answered `sandbox-started` or its create was
     /// accepted, the answers that take the sandbox up for this lane: it
     /// stands from then, whatever later step fails. A list row is no such
@@ -1198,6 +1216,9 @@ fn hosted_launch(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     );
     sandbox.stands |= created.is_ok();
+    if let Ok(made) = &mut created {
+        sandbox.notices = std::mem::take(&mut made.notices);
+    }
     if let Ok(made) = &mut created
         && made.preparing
     {
@@ -2298,16 +2319,21 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     if created {
         outcome.annotate(SANDBOX, json!(STANDING));
     }
-    // The window read replaces the intent's observation, but it cannot
-    // re-read the confinement the launcher established for this pane.
-    if let Some(confinement) = intent
-        .observation
-        .as_ref()
-        .and_then(|observation| observation.get("confinement"))
-    {
-        outcome.annotate("confinement", confinement.clone());
-    }
+    keep_launcher_readings(&mut outcome, intent.observation.as_ref());
     Ok(outcome)
+}
+
+/// Every outcome recorded over a launch after its launcher ran replaces the
+/// intent's observation, and no later read can establish again what the
+/// launcher did for the pane: `outcome` carries those readings over from
+/// `prior`, and nothing else of it, since its window readings are stale.
+pub(super) fn keep_launcher_readings(outcome: &mut EffectOutcome, prior: Option<&Value>) {
+    let Some(prior) = prior else { return };
+    for key in LAUNCHER_READINGS {
+        if let Some(value) = prior.get(key) {
+            outcome.annotate(key, value.clone());
+        }
+    }
 }
 
 fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {

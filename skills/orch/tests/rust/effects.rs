@@ -8307,6 +8307,122 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
     }
 }
 
+/// A create that answers keeps its stderr on the launch's observation, line
+/// for line, whatever later step fails and through the reconcile and the
+/// superseding close of a launch left unconfirmed: a provider's notices of
+/// the cross-model reviewer and the login seed it gave, and a transcript
+/// too long for the record, kept by its two ends with the count between.
+#[test]
+fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
+    let cross = "lane-host-daytona: claude-cross-none cause=no-eligible-target";
+    let seed = "lane-host-daytona: codex-seed-placed account=a2";
+    let notices = format!("{cross}\n\n  {seed}\n");
+    let transcript: String = (1..=25).map(|n| format!("npm line {n}\n")).collect();
+    let ends: Vec<String> = (1..=10)
+        .chain(16..=25)
+        .map(|n| format!("npm line {n}"))
+        .collect();
+    let built = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let unbuilt = json!({});
+    let cases = [
+        (
+            "notices",
+            &notices,
+            &built,
+            "stub-confirm",
+            "confirmed",
+            json!([cross, seed]),
+            Value::Null,
+        ),
+        (
+            "a later step fails",
+            &notices,
+            &unbuilt,
+            "stub-confirm",
+            "failed",
+            json!([cross, seed]),
+            Value::Null,
+        ),
+        (
+            "a transcript",
+            &transcript,
+            &built,
+            "stub-confirm",
+            "confirmed",
+            json!(ends),
+            json!(5),
+        ),
+        (
+            "an unconfirmed launch reconciled",
+            &transcript,
+            &built,
+            "stub-unconfirmed",
+            "unconfirmed",
+            json!(ends),
+            json!(5),
+        ),
+    ];
+    for (case, stderr, record, harness, outcome, lines, elided) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut world = HostedLaunch::new(&server, dir.path(), record.clone());
+        if harness != "stub-confirm" {
+            world.runner.verify = Some(1);
+            let claude = world.tools.join("claude");
+            std::fs::remove_file(&claude).unwrap();
+            std::os::unix::fs::symlink(stub(harness), &claude).unwrap();
+        }
+        let answers_path = world.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+        let account = world.runner.state_dir().display().to_string();
+        answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")]["stderr"] =
+            json!(stderr);
+        std::fs::write(&answers_path, answers.to_string()).unwrap();
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        let observation = &report["intent"]["observation"];
+        assert_eq!(report["intent"]["outcome"], outcome, "{case}: {report}");
+        assert_eq!(observation["create_stderr"], lines, "{case}: {report}");
+        assert_eq!(
+            observation["create_stderr_elided"], elided,
+            "{case}: {report}"
+        );
+        let launch_id = report["intent"]["id"].clone();
+        let launch = |world: &HostedLaunch| -> Value {
+            world.runner.fleet()["intents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == launch_id)
+                .unwrap()
+                .clone()
+        };
+        if outcome == "unconfirmed" {
+            let replay = world.runner.reconcile_one();
+            assert_eq!(replay["intent"]["id"], launch_id, "{case}: {replay}");
+            let kept = &launch(&world)["observation"];
+            assert_eq!(kept["create_stderr"], lines, "{case}: {replay}");
+            assert_eq!(kept["create_stderr_elided"], elided, "{case}: {replay}");
+        }
+        let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+        let ended = launch(&world);
+        if outcome == "unconfirmed" {
+            assert_eq!(
+                ended["observation"]["cause"], "superseded-by-close",
+                "{case}: {closed}"
+            );
+        }
+        assert_eq!(
+            ended["observation"]["create_stderr"], lines,
+            "{case}: {ended}"
+        );
+        assert_eq!(
+            ended["observation"]["create_stderr_elided"], elided,
+            "{case}: {ended}"
+        );
+    }
+}
+
 /// Through the runtime's provider call: a launch whose `op` ends inside the
 /// provider's create leaves the phase it recorded before it, and the
 /// reconcile holds the launch `host-create-unknown`, the lane `preparing`

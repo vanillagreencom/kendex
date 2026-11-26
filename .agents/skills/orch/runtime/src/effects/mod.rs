@@ -698,10 +698,12 @@ fn supersede_launch(
         // holds: nothing is closed or signalled here, so the
         // launch intent ends refused with its handles untouched.
         let operation = lane_operation::open(run, &launch.intent)?;
-        run.apply_outcome(operation.refuse(
+        let mut outcome = operation.refuse(
             "superseded-by-close",
             json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "answer_by": answer_by, "preparing": preparing}),
-        ))?;
+        );
+        launch::keep_launcher_readings(&mut outcome, launch.intent.observation.as_ref());
+        run.apply_outcome(outcome)?;
     }
     // The launch intent is closed either way: the close now persists its
     // own intent and runs, as a close with nothing open does.

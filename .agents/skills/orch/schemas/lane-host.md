@@ -67,6 +67,7 @@ The recorded cause:
 - A `create` that exits `75` without `state=preparing` records `item-owned exit=75` and no stderr line, unless its stderr holds `lane-host-ssh: ownership-busy`, the ssh provider's lock: that create records `host-create-busy create exit=75` and its cause line.
 - A `close` that exits `3` records no stderr line, only the path its `close-refused path=` line names, `unknown` without one.
 - Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded.
+- A `create` that answers, exit `0` or an accepted preparation, keeps its stderr in the launch observation's `create_stderr`, whatever later step of the launch fails. Each line is trimmed and blank lines are dropped, with no line parsed. Over 20 lines, it keeps the first 10 and the last 10, and `create_stderr_elided` counts the lines between.
 
 The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
 
