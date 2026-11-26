@@ -1622,6 +1622,56 @@ with open(sys.argv[1], "ab") as out:
                               "EVENT mail\nproducer after failure\nEVENT custom\nconsumer after failure"])
             self.assertEqual(watch.log.read_bytes(), b"")
 
+    def test_failed_send_retry_by_cause(self):
+        # A satellite home driven one second per pass, as the loop does. Only
+        # an unread mailbox waits; every other failure retries next pass.
+        runtime = REPO / "skills/orch/scripts/orch-runtime"
+        controller = lambda record: self.assertEqual(
+            self.command([runtime, "state", "set", "--fleet", "/controller", record]).returncode, 0)
+        # Each row: the failure, the passes driven, the attempt period, the
+        # journal line's start, and what lets the next attempt deliver.
+        rows = (("overseer-absent", 200, 60, "lane-mail: overseer-absent=",
+                 lambda: controller(json.dumps({"pane": "%1", "server": str(os.getpid())}))),
+                ("exit", 3, 1, "child exit=1", lambda: None))
+        for name, passes, period, cause, recover in rows:
+            with self.subTest(row=name):
+                self.home = self.project("satellite-" + name)
+                self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home", JARVIS_WAKE_SETTLE_SECS="0",
+                                     JARVIS_LOG_DIR=str(self.root / ("log-" + name)))
+                attempts = self.root / ("attempts-" + name)
+                refuse = "exit 1" if name == "exit" else ":"
+                self.intercept_mail('[ "$1" = send ] && { echo send >> ' + shlex.quote(str(attempts)) + '; ' +
+                                    refuse + '; }')
+                if name == "overseer-absent":
+                    controller("null")
+                sent = lambda: len(attempts.read_text().splitlines()) if attempts.exists() else 0
+                errors = io.StringIO()
+                with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(errors):
+                    watch = self.watch()
+                    self.append(watch, "EVENT mail repo=peer file=to-lane\nwaiting for a session\n")
+                    times = []
+                    for now in range(passes):
+                        before = sent()
+                        watch.batch(now)
+                        times.extend([now] * (sent() - before))
+                    saved = watch.state["pending"]
+                    self.assertEqual(self.inbox(), [])
+                    recover()
+                    self.intercept_mail(':')
+                    for now in range(passes, passes + period + 1):
+                        watch.batch(now)
+                        if self.inbox():
+                            break
+                self.assertEqual(times, list(range(0, passes, period)))
+                # The journal's keyed line, read by Jarvis on the satellite.
+                lines = [line for line in errors.getvalue().splitlines() if line.startswith("watch-loop: send=")]
+                self.assertEqual(len(lines), 1, lines)
+                self.assertTrue(lines[0].startswith("watch-loop: send=pending " + cause), lines)
+                self.assertEqual([(row["delivery_id"], row["text"]) for row in self.inbox()],
+                                 [(saved["key"], saved["body"].rstrip("\n"))])
+                self.assertIsNone(watch.state["pending"])
+
     def test_report_deadline_restart_and_receipt(self):
         base = int(time.time())
         utc = lambda moment: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment))

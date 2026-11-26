@@ -853,7 +853,10 @@ class Watch:
         self.satellite = role(settings).kind != "main"
         self.forward_pending = None
         self.next_forward = 0
-        self.collection = None
+        # The mailbox send waits FORWARD_EVERY_SECS while no session is
+        # registered to read it; a restarted loop tries at once.
+        self.next_send = 0
+        self.outcomes = {}
         self.mail_pending = {}
         # ("read" or "succession", future): one wall pass at a time, so a
         # succession in flight is never read for again.
@@ -1066,6 +1069,8 @@ class Watch:
             # Selection is durable before the mailbox append. A retry uses
             # these bytes even if the event log gained complete new blocks.
             self.save()
+        if now < self.next_send:
+            return
         pending = self.state["pending"]
         with tempfile.NamedTemporaryFile(mode="w", dir=self.directory) as payload:
             payload.write(pending["body"])
@@ -1073,13 +1078,16 @@ class Watch:
             try:
                 result = run([self.bash, lane_mail(), "send", "--item", "overseer",
                               "--directive", "--file", payload.name, "--delivery-id", pending["key"]], self.home)
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                print("watch-loop: send=pending " + str(error), file=sys.stderr)
-                return
-        receipt = send_receipt(result, pending["key"])
-        if not receipt:
-            print("watch-loop: send=pending " + result.stderr.strip(), file=sys.stderr)
+                receipt = send_receipt(result, pending["key"])
+                error = None if receipt else child_failure("mailbox-send", result)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as raised:
+                error = failure("mailbox-send", raised)
+        if error is not None:
+            self.reported("send", tuple(error.record["key"]), "send=pending " + error.record["detail"])
+            if error.record["key"][1:] == ["refusal", "overseer-absent"]:
+                self.next_send = now + FORWARD_EVERY_SECS
             return
+        self.outcomes.pop("send", None)
         self.state.update(spans=[self.canonical_span(span) for span in pending["retained"]], pending=None, due=None)
         self.save()
         self.reclaim()
@@ -1624,8 +1632,13 @@ class Watch:
                                 [(None, block) for block, header in zip(blocks, headers) if header not in emitted]))
         self.save()
 
+    def reported(self, name, outcome, line):
+        """One stderr line per change of NAME's outcome, so the unit's journal shows each."""
+        if outcome != self.outcomes.get(name):
+            self.outcomes[name] = outcome
+            print("watch-loop: " + line, file=sys.stderr, flush=True)
+
     def collected(self, result):
-        """One stderr line per change of the forward collection's outcome, so the unit's journal shows each."""
         if isinstance(result, Failure):
             outcome = ("failed", *result.record["key"])
             line = "forward=failed cause=" + line_value(result.record["detail"], True, 200)
@@ -1634,9 +1647,7 @@ class Watch:
             outcome = (reachable, cause)
             line = "forward=" + ("unchecked" if reachable is None else "reachable" if reachable else "unreachable")
             line += "".join(" %s=%s" % pair for pair in (("cause", cause), ("checked_at", at)) if pair[1])
-        if outcome != self.collection:
-            self.collection = outcome
-            print("watch-loop: " + line, file=sys.stderr, flush=True)
+        self.reported("forward", outcome, line)
 
     def accept(self, outputs):
         for side, output, failure, delivered in outputs:
