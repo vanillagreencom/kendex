@@ -1140,13 +1140,47 @@ UNIT_READ_SECS = "1"
 LANE_RUNNER = "runner"
 # stop_unit CLONE UNIT: end the unit's run through the unit's own runtime,
 # which stops the runs of its tree by their recorded identities, then remove
-# the unit. A unit with no runtime yet runs nothing.
-STOP_UNIT = '''stop_unit() {
-  if test -s "$2/runtime" && test -d "$2/tree"; then
-    (cd -- "$2/tree" && ORCH_STATE_DIR="$2/tree/tmp" "$(cat -- "$2/runtime")" validate entry --stop --worktree "$2/tree" >&2) || return 1
-  fi
+# the unit. A unit with no copy launched, no runner record under its tree's
+# tmp, runs nothing; its copy may still hold the lane's start, which names
+# the host run. A detached build of the
+# tree's runtime reads the tree until it releases its claim, and a build that
+# loses its sources records its key failed for every later detached setup
+# (agent-runtime setup --help): while a claim UNIT/building names stands, the
+# unit is left to a detached waiter that removes it once no such claim does,
+# and the run counts as stopped.
+STOP_UNIT = '''remove_unit() {
   if test -d "$2/tree"; then git -C "$1" worktree remove --force "$2/tree" >&2; fi
   rm -rf -- "${2:?}"
+}
+claims_held() {
+  test -s "$1/building" || return 1
+  while IFS= read -r claim; do
+    if test -L "$claim" || test -e "$claim"; then return 0; fi
+  done < "$1/building"
+  return 1
+}
+stop_unit() {
+  if test -e "$2/stopping"; then return 0; fi
+  launched=
+  for runner in "$2"/tree/tmp/*/runner; do
+    if test -e "$runner"; then launched=1; fi
+  done
+  if test -n "$launched" && test -s "$2/runtime"; then
+    (cd -- "$2/tree" && ORCH_STATE_DIR="$2/tree/tmp" "$(cat -- "$2/runtime")" validate entry --stop --worktree "$2/tree" >&2) || return 1
+  fi
+  if claims_held "$2"; then
+    if ! test -e "$2/stopping"; then
+      : > "$2/stopping"
+      set -m
+      (
+        trap '' HUP
+        while claims_held "$2"; do sleep 5; done
+        remove_unit "$1" "$2"
+      ) < /dev/null > /dev/null 2>&1 &
+    fi
+    return 0
+  fi
+  remove_unit "$1" "$2"
 }
 '''
 
@@ -1208,13 +1242,27 @@ def build_unit(row, unit):
     """Record the runtime the unit's own tree builds, as a local run of the
     same commit runs its own. The tree's orch setup builds detached, at most
     once per key, so a cold build outlasts no call: a call that finds it
-    still building answers preparing, and the next one asks again."""
+    still building answers preparing, and the next one asks again. Each ask
+    records at UNIT/building the claim of every build it found running,
+    <cache>/build/<name>/<key>.lock beside the log its answer names, and
+    while it asks, UNIT/asking, since the setup may start a build: a stop
+    waits on each before it removes the tree."""
     step = remote(row, '''setup="$1/tree/.agents/skills/orch/scripts/setup"
 if [ ! -x "$setup" ]; then
   printf 'lane-host-ssh: runtime-setup-missing path=%s fix=run a commit whose tree carries the orch render\\n' "$setup" >&2
   exit 1
 fi
-line=$("$setup" --detach | tail -n 1) || exit 1
+: > "$1/asking"
+printf '%s\\n' "$1/asking" > "$1/building"
+answers=$("$setup" --detach) || { rm -f -- "$1/asking"; exit 1; }
+printf '%s\\n' "$answers" | while IFS= read -r answer; do
+  case "$answer" in
+    *" runtime-building "*" log="*) log=${answer##* log=}; printf '%s\\n' "${log%.log}.lock" ;;
+  esac
+done > "$1/building.part"
+mv -f -- "$1/building.part" "$1/building"
+rm -f -- "$1/asking"
+line=$(printf '%s\\n' "$answers" | tail -n 1)
 case "$line" in
   *" binary=/"*) printf '%s\\n' "${line##* binary=}" > "$1/runtime"; printf built ;;
   *" runtime-building "*) printf building ;;
@@ -1250,7 +1298,9 @@ ORCH_STATE_DIR="$unit/tree/tmp" exec "$runtime" validate entry --host-child --wo
     if answer.returncode == 2:
         launched = remote(row, 'if test -e "$1/runner"; then printf launched; fi', unit_run(unit, args)).stdout
         if launched != b"launched":
-            release_unit(row, unit)
+            released = release_unit(row, unit)
+            if released.returncode != 0:
+                notice("validate-unit-kept", target=row["target"], path=unit, exit=released.returncode)
             step_failed("validate-launch-refused", answer.stderr, "repair what cause= names on the host, then start a new run",
                         target=row["target"])
             raise SystemExit(UNIT_REFUSED)
@@ -1504,13 +1554,15 @@ state=running, both on stdout. A run that ended, with its sentinel or read
 lost, travels back whole: its folder's regular files land in STAGE, a folder
 this call creates on the control machine, and the unit leaves the host
 (validate-unit-kept names one that would not). A launch the runtime refused,
-exit 2 with no runner record, removes the unit and exits 4 with
-validate-launch-refused, which is final; any other failed launch keeps the
-unit, and the next call reads the run it may have launched, exiting 1 with
-validate-start-failed. validate --item ID --run-id RUN --stop ends the unit's
-run through the unit's own runtime (validate entry --stop --worktree
-UNIT/tree), removes the unit and prints stopped item=ID run-id=RUN, also where
-the host holds no unit; validate-stop-failed names a stop that failed.
+exit 2 with no runner record, removes the unit (validate-unit-kept names one
+that would not go) and exits 4 with validate-launch-refused, which is final;
+any other failed launch keeps the unit, and the next call reads the run it may
+have launched, exiting 1 with validate-start-failed. validate --item ID
+--run-id RUN --stop ends the unit's run through the unit's own runtime
+(validate entry --stop --worktree UNIT/tree), removes the unit and prints
+stopped item=ID run-id=RUN, also where the host holds no unit; a unit whose
+tree a runtime build is still reading is removed by a detached waiter once the
+build releases its claim. validate-stop-failed names a stop that failed.
 validate-arguments refuses a step that names no --commit, --source, --run-dir
 or --into. validate-clone-missing, validate-commit-moved (DIR's
 HEAD or the unit's tree is not SHA), validate-into-exists and

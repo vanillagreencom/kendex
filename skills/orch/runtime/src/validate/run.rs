@@ -1372,6 +1372,81 @@ fn host_wait(run_dir: &Path, poll: Duration, clock: &dyn Clock) {
     }
 }
 
+/// The run file that records the host holds nothing of the run: written
+/// once the provider answered `stopped`, or handed the run back with its
+/// unit removed. A host run without it may still hold its host, so each
+/// stop asks the host again (`stop_files`), whatever its holder reads.
+const HOST_RELEASED: &str = "host-released";
+
+fn host_released(run_dir: &Path) -> bool {
+    fs::symlink_metadata(run_dir.join(HOST_RELEASED)).is_ok()
+}
+
+/// The run's id, the admitted name its start gave `run_dir`.
+fn host_run_id(run_dir: &Path) -> &str {
+    let name = run_dir
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default();
+    name.strip_prefix(super::RUN_DIR_PREFIX).unwrap_or(name)
+}
+
+/// The host stop of a run whose host may still hold it: none where the
+/// run is released, else [`host_stop`].
+fn release_host(run_dir: &Path, item: Option<&str>) -> std::result::Result<(), String> {
+    if host_released(run_dir) {
+        return Ok(());
+    }
+    host_stop(run_dir, item)
+}
+
+/// The one host stop of a run: the provider its start record names asked
+/// `validate --stop` for `item` and the run's id, which ends the unit's run
+/// and removes the unit. Only its `stopped` answer for this item and run is
+/// a stop, recorded as `host-released`; anything else is the cause it
+/// returns, leading `host-stop-failed`. The executor asks it at its own
+/// end even on a released run, since a call it had in flight when another
+/// stop was confirmed may have prepared the unit again.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host stop's one provider call, by the host the run's start record names"
+)]
+fn host_stop(run_dir: &Path, item: Option<&str>) -> std::result::Result<(), String> {
+    let failed = |cause: &str| format!("host-stop-failed {cause}");
+    let start = super::files::fields(&run_dir.join("start")).map_err(|e| failed(&e.to_string()))?;
+    let host = start.get("host").map(String::as_str).unwrap_or("");
+    let item = item.ok_or_else(|| failed("item=unknown"))?;
+    let id = host_run_id(run_dir);
+    let stop = ["validate", "--item", item, "--run-id", id, "--stop"];
+    let out = crate::provider::call(host, &stop, None, HOST_CALL_BOUND, HOST_TAG)
+        .map_err(|failure| failed(&format!("host={host} {failure}")))?;
+    let (item_word, id_word) = (format!("item={item}"), format!("run-id={id}"));
+    let stopped = String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        words.contains(&"stopped")
+            && words.contains(&item_word.as_str())
+            && words.contains(&id_word.as_str())
+    });
+    if out.status.success() && stopped {
+        return atomic(run_dir, HOST_RELEASED, "stopped\n").map_err(|e| failed(&e.to_string()));
+    }
+    Err(failed(&format!(
+        "host={host} exit={} {}",
+        out.status
+            .code()
+            .map_or("signal".to_owned(), |c| c.to_string()),
+        crate::provider::cause_line(&String::from_utf8_lossy(&out.stderr))
+    )))
+}
+
+/// The provider's notice of a unit it handed back and could not remove.
+fn unit_kept(stderr: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .find(|line| line.contains("validate-unit-kept"))
+        .map(|line| line.trim().to_owned())
+}
+
 /// The executor of a run its start sent to `host`: ask the provider's
 /// `validate`, one step of the unit per call, until the host's run ends,
 /// then hand its outputs back into `run_dir`, whose start and proof this
@@ -1384,10 +1459,11 @@ fn host_wait(run_dir: &Path, poll: Duration, clock: &dyn Clock) {
 /// time ends the run no-verdict, as a command that shows no work for that
 /// time ends a local run. A launch the host's runtime refused ends the run
 /// no-verdict with its cause. Each of these ends, and a recorded stop, asks
-/// the host to end its run and remove the unit first. A folder a call
-/// staged for this run's commit and no hand-back took is taken before the
-/// next call. A host run that ended with no sentinel fails, as a lost local
-/// run does.
+/// the host stop first (`host_stop`), its failure named in the log. A
+/// folder a call staged for this run's commit and no hand-back took is
+/// taken before the next call, and the host stop asked after it; a unit
+/// the host kept after a hand-back is named in the log. A host run that
+/// ended with no sentinel fails, as a lost local run does.
 #[allow(
     clippy::disallowed_methods,
     reason = "the host executor's provider calls, the run files it hands back and the wait between calls on the clock"
@@ -1397,11 +1473,11 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
     let field = |key: &str| start.get(key).map(String::as_str).unwrap_or("");
     let poll = Duration::from_secs(field("poll-secs").parse().unwrap_or(super::POLL_DEFAULT));
     let quiet = Duration::from_secs(field("quiet-secs").parse().unwrap_or(super::QUIET_SECS));
+    let id = host_run_id(run_dir);
     let name = run_dir
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or_default();
-    let id = name.strip_prefix(super::RUN_DIR_PREFIX).unwrap_or(name);
     let staged = run_dir.with_file_name(format!("host-{name}"));
     let (rd, into) = (run_dir.display().to_string(), staged.display().to_string());
     let argv = [
@@ -1420,14 +1496,9 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
         &into,
     ];
     let end = |status: i32, why: &str| {
-        let stop = ["validate", "--item", item, "--run-id", id, "--stop"];
-        let released = match crate::provider::call(host, &stop, None, HOST_CALL_BOUND, HOST_TAG) {
-            Ok(out) if out.status.success() => String::new(),
-            Ok(out) => format!(
-                " host-stop=failed {}",
-                crate::provider::cause_line(&String::from_utf8_lossy(&out.stderr))
-            ),
-            Err(failure) => format!(" host-stop=failed {failure}"),
+        let released = match host_stop(run_dir, Some(item)) {
+            Ok(()) => String::new(),
+            Err(cause) => format!(" {cause}"),
         };
         host_end(
             run_dir,
@@ -1440,6 +1511,7 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
     };
     let mut answered = clock.now();
     let mut fetched = false;
+    let mut kept = None;
     while fs::symlink_metadata(&staged).is_err() {
         if stop_recorded(run_dir) {
             return end(3, "host-run-stopped");
@@ -1457,6 +1529,7 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
                 }
                 Some(0) => {
                     fetched = true;
+                    kept = unit_kept(&out.stderr);
                     continue;
                 }
                 Some(3) => {
@@ -1472,16 +1545,12 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
                 }
                 Some(HOST_REFUSED) => {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    return host_end(
-                        run_dir,
-                        &start,
+                    return end(
                         3,
                         &format!(
                             "host-launch-refused {}",
                             crate::provider::cause_line(&stderr)
                         ),
-                        host,
-                        clock,
                     );
                 }
                 code => Some(format!(
@@ -1505,9 +1574,10 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
     if staged_head.as_deref() != Some(field("head")) {
         return end(3, &format!("host-stage-foreign path={into}"));
     }
+    let mut outputs = Vec::new();
     for name in EXECUTOR_OUTPUTS {
         match fs::read_to_string(staged.join(name)) {
-            Ok(text) => atomic(run_dir, name, &text)?,
+            Ok(text) => outputs.push((name, text)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 return Err(Error::ValidateUnreadable {
@@ -1517,15 +1587,38 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
             }
         }
     }
+    // The sentinel lands last, after the host stop's note: a reader takes
+    // it as the run's end.
+    let (sentinel, outputs): (Vec<_>, Vec<_>) =
+        outputs.into_iter().partition(|(name, _)| *name == "exit");
+    for (name, text) in &outputs {
+        atomic(run_dir, name, text)?;
+    }
     fs::remove_dir_all(&staged).map_err(|e| Error::ValidateUnreadable {
         read: "host-run",
         cause: format!("{into}: {e}"),
     })?;
-    if !fetched {
-        // A folder an earlier call staged may stand beside a unit that call
-        // could not remove.
-        let stop = ["validate", "--item", item, "--run-id", id, "--stop"];
-        let _ = crate::provider::call(host, &stop, None, HOST_CALL_BOUND, HOST_TAG);
+    // A folder an earlier call staged may stand beside a unit that call
+    // could not remove, and a hand-back may name a unit it kept: either is
+    // a host stop still owed.
+    let released = if fetched && kept.is_none() {
+        atomic(run_dir, HOST_RELEASED, "handed-back\n")?;
+        Ok(())
+    } else {
+        host_stop(run_dir, Some(item))
+    };
+    if let Err(cause) = released {
+        let note = match kept {
+            Some(kept) => format!("{kept} {cause}"),
+            None => cause,
+        };
+        append_log(
+            run_dir,
+            &format!("validate-host: host-unit-kept {note} host={host}"),
+        )?;
+    }
+    for (name, text) in &sentinel {
+        atomic(run_dir, name, text)?;
     }
     if fs::symlink_metadata(run_dir.join("exit")).is_err() {
         // The host's run ended with no sentinel, so no command exit is
@@ -1533,6 +1626,24 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
         return host_end(run_dir, &start, 1, "host-run-lost", host, clock);
     }
     Ok(())
+}
+
+/// Append `line` to the run's log.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host executor appends its own lines to the run's log before its sentinel"
+)]
+fn append_log(run_dir: &Path, line: &str) -> Result<()> {
+    use std::io::Write;
+    fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(run_dir.join("log"))
+        .and_then(|mut log| writeln!(log, "{line}"))
+        .map_err(|e| Error::ValidateUnreadable {
+            read: "log",
+            cause: e.to_string(),
+        })
 }
 
 /// The executor's own end of a host run it could not hand back: the log
@@ -1705,8 +1816,8 @@ pub enum JobState {
     clippy::disallowed_methods,
     reason = "the stop's one ask of the job launcher to end the run's job by its recorded identity, after the stop was recorded on the stage"
 )]
-fn end_job(_settings: &Settings, run_dir: &str, _job: &ValidateJob) -> Result<JobEnded> {
-    stop_files(Path::new(run_dir), true).map(|answer| {
+fn end_job(item: &str, run_dir: &str) -> Result<JobEnded> {
+    stop_files(Path::new(run_dir), true, Some(item)).map(|answer| {
         if answer.is_some() {
             JobEnded::Signalled
         } else {
@@ -1745,16 +1856,17 @@ pub fn stop_worktree(
         Some(_) => stopped.groups += 1,
         None => {}
     };
+    // A host run its host may still hold stays owed after its sentinel.
     for run in super::files::runs(worktree)?
         .into_iter()
-        .filter(|r| r.sentinel.is_none())
+        .filter(|r| r.sentinel.is_none() || (!r.get("host").is_empty() && !host_released(&r.dir)))
     {
         let rd = run.dir.display().to_string();
         match item_of_run_dir(&settings.state_dir, &rd) {
             Ok((item, _)) if Some(item.as_str()) == keep => {
                 let (stages, index) = stage_of(&state::item_path(&settings.state_dir, &item), &rd)?;
                 if stages[index].end.is_some() || stages[index].job.is_none() {
-                    count(stop_files(&run.dir, false)?);
+                    count(stop_files(&run.dir, false, Some(&item))?);
                 }
             }
             Ok((item, _)) => match stop(settings, reach, Some(&item), &rd, env, locking) {
@@ -1785,10 +1897,10 @@ pub fn stop_worktree(
                         count(Some(&reply.runner));
                     }
                 }
-                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir, false)?),
+                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir, false, Some(&item))?),
                 Err(error) => return Err(error),
             },
-            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir, false)?),
+            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir, false, None)?),
             Err(error) => return Err(error),
         }
     }
@@ -1805,12 +1917,19 @@ pub fn stop_worktree(
 /// (`staged`), since that stage's close reads `stopped` whatever the stop
 /// finds, and otherwise only where the command group, or a runner that is
 /// not attached, does not read gone. A run whose work reads gone at a stop
-/// no stage records keeps the word its own ending reads.
+/// no stage records keeps the word its own ending reads. A host run's
+/// command runs on its host: the host stop (`release_host`) for `item` is
+/// asked whatever the run's holder reads, and a stop it does not confirm
+/// refuses `stop-failed`.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
 )]
-pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static str>> {
+pub(crate) fn stop_files(
+    run_dir: &Path,
+    staged: bool,
+    item: Option<&str>,
+) -> Result<Option<&'static str>> {
     let mut marked = false;
     let mut mark = |live: bool| -> Result<()> {
         if live && !marked {
@@ -1840,17 +1959,22 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let run = super::files::RunFile::read(run_dir)?;
             if !run.get("host").is_empty() {
-                // A host run's command runs on its host, and its executor
-                // is the caller that holds the run here: the stop record is
-                // its word to end the host's run and close this one.
-                return Ok(match super::files::runner_reading(&run) {
-                    agent_runtime::reading::Reading::Gone => None,
-                    agent_runtime::reading::Reading::Live(_)
-                    | agent_runtime::reading::Reading::Unreadable { .. } => {
-                        mark(true)?;
-                        Some("attached")
-                    }
-                });
+                // The stop record is a live executor's word to close this
+                // run; the host stop ends the host's run whether or not an
+                // executor still holds it.
+                let ended = fs::symlink_metadata(run_dir.join("exit")).is_ok();
+                mark(!ended)?;
+                let asked = !host_released(run_dir);
+                release_host(run_dir, item).map_err(|cause| Error::ValidateStopFailed {
+                    run_dir: run_dir.display().to_string(),
+                    cause,
+                })?;
+                let held = !ended
+                    && !matches!(
+                        super::files::runner_reading(&run),
+                        agent_runtime::reading::Reading::Gone
+                    );
+                return Ok((asked || held).then_some("attached"));
             }
             let runner = super::files::fields(&run_dir.join("runner"))
                 .ok()
@@ -1992,7 +2116,7 @@ pub fn stop(
     let Some(job) = stages[index].job.clone() else {
         unreachable!("the stop stands on a started run")
     };
-    let ended = end_job(settings, run_dir, &job)?;
+    let ended = end_job(&item, run_dir)?;
     let job_state = if job.runner.as_deref() == Some("attached") {
         JobState::Live
     } else {
