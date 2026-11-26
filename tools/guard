@@ -2835,7 +2835,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     fi
     # The Node shard runs this standalone suite above the Pi package roots.
     case "$MODE:$f" in
-      suite-reach:pi-extensions/package-policy.test.mjs | suite-reach:skills/harness-ci/tests/lib/gh-eval.py)
+      suite-reach:pi-extensions/package-policy.test.mjs)
         [ ! -f pi-extensions/package-policy.test.mjs ] || preview_suites+="pi-extensions/package-policy.test.mjs"$'\n'
         ;;
     esac

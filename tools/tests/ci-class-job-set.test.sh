@@ -129,13 +129,8 @@ leader_row() {
   check "group-leader.sh runs the runtime target that runs it" true \
     "$(jq 'index("orch/validate") != null' <<<"$(selection micro false skills/github/scripts/lib/group-leader.sh | field rust_targets)")"
 }
-evaluator_row() {
-  check "an evaluator-only merge group selects the Pi package policy's node shard" true \
-    "$(SELECT_EVENT=merge_group selection micro false skills/harness-ci/tests/lib/gh-eval.py | field shards | jq 'index("node") != null')"
-}
 row_spawn lock_row
 row_spawn leader_row
-row_spawn evaluator_row
 # PATH|THE SUITES WHOSE NOTES NAME IT
 keep_row() { # PATH SUITES
   local skipped suite
