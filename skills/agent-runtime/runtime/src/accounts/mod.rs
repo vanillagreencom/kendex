@@ -629,17 +629,31 @@ impl Roster {
 
     /// Carries onto each row the unused limit resets the provider's
     /// `accounts --json --headroom` document `doc` states for its account,
-    /// matched on the harness and the alias or directory name; the cause
+    /// matched on the harness and the directory name, never the local
+    /// alias, since the document names the provider's directory; the cause
     /// where the document cannot be read, with no row changed.
     pub fn carry_limit_resets(&mut self, doc: &str) -> std::result::Result<(), String> {
         let stated = batch::limit_resets(doc)?;
         for row in &mut self.rows {
             row.limit_resets = stated
                 .iter()
-                .find(|s| s.harness == row.harness && names(&row.alias, &row.config_dir, &s.name))
+                .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
                 .map(|s| s.count);
         }
         Ok(())
+    }
+
+    /// The alias of each account whose row lists at least one unused limit
+    /// reset, the account at the directory `leave_out` excepted: the stop
+    /// decision's [`crate::stop::Ground::resets`].
+    pub fn reset_holders(&self, leave_out: Option<&str>) -> Vec<String> {
+        let left_out = leave_out.map(wall::canon);
+        self.rows
+            .iter()
+            .filter(|r| r.limit_resets.is_some_and(|n| n > 0))
+            .filter(|r| left_out.as_ref() != Some(&r.canon))
+            .map(|r| r.alias.clone())
+            .collect()
     }
 
     /// Whether an account bills the harness and pool a pick would judge
@@ -2426,15 +2440,16 @@ mod tests {
         {"name":"3codex","harness":"codex","meters":{"windows":[{"wall":"weekly","used_pct":0,"resets":"2026-12-03T07:24:18Z"}],"credits":0.0,"credit_flags":{"has_credits":false,"overage_limit_reached":false,"spend_control_reached":false},"limit_resets":0}}
     ],"notes":[]}"#;
 
-    /// Each row carries the count the provider states for its account, on
-    /// its harness alone, and none where the provider states none. A
-    /// provider that answers its rows in place of the document changes no
-    /// row.
+    /// Each row carries the count the provider states for its account's
+    /// directory, on its harness alone, whatever alias the machine gives
+    /// it, and none where the provider states none. A provider that answers
+    /// its rows in place of the document changes no row. The holders are
+    /// the accounts with a count above zero, a left-out account excepted.
     #[test]
     fn each_row_carries_the_limit_resets_the_provider_states_for_its_account() {
-        let codex = |dir: &str| {
+        let codex = |dir: &str, alias: &str| {
             row(
-                json!({"alias":"x","harness":"codex","config_dir":dir,"measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
+                json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
             )
         };
         let claude = row(
@@ -2442,24 +2457,32 @@ mod tests {
         );
         let mut roster = Roster {
             rows: vec![
-                codex("/h/.1codex"),
-                codex("/h/.2codex"),
-                codex("/h/.3codex"),
+                codex("/h/.1codex", "x"),
+                codex("/h/.2codex", "y"),
+                // `AGENT_RUNTIME_ACCOUNT_ALIASES="3codex=1codex"`.
+                codex("/h/.3codex", "1codex"),
                 claude,
             ],
             provider_failure: None,
             notes: Vec::new(),
         };
-        let before = roster.clone();
+        let counts = |roster: &Roster| -> Vec<Option<u64>> {
+            roster.rows.iter().map(|r| r.limit_resets).collect()
+        };
+        roster.carry_limit_resets(HEADROOM).unwrap();
+        assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
         assert!(
             roster
                 .carry_limit_resets("account=/h/.1codex\tharness=codex\n")
                 .is_err()
         );
-        assert_eq!(roster, before);
-        roster.carry_limit_resets(HEADROOM).unwrap();
-        let counts: Vec<Option<u64>> = roster.rows.iter().map(|r| r.limit_resets).collect();
-        assert_eq!(counts, vec![Some(1), None, Some(0), None]);
+        assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
+        assert_eq!(roster.reset_holders(None), vec!["x".to_owned()]);
+        assert!(roster.reset_holders(Some("/h/.1codex")).is_empty());
+        assert_eq!(
+            roster.reset_holders(Some("/h/.2codex")),
+            vec!["x".to_owned()]
+        );
     }
 
     /// The machine's stated end is matched on the alias, the directory name

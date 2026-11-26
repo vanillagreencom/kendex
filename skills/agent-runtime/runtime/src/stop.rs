@@ -229,10 +229,9 @@ pub struct Ground<'a> {
     pub room: bool,
     /// No entry has room, and the soonest reset among them is known.
     pub reset: bool,
-    /// The accounts whose row lists an unused limit reset
-    /// ([`crate::accounts::AccountRow::limit_resets`]) that, pressed, would
-    /// give the session room: for an ended sign-in, accounts other than its
-    /// own.
+    /// The accounts holding an unused limit reset
+    /// ([`crate::accounts::Roster::reset_holders`]), the stopped session's
+    /// own left out for an ended sign-in.
     pub resets: &'a [String],
 }
 
@@ -251,8 +250,13 @@ pub enum Action {
     /// Nothing can recover the session: tell its owner once.
     Notify { to: Owner },
     /// No entry has room, but these accounts hold an unused limit reset:
-    /// tell whoever presses one, then judge the stop again.
-    NotifyReset { to: Owner, accounts: Vec<String> },
+    /// tell whoever presses one once, then take `then`, the wait or the
+    /// stop the decision takes without them.
+    NotifyReset {
+        to: Owner,
+        accounts: Vec<String>,
+        then: Box<Action>,
+    },
 }
 
 /// How long a provider that is not answering is resumed on its own account
@@ -275,6 +279,7 @@ pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Ac
             Action::NotifyReset {
                 to: session.reset_owner(),
                 accounts: ground.resets.to_vec(),
+                then: Box::new(otherwise),
             }
         }
     };
@@ -323,9 +328,10 @@ mod tests {
             resets: &held,
             ..ground(false, false, reset)
         };
-        let press = |to| Action::NotifyReset {
+        let press = |to, then| Action::NotifyReset {
             to,
             accounts: held.to_vec(),
+            then: Box::new(then),
         };
         let rows = [
             // A provider not answering is resumed for its first 30 minutes.
@@ -398,21 +404,32 @@ mod tests {
                 MINUTE,
                 Session::Worker,
                 holding(true),
-                press(Owner::Jarvis),
+                press(Owner::Jarvis, Action::WaitForReset),
             ),
             (
                 Kind::Exited,
                 MINUTE,
                 Session::Jarvis,
                 holding(false),
-                press(Owner::Channel),
+                press(Owner::Channel, Action::Notify { to: Owner::Channel }),
             ),
             (
                 Kind::Auth,
                 MINUTE,
                 Session::Overseer,
                 holding(false),
-                press(Owner::Jarvis),
+                press(Owner::Jarvis, Action::Notify { to: Owner::Jarvis }),
+            ),
+            // An account with room is taken over a reset someone must press.
+            (
+                Kind::Usage,
+                MINUTE,
+                Session::Worker,
+                Ground {
+                    resets: &held,
+                    ..ground(false, true, true)
+                },
+                Action::MoveAccount { tell: None },
             ),
         ];
         for (kind, age, session, ground, want) in rows {
