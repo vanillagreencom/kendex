@@ -1151,8 +1151,7 @@ fn an_idle_codex_lane_is_typed_one_line_confirmed_by_a_user_turn_in_its_own_roll
 /// API ended: the sentence and the inbox line are typed into the session at
 /// its error screen, with no account reading (none is planted, so a wall's
 /// resume would wait), confirmed by a user turn in its own rollout, once,
-/// `wake-delivered <item> resume=api-error`; a `told` row is never served. A
-/// lane whose paste is refused is told its idle line with the cause instead,
+/// `wake-delivered <item> resume=api-error`. A lane whose paste is refused is told its idle line with the cause instead,
 /// once, and its mark keeps the resume, so nothing is typed on a later pass.
 #[test]
 fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_is_told_once() {
@@ -1201,8 +1200,6 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
     );
     let repeat = run_once(&mut body, &resume("KEN-3", asked), &clock).unwrap();
     assert_eq!(rendered(&repeat), Vec::<String>::new());
-    let told = run_once(&mut body, &resume("KEN-3", "told|%1|43"), &clock).unwrap();
-    assert_eq!(rendered(&told), Vec::<String>::new());
     assert_eq!(codex_turns(&fleet.home, "lead-3").len(), 1, "typed once");
     let (refusing, count) = refusing_once(&fleet);
     let mut body = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &refusing));

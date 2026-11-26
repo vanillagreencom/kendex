@@ -296,6 +296,16 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or the file-overlap hold; it keeps the record's touched sets and tier.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
+### Watch recovery
+
+Under `ORCH_WALL_RELAUNCH=auto`, the fleet watch recovers a stopped worker by itself, through this section's close and launch. A standing halt at the lane's mailbox stops every relaunch. [oversee-events.md](oversee-events.md) names each line it prints.
+
+1. At a usage limit or spent credit, the watch walks `ORCH_LANE_PREFERENCE`, then the lane's own harness and model, for an account with room, the spent account excluded. It relaunches the lane on the entry the walk chose, on any harness whose permission words the lane's posture transfers to. With no account with room and a reset named, the wake resumes the lane on its own account once the reset passes and the account reads room.
+2. At an ended sign-in, the watch walks the same way and relaunches the lane on another account at once, never the one whose sign-in ended. Its `usage-limit ... wall_kind=auth` line tells the overseer once.
+3. When the provider stops answering, the wake resumes the lane on its own account after each resume it delivered, at most once per watch pass. After 30 minutes of such stops (agent-runtime's `stop::PROVIDER_PATIENCE`), the watch walks the lane preference less every entry on the lane's provider. It relaunches the lane on the entry the walk chose, with a brief closed by [handoff.md § 2](../workflows/handoff.md#2-launch)'s sentence naming the prior session's transcript. With no such entry, the resumes go on.
+4. When a local lane's harness exits under a live window and its item has no merge, the watch sends `orch-runtime lane relaunch`'s close and launch. The launch resumes the session the record binds.
+5. When no account has room and no reset or other account can recover the lane, the watch tells the overseer once with the cause and walks again on each later pass. A walk that answers `none` relaunches nothing; the first later pass whose walk finds room relaunches the lane.
+
 ### Resume or fresh
 
 - A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt.

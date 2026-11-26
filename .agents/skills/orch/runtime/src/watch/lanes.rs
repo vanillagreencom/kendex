@@ -23,8 +23,10 @@
 //! grammar ([`reset`] below) and the line is `usage-limit-passed` once
 //! the clock passes it; the account wall record and the lane record's own wall
 //! are written through `ops::wall`; the wall relaunch is the walled lane's
-//! close and its `launch-lane` on the account the walk picked for a usage wall
-//! or the lane's own account for an auth wall. The runtime's own entry applies
+//! close and its `launch-lane` on the entry the lane walk chose, the spent
+//! account left out, for a usage and an auth wall alike. A provider stop and
+//! an exited harness take the same relaunch ([`continue_lane`],
+//! `restart_exited`). The runtime's own entry applies
 //! both, started detached through the one runner under
 //! `ORCH_WALL_RELAUNCH=auto`; a window gone while that
 //! relaunch is still opening its replacement is not `window-gone`. A lane
@@ -68,7 +70,7 @@ use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::session;
-use agent_runtime::stop::{self, reset};
+use agent_runtime::stop::{self, Action, Kind, Session, reset};
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -77,9 +79,10 @@ use super::Produced;
 use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
-use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use super::overseer::{RelaunchPending, relaunch_pending};
 use super::verifying::is_reading_lane;
 use super::wake;
+use crate::effects::relaunch::{Close as RecordClose, Relaunch as RecordRelaunch};
 use crate::effects::start_brief;
 use crate::mailbox::Refusal;
 use crate::marker;
@@ -88,12 +91,14 @@ use crate::ops::lane::RecoveryReason;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, CloseGround, FleetState, Lane, LaneMembers, LaneStatus};
+use agent_runtime::accounts::walk::{self as lane_walk, Chosen, WalkAnswer, WalkRequest, Walked};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
+use agent_runtime::controller::successor::{self as choice, Leaving};
 use agent_runtime::intent::{EffectOp, Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 10] = [
+const LANE_ROWS: [&str; 11] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
@@ -104,7 +109,13 @@ const LANE_ROWS: [&str; 10] = [
     "start-stalled",
     hosted::CLOSE_PENDING_ROW,
     hosted::LEFT_ROW,
+    PROVIDER_ROW,
 ];
+
+/// The row of a worker's continuation episode: `<since>|<last>[|told]`,
+/// the epoch seconds its first and latest stopped turns were read at, and
+/// whether a refused provider move was told.
+const PROVIDER_ROW: &str = "provider-stop";
 
 /// Lines kept above the banner in a usage-limit block.
 const BANNER_LEAD: usize = 3;
@@ -313,13 +324,20 @@ pub struct Relaunch {
     pub log: PathBuf,
 }
 
-/// The wall route's calls and the setting that gates a replacement.
+/// The recovery route's calls and the setting that gates a replacement.
 pub struct WallRoute<'a> {
     pub relaunch: WallRelaunch,
-    /// `agent-runtime accounts pick --harness H --native-model M --exclude-account SPENT`.
-    pub pick: &'a dyn Fn(Harness, &str, &str) -> Pick,
+    /// The lane walk (`orch-runtime lane walk --fleet --replaces ITEM`) for
+    /// the item whose charge it leaves out; `Err` is the walk's refusal.
+    pub walk: &'a dyn Fn(&str, &WalkRequest) -> Result<Walked, String>,
+    /// `ORCH_LANE_PREFERENCE`, which a provider move walks less the stopped
+    /// lane's own provider.
+    pub preference: Option<&'a str>,
     /// The standing halt at the lane's mailbox.
     pub halted: &'a dyn Fn(&Lane) -> Result<bool, Refusal>,
+    /// An exited local lane's relaunch from its record, its session
+    /// resumed (`effects::relaunch::composed`); `Err` is its refusal.
+    pub exited: &'a dyn Fn(&Lane) -> Result<RecordRelaunch, String>,
     /// Start the relaunch detached through the one runner; `Err` is the
     /// launcher's refusal.
     pub start: &'a dyn Fn(&Relaunch) -> Result<(), String>,
@@ -1478,6 +1496,7 @@ fn observe_one(
                 .push(set("lane-exited", lane, format!("{pane_key}|reported")));
             out.changes.push(clear("lane-asking", lane));
             hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, out);
+            restart_exited(obs, pass, out);
         } else {
             out.changes.push(set("lane-exited", lane, pane_key));
         }
@@ -1517,9 +1536,9 @@ fn observe_one(
     // the line carries the
     // stop's cause where the verdict kept one, so a turn its output limit
     // cut is told apart from a finished one, whose line carries none, else
-    // a Copilot lane's policy note, keyed as the asking line keys it. The
-    // `resume` row chains a failed turn's resume (`<cause>|<key>`) to the
-    // failure after it (`told|<key>`), which the wake never serves.
+    // a Copilot lane's policy note, keyed as the asking line keys it. A
+    // turn a continuation resumes takes no line while its session is
+    // reached ([`continue_lane`]).
     match &state {
         LaneState::Idle { capacity: true, .. } => {
             let key = hash_of(&slice).to_string();
@@ -1570,51 +1589,48 @@ fn observe_one(
                 format!("{pane_key}|{position:?}|{wake_at}|{}", hash_of(&slice)),
                 note.as_deref(),
             );
-            if prior == format!("{key}|reported") {
-                return reading;
-            }
+            let reported = prior == format!("{key}|reported");
             // A hosted lane's screen between a finished tool call and the
             // next reads the same, so only a local lane's is believed at once.
             let codex_after_turn = obs.lane.harness.as_deref() == Some("codex")
                 && hosted::host_of(obs.lane) == "local"
                 && obs.screen.as_deref().is_some_and(|s| s != slice);
-            if prior == key || codex_after_turn {
-                out.changes
-                    .push(set("lane-idle", lane, format!("{key}|reported")));
-                let continuation = cause.as_deref().filter(|cause| {
-                    obs.lane
-                        .harness
-                        .as_deref()
-                        .and_then(Harness::parse)
-                        .is_some_and(|harness| {
-                            wake::can_continue(harness, cause, is_reading_lane(&obs.lane.item))
-                        })
-                });
-                let asked = get(wake::RESUME_KIND);
-                let asked = wake::continued(asked.as_deref());
-                if let Some(cause) = continuation
-                    && !asked
-                    && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
-                {
-                    out.changes
-                        .push(set(wake::RESUME_KIND, lane, format!("{cause}|{key}")));
-                    return reading;
-                }
-                if continuation.is_none() {
-                    out.changes.push(clear(wake::RESUME_KIND, lane));
-                } else if asked {
-                    out.changes
-                        .push(set(wake::RESUME_KIND, lane, format!("told|{key}")));
-                }
-                out.events.push(Event::IdleAfterReturn {
-                    lane: lane.clone(),
-                    note,
-                });
-                out.events.extend(payload(bounded_tail(&slice, cap)));
-                hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
-            } else {
+            if !(reported || prior == key || codex_after_turn) {
                 out.changes.push(set("lane-idle", lane, key));
+                return reading;
             }
+            let continuation = cause.as_deref().filter(|cause| {
+                obs.lane
+                    .harness
+                    .as_deref()
+                    .and_then(Harness::parse)
+                    .is_some_and(|harness| {
+                        wake::can_continue(harness, cause, is_reading_lane(&obs.lane.item))
+                    })
+            });
+            if let Some(cause) = continuation
+                && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
+            {
+                if !reported {
+                    out.changes
+                        .push(set("lane-idle", lane, format!("{key}|reported")));
+                }
+                continue_lane(obs, cause, &key, &wakes, pass, out);
+                return reading;
+            }
+            if reported {
+                return reading;
+            }
+            out.changes
+                .push(set("lane-idle", lane, format!("{key}|reported")));
+            out.changes.push(clear(wake::RESUME_KIND, lane));
+            out.changes.push(clear(PROVIDER_ROW, lane));
+            out.events.push(Event::IdleAfterReturn {
+                lane: lane.clone(),
+                note,
+            });
+            out.events.extend(payload(bounded_tail(&slice, cap)));
+            hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
         }
         LaneState::Gone
         | LaneState::Unreadable { .. }
@@ -1629,6 +1645,207 @@ fn observe_one(
         }
     }
     reading
+}
+
+/// A worker whose turn ended on a continuation cause is resumed on its own
+/// account once per pass while the stop stands: each resume the wake
+/// delivered is followed by a fresh row (`<cause>|<key>|pass:<epoch>`),
+/// which the wake types once, and one it has not typed, or refused,
+/// stands, since the wake tells a refused one itself. A provider stop past
+/// `stop::PROVIDER_PATIENCE` since the episode's first stopped turn, under
+/// `ORCH_WALL_RELAUNCH=auto` with no halt standing, moves the lane to the
+/// first entry on another provider the walk finds room on, its brief naming
+/// the prior transcript; with none it is resumed still, and a move refused
+/// is told once as `idle-after-return` with the refusal under it. The
+/// episode stands while each stopped turn follows the last one read within
+/// the patience; the first finished turn ends it.
+fn continue_lane(
+    obs: &Observed,
+    cause: &str,
+    key: &str,
+    wakes: &crate::ops::wake::WakeRecord,
+    pass: &Pass,
+    out: &mut Produced,
+) {
+    let lane = &obs.name;
+    let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
+    match relaunch_pending(&marker, pass.settings.prepare, pass.now) {
+        RelaunchPending::None => {}
+        // The move this episode started still owns the lane.
+        RelaunchPending::Pending => return,
+        RelaunchPending::Unreadable { path, cause } => {
+            fail(
+                out,
+                format!("state-read-failed path={} cause={cause}", path.display()),
+            );
+            return;
+        }
+    }
+    let patience = stop::PROVIDER_PATIENCE.as_secs();
+    let episode = pass.baseline.get(PROVIDER_ROW, lane).and_then(|value| {
+        let mut fields = value.split('|');
+        let since = fields.next()?.parse::<u64>().ok()?;
+        let last = fields.next()?.parse::<u64>().ok()?;
+        (pass.now.saturating_sub(last) <= patience)
+            .then_some((since, fields.next() == Some("told")))
+    });
+    let (since, told) = episode.unwrap_or((pass.now, false));
+    let row = |told: bool| format!("{since}|{}{}", pass.now, if told { "|told" } else { "" });
+    out.changes.push(set(PROVIDER_ROW, lane, row(told)));
+    let harness = obs.lane.harness.as_deref().and_then(Harness::parse);
+    let age = Duration::from_secs(pass.now.saturating_sub(since));
+    let ground = stop::Ground {
+        own_room: true,
+        room: true,
+        reset: false,
+    };
+    if let Some(harness) = harness
+        && stop::of_cause(harness, cause) == Some(Kind::Provider)
+        && stop::action(Kind::Provider, age, Session::Worker, ground) == Action::MoveProvider
+        && pass.route.relaunch == WallRelaunch::Auto
+        && halt_reason(obs, pass).is_none()
+    {
+        match move_provider(obs, harness, pass, out) {
+            Moved::Relaunched => {
+                out.events.push(Event::Tail(format!(
+                    "provider-move cause={cause} since={}",
+                    clock::iso_utc(since)
+                )));
+                out.changes.push(clear(PROVIDER_ROW, lane));
+                out.changes.push(clear(wake::RESUME_KIND, lane));
+                return;
+            }
+            Moved::NoSuccessor => {}
+            Moved::Refused(reason) => {
+                if !told {
+                    out.events.push(Event::IdleAfterReturn {
+                        lane: lane.clone(),
+                        note: Some(format!("cause={cause}")),
+                    });
+                    out.events.push(Event::Tail(format!(
+                        "provider-move-refused lane={lane} reason={reason}"
+                    )));
+                    out.changes.push(set(PROVIDER_ROW, lane, row(true)));
+                }
+            }
+        }
+    }
+    let asked = pass.baseline.get(wake::RESUME_KIND, lane);
+    // A wall's resume is the wall route's, never this episode's.
+    let answered = asked.is_none_or(|row| {
+        row.split_once('|')
+            .is_some_and(|(c, _)| c == wake::WALL_CAUSE)
+            || wakes.get(&obs.lane.item).is_some_and(|mark| {
+                mark.resume.as_deref() == Some(row)
+                    && matches!(
+                        mark.outcome,
+                        Some(crate::ops::wake::WakeOutcome::Delivered { .. })
+                    )
+            })
+    });
+    if !answered {
+        return;
+    }
+    out.changes.push(set(
+        wake::RESUME_KIND,
+        lane,
+        format!("{cause}|{key}|pass:{}", pass.now),
+    ));
+}
+
+/// An exited local lane, its harness gone under a live window and its
+/// item not merged, is started again under `ORCH_WALL_RELAUNCH=auto` with
+/// no halt standing: the record's own relaunch on its own account, which
+/// resumes the session the record binds, closing its last attempt on the
+/// `restart-recovery` ground. A hosted lane's exit is its provider's
+/// close's ([`hosted::close_finished`]). A refusal is said under the
+/// `lane-exited` line.
+fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
+    if pass.route.relaunch != WallRelaunch::Auto
+        || hosted::host_of(obs.lane) != "local"
+        || !matches!(
+            super::github::finished_merge(pass.baseline, obs.lane),
+            super::github::FinishedMerge::None
+        )
+    {
+        return;
+    }
+    let lane = &obs.name;
+    let refused = |out: &mut Produced, reason: &str| {
+        out.events.push(Event::Tail(format!(
+            "relaunch-refused lane={lane} reason={reason}"
+        )));
+    };
+    if let Some(reason) = halt_reason(obs, pass) {
+        return refused(out, &reason);
+    }
+    let RecordRelaunch {
+        close,
+        launch,
+        account,
+    } = match (pass.route.exited)(obs.lane) {
+        Ok(relaunch) => relaunch,
+        Err(cause) => return refused(out, &cause),
+    };
+    let Some(cwd) = obs
+        .lane
+        .mail_root
+        .as_deref()
+        .and_then(|root| std::fs::canonicalize(root).ok())
+    else {
+        return refused(out, "checkout-unavailable");
+    };
+    let close = match &close {
+        RecordClose::Request(path) => Some(path.as_path()),
+        RecordClose::Confirmed(_) => None,
+    };
+    let recovery = Recovery {
+        cwd,
+        session: pass.session.map(str::to_owned).unwrap_or_default(),
+        args: relaunch_args(pass, close, &launch),
+    };
+    let account = account.unwrap_or_else(|| "-".to_owned());
+    if let Err(reason) = start_recovery(obs, pass, out, recovery, &account, &account) {
+        refused(out, &reason);
+    }
+}
+
+/// What a provider move did.
+enum Moved {
+    Relaunched,
+    /// No preference to walk, or the walk found no other provider with
+    /// room or could not judge one: the lane is resumed where it is.
+    NoSuccessor,
+    Refused(String),
+}
+
+/// Move the observed lane to the first entry on another provider the walk
+/// finds room on, through the record's relaunch with the brief naming its
+/// prior transcript.
+fn move_provider(obs: &Observed, harness: Harness, pass: &Pass, out: &mut Produced) -> Moved {
+    let Some(request) = provider_walk(obs.lane, harness, pass.route.preference) else {
+        return Moved::NoSuccessor;
+    };
+    let to = match walked(&obs.lane.item, &request, pass) {
+        Found::Destination(to) => to,
+        Found::None | Found::Unjudged(_) => return Moved::NoSuccessor,
+    };
+    let spent = obs.lane.account.clone().unwrap_or_else(|| "-".to_owned());
+    let recovery = match relaunch_request(
+        obs.lane,
+        harness,
+        &to,
+        RecoveryReason::UsageLimit,
+        None,
+        pass,
+    ) {
+        Ok(recovery) => recovery,
+        Err(cause) => return Moved::Refused(format!("context-unavailable cause={cause}")),
+    };
+    match start_recovery(obs, pass, out, recovery, &to.account, &spent) {
+        Ok(()) => Moved::Relaunched,
+        Err(reason) => Moved::Refused(reason),
+    }
 }
 
 /// A line's key with the note the line carries, so a changed note is news
@@ -1866,6 +2083,23 @@ fn wall(
         .err()
         .map(|e| e.to_string());
     if quiet && !rewalled && !held {
+        // A wall no relaunch took is walked again on each later pass under
+        // the same banner, quietly, so an account that gains room takes the
+        // lane with nobody starting it.
+        let walking = !passed
+            && pass.route.relaunch == WallRelaunch::Auto
+            && prior.get(3).is_some_and(|r| r != "lane-relaunched");
+        if walking {
+            match route(obs, kind, pass, out, &mut Vec::new()) {
+                Routed::Relaunched => out.changes.push(set(
+                    "usage-limit",
+                    lane,
+                    format!("{first_seen}|{hash}|{identity}|lane-relaunched"),
+                )),
+                Routed::Opening => return unjudged("auth-recovery-opening"),
+                Routed::Held | Routed::Left | Routed::NoRoom => {}
+            }
+        }
         return (walled, observed);
     }
     let lines = match evidence {
@@ -1877,11 +2111,32 @@ fn wall(
             None => return unjudged("banner-missing"),
         },
     };
+    // The line's body: the lane, the claimed account where the record names
+    // one, `resets=` where read, `wall_kind=auth`.
+    let mut line = lane.clone();
+    if !account.is_empty() {
+        line.push(' ');
+        line.push_str(&account);
+    }
+    if let Some(at) = reset_at {
+        line.push_str(" resets=");
+        line.push_str(&clock::iso_utc(at));
+    }
+    if auth {
+        line.push_str(" wall_kind=auth");
+    }
     let mut notes = Vec::new();
     let mut retry = "";
+    let told_at = out.events.len();
     match reset_at.filter(|_| passed) {
         None => match route(obs, kind, pass, out, &mut notes) {
             Routed::Relaunched => {
+                // A limit's move is the relaunch's line alone; an ended
+                // sign-in is told once, naming the account it ended on.
+                if auth {
+                    out.events
+                        .insert(told_at, Event::UsageLimit { passed, line });
+                }
                 out.changes.push(set(
                     "usage-limit",
                     lane,
@@ -1893,6 +2148,30 @@ fn wall(
             Routed::Held if held => return (walled, observed),
             Routed::Held => retry = "|held",
             Routed::Left => {}
+            // No account has room: a limit with a reset waits for it, and
+            // one with none, or an ended sign-in, has nothing to recover it,
+            // which the overseer is told once, here.
+            Routed::NoRoom => {
+                let ground = stop::Ground {
+                    own_room: false,
+                    room: false,
+                    reset: reset_at.is_some(),
+                };
+                match stop::action(Kind::from(kind), Duration::ZERO, Session::Worker, ground) {
+                    Action::Notify { .. } => notes.push(format!(
+                        "recovery-stopped cause={}",
+                        if auth {
+                            "no-other-account"
+                        } else {
+                            "no-room-no-reset"
+                        }
+                    )),
+                    Action::WaitForReset
+                    | Action::Resume
+                    | Action::MoveAccount { .. }
+                    | Action::MoveProvider => {}
+                }
+            }
         },
         // A passed reset: the wake resumes the lane it reaches, once per
         // wall, and the note says whether it will.
@@ -1922,20 +2201,6 @@ fn wall(
             }
         }
     }
-    // The line's body: the lane, the claimed account where the record names
-    // one, `resets=` where read, `wall_kind=auth`.
-    let mut line = lane.clone();
-    if !account.is_empty() {
-        line.push(' ');
-        line.push_str(&account);
-    }
-    if let Some(at) = reset_at {
-        line.push_str(" resets=");
-        line.push_str(&clock::iso_utc(at));
-    }
-    if auth {
-        line.push_str(" wall_kind=auth");
-    }
     out.events.push(Event::UsageLimit { passed, line });
     out.events.extend(notes.into_iter().map(Event::Tail));
     if let Some(cause) = unwritten {
@@ -1960,9 +2225,11 @@ enum Routed {
     Opening,
     /// The mailbox holds the relaunch. Check it again even if the wall passes.
     Held,
-    /// The wall is left to the overseer; `notes` carry the pick's answer
+    /// The wall is left to the overseer; `notes` carry the walk's answer
     /// and any refusal.
     Left,
+    /// The walk judged every entry and none has room.
+    NoRoom,
 }
 
 enum AuthRecovery {
@@ -2051,17 +2318,15 @@ fn halt_reason(obs: &Observed, pass: &Pass) -> Option<String> {
     }
 }
 
-/// A usage wall walks accounts for the record's model with the spent account
-/// excluded and prints the pick's answer under the event. An auth wall keeps
-/// the lane's account so a resumed harness reads its current credentials.
-/// Under `ORCH_WALL_RELAUNCH=auto` the destination takes the lane through the
-/// record's own relaunch, started detached through the one runner, its marker
-/// written first for the outcome reader. A hosted lane of any kind has its
-/// harness stopped through the provider first (its `stop --item
-/// --harness`), and a stop not confirmed refuses the relaunch as
-/// `stop-failed` with the status, or `stop-unanswered` where it gave no
-/// answer. A relaunch refused after the pick is said
-/// under the event, after the pick's line, and never asked again this pass.
+/// A usage or auth wall walks the lane preference, then the lane's own
+/// harness, for an account with room, the spent account left out, so an
+/// ended sign-in never relaunches on the account it ended on, and prints
+/// the walk's answer under the event. Under `ORCH_WALL_RELAUNCH=auto` the
+/// destination takes the lane through the record's own relaunch, started
+/// detached through the one runner, its marker written first for the
+/// outcome reader ([`start_recovery`]). A relaunch refused after the walk
+/// is said under the event, after the walk's line, and never asked again
+/// this pass.
 fn route(
     obs: &Observed,
     kind: WallKind,
@@ -2083,28 +2348,13 @@ fn route(
         notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
         return Routed::Held;
     }
-    let account = obs.lane.account.as_deref();
-    let to = match kind {
-        WallKind::Auth => obs.lane.account.clone(),
-        WallKind::Usage => {
-            let Some(spent) = account.filter(|a| !a.is_empty()) else {
-                return refused(notes, "account-unknown");
-            };
-            match (pass.route.pick)(harness, model, spent) {
-                Pick::Lane(to) => {
-                    notes.push(format!("pick lane={to}"));
-                    Some(to)
-                }
-                Pick::None => {
-                    notes.push("pick none".to_owned());
-                    return Routed::Left;
-                }
-                Pick::Unjudged { cause } => {
-                    notes.push(format!("pick unjudged {cause}"));
-                    return Routed::Left;
-                }
-            }
-        }
+    // The account the lane spends: its record's, else the home its last
+    // launch ran under on inherited credentials.
+    let Some(spent) = [&obs.lane.account, &obs.lane.home]
+        .into_iter()
+        .find_map(|a| a.as_deref().filter(|a| !a.is_empty()))
+    else {
+        return refused(notes, "account-unknown");
     };
     let recovery = match kind {
         WallKind::Auth => match auth_recovery(obs.lane, pass) {
@@ -2115,65 +2365,383 @@ fn route(
     };
     match (pass.route.relaunch, recovery) {
         (_, AuthRecovery::Opening) => return Routed::Opening,
-        (WallRelaunch::Ask, AuthRecovery::Ready | AuthRecovery::AwaitingTurn) => {
-            return Routed::Left;
-        }
         (WallRelaunch::Auto, AuthRecovery::AwaitingTurn) => {
             return refused(notes, "auth-recovery-unconfirmed");
         }
-        (WallRelaunch::Auto, AuthRecovery::Ready) => {}
+        (
+            WallRelaunch::Ask | WallRelaunch::Auto,
+            AuthRecovery::Ready | AuthRecovery::AwaitingTurn,
+        ) => {}
     }
-    if kind == WallKind::Usage
-        && let (Some(to), Some(spent)) = (to.as_deref(), account)
-        && account_wall::canon(to) == account_wall::canon(spent)
-    {
+    let to = match walked(
+        &obs.lane.item,
+        &account_walk(obs.lane, harness, model, spent),
+        pass,
+    ) {
+        Found::Destination(to) => {
+            notes.push(to.note(harness));
+            to
+        }
+        Found::None => {
+            notes.push("pick none".to_owned());
+            return Routed::NoRoom;
+        }
+        Found::Unjudged(cause) => {
+            notes.push(format!("pick unjudged {cause}"));
+            return Routed::Left;
+        }
+    };
+    if pass.route.relaunch == WallRelaunch::Ask {
+        return Routed::Left;
+    }
+    if account_wall::canon(&to.account) == account_wall::canon(spent) {
         return refused(notes, "spent-account");
     }
-    let relaunch = match relaunch_request(
-        obs.lane,
-        harness,
-        to.as_deref(),
-        kind,
-        pass.state_dir,
-        pass.scripts,
-        pass.session,
-    ) {
-        Ok(request) => request,
-        Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
+    let ground = match kind {
+        WallKind::Usage => RecoveryReason::UsageLimit,
+        WallKind::Auth => RecoveryReason::AuthWall,
     };
+    match relaunch_request(obs.lane, harness, &to, ground, Some(spent), pass) {
+        Ok(recovery) => match start_recovery(obs, pass, out, recovery, &to.account, spent) {
+            Ok(()) => Routed::Relaunched,
+            Err(reason) => refused(notes, &reason),
+        },
+        Err(cause) => refused(notes, &format!("context-unavailable cause={cause}")),
+    }
+}
+
+/// Where a walk lands a lane: the entry it chose and that entry's account.
+struct Destination {
+    harness: Harness,
+    /// The model the entry runs; `None` is the harness's default.
+    model: Option<String>,
+    effort: Option<String>,
+    account: String,
+}
+
+impl Destination {
+    /// The walk's line under the event: the account, and the harness and
+    /// model where the walk crossed to another harness.
+    fn note(&self, from: Harness) -> String {
+        if self.harness == from {
+            format!("pick lane={}", self.account)
+        } else {
+            format!(
+                "pick lane={} harness={} model={}",
+                self.account,
+                self.harness.name(),
+                self.model.as_deref().unwrap_or("-")
+            )
+        }
+    }
+}
+
+/// The walk's answer as a recovery reads it.
+enum Found {
+    Destination(Destination),
+    /// Every entry judged, none with room.
+    None,
+    /// No decision: the walk refused, held on its `:last` entry, left an
+    /// entry unread, or chose an entry with no account to land on.
+    Unjudged(String),
+}
+
+/// What the lane walk answers `request` with for `item`, its own charge
+/// left out.
+fn walked(item: &str, request: &WalkRequest, pass: &Pass) -> Found {
+    let walked = match (pass.route.walk)(item, request) {
+        Ok(walked) => walked,
+        Err(cause) => return Found::Unjudged(cause),
+    };
+    match walked.answer {
+        WalkAnswer::Lane(chosen) => match *chosen {
+            Chosen {
+                harness,
+                model,
+                effort,
+                account: Some(account),
+                ..
+            } => Found::Destination(Destination {
+                harness,
+                model: Some(model).filter(|m| !m.is_empty()),
+                effort: Some(effort).filter(|e| !e.is_empty()),
+                account,
+            }),
+            Chosen { account: None, .. } => Found::Unjudged("walk-account-unnamed".to_owned()),
+        },
+        WalkAnswer::None if walked.unread.is_empty() => Found::None,
+        WalkAnswer::None => Found::Unjudged(format!("walk-unread {}", walked.unread.join(" "))),
+        WalkAnswer::Held { last_choice, .. } => {
+            Found::Unjudged(format!("walk-held last_choice={last_choice}"))
+        }
+    }
+}
+
+/// The posture the lane's launch ran under, as a walk passes over an entry
+/// whose harness cannot carry it: the recorded words, or none where the
+/// launch ran the settings' posture.
+fn source_of(lane: &Lane, harness: Harness) -> lane_walk::Source {
+    lane_walk::Source {
+        harness,
+        flags: recorded_permission(lane)
+            .map(|words| words.split_whitespace().map(str::to_owned).collect()),
+    }
+}
+
+/// The walk a walled lane leaves its account by: the lane preference, then
+/// the lane's own harness and model on any other account, the spent one
+/// left out.
+fn account_walk(lane: &Lane, harness: Harness, model: &str, spent: &str) -> WalkRequest {
+    WalkRequest {
+        scope: lane_walk::Scope::Lane,
+        preference: None,
+        lane: None,
+        exclude: vec![spent.to_owned()],
+        max_pct: None,
+        min_headroom_pct: None,
+        source: Some(source_of(lane, harness)),
+        caller: Some(lane_walk::Caller {
+            harness,
+            lane: None,
+            model: Some(model.to_owned()),
+            effort: lane.effort.clone().filter(|e| !e.is_empty()),
+            pick_model: Some(model.to_owned()),
+            keep: false,
+        }),
+        keep_unmeasured: false,
+    }
+}
+
+/// The walk a lane its provider stopped for the whole patience leaves that
+/// provider by: the lane preference less every entry on the lane's own
+/// provider, and no entry of its own; none where no preference is set.
+fn provider_walk(lane: &Lane, harness: Harness, preference: Option<&str>) -> Option<WalkRequest> {
+    let model = lane.model.as_deref().unwrap_or_default();
+    let others = other_providers(preference?, harness, model);
+    (!others.is_empty()).then(|| WalkRequest {
+        scope: lane_walk::Scope::Lane,
+        preference: Some(others),
+        lane: None,
+        exclude: Vec::new(),
+        max_pct: None,
+        min_headroom_pct: None,
+        source: Some(source_of(lane, harness)),
+        caller: None,
+        keep_unmeasured: false,
+    })
+}
+
+/// The lane preference `text` less each entry on the provider `harness`
+/// running `model` sends its turns to, judged entry by entry as the
+/// controller's provider walk judges one ([`Leaving::Provider`]); the
+/// entry's host does not change its provider, so it is judged without one.
+/// A preference the lane grammar refuses is kept as written, so the walk
+/// refuses it by its own rule.
+fn other_providers(text: &str, harness: Harness, model: &str) -> String {
+    let Ok(parsed) = lane_walk::Preference::parse(text, lane_walk::Scope::Lane) else {
+        return text.to_owned();
+    };
+    let caller = agent_runtime::controller::views::Caller {
+        harness: Some(harness),
+        model: Some(model.to_owned()),
+        ..Default::default()
+    };
+    let last = parsed.entries.len().saturating_sub(1);
+    let mut kept = Vec::new();
+    for (i, entry) in parsed.entries.iter().enumerate() {
+        let bare = format!("{}:{}:{}", entry.harness.name(), entry.model, entry.effort);
+        let walk = choice::recovery_walk(&caller, harness, Leaving::Provider { preference: &bare });
+        if walk.preference.is_some_and(|p| !p.is_empty()) {
+            kept.push(if parsed.last_choice && i == last {
+                format!("{}:last", entry.text)
+            } else {
+                entry.text.clone()
+            });
+        }
+    }
+    kept.join(",")
+}
+
+/// The record's own relaunch onto `to` for the watch's session: the walk's
+/// harness, model, effort and account in place of the record's, a
+/// permission word the new harness takes, and a brief that names the
+/// prior transcript where the harness changes ([`moved_start_brief`]).
+fn relaunch_request(
+    lane: &Lane,
+    from: Harness,
+    to: &Destination,
+    ground: RecoveryReason,
+    exclude: Option<&str>,
+    pass: &Pass,
+) -> Result<Recovery, String> {
+    let mut moved = lane.clone();
+    moved.model.clone_from(&to.model);
+    moved.effort.clone_from(&to.effort);
+    let brief: fn(&Lane, Harness) -> Result<String, String> = if to.harness == from {
+        start_brief
+    } else {
+        // A recorded word is the source's own spelling: a walk crosses
+        // harnesses only under a full bypass, which the new harness spells
+        // its own way, or names none where it has no permission word.
+        if recorded_permission(lane).is_some() {
+            match to.harness.bypass_words().first() {
+                Some(word) => {
+                    moved.extra.insert("permission".to_owned(), json!(word));
+                }
+                None => {
+                    moved.extra.remove("permission");
+                }
+            }
+        }
+        moved_start_brief
+    };
+    let Composed { cwd, close, launch } = compose_relaunch(
+        &moved,
+        to.harness,
+        &Composition {
+            stem: "wall-relaunch",
+            account: Some(&to.account),
+            exclude,
+            brief,
+            ground,
+        },
+        pass.state_dir,
+    )?;
+    Ok(Recovery {
+        cwd,
+        session: pass.session.map(str::to_owned).unwrap_or_default(),
+        args: relaunch_args(pass, Some(&close), &launch),
+    })
+}
+
+/// The handoff sentence a lane moved to another harness starts on
+/// (`workflows/handoff.md` § 2), naming the prior session's transcript:
+/// the file the record's bound session id names under the home its last
+/// launch ran in, read on this machine. A session with no file here, or a
+/// store that cannot be read, names no transcript, so the move is refused
+/// with the cause.
+fn moved_start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
+    let from = lane
+        .harness
+        .as_deref()
+        .and_then(Harness::parse)
+        .ok_or_else(|| "harness-unrecorded".to_owned())?;
+    let id = lane
+        .session_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "session-unrecorded".to_owned())?;
+    let home = lane
+        .home
+        .as_deref()
+        .or(lane.account.as_deref())
+        .map(PathBuf::from)
+        .or_else(|| agent_runtime::effects::default_home(from))
+        .ok_or_else(|| "home-unrecorded".to_owned())?;
+    let cwd = lane
+        .mail_root
+        .as_deref()
+        .ok_or_else(|| "checkout-unrecorded".to_owned())?;
+    let transcript = match agent_runtime::effects::fixed_id_file(from, &home, Path::new(cwd), id) {
+        Reading::Live(file) => file,
+        Reading::Gone => return Err(format!("transcript-absent session={id}")),
+        Reading::Unreadable { cause } => {
+            return Err(format!("transcript-unreadable session={id} cause={cause}"));
+        }
+    };
+    let brief = start_brief(lane, harness)?;
+    Ok(format!(
+        "{}\nContinue {} from the prior {} transcript at {}; read it first, then resume the orch workflow.\n",
+        brief.trim_end(),
+        lane.item,
+        from.name(),
+        transcript.display()
+    ))
+}
+
+/// The runtime's own argv for a relaunch's requests through the one shell
+/// word, each exiting by its effect's outcome, never by its admission
+/// alone: the launch is asked only once the close's effect did not fail
+/// (an unconfirmed close leaves the launch's own transition to refuse a
+/// lane whose harness still runs), and the launch's status is the chain's:
+/// a replacement whose effect failed, or whose outcome is still open,
+/// leaves the status the outcome reader says or settles from the launch's
+/// intent. A close an earlier relaunch confirmed is not sent again.
+fn relaunch_args(pass: &Pass, close: Option<&Path>, launch: &Path) -> Vec<String> {
+    let entry = pass.scripts.join("orch-runtime").display().to_string();
+    let state = pass.state_dir.display().to_string();
+    let launch = launch.display().to_string();
+    match close {
+        Some(close) => vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
+            "wall-relaunch".to_owned(),
+            entry,
+            state,
+            close.display().to_string(),
+            launch,
+        ],
+        None => vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            "exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"".to_owned(),
+            "wall-relaunch".to_owned(),
+            entry,
+            state,
+            launch,
+        ],
+    }
+}
+
+/// Start a composed relaunch of the observed lane: a hosted lane of any
+/// kind has its harness stopped through the provider first (its `stop
+/// --item --harness`), and a stop not confirmed refuses the relaunch as
+/// `stop-failed` with the status, or `stop-unanswered` where it gave no
+/// answer; then the marker the outcome reader settles, then the detached
+/// start, and `lane-relaunched` with its log. `Err` is the refusal's
+/// reason.
+fn start_recovery(
+    obs: &Observed,
+    pass: &Pass,
+    out: &mut Produced,
+    recovery: Recovery,
+    to: &str,
+    spent: &str,
+) -> Result<(), String> {
+    let lane = &obs.name;
     let host = hosted::host_of(obs.lane);
     // A stop refused or unanswered alike may leave the harness running, so
     // neither relaunches beside it this pass.
     if host != "local"
+        && let Some(harness) = obs.lane.harness.as_deref()
         && let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
-            hosted::stop(pass.scripts, host, &obs.lane.item, harness.name())
+            hosted::stop(pass.scripts, host, &obs.lane.item, harness)
     {
-        return refused(notes, &cause);
+        return Err(cause);
     }
     let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
     let log = pass
         .state_dir
         .join(format!("wall-relaunch-{}.log", obs.lane.item));
     if let Err(e) = wall::write_relaunch_marker(&marker, &obs.lane.item, pass.now, &log) {
-        return refused(
-            notes,
-            &format!("marker-unwritten path={} cause={e}", marker.display()),
-        );
+        return Err(format!(
+            "marker-unwritten path={} cause={e}",
+            marker.display()
+        ));
     }
     let relaunch = Relaunch {
         item: obs.lane.item.clone(),
         window: lane.clone(),
-        to: to.unwrap_or_else(|| "-".to_owned()),
-        spent: account.unwrap_or("-").to_owned(),
-        cwd: relaunch.cwd,
-        session: relaunch.session,
-        args: relaunch.args,
+        to: to.to_owned(),
+        spent: spent.to_owned(),
+        cwd: recovery.cwd,
+        session: recovery.session,
+        args: recovery.args,
         marker,
         log: log.clone(),
     };
-    if let Err(cause) = (pass.route.start)(&relaunch) {
-        return refused(notes, &format!("launch-failed cause={cause}"));
-    }
+    (pass.route.start)(&relaunch).map_err(|cause| format!("launch-failed cause={cause}"))?;
     out.events.push(Event::LaneRelaunched {
         item: obs.lane.item.clone(),
         lane: relaunch.to,
@@ -2181,7 +2749,7 @@ fn route(
     });
     out.events
         .push(Event::Tail(format!("log={}", log.display())));
-    Routed::Relaunched
+    Ok(())
 }
 
 /// The relaunch's parts before the marker: the checkout, the session and
@@ -2330,60 +2898,6 @@ pub(crate) fn compose_relaunch(
         cwd,
         close,
         launch: file,
-    })
-}
-
-/// Compose both wall relaunch requests for the watch's session.
-fn relaunch_request(
-    lane: &Lane,
-    harness: Harness,
-    to: Option<&str>,
-    kind: WallKind,
-    state_dir: &Path,
-    scripts: &Path,
-    session: Option<&str>,
-) -> Result<Recovery, String> {
-    let (exclude, reason) = match kind {
-        WallKind::Usage => (lane.account.as_deref(), RecoveryReason::UsageLimit),
-        WallKind::Auth => (None, RecoveryReason::AuthWall),
-    };
-    let Composed {
-        cwd,
-        close,
-        launch: file,
-    } = compose_relaunch(
-        lane,
-        harness,
-        &Composition {
-            stem: "wall-relaunch",
-            account: to,
-            exclude,
-            brief: start_brief,
-            ground: reason,
-        },
-        state_dir,
-    )?;
-    // The two requests in order through the one shell word, each exiting by
-    // its effect's outcome, never by its admission alone: the launch is
-    // asked only once the close's effect did not fail (an unconfirmed close
-    // leaves the launch's own transition to refuse a lane whose harness
-    // still runs), and the launch's status is the chain's: a replacement
-    // whose effect failed, or whose outcome is still open, leaves the status
-    // the outcome reader says or settles from the launch's intent.
-    let args = vec![
-        "sh".to_owned(),
-        "-c".to_owned(),
-        "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
-        "wall-relaunch".to_owned(),
-        scripts.join("orch-runtime").display().to_string(),
-        state_dir.display().to_string(),
-        close.display().to_string(),
-        file.display().to_string(),
-    ];
-    Ok(Recovery {
-        cwd,
-        session: session.map(str::to_owned).unwrap_or_default(),
-        args,
     })
 }
 

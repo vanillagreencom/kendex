@@ -416,6 +416,8 @@ Each answer:
 - A lane at a harness session limit ("You've hit your session limit · resets 9:50am") is walled, not dead: § `usage-limit` applies.
 - Relaunch a lane that reported `handoff` per § `handoff`. Never nudge it.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line, with its merge as the close's `delivery`.
+- Under `ORCH_WALL_RELAUNCH=auto`, the watch relaunches a local lane whose item has no merge from its record, as `orch-runtime lane relaunch` does ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)). § `lane-relaunched` follows. Nothing is owed.
+- `relaunch-refused lane=[LANE] reason=[REASON]` under the line names the step that stopped that relaunch. Repair it, or relaunch by hand.
 - Any other exit: § `window-gone`.
 
 ### `window-gone`
@@ -494,7 +496,7 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 Read the closing lines under the `idle-after-return` line.
 
 - `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
-- `cause=api-error` on Codex or Copilot, `cause=server_error` or `cause=refusal` (a safety refusal) on a local Claude session, and `cause=error` on Pi are failed provider turns, as agent-runtime's stop reading names them. The watch continues a worker session it reaches once. For a worker, this event reports a repeated failure, a continuation the wake could not deliver, an unreachable session, or a reading worker with a posted result. For a reading worker, use the result and close steps above. For another worker, send a one-line continuation directive if the workflow calls for another turn.
+- `cause=api-error` on Codex or Copilot, `cause=server_error` or `cause=refusal` (a safety refusal) on a local Claude session, and `cause=error` on Pi are failed provider turns, as agent-runtime's stop reading names them. The watch resumes a worker session it reaches, and moves it to another provider after 30 minutes ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)). For a worker, this event reports a continuation the wake could not deliver, an unreachable session, a reading worker with a posted result, or a provider move the watch could not start, named by `provider-move-refused lane=[LANE] reason=[REASON]` under it. For a reading worker, use the result and close steps above. For another worker, send a one-line continuation directive if the workflow calls for another turn.
 - `stop-cause=allow-all-blocked-by-policy`: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of sending a directive. That section names the `session-record=` reasons.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line.
 - A lane inside `merge-pr.md` § 5 step 1 waits on its queue. That is work in flight, not idle.
@@ -625,9 +627,10 @@ A marker beside a lane whose record still reads open is a close the watch cannot
 
 ### `usage-limit`
 
-`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]` reports a wall from the lane's pane or session rows. The banner or row message follows when available. The watch left the wall to the overseer because of `ORCH_WALL_RELAUNCH=ask`, a usage wall with no qualifying account, or a refusal. Follow the auth instructions below if the line carries `wall_kind=auth`. These lines may follow the event.
+`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]` reports a wall from the lane's pane or session rows. The banner or row message follows when available. The watch left the wall to the overseer because of `ORCH_WALL_RELAUNCH=ask`, a wall with no qualifying account, or a refusal. Under `auto`, the watch walks again on each later pass under the same banner and relaunches the lane once an account has room; § `lane-relaunched` follows with no new `usage-limit` line. Follow the auth instructions below if the line carries `wall_kind=auth`. These lines may follow the event.
 
-- `pick lane=[DIR]`, `pick none` or `pick unjudged [CAUSE]`: the account judge's answer for a usage wall, excluding the spent account.
+- `pick lane=[DIR] [harness=[HARNESS] model=[MODEL]]`, `pick none` or `pick unjudged [CAUSE]`: the lane walk's answer, excluding the spent account. `harness=` and `model=` appear where the walk chose another harness.
+- `recovery-stopped cause=no-room-no-reset` or `cause=no-other-account`: no account has room, and no reset or no other account can recover the lane. Tell the owner the recovery is blocked, once. The watch keeps walking.
 - `wall-relaunch-refused lane=[LANE] reason=[REASON]`: the step that stopped the watch's relaunch. Under `stop-failed` or `stop-unanswered`, the harness may still run: start nothing beside it.
 - `account-wall: record-unwritten config_dir=[DIR] cause=[CAUSE]`: the wall's record for that account did not write. Until it writes, launch nothing on that account before the reset.
 
@@ -646,13 +649,13 @@ A marker beside a lane whose record still reads open is a close the watch cannot
    - Keep the window until an account qualifies.
    - The spent account's `account` line or heartbeat roster line says which case it is.
 
-`wall_kind=auth` marks a login failure with no reset. The watch skips the account walk. Under `ORCH_WALL_RELAUNCH=auto`, it asks to resume the lane with its recorded account or inherited credentials. If the replacement hits an auth wall before a completed turn can be confirmed, `auth-recovery-unconfirmed` leaves the pane running for the overseer. Ask the operator to sign in again if the failure persists.
+`wall_kind=auth` marks a login failure with no reset. The watch walks for another account, the spent one excluded. Under `ORCH_WALL_RELAUNCH=auto`, it relaunches the lane there, and § `lane-relaunched` follows the line. The line is the one notice of the ended sign-in: ask the operator to sign in to the account it names again. If the replacement hits an auth wall before a completed turn can be confirmed, `auth-recovery-unconfirmed` leaves the pane running for the overseer.
 
-For manual recovery, use the close and launch requests in steps 2 and 3 of [Recovery relaunch](lane-directive.md#recovery-relaunch). Set `no_landing.reason` to `auth-wall` to preserve the lane's model class. Use its recorded account or omit `account` to keep its inherited credentials.
+For manual recovery, use the close and launch requests in steps 2 and 3 of [Recovery relaunch](lane-directive.md#recovery-relaunch). Set `no_landing.reason` to `auth-wall` to preserve the lane's model class. Launch on another account.
 
 ### `lane-relaunched`
 
-`EVENT lane-relaunched [ITEM] lane=[DIR] from=[DIR]`, then `log=[PATH]`: under `ORCH_WALL_RELAUNCH=auto`, the watch relaunched the lane on the `lane=` account, with its output at `log=`.
+`EVENT lane-relaunched [ITEM] lane=[DIR] from=[DIR]`, then `log=[PATH]`: under `ORCH_WALL_RELAUNCH=auto`, the watch relaunched the lane on the `lane=` account, with its output at `log=`. `-` names no account. A move off a provider that stopped answering carries `provider-move cause=[CAUSE] since=[UTC]` under `log=`.
 
 - Nothing is owed.
 - While that launch runs, inside `ORCH_WATCH_PREPARE_SECS`, its missing window is no `window-gone`.

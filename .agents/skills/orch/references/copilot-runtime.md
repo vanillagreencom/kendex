@@ -109,7 +109,7 @@ Where the lane reads idle with mail unread, the watch's wake duty types the inbo
 
 ## Lane close
 
-The runtime's close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) types `C-c` and `/exit` into a local Copilot lane's pane, so the session writes its totals. It then stops the recorded process (agent-runtime `harness.rs` `owns_process`). A hosted lane gets the same two inputs before the provider's stop: through the provider where it holds the pane, or in a `pane=local` window from the close. The close reads no account for a Copilot lane, so it refuses a walled Copilot lane as `lane-live`.
+The runtime's close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) types `C-c` and `/exit` into a local Copilot lane's pane, so the session writes its totals. It then stops the recorded process (agent-runtime `harness.rs` `owns_process`). A hosted lane gets the same two inputs before the provider's stop: through the provider where it holds the pane, or in a `pane=local` window from the close. A walled Copilot lane is weighed as any lane is: the close reads its account, and the wall lifts where that reading has room and the banner names no reset ahead.
 
 ## Overseer registration
 
