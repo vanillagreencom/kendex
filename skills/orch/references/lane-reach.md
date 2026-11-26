@@ -105,7 +105,7 @@ A full close that answered `unconfirmed` leaves its intent open, and a keep refu
 - On `failed`, nothing moved; fix the cause in `result.observation`.
 - A refusal exits 1 with its key in `refusal.key`; nothing past the read it names has changed.
 
-A full close of an ended item writes `result.observation.branches` (§ What the close does):
+A full close of an ended item writes `result.observation.branches` (§ What the close does), except where the release deleted and kept nothing, as where origin holds no branch named for the item:
 
 - `deleted` and `kept` where origin holds a branch named for the item.
   - `deleted` lists each branch the close deleted.
@@ -113,7 +113,8 @@ A full close of an ended item writes `result.observation.branches` (§ What the 
     - `unmerged`: the base lacks its work. Merge or delete it by hand.
     - `recovery`: a `recovery/*` branch, which fleet's reap releases once the base holds its work.
     - `symbolic`: a branch alias. Delete it by hand.
-    - `delete-failed` or `unread`, with the git failure. Fix the cause, then delete it by hand.
+    - `unread`, naming the read that did not answer (`is-ancestor`, `merge-tree` or `base-tree`), or `deadline` where the release's time budget ran out before the branch was judged. Run that read by hand to find the cause. A `deadline` branch was not judged: delete it by hand once the base holds its work.
+    - `delete-failed`, with Git's exit status and the first line it printed. Fix the cause, then delete it by hand.
 - `unread` alone, with its cause, where a read judged no branch, whether or not origin holds one. Its cause is `repo-other` for a lane whose record names another repository.
 
 A kept branch holds no other part of the close. `result.observation.branches_comment` is the answer of the one comment the confirming close posts on a Linear item, naming each `unmerged` branch and its tip.

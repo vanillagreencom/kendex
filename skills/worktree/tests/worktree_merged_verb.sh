@@ -273,33 +273,46 @@ echo "=== worktree release-branches: what a local setting cannot make the base h
 # refused delete and a branch named for another item. These rows hold what
 # the checkout's own Git state could otherwise turn into a delete of work the
 # base lacks. Each row is a fresh checkout whose origin holds main and the
-# item's branch ken-r at a commit whose change conflicts with main's.
+# item's branch ken-r at a commit whose change conflicts with main's: main
+# edits line two, ken-r deletes lines two and three, so a union merge of the
+# two writes main's own file.
 release_world() { # NAME -> RELEASE_MAIN RELEASE_ORIGIN RELEASE_TIP
   local root="$TMP_ROOT/release-$1"
   RELEASE_MAIN="$root/main"
   RELEASE_ORIGIN="$root/origin.git"
   git init -q -b main "$RELEASE_MAIN"
   git init -q --bare "$RELEASE_ORIGIN"
+  fixture_quiet "$RELEASE_MAIN"
+  fixture_quiet "$RELEASE_ORIGIN"
   git -C "$RELEASE_MAIN" config user.email test@example.com
   git -C "$RELEASE_MAIN" config user.name Test
   git -C "$RELEASE_MAIN" config commit.gpgsign false
   git -C "$RELEASE_MAIN" remote add origin "$RELEASE_ORIGIN"
-  printf 'orig\n' >"$RELEASE_MAIN/file.txt"
+  printf 'one\ntwo\nthree\nfour\n' >"$RELEASE_MAIN/file.txt"
   git -C "$RELEASE_MAIN" add file.txt
   git -C "$RELEASE_MAIN" commit -q -m base
   git -C "$RELEASE_MAIN" switch -q -c ken-r
-  printf 'item\n' >"$RELEASE_MAIN/file.txt"
+  printf 'one\nfour\n' >"$RELEASE_MAIN/file.txt"
   git -C "$RELEASE_MAIN" commit -q -a -m 'item work'
   RELEASE_TIP="$(git -C "$RELEASE_MAIN" rev-parse HEAD)"
   git -C "$RELEASE_MAIN" switch -q main
-  printf 'main\n' >"$RELEASE_MAIN/file.txt"
+  printf 'one\nTWO\nthree\nfour\n' >"$RELEASE_MAIN/file.txt"
   git -C "$RELEASE_MAIN" commit -q -a -m 'main work'
   git -C "$RELEASE_MAIN" push -q origin main ken-r
 }
 
-release_run() { # -> rc, stdout records, origin heads
+# Git's background maintenance stays off in a fixture repository the suite
+# removes, set before its first commit, fetch or push.
+fixture_quiet() { # REPO
+  git -C "$1" config gc.auto 0
+  git -C "$1" config maintenance.auto false
+}
+
+# RELEASE_SCRIPT runs the release, the package's own script unless a row
+# names a private copy; ENV... is added to the run's environment.
+release_run() { # [ENV...] -> rc, stdout records, origin heads
   local rc=0
-  ( cd "$RELEASE_MAIN" && "$WORKTREE_SCRIPT" release-branches KEN-R \
+  ( cd "$RELEASE_MAIN" && env "$@" "${RELEASE_SCRIPT:-$WORKTREE_SCRIPT}" release-branches KEN-R \
       >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" ) || rc=$?
   printf 'rc=%s out=%s err=%s heads=%s' "$rc" \
     "$(message_records <"$TMP_ROOT/out" | sed "s|$RELEASE_TIP|<tip>|g" | paste -s -d ';' -)" \
@@ -316,6 +329,31 @@ assert_eq "$(release_run)" \
   "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged err= heads=ken-r,main" \
   "a checkout's keep-current merge driver does not make the base hold a conflicting branch"
 
+# A union merge driver set in the global attributes file, which Git reads
+# whatever GIT_CONFIG_GLOBAL names, resolves the conflict to main's own tree.
+release_world global-attributes
+mkdir -p "$TMP_ROOT/release-global-attributes/xdg/git"
+printf '* merge=union\n' >"$TMP_ROOT/release-global-attributes/xdg/git/attributes"
+assert_eq "$(release_run XDG_CONFIG_HOME="$TMP_ROOT/release-global-attributes/xdg")" \
+  "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged err= heads=ken-r,main" \
+  "a union merge driver in the global attributes file does not make the base hold a conflicting branch"
+
+# A union merge driver both branches commit in .gitattributes.
+release_world tree-attributes
+printf '* merge=union\n' >"$RELEASE_MAIN/.gitattributes"
+git -C "$RELEASE_MAIN" add .gitattributes
+git -C "$RELEASE_MAIN" commit -q -m 'main: union attributes'
+git -C "$RELEASE_MAIN" switch -q ken-r
+printf '* merge=union\n' >"$RELEASE_MAIN/.gitattributes"
+git -C "$RELEASE_MAIN" add .gitattributes
+git -C "$RELEASE_MAIN" commit -q -m 'item: union attributes'
+RELEASE_TIP="$(git -C "$RELEASE_MAIN" rev-parse HEAD)"
+git -C "$RELEASE_MAIN" switch -q main
+git -C "$RELEASE_MAIN" push -q origin main ken-r
+assert_eq "$(release_run)" \
+  "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged err= heads=ken-r,main" \
+  "a union merge driver the branches' own .gitattributes set does not make the base hold a conflicting branch"
+
 # A graft the checkout records makes the item's tip a parent of main's.
 release_world graft
 git -C "$RELEASE_MAIN" replace --graft main main~1 "$RELEASE_TIP"
@@ -327,12 +365,25 @@ assert_eq "$(release_run)" \
 # push URL, which the deletes reach, names one whose main lacks it.
 release_world split
 git init -q --bare "$TMP_ROOT/release-split/fetch.git"
+fixture_quiet "$TMP_ROOT/release-split/fetch.git"
 git -C "$RELEASE_MAIN" push -q "$TMP_ROOT/release-split/fetch.git" "$RELEASE_TIP:refs/heads/main" "$RELEASE_TIP:refs/heads/ken-r"
 git -C "$RELEASE_MAIN" remote set-url origin "$TMP_ROOT/release-split/fetch.git"
 git -C "$RELEASE_MAIN" remote set-url --push origin "$RELEASE_ORIGIN"
 assert_eq "$(release_run)" \
   "rc=2 out= err=worktree-branch-release-unread: origin-split heads=ken-r,main" \
   "split fetch and push URLs judge no branch, and the push destination keeps the item's branch"
+
+# An SSH GitHub origin, which the GitHub route rewrites to HTTPS when gh is
+# signed in: its fetch and push URLs are one remote, so the release passes
+# the split check and reaches the listing, which GIT_ALLOW_PROTOCOL refuses
+# here so the row reaches no network. Git's refusal precedes the record.
+release_world ssh
+git -C "$RELEASE_MAIN" remote set-url origin git@github.com:example/repo.git
+SSH_RUN="$(release_run -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+  -u ORCH_GH_READ_TOKEN_FILE -u KENDEX_GITHUB_GIT_HTTPS_FALLBACK PATH="$GH_PATH" GIT_ALLOW_PROTOCOL=file)"
+assert_eq "${SSH_RUN%% *} ${SSH_RUN##* } $(grep '^worktree-' "$TMP_ROOT/err" | paste -s -d ';' -)" \
+  "rc=2 heads=ken-r,main worktree-branch-release-unread: list-failed status=128" \
+  "an SSH GitHub origin's fetch and push URLs read as one remote under the GitHub route's rewrites"
 
 # A branch alias named for the item, whose target is main.
 release_world alias
@@ -341,6 +392,31 @@ git -C "$RELEASE_MAIN" push -q origin --delete ken-r
 assert_eq "$(release_run | sed "s|$(git -C "$RELEASE_MAIN" rev-parse main)|<main>|g")" \
   "rc=0 out=worktree-branch-kept: ken-r-alias <main> symbolic err= heads=ken-r-alias,main" \
   "a branch alias named for the item is kept, and its target with it"
+
+echo
+echo "=== must-fail control: past its budget the release judges no branch, and records each delete it ran ==="
+
+# A private package copy whose budget is 5 seconds, and an origin whose
+# pre-receive hook takes 6 seconds a push: the first held branch's delete
+# starts inside the budget and ends past it. Without the budget every held
+# branch is deleted.
+release_world deadline
+for n in 1 2 3; do
+  git -C "$RELEASE_MAIN" push -q origin "main~1:refs/heads/ken-r-$n"
+done
+printf '#!/bin/sh\nsleep 6\n' >"$RELEASE_ORIGIN/hooks/pre-receive"
+chmod +x "$RELEASE_ORIGIN/hooks/pre-receive"
+mkdir -p "$TMP_ROOT/deadline-pkg"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/deadline-pkg/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/deadline-pkg/github"
+DEADLINE_SCRIPT="$TMP_ROOT/deadline-pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c '^RELEASE_BUDGET=60$' "$DEADLINE_SCRIPT")" "1" "control finds the release budget"
+sed -i.bak 's/^RELEASE_BUDGET=60$/RELEASE_BUDGET=5/' "$DEADLINE_SCRIPT"
+rm -f -- "${DEADLINE_SCRIPT:?}.bak"
+DEADLINE_BASE="$(git -C "$RELEASE_MAIN" rev-parse main~1)"
+assert_eq "$(RELEASE_SCRIPT="$DEADLINE_SCRIPT" release_run | sed "s|$DEADLINE_BASE|<base>|g")" \
+  "rc=0 out=worktree-branch-kept: ken-r <tip> unmerged;worktree-branch-deleted: ken-r-1;worktree-branch-kept: ken-r-2 <base> unread deadline;worktree-branch-kept: ken-r-3 <base> unread deadline err= heads=ken-r,ken-r-2,ken-r-3,main" \
+  "control: the delete that ran is recorded, and each branch past the budget is kept unjudged"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -18,6 +18,13 @@ use crate::settings::Settings;
 /// How long one git read or one worktree package call may run.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long `worktree release-branches` may run: above its own 60-second
+/// budget for judging a branch (`RELEASE_BUDGET` in the package's script)
+/// plus one bounded Git call, a 1Password read, a token check and the
+/// operation at 10 seconds each, so the bound never ends a run after a
+/// delete and drops its record.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Why the close kept the lane's worktree instead of removing it: each a
 /// read of the worktree itself through the handle's runner,
 /// recorded as the lane's `kept` reason.
@@ -829,15 +836,19 @@ impl KeptBranch {
 }
 
 /// The worktree package's `release-branches ITEM`, run from the main
-/// checkout `main`, as its records answer it: each origin branch named for
-/// the item deleted or kept with its cause. `Err` is an answer that judged
-/// no branch: the package's `worktree-branch-release-unread` cause, its
-/// exit, a run with no reply, or a record this reader does not know.
+/// checkout `main` under the credential the watch's sign-in renewed where
+/// one stands, as its records answer it: each origin branch named for the
+/// item deleted or kept with its cause. `Err` is an answer that judged no
+/// branch: the package's `worktree-branch-release-unread` cause, its exit, a
+/// run with no reply, or a record this reader does not know.
 pub(super) fn release_branches(
     cli: &Path,
     main: &Path,
     item: &str,
 ) -> std::result::Result<BranchRelease, String> {
+    let credential = crate::watch::github::renewed_credential();
+    let mut env: Vec<(&str, &OsStr)> = crate::settings::worktree_env().to_vec();
+    env.extend(crate::watch::github::credential_env(&credential));
     let out = host::run_tagged_in(
         "close",
         "worktree",
@@ -846,9 +857,9 @@ pub(super) fn release_branches(
         &["release-branches", item],
         host::Place {
             cwd: Some(main),
-            env: crate::settings::worktree_env(),
+            env: &env,
         },
-        CLI_TIMEOUT,
+        RELEASE_TIMEOUT,
     )
     .map_err(|e| format!("cause={e}"))?;
     if !out.status.success() {

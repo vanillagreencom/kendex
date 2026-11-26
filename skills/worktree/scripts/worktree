@@ -302,20 +302,27 @@ prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
 }
 
 # Git over the stored history alone (git_stored_history), reading no
-# configuration but its repository's own, no attribute file outside the
-# repository and no variable that points it at another repository or object
-# store. In the release's scratch repository, which holds no configuration,
-# attribute, ref, graft or replacement, no merge driver can resolve a trial
-# merge's conflict and no graft or replacement adds a parent.
+# configuration but its repository's own and no variable that points it at
+# another repository or object store. It reads no attribute file outside the
+# repository: neither the system file nor core.attributesFile, whose default
+# ($XDG_CONFIG_HOME/git/attributes) no GIT_CONFIG_GLOBAL setting removes.
+# Once release_scratch has set RELEASE_EMPTY_TREE, the empty tree is the
+# attribute source, so no .gitattributes a commit holds is read either. In
+# the release's scratch repository, which holds no configuration, attribute,
+# ref, graft or replacement, no merge driver, built-in ones such as union
+# included, can resolve a trial merge's conflict and no graft or replacement
+# adds a parent.
 isolated_git() ( # GIT-ARG...
   unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
     GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_ATTR_SOURCE
   export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
-  git_stored_history "$@"
+  [[ -z "${RELEASE_EMPTY_TREE:-}" ]] || export GIT_ATTR_SOURCE="$RELEASE_EMPTY_TREE"
+  git_stored_history -c core.attributesFile=/dev/null "$@"
 )
 
 # The release's scratch repository, RELEASE_SCRATCH: bare, made from no
-# template, its objects the main checkout's through an alternate. The
+# template, its objects the main checkout's through an alternate.
+# RELEASE_EMPTY_TREE is its empty tree, isolated_git's attribute source. The
 # release's EXIT trap removes it.
 release_scratch() {
   local format=""
@@ -324,7 +331,9 @@ release_scratch() {
   RELEASE_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/worktree-release.XXXXXX")" || return 1
   isolated_git init -q --bare --template= "--object-format=$format" "$RELEASE_SCRATCH" >/dev/null &&
     mkdir -p "$RELEASE_SCRATCH/objects/info" &&
-    printf '%s\n' "$PROJECT_COMMON_GIT_DIR/objects" >"$RELEASE_SCRATCH/objects/info/alternates"
+    printf '%s\n' "$PROJECT_COMMON_GIT_DIR/objects" >"$RELEASE_SCRATCH/objects/info/alternates" &&
+    RELEASE_EMPTY_TREE="$(isolated_git --git-dir="$RELEASE_SCRATCH" hash-object -t tree --stdin </dev/null)" &&
+    [[ -n "$RELEASE_EMPTY_TREE" ]]
 }
 
 release_scratch_remove() {
@@ -371,6 +380,16 @@ listing_tip() { # ROWS REF
   return 1
 }
 
+# Seconds from the script's start within which the release may judge a
+# branch, and so start its delete. Past it, each branch not yet judged is
+# kept as `unread deadline`. A delete started before the budget ends within
+# one bounded Git call (git_with_bounded_github_https_auth: a 1Password read,
+# a token check and the operation, 10 s each), so a caller whose bound is
+# above the budget plus that call never ends the run after a delete and
+# loses its record. orch's close bounds the verb at RELEASE_TIMEOUT
+# (skills/orch/runtime/src/effects/lane_operation/worktree.rs).
+RELEASE_BUDGET=60
+
 # A read the release needed did not answer: no branch was judged or deleted.
 release_unread() { # CAUSE
   worktree_message branch-release-unread "$1" "Kept every origin branch named for the item: a read judged none of them." >&2
@@ -390,8 +409,12 @@ release_item_branches() { # ITEM
   # orch's close checks the lane's repository against origin's fetch URL,
   # and GitHub names the default branch of that repository: either speaks
   # for the destination the deletes reach only where the two URLs agree.
-  fetch_url="$(git -C "$PROJECT_ROOT" remote get-url origin)" || release_unread origin-unread
-  [[ "$fetch_url" == "$ORIGIN_PUSH_URL" ]] || release_unread origin-split
+  # Read under the push URL's rewrites, so an SSH remote the GitHub route
+  # rewrites to HTTPS is compared in the same form.
+  fetch_url="$(git_with_bounded_github_https_auth -C "$PROJECT_ROOT" remote get-url --all origin)" ||
+    release_unread origin-unread
+  [[ -n "$fetch_url" && "$fetch_url" != *$'\n'* && "$fetch_url" == "$ORIGIN_PUSH_URL" ]] ||
+    release_unread origin-split
   rows="$(origin_push_refs "$PROJECT_ROOT" 'refs/heads/*')" || release_unread "list-failed status=$?"
   lower="$(printf '%s' "$item" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   lowered="$(printf '%s\n' "$rows" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
@@ -439,6 +462,10 @@ release_item_branches() { # ITEM
     [[ "$ref" != "$base_ref" ]] || continue
     if [[ "${kinds[$i]}" != judged ]]; then
       worktree_message branch-kept "$name $tip ${kinds[$i]}"
+      continue
+    fi
+    if ((SECONDS >= RELEASE_BUDGET)); then
+      worktree_message branch-kept "$name $tip unread deadline"
       continue
     fi
     base_holds_tip "$base_tip" "$tip"

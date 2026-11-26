@@ -1018,16 +1018,24 @@ Each branch named for the item is judged at the tip the listing gave:
               change leaves it
   unmerged    kept: every other branch
 The judgement reads the stored objects alone, in a scratch repository that
-borrows the checkout's objects and reads no configuration or attribute
-file, so no merge driver, graft or replacement takes part. The delete runs
-through the github skill's push route, under the push-purpose credential.
+borrows the checkout's objects. It reads no configuration, no attribute
+file (the global core.attributesFile included) and no .gitattributes a
+commit holds, so no merge driver, built-in ones such as union included, and
+no graft or replacement takes part. The delete runs through the github
+skill's push route, under the push-purpose credential.
+
+A branch is judged, and so deleted, only within 60 seconds of the run's
+start. Past that budget each branch not yet judged is kept as
+`unread deadline`, so a caller that bounds the run above the budget plus one
+bounded Git call receives the record of every delete.
 
 Output, one stdout record per branch named for the item:
   worktree-branch-deleted: <branch>
   worktree-branch-kept: <branch> <tip> <cause> [<detail>]
 <cause> is unmerged, recovery, symbolic, unread (a read the judgement of
-that branch needed failed; <detail> names the read) or delete-failed
-(<detail> names Git's exit status and the first line it printed).
+that branch needed failed, or the budget ran out; <detail> names the read:
+is-ancestor, merge-tree, base-tree or deadline) or delete-failed (<detail>
+names Git's exit status and the first line it printed).
 
 Exit 0 once every branch named for the item is judged, kept ones included.
 Exit 2 where a read judged no branch, with worktree-branch-release-unread:
