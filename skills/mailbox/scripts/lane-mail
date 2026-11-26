@@ -58,11 +58,15 @@ issue=<item>`, and the other items are read. An item off the owner list that
 an ask names by no identifier, only a UUID, is not read: stderr names it as
 `owner-answers: item-unreadable issue=<ref> cause=ref-form`. With
 no optional Linear skill it exits 0 with `owner-answers: tracker=absent`.
-OVERSEE_WATCH_TRACKER selects an explicit tracker CLI. The pass prints JSON
-line and delivered receipts for tracker marks, then `owner-answers: read=STATE`
-(read, unread or disabled). A quota refusal prints its original JSON on stderr
-and the EVENT tracker-quota line on stdout in place of the final read state.
-The caller owns fleet scheduling, quota persistence and tracker marks.
+OVERSEE_WATCH_TRACKER selects an explicit tracker CLI. A comment's first
+delivery adds the `eyes` reaction to it; a later pass adds none. A reaction
+that fails leaves the answer delivered and prints `owner-answers: unmarked
+issue=<item> comment=<id> cause=<quota|reaction-failed>` on stderr, never the
+tracker's own lines. The pass prints JSON line and delivered receipts for
+the caller's other tracker marks, then `owner-answers: read=STATE` (read,
+unread or disabled). A quota refusal prints its original JSON on stderr and
+the EVENT tracker-quota line on stdout in place of the final read state. The
+caller owns fleet scheduling, quota persistence and every other tracker mark.
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
 through `orch-runtime host` for a lane on another host.
@@ -1300,11 +1304,15 @@ tracker_quota_line() {
     "tracker-quota status=\(.status) reset=\(.reset) limit=\(.limit)"' <<<"$1"
 }
 
+tracker_quota_receipt() { # STDERR_FILE
+  jq -Rrnc '[inputs | fromjson? | objects | select(.code == "RATELIMITED") | .quota | objects] | last // empty' <"$1"
+}
+
 # A standalone pass returns the transport refusal to its caller; the fleet
 # caller owns persistence and stopping its remaining tracker work.
 tracker_quota_refusal() { # STDERR_FILE
   local receipt line
-  receipt="$(jq -Rrnc '[inputs | fromjson? | objects | select(.code == "RATELIMITED") | .quota | objects] | last // empty' <"$1")" || return 1
+  receipt="$(tracker_quota_receipt "$1")" || return 1
   [[ -n "$receipt" ]] || return 1
   receipt="$(jq -ce "$TRACKER_QUOTA_JQ" <<<"$receipt")" || return 1
   OWNER_TRACKER_READ=unread
@@ -1313,6 +1321,19 @@ tracker_quota_refusal() { # STDERR_FILE
   cat -- "$1" >&2
   printf 'EVENT %s\n' "$line"
 }
+
+# The owner's mark that his answer reached the overseer, as the Slack relay
+# marks one in Slack: eyes on the comment, once, when its delivery first lands;
+# a repeated delivery adds none. The mark is advisory, so a failed write keeps
+# the delivery and prints one keyed line. The tracker's own stderr stays here:
+# the caller reads a quota receipt on this verb's stderr as a held pass.
+owner_answer_seen() { # ISSUE COMMENT_ID
+  local cause=reaction-failed
+  "$TRACKER" comments react "$2" --emoji eyes </dev/null >/dev/null 2>"$WORK_DIR/react.err" && return 0
+  [[ -z "$(tracker_quota_receipt "$WORK_DIR/react.err")" ]] || cause=quota
+  printf 'owner-answers: unmarked issue=%s comment=%s cause=%s\n' "$1" "$2" "$cause" >&2
+}
+
 owner_answers() {
   OWNER_TRACKER_READ=disabled
   OWNER_TRACKER_QUOTA=0
@@ -1506,7 +1527,9 @@ owner_answers() {
       echo 'KEN-3624-unread cause=delivery' >&2; return 0
     fi
     if [[ "$rc" -eq 0 ]]; then
-      jq -cn --arg ask "$ask" --arg issue "$(jq -r '.issue' <<<"$comment")" --arg comment "$id" \
+      issue="$(jq -r '.issue' <<<"$comment")" || return 1
+      owner_answer_seen "$issue" "$id"
+      jq -cn --arg ask "$ask" --arg issue "$issue" --arg comment "$id" \
         '{kind: "delivered", ask: $ask, issue: $issue, comment: $comment}' || return 1
     fi
   done <"$WORK_DIR/tracker-answers"

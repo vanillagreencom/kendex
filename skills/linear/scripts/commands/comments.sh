@@ -19,6 +19,7 @@ Actions:
   owner-requests  Complete owner-mentioned requests in the assigned, labelled view
   owner-questions ISSUE --email EMAIL  Read possible questions awaiting a ruling
   create     Create a new comment
+  react COMMENT_ID --emoji NAME  Add your reaction to a comment
   update  Update an existing comment
   delete  Delete a comment
 
@@ -80,6 +81,14 @@ Create Options:
   model and effort from the session's own record. A value it does not read
   is unknown. A body that already opens with such a line has it replaced.
   --no-attribution leaves both out.
+
+React:
+  comments.sh react <comment-id> --emoji <name>
+                        Adds the emoji as the caller to the comment through
+                        Linear's reactionCreate. Linear returns the caller's
+                        existing reaction where it already stands, so a
+                        repeat adds none. Exits nonzero unless Linear
+                        answers success.
 
 Update Options:
   --body <text>         New comment body (required unless --body-file is set)
@@ -513,6 +522,28 @@ create_comment() {
     normalize_mutation_response "$result" "commentCreate" "comment"
 }
 
+react_comment() {
+    local comment_id="$1" emoji="" variables result
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --emoji) linear_require_option_value "$@" || return 1; emoji="$2"; shift 2 ;;
+            *) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
+        esac
+    done
+    [[ -n "$emoji" ]] || { echo '{"error": "Required: --emoji"}' >&2; return 1; }
+    local mutation='mutation ReactComment($input: ReactionCreateInput!) {
+        reactionCreate(input: $input) { success reaction { id emoji } }
+    }'
+    variables=$(jq -cn --arg comment "$comment_id" --arg emoji "$emoji" '{input: {commentId: $comment, emoji: $emoji}}') || return 1
+    result=$(graphql_query "$mutation" "$variables") || return 1
+    if ! jq -e '.reactionCreate.success == true' <<<"$result" >/dev/null 2>&1; then
+        jq -cn --arg comment "$comment_id" '{error: "reaction-unconfirmed", comment: $comment}' >&2
+        return 1
+    fi
+    normalize_mutation_response "$result" "reactionCreate" "reaction"
+}
+
 update_comment() {
     local comment_id="$1"
     shift
@@ -614,6 +645,13 @@ case "$action" in
             exit 1
         fi
         create_comment "$@"
+        ;;
+    react)
+        if [ -z "${1:-}" ]; then
+            echo '{"error": "Usage: comments.sh react <comment-id> --emoji <name>"}' >&2
+            exit 1
+        fi
+        react_comment "$@"
         ;;
     update)
         if [ -z "${1:-}" ]; then
