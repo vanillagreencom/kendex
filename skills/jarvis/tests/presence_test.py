@@ -317,7 +317,7 @@ class Presence(unittest.TestCase):
         module = load()
         source_path = REPO / "skills/jarvis/scripts/lib/watch.py"
         source = source_path.read_text()
-        old = "return 0 <= now - at < 300"
+        old = "return 0 <= now - at < LIVE_SECS"
         self.assertEqual(source.count(old), 1)
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "watch.py"

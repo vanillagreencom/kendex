@@ -34,7 +34,8 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - After the harness confirms its native identity, the session command delivers those instructions with Start.
   - The session record keeps them, so every successor, a `succeed` retry included, receives them with its Start brief.
   - The consumer can remove the file once Start answers.
-  - A session started without `--brief-file` gives its successors the Start brief alone.
+  - A session started without `--brief-file` or `--keep-brief` gives its successors the Start brief alone.
+  - `--keep-brief` keeps the instructions the record already holds. It refuses beside `--brief-file` or `--adopt-pane`.
   - This route starts no repository overseer workflow.
 - To move a Jarvis session that runs outside this package onto it, run Start from inside that session with `--mode new --origin manual --adopt-pane PANE --adopt-pid PID`. PANE is its tmux pane, and PID is that pane's process.
   - Start refuses, before saving or stopping anything, when the home's record names a running or starting controller, or when PANE is missing or dead, its process is not PID, or PID runs no supported harness or two at the same nearest depth.
@@ -46,6 +47,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session.
   - A `starting` answer means a fact Start waits for, such as the native identity or the session's taking of the Start brief, is still unconfirmed.
   - While a controller is live, status also prints the attach command on stderr.
+  - `--mark-unread` adds the boolean `unread` and the recorded controller's identity, `controller`, to the answer. `unread` is true only where status could not make its read, such as a runtime refusal or an unreadable record: the state and reason then name that failure, not the controller. A recorded Start failure reads false. `controller` holds the recorded `session_id`, `pane` and `server_start`, and is null where the read is unread or records no controller. Without the flag the answer keeps its key set.
   - Status starts and stops nothing.
 - `.agents/skills/jarvis/scripts/jarvis-session attach --home HOME` puts the caller's terminal on the live controller's session, under [Attach](home-layout.md#attach).
   - A refusal exits 1, and its line names the cause; `terminal-unresolved` means `xdg-terminal-exec` is not on PATH.
@@ -63,6 +65,10 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - An app that turns Jarvis off uses `--origin app-off`.
   - Only `start --origin app-on` clears that Off.
   - A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
+- A controller whose harness process exited without a Stop, as after a crash or a `/logout`, reads `stopped` with reason `ended`. The [watch loop](control-host-events.md#delivery) starts it again by this route:
+  1. Start with `--mode resume --origin manual --keep-brief` on the recorded harness and account.
+  2. If that Start refuses, at once or once its detached start records the refusal, run `jarvis-session succeed --home HOME --exited`. It hands the exited controller over to the next account the walk picks, never the recorded one, and retires nothing live.
+     - `--exited` refuses `record-unreadable` while the controller runs, while a start is open, and after a Stop. After an app-off Stop it refuses `app-off`. During an open hand-over it answers `handing-over`, as every `succeed` does.
 - After a machine restart, or once a tmux server holding the delegate, an overseer or a lane is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
   - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.
   - It then resumes the overseer of each checkout `kendex project list --json` registers, through `orch-runtime resume-controller --fleet` run from that checkout. It skips the home's own controller, which is the delegate, and a controller stopped on purpose.
