@@ -8308,9 +8308,10 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
 }
 
 /// A create that answers keeps its stderr on the launch's observation, line
-/// for line, whatever later step fails: a provider's notices of the
-/// cross-model reviewer and the login seed it gave, and a transcript too
-/// long for the record, kept by its two ends with the count between.
+/// for line, whatever later step fails and through the reconcile of a
+/// launch left unconfirmed: a provider's notices of the cross-model
+/// reviewer and the login seed it gave, and a transcript too long for the
+/// record, kept by its two ends with the count between.
 #[test]
 fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
     let cross = "lane-host-daytona: claude-cross-none cause=no-eligible-target";
@@ -8328,6 +8329,7 @@ fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
             "notices",
             &notices,
             &built,
+            "stub-confirm",
             "confirmed",
             json!([cross, seed]),
             Value::Null,
@@ -8336,6 +8338,7 @@ fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
             "a later step fails",
             &notices,
             &unbuilt,
+            "stub-confirm",
             "failed",
             json!([cross, seed]),
             Value::Null,
@@ -8344,15 +8347,31 @@ fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
             "a transcript",
             &transcript,
             &built,
+            "stub-confirm",
             "confirmed",
             json!(ends),
             json!(5),
         ),
+        (
+            "an unconfirmed launch reconciled",
+            &transcript,
+            &built,
+            "stub-unconfirmed",
+            "unconfirmed",
+            json!(ends),
+            json!(5),
+        ),
     ];
-    for (case, stderr, record, outcome, lines, elided) in cases {
+    for (case, stderr, record, harness, outcome, lines, elided) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let world = HostedLaunch::new(&server, dir.path(), record.clone());
+        let mut world = HostedLaunch::new(&server, dir.path(), record.clone());
+        if harness != "stub-confirm" {
+            world.runner.verify = Some(1);
+            let claude = world.tools.join("claude");
+            std::fs::remove_file(&claude).unwrap();
+            std::os::unix::fs::symlink(stub(harness), &claude).unwrap();
+        }
         let answers_path = world.scripts.join("lane-host.json");
         let mut answers: Value =
             serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
@@ -8368,6 +8387,13 @@ fn a_hosted_launch_keeps_the_stderr_of_the_create_that_answered() {
             observation["create_stderr_elided"], elided,
             "{case}: {report}"
         );
+        if outcome == "unconfirmed" {
+            let replay = world.runner.reconcile_one();
+            assert_eq!(replay["intent"]["id"], report["intent"]["id"], "{case}: {replay}");
+            let kept = &world.runner.fleet()["intents"][0]["observation"];
+            assert_eq!(kept["create_stderr"], lines, "{case}: {replay}");
+            assert_eq!(kept["create_stderr_elided"], elided, "{case}: {replay}");
+        }
         effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
     }
 }

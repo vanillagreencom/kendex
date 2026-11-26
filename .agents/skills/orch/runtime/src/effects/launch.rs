@@ -799,6 +799,16 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
     crate::watch::overseer::scripts_dir(&settings.roots.project)
 }
 
+/// The launch observation's members holding the stderr of the provider's
+/// create that answered.
+const CREATE_STDERR: &str = "create_stderr";
+const CREATE_STDERR_ELIDED: &str = "create_stderr_elided";
+
+/// The launch observation's members the launcher established and a
+/// reconcile's window read cannot read again: the confinement of the pane
+/// and the stderr of the provider's create.
+const LAUNCHER_READINGS: [&str; 3] = ["confinement", CREATE_STDERR, CREATE_STDERR_ELIDED];
+
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = super::lane_operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
@@ -839,10 +849,10 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
                 outcome.annotate(SANDBOX, json!(STANDING));
             }
             if !sandbox.notices.lines.is_empty() {
-                outcome.annotate("create_stderr", json!(sandbox.notices.lines));
+                outcome.annotate(CREATE_STDERR, json!(sandbox.notices.lines));
             }
             if sandbox.notices.elided > 0 {
-                outcome.annotate("create_stderr_elided", json!(sandbox.notices.elided));
+                outcome.annotate(CREATE_STDERR_ELIDED, json!(sandbox.notices.elided));
             }
             // A parked lane whose provider holds no sandbox for it resumed
             // nothing: its disk, session and mailbox went with the sandbox.
@@ -2311,13 +2321,13 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
         outcome.annotate(SANDBOX, json!(STANDING));
     }
     // The window read replaces the intent's observation, but it cannot
-    // re-read the confinement the launcher established for this pane.
-    if let Some(confinement) = intent
-        .observation
-        .as_ref()
-        .and_then(|observation| observation.get("confinement"))
-    {
-        outcome.annotate("confinement", confinement.clone());
+    // read again what the launcher established for this pane.
+    if let Some(observation) = intent.observation.as_ref() {
+        for key in LAUNCHER_READINGS {
+            if let Some(value) = observation.get(key) {
+                outcome.annotate(key, value.clone());
+            }
+        }
     }
     Ok(outcome)
 }
