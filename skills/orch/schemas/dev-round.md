@@ -119,7 +119,7 @@ The record is input, never a receipt. It proves what was delegated, not that any
 
 ## Protected additions
 
-The gate checks additions only. Git's rename detection keeps moves and renames outside it.
+The gate checks additions only. Outside a fold, Git's rename detection keeps moves and renames outside it.
 
 `base_sha` records the round's starting tree. A file already there is not this round's, so a later round does not refuse an addition an earlier round authorized.
 
@@ -133,9 +133,11 @@ It changes neither the record nor the map. A missing, unresolved, malformed, inc
 
 A round rebased with no map recorded answers this until the map is recorded in the item record's `rebase_map`, or a fresh round names the paths in `Adds:`. The branch's merge base is no substitute: a protected path the branch deleted before the round and the round restored is an addition from the round's start, not from the merge base.
 
+Where a rewrite folded that commit together with later branch work, as base preparation does, no commit in `HEAD`'s ancestry marks where the round began. The check then compares the tree of the base's last image before the fold with `HEAD`, with no rename detection, so a move into a protected path counts as an addition. A protected addition there that the round's `adds` does not name answers `additions_unattributable` with empty `files`, not `unapproved_additions`.
+
 That answer is not a deferral. A fresh round starts at the current `HEAD`, which already carries the earlier round's additions, so the fresh round's gate cannot derive them again. Settle them first:
 
-1. Read the earlier round's own commits against the scope below.
+1. Read the earlier round's own commits against the scope below. After a fold those commits are gone: read what `HEAD` adds to the base's image before the fold, which the rebase map names.
 2. Mint a fresh round.
 3. Name each deliberate path in `Adds:`. That line authorizes those standing paths.
 4. Cut the rest before delegating it.

@@ -3408,59 +3408,121 @@ mod dev_artifacts {
         assert_eq!(check["path"], written["path"]);
     }
 
-    /// A fold inside the round leaves no commit where the round's work
-    /// began: a protected file the fold carries and the round did not
-    /// authorize stays unattributed, through the item record and through the
-    /// worktree's map, while the fold is HEAD and after one more commit. A
-    /// round that authorized it still checks valid over the same fold.
+    /// Base preparation rebases the branch and then folds it, so no commit in
+    /// HEAD's history marks where the round began: the check reads from the
+    /// round base's image before the fold, through the item record and
+    /// through the worktree's map, while the fold is HEAD and after one more
+    /// commit. A protected file the round added or restored without
+    /// authority stays unattributed, an authorized one checks valid, and one
+    /// an earlier round left standing is not the round's.
     #[test]
-    fn a_folded_round_leaves_an_unauthorized_protected_addition_unattributed() {
-        let w = World::new();
-        w.with_origin();
-        w.commit("first.txt");
-        let round_base = w.head();
-        w.stamp("r1");
-        result(&w.call(
-            &["round", "stamp"],
-            "adds",
-            &["--item", "1", "repair", "app CLI", "--adds", "tools/new"],
-        ));
-        w.upstream("up.txt");
-        w.commit("tools/new");
-        let fixed = w.head();
-        git(&w.wt, &["rebase", "-q", "origin/main"]);
-        git(&w.wt, &["reset", "-q", "--soft", "origin/main"]);
-        git(&w.wt, &["commit", "-qm", "fold"]);
-        let fold = w.head();
-        let map = PathBuf::from(git(
-            &w.wt,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "kendex-rebase-map",
-            ],
-        ));
-        let unmapped = w.doc();
-        for later in [None, Some("after.txt")] {
-            if let Some(path) = later {
-                w.commit(path);
+    fn a_folded_round_reads_its_protected_additions_from_its_start() {
+        struct Row {
+            case: &'static str,
+            before: fn(&World),
+            work: &'static str,
+            in_fold_parent: bool,
+            unauthorized: &'static str,
+        }
+        let rows = [
+            Row {
+                case: "an addition",
+                before: |_| {},
+                work: "tools/new",
+                in_fold_parent: false,
+                unauthorized: "additions_unattributable",
+            },
+            Row {
+                case: "a restoration of a file the branch deleted",
+                before: |w| {
+                    git(&w.wt, &["rm", "-q", "tools/kept"]);
+                    git(&w.wt, &["commit", "-qm", "drop"]);
+                },
+                work: "tools/kept",
+                in_fold_parent: true,
+                unauthorized: "additions_unattributable",
+            },
+            Row {
+                case: "an earlier round's addition",
+                before: |w| w.commit("tools/earlier"),
+                work: "fix.txt",
+                in_fold_parent: false,
+                unauthorized: "valid",
+            },
+        ];
+        for row in rows {
+            let w = World::new();
+            w.with_origin();
+            w.upstream("tools/kept");
+            git(&w.wt, &["rebase", "-q", "origin/main"]);
+            w.commit("first.txt");
+            (row.before)(&w);
+            w.stamp("r1");
+            result(&w.call(
+                &["round", "stamp"],
+                "adds",
+                &["--item", "1", "repair", "app CLI", "--adds", row.work],
+            ));
+            w.upstream("up.txt");
+            w.commit(row.work);
+            let commits = |range: &str| -> Vec<String> {
+                git(&w.wt, &["rev-list", "--reverse", range])
+                    .lines()
+                    .map(str::to_owned)
+                    .collect()
+            };
+            let branch = commits("origin/main..HEAD");
+            git(&w.wt, &["rebase", "-q", "origin/main"]);
+            let rebased = commits("origin/main..HEAD");
+            git(&w.wt, &["reset", "-q", "--soft", "origin/main"]);
+            git(&w.wt, &["commit", "-qm", "fold"]);
+            let fold = w.head();
+            let parent = git(&w.wt, &["ls-tree", "--name-only", "HEAD^", row.work]);
+            assert_eq!(!parent.is_empty(), row.in_fold_parent, "{}", row.case);
+            let hops = [
+                branch.iter().zip(&rebased).collect::<Vec<_>>(),
+                rebased.iter().map(|c| (c, &fold)).collect(),
+            ];
+            let mut record = serde_json::Map::new();
+            let mut text = String::new();
+            for hop in &hops {
+                text.push_str("rebase-hop:\n");
+                for (old, new) in hop {
+                    record.insert((*old).clone(), json!(new));
+                    text.push_str(&format!("rebase-map: {old} {new}\n"));
+                }
             }
-            w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
-            w.plant_receipt("adds", &w.failing_receipt("adds", "fix"));
-            let mut doc = unmapped.clone();
-            doc["rebase_map"] = json!({ round_base.as_str(): fold, fixed.as_str(): fold });
-            fs::write(w.item(), doc.to_string()).unwrap();
-            assert_eq!(w.check("r1")["reason"], "additions_unattributable");
-            assert_eq!(w.check("adds")["reason"], "valid");
-            fs::write(w.item(), unmapped.to_string()).unwrap();
-            let hop = format!(
-                "rebase-hop:\nrebase-map: {round_base} {fold}\nrebase-map: {fixed} {fold}\n"
-            );
-            fs::write(&map, hop).unwrap();
-            assert_eq!(w.check("r1")["reason"], "additions_unattributable");
-            assert_eq!(w.check("adds")["reason"], "valid");
-            fs::remove_file(&map).unwrap();
+            let map = PathBuf::from(git(
+                &w.wt,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "kendex-rebase-map",
+                ],
+            ));
+            let unmapped = w.doc();
+            let mut mapped = unmapped.clone();
+            mapped["rebase_map"] = Value::Object(record);
+            for later in [None, Some("after.txt")] {
+                if let Some(path) = later {
+                    w.commit(path);
+                }
+                w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
+                w.plant_receipt("adds", &w.failing_receipt("adds", "fix"));
+                for source in ["item record", "worktree map"] {
+                    if source == "item record" {
+                        fs::write(w.item(), mapped.to_string()).unwrap();
+                    } else {
+                        fs::write(w.item(), unmapped.to_string()).unwrap();
+                        fs::write(&map, &text).unwrap();
+                    }
+                    let at = format!("{} via {source} after {later:?}", row.case);
+                    assert_eq!(w.check("r1")["reason"], row.unauthorized, "{at}");
+                    assert_eq!(w.check("adds")["reason"], "valid", "{at}");
+                }
+                fs::remove_file(&map).unwrap();
+            }
         }
     }
 

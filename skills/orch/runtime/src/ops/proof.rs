@@ -968,17 +968,20 @@ pub fn remap(recorded: &str, hop: &Hop) -> String {
     out
 }
 
-/// The commit `sha` became through every hop, and whether some hop folded
-/// it ([`folds`]).
-pub(crate) fn project_rebase(text: &str, sha: &str) -> crate::error::Result<(String, bool)> {
+/// The commit `sha` became through every hop, and the image it had just
+/// before the first hop that folded it ([`folds`]).
+pub(crate) fn project_rebase(
+    text: &str,
+    sha: &str,
+) -> crate::error::Result<(String, Option<String>)> {
     let hops = hops(text)
         .map_err(|e| crate::validate::files::unreadable("rebase-map-unreadable", e.cause))?;
     Ok(hops
         .iter()
-        .fold((sha.to_owned(), false), |(sha, folded), hop| {
+        .fold((sha.to_owned(), None), |(sha, before), hop| {
             let entries = hop.iter().map(|(old, new)| (old.as_str(), new.as_str()));
-            let folded = folded || folds(entries, &sha);
-            (remap(&sha, hop), folded)
+            let before = before.or_else(|| folds(entries, &sha).then(|| sha.clone()));
+            (remap(&sha, hop), before)
         }))
 }
 
