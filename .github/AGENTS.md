@@ -11,7 +11,7 @@ This repository's own continuous integration and the instruction files its revie
   - The AUR, Homebrew and `request-copilot-review.yml` workflows read the fleet's `vars.CI_RUNNER_2V`, unset in this public repository, and fall back to `ubuntu-latest`.
 - `skill-tests.yml` owns catalog and CLI checks.
   - Keep caller content out of reusable `catalog-check.yml`.
-  - `skill-tests.yml` runs every suite [`../skills/AGENTS.md`](../skills/AGENTS.md) names, plus `refresh/`, `tools/` and `hooks/`, with the temporary adopter exception in the merge-rail principle.
+  - `skill-tests.yml` runs every suite [`../skills/AGENTS.md`](../skills/AGENTS.md) names, plus `refresh/`, `tools/` and `hooks/`.
 - Read [CI and merge rail](../docs/architecture/merge-rail.md) before changing job selection, triggers or aggregation.
 - `ci-job-set --event-parity` requires equal pull-request and merge-group selections for the same paths, since local validation (`tools/guard --full`) reads the pull-request one.
 - On a merge group, `CI` holds every selected lane, plus Preflight and Markdown.

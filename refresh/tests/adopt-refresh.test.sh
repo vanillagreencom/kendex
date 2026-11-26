@@ -7,10 +7,10 @@ SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)" || { echo 'adopt-refresh: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "adopt-refresh: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'adopt-refresh: scratch=resolve-failed' >&2; exit 1; }
-# A loop that sets ROW names that row, with its last adopter RC and output,
-# when the suite exits inside it: an explicit exit or a set -e stop. The loop
-# unsets RC and OUT with each ROW, so a stop before the row's first adopter
-# call prints rc=unset rather than the previous row's result.
+# A row or setup step that sets ROW is named, with its last adopter RC and
+# output, when the suite exits inside it: an explicit exit or a set -e stop.
+# Each unsets RC and OUT with its ROW, so a stop before its first adopter
+# call prints rc=unset rather than the previous step's result.
 ROW=''
 exit_report() {
   local status=$?
@@ -44,6 +44,8 @@ if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.jso
 # The API child keeps the inputs used by GitHub CLI configuration, Linux
 # credential storage and Go network routes. The fixture owns its assertions.
 while IFS='|' read -r key value mutation expected; do
+  ROW="gh-cli-environment input=$key mutation=$mutation"
+  unset RC OUT
   sandbox
   run_refresh_command "$DIR" "$DIR/$ADOPT"
   [ "$RC" -eq 0 ] || exit 1
@@ -100,6 +102,7 @@ GODEBUG|x509sslcertoverrideplatform=0|dropped|no
 GODEBUG|x509sslcertoverrideplatform=0|discovery-inherited|no
 GODEBUG|x509sslcertoverrideplatform=0|validation-inherited|no
 GH_ENV_ROWS
+ROW=''
 
 # Only the catalog fixture licenses updates. Consumer records, current
 # templates and consumer commits cannot supply shipment evidence.
@@ -359,10 +362,13 @@ if [ "$RC" -eq 0 ] && [ -e "$DIR/$REFRESH" ]; then
   ok 'control: removed self-exclusion adopts the consumer workflow in kendex'
 else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 
+ROW='template-update setup'
+unset RC OUT
 sandbox
 printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 run_refresh_command "$DIR" "$DIR/$ADOPT"
 [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" || exit 1
+ROW=''
 commit "$DIR"
 printf '\n# new template bytes\n' >>"$DIR/$TEMPLATE"
 ship_caller_template "$DIR/$TEMPLATE"

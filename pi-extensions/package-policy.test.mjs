@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -345,7 +344,6 @@ function enabled(condition, matrix, github, needs) {
 function packageExecutions(workflow, events = ["merge_group", "push"], changes = { result: "failure", outputs: {} }) {
 	const jobs = workflow.split(/\n(?= {2}[\w-]+:\n)/);
 	const ordinary = jobs.find((job) => job.startsWith("  skill-suites-shard:\n"));
-	const dedicated = jobs.find((job) => job.startsWith("  skill-suites-main-only:\n"));
 	assert.ok(ordinary, "the package execution job reader found no route");
 	const ordinarySteps = ciSteps(ordinary);
 	const needs = { changes };
@@ -358,17 +356,6 @@ function packageExecutions(workflow, events = ["merge_group", "push"], changes =
 			if (enabled(condition, matrix, github, needs)) {
 				executions.push({ matrix, github, needs, steps: ordinarySteps });
 			}
-		}
-		if (dedicated && enabled(dedicated.match(/^ {4}if: (.+)$/m)?.[1], {}, github, needs)) {
-			const include = dedicated.match(/^ {8}include: \$\{\{ (.+) \}\}$/m)?.[1];
-			assert.ok(include, "the active dedicated job has no include matrix expression");
-			const evaluator = join(root, "..", "skills", "harness-ci", "tests", "lib", "gh-eval.py");
-			const rows = JSON.parse(execFileSync("python3", [
-				evaluator, "value", JSON.stringify({ github, needs }), include,
-			], { encoding: "utf8" }));
-			assert.ok(Array.isArray(rows) && rows.length > 0, "the active dedicated job has no matrix rows");
-			const steps = /^ {4}steps: \*skill-suite-steps$/m.test(dedicated) ? ordinarySteps : ciSteps(dedicated);
-			for (const matrix of rows) executions.push({ matrix, github, needs, steps });
 		}
 	}
 	return executions;
@@ -387,10 +374,7 @@ test("main and the merge group each execute every package once", () => {
 	for (const changes of [
 		{ result: "failure", outputs: {} },
 		{ result: "skipped", outputs: {} },
-		{ result: "success", outputs: {
-			shell_shards: "true", shell_os: '["ubuntu-latest"]',
-			main_suites: '[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]',
-		} },
+		{ result: "success", outputs: { shell_shards: "true", shell_os: '["ubuntu-latest"]' } },
 	]) {
 		assert.deepEqual(packageClaims(workflow, "push", changes), expected);
 		assert.deepEqual(packageClaims(workflow, "merge_group", changes), expected);

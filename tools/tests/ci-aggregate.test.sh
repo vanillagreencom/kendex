@@ -254,8 +254,7 @@ mkdir -p "$TMP/gh-down"
 printf '#!/bin/sh\nexit 1\n' >"$TMP/gh-down/gh"
 chmod +x "$TMP/gh-down/gh"
 PUSH_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
-MAIN_DECLARATIONS="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$WORKFLOW")"
-PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA="$PUSH_HEAD" PUSH_BEFORE="$PUSH_HEAD" PUSH_AFTER="$PUSH_HEAD" MAIN_ONLY_SUITES="$MAIN_DECLARATIONS" SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
+PUSH_SELECTION="$(PATH="$TMP/gh-down:$PATH" GITHUB_REPOSITORY=owner/repo GITHUB_SHA="$PUSH_HEAD" PUSH_BEFORE="$PUSH_HEAD" PUSH_AFTER="$PUSH_HEAD" SELECT_EVENT=push selection '' '' '' | sed -n '$p')"
 case "$PUSH_SELECTION" in *" skipped_suites_macos=[] "*) ;; *) echo "a failed push read published '$PUSH_SELECTION'" >&2; exit 1 ;; esac
 PUBLISHED_BY_SCRIPT="$(printf '%s %s nightly=true' "$(SELECT_CARGO_MATRIX=true selection standard false 'crates/core/src/lib.rs')" "$PUSH_SELECTION" |
   tr ' ' '\n' | sed 's/=.*//' | LC_ALL=C sort -u)"
@@ -298,7 +297,7 @@ GATE_PAIRS="$(gate_pairs "$WORKFLOW")"
 aggregate_gap() { # WORKFLOW AGGREGATE — `lanes: missing= extra= events: missing= extra=`
   local wf="$1" agg="$2" needs job expr group held=""
   needs="$(job_needs "$wf" | awk -F '\t' -v j="$agg" '$1 == j { print $2 }' | tr ',' '\n' | grep .)" || needs=""
-  gate_pairs "$wf" | grep -vE '^(cache_compile|main_suites|nightly):' >"$TMP/gap-gates"
+  gate_pairs "$wf" | grep -vE '^(cache_compile|nightly):' >"$TMP/gap-gates"
   job_ifs "$wf" >"$TMP/gap-ifs"
   while IFS= read -r job; do
     grep -q ":$job\$" "$TMP/gap-gates" && continue
@@ -344,7 +343,7 @@ gated_jobs() { # WORKFLOW
 running() { # WORKFLOW SELECTION [RESULT] [EVENT] — the gated jobs that run, sorted and spaced
   local wf="$1" sel="$2" result="${3:-success}" event="${4:-pull_request}" map="$TMP/published-map" job expr
   published_map "$wf" >"$map"
-  gated_jobs "$wf" | grep -vE '^skill-suites-(macos|main-only)$' >"$TMP/gated"
+  gated_jobs "$wf" | grep -vxF skill-suites-macos >"$TMP/gated"
   job_needs "$wf" >"$TMP/needs"
   job_ifs "$wf" | while IFS="$(printf '\t')" read -r job expr; do
     grep -qxF -- "$job" "$TMP/gated" &&
@@ -369,7 +368,7 @@ EVERY_GATED="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-m
 # which reads its lane on the schedule alone.
 EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke ui-tests"
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
-  "$(gated_jobs "$WORKFLOW" | grep -vE '^skill-suites-(macos|main-only)$' | tr '\n' ' ' | sed 's/ $//')"
+  "$(gated_jobs "$WORKFLOW" | grep -vxF skill-suites-macos | tr '\n' ' ' | sed 's/ $//')"
 
 one_skill="$(SELECT_CARGO_MATRIX=true selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
@@ -417,10 +416,10 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
 # unproved: none, some on both runners, or every one where changes failed.
 MAIN_FIXED="cargo-check-windows catalog changes"
 MAIN_BUILT="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
-MAIN_JOBS="$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
-PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] cache_compile=false main_suites=[]'
-PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"] cache_compile=true main_suites=[{"suite":"adopt-refresh.test"}]'
-PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[] cache_compile=false main_suites=[]'
+MAIN_JOBS="$MAIN_BUILT skill-suites-macos-queue skill-suites-shard smoke"
+PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] cache_compile=false'
+PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"] cache_compile=true'
+PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[] cache_compile=false'
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
 # The night's selections: every leg proved at the head, and one macOS shard
 # and the macOS cargo tests left unproved.
@@ -440,7 +439,7 @@ pull_request|failure|$ALL_OFF|ci
 merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
 push|success|$PUSH_PROVED|$MAIN_FIXED smoke
-push|success|$PUSH_REST|$MAIN_BUILT skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke
+push|success|$PUSH_REST|$MAIN_BUILT skill-suites-macos-queue skill-suites-shard smoke
 push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-shard smoke
 push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|failure|$ALL_OFF|cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke
@@ -973,16 +972,16 @@ done
 # main work and decides whether a scheduled head needs testing.
 
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on a merge group
-  local wf="$1" ci job expr main_only=""
+  local wf="$1" ci job expr off_group=""
   ci="$(jobs_named "$wf" CI)"
   # A job that can run on a merge group runs on one whose classifier died,
   # which every gated lane runs on.
   while IFS=$'\t' read -r job expr; do
     if [ "$(gh_eval value '{"github":{"event_name":"merge_group"},"needs":{"changes":{"result":"failure"}}}' "$expr")" = false ]; then
-      main_only="$main_only$job\n"
+      off_group="$off_group$job\n"
     fi
   done < <(job_ifs "$wf")
-  set_gap "$(job_needs "$wf" | cut -f1 | LC_ALL=C sort | comm -23 - <({ aggregators "$wf"; printf '%b' "$main_only"; } | LC_ALL=C sort -u))" \
+  set_gap "$(job_needs "$wf" | cut -f1 | LC_ALL=C sort | comm -23 - <({ aggregators "$wf"; printf '%b' "$off_group"; } | LC_ALL=C sort -u))" \
     "$(job_needs "$wf" | awk -F '\t' -v j="$ci" '$1 == j { print $2 }' | tr ',' '\n')"
 }
 check "one job is named CI" "ci" "$(jobs_named "$WORKFLOW" CI | tr '\n' ' ' | sed 's/ $//')"

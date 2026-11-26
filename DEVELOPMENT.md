@@ -65,9 +65,9 @@ On Linux a debug build and the installed app are two apps to the single-instance
 
 ## CI
 
-A pull request runs no lane: its Skill Tests run reports `CI` alone before queue admission. The merge group runs its selected lanes, including macOS cargo tests and shell shards. [D026](docs/decisions/D026-macos-native-contracts.md) tracks the adopter's temporary Linux main-only exception. The deny hook, tools shell partition and whole Pi tmux package run in the Linux merge group. Required cargo-only partition proof remains. A red group returns the change to its lane; required check names stay unchanged.
+A pull request runs no lane: its Skill Tests run reports `CI` alone before queue admission. The merge group runs its selected lanes, including macOS cargo tests and shell shards. The adopter suite, the deny hook, the tools shell partition and the whole Pi tmux package run in the Linux merge group, as [D026](docs/decisions/D026-macos-native-contracts.md) records. Required cargo-only partition proof remains. A red group returns the change to its lane; required check names stay unchanged.
 
-A selected schedule and every manual dispatch run the macOS shell profile, macOS cargo tests and Windows tests; only this workflow's latest successful scheduled head stands a schedule down. `tools/macos-test-contracts` owns native eligibility. Main selects work since its latest successful push, compiles caches on build inputs and runs selected suites and Rust targets its same-head merge group left unproved. The adopter runs on main while its placement failure awaits a causal fix.
+A selected schedule and every manual dispatch run the macOS shell profile, macOS cargo tests and Windows tests; only this workflow's latest successful scheduled head stands a schedule down. `tools/macos-test-contracts` owns native eligibility. Main selects work since its latest successful push, compiles caches on build inputs and runs selected suites and Rust targets its same-head merge group left unproved.
 
 ## The self-install
 
