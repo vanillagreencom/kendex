@@ -8,7 +8,7 @@
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
-//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path blocks: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
@@ -61,7 +61,9 @@
 //! A fleet file in no checkout names no repository and binds every launch
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
-//! record's); the rest of its judgement stands from its first admission. A `github` item of another repository than the checkout's,
+//! record's). Its touched set, scope and Ancestor gate stand from its first
+//! admission, and that set meets the holders standing now as a running
+//! lane's added path does ([`relaunch_held`]). A `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
@@ -1086,10 +1088,10 @@ fn bind(
 }
 
 /// The binding alone (the module's binding paragraph): a first launch's,
-/// inside the judgement, and a relaunch's, whose touched set, Ancestor gate
-/// and holders were judged when it was first admitted but whose checkout,
-/// tracker and repository the request may change. Answers the checkout's
-/// common git folder as [`bind`] read it.
+/// inside the judgement, and a relaunch's, whose touched set and Ancestor
+/// gate were judged when it was first admitted but whose checkout, tracker
+/// and repository the request may change. Answers the checkout's common
+/// git folder as [`bind`] read it.
 pub(super) fn bound(
     path: &Path,
     item: &str,
@@ -1115,6 +1117,37 @@ pub(super) fn bound(
         read_only: false,
     };
     bind(path, &a, checkout, reads, host.accounts)
+}
+
+/// A relaunch's holders (the module's binding paragraph): the record's
+/// touched set and scope, kept from its admission, met against the lanes
+/// that hold paths now, as a running lane's added path is, never joined. A
+/// stopped or parked record yields while it stands, so another lane can be
+/// admitted a path it holds; its relaunch must not take that path back.
+/// `repo` is the relaunch's effective repository, the request's else the
+/// record's.
+pub(super) fn relaunch_held(
+    path: &Path,
+    lanes: &[Lane],
+    intents: &[Intent],
+    record: &Lane,
+    repo: Option<&str>,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
+    let a = Admission {
+        item: &record.item,
+        tracker: None,
+        repo,
+        brief_file: None,
+        repo_dir: None,
+        scope_range: None,
+        in_scope: record.in_scope.as_deref().unwrap_or_default(),
+        paths: record.touched.as_deref().unwrap_or_default(),
+        checkout: None,
+        read_only: record.read_only,
+    };
+    judge(path, lanes, intents, &a, env, host).map(drop)
 }
 
 /// The judgement (the module's table). `lanes` and `intents` are the

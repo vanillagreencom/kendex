@@ -719,6 +719,53 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
 }
 
+/// A stopped record holds nothing, so a running lane is admitted a path it
+/// recorded; the stopped lane's relaunch then meets that holder with its
+/// record's set and scope, as a running lane's added path does: refused
+/// `launch-overlap` while the holder lives, never joined, nothing written;
+/// with the holder gone, relaunched over its kept sets.
+#[test]
+fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let mut harness = Owned::sleep();
+    let mut stopped = holder("KEN-R", "stopped", None, Some(&["docs/x.md", "src/a.sh"]));
+    stopped["in_scope"] = json!(["docs/"]);
+    fleet.write_lanes(vec![
+        stopped,
+        holder("KEN-H", "running", Some(&harness), Some(&["docs/x.md"])),
+    ]);
+    let out = fleet.admit(&json!({"item": "KEN-H", "paths": ["src/a.sh"]}));
+    assert_eq!(
+        reply(&out)["ok"],
+        true,
+        "a stopped record yields: {}",
+        stderr(&out)
+    );
+    let before = fleet.fleet();
+
+    let out = fleet.op(&launch("KEN-R", fleet.state_dir().as_path()));
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "launch-overlap", "{}", stderr(&out));
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-R"), ("file", "src/a.sh"), ("holder", "KEN-H")]),
+        "the record's scope leaves docs/x.md out"
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing, no join");
+    assert!(live(harness.pid()), "a refused relaunch signals nothing");
+
+    end(&mut harness);
+    let out = fleet.op(&launch("KEN-R", fleet.state_dir().as_path()));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-R");
+    assert_eq!(lane["touched"], json!(["docs/x.md", "src/a.sh"]));
+    assert_eq!(lane["in_scope"], json!(["docs/"]));
+    // No fleet server exists here, so the relaunch fails before any window.
+    assert_eq!(lane["status"], "stopped");
+    assert_eq!(fleet.lane("KEN-H"), before["lanes"][1]);
+}
+
 /// The bundle reply a linear package whose formatter names no launch
 /// blockers prints over a node blocked by the started issue CC-9: that
 /// formatter's own output, planted as it stands for the row below, since
@@ -801,7 +848,7 @@ fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_r
     assert_eq!(
         reads_since(11),
         Vec::<String>::new(),
-        "a recorded lane's relaunch was judged when it was admitted"
+        "a recorded lane's relaunch keeps the item judgement of its admission"
     );
 }
 

@@ -1444,9 +1444,8 @@ pub(super) fn launch_lane(
     // A read-only lane holds no path, which stands only where something
     // holds it to shipping no change, on an ssh host `record-push` alone: a
     // launch nothing holds would ship one under an empty touched set. It is
-    // decided where the launch is judged: a relaunch, unjudged, keeps the
-    // record's, so a writing record never turns read-only over the set it
-    // holds.
+    // decided where the launch is judged: a relaunch keeps the record's,
+    // so a writing record never turns read-only over the set it holds.
     let read_only = match relaunch {
         Some(index) => lanes[index].read_only,
         None => r.read_only,
@@ -1465,7 +1464,9 @@ pub(super) fn launch_lane(
     // account's room and the cap, so one transition admits, joins or
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
-    // since a recorded lane's relaunch was judged when it was admitted.
+    // judged when it was admitted, and meets the holders standing now with
+    // them, since a stopped record held nothing while another lane could
+    // take its path.
     let candidate = Admission {
         item: &r.item,
         tracker: r.tracker.as_deref(),
@@ -1479,7 +1480,19 @@ pub(super) fn launch_lane(
         read_only,
     };
     let judged = match relaunch {
-        Some(_) => None,
+        Some(index) => {
+            let record = &lanes[index];
+            admission::relaunch_held(
+                path,
+                &lanes,
+                &intents,
+                record,
+                r.repo.as_deref().or(record.repo.as_deref()),
+                env,
+                host,
+            )?;
+            None
+        }
         None => Some(admission::judge(
             path, &lanes, &intents, &candidate, env, host,
         )?),
@@ -1507,8 +1520,8 @@ pub(super) fn launch_lane(
         env,
         host,
     )?;
-    // A relaunch was judged when first admitted, bar where it runs and
-    // whose item it is: the binding, on its effective tracker and
+    // A relaunch's sets were judged when first admitted, bar where it runs
+    // and whose item it is: the binding, on its effective tracker and
     // repository, before the patch writes them. Either binding answers the
     // checkout's common git folder it read.
     let checkout_common = match relaunch {
