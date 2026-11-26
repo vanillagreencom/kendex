@@ -9333,13 +9333,15 @@ fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_r
 }
 
 /// A pending wall whose pane then runs a turn, as one the owner resumed by
-/// hand, ends with no resume and no transfer whatever its own account
-/// reads, a successor with room standing by: room, an unreadable or
-/// unmeasured account, zero headroom on the plan or on the reserve, under
-/// the hook's standing failure row, and on a Pi screen that still shows
-/// the last turn's usage error above the working one.
+/// hand, is held for every pass the turn runs: never announced again,
+/// resumed or moved whatever its own account reads, a successor with room
+/// standing by, its episode standing for the pass after the turn. The
+/// readings are room, an unreadable or unmeasured account, zero headroom
+/// on the plan or on the reserve, under the hook's standing failure row,
+/// and a Pi screen that still shows the last turn's usage error above the
+/// working one.
 #[test]
-fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
+fn a_pending_wall_whose_pane_runs_a_turn_is_held_with_no_resume_and_no_transfer() {
     let reset = 1_800_000_000 + 3600;
     let room = || marks(MarkKey::Below, "", "", Succession::On, "");
     let unread = |own: AccountState, reason: &str| {
@@ -9493,21 +9495,108 @@ fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
             Some("pending"),
             "{case}"
         );
+        // A line only the working screen draws, then its working line.
+        let drawn = match harness {
+            Harness::Pi => "You've hit your usage limit",
+            _ => "Resume the work",
+        };
         redraw(
             &server,
             &pane,
             dir.path(),
             "overseer-working.txt",
             working,
-            "Working",
+            drawn,
         );
+        await_drawn(&server, &pane, "Working");
         resumed.set(true);
-        driver.pass(&state);
-        assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live, "{case}");
-        assert_eq!(driver.baseline.get("overseer-walled", &key), None, "{case}");
-        assert_eq!(driver.baseline.get("resume", "overseer"), None, "{case}");
-        assert!(transfers.borrow().is_empty(), "{case}");
+        for at in 0..4 {
+            let held = driver.pass(&state);
+            assert!(
+                event_lines(&held).is_empty(),
+                "{case}, pass {at}: {:?}",
+                lines(&held)
+            );
+            assert_eq!(
+                driver.slot.read().unwrap().verdict,
+                Verdict::Live,
+                "{case}, pass {at}"
+            );
+            assert_eq!(
+                driver.baseline.get("overseer-walled", &key),
+                Some("pending"),
+                "{case}, pass {at}"
+            );
+            assert_eq!(
+                driver.baseline.get("resume", "overseer"),
+                None,
+                "{case}, pass {at}"
+            );
+            assert!(transfers.borrow().is_empty(), "{case}, pass {at}");
+        }
     }
+}
+
+/// A pending wall the hook's failure row holds ends once a turn returns
+/// past that row, its own account unread and a successor with room
+/// standing by: nothing is resumed or moved, and its rows go.
+#[test]
+fn a_pending_wall_ends_with_no_resume_once_a_turn_returns_past_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+    let returned = Cell::new(false);
+    let judge = |_: &Caller, _: Option<&str>| {
+        if returned.get() {
+            let mut m = marks(
+                MarkKey::Unmeasured(MarkKind::Headroom),
+                "",
+                "",
+                Succession::On,
+                "",
+            );
+            m.reason = "headroom-unreadable".to_owned();
+            return Ok(m);
+        }
+        Ok(marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        ))
+    };
+    let walk = |request: &WalkRequest| {
+        if returned.get() {
+            walk_b(request)
+        } else {
+            walk_none(request)
+        }
+    };
+    let accept = |_: &str, _: &str| Ok(());
+    overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+    driver.alert = &accept;
+    let key = format!("{} {pane}", server.pid);
+    let state = fleet.read();
+    driver.pass(&state);
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("pending")
+    );
+    let rows = dir.path().join("session-rows.jsonl");
+    let mut text = std::fs::read_to_string(&rows).unwrap();
+    text.push_str("{\"harness\":\"claude\",\"event\":\"UserPromptSubmit\"}\n{\"harness\":\"claude\",\"event\":\"Stop\"}\n");
+    std::fs::write(&rows, text).unwrap();
+    returned.set(true);
+    driver.pass(&state);
+    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
+    for row in ["overseer-walled", "overseer-walled-at", "overseer-wall-row"] {
+        assert_eq!(driver.baseline.get(row, &key), None, "{row}");
+    }
+    assert_eq!(driver.baseline.get("resume", "overseer"), None);
+    assert!(transfers.borrow().is_empty());
 }
 
 /// A pending usage wall's own account that cannot be read past its reset

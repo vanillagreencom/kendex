@@ -1163,11 +1163,12 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 12] = [
+const ROWS: [&str; 13] = [
     "overseer-dead",
     "overseer-walled",
     WALLED_AT_ROW,
     WALL_RESET_ROW,
+    WALL_ROW_ROW,
     "overseer-mark",
     TRANSFER_ROW,
     context::GAP_ROW,
@@ -1422,14 +1423,17 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         };
     }
     let marks_now = marks_read.clone().and_then(Result::ok);
-    // A pending wall read live, its pane running no turn, lifts only where
-    // the own account reads room and the pane, judged with that room,
-    // stands idle for the resume. A screen or account wall reads live where
+    // A pending wall's episode ends on one proof: a turn that returned past
+    // the row the episode began on, or its own account read with room and
+    // its pane, judged with that room, idle for the resume. A running turn
+    // holds the episode, so its rows stand for the passes after it. Any
+    // other pass keeps the wall: a screen or account wall reads live where
     // the account read failed or left its headroom unread, and a banner
-    // screen reads walled until room is judged on it: on any other pass the
-    // wall stands, so it is walked and its reset read as on a walled one.
+    // screen reads walled until room is judged on it, so the pass is walked
+    // and its reset read as on a walled one.
     let mut resume = false;
-    if verdict == Verdict::Live && pending && !working {
+    if verdict == Verdict::Live && pending && !working && !turn_returned(&key, reads.as_ref(), pass)
+    {
         let room = marks_now.as_ref().is_some_and(Marks::reads_room);
         if room && with_room() == Some(State::Idle) {
             resume = true;
@@ -1441,6 +1445,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             };
         }
     }
+    let held = pending && working;
     let (case, source, passes_needed) = match &verdict {
         Verdict::Exited { source } => (
             Some(OverseerCase::Dead),
@@ -1472,21 +1477,12 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         if verdict == Verdict::Live {
             out.changes.push(clear("overseer-dead", &key));
             out.changes.push(clear(DEAD_ALERT_ROW, &key));
-            // A provider stop's episode keeps its move's transfer and its
-            // notice while it stands.
-            if pass.baseline.get(PROVIDER_ROW, &key).is_none() {
-                out.changes.push(clear(TRANSFER_ROW, &key));
-                out.changes.push(clear(NOTICE_ROW, &key));
-            }
             if resume {
                 resume_at_reset(&key, pass, out);
             }
-            let prior = pass.baseline.get("overseer-walled", &key).unwrap_or("");
-            if !prior.starts_with("reserve:") || marks_now.as_ref().is_some_and(Marks::reads_room) {
-                out.changes.push(clear("overseer-walled", &key));
+            if !held {
+                end_wall(&key, marks_now.as_ref(), pass, out);
             }
-            out.changes.push(clear(WALLED_AT_ROW, &key));
-            out.changes.push(clear(WALL_RESET_ROW, &key));
             mark_check(&record, &key, marks_now.as_ref(), pass, out);
             context_check(&record, &key, context.as_ref(), pass, out);
             if let Some(pid) = pane_pid {
@@ -1594,6 +1590,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     out.changes.push(clear(DEAD_ALERT_ROW, &key));
     out.changes.push(clear(NOTICE_ROW, &key));
     out.changes.push(clear(WALL_RESET_ROW, &key));
+    out.changes.push(clear(WALL_ROW_ROW, &key));
     let cause = match case {
         OverseerCase::Dead => pane_pid.and_then(|pid| memory_cap(&key, pid, pass)),
         OverseerCase::Walled | OverseerCase::Reserve => None,
@@ -1649,6 +1646,11 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     if plan_relaunch && case == OverseerCase::Walled {
         out.changes
             .push(set(WALLED_AT_ROW, &key, pass.now.to_string()));
+        let newest = match reads.as_ref().and_then(|reads| reads.rows.as_ref()) {
+            Some(Reading::Live(row)) => row.position.to_string(),
+            Some(Reading::Gone | Reading::Unreadable { .. }) | None => "none".to_owned(),
+        };
+        out.changes.push(set(WALL_ROW_ROW, &key, newest));
     }
     out.next_due = (plan_relaunch || case == OverseerCase::Dead).then_some(pass_next_due());
     judged(verdict, Some(key))
@@ -2032,6 +2034,47 @@ const PENDING: &str = "pending";
 enum OwnRoom {
     Never,
     Lifts(Option<u64>),
+}
+
+/// The session's newest row position when a walled case was announced,
+/// keyed by the pane key, `none` with no row read: a turn that returned
+/// past it ends the episode ([`turn_returned`]).
+const WALL_ROW_ROW: &str = "overseer-wall-row";
+
+/// Whether the session's newest row is a turn that returned after the
+/// walled case under `key` was announced, past the row kept then
+/// ([`WALL_ROW_ROW`]); an episode that kept none ends no way but its own.
+fn turn_returned(key: &str, reads: Option<&Reads>, pass: &Pass) -> bool {
+    let Some(Reading::Live(row)) = reads.and_then(|reads| reads.rows.as_ref()) else {
+        return false;
+    };
+    if row.idle != Some(SessionIdle::Returned) {
+        return false;
+    }
+    match pass.baseline.get(WALL_ROW_ROW, key) {
+        Some("none") => true,
+        Some(began) => began
+            .parse::<usize>()
+            .is_ok_and(|began| row.position > began),
+        None => false,
+    }
+}
+
+/// A walled case read live with nothing holding it ends: its rows go, a
+/// reserve attempt's only once the account reads room, and so do its
+/// transfer and its notices, unless a provider stop's episode keeps them.
+fn end_wall(key: &str, marks: Option<&Marks>, pass: &Pass, out: &mut Produced) {
+    if pass.baseline.get(PROVIDER_ROW, key).is_none() {
+        out.changes.push(clear(TRANSFER_ROW, key));
+        out.changes.push(clear(NOTICE_ROW, key));
+    }
+    let prior = pass.baseline.get("overseer-walled", key).unwrap_or("");
+    if !prior.starts_with("reserve:") || marks.is_some_and(Marks::reads_room) {
+        out.changes.push(clear("overseer-walled", key));
+    }
+    for row in [WALLED_AT_ROW, WALL_RESET_ROW, WALL_ROW_ROW] {
+        out.changes.push(clear(row, key));
+    }
 }
 
 /// The confirmed reset of a walled episode's own account, epoch seconds,
