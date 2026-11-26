@@ -968,12 +968,31 @@ pub fn remap(recorded: &str, hop: &Hop) -> String {
     out
 }
 
-pub(crate) fn project_rebase(text: &str, sha: &str) -> crate::error::Result<String> {
+/// The commit `sha` became through every hop, and the image it had just
+/// before the first hop that folded it ([`folds`]).
+pub(crate) fn project_rebase(
+    text: &str,
+    sha: &str,
+) -> crate::error::Result<(String, Option<String>)> {
     let hops = hops(text)
         .map_err(|e| crate::validate::files::unreadable("rebase-map-unreadable", e.cause))?;
     Ok(hops
         .iter()
-        .fold(sha.to_owned(), |sha, hop| remap(&sha, hop)))
+        .fold((sha.to_owned(), None), |(sha, before), hop| {
+            let entries = hop.iter().map(|(old, new)| (old.as_str(), new.as_str()));
+            let before = before.or_else(|| folds(entries, &sha).then(|| sha.clone()));
+            (remap(&sha, hop), before)
+        }))
+}
+
+/// Whether one hop maps `image` and a commit listed after it to one commit.
+/// Base preparation lists the commits it folds oldest first, so that commit
+/// is branch work after `image`, and no commit marks where it began.
+pub(crate) fn folds<'a>(mut hop: impl Iterator<Item = (&'a str, &'a str)>, image: &str) -> bool {
+    let Some((_, target)) = hop.find(|(old, _)| old.starts_with(image)) else {
+        return false;
+    };
+    target != "dropped" && hop.any(|(_, new)| new == target)
 }
 
 #[cfg(test)]
