@@ -130,8 +130,15 @@ Create Options:
   --estimate <1-5>      Effort estimate (points)
   --assignee <name|me|email|id>  Assignee: a name matches as a substring, an
                         address (anything with @) matches a user's whole
-                        email, case-insensitively, and a user id is used as
-                        given; a miss refuses
+                        email, case-insensitively, and a user id is looked
+                        up as given; a miss refuses. An app user is refused
+                        (ASSIGNEE_IS_APP) unless it is the API key's own user:
+                        an agent goes in --delegate
+  --delegate <name|me|email|id>  The agent working the issue, Linear's
+                        delegate, matched as --assignee is; the assignee stays
+                        the accountable person. Refused before any write: a
+                        person (DELEGATE_NOT_APP) and an app whose install
+                        lacks app:assignable (DELEGATE_NOT_ASSIGNABLE)
   --parent <id>         Parent issue ID (creates sub-issue)
   --milestone <name|uuid> Project milestone (a name needs --project; a UUID does not)
   --cycle <id>          Cycle (sprint) ID
@@ -224,8 +231,10 @@ Update Options:
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low
   --estimate <0-5>      Effort estimate (points); 0 clears the estimate (unset)
   --clear-estimate      Clear the estimate (unset; e.g. coordination parents = no estimate)
-  --assignee <name|me|email|id>  Change assignee (matched as on create)
+  --assignee <name|me|email|id>  Change assignee (matched and judged as on create)
   --clear-assignee     Remove the assignee
+  --delegate <name|me|email|id>  Change the delegate (judged as on create)
+  --clear-delegate     Remove the delegate
   --parent <id>         Set parent issue (convert to sub-issue)
   --remove-parent       Remove parent (convert to top-level issue)
   --milestone <name|uuid> Set project milestone (a name resolves in --project,
@@ -488,7 +497,7 @@ esac
 _help_takes_value() {
     case "$1" in
         --agent | --assignee | --attach | --blocked-by | --blocks | --by | \
-            --cycle | --description | --description-file | --duplicate | \
+            --cycle | --delegate | --description | --description-file | --duplicate | \
             --estimate | --format | --include-children-of | --inventory | --label | \
             --labels | --limit | --milestone | --parent | --priority | \
             --project | --reason | --related | --search | --sort-order | \
@@ -1105,6 +1114,7 @@ get_issue() {
                 description
                 state { name type }
                 assignee { name email }
+                delegate { name email }
                 project { id name }
                 projectMilestone { id name }
                 cycle { id name number }
@@ -1178,6 +1188,7 @@ get_issue_bundle() {
                 description
                 state { name type }
                 assignee { name email }
+                delegate { name email }
                 project { id name }
                 projectMilestone { id name }
                 cycle { id name number }
@@ -1483,6 +1494,7 @@ create_issue() {
     local state=""
     local priority=""
     local assignee=""
+    local delegate=""
     local parent=""
     local milestone=""
     local cycle=""
@@ -1554,6 +1566,10 @@ create_issue() {
             ;;
         --assignee)
             assignee="$2"
+            shift 2
+            ;;
+        --delegate)
+            delegate="$2"
             shift 2
             ;;
         --parent)
@@ -1683,9 +1699,12 @@ create_issue() {
 
     # A miss refuses here, before the upload, so an unknown assignee leaves
     # no orphaned asset behind.
-    local assignee_id=""
+    local assignee_id="" delegate_id=""
     if [ -n "$assignee" ]; then
         assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+    if [ -n "$delegate" ]; then
+        delegate_id=$(resolve_assignee_id "$delegate" Delegate) || return 1
     fi
 
     # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
@@ -1791,6 +1810,9 @@ create_issue() {
     # Resolved above, before the attachment upload.
     if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
+    fi
+    if [ -n "$delegate_id" ]; then
+        input_parts+=("\"delegateId\": \"$delegate_id\"")
     fi
 
     # Handle parent (for sub-issues) - resolve identifier to UUID
@@ -2100,6 +2122,7 @@ write_issue_update() {
     local clear_estimate="false"
     local clear_labels="false"
     local clear_assignee="false"
+    local delegate="" clear_delegate="false"
     local sort_order=""
     local output_format=""
     local attach_paths=()
@@ -2244,6 +2267,10 @@ write_issue_update() {
             clear_assignee="true"
             shift
             ;;
+        --clear-delegate)
+            clear_delegate="true"
+            shift
+            ;;
         --clear-labels)
             clear_labels="true"
             shift
@@ -2254,6 +2281,14 @@ write_issue_update() {
             ;;
         --assignee=*)
             assignee="${1#*=}"
+            shift
+            ;;
+        --delegate)
+            delegate="$2"
+            shift 2
+            ;;
+        --delegate=*)
+            delegate="${1#*=}"
             shift
             ;;
         --cycle)
@@ -2400,6 +2435,10 @@ write_issue_update() {
         echo '{"error": "Use either --assignee or --clear-assignee"}' >&2
         return 1
     fi
+    if [ "$clear_delegate" = "true" ] && [ -n "$delegate" ]; then
+        echo '{"error": "Use either --delegate or --clear-delegate"}' >&2
+        return 1
+    fi
     if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
         echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
         return 1
@@ -2463,9 +2502,12 @@ write_issue_update() {
 
     # A miss refuses here, before the upload, so an unknown assignee leaves
     # no orphaned asset behind.
-    local assignee_id=""
+    local assignee_id="" delegate_id=""
     if [ -n "$assignee" ]; then
         assignee_id=$(resolve_assignee_id "$assignee") || return 1
+    fi
+    if [ -n "$delegate" ]; then
+        delegate_id=$(resolve_assignee_id "$delegate" Delegate) || return 1
     fi
 
     # Upload --attach files. Image embeds append to the description being
@@ -2557,8 +2599,14 @@ write_issue_update() {
     if [ -n "$assignee_id" ]; then
         input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
+    if [ -n "$delegate_id" ]; then
+        input_parts+=("\"delegateId\": \"$delegate_id\"")
+    fi
     if [ "$clear_assignee" = "true" ]; then
         input_parts+=('"assigneeId": null')
+    fi
+    if [ "$clear_delegate" = "true" ]; then
+        input_parts+=('"delegateId": null')
     fi
 
     # Handle parent (set or remove) - resolve identifier to UUID

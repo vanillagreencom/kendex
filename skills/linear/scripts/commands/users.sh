@@ -13,7 +13,9 @@ User Operations
 Usage: users.sh <action> [options]
 
 Actions:
-  list    List users
+  list    List users. Each row's `app` is true for an app (agent) identity,
+          which Linear refuses as another actor's assignee: set it with
+          `issues update --delegate`, which needs `assignable` true.
   get     Get a single user by ID, name, or "me"
   me      Get current user (shorthand for "get me")
 
@@ -69,6 +71,8 @@ list_users() {
                 displayName
                 active
                 admin
+                app
+                isAssignable
                 createdAt
             }
         }
@@ -118,6 +122,8 @@ get_user() {
                 displayName
                 active
                 admin
+                app
+                isAssignable
                 teams { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }
@@ -133,6 +139,8 @@ get_user() {
                 displayName
                 active
                 admin
+                app
+                isAssignable
                 teams { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }

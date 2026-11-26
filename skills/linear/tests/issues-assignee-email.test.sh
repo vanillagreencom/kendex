@@ -3,7 +3,7 @@
 # --assignee on issues create and issues update takes an email address: a
 # value containing `@` is matched against a user's whole address,
 # case-insensitively, and a miss refuses before any mutation. A user id is
-# sent as given, and the name form keeps matching as a substring.
+# looked up and sent, and the name form keeps matching as a substring.
 
 set -euo pipefail
 
@@ -57,6 +57,17 @@ case "$query" in
   else
     printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   fi
+  ;;
+*"users(filter: {id:"*)
+  # Both people exist by id; neither is an app user.
+  case "$(jq -r '.id' <<<"$variables")" in
+  11111111-2222-3333-4444-555555555555 | 99999999-8888-7777-6666-555555555555)
+    jq -cjn --arg id "$(jq -r '.id' <<<"$variables")" \
+      '{data: {users: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [{id: $id, app: false, isAssignable: true}]}}}'
+    printf '%s' '___HTTP_CODE___200'
+    ;;
+  *) printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
+  esac
   ;;
 *"users(filter: {name:"*)
   if [[ "$(jq -r '.name' <<<"$variables")" == "Dana" ]]; then
