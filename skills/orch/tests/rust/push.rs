@@ -461,10 +461,11 @@ mod push {
 
     /// A hosted `read_only` launch's record in the worktree's git directory
     /// refuses every publishing mode before anything runs, whatever the
-    /// delivery, and pushes nothing; with the record gone the same worktree
-    /// pushes its branch.
+    /// delivery, and pushes nothing; with the record emptied, as a hosted
+    /// writing launch over the same worktree puts it, the worktree pushes
+    /// its branch.
     #[test]
-    fn a_read_only_record_refuses_every_publishing_mode_and_its_absence_pushes() {
+    fn a_read_only_record_refuses_every_publishing_mode_and_an_emptied_one_pushes() {
         let repo = Repo::new("KEN-1", "");
         repo.record(json!({}));
         let record = PathBuf::from(git(&repo.wt, &["rev-parse", "--absolute-git-dir"]))
@@ -487,7 +488,7 @@ mod push {
             assert_eq!(repo.remote("ken-1"), "", "{request} pushed");
             assert_eq!(repo.remote("main"), base, "{request} published");
         }
-        fs::remove_file(&record).unwrap();
+        fs::write(&record, "").unwrap();
         let out = repo.push("branch");
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(repo.remote("ken-1"), repo.head());

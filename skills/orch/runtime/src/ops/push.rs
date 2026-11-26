@@ -7,7 +7,8 @@
 //! the live-round question alone, and the post-push record of a restack run.
 //! A mode that publishes refuses `push-read-only` from a worktree whose git
 //! directory holds the read-only record a hosted `read_only` launch puts
-//! there: on its host nothing else holds that lane to shipping no change.
+//! there. On its host this refusal is the lane's only hold, and it binds
+//! `record-push` alone: a direct `git push` passes it.
 //!
 //! The push's answer is read three-valued: a push that never started pushed
 //! nothing; one that answered has its status; one whose answer was lost
@@ -279,18 +280,26 @@ fn resolve(worktree: &Path) -> Result<(PathBuf, PathBuf)> {
 }
 
 /// Refuse a publishing push from a worktree a `read_only` launch put its
-/// record in: any entry at the record's path counts, and one that cannot be
-/// read refuses by its cause, since an unread record proves no writing lane.
+/// record in. Absent, or empty as a hosted writing launch puts it, holds
+/// nothing; a plain file holding bytes, or an entry of any other kind,
+/// refuses; one that cannot be read refuses by its cause, since an unread
+/// record proves no writing lane.
 fn not_read_only(item: &str, git_dir: &Path) -> Result<()> {
     let record = crate::marker::read_only_path(git_dir);
-    match fs::symlink_metadata(&record) {
-        Ok(_) => Err(refuse(
+    let held = match fs::symlink_metadata(&record) {
+        Ok(meta) => !meta.is_file() || meta.len() > 0,
+        Err(e) if e.kind() == ErrorKind::NotFound => false,
+        Err(e) => {
+            return Err(agent_runtime::Error::io("read-only-record-read", &record, e).into());
+        }
+    };
+    if held {
+        return Err(refuse(
             "push-read-only",
             &[("issue", item), ("record", &record.display().to_string())],
-        )),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(agent_runtime::Error::io("read-only-record-read", &record, e).into()),
+        ));
     }
+    Ok(())
 }
 
 /// A record resolved for other arguments would have another item's commits

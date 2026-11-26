@@ -112,7 +112,10 @@ A first launch can join a live lane of the same repository before that lane's re
 A request naming `read_only: true` launches a lane that ships no repository change. Name it for a lane whose brief changes no repository file, such as a plan or a tracker-comment lane.
 
 - On this machine, its confinement binds its checkout and its common git folder read-only, the checkout's `tmp` alone writable.
-- On an ssh host, the launch puts a read-only record (`lane-read-only`) in the worktree's git directory, and `record-push` refuses `push-read-only` from that worktree in every mode that pushes.
+- On an ssh host, the launch puts a read-only record (`lane-read-only`) holding the worktree path in the worktree's git directory, and `record-push` refuses `push-read-only` from that worktree in every mode that pushes.
+  - A writing launch on that host puts the record empty, which holds nothing.
+  - A put that fails or never answers refuses the launch before the harness starts.
+  - The hold is advisory: it stops neither a direct `git push` nor the `record-push` of a consumer whose committed orch render reads no record.
 - A cloud session refuses `read-only-unconfined`.
 - Its first launch is not judged on its item's launch blockers, or a container ancestor's: it starts beside them. The item's writing launch still waits for them.
 - Its first launch judges an empty touched set: it meets no holder, and its record holds no path.

@@ -7961,8 +7961,9 @@ impl HostedLaunch {
     /// line with a local pane, a create naming this disk's worktree, the
     /// worktree's `.git` naming a clone, no marker until the launch puts
     /// one (its second read answers the root), the launch record `record`,
-    /// and a host whose Claude settings already consent to the bypass the
-    /// default posture launches under.
+    /// the refresh and read-only records taken, and a host whose Claude
+    /// settings already consent to the bypass the default posture launches
+    /// under.
     fn plant(&self, record: Value) {
         let account = self.runner.state_dir().display().to_string();
         let host = self.host();
@@ -7976,6 +7977,8 @@ impl HostedLaunch {
             "touch --item KEN-H": {},
             "put --item KEN-H /srv/clone/.git/lane-mail/ken-h": {},
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json": {"stdout": record.to_string()},
+            format!("put --item KEN-H {HOST_GIT_DIR}/lane-refresh"): {},
+            format!("put --item KEN-H {HOST_GIT_DIR}/lane-read-only"): {},
             "cat --item KEN-H .claude/settings.json": {"stdout": "{\"skipDangerousModePermissionPrompt\": true}\n"},
         });
         std::fs::write(
@@ -8314,9 +8317,23 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
             format!(
                 "ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {clone}/.git/lane-launch/ken-h.json"
             ),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER} put --item KEN-H {clone}/.git/worktrees/lane/lane-refresh"
+            ),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER} put --item KEN-H {clone}/.git/worktrees/lane/lane-read-only"
+            ),
         ],
         "the provider's verbs in order, each under the record's host: the marker the create wrote is read before the record"
     );
+    for name in ["lane-refresh", "lane-read-only"] {
+        let record = format!("{clone}/.git/worktrees/lane/{name}");
+        assert_eq!(
+            std::fs::read_to_string(&record).ok().as_deref(),
+            Some(""),
+            "a writing lane's {name} stands empty on the host"
+        );
+    }
     let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
     assert!(
         ssh.starts_with("-t -o BatchMode=yes -o ConnectTimeout=5 -- lane.example exec env "),
@@ -8422,6 +8439,8 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
             format!("cat --item KEN-H {pi_root}/settings.json"):
                 {"stdout": r#"{"compaction":{"enabled":true}}"#},
             format!("cat --item KEN-H {worktree}/.pi/settings.json"): {"exit": 2},
+            format!("put --item KEN-H {git}/worktrees/lane/lane-refresh"): {},
+            format!("put --item KEN-H {git}/worktrees/lane/lane-read-only"): {},
         }));
         std::fs::write(
             world.scripts.join("development-root"),
@@ -8862,6 +8881,84 @@ fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
         std::fs::metadata(world.tools.join("ssh.log")).is_err(),
         "nothing dialled"
     );
+}
+
+/// The worktree git directory the planted provider's `.git` answer names.
+const HOST_GIT_DIR: &str = "/srv/clone/.git/worktrees/lane";
+
+/// Every hosted launch states the refresh and read-only records in the
+/// worktree's git directory, the path for a lane that is one and empty for
+/// any other, since a relaunch reuses the worktree and its git directory;
+/// a put that fails refuses the launch before any window, so a read-only
+/// lane never runs without the record its `record-push` refuses by.
+#[test]
+fn a_hosted_launch_states_its_refresh_and_read_only_records_before_any_window() {
+    let refresh = format!("{HOST_GIT_DIR}/lane-refresh");
+    let read_only = format!("{HOST_GIT_DIR}/lane-read-only");
+    type Expected<'a> = Result<(&'a str, &'a str), &'a str>;
+    let rows: [(&str, bool, bool, Value, Expected); 3] = [
+        ("read-only lane", true, false, json!({}), Ok(("", "root"))),
+        ("refresh lane", false, true, json!({}), Ok(("root", ""))),
+        (
+            "read-only record unput",
+            true,
+            false,
+            json!({format!("put --item KEN-H {read_only}"): {"exit": 1, "stderr": "put-failed\n"}}),
+            Err("marker-failed path=/srv/clone/.git/worktrees/lane/lane-read-only "),
+        ),
+    ];
+    for (case, read_only_lane, refresh_lane, answers, expected) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let path = world.scripts.join("lane-host.json");
+        let mut planted: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for (key, answer) in answers.as_object().unwrap() {
+            planted[key] = answer.clone();
+        }
+        std::fs::write(&path, planted.to_string()).unwrap();
+        let mut request = world.request();
+        request["read_only"] = json!(read_only_lane);
+        request["refresh"] = json!(refresh_lane);
+        let panes_before = server.panes().len();
+        let report = effect_report(&world.runner.op_fleet(&request));
+        let root = format!("{}\n", world.host());
+        let stated = |word: &str| {
+            if word == "root" {
+                root.clone()
+            } else {
+                String::new()
+            }
+        };
+        match expected {
+            Ok((refresh_bytes, read_only_bytes)) => {
+                assert_ne!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                assert_eq!(world.puts(&refresh), [stated(refresh_bytes)], "{case}");
+                assert_eq!(world.puts(&read_only), [stated(read_only_bytes)], "{case}");
+                assert_eq!(server.panes().len(), panes_before + 1, "{case}: one window");
+            }
+            Err(cause) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+                assert!(
+                    report["intent"]["observation"]["cause"]
+                        .as_str()
+                        .is_some_and(|c| c.starts_with(cause)),
+                    "{case}: {report}"
+                );
+                assert_eq!(
+                    server.panes().len(),
+                    panes_before,
+                    "{case}: no window opened"
+                );
+                assert!(
+                    std::fs::metadata(world.tools.join("ssh.log")).is_err(),
+                    "{case}: nothing dialled"
+                );
+            }
+        }
+    }
 }
 
 /// The capability line of a provider that owns the harness's session on

@@ -710,9 +710,9 @@ pub struct Lane {
     pub reservation: Option<Reservation>,
     /// The lane ships no repository change: on this machine its confinement
     /// binds its checkout read-only bar the checkout's `tmp` scratch, and on
-    /// an ssh host its `record-push` refuses. A relaunch keeps the record's,
-    /// set or not, whatever its request names; a launch over a `done` record
-    /// takes its request's.
+    /// an ssh host only `record-push` refuses its push. A relaunch keeps the
+    /// record's, set or not, whatever its request names; a launch over a
+    /// `done` record takes its request's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
     /// The touched set the admission judged: the union

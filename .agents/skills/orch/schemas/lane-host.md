@@ -277,7 +277,14 @@ The launch verifies, in order:
 2. That the marker holds the worktree path, writing it through `put` where it does not.
 3. That the launch fields record names an absolute `runtime`.
 
-For a refresh lane, it then writes the worktree path to `lane-refresh` in the worktree's git directory through `put`.
+It then writes two records in the worktree's git directory through `put`, each holding the worktree path for a lane that is one and empty for any other:
+
+| Record | Holds the path for |
+|---|---|
+| `lane-refresh` | A refresh lane. |
+| `lane-read-only` | A `read_only` lane, whose `record-push` then refuses ([lane-directive.md § A read-only launch](../references/lane-directive.md#a-read-only-launch)). |
+
+A put of either that fails or never answers refuses the launch before the harness starts.
 
 The first `append` that reaches the worktree makes its mailbox directory `tmp/lane-mail/<item>`.
 
