@@ -1853,10 +1853,10 @@ PY
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
 # spells and each `/<module>.py` and dotted `/<package>.<module>` a test
-# program imports, and SCAN_SOURCED, each
-# `/<name>` its `source` and `.` lines spell, one per line between newlines,
-# and SCAN_INPUTS, the repository path patterns in its input notes, as
-# INPUTS_NOTE_AWK reads them.
+# program imports, and SCAN_SOURCED, each `/<name>` its `source` and `.`
+# lines spell, each between spaces, since no name holds one, and SCAN_INPUTS,
+# the repository path patterns in its input notes, as INPUTS_NOTE_AWK reads
+# them.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
@@ -1939,23 +1939,41 @@ scan_load() { # DIR
       }
       return out
     }
-    function scan_names(reader, text, kind, rest, name) {
+    # mawk and BWK awk copy the whole left operand of each concatenation, so a
+    # string grown one piece at a time costs the square of its length there.
+    # The names of a file wait in counted arrays and print at the end of its
+    # scan.
+    function add_name(kind, reader, name) {
+      if (name_seen[kind, reader, name]++) return
+      if (kind == "N") file_names[++file_name_count] = name
+      else file_sourced[++file_sourced_count] = name
+    }
+    function print_names(kind, reader, names, count, i) {
+      if (!count) return
+      printf "%s\t%s\t%s", kind, reader, names[1]
+      for (i = 2; i <= count; i++) printf " %s", names[i]
+      printf "\n"
+    }
+    # The kept lines LO to HI of READER, each after a newline, joined by halves
+    # so each line is copied about log2(HI - LO) times in any awk.
+    function join_lines(reader, lo, hi, mid) {
+      if (lo == hi) return "\n" reader_lines[reader, lo]
+      mid = int((lo + hi) / 2)
+      return join_lines(reader, lo, mid) join_lines(reader, mid + 1, hi)
+    }
+    function scan_names(reader, text, kind, rest) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
-        name = substr(rest, RSTART, RLENGTH)
-        if (!name_seen[kind, reader, name]++)
-          print kind "\t" reader "\t" name
+        add_name(kind, reader, substr(rest, RSTART, RLENGTH))
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
     # A runtime or a Rust target runs a program by a quoted name, as
     # `sibling("pr-order")` does: the name inside the quotes counts as one.
-    function scan_quoted(reader, text, rest, name) {
+    function scan_quoted(reader, text, rest) {
       rest = text
       while (match(rest, /"[[:alnum:]._-]*[[:alnum:]_-]"/)) {
-        name = "/" substr(rest, RSTART + 1, RLENGTH - 2)
-        if (!name_seen["N", reader, name]++)
-          print "N\t" reader "\t" name
+        add_name("N", reader, "/" substr(rest, RSTART + 1, RLENGTH - 2))
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
@@ -1979,15 +1997,13 @@ scan_load() { # DIR
         dotted = "/" substr(name, 1, RLENGTH)
         name = dotted
         sub(/\..*/, "", name)
-        name = name ".py"
-        if (!name_seen["N", reader, name]++)
-          print "N\t" reader "\t" name
-        if (dotted ~ /\./ && !name_seen["N", reader, dotted]++)
-          print "N\t" reader "\t" dotted
+        add_name("N", reader, name ".py")
+        if (dotted ~ /\./) add_name("N", reader, dotted)
       }
     }
     function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources) {
       path = scan_paths[reader]; role = scan_roles[reader]
+      file_name_count = file_sourced_count = 0
       while ((status = (getline text < path)) > 0) {
         if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
@@ -2033,10 +2049,10 @@ scan_load() { # DIR
       for (i = 1; i <= assignments; i++)
         if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
       for (i = 1; i <= count; i++)
-        if (keep[i]) {
-          reader_lines[reader, ++reader_counts[reader]] = code[i]
-          reader_texts[reader] = reader_texts[reader] "\n" code[i]
-        }
+        if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
+      if (reader in reader_counts) reader_texts[reader] = join_lines(reader, 1, reader_counts[reader])
+      print_names("N", reader, file_names, file_name_count)
+      print_names("S", reader, file_sourced, file_sourced_count)
       return 1
     }
     $1 == "F" {
@@ -2115,8 +2131,8 @@ scan_load() { # DIR
     kind=${record%%$'\t'*}; record=${record#*$'\t'}
     i=${record%%$'\t'*}; value=${record#*$'\t'}
     case "$kind" in
-      N) SCAN_NAMES[i]+="$nl$value$nl" ;;
-      S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
+      N) SCAN_NAMES[i]=" $value " ;;
+      S) SCAN_SOURCED[i]=" $value " ;;
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
       W) SCAN_ROW_QUERIES[i]=$value ;;
@@ -2466,7 +2482,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
       hit=0
       for n in ${any[@]+"${any[@]}"}; do
         [ "$n:${SCAN_ROLE[i]}" != "$folder:test-program" ] || continue
-        if [[ $names == *"$nl/$n$nl"* ]]; then
+        if [[ $names == *" /$n "* ]]; then
           hit=1
           break
         fi
@@ -2477,7 +2493,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
           *) names=${SCAN_SOURCED[i]} ;;
         esac
         for n in ${scripts[@]+"${scripts[@]}"}; do
-          if [[ $names == *"$nl/$n$nl"* ]]; then
+          if [[ $names == *" /$n "* ]]; then
             hit=1
             break
           fi
