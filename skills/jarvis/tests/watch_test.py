@@ -2616,25 +2616,31 @@ with open(sys.argv[1], "ab") as out:
         # tells nobody; or a loop that restarts and tells the owner on every
         # pass, or again after a restart that failed, or again each time a
         # restarted controller exits; or a recorded Start failure reported as
-        # a refused read.
-        ended = {"state": "stopped", "reason": "ended", "harness": "claude", "account": "/accounts/a"}
+        # a refused read; or a success notice still owed, or an exit of
+        # another controller than the restarted one, that keeps an exit down.
+        ended = {"state": "stopped", "reason": "ended", "harness": "claude", "account": "/accounts/a",
+                 "controller": {"session_id": "s1", "pane": "%3", "server_start": 1790000000}}
         running = dict(ended, state="running", reason="resumed")
         starting = dict(ended, state="starting", reason="launching")
         signed_out = dict(ended, state="blocked", reason="sign-in-required")
         moved = dict(running, account="/accounts/b", reason="new-requested")
         spent = dict(ended, state="failed", reason="handover-failed", detail="No account is left to take over.")
         resume = "start --home {home} --harness claude --account /accounts/a --mode resume --origin manual --keep-brief"
-        unread = {"state": "blocked", "reason": "record-unreadable", "harness": None, "account": None, "unread": True}
-        first_start_failed = dict(signed_out, harness=None, account=None, unread=False,
+        unread = {"state": "blocked", "reason": "record-unreadable", "harness": None, "account": None, "unread": True,
+                  "controller": None}
+        first_start_failed = dict(signed_out, harness=None, account=None, unread=False, controller=None,
                                   detail="Sign in to the chosen account and retry Start.")
         succeed = "succeed --home {home} --exited"
+        # A controller the owner started after the restart, on another harness.
+        other = dict(ended, harness="codex", controller={"session_id": "s2", "pane": "%5", "server_start": 1790000000})
+        other_resume = resume.replace("claude", "codex")
         # Each row: Start's and succeed's answers with their exits (None: no
         # answer), its world, then one step per watch pass: the status it
         # reads, the session calls it adds, the words of each owner notice it
         # adds, and the root-unreachable events it adds. The world names how
         # many notices lane-mail refuses first, the steps whose wall read
-        # binds a live controller, and a step's time where it is not 30
-        # seconds a step.
+        # binds a live controller, the steps whose wall read the runtime
+        # refuses, and a step's time where it is not 30 seconds a step.
         for name, start, succession, world, steps in (
                 # An exit past the 300 seconds after the restart ran is another one.
                 ("resumed", (running, 0), (None, 1), dict(at={2: 330}),
@@ -2664,6 +2670,21 @@ with open(sys.argv[1], "ab") as out:
                  [(ended, [resume, succeed], [["did not start", "resume", "succeed"]], 0), (ended, [], [], 0)]),
                 ("notice unsent", (running, 0), (None, 1), dict(refusals=1),
                  [(ended, [resume], [], 1), (running, [], [["/accounts/a", "resumed"]], 0), (running, [], [], 0)]),
+                # An exit while the success notice is owed is told in its
+                # place, and the window's end starts nothing.
+                ("exits while its notice is owed", (running, 0), (None, 1), dict(refusals=1, at={2: 400}),
+                 [(ended, [resume], [], 1), (ended, [], [["/accounts/a", "exited again", "not started again"]], 0),
+                  (ended, [], [], 0)]),
+                # A Stop, with no running reading before it, ends the exit:
+                # the controller started after it is not the restarted one.
+                ("stopped and started again", (running, 0), (None, 1), {},
+                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (dict(ended, reason="stopped"), [], [], 0),
+                  (dict(other, state="running", reason="resumed"), [], [], 0),
+                  (other, [other_resume], [["codex", "resumed"]], 0)]),
+                # Another controller's exit inside the window is its own.
+                ("another controller", (running, 0), (None, 1), {},
+                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (running, [], [], 0),
+                  (other, [other_resume], [["codex", "resumed"]], 0)]),
                 ("stopped on purpose", (running, 0), (moved, 0), {},
                  [(dict(ended, reason="stopped"), [], [], 0), (dict(ended, state="off", reason="app-off"), [], [], 0)]),
                 ("never started", (running, 0), (moved, 0), {},
@@ -2671,7 +2692,11 @@ with open(sys.argv[1], "ab") as out:
                 # A first Start that failed before any controller launched is
                 # a status read that worked.
                 ("first start failed", (running, 0), (moved, 0), {},
-                 [(first_start_failed, [], [], 0), (first_start_failed, [], [], 0)])):
+                 [(first_start_failed, [], [], 0), (first_start_failed, [], [], 0)]),
+                # One refusal of both status reads in a check reports once.
+                # Last: the refusing runtime stays installed for later rows.
+                ("status refused on both reads", (starting, 0), (None, 1), dict(refused={1, 2}),
+                 [(ended, [resume], [], 0), (unread, [], [], 1), (unread, [], [], 0)])):
             with self.subTest(row=name):
                 # Each row's own home: the mailbox refuses an owner notice
                 # whose text it delivered within the last 24 hours.
@@ -2695,6 +2720,14 @@ with open(sys.argv[1], "ab") as out:
                             plant("status", status)
                             if index in world.get("bound", ()):
                                 self.controller("s1", "/accounts/a", {"event": "Stop"})
+                            elif index in world.get("refused", ()):
+                                # The runtime refuses every status read, as the
+                                # wrapper does before its setup has run.
+                                self.controller("s1", "/accounts/a", {"event": "Stop"}, runtime=False)
+                                refusing = self.packages / "agent-runtime/scripts/agent-runtime"
+                                refusing.write_text("#!/bin/sh\necho 'agent-runtime: setup-required key=fixture run=setup' >&2\n"
+                                                    "exit 69\n")
+                                refusing.chmod(0o755)
                             elif self.root.joinpath("status.json").exists():
                                 # The planted runtime reads the controller gone.
                                 gone = json.loads(self.root.joinpath("status.json").read_text())
@@ -2703,7 +2736,9 @@ with open(sys.argv[1], "ab") as out:
                             self.exited_passes(watch, world.get("at", {}).get(index, 30 * index))
                             made += [call.format(home=self.home) for call in added]
                             self.assertEqual(set(calls(status=True)), {"status --home {} --mark-unread".format(self.home)})
-                            self.assertEqual("exited_failure" in watch.state, bool(status.get("unread")), watch.state)
+                            self.assertEqual("exited_failure" in watch.state,
+                                             bool(status.get("unread")) and index not in world.get("refused", ()),
+                                             watch.state)
                             told += named
                             alerts += alerted
                             self.assertEqual(calls(), made)

@@ -1389,7 +1389,7 @@ def main():
         if verb == "status":
             # The default answer's key set is the VGS-1439 contract; --main is a separate shape.
             command.add_argument("--main", action="store_true")
-            # The watch loop's read: it adds `unread` to that key set.
+            # The watch loop's read: it adds `unread` and `controller` to that key set.
             command.add_argument("--mark-unread", action="store_true")
         elif verb == "forward-drain":
             # The watch-loop's own drain, whose reach status --main reports.
@@ -1491,6 +1491,7 @@ def main():
     # A status read that worked answers the record, a recorded Start failure
     # included; only a read status could not make is unread.
     unread = False
+    status = None
     try:
         if args.verb == "start":
             answer, code = session.start(args)
@@ -1513,7 +1514,8 @@ def main():
             answer, code = session.resume()
         else:
             record = session.read()
-            answer, code = session.answer(record, session.status(allow_unstarted=record is None)), 0
+            status = session.status(allow_unstarted=record is None)
+            answer, code = session.answer(record, status), 0
             if answer["terminal"]:
                 print("jarvis-session: attach=" + shlex.quote(str(ENTRY)) + " attach --home " + shlex.quote(session.home),
                       file=sys.stderr)
@@ -1530,7 +1532,12 @@ def main():
         code = 0 if args.verb == "status" else 1
         unread = True
     if args.verb == "status" and args.mark_unread:
+        # The recorded controller's identity, so the loop tells the
+        # controller a restart started from one started after it.
+        recorded = (status or {}).get("recorded") or {}
         answer["unread"] = unread
+        answer["controller"] = None if unread or not recorded else {
+            key: recorded.get(key) for key in ("session_id", "pane", "server_start")}
     if not session.emitted:
         session._emit(answer)
     return code

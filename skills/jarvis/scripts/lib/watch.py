@@ -1237,9 +1237,15 @@ class Watch:
         stopped and ended. Its exit is one episode: one resume, one succeed
         where that resume is refused, and one owner notice of the outcome.
         A restart that runs holds the episode for LIVE_SECS after it ran: an
-        exit read inside that window ends it as failed with one more notice
-        and no restart, so a controller that exits on every resume is not
-        restarted in a loop. A failed one ends once a controller runs again."""
+        exit read inside that window, its success notice sent or still owed,
+        ends it as failed, with one notice of that outcome and no restart, so
+        a controller that exits on every resume is not restarted in a loop.
+        A failed one ends once a controller runs again.
+
+        The episode is the restarted controller's: the first running reading
+        after the restart ran binds its identity. An asked Stop, or a reading
+        of another controller, ends the episode once its notice is sent, so
+        an exit of a controller the owner started is its own."""
         if isinstance(answer, Failure):
             self.failed_pass("exited", answer.record)
             return None
@@ -1251,6 +1257,19 @@ class Watch:
             return None
         self.state.pop("exited_failure", None)
         memory = self.state.get("exited")
+        reading, identity = (answer.get("state"), answer.get("reason")), answer.get("controller")
+        if memory is not None and memory.get("ran") and memory.get("controller") is None and reading[0] == "running":
+            memory["controller"] = identity
+            self.save()
+        if memory is not None and (reading == ("stopped", "stopped")
+                                   or memory.get("controller") is not None and memory["controller"] != identity):
+            if memory["outcome"] is not None and not memory["noticed"]:
+                self.tell_exited(memory)
+                if not memory["noticed"]:
+                    return None
+            del self.state["exited"]
+            self.save()
+            memory = None
         if memory is not None and memory.get("ran") and memory["noticed"] and now - memory["ran_at"] >= LIVE_SECS:
             # The restart outlived its window: a later exit is another one.
             del self.state["exited"]
@@ -1267,15 +1286,17 @@ class Watch:
             self.state["exited"] = memory
             self.save()
             return memory
+        if memory.get("ran") and reading == ("stopped", "ended"):
+            # The owner's one notice names this outcome, never a success
+            # still owed from before it.
+            memory.update(ran=False, noticed=False, outcome=(
+                "It started again on " + (answer.get("account") or "its default account")
+                + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
+            self.save()
+            self.tell_exited(memory)
+            return None
         if memory["noticed"]:
-            if memory.get("ran"):
-                if (answer.get("state"), answer.get("reason")) == ("stopped", "ended"):
-                    memory.update(ran=False, noticed=False, outcome=(
-                        "It started again on " + (answer.get("account") or "its default account")
-                        + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
-                    self.save()
-                    self.tell_exited(memory)
-            elif answer.get("state") == "running":
+            if not memory.get("ran") and reading[0] == "running":
                 del self.state["exited"]
                 self.save()
             return None
@@ -1720,8 +1741,12 @@ class Watch:
                 reading = wall[1].result()
                 kind = self.accept_wall(reading, now)
                 # A wall read that binds no live controller, or an exit's
-                # episode still open, reads the recorded one's status.
-                if self.exited_pending is None and (reading is None or "exited" in self.state):
+                # episode still open, reads the recorded one's status. A
+                # wall read whose status read was refused, or found no
+                # package that read needs, already reported this pass's
+                # controller status failure: the exit read would report it again.
+                unread = isinstance(reading, Failure) and reading.record["key"][1:] == ["refusal", "dependency"]
+                if self.exited_pending is None and (reading is None or "exited" in self.state and not unread):
                     self.exited_pending = ("read", passes.submit(self.exited))
                 if kind is not None:
                     usage = []

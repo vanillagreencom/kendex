@@ -837,6 +837,16 @@ class SessionContract(unittest.TestCase):
             self.fail(verb + " exit=" + str(result.returncode) + " answered " + result.stdout + result.stderr
                       + "\n" + self.diagnostics())
 
+    def marked(self):
+        """status --mark-unread's answer, its default key set checked once its
+        two added fields, unread and controller, are taken out beside it."""
+        result = subprocess.run([str(SCRIPT), "status", "--home", str(self.home), "--mark-unread"],
+                                env=self.env, capture_output=True, text=True, timeout=120)
+        answer = json.loads(result.stdout)
+        added = answer.pop("unread"), answer.pop("controller")
+        validate(json.dumps(answer), result.returncode, "status")
+        return (answer, *added)
+
     def wait(self, state="running", reason=None, seconds=90):
         deadline = time.monotonic() + seconds
         answer = None
@@ -934,6 +944,11 @@ print(json.dumps(session.terminal(status)))
         self.assertEqual(len(caller_panes), 1, "the caller's server took a window")
         launched = self.started()
         self.assertEqual(len(launched), 1)
+        # The watch loop's read names the controller by its native session
+        # and its pane.
+        _, unread, first_identity = self.marked()
+        self.assertEqual((unread, first_identity["session_id"], first_identity["pane"]),
+                         (False, launched[0]["id"], first["terminal"]["pane"]))
         self.assertEqual((launched[0]["cwd"], launched[0]["account"]), (str(self.home), str(self.account)))
         # Jarvis acts on the owner's desktop: its session keeps the live display.
         self.assertEqual(launched[0]["display"], ["fixture-wayland", ":fixture"])
@@ -962,13 +977,18 @@ print(json.dumps(session.terminal(status)))
         self.wait(reason="resumed")
         resumed = self.started()[-1]["argv"]
         self.assertEqual(resumed[resumed.index("--resume") + 1], launched[0]["id"])
+        # A resume of the same conversation is another controller.
+        self.assertNotEqual(self.marked()[2], first_identity)
         self.call("stop")
         self.wait("stopped", "stopped")
         self.call("start", mode="new")
         self.wait(reason="new-requested")
         self.assertNotEqual(self.started()[-1]["id"], launched[0]["id"])
+        running_identity = self.marked()[2]
         os.kill(self.started()[-1]["pid"], signal.SIGKILL)
         self.wait("stopped", "ended", seconds=30)
+        # The exited controller is named as it was while it ran.
+        self.assertEqual(self.marked()[1:], (False, running_identity))
 
     def test_stop_and_off_during_start_end_the_pending_controller(self):
         scoped_tmux = reached_through_path(self.root)
@@ -1435,11 +1455,9 @@ print(json.dumps(session.terminal(status)))
                 ("unreadable record", {"v": 3, "home": str(self.home), "origin": "manual"}, True)):
             with self.subTest(row=name):
                 self.record.write_text(json.dumps(record))
-                result = subprocess.run([str(SCRIPT), "status", "--home", str(self.home), "--mark-unread"],
-                                        env=self.env, capture_output=True, text=True, timeout=120)
-                answer = json.loads(result.stdout)
-                self.assertIs(answer.pop("unread"), unread, answer)
-                validate(json.dumps(answer), result.returncode, "status")
+                answer, marked, controller = self.marked()
+                # Neither row records a controller to name.
+                self.assertEqual((marked, controller), (unread, None), answer)
 
     def test_status_without_setup_or_record(self):
         self.assertFalse(self.record.exists())
