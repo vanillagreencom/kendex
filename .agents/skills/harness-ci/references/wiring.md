@@ -386,6 +386,8 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 The producer reads the event's base workflow. Push derivation needs runner proof of the default branch and endpoints. Keep the template's per-lane outputs and job gates. Jobs sharing an output share a verdict. Keep gated prerequisites. On eligible runs, a shared input or possible overlap keeps every lane, as do shared root config and checkout attributes. Unreadable per-lane wiring keeps coverage. The docs, trivial and event waivers still apply.
 
+A lane job that runs on one event only joins a literal event test after the status function: `${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}`. The test limits the events the job runs on, and the lane's verdict is the same on every event. A gate that drops the `result != 'success'` fallback leaves the roster unreadable with `cause=unsupported-lane-gate`.
+
 Map the job's `lanes` output directly from the classifier. To narrow it with a Boolean step output, use `${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.classify.outputs.lanes }}`. Use the IDs and output names from your workflow.
 
 Bind `LANE_VERDICTS` to the classifier's `lane_verdicts` output and forward it with `printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"`. Map each `lane_<name>` job output from that step. The step can follow the forwarding line with this queue deferral block. Bind `QUEUE_ONLY` to the classifier's `queue_only` output and `EVENT` to `github.event_name`. Use literal lane names in the overrides.

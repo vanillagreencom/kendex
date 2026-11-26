@@ -353,6 +353,23 @@ workflow-env-bash-env-blank|  BASH_ENV: ./tools/env.sh\n|  BASH_ENV: ./tools/env
 workflow-env-option|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: -C link-arg=-Tlink.x\n
 workflow-defaults|\nenv:\n|\ndefaults:\n  run:\n    working-directory: tools\nenv:\n
 ROWS
+# HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
+# unguarded copy drops the classifier-failure fallback.
+for shape in event-gate event-gate-unguarded; do
+  git -C "$repo" checkout -qb "fixture-$shape" "$static_base"
+  python3 - "$repo/.github/workflows/ci.yml" "$shape" <<'PY'
+from pathlib import Path
+import sys
+path, shape = Path(sys.argv[1]), sys.argv[2]
+old = "${{ !cancelled() && (needs.changes.result != 'success' || ("
+new = "${{ !cancelled() && github.event_name == 'merge_group' && (" + (
+    "(" if shape == "event-gate-unguarded" else "needs.changes.result != 'success' || (")
+source = path.read_text()
+assert old in source
+path.write_text(source.replace(old, new))
+PY
+  git -C "$repo" commit -qam "$shape"
+done
 # A consumer whose Rust and Vitest jobs the reader refuses keeps a reasoned
 # claim for each, beside a shell lane it proves. The Vitest job reads a file
 # before the step the reader refuses.
@@ -1072,7 +1089,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
     workflow-env|workflow-env-sourced|workflow-env-config|workflow-env-claimed) base="$workflow_env_base" ;;
-    workflow-env-*|workflow-defaults) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    workflow-env-*|workflow-defaults|event-gate*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
@@ -1298,6 +1315,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
       refusal='opaque-workflow-env key=BASH_ENV path=/home/runner/work/R/R/tools/env.sh' ;;
     workflow-env-bash-env-blank) refusal="opaque-workflow-env key=BASH_ENV path='./tools/env ci.sh'" ;;
     workflow-defaults) refusal=opaque-workflow-defaults ;;
+    event-gate-unguarded) refusal=unsupported-lane-gate ;;
   esac
   if [ -n "$refusal" ]; then
     for implementation in action local; do
@@ -1372,6 +1390,8 @@ workflow-env-bash-env-absolute|tools/input.sh||||
 workflow-env-bash-env-blank|tools/input.sh||||
 workflow-env-option|tools/input.sh||||
 workflow-defaults|tools/input.sh||||
+event-gate|tools/input.sh|true||false|false
+event-gate-unguarded|tools/input.sh||||
 agent-pair|.codex/agents/auditor.toml|true||false|false
 command-pair|.claude/commands/audit.md.disabled|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
