@@ -1427,11 +1427,12 @@ owner_comments_read() { # OUT ERR ITEM...
 # open question its thread ends at, or, at the top level, the ask of the
 # item's latest open question before it, and no ask otherwise. COMMENTS is a
 # `comments bulk-list` read, ASKS the open owner asks `pending` prints; one
-# JSON row per delivery, on stdout. A malformed read returns nonzero.
+# JSON row per delivery, on stdout. A malformed read returns nonzero, jq's
+# own status.
 owner_answer_rows() { # COMMENTS ASKS
   jq -se 'length == 1 and (.[0] | type == "object" and
       all(.[]; type == "array" and all(.[]; type == "object" and
-        all(.id, .body, .user_email, .created_at; type == "string"))))' "$1" >/dev/null || return 1
+        all(.id, .body, .user_email, .created_at; type == "string"))))' "$1" >/dev/null || return
   jq -cn --slurpfile comments "$1" --arg email "$OWNER_TRACKER_EMAIL" \
     --slurpfile asks "$2" "$OWNER_QUESTION_JQ"'
       def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
@@ -1454,12 +1455,23 @@ owner_answer_rows() { # COMMENTS ASKS
       | {ask: $q.ask, issue: $issue, comment: $row, replaced: $q.replaced, under: (($row.parent_id // "") != "")}'
 }
 
+# STATUS is a read step's exit status. 126 is the shell refusing to start the
+# command, such as an argument list past the kernel's limit, which no format
+# fault in the input explains; any other failure is CAUSE.
+owner_unread() { # STATUS CAUSE
+  if [[ "$1" -eq 126 ]]; then
+    echo 'KEN-3624-unread cause=exec' >&2
+  else
+    echo "KEN-3624-unread cause=$2" >&2
+  fi
+}
+
 owner_answers() {
   OWNER_TRACKER_READ=disabled
   OWNER_TRACKER_QUOTA=0
   owner_tracker_settings "$SCRIPT_DIR" || return 0
   OWNER_TRACKER_READ=unread
-  local items questions extra issue ask comment id rc repair description labels label cause current variables missing replacing ids=()
+  local items extra issue ask comment id rc repair description labels label cause current variables missing replacing ids=()
   if ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=asks' >&2; return 0
   fi
@@ -1470,10 +1482,9 @@ owner_answers() {
   if ! "$LANE_MAIL" events --item "$ITEM" --root "$ROOT" >"$WORK_DIR/tracker-events" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=asks' >&2; return 0
   fi
-  if ! replacing="$(jq -r "$OWNER_REPLACING_JQ"' select(.box == "to-overseer" and .kind == "ask" and .to == "owner"
-      and .replacement == "incomplete" and owner_replacing) | .id' "$WORK_DIR/tracker-events" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
-  fi
+  replacing="$(jq -r "$OWNER_REPLACING_JQ"' select(.box == "to-overseer" and .kind == "ask" and .to == "owner"
+      and .replacement == "incomplete" and owner_replacing) | .id' "$WORK_DIR/tracker-events" 2>"$WORK_DIR/tracker.err")" ||
+    { owner_unread $? asks-format; return 0; }
   if [[ -n "$replacing" ]]; then
     while IFS= read -r ask; do
       "$LANE_MAIL" replace --item "$ITEM" --root "$ROOT" --id "$ask" </dev/null >/dev/null 2>"$WORK_DIR/replace.err" || :
@@ -1485,15 +1496,12 @@ owner_answers() {
   fi
   # With no open question, no owner comment reaches an ask. A question a
   # chat ask replaced stands open with no posted ask beside it.
-  if ! questions="$(jq -cs "$OWNER_QUESTION_JQ"' owner_questions' "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
-  fi
-  [[ "$questions" != '[]' ]] || { OWNER_TRACKER_READ=read; return 0; }
-  if ! labels="$(jq -rs --arg label "$OWNER_TRACKER_LABEL" '
+  jq -cs "$OWNER_QUESTION_JQ"' owner_questions' "$WORK_DIR/tracker-asks" >"$WORK_DIR/tracker-questions" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? asks-format; return 0; }
+  [[ "$(<"$WORK_DIR/tracker-questions")" != '[]' ]] || { OWNER_TRACKER_READ=read; return 0; }
+  labels="$(jq -rs --arg label "$OWNER_TRACKER_LABEL" '
     map(select(.tracker_posted == true) | .tracker_label // $label) | unique[]' \
-    "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
-  fi
+    "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")" || { owner_unread $? asks-format; return 0; }
   : >"$WORK_DIR/tracker-item-lists"
   while IFS= read -r label; do
     [[ -n "$label" ]] || continue
@@ -1501,22 +1509,22 @@ owner_answers() {
       tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
       echo 'KEN-3624-unread cause=issues' >&2; return 0
     fi
-    if ! jq -sce '
+    jq -sce '
       if length == 1 and (.[0] | type == "array") then .[0] else error("owner-items-invalid") end
       | if all(.[]; type == "object" and (.id | type == "string")
           and (if has("assignee") then .assignee | type == "string" else true end)
           and (.description == null or (.description | type == "string")))
         then . else error("owner-items-invalid") end' \
-      <<<"$items" >>"$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err"; then
-      echo 'KEN-3624-unread cause=issues-format' >&2; return 0
-    fi
+      <<<"$items" >>"$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err" ||
+      { owner_unread $? issues-format; return 0; }
   done <<<"$labels"
-  if ! items="$(jq -cs 'add // [] | unique_by(.id)' "$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
-  fi
+  # The listing carries every item's description, past the kernel's limit
+  # for one argument in a large workspace: each read below takes it by file.
+  jq -cs 'add // [] | unique_by(.id)' "$WORK_DIR/tracker-item-lists" >"$WORK_DIR/tracker-items" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? issues-format; return 0; }
   # An ask is on a listed item where their tracker identities agree; an ask
   # recorded before asks carried one is matched by its item ref as written.
-  if ! jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
+  jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
     def owner_item($item): if (.identity.uuid | type) == "string" then .identity.uuid == $item.uuid else .issue == $item.id end;
     .[] | . as $item
     | ([$asks[] | select(.tracker_posted == true and owner_item($item) and (.do // "") != "")] | last) as $ask
@@ -1525,9 +1533,8 @@ owner_answers() {
         then null
         elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do))
         else error("owner-assignee-unavailable") end)}' \
-    <<<"$items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err"; then
-    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
-  fi
+    "$WORK_DIR/tracker-items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? issues-format; return 0; }
   while IFS= read -r repair; do
     issue="$(jq -r '.id' <<<"$repair")" || return 1
     ask="$(jq -r '.ask' <<<"$repair")" || return 1
@@ -1540,11 +1547,12 @@ owner_answers() {
       fi
       # A write receipt cannot prove the description landed.
       variables="$(jq -cn --arg id "$issue" '{id: $id}')" || return 1
+      printf '%s' "$description" >"$WORK_DIR/tracker-description" || return 1
       if current="$("$TRACKER" graphql --query 'query OwnerItem($id: String!) { issue(id: $id) { identifier description } }' \
           --variables "$variables" 2>"$WORK_DIR/tracker.err")"; then
         if ! jq -e '(.issue.identifier | type == "string") and (.issue.description == null or (.issue.description | type == "string"))' <<<"$current" >/dev/null 2>&1; then
           cause=tracker-list-invalid
-        elif ! jq -e --arg id "$issue" --arg description "$description" \
+        elif ! jq -e --arg id "$issue" --rawfile description "$WORK_DIR/tracker-description" \
             '.issue.identifier == $id and .issue.description == $description' <<<"$current" >/dev/null 2>&1; then
           cause=unlanded
         fi
@@ -1564,21 +1572,21 @@ owner_answers() {
   # for any other ref (linear_issue_refs), so an unlisted item known only by
   # another ref, a UUID an ask recorded before asks carried an identity, is
   # named on stderr and left unread, and the other items are read.
-  if ! extra="$(jq -rn --argjson listed "$items" --argjson questions "$questions" '
-      [$questions[].item | objects | select((.ref | type) == "string")
-        | . as $item | select(all($listed[]; (.id | ascii_upcase) != ($item.ref | ascii_upcase) and .uuid != $item.ref
+  jq -c 'map({id, uuid})' "$WORK_DIR/tracker-items" >"$WORK_DIR/tracker-listed" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? issues-format; return 0; }
+  extra="$(jq -rn --slurpfile listed "$WORK_DIR/tracker-listed" --slurpfile questions "$WORK_DIR/tracker-questions" '
+      [$questions[0][].item | objects | select((.ref | type) == "string")
+        | . as $item | select(all($listed[0][]; (.id | ascii_upcase) != ($item.ref | ascii_upcase) and .uuid != $item.ref
             and (($item.uuid | type) != "string" or .uuid != $item.uuid)))
         | .ref] | unique[]
-      | if test("\\A[A-Za-z0-9]+-[0-9]+\\z") then . else "skip " + . end' 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=asks-format' >&2; return 0
-  fi
+      | if test("\\A[A-Za-z0-9]+-[0-9]+\\z") then . else "skip " + . end' 2>"$WORK_DIR/tracker.err")" ||
+    { owner_unread $? asks-format; return 0; }
   while IFS= read -r issue; do
     [[ "$issue" != skip\ * ]] || printf 'owner-answers: item-unreadable issue=%s cause=ref-form\n' "${issue#skip }" >&2
   done <<<"$extra"
   extra="$(grep -v '^skip ' <<<"$extra")" || extra=""
-  if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
-  fi
+  items="$(jq -r '.[].id' "$WORK_DIR/tracker-listed" 2>"$WORK_DIR/tracker.err")" ||
+    { owner_unread $? issues-format; return 0; }
   [[ -z "$extra" ]] || items="$items"$'\n'"$extra"
   while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
   [[ ${#ids[@]} -gt 0 ]] || { OWNER_TRACKER_READ=read; return 0; }
@@ -1587,10 +1595,8 @@ owner_answers() {
     tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
     echo 'KEN-3624-unread cause=comments' >&2; return 0
   fi
-  if ! owner_answer_rows "$WORK_DIR/tracker-comments" "$WORK_DIR/tracker-asks" \
-    >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
-    echo 'KEN-3624-unread cause=comments-format' >&2; return 0
-  fi
+  owner_answer_rows "$WORK_DIR/tracker-comments" "$WORK_DIR/tracker-asks" \
+    >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err" || { owner_unread $? comments-format; return 0; }
   while IFS= read -r comment; do
     ask="$(jq -r '.ask' <<<"$comment")" || return 1
     id="$(jq -r '.comment.id' <<<"$comment")" || return 1

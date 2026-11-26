@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # lane-mail's owner channel: the typed fields an overseer ask and notice carry,
 # `resolve` closing an owner ask exactly once, `--delivery-id` landing an ask or send
-# once under the lock, `events` reading both files, and `pending --to` and
-# `--due`. Each case builds an overseer checkout under TMP_ROOT and drives the
+# once under the lock, `events` reading both files, `pending --to` and
+# `--due`, and owner-answers over an owner listing past the kernel's limit for
+# one argument. Each case builds an overseer checkout under TMP_ROOT and drives the
 # real script; the lane-side verbs are tests/lane-mail.sh. The must-fail
 # controls close the file, one per rule, each a copy of lane-mail or the
 # library it sources with that rule removed: the one resolution, the delivery
@@ -1115,6 +1116,83 @@ printf 'interrupted\n' >> "$BOX/to-overseer.jsonl"
 lm events --item overseer
 assert_eq "$RC=$(jq -r 'select(.box == "to-overseer") | "\(.line)/\(.count)"' <<<"$OUT" | paste -sd, -)" "0=1/5,4/5" \
   "events keeps physical offsets and counts across filtered lines left by an interrupted writer"
+
+# --- owner-answers over a large owner listing ----------------------------------
+# The lane holds a whole copy of the mailbox package and a tracker fixture where
+# that copy finds the optional Linear skill, so no row reaches a real tracker.
+# The fixture lists the owner's labelled items with every description, as
+# `issues list --format=safe` does.
+new_repo owner_listing
+rm -- "$LANE/.agents/skills/mailbox/scripts"
+cp -R "$REPO_ROOT/skills/mailbox/." "$LANE/.agents/skills/mailbox/"
+OWNER_MAIL="$LANE/.agents/skills/mailbox/scripts/lane-mail"
+TRACKER_DIR="$LANE/.agents/skills/linear/scripts"
+mkdir -p "$TRACKER_DIR"
+cat > "$TRACKER_DIR/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+FIXTURE="${BASH_SOURCE[0]%/*}"
+case "$1:$2" in
+  users:list) printf '[{"id":"owner","name":"Owner","email":"owner@example.test","display_name":"owner"}]\n' ;;
+  teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
+  issues:list) cat "$FIXTURE/items" ;;
+  issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\n' "$3" "$3" ;;
+  issues:update) printf '{}\n' ;;
+  graphql:--query)
+    case "$3" in
+      'query OwnerTrackerComment('*)
+        printf '%s\n' '{"comment":{"bodyData":"{\"type\":\"doc\",\"content\":[{\"type\":\"suggestion_userMentions\",\"attrs\":{\"id\":\"owner\"}}]}"}}' ;;
+      'query OwnerTracker('*) printf '{"issue":{"description":"Body","assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}\n' ;;
+      *) exit 1 ;;
+    esac ;;
+  comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\n' ;;
+  comments:react) printf '{"success":true,"data":{"reaction":{"emoji":"eyes"}}}\n' ;;
+  comments:bulk-list) cat "$FIXTURE/comments" ;;
+  *) exit 1 ;;
+esac
+SH
+chmod +x "$TRACKER_DIR/linear.sh"
+# KEN-7 already opens with its action line, so the pass repairs no description.
+jq -cn '[{id: "KEN-7", uuid: "uuid-KEN-7", assignee: "Owner",
+    description: "**Owner, what you do:** Approve change\n\nBody"}]
+  + [range(100; 165) | {id: "KEN-\(.)", uuid: "uuid-KEN-\(.)", assignee: "Owner", description: ("Long body. " * 300)}]' \
+  > "$TRACKER_DIR/items"
+jq -cn '{"KEN-7": [{id: "question", body: "Question", user_email: "bot@example.test", created_at: "2026-01-02T00:00:00Z"}]}' \
+  > "$TRACKER_DIR/comments"
+owner_listing() { # ARGS... — lm through the lane's copy, owner tracker settings set.
+  ORCH_OWNER_EMAIL=owner@example.test ORCH_OWNER_ASK_LABEL=owner-gated LANE_MAIL_BIN="$OWNER_MAIL" lm "$@"
+}
+owner_listing ask --item overseer --to owner --issue KEN-7 --do 'Approve change' --options approve,hold \
+  --recommend approve --effect none --file "$(text listing-q 'Approve this change?')"
+LISTING_ASK="${OUT#id=}"
+assert_eq "$RC=$(jq -r 'select(.kind == "tracker-posted") | .re' < "$BOX/to-overseer.jsonl")" "0=$LISTING_ASK" \
+  "the item ask posts its question to the tracker fixture"
+# The bound: Linux refuses one argument past MAX_ARG_STRLEN, 131072 bytes.
+LISTING_BYTES="$(wc -c < "$TRACKER_DIR/items" | tr -d ' ')"
+assert_eq "$((LISTING_BYTES > 131072))" 1 "the owner listing passes the one-argument limit"
+
+# A refused start reads as exec in the unread line the orch runtime's
+# owner_answers reads (`KEN-3624-unread cause=`), not as a format fault. The
+# wrapper refuses only the open-questions read, as the kernel refuses an
+# oversized argument.
+REAL_JQ="$(command -v jq)"
+mkdir -p "$TMP_ROOT/jq-refused"
+printf '#!/usr/bin/env bash\n[[ "$1" != -cs || "${2:-}" != *" owner_questions" ]] || exit 126\nexec %q "$@"\n' "$REAL_JQ" \
+  > "$TMP_ROOT/jq-refused/jq"
+chmod +x "$TMP_ROOT/jq-refused/jq"
+PATH="$TMP_ROOT/jq-refused:$PATH" owner_listing owner-answers --item overseer
+assert_eq "$RC=${OUT##*$'\n'}=$(grep '^KEN-3624-unread ' "$TMP_ROOT/err")" \
+  "0=owner-answers: read=unread=KEN-3624-unread cause=exec" "a read the shell cannot start is unread with cause exec"
+
+jq -c '.["KEN-7"] += [{id: "answer", body: "Approved.", user_email: "owner@example.test", created_at: "2026-01-03T00:00:00Z"}]' \
+  "$TRACKER_DIR/comments" > "$TRACKER_DIR/comments.next"
+mv -- "$TRACKER_DIR/comments.next" "$TRACKER_DIR/comments"
+owner_listing owner-answers --item overseer
+assert_eq "$RC=${OUT##*$'\n'}=$(cat "$TMP_ROOT/err")" "0=owner-answers: read=read=" \
+  "a listing past the argument limit is read, with nothing on stderr"
+owner_listing inbox --item overseer --peek
+assert_eq "$RC=$(jq -rR 'fromjson? | objects | select(.kind == "answer") | [.re, .text] | join(":")' <<<"$OUT")" \
+  "0=$LISTING_ASK:Approved." "the owner's answer on the item reaches the ask"
 
 # --- controls, one per rule ---------------------------------------------------
 # mutant NAME OLD NEW — a private lane-mail with OLD, which occurs once,
