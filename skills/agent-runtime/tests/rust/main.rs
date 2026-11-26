@@ -190,8 +190,8 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     .unwrap();
     let process_only = dir.path().join("process-only.txt");
     std::fs::write(&process_only, "Copilot v1.0.109 uses AI.\n").unwrap();
-    // pi-qol screens a shipped setting or state draws, each one substitution
-    // away from a real capture.
+    // Pi screens that a shipped setting or state draws, derived from real
+    // captures by text substitution.
     let derive = |name: &str, base: &str, from: &str, to: &str| {
         assert_eq!(base.matches(from).count(), 1, "{name}: {from:?}");
         let path = dir.path().join(name);
@@ -232,13 +232,15 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     );
     // Transcript text that looks like the status line over a `π` composer,
     // with Pi's selector drawn where the composer stands.
-    assert_eq!(qol_idle.matches("\ndone\n").count(), 1);
+    assert_eq!(qol_idle.matches("\nπ\n").count(), 1);
     let qol_selector = derive(
         "qol-selector.txt",
-        &qol_idle.replacen("\ndone\n", "\nProgress: 97%\nπ approximation\n", 1),
-        "\nπ\n",
-        &format!("\n{tree}"),
+        &qol_idle.replacen("\nπ\n", &format!("\n{tree}"), 1),
+        "\ndone\n",
+        "\nProgress: 97%\nπ\n",
     );
+    // A draft in pi-qol's composer, which a paste would submit with it.
+    let qol_draft = derive("qol-draft.txt", &qol_idle, "\nπ\n", "\nπ hello\n");
     let ask = |screen: &std::path::Path, harness: &str| {
         reply_of(&[
             "judge".as_ref(),
@@ -252,6 +254,7 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
         (qol_unread, "pi", "idle", true, None),
         (qol_child, "pi", "idle", true, None),
         (qol_selector, "pi", "unjudged", false, None),
+        (qol_draft, "pi", "unjudged", false, None),
         (pi_hidden, "pi", "working", true, None),
     ]
     .into_iter()

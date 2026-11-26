@@ -315,10 +315,12 @@ static PI_WORKING_BORDER: LazyLock<Regex> =
 /// session has a name (Pi 1.6.1 `modes/interactive/components/footer.js`).
 static PI_PROMPT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[~/]\S*( \(.+\))?( • .+)?\s*$").unwrap());
-/// pi-qol's compact composer, which replaces Pi's editor: `π`, then a space
-/// and the draft once one is typed (pi-qol `qol/editor.ts`,
-/// `QolCompactPromptEditor`).
-static QOL_PROMPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^π( |$)").unwrap());
+/// pi-qol's compact composer, which replaces Pi's editor, with no draft in
+/// it: pi-qol draws `π ` and then the draft (pi-qol `qol/editor.ts`,
+/// `QolCompactPromptEditor`), and a capture drops the trailing space when no
+/// draft is typed. A paste into a composer that holds a draft submits the
+/// draft with it, so a `π` row with a draft is not read as this composer.
+static QOL_PROMPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^π\s*$").unwrap());
 /// pi-qol's status line, drawn above its composer in place of Pi's footer:
 /// it ends with the context left, `<n>%` or `…%` before any reading, then,
 /// in a subagent, two spaces and its name cut to 24 columns (pi-qol
@@ -566,11 +568,12 @@ pub fn is_working(slice: &str) -> bool {
 /// Whether Pi's editor border, or pi-qol's status line, says a turn is
 /// running.
 ///
-/// Pi also reports a running turn as Program Status (OSC 7501), but sends it
-/// only to a terminal that answers the protocol's query, and tmux forwards
-/// none of it (Pi 1.6.1's terminal setup document, § Program status). A tmux
-/// pane capture holds the cells drawn, never a sequence tmux consumed, so the
-/// pane read cannot see that report.
+/// Pi also reports a running turn as Program Status (OSC 7501). It sends the
+/// report once the terminal answers the protocol's query, or always under
+/// `PI_PROGRAM_STATUS=1`, and tmux forwards none of it (Pi 1.6.1's terminal
+/// setup document, § Program status). A tmux pane capture holds the cells
+/// drawn, never a sequence tmux consumed, so the pane read cannot see that
+/// report.
 pub fn pi_working(slice: &str) -> bool {
     slice.lines().any(|l| PI_WORKING_BORDER.is_match(l))
         || qol_status(slice).is_some_and(|status| QOL_TURN.is_match(status))
@@ -579,18 +582,14 @@ pub fn pi_working(slice: &str) -> bool {
 /// pi-qol's status line when its composer is drawn: the last `π` line, with
 /// the status line the first row above it that is no panel row. Any other
 /// row there, a blank one included, is a drawing this rule does not know,
-/// and settles nothing. Below a live composer stand only its blank padding
-/// rows and the rows it indents by the width of `π `: a draft's further
-/// lines and the completion list. Any other row below means the `π` line is
-/// transcript text, with something else, such as a Pi selector, drawn where
-/// the composer stands.
+/// and settles nothing. Below an empty composer stand only its blank padding
+/// rows. A row below it is a draft's line, the completion list, or
+/// something else, such as a Pi selector, drawn where the composer stands
+/// under a `π` line of transcript text; each settles nothing.
 fn qol_status(slice: &str) -> Option<&str> {
     let lines: Vec<&str> = slice.lines().collect();
     let prompt = lines.iter().rposition(|l| QOL_PROMPT.is_match(l))?;
-    if !lines[prompt + 1..]
-        .iter()
-        .all(|l| l.trim().is_empty() || l.starts_with("  "))
-    {
+    if !lines[prompt + 1..].iter().all(|l| l.trim().is_empty()) {
         return None;
     }
     let status = *lines[..prompt]
@@ -629,7 +628,8 @@ pub fn pi_composer_drawn(slice: &str) -> bool {
 
 /// At rest the composers draw Claude's marker padded with U+00A0, Codex's
 /// `› ` line, Copilot's marker with a rule below it, and Pi's rule, prompt
-/// and footer. A shell prompt
+/// and footer, or under pi-qol its status line over its `π` composer. A
+/// shell prompt
 /// that happens to start with the marker, `❯ cd … && exec claude …` as the
 /// pane's shell echoes the launch line, matches none of them. Each rule
 /// reads a drawn row: the screen arrives row by row (`host::tmux::capture`),
