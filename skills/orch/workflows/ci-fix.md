@@ -99,6 +99,8 @@ git -C "[WORKTREE_PATH]" push
 - Apply [Delegation](../references/skill-rules.md#delegation) before each dev or integration-analysis delegation.
 - A test failure in concurrent code that passes locally may be flaky. Check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a regression.
 
+Before the round is stamped, send it through the gate of [dev-fix.md § Base freshness](dev-fix.md#base-freshness), with `[WORKTREE_PATH]` as § 3.1's.
+
 Stamp the round immediately before delegating, each command as its own tool call. Apply the cleanup condition and arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure).
 
 1. Mint the CI token. The runtime stores it at `ci_round_id`; the reply's `.result.report.round_id` is the token.
@@ -119,7 +121,7 @@ Stamp the round immediately before delegating, each command as its own tool call
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"ci"}'
    ```
 
-Arm the watchdog with the CI token and accept the round as [Round Closure](../references/skill-rules.md#round-closure) states for CI rounds. `[WORKTREE_PATH]` is § 3.1's.
+Arm the watchdog with the CI token and accept the round as [Round Closure](../references/skill-rules.md#round-closure) states for CI rounds. `[WORKTREE_PATH]` is § 3.1's. After accepting the round, publish it through the guarded `record-push` `branch` request of **Push** step 2 in [review-pr-comments.md § 6.1](review-pr-comments.md#61-delegate-fixes), whatever `pr_order` reads.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
@@ -137,7 +139,7 @@ Worktree: [WORKTREE_PATH]
 3. Run the project's validation command from `[WORKTREE_PATH]`.
 4. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
 5. Stage and commit: `git -C [WORKTREE_PATH] add -A`, then `git -C [WORKTREE_PATH] commit -m "fix([ISSUE_ID]): [DESCRIPTION]"`, adding `-m "[validate: FAILING_CHECK]"` as the body, never to the header, when other failures remain.
-6. Push: `git -C [WORKTREE_PATH] push`.
+6. Never push: commit and return.
 
 Report: what was fixed, the validate status, and any unrelated failures.
 </delegation_format>
