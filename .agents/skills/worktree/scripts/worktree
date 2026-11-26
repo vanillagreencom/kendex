@@ -229,29 +229,60 @@ git_stored_history() {
     "${runner[@]}" --no-replace-objects -c advice.graftFileDeprecated=false "$@"
 }
 
-# The push wrapper selects the push-purpose credential for the deletion.
+# Binds origin's one push destination, which every read of an origin item
+# branch and its deletion reach: ORIGIN_PUSH_URL is that destination after
+# Git's URL rewrites, and ORIGIN_PUSH_ENDPOINT an alias mapped to it. Fails
+# where origin has no single push destination or the alias misses it.
+bind_origin_push() { # WT
+  local wt="$1" resolved=""
+  ORIGIN_PUSH_ENDPOINT="kendex-worktree-prune:$$"
+  # get-url returns the destination after Git's URL rewrites. Map an alias
+  # for discovery so Git never applies a second rewrite to that destination.
+  ORIGIN_PUSH_URL="$(git_with_bounded_github_https_auth -C "$wt" remote get-url --push --all origin)" &&
+    [[ -n "$ORIGIN_PUSH_URL" && "$ORIGIN_PUSH_URL" != *$'\n'* ]] &&
+    resolved="$(git -C "$wt" -c "url.$ORIGIN_PUSH_URL.insteadOf=$ORIGIN_PUSH_ENDPOINT" ls-remote --get-url -- "$ORIGIN_PUSH_ENDPOINT")" &&
+    [[ "$resolved" == "$ORIGIN_PUSH_URL" ]]
+}
+
+# Bounded git from WT with ORIGIN_PUSH_ENDPOINT mapped to the destination
+# bind_origin_push bound.
+origin_push_git() { # WT GIT-ARG...
+  local wt="$1"
+  shift
+  git_with_bounded_github_https_auth -C "$wt" -c "url.$ORIGIN_PUSH_URL.insteadOf=$ORIGIN_PUSH_ENDPOINT" "$@"
+}
+
+# The refs the bound push destination advertises for PATTERN...: one
+# `<oid>\t<ref>` row each, after a `ref: <target>\t<ref>` row for a symbolic
+# one. Protocol v2 advertises symbolic branch aliases. A server option forces
+# Git to refuse v0/v1, whose listing can omit the alias target.
+origin_push_refs() { # WT PATTERN...
+  local wt="$1"
+  shift
+  origin_push_git "$wt" -c protocol.version=2 ls-remote --refs --symref \
+    --server-option=kendex-ref-proof -- "$ORIGIN_PUSH_ENDPOINT" "$@"
+}
+
+# Delete REF on origin under a lease on OID. The push wrapper selects the
+# push-purpose credential for the deletion. DELETE_OUTPUT holds Git's output.
+delete_origin_ref() { # WT REF OID
+  DELETE_OUTPUT="$(git_with_bounded_github_https_auth -C "$1" push "--force-with-lease=$2:$3" origin ":$2" 2>&1)"
+}
+
 # Bound advisory transport so it can return the confirmed delivery receipt.
 prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
   local wt="$1" branch="$2" delivered="$3" ref="refs/heads/$2"
-  local url="" resolved="" rows="" oid="" output="" status=0
-  local endpoint="kendex-worktree-prune:$$"
+  local rows="" oid="" status=0
   [[ -n "$branch" && "$branch" != "$DEFAULT_BRANCH" && "$branch" != recovery/* ]] || return 0
   if ! declare -F kendex_github_run_bounded >/dev/null; then
     worktree_message push-base-item-read-failed "origin/$branch" "Bounded Git transport is unavailable. Keeping the origin item branch." >&2
     return 0
   fi
-  # get-url returns the destination after Git's URL rewrites. Map an alias
-  # for discovery so Git never applies a second rewrite to that destination.
-  if ! url="$(git_with_bounded_github_https_auth -C "$wt" remote get-url --push --all origin)" ||
-     [[ -z "$url" || "$url" == *$'\n'* ]] ||
-     ! resolved="$(git -C "$wt" -c "url.$url.insteadOf=$endpoint" ls-remote --get-url -- "$endpoint")" || [[ "$resolved" != "$url" ]]; then
+  if ! bind_origin_push "$wt"; then
     worktree_message push-base-item-read-failed "origin/$branch" "Could not bind discovery to one origin push destination. Keeping the item branch." >&2
     return 0
   fi
-  # Protocol v2 advertises symbolic branch aliases. A server option forces
-  # Git to refuse v0/v1, whose listing can omit the alias target.
-  rows="$(git_with_bounded_github_https_auth -C "$wt" -c "url.$url.insteadOf=$endpoint" \
-    -c protocol.version=2 ls-remote --refs --symref --server-option=kendex-ref-proof -- "$endpoint" "$ref" 2>&1)" || status=$?
+  rows="$(origin_push_refs "$wt" "$ref" 2>&1)" || status=$?
   if [[ "$status" != 0 ]]; then
     worktree_message push-base-item-read-failed "origin/$branch status=$status" "Could not verify whether the origin item ref is direct. Keeping the item branch." >&2
     return 0
@@ -263,12 +294,194 @@ prune_pushed_item_branch() { # WT BRANCH DELIVERED_OID
     worktree_message push-base-item-kept "origin/$branch" "The origin item ref is symbolic or its tip could not be proved reachable from the delivered commit. Keeping the branch." >&2
     return 0
   fi
-  output="$(git_with_bounded_github_https_auth -C "$wt" push \
-    "--force-with-lease=$ref:$oid" origin ":$ref" 2>&1)" || status=$?
+  delete_origin_ref "$wt" "$ref" "$oid" || status=$?
   if [[ "$status" != 0 ]]; then
     worktree_message push-base-item-delete-failed "origin/$branch status=$status" "Published the base, but Git could not confirm deletion of the origin item branch." >&2
-    [[ -z "$output" ]] || sed 's/^/  git: /' <<<"$output" >&2
+    [[ -z "$DELETE_OUTPUT" ]] || sed 's/^/  git: /' <<<"$DELETE_OUTPUT" >&2
   fi
+}
+
+# Git over the stored history alone (git_stored_history), reading no
+# configuration but its repository's own and no variable that points it at
+# another repository or object store. It reads no attribute file outside the
+# repository: neither the system file nor core.attributesFile, whose default
+# ($XDG_CONFIG_HOME/git/attributes) no GIT_CONFIG_GLOBAL setting removes.
+# Once release_scratch has set RELEASE_EMPTY_TREE, the empty tree is the
+# attribute source, so no .gitattributes a commit holds is read either. In
+# the release's scratch repository, which holds no configuration, attribute,
+# ref, graft or replacement, no merge driver, built-in ones such as union
+# included, can resolve a trial merge's conflict and no graft or replacement
+# adds a parent.
+isolated_git() ( # GIT-ARG...
+  unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_ATTR_SOURCE
+  export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
+  [[ -z "${RELEASE_EMPTY_TREE:-}" ]] || export GIT_ATTR_SOURCE="$RELEASE_EMPTY_TREE"
+  git_stored_history -c core.attributesFile=/dev/null "$@"
+)
+
+# The release's scratch repository, RELEASE_SCRATCH: bare, made from no
+# template, its objects the main checkout's through an alternate.
+# RELEASE_EMPTY_TREE is its empty tree, isolated_git's attribute source. The
+# release's EXIT trap removes it.
+release_scratch() {
+  local format=""
+  [[ "$PROJECT_COMMON_GIT_DIR" != *$'\n'* ]] || return 1
+  format="$(git -C "$PROJECT_ROOT" rev-parse --show-object-format)" || return 1
+  RELEASE_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/worktree-release.XXXXXX")" || return 1
+  isolated_git init -q --bare --template= "--object-format=$format" "$RELEASE_SCRATCH" >/dev/null &&
+    mkdir -p "$RELEASE_SCRATCH/objects/info" &&
+    printf '%s\n' "$PROJECT_COMMON_GIT_DIR/objects" >"$RELEASE_SCRATCH/objects/info/alternates" &&
+    RELEASE_EMPTY_TREE="$(isolated_git --git-dir="$RELEASE_SCRATCH" hash-object -t tree --stdin </dev/null)" &&
+    [[ -n "$RELEASE_EMPTY_TREE" ]]
+}
+
+release_scratch_remove() {
+  [[ -z "${RELEASE_SCRATCH:-}" ]] || rm -rf -- "${RELEASE_SCRATCH:?}"
+}
+
+# Sets BASE_HOLDS to whether the commit BASE holds the work of the commit TIP,
+# judged in the release's scratch repository: held where TIP is an ancestor
+# of BASE, or where a trial merge of TIP onto BASE writes BASE's own tree, as
+# a squash merge or a superseding change leaves it; unmerged otherwise;
+# `unread <step>` where a read did not answer.
+base_holds_tip() { # BASE TIP
+  local base="$1" tip="$2" rc=0 base_tree=""
+  isolated_git --git-dir="$RELEASE_SCRATCH" merge-base --is-ancestor "$tip" "$base" 2>/dev/null || rc=$?
+  case "$rc" in
+    0) BASE_HOLDS=held; return 0 ;;
+    1) ;;
+    *) BASE_HOLDS="unread is-ancestor status=$rc"; return 0 ;;
+  esac
+  merge_trial "$base" "$tip" isolated_git --git-dir="$RELEASE_SCRATCH"
+  case "$MERGE_TRIAL" in
+    clean) ;;
+    conflicts) BASE_HOLDS=unmerged; return 0 ;;
+    *) BASE_HOLDS="unread merge-tree"; return 0 ;;
+  esac
+  if ! base_tree="$(isolated_git --git-dir="$RELEASE_SCRATCH" rev-parse --verify --quiet "$base^{tree}")"; then
+    BASE_HOLDS="unread base-tree"
+  elif [[ "$MERGE_TRIAL_TREE" == "$base_tree" ]]; then
+    BASE_HOLDS=held
+  else
+    BASE_HOLDS=unmerged
+  fi
+}
+
+# The tip ROWS (origin_push_refs) advertise for REF, where REF is direct.
+listing_tip() { # ROWS REF
+  local row=""
+  while IFS= read -r row; do
+    case "$row" in
+      "ref: "*$'\t'"$2") return 1 ;;
+      *$'\t'"$2") printf '%s\n' "${row%%$'\t'*}"; return 0 ;;
+    esac
+  done <<<"$1"
+  return 1
+}
+
+# Seconds from the script's start within which the release may judge a
+# branch, and so start its delete. Past it, each branch not yet judged is
+# kept as `unread deadline`. A delete started before the budget ends within
+# one bounded Git call (git_with_bounded_github_https_auth: a 1Password read,
+# a token check and the operation, 10 s each), so a caller whose bound is
+# above the budget plus that call never ends the run after a delete and
+# loses its record. orch's close bounds the verb at RELEASE_TIMEOUT
+# (skills/orch/runtime/src/effects/lane_operation/worktree.rs).
+RELEASE_BUDGET=60
+
+# A read the release needed did not answer: no branch was judged or deleted.
+release_unread() { # CAUSE
+  worktree_message branch-release-unread "$1" "Kept every origin branch named for the item: a read judged none of them." >&2
+  exit 2
+}
+
+# Releases the origin branches named for ITEM (release-branches --help): one
+# stdout record per branch, deleted or kept with its cause.
+release_item_branches() { # ITEM
+  local item="$1" lower="" fetch_url="" rows="" lowered="" row="" low=""
+  local ref="" name="" tip="" symref="" base_ref="" base_tip="" status=0 i=0
+  local -a refs=() tips=() kinds=() wants=()
+  declare -F kendex_github_run_bounded >/dev/null || release_unread transport-unavailable
+  # The deletes' pre-push hooks must read the item tree's own settings.
+  read_committed_unexport || release_unread settings-unread
+  bind_origin_push "$PROJECT_ROOT" || release_unread origin-unbound
+  # orch's close checks the lane's repository against origin's fetch URL,
+  # and GitHub names the default branch of that repository: either speaks
+  # for the destination the deletes reach only where the two URLs agree.
+  # Read under the push URL's rewrites, so an SSH remote the GitHub route
+  # rewrites to HTTPS is compared in the same form.
+  fetch_url="$(git_with_bounded_github_https_auth -C "$PROJECT_ROOT" remote get-url --all origin)" ||
+    release_unread origin-unread
+  [[ -n "$fetch_url" && "$fetch_url" != *$'\n'* && "$fetch_url" == "$ORIGIN_PUSH_URL" ]] ||
+    release_unread origin-split
+  rows="$(origin_push_refs "$PROJECT_ROOT" 'refs/heads/*')" || release_unread "list-failed status=$?"
+  lower="$(printf '%s' "$item" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  lowered="$(printf '%s\n' "$rows" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  while IFS= read -r row && IFS= read -r low <&3; do
+    [[ -n "$row" ]] || continue
+    ref="${row#*$'\t'}"
+    [[ "$ref" != "$row" ]] || release_unread list-unread
+    if [[ "$row" == "ref: "* ]]; then
+      symref="$ref"
+      continue
+    fi
+    tip="${row%%$'\t'*}"
+    [[ "$tip" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || release_unread list-unread
+    # A pattern matches a ref's tail, so refs outside refs/heads/ can list.
+    name="${low#*$'\t'}"
+    name="${name#refs/heads/}"
+    # The ID in any case, bounded by '/', '-' or the name's ends.
+    if [[ "$ref" == refs/heads/?* && "/$name/" == *[/-]"$lower"[/-]* ]]; then
+      refs+=("$ref")
+      tips+=("$tip")
+      if [[ "$ref" == "$symref" ]]; then
+        kinds+=(symbolic)
+      elif [[ "$ref" == refs/heads/recovery/* ]]; then
+        kinds+=(recovery)
+      else
+        kinds+=(judged)
+        wants+=("$tip")
+      fi
+    fi
+    symref=""
+  done <<<"$rows" 3<<<"$lowered"
+  [[ ${#refs[@]} -gt 0 ]] || return 0
+  if [[ ${#wants[@]} -gt 0 ]]; then
+    resolve_default_branch || release_unread base-unknown
+    base_ref="refs/heads/$DEFAULT_BRANCH"
+    base_tip="$(listing_tip "$rows" "$base_ref")" || release_unread "base-absent branch=$DEFAULT_BRANCH"
+    origin_push_git "$PROJECT_ROOT" fetch --quiet --no-tags --no-write-fetch-head -- \
+      "$ORIGIN_PUSH_ENDPOINT" "$base_tip" "${wants[@]}" || release_unread "fetch-failed status=$?"
+    release_scratch || release_unread scratch-failed
+  fi
+  for ((i = 0; i < ${#refs[@]}; i++)); do
+    ref="${refs[$i]}"
+    tip="${tips[$i]}"
+    name="${ref#refs/heads/}"
+    [[ "$ref" != "$base_ref" ]] || continue
+    if [[ "${kinds[$i]}" != judged ]]; then
+      worktree_message branch-kept "$name $tip ${kinds[$i]}"
+      continue
+    fi
+    if ((SECONDS >= RELEASE_BUDGET)); then
+      worktree_message branch-kept "$name $tip unread deadline"
+      continue
+    fi
+    base_holds_tip "$base_tip" "$tip"
+    if [[ "$BASE_HOLDS" != held ]]; then
+      worktree_message branch-kept "$name $tip $BASE_HOLDS"
+      continue
+    fi
+    status=0
+    delete_origin_ref "$PROJECT_ROOT" "$ref" "$tip" || status=$?
+    if [[ "$status" == 0 ]]; then
+      worktree_message branch-deleted "$name"
+      continue
+    fi
+    worktree_message branch-kept "$name $tip delete-failed status=$status ${DELETE_OUTPUT%%$'\n'*}"
+    [[ -z "$DELETE_OUTPUT" ]] || sed 's/^/  git: /' <<<"$DELETE_OUTPUT" >&2
+  done
 }
 
 # Every gh read takes the github skill's user ladder: GH_TOKEN, then
@@ -4786,6 +4999,16 @@ case "${1:-}" in
     esac
     ;;
 
+  release-branches)
+    if [[ $# -ne 2 ]]; then
+      worktree_message release-branches-arguments "$#" "Error: release-branches takes one issue ID" >&2
+      exit 1
+    fi
+    validate_issue_id "$2" || exit 1
+    trap release_scratch_remove EXIT
+    release_item_branches "$2"
+    ;;
+
   check)
     # check inspects only the main checkout; a target argument would be
     # silently ignored and could report clean while the named worktree is
@@ -5406,7 +5629,7 @@ case "${1:-}" in
     ;;
 
   *)
-    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|merged|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|merged|release-branches|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     echo "Run: $0 --help" >&2
     exit 1
     ;;

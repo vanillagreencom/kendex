@@ -44,7 +44,7 @@ use agent_runtime::intent::{EffectOp, PrincipalKeys, Role};
 use agent_runtime::journal::{OutcomeWritten, Progress};
 use agent_runtime::record::Locking;
 
-pub(super) use worktree::WorktreeRelease;
+pub(super) use worktree::{BranchKept, BranchRelease, KeptBranch, WorktreeRelease};
 
 use lane_obligations::{LaneDischarge, LaneObligations, ValidationEnd, WorktreeEnd};
 
@@ -772,6 +772,39 @@ impl<'a> LaneOperation<'a> {
             &self.run.settings.roots.project,
             item,
         )
+    }
+
+    /// The origin branches named for the lane's item, released once its
+    /// work ended by the worktree package's `release-branches`, the owner
+    /// of which branch the base holds and of its delete, asked from the
+    /// main checkout of the lane's trusted common git folder and signalled
+    /// before it runs. `Err` names a read that judged nothing: no branch is
+    /// deleted.
+    pub(super) fn release_branches(
+        &mut self,
+        lane: &Lane,
+    ) -> Result<std::result::Result<BranchRelease, String>> {
+        let common = self.checkout_common(lane);
+        let main = match (common.file_name(), common.parent()) {
+            (Some(name), Some(main)) if name == ".git" => main.to_path_buf(),
+            _ => return Ok(Err(format!("checkout-unread common={}", common.display()))),
+        };
+        let project = &self.run.settings.roots.project;
+        // A lane in another repository than the checkout's pushed nothing to
+        // this origin, whose branches named for its key are not its own.
+        if let Some(repo) = lane.repo.as_deref().filter(|r| !r.is_empty()) {
+            match crate::repo::origin(&crate::repo::resolver(project), &main) {
+                Ok(origin) if origin.eq_ignore_ascii_case(repo) => {}
+                Ok(origin) => return Ok(Err(format!("repo-other origin={origin} lane={repo}"))),
+                Err(unread) => return Ok(Err(format!("origin-unread {unread}"))),
+            }
+        }
+        let _signalled = self.engine.signal()?;
+        Ok(worktree::release_branches(
+            &self.run.settings.worktree_cli,
+            &main,
+            &lane.item,
+        ))
     }
 
     /// The terminal `word` once both sets are settled: the engine's settle

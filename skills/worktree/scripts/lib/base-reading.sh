@@ -64,6 +64,25 @@ base_policy_read() { # WT BRANCH
   [[ -z "$cache" ]] || printf '%s %s\n' "$branch" "$BASE_POLICY" 2>/dev/null >"$cache" || true
 }
 
+# Sets MERGE_TRIAL to how the commit THEIRS merges onto the commit OURS, by a
+# trial merge that writes objects alone, no ref, index or file:
+#   clean      MERGE_TRIAL_TREE names the tree the merge wrote
+#   conflicts  the merge conflicts
+#   failed     the trial could not run
+# GIT... is the git command the trial runs as, such as `git -C WT`. Both
+# base_reading and the worktree script's origin-branch release ask here.
+merge_trial() { # OURS THEIRS GIT...
+  local ours="$1" theirs="$2" out="" rc=0
+  shift 2
+  MERGE_TRIAL_TREE=""
+  out="$("$@" merge-tree --write-tree "$ours" "$theirs" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0) MERGE_TRIAL=clean; MERGE_TRIAL_TREE="${out%%$'\n'*}" ;;
+    1) MERGE_TRIAL=conflicts ;;
+    *) MERGE_TRIAL=failed ;;
+  esac
+}
+
 # Sets BASE_READING to what the branch at WT's HEAD needs against BASE_REF,
 # the remote-tracking ref of BRANCH, and BASE_POLICY as base_policy_read left
 # it (empty when the branch already contains the base and no read ran):
@@ -74,7 +93,7 @@ base_policy_read() { # WT BRANCH
 #   behind          any other policy
 # Only contained and merges-cleanly let the branch go without a rebase.
 base_reading() { # WT BRANCH BASE_REF
-  local wt="$1" branch="$2" base_ref="$3" rc=0
+  local wt="$1" branch="$2" base_ref="$3"
   BASE_POLICY=""
   if git -C "$wt" merge-base --is-ancestor "$base_ref" HEAD 2>/dev/null; then
     BASE_READING=contained
@@ -85,10 +104,10 @@ base_reading() { # WT BRANCH BASE_REF
     BASE_READING=behind
     return 0
   fi
-  git -C "$wt" merge-tree --write-tree "$base_ref" HEAD >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    0) BASE_READING=merges-cleanly ;;
-    1) BASE_READING=conflicts ;;
+  merge_trial "$base_ref" HEAD git -C "$wt"
+  case "$MERGE_TRIAL" in
+    clean) BASE_READING=merges-cleanly ;;
+    conflicts) BASE_READING=conflicts ;;
     *) BASE_READING=trial-failed ;;
   esac
 }

@@ -536,7 +536,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
 4. **Prepare branch and worktree cleanup.**
 
-   - In a lane, the overseer's close owns branch and worktree cleanup. The lane still runs step 6's close-out.
+   - In a lane, the overseer's close owns branch and worktree cleanup. Its release of the item's origin branches is [lane-reach.md § What the close does](../references/lane-reach.md#what-the-close-does). The lane still runs step 6's close-out.
    - A local close keeps a dirty or unmerged worktree, and records the reason.
    - The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before you hand back a hosted lane for close.
    - A run outside a lane cleans up only the PR's own branch and worktree, never unrelated branches or sibling worktrees:

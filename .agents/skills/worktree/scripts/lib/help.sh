@@ -25,6 +25,9 @@ Commands:
   path --hosted    Print the one path a hosted lane's worktree takes
   exists ID        Check whether a worktree exists for an issue ID
   merged ID        Print the commit the issue tree's pull request merged as
+  release-branches ID
+                   Delete the origin branches named for an ended item whose
+                   work the default branch holds (release-branches --help)
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments. A default
                    branch only origin holds has nothing unpushed; one
@@ -989,6 +992,57 @@ worktree, only the main checkout and its default branch.
 EOF
 }
 
+print_release_branches_help() {
+  worktree_message help release-branches
+  cat <<'EOF'
+Usage: worktree release-branches <ID>
+
+Release the origin branches named for an item whose work ended, as orch's
+lane close does. A branch is named for the item where its name carries the
+ID, in any case, bounded by '/', '-' or the name's ends, so KEN-200 names no
+ken-2008. The default branch is never released.
+
+Every read reaches origin's one push destination, the one that receives
+the deletes: the branch listing, the default branch's tip and the fetch of
+each tip judged. Where origin has no single push destination, or its fetch
+URL differs from that destination, no branch is judged.
+
+Each branch named for the item is judged at the tip the listing gave:
+  recovery/*  kept: fleet's reap releases it
+  symbolic    kept: a branch alias, whose delete is not proved to stop at
+              the alias
+  held        deleted, under a lease on that tip, where the default branch
+              holds its work: the tip is an ancestor of the default branch,
+              or a trial merge of it onto the default branch writes the
+              default branch's own tree, as a squash merge or a superseding
+              change leaves it
+  unmerged    kept: every other branch
+The judgement reads the stored objects alone, in a scratch repository that
+borrows the checkout's objects. It reads no configuration, no attribute
+file (the global core.attributesFile included) and no .gitattributes a
+commit holds, so no merge driver, built-in ones such as union included, and
+no graft or replacement takes part. The delete runs through the github
+skill's push route, under the push-purpose credential.
+
+A branch is judged, and so deleted, only within 60 seconds of the run's
+start. Past that budget each branch not yet judged is kept as
+`unread deadline`, so a caller that bounds the run above the budget plus one
+bounded Git call receives the record of every delete.
+
+Output, one stdout record per branch named for the item:
+  worktree-branch-deleted: <branch>
+  worktree-branch-kept: <branch> <tip> <cause> [<detail>]
+<cause> is unmerged, recovery, symbolic, unread (a read the judgement of
+that branch needed failed, or the budget ran out; <detail> names the read:
+is-ancestor, merge-tree, base-tree or deadline) or delete-failed (<detail>
+names Git's exit status and the first line it printed).
+
+Exit 0 once every branch named for the item is judged, kept ones included.
+Exit 2 where a read judged no branch, with worktree-branch-release-unread:
+<cause> on stderr: no branch was deleted. Exit 1 on a usage error.
+EOF
+}
+
 print_list_help() {
   worktree_message help list
   cat <<'EOF'
@@ -1111,6 +1165,8 @@ if [[ -n "$_want_help" ]]; then
     list)         print_list_help; exit 0 ;;
     path|exists|merged)
                   print_path_exists_help; exit 0 ;;
+    release-branches)
+                  print_release_branches_help; exit 0 ;;
     push)         print_push_help; exit 0 ;;
     fix-links)    print_fix_links_help; exit 0 ;;
     repair-links) print_repair_links_help; exit 0 ;;

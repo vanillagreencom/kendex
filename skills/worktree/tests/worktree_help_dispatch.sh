@@ -116,6 +116,7 @@ list --help^repo^-^list --help^0^worktree-help: list^-^-
 path --help prints help, not an issue lookup^repo^-^path --help^0^worktree-help: path^-^-
 exists -h prints help, not an issue lookup^repo^-^exists -h^0^worktree-help: path^-^-
 merged --help prints help, not a forge lookup^repo^-^merged --help^0^worktree-help: path^-^-
+release-branches --help prints help, not a branch release^repo^-^release-branches --help^0^worktree-help: release-branches^-^-
 push --help^repo^-^push --help^0^worktree-help: push^-^-
 fix-links --help^repo^-^fix-links --help^0^worktree-help: fix-links^-^-
 repair-links --help points at the fix-links contract^repo^-^repair-links --help^0^worktree-help: repair-links^-^-

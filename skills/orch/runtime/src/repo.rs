@@ -55,6 +55,9 @@ pub fn of(resolver: &Path, dir: &Path) -> Result<String, Unread> {
     resolve(resolver, dir, "kendex_github_resolve_gh_repo")
 }
 
+/// The remote-tracking ref of the branch a publication from the checkout
+/// at `dir` lands on: `WORKTREE_DEFAULT_BRANCH`, else GitHub's default read
+/// under the credential `worktree push` selects, else `origin/HEAD`.
 pub(crate) fn publication_base(project: &Path, dir: &Path) -> Result<String, Unread> {
     resolve(&resolver(project), dir, "kendex_github_default_branch")
 }
@@ -100,9 +103,15 @@ fn resolve(resolver: &Path, dir: &Path, function: &'static str) -> Result<String
             r#"source "$1" || exit 3
                 if [ "$2" = kendex_github_default_branch ]; then
                     lib=${1%/*}
-                    source "$lib/repo-settings.sh" && source "$lib/kendex-env.sh" && source "$lib/gh-auth.sh" || exit 3
-                    kendex_load_project_env "$3" -- WORKTREE_DEFAULT_BRANCH || exit 3
-                    [ -n "${WORKTREE_DEFAULT_BRANCH:-}" ] || kendex_github_sanitize_gh_env
+                    source "$lib/repo-settings.sh" && source "$lib/kendex-env.sh" && source "$lib/gh-auth.sh" && source "$lib/settings-names.sh" || exit 3
+                    # The credential `worktree push` publishes under: the
+                    # github settings, a token the checkout configures among
+                    # them, then the user ladder's pick, sanitized.
+                    kendex_load_project_env "$3" -- "${github_settings_names[@]}" || exit 3
+                    if [ -z "${WORKTREE_DEFAULT_BRANCH:-}" ]; then
+                        kendex_github_apply_selected_auth_token user >/dev/null 2>&1 || true
+                        kendex_github_sanitize_gh_env
+                    fi
                     branch=$("$2" "$3") || exec git symbolic-ref refs/remotes/origin/HEAD
                     printf 'refs/remotes/origin/%s\n' "$branch"
                 else

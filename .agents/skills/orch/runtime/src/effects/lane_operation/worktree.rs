@@ -18,6 +18,13 @@ use crate::settings::Settings;
 /// How long one git read or one worktree package call may run.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long `worktree release-branches` may run: above its own 60-second
+/// budget for judging a branch (`RELEASE_BUDGET` in the package's script)
+/// plus one bounded Git call, a 1Password read, a token check and the
+/// operation at 10 seconds each, so the bound never ends a run after a
+/// delete and drops its record.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Why the close kept the lane's worktree instead of removing it: each a
 /// read of the worktree itself through the handle's runner,
 /// recorded as the lane's `kept` reason.
@@ -759,4 +766,121 @@ pub(super) fn merged(cli: &Path, project: &Path, item: &str) -> std::result::Res
         Some(code) => Err(format!("status={code}")),
         None => Err(format!("status={}", out.status)),
     }
+}
+
+/// What the worktree package's `release-branches` did with an item's origin
+/// branches.
+#[derive(Debug, Default)]
+pub(in crate::effects) struct BranchRelease {
+    pub(in crate::effects) deleted: Vec<String>,
+    pub(in crate::effects) kept: Vec<KeptBranch>,
+}
+
+/// An origin branch the release kept, at the tip it judged.
+#[derive(Debug)]
+pub(in crate::effects) struct KeptBranch {
+    pub(in crate::effects) branch: String,
+    pub(in crate::effects) tip: String,
+    pub(in crate::effects) cause: BranchKept,
+}
+
+/// Why the release kept a branch: the `<cause>` of its
+/// `worktree-branch-kept` record (`worktree release-branches --help`).
+#[derive(Debug)]
+pub(in crate::effects) enum BranchKept {
+    /// The base lacks its work: the one cause the item is told of.
+    Unmerged,
+    /// A `recovery/*` branch, which fleet's reap releases.
+    Recovery,
+    /// A branch alias, whose delete is not proved to stop at the alias.
+    Symbolic,
+    /// A read the judgement of this branch needed failed.
+    Unread(String),
+    /// The base holds its work, and the delete failed.
+    DeleteFailed(String),
+}
+
+impl BranchKept {
+    pub(in crate::effects) fn word(&self) -> String {
+        match self {
+            BranchKept::Unmerged => "unmerged".to_owned(),
+            BranchKept::Recovery => "recovery".to_owned(),
+            BranchKept::Symbolic => "symbolic".to_owned(),
+            BranchKept::Unread(detail) => format!("unread {detail}"),
+            BranchKept::DeleteFailed(detail) => format!("delete-failed {detail}"),
+        }
+    }
+}
+
+impl KeptBranch {
+    /// A `worktree-branch-kept` record's value, `<branch> <tip> <cause>
+    /// [<detail>]`.
+    fn parse(value: &str) -> Option<KeptBranch> {
+        let mut fields = value.splitn(4, ' ');
+        let (branch, tip, cause) = (fields.next()?, fields.next()?, fields.next()?);
+        let detail = fields.next().unwrap_or_default().trim().to_owned();
+        let cause = match cause {
+            "unmerged" => BranchKept::Unmerged,
+            "recovery" => BranchKept::Recovery,
+            "symbolic" => BranchKept::Symbolic,
+            "unread" => BranchKept::Unread(detail),
+            "delete-failed" => BranchKept::DeleteFailed(detail),
+            _ => return None,
+        };
+        Some(KeptBranch {
+            branch: branch.to_owned(),
+            tip: tip.to_owned(),
+            cause,
+        })
+    }
+}
+
+/// The worktree package's `release-branches ITEM`, run from the main
+/// checkout `main` under the credential the watch's sign-in renewed where
+/// one stands, as its records answer it: each origin branch named for the
+/// item deleted or kept with its cause. `Err` is an answer that judged no
+/// branch: the package's `worktree-branch-release-unread` cause, its exit, a
+/// run with no reply, or a record this reader does not know.
+pub(super) fn release_branches(
+    cli: &Path,
+    main: &Path,
+    item: &str,
+) -> std::result::Result<BranchRelease, String> {
+    let credential = crate::watch::github::renewed_credential();
+    let mut env: Vec<(&str, &OsStr)> = crate::settings::worktree_env().to_vec();
+    env.extend(crate::watch::github::credential_env(&credential));
+    let out = host::run_tagged_in(
+        "close",
+        "worktree",
+        cli,
+        "release-branches",
+        &["release-branches", item],
+        host::Place {
+            cwd: Some(main),
+            env: &env,
+        },
+        RELEASE_TIMEOUT,
+    )
+    .map_err(|e| format!("cause={e}"))?;
+    if !out.status.success() {
+        let stderr = host::stderr_text(&out);
+        return Err(keyed_lines(&stderr)
+            .find(|(key, _)| *key == "branch-release-unread")
+            .map_or_else(
+                || format!("status={}", out.status),
+                |(_, cause)| cause.to_owned(),
+            ));
+    }
+    let stdout = host::stdout_text(&out);
+    let mut release = BranchRelease::default();
+    for (key, value) in keyed_lines(&stdout) {
+        match key {
+            "branch-deleted" => release.deleted.push(value.to_owned()),
+            "branch-kept" => release.kept.push(
+                KeptBranch::parse(value).ok_or_else(|| format!("reply-unread kept={value}"))?,
+            ),
+            _ => return Err(format!("reply-unread key={key}")),
+        }
+    }
+    Ok(release)
 }

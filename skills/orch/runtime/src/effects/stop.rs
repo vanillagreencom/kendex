@@ -24,10 +24,11 @@ use serde_json::{Value, json};
 
 use super::close::{StopRead, read_stop};
 use super::grants;
-use super::lane_operation::{LaneOperation, Unread, WorktreeRelease};
+use super::lane_operation::{BranchKept, KeptBranch, LaneOperation, Unread, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
+use crate::settings::Settings;
+use crate::state::{CloseGround, CloseKind, Lane, LaneMembers, TerminalVerdict};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
 use crate::watch::mail::ClosingMail;
@@ -67,6 +68,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let mut operation = LaneOperation::open_close(run, &intent, &lane)?;
     operation.engine().already_read_stale(stale);
     let close = Close {
+        settings: run.settings,
         item: &item,
         lane: &lane,
         target: harness
@@ -198,6 +200,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
 /// One close in progress: the lane, its recorded harness and the ground the
 /// close stands on.
 struct Close<'a> {
+    settings: &'a Settings,
     item: &'a str,
     lane: &'a Lane,
     target: Option<Target>,
@@ -615,12 +618,72 @@ impl Close<'_> {
                 observation["cause"] = json!(cause);
             }
         }
+        // What the branch release leaves holds nothing: a branch it could
+        // not delete stays on origin, named.
+        let mut unmerged = Vec::new();
+        if self.item_ended() {
+            match operation.release_branches(self.lane)? {
+                Ok(release) if release.deleted.is_empty() && release.kept.is_empty() => {}
+                Ok(release) => {
+                    let kept: Vec<Value> = release
+                        .kept
+                        .iter()
+                        .map(|k| json!({"branch": k.branch, "tip": k.tip, "cause": k.cause.word()}))
+                        .collect();
+                    observation["branches"] = json!({"deleted": release.deleted, "kept": kept});
+                    unmerged = release
+                        .kept
+                        .into_iter()
+                        .filter(|k| matches!(k.cause, BranchKept::Unmerged))
+                        .collect();
+                }
+                Err(cause) => observation["branches"] = json!({"unread": cause}),
+            }
+        }
         // After a recorded landing the base checkout follows it; a refusal
         // is noted and holds nothing.
         if self.cycle.is_some() {
             observation["base"] = json!(operation.follow_base());
         }
-        Ok(self.judged(operation, observation))
+        let mut outcome = self.judged(operation, observation);
+        // Told once, by the run that ends the close.
+        if outcome.ended() && !unmerged.is_empty() {
+            let posted = self.tell_unmerged(&unmerged);
+            outcome.annotate("branches_comment", json!(posted));
+        }
+        Ok(outcome)
+    }
+
+    /// Whether the close ends the lane's item, whose pushed branches it
+    /// then releases: a full close on the tracker's terminal verdict, of a
+    /// sandbox its provider no longer holds, or of a landing the record or
+    /// this close records.
+    fn item_ended(&self) -> bool {
+        CloseKind::of(self.ground) == CloseKind::Full
+            && (self.ground.is_some_and(CloseGround::ends_item)
+                || record_merged(self.lane)
+                || self.cycle.is_some())
+    }
+
+    /// The one comment on a Linear item naming each branch the close kept
+    /// because the base lacks its work, and its tip: the poster's word, or
+    /// `unposted tracker=T` for an item the Linear CLI does not hold.
+    fn tell_unmerged(&self, kept: &[KeptBranch]) -> String {
+        let tracker = self.lane.tracker.as_deref().filter(|t| !t.is_empty());
+        let linear = match tracker {
+            Some(tracker) => tracker == "linear",
+            None => !self.item.starts_with("issue-"),
+        };
+        if !linear {
+            return format!("unposted tracker={}", tracker.unwrap_or("github"));
+        }
+        let mut text = String::from(
+            "The lane close kept these origin branches because the base branch lacks their work. Merge or delete each one by hand.\n\n",
+        );
+        for k in kept {
+            text.push_str(&format!("- `{}` at `{}`\n", k.branch, k.tip));
+        }
+        crate::ops::boxes::post(self.settings, self.item, &text).to_owned()
     }
 
     /// The pane route: the set's standing pane present is stopped by the

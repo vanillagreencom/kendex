@@ -105,6 +105,20 @@ A full close that answered `unconfirmed` leaves its intent open, and a keep refu
 - On `failed`, nothing moved; fix the cause in `result.observation`.
 - A refusal exits 1 with its key in `refusal.key`; nothing past the read it names has changed.
 
+A full close of an ended item writes `result.observation.branches` (§ What the close does), except where the release deleted and kept nothing, as where origin holds no branch named for the item:
+
+- `deleted` and `kept` where origin holds a branch named for the item.
+  - `deleted` lists each branch the close deleted.
+  - `kept` lists each branch it kept, with its `tip` and its `cause`:
+    - `unmerged`: the base lacks its work. Merge or delete it by hand.
+    - `recovery`: a `recovery/*` branch, which fleet's reap releases once the base holds its work.
+    - `symbolic`: a branch alias. Delete it by hand.
+    - `unread`, naming the read that did not answer (`is-ancestor`, `merge-tree` or `base-tree`), or `deadline` where the release's time budget ran out before the branch was judged. Run that read by hand to find the cause. A `deadline` branch was not judged: delete it by hand once the base holds its work.
+    - `delete-failed`, with Git's exit status and the first line it printed. Fix the cause, then delete it by hand.
+- `unread` alone, with its cause, where a read judged no branch, whether or not origin holds one. Its cause is `repo-other` for a lane whose record names another repository.
+
+A kept branch holds no other part of the close. `result.observation.branches_comment` is the answer of the one comment the confirming close posts on a Linear item, naming each `unmerged` branch and its tip.
+
 A hosted lane's box is read from its host before the provider's close takes its sandbox:
 
 - A park reads no box, and neither does a close of a parked record, of one that owes a park, or of a relaunch from a park that failed before its sandbox came back.
@@ -150,6 +164,14 @@ The close stops a hosted lane's harness through its provider. An exited lane nee
 ### What the close does
 
 The close ends the harness, the detached turn its `wake` names and, on every mode but `keep-sandbox`, the validation runs of its local worktree. On the tracker's terminal verdict it archives and removes the item's files. It closes a hosted lane's sandbox, releases the window, releases or keeps the worktree, and moves the record. Nothing else is typed into the pane.
+
+A full close of an ended item also releases the item's origin branches. The item ended where its tracker's verdict is terminal, or where the record or the close's `delivery` names its landing.
+
+- An item's branch carries its key, in any case, bounded by `/`, `-` or the name's ends.
+- The close deletes each branch whose work the base holds: its tip is an ancestor of the base, or merging it into the base changes nothing, as a squash merge or a superseding change leaves it.
+- The base is the one `worktree push` publishes to.
+- The worktree package's `release-branches` judges and deletes each branch, under the credential a push takes (`worktree release-branches --help`).
+- A lane whose record names a repository other than the checkout's `origin` releases no branch.
 
 Where the clone or the item's worktree on the host holds a dirty path it cannot set aside, the provider's close answers `host_close: refused` with `path` ([lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol), `close`). Clean or commit what that checkout holds, then close again.
 
