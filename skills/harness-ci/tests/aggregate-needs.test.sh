@@ -142,6 +142,51 @@ run_args duplicate-lane-false-first "exit=2 aggregate-needs: invalid-arguments=d
   --results "$(lanes_needs true false skipped success)" --classifier changes \
   --lane test=build --lane test=test
 
+# A lane job whose gate runs it on merge_group alone, wired as the template
+# wires its lanes: the waiver reads lanes == 'false', and every row's lanes
+# and verdict read true, so only the event can stand the job down. The record
+# is the exit status and the last line printed.
+# EVENT|ONLY_ON|RECORD
+event_rows=0
+while IFS='|' read -r event only_on expected; do
+  event_rows=$((event_rows + 1))
+  set -- --results "$(lanes_needs true true skipped success)" --classifier changes \
+    --waiver false --skippable test --lane test=test
+  [ -z "$only_on" ] || set -- "$@" --only-on "test=$only_on"
+  status=0
+  out="$(env -i PATH="$PATH" GITHUB_EVENT_NAME="$event" "$AGGREGATE" "$@" 2>&1)" || status=$?
+  assert_eq "a skip on $event with only-on=${only_on:-none}" "$expected" \
+    "exit=$status $(printf '%s\n' "$out" | sed -n '$p')"
+done <<'ROWS'
+schedule|merge_group|exit=0 aggregate-needs: accepted
+workflow_dispatch|merge_group|exit=0 aggregate-needs: accepted
+pull_request|merge_group|exit=0 aggregate-needs: accepted
+merge_group|merge_group|exit=1 aggregate-needs: unaccepted job=test result=skipped lane=test verdict=true only-on=merge_group
+schedule||exit=1 aggregate-needs: unaccepted job=test result=skipped lane=test verdict=true
+ROWS
+[ "$event_rows" -eq 5 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
+
+# LABEL|GITHUB_EVENT_NAME|--only-on VALUE|RECORD: an event limit with no run
+# event to compare, or on a job no verdict judges, is refused before any
+# result is read.
+only_on_rows=0
+while IFS='|' read -r label event value expected; do
+  only_on_rows=$((only_on_rows + 1))
+  status=0
+  out="$(env -i PATH="$PATH" ${event:+GITHUB_EVENT_NAME="$event"} "$AGGREGATE" \
+    --results "$(lanes_needs true true skipped success)" --classifier changes \
+    --lane test=test --only-on "$value" 2>&1)" || status=$?
+  assert_eq "$label" "$expected" "exit=$status $(printf '%s\n' "$out" | sed -n '1p')"
+done <<'ROWS'
+only-on-without-event||test=merge_group|exit=2 aggregate-needs: invalid-environment=event variable=GITHUB_EVENT_NAME value=
+only-on-without-lane|schedule|build=merge_group|exit=2 aggregate-needs: invalid-arguments=only-on-without-lane job=build
+only-on-without-event-name|schedule|test=|exit=2 aggregate-needs: invalid-arguments=invalid-only-on value=test=
+ROWS
+[ "$only_on_rows" -eq 3 ] || { echo "the only-on table read $only_on_rows rows" >&2; exit 1; }
+run_args duplicate-only-on "exit=2 aggregate-needs: invalid-arguments=duplicate-only-on job=test" \
+  --results "$(lanes_needs true true skipped success)" --classifier changes \
+  --lane test=test --only-on test=merge_group --only-on test=schedule
+
 # The rejection names each job it did not accept, and the verdict a --lane
 # job's skip was judged by.
 status=0
