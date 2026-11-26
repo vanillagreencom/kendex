@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 
-from mail_world import BASH, SCRIPTS, MailWorld, make_project
+from mail_world import BASH, REPO, SCRIPTS, MailWorld, make_project
 
 sys.path.insert(0, str(SCRIPTS / "lib"))
 from progress import change_state, index_ends, records, state_entries  # noqa: E402
@@ -36,6 +36,24 @@ OTHER_COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04249"
 NAMED_READ = [("issues", "get"), ("comments", "list")]
 NAMED_CREATE = NAMED_READ + [("comments", "create")]
 NAMED_READBACK = NAMED_CREATE + [("comments", "list")]
+LINEAR_SCRIPTS = SCRIPTS.parents[1] / "linear/scripts"
+
+
+def linear_bash():
+    """BASH when linear's own preflight accepts it, else None.
+
+    The LINEAR stub stands in for linear.sh, which runs only under the Bash that
+    preflight admits. The macOS leg carries /bin/bash 3.2 alone, where linear's
+    guards are skipped rather than run under a shell linear refuses."""
+    probe = subprocess.run([BASH, "-c", 'source "$1" || exit 2; linear_require_supported_bash', "linear-bash",
+                            str(REPO / "skills/linear/scripts/lib/bash-version.sh")], capture_output=True, text=True, timeout=60)
+    if probe.returncode not in (0, 1):
+        raise RuntimeError("linear-bash-unread=%s exit=%d %s" % (BASH, probe.returncode, probe.stderr.strip()))
+    return BASH if probe.returncode == 0 else None
+
+
+LINEAR_BASH = linear_bash()
+NO_LINEAR_BASH = BASH + " is older than the Bash linear.sh requires, so the stub skips linear's issue guards"
 # Bulk and safe rows use lib/formatters.sh. Missing refs use lib/common.sh's
 # linear_issue_refs_read response. Comment receipts and the trailing newline
 # come from commands/comments.sh and lib/common.sh's normalizer.
@@ -82,12 +100,15 @@ elif verb == ("issues", "create"):
     assert args[2:4] == ["--project", world["project"]] and args[-1] == "--format=ids"
     assert world["created"] not in issues
     title, description = args[args.index("--title") + 1], args[args.index("--description") + 1]
-    # Run the shipped guards without the workspace and network bootstrap.
-    subprocess.run([world["bash"], "-c",
-                    'source "$1"; source "$2"; LINEAR_REQUIRE_REACH=1; LINEAR_AGENT_LABELS=agent:runtime; '
-                    'require_agent_routing_label "" "$3" && require_issue_reach "$4" 0 && require_issue_header_shape "$4"',
-                    "validate-description", world["validator"], world["routing_guard"],
-                    str(int("--no-agent-label" in args)), description], check=True)
+    # Run the shipped guards without the workspace and network bootstrap, under
+    # the Bash linear.sh requires. A null bash is a host with none: linear
+    # refuses an older shell, so its guards are not run under one.
+    if world["bash"]:
+        subprocess.run([world["bash"], "-c",
+                        'source "$1"; source "$2"; LINEAR_REQUIRE_REACH=1; LINEAR_AGENT_LABELS=agent:runtime; '
+                        'require_agent_routing_label "" "$3" && require_issue_reach "$4" 0 && require_issue_header_shape "$4"',
+                        "validate-description", world["validator"], world["routing_guard"],
+                        str(int("--no-agent-label" in args)), description], check=True)
     issue = {"id": world["created"], "title": title, "description": description, "project_id": world["project"]}
     issues[issue["id"]] = issue
     store.write_text(json.dumps(world))
@@ -195,15 +216,14 @@ class ProgressLog(ProgressLogCommands):
     def action_world(self, issues=None, comments=None, mode=""):
         packages = self.root / "action-packages"
         scripts = packages / "jarvis/scripts"
-        linear = SCRIPTS.parents[1] / "linear/scripts"
         guard = packages / "routing-guard.sh"
         if not scripts.exists():
             shutil.copytree(self.scripts, scripts)
             install_tracker(packages)
             # The function is shell-only. Keep the checkout's routing check
-            # without loading auth or needing Linear's Bash for this stub.
+            # without loading auth for this stub.
             start = "\nrequire_agent_routing_label() {\n"
-            source = (linear / "commands/issues.sh").read_text()
+            source = (LINEAR_SCRIPTS / "commands/issues.sh").read_text()
             self.assertEqual(source.count(start), 1)
             body, close, _ = source.split(start, 1)[1].partition("\n}\n")
             self.assertTrue(close)
@@ -213,8 +233,8 @@ class ProgressLog(ProgressLogCommands):
         self.action_trace = self.root / "linear-calls"
         self.action_trace.write_text("")
         self.action_store.write_text(json.dumps({"project": PROJECT, "created": "KEN-2", "comment": COMMENT,
-                                                 "bash": BASH,
-                                                 "validator": str(linear / "lib/issue-validation.sh"), "routing_guard": str(guard),
+                                                 "bash": LINEAR_BASH,
+                                                 "validator": str(LINEAR_SCRIPTS / "lib/issue-validation.sh"), "routing_guard": str(guard),
                                                  "issues": issues if issues is not None else {"KEN-1": self.issue()},
                                                  "comments": comments or {}, "mode": mode}))
 
@@ -270,6 +290,28 @@ class ProgressLog(ProgressLogCommands):
             ("issues", "list"), ("comments", "bulk-list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
             ("comments", "list"), ("comments", "create"), ("comments", "list"),
             ("issues", "list"), ("comments", "bulk-list"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
+
+    def test_issue_guards_run_under_linear_bash(self):
+        validator = self.root / "issue-validation.sh"
+        source = (LINEAR_SCRIPTS / "lib/issue-validation.sh").read_text()
+        start = "\nrequire_issue_header_shape() {\n"
+        self.assertEqual(source.count(start), 1)
+        # Lowercasing is Bash 4: it runs under the Bash linear.sh requires and
+        # is a bad substitution under 3.2, so the probe shows which shell ran.
+        validator.write_text(source.replace(start, start + '\tlocal probe=RAN; printf \'%s\\n\' "${probe,,}" >"$HOME/guard-probe"\n'))
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n"))
+        self.action_world(issues={})
+        world = json.loads(self.action_store.read_text())
+        world["validator"] = str(validator)
+        self.action_store.write_text(json.dumps(world))
+        result = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(("issues", "create"), self.action_calls())
+        probe = self.root / "guard-probe"
+        if LINEAR_BASH is None:
+            self.assertFalse(probe.exists())
+            self.skipTest(NO_LINEAR_BASH)
+        self.assertEqual(probe.read_text(), "ran\n")
 
     def binding_cases(self):
         source = "Original request: [thread](" + REQUEST + ")"
