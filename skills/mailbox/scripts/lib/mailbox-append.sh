@@ -143,18 +143,15 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD [ENVELOPE_FILE]]: bytes on 
 # definition a caller puts ahead of its filter, so the writer that checks a
 # reply's --ref and the watch that reports the line judge one rule: `data`
 # is a data notice, whoever its `from` names, so it is never an owner note; a
-# `close` is a resolution or a legacy closing answer; `resolution` is an owner answer
-# carrying `by`; a `peer` line names another repository's overseer in `from`;
-# an `owner-note` names owner or no sender; and a `stray` is an owner answer
-# missing the `by` field every owner-answer writer supplies.
+# `close` is a resolution; `resolution` is an owner answer carrying `by`, a
+# pre-1.3 closing answer with no closes field included; a `peer` line names
+# another repository's overseer in `from`; an `owner-note` names owner or no
+# sender; and a `stray` is an owner answer missing the `by` field every
+# owner-answer writer supplies.
 # shellcheck disable=SC2034  # read by the scripts that source this.
-# Compatibility floor: kendex 1.3 mailboxes; remove legacy reads no earlier
-# than 1.5, after the release-standard minor-release warning period.
-MAILBOX_CLASS_JQ='def mailbox_legacy_close:
-  .kind == "answer" and (.by == "text" or .by == "default") and (has("closes") | not);
-def overseer_mail_class:
+MAILBOX_CLASS_JQ='def overseer_mail_class:
   if .kind == "data" then "data"
-  elif .kind == "resolution" or mailbox_legacy_close then "close"
+  elif .kind == "resolution" then "close"
   elif .kind == "answer" and (.by | type) == "string" then "resolution"
   elif ((.from // "") | . != "" and . != "owner") then "peer"
   elif .kind == "answer" then "stray"
@@ -166,21 +163,6 @@ def mailbox_answers:
                 elif .kind == "answer" then .re else empty end
                 | strings | select(length > 0)) as $id ({}; .[$id] = true);
 '
-
-# The pre-1.3 resolve producer wrote an answer without a closes field.
-mailbox_legacy_notice() { # ID
-  printf 'lane-mail: legacy-close=%s\nLegacy closing answer retained; supported through kendex 1.4.\n' "$1" >&2
-}
-
-mailbox_warn_legacy() { # FILE
-  local ids id
-  ids="$(jq -r -R "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
-    | select(mailbox_legacy_close) | .id' <"$1")" || return 2
-  [ -n "$ids" ] || return 0
-  while IFS= read -r id; do
-    mailbox_legacy_notice "$id"
-  done <<<"$ids"
-}
 
 # The mailbox owns the ask. Tracker writes after the append are advisory: a
 # failed write must leave that ask available on its existing chat route. The

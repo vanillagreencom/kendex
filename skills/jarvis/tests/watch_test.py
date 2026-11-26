@@ -2482,6 +2482,12 @@ with open(sys.argv[1], "ab") as out:
                 self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + parent))
                 self.mail(self.home, "notice", text, "--to", "owner")
                 original, = self.owner_notice_rows()
+                # A pre-1.3 resolve wrote this closing answer with no closes field.
+                lane = self.home / "tmp/lane-mail/overseer/to-lane.jsonl"
+                with lane.open("a") as rows:
+                    rows.write(json.dumps({"id": "pre-1.3-close", "kind": "answer", "by": "text", "re": "old-ask",
+                                           "text": "a", "from": "owner",
+                                           "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
                 self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "rate_limit", "at": at - 1})
                 watch = self.watch()
                 watch.state["wall"] = dict(legacy)
@@ -2495,6 +2501,7 @@ with open(sys.argv[1], "ab") as out:
                     result = self.command([self.mail_command, "compact", "--item", "overseer"], self.home)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(self.owner_notice_rows(), [])
+                self.assertIn('"pre-1.3-close"', lane.read_text())
                 self.session_command({"state": "running", "account": "/accounts/b"}, 0)
                 self.wall_passes(self.watch(), at + 60)
                 if parent == "retained":

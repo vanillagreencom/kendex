@@ -257,7 +257,7 @@ class Compaction(unittest.TestCase):
             ("answered", ["old-open"], 'row["class"] == "close"',
              'row["class"] in ("close", "resolution")'),
             ("resolved", [], 'row["class"] == "close"', 'row["class"] == "resolution"'),
-            ("legacy", [], None, None),
+            ("legacy", ["old-open"], None, None),
         ]
         for mode, expected, old, new in cases:
             variants = [SCRIPTS]
@@ -276,7 +276,8 @@ class Compaction(unittest.TestCase):
                     elif mode == "resolved":
                         self.run_cli(repo, "resolve", "--id", "old-open", scripts=scripts)
                     elif mode == "legacy":
-                        # The pre-1.3 resolve producer wrote no closes field.
+                        # The pre-1.3 resolve producer wrote no closes field;
+                        # the row reads as an owner answer.
                         self.rows(box, "to-lane", [{"id": "legacy-close", "kind": "answer",
                                                   "by": "text", "re": "old-open", "at": OLD}])
                     self.run_cli(repo, "inbox", scripts=scripts)
@@ -291,10 +292,31 @@ class Compaction(unittest.TestCase):
                         self.assertEqual(pending, expected)
                         events = [json.loads(row) for row in self.run_cli(repo, "events").stdout.splitlines()]
                         self.assertEqual([row["id"] for row in events if row["kind"] == "ask"], expected)
-                        self.assertEqual(len(events), 2 if mode == "answered" else len(expected))
+                        self.assertEqual(len(events), 2 if mode in ("answered", "legacy") else len(expected))
                     else:
                         with self.assertRaises(AssertionError):
                             self.assertEqual(retained, expected)
+
+    def test_refusal_beside_pre_1_3_close(self):
+        # A Jarvis usage stop names its owner notice after compaction dropped
+        # it, in a mailbox that still holds a pre-1.3 closing answer.
+        repo, box = self.world()
+        self.rows(box, "to-overseer", [
+            {"id": "asked", "kind": "ask", "to": "owner", "at": FRESH},
+            {"id": "usage-stop", "kind": "notice", "to": "owner", "from": "overseer", "at": OLD,
+             "text": "Jarvis session s1 hit its five-hour limit."}])
+        self.rows(box, "to-lane", [{"id": "pre-1.3-close", "kind": "answer", "by": "text",
+                                    "re": "asked", "text": "a", "at": FRESH}])
+        self.run_cli(repo, "inbox")
+        self.run_cli(repo, "compact")
+        ids = lambda name: [json.loads(row)["id"] for row in (box / name).read_text().splitlines()]
+        self.assertEqual((ids("to-lane.jsonl"), ids("to-overseer.jsonl")), (["pre-1.3-close"], ["asked"]))
+        text = repo / "message.txt"
+        text.write_text("Recovered.\n")
+        result = self.run_cli(repo, "notice", "--to", "owner", "--ref", "usage-stop", "--file", str(text),
+                              check=False)
+        self.assertEqual((result.returncode, result.stderr.splitlines()[:1]),
+                         (2, ["lane-mail: ref-unknown=usage-stop"]), result.stderr)
 
     def nonowner_closed(self, scripts):
         for audience in ({"to": "peer"}, {}):

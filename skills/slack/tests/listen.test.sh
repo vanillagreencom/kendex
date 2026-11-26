@@ -568,7 +568,6 @@ assert_has "$(posts C002)" "$OLD | Late ruling." "it lands in that message's thr
 
 # Bind these roots after gamma, whose cases use the fake API's C002 channel.
 # Closures first observed after the posting horizon still update state.
-# Legacy rows model the retained pre-1.3 resolve producer.
 while read -r mode close; do
   LATE="$(sk_new_root "late-$mode-$close")"
   sk_bind "$LATE"
@@ -578,13 +577,7 @@ while read -r mode close; do
   LATE_CH="$(sk_channel "$LATE")"
   LATE_TS="$(sk_state ".messages.${LATE_CH}[-1].ts")"
   assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[\"$LATE_ASK\"]" "$mode/$close: the posted ask is open before closure"
-  args=(--item overseer --id "$LATE_ASK")
-  [ "$close" != text ] || args+=(--text "$(sk_text late-answer b)")
-  sk_lm "$LATE" resolve "${args[@]}" >/dev/null
-  if [ "$mode" = legacy ]; then
-    jq -c 'select(.kind != "resolution") | del(.closes)' "$(sk_box "$LATE")/to-lane.jsonl" >"$SK_TMP/legacy-close.jsonl"
-    cp "$SK_TMP/legacy-close.jsonl" "$(sk_box "$LATE")/to-lane.jsonl"
-  fi
+  sk_lm "$LATE" resolve --item overseer --id "$LATE_ASK" >/dev/null
   LATE_CLOSE="$(jq -r 'select(.kind == "resolution" or .kind == "answer") | .id' "$(sk_box "$LATE")/to-lane.jsonl" | tail -n 1)"
   sk_age_envelope "$LATE" "$LATE_CLOSE" 172800
   sk_poll "$LATE" SLACK_THREAD_DAYS=1
@@ -598,7 +591,6 @@ while read -r mode close; do
   assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
 done <<'ROWS'
 current explicit
-legacy text
 ROWS
 
 # --- daily compaction: envelope age and thread activity are separate ------------------
