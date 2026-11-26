@@ -27,6 +27,9 @@ LANE_MAIL = SKILLS / "mailbox/scripts/lane-mail"
 BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
+# A resume step's own launch bounds its wait; this ends only a call that
+# never answers, as the detached start's bound does.
+RESUME_SECONDS = 3600
 START_BRIEF = (
     "Read .agents/skills/jarvis/SKILL.md. Read and follow the Start section using "
     "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md 'Start'`. "
@@ -172,7 +175,7 @@ class Session:
         self.emitted = False
         self.fleet_path = None
 
-    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None, track_launch=False):
+    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None, track_launch=False, cwd=None):
         remaining = self.deadline - time.monotonic() if timeout is None else timeout
         if remaining <= 0:
             if track_launch:
@@ -181,7 +184,7 @@ class Session:
         try:
             process = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else None,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding=encoding,
-                                       cwd=self.home, env=env or self.env)
+                                       cwd=cwd or self.home, env=env or self.env)
         except OSError as error:
             if track_launch:
                 raise CommandNotStarted("spawn") from error
@@ -580,10 +583,11 @@ class Session:
             if account == (recorded or {}).get("account") and "--mark" in words:
                 words[words.index("--mark") + 1] = "headroom"
 
-    def choose(self, args, recorded):
+    def choose(self, args, recorded, resume_only=False):
         """The pending a start opens: the recorded launch resumed where the
         person asks for it and states nothing else, else the stated account,
-        else the account the controller walk picks for the stated harness."""
+        else the account the controller walk picks for the stated harness.
+        A resume-only start refuses with the reason in place of any other."""
         resumable = (args.mode == "resume" and recorded.get("session_id") and recorded.get("harness") == args.harness
                      and (args.account is None or recorded.get("account") == args.account)
                      and (args.model is None or recorded.get("model") == args.model))
@@ -600,6 +604,8 @@ class Session:
             reason = "new-requested" if same or args.account is None else "new-selection-changed"
         else:
             reason = "new-no-record"
+        if resume_only:
+            raise Refusal(reason)
         pending = {"harness": args.harness}
         if args.model is not None or args.account is None:
             # The walk is the one judge of an account and the one reader of a
@@ -626,7 +632,7 @@ class Session:
             pending.update(permission="native", extra_args=[])
         return pending, reason
 
-    def start(self, args):
+    def start(self, args, resume_only=False):
         boot = None
         if args.origin == "boot":
             boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip() + ":" + os.environ.get("XDG_SESSION_ID", "")
@@ -677,30 +683,32 @@ class Session:
                 status = self.status()
                 recorded = (status or {}).get("recorded") or {}
             self.initialized_fleet()
-            pending, reason = self.choose(args, recorded)
+            pending, reason = self.choose(args, recorded, resume_only)
             problem = setup_problem(pending["harness"], pending.get("account") or self.env["HOME"])
             if problem:
                 raise Refusal("trust-required", problem)
             socket = self.server(pending["harness"])
-            private = self.private_brief(args)
+            # A restart's resume names no brief: the recorded one still holds.
+            private = record.get("private_brief") if resume_only else self.private_brief(args)
             record.update(origin=args.origin, app_off=False, report_started_at=int(time.time()), private_brief=private,
                           reason=reason, intent="start", failure=None)
             self.write(record)
-            self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private))
+            self.detach(dict(pending, window=SESSION_NAME, seat=SEAT), socket, start_brief(private), resume_only)
             # The detached start records its outcome under this lock, so until
             # this call returns a start that is not running is still starting.
             answer = self.answer(record, self.status())
             return (answer if answer["state"] == "running" else
                     self.answer(record, state="starting", reason="launching")), 0
 
-    def detach(self, pending, socket, brief):
+    def detach(self, pending, socket, brief, resume_only=False):
         # The start runs to its confirmation past this call's bound, so a
         # process of its own runs it and records a failure's words here.
         state = self.path.parent
         brief_file = state / ("start-brief-" + uuid.uuid4().hex + ".txt")
         brief_file.write_text(brief)
         request = state / ("start-request-" + uuid.uuid4().hex + ".json")
-        request.write_text(json.dumps({"controller": pending, "brief_file": str(brief_file), "session": SESSION_NAME}))
+        request.write_text(json.dumps({"controller": pending, "brief_file": str(brief_file), "session": SESSION_NAME,
+                                       "resume_only": resume_only}))
         record = self.read()
         record["start_request"] = str(request)
         self.write(record)
@@ -755,9 +763,9 @@ class Session:
             settled = (result or {}).get("settled") or {}
             observation = settled.get("observation") or {}
             note = observation.get("note") or refusal or "start-failed"
-            if note == "session-missing" and json.loads(Path(request).read_text())["controller"].get("resume"):
+            body = json.loads(Path(request).read_text())
+            if note == "session-missing" and body["controller"].get("resume") and not body.get("resume_only"):
                 # The recorded session is gone: the start opens a new one.
-                body = json.loads(Path(request).read_text())
                 for key in ("resume", "resume_file"):
                     body["controller"].pop(key, None)
                 Path(request).write_text(json.dumps(body))
@@ -1041,6 +1049,164 @@ class Session:
                 return self.answer(record, status, state="stopping", reason="stop-requested"), 0
             return self.answer(record, status), 0
 
+    def resume(self):
+        """After a restart, each recorded session through its owner's verb, one
+        at a time: the delegate, then each registered checkout's overseer, then
+        each running lane. One line each; exit 1 where any refused."""
+        refused = 0
+
+        def report(kind, refusal, **names):
+            nonlocal refused
+            words = ["refused" if refusal else "resumed", "kind=" + kind]
+            words += [name + "=" + shlex.quote(str(value)) for name, value in names.items()]
+            if refusal:
+                refused += 1
+                key, fields = refusal
+                words.append("cause=" + key)
+                # A field the line already spells keeps its value under orch_,
+                # unless it only repeats the line's own.
+                words += [("orch_" + name if name in ("kind", "cause") or name in names else name) + "="
+                          + shlex.quote(str(value)) for name, value in fields
+                          if name not in names or str(names[name]) != str(value)]
+            print(" ".join(words), flush=True)
+
+        self.emitted = True
+        self.deadline = time.monotonic() + RESUME_SECONDS
+        report("delegate", self.resume_delegate(), checkout=self.home)
+        # watch owns which registered folders are project roots.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import watch
+        try:
+            roots = watch.project_roots(every=True)
+        except watch.Failure as failure:
+            print("jarvis-session: project-list=unread " + json.dumps(failure.record), file=sys.stderr)
+            report("projects", ("project-list-unread", ()))
+            return None, 1
+        read, overseers, lanes = set(), [], []
+        for root, unread in roots:
+            if unread:
+                print("jarvis-session: fleet=unread " + json.dumps(unread.record), file=sys.stderr)
+                report("fleet", (unread.record["key"][2], ()), checkout=root)
+                continue
+            refusal, path, state = self.inspected(root)
+            if refusal:
+                report("fleet", refusal, checkout=root)
+            if path is None or path in read:
+                continue
+            read.add(path)
+            controller = state.get("controller")
+            # The home's controller is the delegate. A controller stopped on
+            # purpose keeps `off` until a start opens it again.
+            if (isinstance(controller, dict) and controller.get("off") is None
+                    and path != self.fleet_path and root != Path(self.home)):
+                overseers.append(root)
+            lanes += [(root, lane["item"]) for lane in state.get("lanes") or [] if lane.get("status") == "running"]
+        for root in overseers:
+            self.deadline = time.monotonic() + RESUME_SECONDS
+            refusal = self.orch_step(root, "resume-controller", "--fleet")
+            report("overseer", None if still_running("overseer", refusal) else refusal, checkout=root)
+        for root, item in lanes:
+            self.deadline = time.monotonic() + RESUME_SECONDS
+            refusal = self.orch_step(root, "lane", "relaunch", "--fleet", item)
+            # A hosted lane runs on its own host: this machine's restart left it.
+            if refusal and refusal[0] == "lane-hosted":
+                continue
+            report("lane", None if still_running("lane", refusal) else refusal, checkout=root, item=item)
+        return None, 1 if refused else 0
+
+    def resume_delegate(self):
+        """The recorded delegate on its own conversation, through Start's
+        resume, never a new one: None once it runs, resumed or still running
+        (`existing`), else Start's reason as a refusal."""
+        try:
+            recorded = (self.status() or {}).get("recorded") or {}
+            if not recorded.get("harness"):
+                return "new-no-record", ()
+            args = argparse.Namespace(harness=recorded["harness"], account=None, model=None, effort=None,
+                                      mode="resume", origin="manual", brief_file=None, adopt_pane=None, adopt_pid=None)
+            answer, _ = self.start(args, resume_only=True)
+            if answer["state"] == "starting":
+                # The detached start removes its request when it ends: the
+                # next session waits for that, never beside it.
+                request = (self.read() or {}).get("start_request")
+                while request and Path(request).exists() and time.monotonic() < self.deadline:
+                    time.sleep(0.2)
+                answer = self.answer(self.read(), self.status())
+        except Refusal as failure:
+            return failure.reason, ()
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return "record-unreadable", ()
+        # A resume-only start opens no new conversation, so a running answer
+        # is the recorded one.
+        if answer["state"] == "running":
+            return None
+        return answer["reason"], ()
+
+    def inspected(self, root):
+        """ROOT's fleet as (refusal, path, state): path None where none stands."""
+        try:
+            result = self.run([str(ORCH_RUNTIME), "state", "inspect", "--fleet"], check=False, env=dict(os.environ),
+                              cwd=root)
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            print("jarvis-session: operation=orch-runtime state inspect cause=" + type(failure).__name__, file=sys.stderr)
+            return ("unanswered", ()), None, None
+        if result.returncode == 0:
+            try:
+                reply = json.loads(result.stdout.splitlines()[-1])["result"]
+                if isinstance(reply["state"], dict):
+                    return None, Path(reply["path"]), reply["state"]
+            except (IndexError, KeyError, TypeError, ValueError):
+                pass
+        refusal = orch_refusal(result)
+        if refusal[0] == "record-missing":
+            return None, None, None
+        sys.stderr.write(result.stdout + result.stderr)
+        return refusal, None, None
+
+    def orch_step(self, root, *words):
+        """orch-runtime WORDS run from ROOT: None at exit 0, else its refusal."""
+        try:
+            result = self.run([str(ORCH_RUNTIME), *words], check=False, env=dict(os.environ), cwd=root)
+        except (OSError, subprocess.TimeoutExpired) as failure:
+            print("jarvis-session: operation=orch-runtime " + " ".join(words[:2]) + " cause=" + type(failure).__name__,
+                  file=sys.stderr)
+            return "unanswered", ()
+        # The session log keeps orch's own lines, its outcome line included.
+        sys.stderr.write(result.stdout + result.stderr)
+        return None if result.returncode == 0 else orch_refusal(result)
+
+
+# orch's answer for a session the restart did not end, by kind: a lane's
+# relaunch refuses `lane-live` with nothing closed, and a controller's resume
+# fails its start `overseer-live` before anything opens
+# (skills/agent-runtime/runtime/src/controller/effect.rs resolve_predecessor).
+# Nothing needs doing to it, so it reads resumed.
+STILL_RUNNING = {"lane": ("lane-live", ()), "overseer": ("controller-resume-failed", (("note", "overseer-live"),))}
+
+
+def still_running(kind, refusal):
+    key, fields = STILL_RUNNING[kind]
+    return refusal is not None and refusal[0] == key and set(fields) <= set(refusal[1])
+
+
+def orch_refusal(result):
+    """A failed orch-runtime call as (key, fields): its reply's refusal, else
+    the key that leads its last line, as a close, launch or resume that failed
+    or is unconfirmed after the fact prints it, with that line's NAME=VALUE
+    fields, else `answer-unread`. A field's value runs to the next field, since
+    a cause is free text."""
+    try:
+        refusal = json.loads(result.stdout.splitlines()[-1])["refusal"]
+        return refusal["key"], [tuple(field) for field in refusal.get("fields") or []]
+    except (IndexError, KeyError, TypeError, ValueError):
+        pass
+    for text in (result.stdout, result.stderr):
+        lines = text.strip().splitlines()
+        match = re.match(r"(?:orch-runtime: )?([a-z][a-z0-9-]*)(?: (.*)|$)", lines[-1]) if lines else None
+        if match:
+            return match[1], re.findall(r"([a-z_]+)=(.*?)(?= [a-z_]+=|$)", match[2] or "")
+    return "answer-unread", (("exit", result.returncode),)
+
 
 class Arguments(argparse.ArgumentParser):
     def error(self, message):
@@ -1199,7 +1365,7 @@ def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
     for verb in ("start", "status", "stop", "succeed", "update-brief", "report-due", "attach", "forward", "forward-drain",
-                 "forward-wait", "main-host", "init"):
+                 "forward-wait", "main-host", "init", "resume"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1312,6 +1478,8 @@ def main():
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":
             answer, code = session.report_due()
+        elif args.verb == "resume":
+            answer, code = session.resume()
         else:
             record = session.read()
             answer, code = session.answer(record, session.status(allow_unstarted=record is None)), 0

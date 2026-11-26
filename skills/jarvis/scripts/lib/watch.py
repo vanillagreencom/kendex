@@ -102,21 +102,26 @@ def destination_projects(destination, timeout=60):
     return entries
 
 
-def destination_roots(destination):
+def destination_roots(destination, every=False):
     """The registered folders a pass or a note may take, each with the Failure that stops it, else None.
 
     A readable folder that is not a linked worktree is a root. A folder Git
     cannot classify is a root whose Failure, kendex's cause, stops what needs
     Git there, its mail read and a note to it; the presence pass renews no
     hold for it, so Slack delivers its notices. Other unreadable entries are
-    skipped."""
+    skipped, unless EVERY, which a restart's resume asks for: a checkout not
+    mounted yet is then a root whose Failure names kendex's state, so its
+    fleet is reported, never passed over."""
     roots = []
     for entry in destination_projects(destination):
         if entry.state == "git-unclassified":
             roots.append((entry.folder, Failure("project-list", "registration", entry.state,
                                                 entry.state + " " + entry.cause)))
-        elif entry.state == "ok" and not entry.linked:
-            roots.append((entry.folder, None))
+        elif entry.state == "ok":
+            if not entry.linked:
+                roots.append((entry.folder, None))
+        elif every:
+            roots.append((entry.folder, Failure("project-list", "registration", entry.state, entry.state)))
     return roots
 
 
@@ -413,9 +418,9 @@ except Refusal as error:
     return "ok"
 
 
-def project_roots():
+def project_roots(every=False):
     try:
-        roots = destination_roots(Destination("local", None, None))
+        roots = destination_roots(Destination("local", None, None), every)
     except Failure as error:
         # Only an absent executable takes the install remedy: a listing kendex
         # refuses, such as one naming a folder with no UTF-8 form, names its own cause.

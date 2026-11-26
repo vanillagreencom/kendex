@@ -63,6 +63,20 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - An app that turns Jarvis off uses `--origin app-off`.
   - Only `start --origin app-on` clears that Off.
   - A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
+- After a machine restart, or once a tmux server holding the delegate, an overseer or a lane is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
+  - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.
+  - It then resumes the overseer of each checkout `kendex project list --json` registers, through `orch-runtime resume-controller --fleet` run from that checkout. It skips the home's own controller, which is the delegate, and a controller stopped on purpose.
+  - It then relaunches each lane whose record reads `running`, through `orch-runtime lane relaunch --fleet ITEM` run from its checkout. It leaves a lane hosted on another machine as it is.
+  - Each session starts only after the one before it ends, so the command runs past the 60-second bound an app gives Start.
+  - It does nothing to a session that still runs and prints it `resumed`: a delegate Start answers `existing`, an overseer whose start fails `controller-resume-failed` with `note=overseer-live`, and a lane refused `lane-live`.
+  - A lane refused after its close, whose line carries `close=ID`, is left stopped. Its record no longer reads `running`, so a rerun prints no line for it. Relaunch it with the steps composed by hand, per orch's [lane-directive.md § Recovery relaunch](../../orch/references/lane-directive.md#recovery-relaunch).
+  - It prints one line per session on stdout: `resumed kind=delegate|overseer|lane checkout=PATH`, with `item=KEY` for a lane, or `refused` with the same fields, then `cause=KEY` and the refusal's own fields. A refusal's field named `kind` or `cause`, or one naming the line's own field with another value, reads `orch_NAME`, such as `orch_cause=`.
+  - A delegate's cause is the reason Start answers, such as `new-no-record`, `app-off` or `launch-failed`.
+  - An overseer's or a lane's cause is orch's refusal key. Where a close, launch or resume failed or is unconfirmed, it is the key that leads orch's outcome line, with that line's fields.
+  - An overseer's, a lane's or a fleet's `orch-runtime` call that cannot start or does not end has cause `unanswered`, and an answer with no key it can read has cause `answer-unread` with `exit=N`. A delegate's call that cannot start or does not end has cause `record-unreadable`.
+  - A registry it cannot read prints `refused kind=projects cause=project-list-unread`. A checkout whose fleet it cannot read prints `refused kind=fleet`.
+  - A registered checkout `kendex project list --json` lists as `folder-not-found`, `not-a-folder`, `unreadable` or `git-unclassified` prints `refused kind=fleet checkout=PATH cause=STATE`, as a volume not mounted yet leaves it.
+  - It exits 0 when every line reads `resumed`, and 1 otherwise.
 
 ## Task command
 

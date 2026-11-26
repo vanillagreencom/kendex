@@ -1200,6 +1200,185 @@ print(json.dumps(session.terminal(status)))
             answer, _ = self.call("start", origin="boot", duplicate_boot=True)
             self.assertEqual((answer["state"], len(self.started())), ("stopped", 2), "the same boot launched again")
 
+    def test_resume_brings_back_the_delegate_then_each_overseer_then_each_lane(self):
+        # The failures it stops: a delegate started fresh in place of its
+        # recorded conversation, two sessions launching at once, one refusal
+        # ending the run, and a session that was not running brought back.
+        # The skills tree runs this package with orch-runtime behind a
+        # recorder: each call passes to the real one unless an answer stands
+        # for its folder and words, as KEN-5605's verbs print them
+        # (skills/orch/runtime/src/main.rs resume_controller, relaunch_lane).
+        tree = self.root / "skills"
+        tree.mkdir()
+        shutil.copytree(SKILLS / "jarvis", tree / "jarvis", symlinks=True)
+        for package in ("agent-runtime", "mailbox"):
+            (tree / package).symlink_to(SKILLS / package, target_is_directory=True)
+        (tree / "orch/scripts").mkdir(parents=True)
+        for entry in (SKILLS / "orch").iterdir():
+            if entry.name != "scripts":
+                (tree / "orch" / entry.name).symlink_to(entry)
+        for entry in (SKILLS / "orch/scripts").iterdir():
+            if entry.name != "orch-runtime":
+                (tree / "orch/scripts" / entry.name).symlink_to(entry)
+        calls, answers = self.root / "orch-calls.jsonl", self.root / "orch-answers.json"
+        answers.write_text("{}")
+        recorder = tree / "orch/scripts/orch-runtime"
+        recorder.write_text("#!" + sys.executable + "\n" + "\n".join((
+            "import json, os, subprocess, sys, time",
+            "from pathlib import Path",
+            "real, calls, answers, fleet, rows = " + repr((str(SKILLS / "orch/scripts/orch-runtime"), str(calls),
+                                                         str(answers), str(self.fleet), str(self.rows))),
+            "key = os.getcwd() + ' ' + ' '.join(sys.argv[1:])",
+            "begin = time.monotonic()",
+            "intents = json.loads(Path(fleet).read_text()).get('intents', []) if Path(fleet).exists() else []",
+            "launches = [json.loads(l) for l in Path(rows).read_text().splitlines()] if Path(rows).exists() else []",
+            "planted = json.loads(Path(answers).read_text()).get(key)",
+            "if planted:",
+            "    time.sleep(0.2)",
+            "    sys.stdout.write(planted.get('stdout', '')); sys.stderr.write(planted.get('stderr', ''))",
+            "    code = planted['code']",
+            "else:",
+            "    code = subprocess.run([real, *sys.argv[1:]]).returncode",
+            "with open(calls, 'a') as stream:",
+            "    stream.write(json.dumps({'key': key, 'begin': begin, 'end': time.monotonic(),",
+            "                             'open': [i['id'] for i in intents if not i.get('completed_at')],",
+            "                             'resumed': any('--resume' in l.get('argv', []) for l in launches)}) + '\\n')",
+            "sys.exit(code)")) + "\n")
+        recorder.chmod(0o755)
+        registry = self.root / "registry.json"
+        registry.write_text("[]")
+        kendex = Path(self.env["PATH"].split(os.pathsep)[0]) / "kendex"
+        kendex.write_text('#!/bin/sh\n[ "$*" = "project list --json" ] || exit 97\ncat ' + shlex.quote(str(registry)) + "\n")
+        kendex.chmod(0o755)
+
+        def resume():
+            result = subprocess.run([str(tree / "jarvis/scripts/jarvis-session"), "resume", "--home", str(self.home)],
+                                    env=self.env, capture_output=True, text=True, timeout=300)
+            lines = []
+            for line in result.stdout.splitlines():
+                outcome, *fields = shlex.split(line)
+                lines.append((outcome, dict(field.split("=", 1) for field in fields)))
+            return lines, result.returncode, result.stderr
+
+        def delegate(outcome, cause=None):
+            return (outcome, {"kind": "delegate", "checkout": str(self.home), **({"cause": cause} if cause else {})})
+
+        # No recorded delegate: nothing starts.
+        lines, code, err = resume()
+        self.assertEqual((lines, code), ([delegate("refused", "new-no-record")], 1), err)
+        self.assertEqual(self.started(), [])
+
+        self.call("start")
+        self.wait(reason="new-no-record")
+        clean = {k: v for k, v in self.env.items() if not k.startswith(("ORCH_", "KENDEX_", "GIT_"))}
+
+        def checkout(name, controller, lanes):
+            path = self.root / name
+            path.mkdir()
+            for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+                subprocess.run(["git", "-C", str(path), *words], check=True, capture_output=True, env=clean)
+            runtime = str(SKILLS / "orch/scripts/orch-runtime")
+            for words in (("state", "init", "--fleet"), ("state", "set", "--fleet", "/controller", json.dumps(controller)),
+                          ("state", "set", "--fleet", "/lanes", json.dumps(lanes))):
+                subprocess.run([runtime, *words], cwd=path, env=clean, check=True, capture_output=True)
+            return path
+
+        socket = str(self.root / "fleet.sock")
+        overseer = {"pane": "%1", "server": "1", "server_socket": socket, "harness": "claude", "cwd": "/"}
+        lane = lambda item, harness="claude", **more: dict({"item": item, "status": "running", "harness": harness,
+                                                            "session_id": "s-" + item}, **more)
+        a = checkout("a", dict(overseer, session_id="overseer-a"),
+                     [lane("KEN-1"), lane("KEN-2", "copilot", session_id=None), lane("KEN-5", host="vm1"),
+                      lane("KEN-7", status="stopped")])
+        # B's overseer recorded no native id, and its KEN-3 no harness: the
+        # real verbs refuse both, closing nothing.
+        b = checkout("b", overseer, [lane("KEN-3", harness=None), lane("KEN-4")])
+        c = checkout("c", dict(overseer, session_id="overseer-c", off={"at": "2026-11-01T00:00:00Z", "generation": 1}),
+                     [lane("KEN-6")])
+        resumed_line = lambda text: {"code": 0, "stdout": text + "\n"}
+        answers.write_text(json.dumps({
+            str(a) + " resume-controller --fleet": resumed_line(
+                "controller-resumed intent=i1 generation=2 pane=%9 session=overseer-a socket=" + socket),
+            str(a) + " lane relaunch --fleet KEN-1": resumed_line("resumed item=KEN-1 route=resume account=-"),
+            str(a) + " lane relaunch --fleet KEN-2": resumed_line("resumed item=KEN-2 route=fresh account=-"),
+            str(b) + " lane relaunch --fleet KEN-4": resumed_line("resumed item=KEN-4 route=resume account=-"),
+            str(c) + " lane relaunch --fleet KEN-6": {"code": 3, "stderr": "orch-runtime: launch-failed item=KEN-6 "
+                                                                         "close=i8 refusal=account-walled\n"}}))
+        registry.write_text(json.dumps([{"folder": str(folder), "state": "ok", "worktree": None}
+                                        for folder in (self.home, a, b, c)]))
+        # The restart: the home's server and the delegate in it are gone.
+        subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
+        self.wait("stopped", "ended", seconds=30)
+
+        lines, code, err = resume()
+        lane_line = lambda outcome, root, item, **more: (outcome, dict(kind="lane", checkout=str(root), item=item, **more))
+        self.assertEqual(lines, [
+            delegate("resumed"),
+            ("resumed", {"kind": "overseer", "checkout": str(a)}),
+            ("refused", {"kind": "overseer", "checkout": str(b), "cause": "session-unrecorded",
+                         "field": "session_id", "pane": "%1"}),
+            lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"),
+            lane_line("refused", b, "KEN-3", cause="harness-unrecorded"), lane_line("resumed", b, "KEN-4"),
+            lane_line("refused", c, "KEN-6", cause="launch-failed", close="i8", refusal="account-walled")],
+            err + self.diagnostics())
+        self.assertEqual(code, 1)
+        resumed = self.started()[-1]["argv"]
+        self.assertEqual((len(self.started()), resumed[resumed.index("--resume") + 1]), (2, self.started()[0]["id"]))
+        steps = [row for row in map(json.loads, calls.read_text().splitlines())
+                 if row["key"].split(" ", 1)[1].startswith(("resume-controller", "lane relaunch"))]
+        self.assertEqual([row["key"] for row in steps], [
+            str(a) + " resume-controller --fleet", str(b) + " resume-controller --fleet",
+            *(str(root) + " lane relaunch --fleet " + item for root, item in
+              ((a, "KEN-1"), (a, "KEN-2"), (a, "KEN-5"), (b, "KEN-3"), (b, "KEN-4"), (c, "KEN-6")))])
+        # Each step began once the delegate's start had settled and the step
+        # before it had ended.
+        self.assertTrue(all(row["open"] == [] and row["resumed"] for row in steps), steps)
+        self.assertTrue(all(later["begin"] >= earlier["end"] for earlier, later in zip(steps, steps[1:])), steps)
+
+        # The rerun with every session still running, as orch answers a live
+        # overseer (skills/orch/tests/rust/controller.rs overseer-live) and a
+        # live lane (skills/orch/tests/rust/effects.rs lane-live): nothing
+        # starts and it succeeds, a linked worktree of a checkout passed over.
+        # A checkout not mounted yet then fails it, beside an overseer whose
+        # start failed for another cause.
+        lane_live = lambda item: {"code": 1, "stdout": json.dumps({"protocol": "orch-runtime-v1", "ok": False, "refusal": {
+            "key": "lane-live", "fields": [["item", item], ["status", "running"]]}}) + "\n"}
+        resume_failed = lambda intent, note: {"code": 3, "stdout": "controller-resume-failed intent=" + intent + " note="
+                                                                   + note + " cause=x\n"}
+        live = [delegate("resumed"), ("resumed", {"kind": "overseer", "checkout": str(a)}),
+                lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2")]
+        unmounted = self.root / "unmounted"
+        for listed, overseer_answer, expected, exit in (
+                ([{"folder": str(self.root / "a-linked"), "state": "ok", "worktree": {"main": str(a)}}],
+                 resume_failed("i2", "overseer-live"), live, 0),
+                ([{"folder": str(unmounted), "state": "folder-not-found", "worktree": None}],
+                 resume_failed("i3", "tmux-server-unstarted"),
+                 live[:1] + [("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"}),
+                             ("refused", {"kind": "overseer", "checkout": str(a), "cause": "controller-resume-failed",
+                                          "intent": "i3", "note": "tmux-server-unstarted", "orch_cause": "x"})]
+                 + live[2:], 1)):
+            answers.write_text(json.dumps({
+                str(a) + " resume-controller --fleet": overseer_answer,
+                str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
+                str(a) + " lane relaunch --fleet KEN-2": lane_live("KEN-2")}))
+            registry.write_text(json.dumps([{"folder": str(folder), "state": "ok", "worktree": None}
+                                            for folder in (self.home, a)] + listed))
+            lines, code, err = resume()
+            self.assertEqual((lines, code), (expected, exit), err + self.diagnostics())
+            self.assertEqual(len(self.started()), 2, self.started())
+
+        # The delegate's conversation is gone: the start that tried it fails,
+        # as status answers it, and no new conversation opens.
+        registry.write_text("[]")
+        subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
+        self.wait("stopped", "ended", seconds=30)
+        for transcript in Path(self.started()[0]["account"]).glob("projects/*/" + self.started()[0]["id"] + ".jsonl"):
+            transcript.unlink()
+        lines, code, err = resume()
+        self.assertEqual((lines, code), ([delegate("refused", "launch-failed")], 1), err)
+        self.assertEqual(self.call("status")[0]["state"], "failed")
+        self.assertTrue(all("--resume" in launch["argv"] for launch in self.started()[1:]), self.started())
+
     def test_a_version_1_record_is_read_as_the_previous_version(self):
         # The previous writer's shape: its state, reason and detail at the top.
         self.record.parent.mkdir(parents=True)

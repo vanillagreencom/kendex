@@ -228,7 +228,7 @@ Every lane window opens in one session on the fleet's tmux server. The launch us
 
 ## Recovery relaunch
 
-For a local lane, run the relaunch from the checkout with the item alone:
+For a local lane whose session has ended, run the relaunch from the checkout with the item alone:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime lane relaunch --fleet [ITEM_KEY]
@@ -240,9 +240,9 @@ For a local lane, run the relaunch from the checkout with the item alone:
 - Exit 0 prints `resumed item=[ITEM_KEY] route=resume|fresh account=[DIR|-]`.
 - A failed close prints `close-failed` on stderr at exit 3, and an open one `close-unconfirmed` at exit 75. Nothing is launched after either.
 - A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
-- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
+- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
 
-Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
+Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, for a lane whose session still runs, which step 2's `no_landing` close ends, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 
 1. End the lane. The record must not be in flight, and no recorded harness or detached turn may still run. End it through its own close-out, [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver), or the runtime close in step 2.
 2. Where the lane still stands, run the runtime close. It retires the attempt and keeps the item's work, the worktree and its validation runs among it, and a hosted lane's sandbox stands after it (§ Resume or fresh). Write the request with the harness file tool:

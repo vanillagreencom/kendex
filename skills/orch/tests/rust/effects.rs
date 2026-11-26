@@ -528,6 +528,31 @@ fn refused_by(out: &std::process::Output) -> String {
         .to_owned()
 }
 
+/// The fleet's server killed, as a restart ends it, and awaited gone with
+/// the lane harness it held: a relaunch reads that harness's identity, so a
+/// harness still exiting would read live.
+fn end_server(server: &Server, harness: u32) {
+    let killed = tmux(&server.socket, &["kill-server"]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while live(server.pid) || live(harness) {
+        assert!(Instant::now() < deadline, "the fleet server never ended");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The pid of `item`'s harness, as its record names it.
+fn harness_pid(runner: &Runner, item: &str) -> u32 {
+    let fleet = runner.fleet();
+    let lane = fleet["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["item"] == item)
+        .unwrap_or_else(|| panic!("no lane {item}: {fleet}"));
+    u32::try_from(lane["launch"]["pid"].as_u64().unwrap()).unwrap()
+}
+
 /// After a restart a local lane's record stands with its session and the
 /// fleet's server gone, and the caller stands on another server: `lane
 /// relaunch` with the item alone closes the lane and launches it again from
@@ -543,13 +568,7 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
     std::fs::create_dir(&sockets).unwrap();
     let server = Server::start(&sockets, "fleet");
     let runner = relaunch_world(dir.path(), &server, 5, "light");
-    let killed = tmux(&server.socket, &["kill-server"]);
-    assert!(killed.status.success(), "{}", stderr(&killed));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while live(server.pid) {
-        assert!(Instant::now() < deadline, "the fleet server never ended");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    end_server(&server, harness_pid(&runner, "KEN-1"));
     std::fs::remove_dir_all(&sockets).unwrap();
     let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
     let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
@@ -604,18 +623,43 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
     );
 }
 
-/// What `lane relaunch` refuses before it closes anything: a fleet whose
-/// controller record names no server, so the caller's own server is never
-/// reached, an item with no lane, a hosted lane, whose server is its
-/// host's, a lane whose own account the launch's judge reads walled, and a
-/// launch its admission refuses, here on a setting only a launch reads.
-/// The lane stands running after each.
+/// What `lane relaunch` refuses before it closes anything: a lane whose
+/// session still runs, idle at its composer, a fleet whose controller
+/// record names no server, so the caller's own server is never reached, an
+/// item with no lane, a hosted lane, whose server is its host's, a lane
+/// whose own account the launch's judge reads walled, and a launch its
+/// admission refuses, here on a setting only a launch reads. The lane
+/// stands running after each.
 #[test]
 fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = relaunch_world(dir.path(), &server, 99, CLASS);
     let fleet = runner.fleet();
+    let harness = harness_pid(&runner, "KEN-1");
+    // With no account to judge, nothing but the live session holds this
+    // relaunch before its close.
+    let mut live_accountless = fleet.clone();
+    live_accountless["lanes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("account");
+    runner.write_fleet(&live_accountless);
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(refused_by(&out), "lane-live");
+    let after = runner.fleet();
+    assert_eq!(after["lanes"][0]["status"], "running", "{after}");
+    assert!(
+        !after["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["op"] == "close-resources"),
+        "a live lane's relaunch closes nothing: {after}"
+    );
+    assert!(live(harness), "a live lane's relaunch stops no harness");
+    // Every row below reads the lane's session gone, as a restart leaves it.
+    end_server(&server, harness);
     let mut hosted = fleet.clone();
     hosted["lanes"][0]["host"] = json!("/opt/provider");
     let mut unrecorded = fleet.clone();
@@ -691,13 +735,7 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     std::fs::create_dir(&sockets).unwrap();
     let server = Server::start(&sockets, "fleet");
     let runner = relaunch_world(dir.path(), &server, 5, CLASS);
-    let killed = tmux(&server.socket, &["kill-server"]);
-    assert!(killed.status.success(), "{}", stderr(&killed));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while live(server.pid) {
-        assert!(Instant::now() < deadline, "the fleet server never ended");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    end_server(&server, harness_pid(&runner, "KEN-1"));
     std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o500)).unwrap();
     let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
     std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o700)).unwrap();
