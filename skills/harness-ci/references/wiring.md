@@ -388,7 +388,7 @@ The producer reads the event's base workflow. Push derivation needs runner proof
 
 An ordinary lane job that runs on one event only joins a literal event test after the status function: `${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}`. The event test limits the events the job runs on and does not change the verdict the reader derives for the lane. The repository-wide scan gate below takes no extra event test. A gate that drops the `result != 'success'` fallback, or a scan gate with an event test, leaves the roster unreadable with `cause=unsupported-lane-gate`.
 
-On every other event the job skips while its verdict can read `true`, and `aggregate-needs` accepts that skip only where `lanes` or the lane's own verdict reads `false`. Under `queue-only-default: true` with no `HARNESS_CI_PER_PUSH_REASON`, `lanes` is `false` on `pull_request` and `push`. On `schedule` and `workflow_dispatch` every lane runs, so there the skip fails `CI`.
+On every other event the job skips while its verdict can read `true`, and `aggregate-needs` accepts that skip only where `lanes` or the lane's own verdict reads `false`. The `lanes` bullets in [§ Through the composite action](#through-the-composite-action) say where `lanes` reads `false`. On `schedule` and `workflow_dispatch` every verdict reads `true`, so there the skip always fails `CI`.
 
 Map the job's `lanes` output directly from the classifier. To narrow it with a Boolean step output, use `${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.classify.outputs.lanes }}`. Use the IDs and output names from your workflow.
 
