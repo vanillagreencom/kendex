@@ -827,6 +827,8 @@ class SessionContract(unittest.TestCase):
             argv += ["--account-walled"]
         if kwargs.get("brief") is not None:
             argv += ["--brief-file", str(kwargs["brief"])]
+        if kwargs.get("keep_brief"):
+            argv.append("--keep-brief")
         result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=120)
         self.stderr = result.stderr
         try:

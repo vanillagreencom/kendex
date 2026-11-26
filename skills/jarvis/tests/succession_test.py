@@ -261,21 +261,35 @@ class SuccessionContract(SessionContract):
     def test_an_exited_controller_whose_resume_is_refused_is_handed_to_the_next_account(self):
         # The failure it stops: a controller whose CLI exited after its
         # account signed out stays down, since Start's resume refuses that
-        # account and succeed hands over only from a running controller.
+        # account and succeed hands over only from a running controller; a
+        # live controller handed over as a dead one; or a restart that drops
+        # the owner's private brief from the successor.
         second = self.plant_account("claude-b", 20)
-        before = self.running()
+        brief = self.root / "brief.md"
+        brief.write_text("Watch the release.\n")
+        self.call("start", brief=brief)
+        self.wait(reason="new-no-record")
+        before = self.controller()
+        launched = len(self.started())
+        answer, code = self.succeed(exited=True)
+        self.assertEqual((answer["reason"], code), ("record-unreadable", 1), self.stderr)
+        self.assertEqual(len(self.started()), launched)
         self.sign_out(self.account)
         os.kill(self.started()[-1]["pid"], signal.SIGKILL)
         self.wait("stopped", "ended", seconds=30)
         self.assertEqual(self.succeed()[0]["reason"], "record-unreadable")
-        self.call("start")
+        self.call("start", keep_brief=True)
         self.wait("blocked", "sign-in-required")
         answer, code = self.succeed(exited=True)
         self.assertEqual((answer["state"], answer["account"], code), ("running", str(second), 0),
                          self.stderr + self.diagnostics())
         after = self.handed_over(before)
         self.assertEqual((after["account"], after.get("seat")), (str(second), "jarvis"))
-        self.assertEqual(self.started()[-1]["account"], str(second))
+        successor = self.started()[-1]
+        self.assertEqual(successor["account"], str(second))
+        prompts = [json.loads(line) for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
+        self.assertEqual([row["prompt"] for row in prompts if row["id"] == successor["id"]],
+                         [START_BRIEF + " Watch the release."])
 
     def test_with_no_account_left_the_answer_names_each_unproved_account_and_jarvis_keeps_running(self):
         # Wanted outcome 2's other half, and a walled account's refusal: with

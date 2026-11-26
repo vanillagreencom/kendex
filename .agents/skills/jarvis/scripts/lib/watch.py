@@ -1224,7 +1224,7 @@ class Watch:
             return self.session("restart", "succeed", "--exited")
         account = ["--account", memory["account"]] if memory["account"] else []
         return self.session("restart", "start", "--harness", memory["harness"], *account,
-                            "--mode", "resume", "--origin", "manual")
+                            "--mode", "resume", "--origin", "manual", "--keep-brief")
 
     def accept_exited(self, answer, now):
         """One status reading at NOW: the episode whose restart starts now, or None.
@@ -1232,9 +1232,16 @@ class Watch:
         A controller whose process is gone, with no stop asked, reads
         stopped and ended. Its exit is one episode: one resume, one succeed
         where that resume is refused, and one owner notice of the outcome.
-        The episode ends once a controller runs after its notice."""
+        A restart that runs ends the episode once its notice lands; a
+        failed one ends once a controller runs again."""
         if isinstance(answer, Failure):
             self.failed_pass("exited", answer.record)
+            return None
+        if answer.get("state") in ("blocked", "failed") and not answer.get("harness"):
+            # Status answers a read it could not make so: no recorded
+            # controller names it, and the reading decides nothing.
+            self.failed_pass("exited", Failure("controller-status", "refusal", answer.get("reason"),
+                                               answer.get("detail") or answer.get("reason")).record)
             return None
         self.state.pop("exited_failure", None)
         memory = self.state.get("exited")
@@ -1270,6 +1277,7 @@ class Watch:
         if state in ("starting", "handing-over", "stopping"):
             return None
         if state == "running":
+            memory["ran"] = True
             memory["outcome"] = ("It started again on " + (answer.get("account") or "its default account")
                                  + " (" + str(reason) + ").")
         else:
@@ -1297,6 +1305,9 @@ class Watch:
             self.failed_pass("exited-notice", failure("exited-notice", error).record)
             return
         memory["noticed"] = True
+        if memory.get("ran"):
+            # A later exit of the controller that runs again is another one.
+            del self.state["exited"]
         self.state.pop("exited-notice_failure", None)
         self.save()
 

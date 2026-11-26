@@ -2621,35 +2621,46 @@ with open(sys.argv[1], "ab") as out:
         signed_out = dict(ended, state="blocked", reason="sign-in-required")
         moved = dict(running, account="/accounts/b", reason="new-requested")
         spent = dict(ended, state="failed", reason="handover-failed", detail="No account is left to take over.")
-        resume = "start --home {home} --harness claude --account /accounts/a --mode resume --origin manual"
+        resume = "start --home {home} --harness claude --account /accounts/a --mode resume --origin manual --keep-brief"
+        unread = {"state": "blocked", "reason": "record-unreadable", "harness": None, "account": None}
         succeed = "succeed --home {home} --exited"
         # Each row: Start's and succeed's answers with their exits (None: no
-        # answer), how many notices lane-mail refuses first, then one step
-        # per watch pass: the status it reads, the session calls it adds, the
-        # words of each owner notice it adds, and the root-unreachable events
-        # it adds.
-        for name, start, succession, refusals, steps in (
-                ("resumed", (running, 0), (None, 1), 0,
+        # answer), its world, then one step per watch pass: the status it
+        # reads, the session calls it adds, the words of each owner notice it
+        # adds, and the root-unreachable events it adds. The world names how
+        # many notices lane-mail refuses first and the steps whose wall read
+        # binds a live controller.
+        for name, start, succession, world, steps in (
+                ("resumed", (running, 0), (None, 1), {},
                  [(ended, [resume], [["/accounts/a", "claude", "started again", "resumed"]], 0), (running, [], [], 0),
                   # An exit after the episode ended is another one.
                   (ended, [resume], [["/accounts/a", "resumed"]], 0)]),
-                ("in flight", (starting, 0), (None, 1), 0,
+                # A restarted controller that exits before any reading of it
+                # running exits again.
+                ("exits again", (running, 0), (None, 1), {},
+                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (ended, [resume], [["/accounts/a", "resumed"]], 0)]),
+                # Once the restarted controller runs, the wall read binds it.
+                ("in flight", (starting, 0), (None, 1), dict(bound={1, 2, 3}),
                  [(ended, [resume], [], 0), (starting, [], [], 0), (running, [], [["/accounts/a", "resumed"]], 0),
                   (running, [], [], 0)]),
-                ("resume refused", (signed_out, 1), (moved, 0), 0,
+                # A status read refused in the episode reports once and decides nothing.
+                ("status read refused", (starting, 0), (None, 1), {},
+                 [(ended, [resume], [], 0), (unread, [], [], 1), (unread, [], [], 0),
+                  (running, [], [["/accounts/a", "resumed"]], 0)]),
+                ("resume refused", (signed_out, 1), (moved, 0), {},
                  [(ended, [resume, succeed], [["started again", "/accounts/b"]], 0), (moved, [], [], 0)]),
-                ("refused after its start", (starting, 0), (spent, 1), 0,
+                ("refused after its start", (starting, 0), (spent, 1), {},
                  [(ended, [resume], [], 0),
                   (signed_out, [succeed], [["did not start", "resume sign-in-required", "succeed handover-failed",
                                             "No account is left"]], 0),
                   (spent, [], [], 0), (ended, [], [], 0)]),
-                ("no answer", (None, 1), (None, 1), 0,
+                ("no answer", (None, 1), (None, 1), {},
                  [(ended, [resume, succeed], [["did not start", "resume", "succeed"]], 0), (ended, [], [], 0)]),
-                ("notice unsent", (running, 0), (None, 1), 1,
+                ("notice unsent", (running, 0), (None, 1), dict(refusals=1),
                  [(ended, [resume], [], 1), (running, [], [["/accounts/a", "resumed"]], 0), (running, [], [], 0)]),
-                ("stopped on purpose", (running, 0), (moved, 0), 0,
+                ("stopped on purpose", (running, 0), (moved, 0), {},
                  [(dict(ended, reason="stopped"), [], [], 0), (dict(ended, state="off", reason="app-off"), [], [], 0)]),
-                ("never started", (running, 0), (moved, 0), 0,
+                ("never started", (running, 0), (moved, 0), {},
                  [(dict(ended, reason="never-started", harness=None, account=None), [], [], 0)])):
             with self.subTest(row=name):
                 # Each row's own home: the mailbox refuses an owner notice
@@ -2662,16 +2673,23 @@ with open(sys.argv[1], "ab") as out:
                     plant, calls = self.exited_session()
                     plant("start", *start)
                     plant("succeed", *succession)
-                    if refusals:
+                    if world.get("refusals"):
                         refused = shlex.quote(str(self.root / ("refused-" + name.replace(" ", "-"))))
                         self.intercept_mail(': >> ' + refused + '\nif [ "$1" = notice ] && [ "$(wc -l < ' + refused
-                                            + ')" -lt ' + str(refusals) + ' ]; then\necho >> ' + refused
+                                            + ')" -lt ' + str(world["refusals"]) + ' ]; then\necho >> ' + refused
                                             + '\necho "lane-mail: send-failed=owner" >&2\nexit 1\nfi')
                     watch = self.watch()
                     made, told, alerts = [], [], 0
                     try:
                         for index, (status, added, named, alerted) in enumerate(steps):
                             plant("status", status)
+                            if index in world.get("bound", ()):
+                                self.controller("s1", "/accounts/a", {"event": "Stop"})
+                            elif self.root.joinpath("status.json").exists():
+                                # The planted runtime reads the controller gone.
+                                gone = json.loads(self.root.joinpath("status.json").read_text())
+                                gone["result"]["live"] = False
+                                self.root.joinpath("status.json").write_text(json.dumps(gone))
                             self.exited_passes(watch, 30 * index)
                             made += [call.format(home=self.home) for call in added]
                             told += named

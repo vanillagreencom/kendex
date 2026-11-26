@@ -688,8 +688,9 @@ class Session:
             if problem:
                 raise Refusal("trust-required", problem)
             socket = self.server(pending["harness"])
-            # A restart's resume names no brief: the recorded one still holds.
-            private = record.get("private_brief") if resume_only else self.private_brief(args)
+            # A restart's resume names no brief, and --keep-brief asks for the
+            # recorded one: the recorded one still holds.
+            private = record.get("private_brief") if resume_only or args.keep_brief else self.private_brief(args)
             record.update(origin=args.origin, app_off=False, report_started_at=int(time.time()), private_brief=private,
                           reason=reason, intent="start", failure=None)
             self.write(record)
@@ -1139,7 +1140,8 @@ class Session:
             if not recorded.get("harness"):
                 return "new-no-record", ()
             args = argparse.Namespace(harness=recorded["harness"], account=None, model=None, effort=None,
-                                      mode="resume", origin="manual", brief_file=None, adopt_pane=None, adopt_pid=None)
+                                      mode="resume", origin="manual", brief_file=None, keep_brief=False,
+                                      adopt_pane=None, adopt_pid=None)
             answer, _ = self.start(args, resume_only=True)
             if answer["state"] == "starting":
                 # The detached start removes its request when it ends: the
@@ -1410,6 +1412,7 @@ def main():
             command.add_argument("--mode", choices=("resume", "new"), default="new")
             command.add_argument("--origin", choices=("boot", "manual", "app-on"), default="manual")
             command.add_argument("--brief-file")
+            command.add_argument("--keep-brief", action="store_true")
             command.add_argument("--model")
             command.add_argument("--effort")
             command.add_argument("--adopt-pane")
@@ -1441,6 +1444,9 @@ def main():
         parser.error("choice")
     if args.verb == "start" and (args.adopt_pane is None) != (args.adopt_pid is None):
         parser.error("adopt")
+    if args.verb == "start" and args.keep_brief and (args.brief_file is not None or args.adopt_pane is not None):
+        # The stored brief stands in for a new one, on the recorded session only.
+        parser.error("keep-brief")
     if args.verb == "start" and args.adopt_pane is not None and not (
             clean(args.adopt_pane) and args.adopt_pane and args.adopt_pid > 0 and args.origin == "manual" and args.mode == "new"):
         # Adoption replaces a running session with a new one, at a person's request.
