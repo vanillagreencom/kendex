@@ -1891,17 +1891,27 @@ fn check_answer(
 fn select_receipt(settings: &Settings, id: &Identity) -> Result<(PathBuf, Option<ValidateMode>)> {
     let bare = bare_path(id);
     let rows = stages(settings, &id.issue)?;
-    if let Some((_, row)) = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| {
-            s.kind == StageKind::Validate
-                && s.round_id.as_deref() == Some(&id.round_id)
-                && s.run_dir.is_some()
-        })
-        .max_by_key(|(index, s)| (s.start, *index))
+    // The round's runs are its own validate rows, and any other row whose
+    // run this round's receipt is keyed to. The writer binds a recorded run
+    // by its directory whatever round the row names, and a restack import
+    // names none.
+    let mut runs = Vec::new();
+    for (index, s) in rows.iter().enumerate() {
+        let Some(dir) = s.run_dir.as_deref().filter(|_| s.kind == StageKind::Validate) else {
+            continue;
+        };
+        if s.round_id.as_deref() == Some(&id.round_id) {
+            runs.push((index, s, keyed_path(id, Path::new(dir))?));
+        } else if let Ok(keyed) = keyed_path(id, Path::new(dir))
+            && fs::symlink_metadata(&keyed).is_ok()
+        {
+            runs.push((index, s, keyed));
+        }
+    }
+    if let Some((_, row, keyed)) = runs
+        .into_iter()
+        .max_by_key(|(index, s, _)| (s.start, *index))
     {
-        let keyed = keyed_path(id, Path::new(row.run_dir.as_deref().expect("selected run")))?;
         let mode = row.proof.as_ref().map(|p| p.mode);
         if mode.is_some()
             || fs::symlink_metadata(&keyed).is_ok()

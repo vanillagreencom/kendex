@@ -23,7 +23,7 @@ After a run that ended without a pass, the runtime admits the round's next attem
 
 The check selects the receipt it judges:
 
-- **Round mode** (`--worktree`, `--issue`, `--round-id`). Where the round has an admitted `validate` stage, the check takes the receipt of the run the newest stage names. Otherwise it takes the round's one receipt under either name; two or more refuse `receipt-ambiguous`. The reply's `path` names the selected receipt, which acceptance and submit consume.
+- **Round mode** (`--worktree`, `--issue`, `--round-id`). Where the round has an admitted `validate` stage, or the item records a `validate` stage of another round or of none whose run this round's receipt is keyed to, the check takes the receipt of the run the newest such stage names. Otherwise it takes the round's one receipt under either name; two or more refuse `receipt-ambiguous`. The reply's `path` names the selected receipt, which acceptance and submit consume.
 - **File mode** (`--file`). The named file, an earlier attempt's receipt included.
 
 A fix round also has an input record bound by the same token, `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. Orch stamps this delegated item set before delegating. `--expect-items-from-round` checks the receipt's `items[]` against it. Its schema is [dev-round.md](dev-round.md).

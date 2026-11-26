@@ -3371,14 +3371,18 @@ mod dev_artifacts {
         fs::write(w.item(), doc.to_string()).unwrap();
         refused(&w.range_write("r1", &docs), "run-off-round");
 
-        // A reuse is cited in place of the overseer's run beside it.
+        // A reuse is cited in place of the overseer's run beside it. The
+        // overseer's run reaches the ledger as `record-restack-validation`
+        // imports it, naming no round.
         let overseer = w.range_run("overseer", &prepared_base);
         let reused = w.range_run("reused", &prepared_base);
         w.record_start(&reused, &format!("pass-run={}", overseer.display()));
+        let mut imported = World::ledger_stage(&overseer);
+        imported["round_id"] = Value::Null;
+        imported["reason"] = json!("restack");
         let stages = doc["stages"].as_array_mut().unwrap();
-        for run in [&reused, &overseer] {
-            stages.push(World::ledger_stage(run));
-        }
+        stages.push(World::ledger_stage(&reused));
+        stages.push(imported);
         fs::write(w.item(), doc.to_string()).unwrap();
         refused(&w.range_write("r1", &reused), "run-off-round");
 
