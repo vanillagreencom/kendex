@@ -242,12 +242,14 @@ For a local lane whose session has ended, run the relaunch from the checkout wit
 ```
 
 - It runs steps 2 and 3 below from the record: the close, then the launch on the record's own account and the start brief.
+  - Where no handoff record stands for the item, the start brief closes with one sentence: the last session ended without a handoff, so before the next step the worker reads its worktree's Git state and the branch's remote head, settles the last command it saw no result for, and restarts any wait it held.
+  - A standing handoff record leaves the sentence out.
 - Before the close, it judges the record's account with the launch's own judge, with the lane's own charge left out, and admits the launch as the launch would be admitted.
 - It reaches the controller record's `server_socket`, not the caller's `$TMUX`, and starts a gone server as § Tmux session states.
 - Exit 0 prints `resumed item=[ITEM_KEY] route=resume|fresh account=[DIR|-]`.
 - A failed close prints `close-failed` on stderr at exit 3, and an open one `close-unconfirmed` at exit 75. Nothing is launched after either.
 - A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
-- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
+- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `handoff-unreadable` where a place the item's handoff is read from cannot be read, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
 
 Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, for a lane whose session still runs, which step 2's `no_landing` close ends, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 

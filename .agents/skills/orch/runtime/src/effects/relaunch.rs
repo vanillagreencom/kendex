@@ -12,7 +12,12 @@ use crate::error::Result;
 use crate::ops;
 use crate::ops::lane::RecoveryReason;
 use crate::settings::Settings;
-use crate::watch::lanes::{Composed, Composition, compose_relaunch};
+use crate::state::Lane;
+use crate::watch::lanes::{
+    Composed, Composition, HandoffReading, compose_relaunch, handoff_standing,
+};
+
+type Brief = fn(&Lane, Harness) -> std::result::Result<String, String>;
 
 /// The files a restart's relaunch keeps beside the fleet state, as a
 /// relaunch names them: its brief and its two requests.
@@ -34,10 +39,13 @@ pub struct Relaunch {
 /// cannot take the lane refuses with the launch's own key before the close
 /// retires anything; then the
 /// record's own relaunch on that account and the start brief, which
-/// continues from the item's handoff, retiring the predecessor on the
-/// `restart-recovery` ground. A record with no account is judged on none
-/// and launches on none. A hosted lane runs where this machine's server is
-/// not its own, and refuses `lane-hosted`.
+/// continues from the item's standing handoff, retiring the predecessor on
+/// the `restart-recovery` ground. Where no handoff stands, the session
+/// ended mid-work, so the brief is the interrupted start brief; a handoff
+/// place that cannot be read refuses `handoff-unreadable`, since either
+/// brief would state a reading that was never made. A record with no
+/// account is judged on none and launches on none. A hosted lane runs
+/// where this machine's server is not its own, and refuses `lane-hosted`.
 pub fn composed(
     settings: &Settings,
     path: &Path,
@@ -77,6 +85,16 @@ pub fn composed(
             now,
         )?;
     }
+    let brief: Brief = match handoff_standing(&settings.state_dir, &lane) {
+        HandoffReading::Stands { record: _ } => super::launch::start_brief,
+        HandoffReading::None => super::launch::interrupted_start_brief,
+        HandoffReading::Unreadable { path } => {
+            return Err(refused(
+                "handoff-unreadable",
+                &[("item", item), ("path", &path.display().to_string())],
+            ));
+        }
+    };
     let Composed { close, launch, .. } = compose_relaunch(
         &lane,
         harness,
@@ -84,7 +102,7 @@ pub fn composed(
             stem: STEM,
             account: account.as_deref(),
             exclude: None,
-            brief: super::launch::start_brief,
+            brief,
             ground: RecoveryReason::RestartRecovery,
         },
         &settings.state_dir,

@@ -636,6 +636,55 @@ fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
     );
 }
 
+/// A relaunched worker is told its last session ended without a handoff,
+/// and to settle its last command and restart its waits, exactly where the
+/// item's state holds no standing handoff record: one that stands is the
+/// start workflow's to continue from, and a state file that cannot be read
+/// refuses before anything is closed rather than guess either brief. The
+/// sentence is the text the relaunched harness receives as its brief.
+#[test]
+fn a_relaunch_brief_says_the_session_ended_without_a_handoff_only_where_none_stands() {
+    const SENTENCE: &str = "Your last session ended without a handoff";
+    // The row, the item state's text where one is planted, and the
+    // refusal's key or whether the brief carries the sentence.
+    let rows: [(&str, Option<&str>, Result<bool, &str>); 3] = [
+        ("no handoff", None, Ok(true)),
+        (
+            "standing handoff",
+            Some(r#"{"handoff": {"reason": "context", "at": 1}}"#),
+            Ok(false),
+        ),
+        ("unreadable state", Some("{"), Err("handoff-unreadable")),
+    ];
+    for (row, state, expected) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = relaunch_world(dir.path(), &server, 5, CLASS);
+        end_server(&server, harness_pid(&runner, "KEN-1"));
+        if let Some(text) = state {
+            std::fs::write(item_record(runner.state_dir(), "KEN-1"), text).unwrap();
+        }
+        let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+        let brief = runner.state_dir().join("restart-relaunch-KEN-1.md");
+        match expected {
+            Ok(carries) => {
+                assert_eq!(out.status.code(), Some(0), "{row}: {}", stderr(&out));
+                let text = std::fs::read_to_string(&brief).unwrap();
+                assert_eq!(text.contains(SENTENCE), carries, "{row}: {text}");
+            }
+            Err(key) => {
+                assert_eq!(refused_by(&out), key, "{row}");
+                assert!(!brief.exists(), "{row}: no brief composed");
+                assert_eq!(
+                    runner.fleet()["lanes"][0]["status"],
+                    "running",
+                    "{row}: nothing closed"
+                );
+            }
+        }
+    }
+}
+
 /// What `lane relaunch` refuses before it closes anything: a lane whose
 /// session still runs, idle at its composer, a fleet whose controller
 /// record names no server, so the caller's own server is never reached, an

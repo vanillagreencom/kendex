@@ -153,6 +153,24 @@ pub(crate) fn start_brief(lane: &Lane, harness: Harness) -> std::result::Result<
     })
 }
 
+/// What closes a relaunch's start brief where the lane's last session ended
+/// with no handoff record standing: the start workflow continues only from
+/// a standing record, so nothing else tells the worker that its last
+/// command may have landed unseen, or that a wait it held died with it.
+const INTERRUPTED_TEXT: &str = "Your last session ended without a handoff, so before your next step read your worktree's Git state and the branch's remote head, settle the last command you saw no result for (a push may already have reached the remote), and restart any wait you held, such as verify-pr or queue-watch.";
+
+/// The start brief closed by [`INTERRUPTED_TEXT`], the same on every
+/// harness.
+pub(crate) fn interrupted_start_brief(
+    lane: &Lane,
+    harness: Harness,
+) -> std::result::Result<String, String> {
+    Ok(format!(
+        "{}\n",
+        closed_by(&start_brief(lane, harness)?, INTERRUPTED_TEXT)
+    ))
+}
+
 /// The brief a launch of `lane` opens on: the request's file, else the
 /// start brief, so no launch opens a lane on nothing.
 fn opening_brief(
