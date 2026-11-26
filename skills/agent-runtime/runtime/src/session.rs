@@ -1456,24 +1456,24 @@ mod tests {
         let dark = home.join("session-state").join("S2");
         fs::create_dir_all(&dark).unwrap();
         fs::set_permissions(&dark, fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = matches!(
+            fs::read_dir(&dark),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
+        );
+        let ids = lead_ids(Harness::Copilot, home, cwd);
+        let leads = new_leads(Harness::Copilot, home, cwd, SystemTime::UNIX_EPOCH, &[]);
+        fs::set_permissions(&dark, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
-            matches!(
-                fs::read_dir(&dark),
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
-            ),
+            denied,
             "the fixture needs a directory this process cannot enter; a root run reads everything"
         );
         const UNREADABLE: &str = "session-store-unreadable";
+        assert_eq!(ids, Reading::Unreadable { cause: UNREADABLE });
         assert_eq!(
-            lead_ids(Harness::Copilot, home, cwd),
-            Reading::Unreadable { cause: UNREADABLE }
-        );
-        assert_eq!(
-            new_leads(Harness::Copilot, home, cwd, SystemTime::UNIX_EPOCH, &[]),
+            leads,
             Reading::Unreadable { cause: UNREADABLE },
             "one readable lead beside an unreadable directory binds nothing"
         );
-        fs::set_permissions(&dark, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
             lead_ids(Harness::Copilot, home, cwd),
             Reading::Live(vec!["S1".to_owned()]),
@@ -1489,11 +1489,9 @@ mod tests {
         let month = home.join("sessions").join("2026").join("09");
         fs::create_dir_all(&month).unwrap();
         fs::set_permissions(&month, fs::Permissions::from_mode(0o000)).unwrap();
-        assert_eq!(
-            lead_ids(Harness::Codex, home, cwd),
-            Reading::Unreadable { cause: UNREADABLE }
-        );
+        let ids = lead_ids(Harness::Codex, home, cwd);
         fs::set_permissions(&month, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(ids, Reading::Unreadable { cause: UNREADABLE });
         assert_eq!(
             lead_ids(Harness::Codex, home, cwd),
             Reading::Live(vec!["R".to_owned()])

@@ -7013,9 +7013,18 @@ fn a_merged_local_lane_whose_worktree_cannot_be_read_keeps_its_running_harness()
         &worktree,
     );
     lane["repo"] = json!("o/r");
+    // The guard gives the mode back however the row ends, so the temporary
+    // directory stays removable.
+    struct Enterable<'a>(&'a Path);
+    impl Drop for Enterable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let enterable = Enterable(&locked);
     if std::fs::symlink_metadata(&worktree).is_ok() {
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        drop(enterable);
         end_harness(&identity);
         eprintln!("skipped: the permission bits do not bind for this user");
         return;
@@ -7041,7 +7050,7 @@ fn a_merged_local_lane_whose_worktree_cannot_be_read_keeps_its_running_harness()
         value: "o/r#7".into(),
     });
     let first = driver.pass(&state);
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    drop(enterable);
     let said = lines(&first);
     assert!(
         !said.contains(&"EVENT lane-closed issue-1".to_owned()),
