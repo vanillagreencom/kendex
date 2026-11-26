@@ -2,6 +2,7 @@
 use crate::error::{Error, Result};
 use crate::state::{Proof, Reused, Stage, StageOutcome, ValidateMode};
 use agent_runtime::clock::Clock;
+use agent_runtime::effects::{JobHandle, SidecarRead};
 use agent_runtime::{process, reading::Reading};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -457,13 +458,13 @@ pub fn last_pass(worktree: &Path) -> Result<LastPass> {
 
 /// Whether the directory is a start whose child never ran: the runtime's
 /// start creates the job's error log, `job.err`, with the run directory and
-/// before any other record, and its executor claims the directory
-/// (`execution`, `command`) before it runs anything, so a directory holding
-/// none of the three is never live, holds nothing to stop, and is lost once
-/// the launch grace has passed. Any other directory is read by the
-/// executor's and the launcher's records.
+/// before any other record, and its executor records itself (`executor`)
+/// and claims the directory (`execution`, `command`) before it runs
+/// anything, so a directory holding none of the four is never live, holds
+/// nothing to stop, and is lost once the launch grace has passed. Any other
+/// directory is read by the executor's and the launcher's records.
 pub(crate) fn unstarted(run: &RunFile) -> Result<bool> {
-    for record in ["execution", "command", "job.err"] {
+    for record in ["executor", "execution", "command", "job.err"] {
         match fs::symlink_metadata(run.dir.join(record)) {
             Ok(_) => return Ok(false),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -472,6 +473,10 @@ pub(crate) fn unstarted(run: &RunFile) -> Result<bool> {
     }
     Ok(true)
 }
+
+/// A systemd run's runner reading inside the wrapper, which hides the
+/// user manager.
+const MANAGER_HIDDEN: &str = "manager-hidden";
 
 #[allow(
     clippy::disallowed_methods,
@@ -499,7 +504,20 @@ pub(crate) fn runner_reading(run: &RunFile) -> Reading<u32> {
             Reading::Unreadable { cause } => Reading::Unreadable { cause },
         };
     }
-    match agent_runtime::effects::job::recorded_live(&run.dir.join("runner")) {
+    let record = run.dir.join("runner");
+    // The manager that would answer for the unit is out of reach, at this
+    // poll and every later one.
+    if agent_runtime::confine::confined()
+        && matches!(
+            agent_runtime::effects::job::read_handle(&record),
+            SidecarRead::Present(JobHandle::Unit { .. })
+        )
+    {
+        return Reading::Unreadable {
+            cause: MANAGER_HIDDEN,
+        };
+    }
+    match agent_runtime::effects::job::recorded_live(&record) {
         Reading::Live(()) => Reading::Live(0),
         Reading::Gone => Reading::Gone,
         Reading::Unreadable { cause } => Reading::Unreadable { cause },
@@ -527,8 +545,11 @@ fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
             }
             continue;
         }
-        if let Some(pid) = holds(&run, strict)? {
-            return Ok(Some((run.dir, pid)));
+        match holds(&run, strict)? {
+            Reading::Live(pid) => return Ok(Some((run.dir, pid))),
+            // A start never overlaps a run whose work it cannot read.
+            Reading::Unreadable { .. } => return Ok(Some((run.dir, 0))),
+            Reading::Gone => {}
         }
     }
     Ok(None)
@@ -536,10 +557,14 @@ fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
 
 /// The work that holds a run with no sentinel, by the pid it names: its
 /// command's group by the identity its executor recorded, else its runner
-/// by the launcher's record. A run whose child never ran holds nothing. An
-/// unreadable reading holds the run, or under `strict` refuses with its
-/// cause.
-fn holds(run: &RunFile, strict: bool) -> Result<Option<u32>> {
+/// by the launcher's record, or by the executor's own record where the
+/// wrapper hides the unit's manager. A run whose child never ran holds
+/// nothing. Under `strict` an unreadable reading refuses with its cause.
+/// Otherwise a hidden manager's reading with no executor record stays
+/// unreadable, and any other unreadable reading holds the run, since a
+/// later read can answer it: unconfined, `unit-unsettled` is also the
+/// reading of a unit that still runs.
+fn holds(run: &RunFile, strict: bool) -> Result<Reading<u32>> {
     let command = super::run::command_reading(&run.dir)
         .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
     if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
@@ -553,19 +578,33 @@ fn holds(run: &RunFile, strict: bool) -> Result<Option<u32>> {
             .ok()
             .and_then(|p| p.trim().parse().ok())
             .unwrap_or(0);
-        return Ok(Some(pid));
+        return Ok(Reading::Live(pid));
     }
     if unstarted(run)? {
-        return Ok(None);
+        return Ok(Reading::Gone);
     }
-    match runner_reading(run) {
-        Reading::Live(pid) => Ok(Some(pid)),
+    let reading = match runner_reading(run) {
+        Reading::Unreadable {
+            cause: MANAGER_HIDDEN,
+        } => match super::run::executor_reading(&run.dir)
+            .map_err(|e| unreadable("executor-identity", format!("{}: {e}", run.dir.display())))?
+        {
+            Some(Reading::Live(())) => Reading::Live(0),
+            Some(Reading::Gone) => Reading::Gone,
+            Some(Reading::Unreadable { cause }) => Reading::Unreadable { cause },
+            None => Reading::Unreadable {
+                cause: MANAGER_HIDDEN,
+            },
+        },
+        reading => reading,
+    };
+    match reading {
         Reading::Unreadable { cause } if strict => Err(unreadable(
             "runner",
             format!("{}: {cause}", run.dir.display()),
         )),
-        Reading::Unreadable { .. } => Ok(Some(0)),
-        Reading::Gone => Ok(None),
+        Reading::Unreadable { cause } if cause != MANAGER_HIDDEN => Ok(Reading::Live(0)),
+        reading => Ok(reading),
     }
 }
 
@@ -573,23 +612,32 @@ fn holds(run: &RunFile, strict: bool) -> Result<Option<u32>> {
 /// sentinel has landed since `run` was read, and its executor claimed it
 /// (`execution`) or its launch grace has passed. `--wait` and `--record`
 /// read such a run here alike; `--record` reads no clock, so a run its
-/// executor never claimed stays unfinished there.
+/// executor never claimed stays unfinished there. Work [`holds`] cannot
+/// read, a unit whose manager the wrapper hides and whose executor left no
+/// record, holds the run within its launch grace, where the executor may
+/// not yet have started, and past the grace refuses `liveness-unreadable`
+/// with its cause: its executor predates the record or never ran, and no
+/// later poll here answers it.
 fn lost(run: &RunFile, past_grace: bool) -> Result<bool> {
-    if holds(run, false)?.is_some() {
-        return Ok(false);
-    }
+    let unread = match holds(run, false)? {
+        Reading::Live(_) => return Ok(false),
+        Reading::Unreadable { cause } => Some(cause),
+        Reading::Gone => None,
+    };
     // An executor that wrote its sentinel and exited after `run` was read
     // holds nothing now: the run ended with its verdict.
     if fs::metadata(run.dir.join("exit")).is_ok_and(|m| m.len() > 0) {
         return Ok(false);
     }
-    if past_grace {
-        return Ok(true);
-    }
-    match fs::symlink_metadata(run.dir.join("execution")) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(unreadable("execution", e)),
+    match (unread, past_grace) {
+        (Some(cause), true) => Err(unread_value("liveness-unreadable", "cause", cause)),
+        (Some(_), false) => Ok(false),
+        (None, true) => Ok(true),
+        (None, false) => match fs::symlink_metadata(run.dir.join("execution")) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(unreadable("execution", e)),
+        },
     }
 }
 

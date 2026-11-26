@@ -23,6 +23,13 @@ use crate::harness::Harness;
 /// the tree.
 pub const CONFINED_VAR: &str = "AGENT_RUNTIME_CONFINED";
 
+/// Whether this process runs inside the wrapper. There [`linux_words`]
+/// hide the user's runtime folder, and with it the user manager's socket:
+/// no `systemctl --user` call answers.
+pub fn confined() -> bool {
+    std::env::var_os(CONFINED_VAR).is_some_and(|value| value == "1")
+}
+
 /// Names the grants file inside the wrapper.
 pub const GRANTS_VAR: &str = "AGENT_RUNTIME_GRANTS";
 
