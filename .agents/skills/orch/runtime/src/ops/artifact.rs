@@ -827,7 +827,9 @@ fn merge_base_pass(
         base: Some(merge_base.to_owned()),
         ..request.clone()
     };
-    let answer = proof::read(rows, &[], &request, declared, &mut |_| None);
+    let answer = proof::read(rows, &[], &request, declared, &mut |_| None, &mut |_, _| {
+        None
+    });
     answer.proof == proof::Verdict::Complete
         && matches!(answer.rows.as_slice(), [row]
             if row.index == cited && row.mode == ValidateMode::Range && row.base == merge_base)
@@ -927,12 +929,16 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     };
     let mut cause = if carried {
         let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
+        let mut docs_only = |head: &str, base: &str| {
+            crate::validate::docs_only(settings, &r.id.worktree, head, base)
+        };
         let (answer, unproved_range_base) = proof::read_with_bound_run(
             &rows,
             &[],
             &request,
             &declared,
             &mut tree_of,
+            &mut docs_only,
             Some(bound_run),
         );
         match (r.validate.as_str(), answer.proof) {

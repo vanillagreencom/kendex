@@ -1153,15 +1153,32 @@ fn a_docs_only_tree_runs_the_real_selectors_text_checks_and_its_pass_is_submit_p
     assert_eq!(stage["proof"]["class_base"], Value::Null);
     assert_eq!(stage["proof"]["base"], "");
     let tree = git(&w.worktree, &["rev-parse", "HEAD^{tree}"]);
+    let head = w.head();
+    let declared = [
+        ("DEV_VALIDATE_RANGE_CMD", "echo product-range"),
+        ("DEV_VALIDATE_SELECTION_CMD", selector),
+    ];
     let proof = w.read_proof(
-        &["--tree", &tree, "--head", &w.head(), "--need", "submit"],
-        &[
-            ("DEV_VALIDATE_RANGE_CMD", "echo product-range"),
-            ("DEV_VALIDATE_SELECTION_CMD", selector),
-        ],
+        &["--tree", &tree, "--head", &head, "--need", "submit"],
+        &declared,
     );
     assert_eq!(proof["proof"], "complete");
     assert_eq!(proof["rows"][0]["run_dir"], dir);
+    // A base whose product file moved: the same tree carries a code diff
+    // against it, though the branch alone changed only text since their
+    // merge base.
+    git(&w.worktree, &["checkout", "-q", "-b", "upstream", &base]);
+    let moved = w.commit_files(&[("a.txt", "moved\n")]);
+    git(&w.worktree, &["checkout", "-q", "main"]);
+    for (from, answer) in [(&base, "complete"), (&moved, "missing")] {
+        let proof = w.read_proof(
+            &[
+                "--tree", &tree, "--head", &head, "--need", "submit", "--base", from,
+            ],
+            &declared,
+        );
+        assert_eq!(proof["proof"], answer, "base {from}");
+    }
 }
 
 #[test]

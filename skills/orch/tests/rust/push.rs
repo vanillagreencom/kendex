@@ -1623,6 +1623,54 @@ mod push {
     }
 
     #[test]
+    fn a_docs_pass_is_reused_only_while_its_tree_is_docs_only_against_the_prepared_base() {
+        let docs = "DEV_VALIDATE_TEXT_CMD = \"true\"\n";
+        for moved in [false, true] {
+            let repo = Repo::new("KEN-1", &format!("{BASE}{RANGE}{docs}"));
+            repo.link_agents();
+            repo.record(json!({}));
+            git(&repo.wt, &["rm", "-q", "feature"]);
+            fs::write(repo.wt.join("note.md"), "note\n").unwrap();
+            git(&repo.wt, &["add", "note.md"]);
+            git(
+                &repo.wt,
+                &["commit", "--amend", "-q", "-m", "docs(KEN-1): add the note"],
+            );
+            let docs_run = range_run(&repo, &repo.remote("main"));
+            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+            assert_eq!(runs[0].get("validate-mode"), "docs");
+            let tree = git(&repo.wt, &["rev-parse", "HEAD^{tree}"]);
+            if moved {
+                // Upstream changes the product file and the branch keeps
+                // the old text: the same tree now carries a code diff.
+                commit(&repo.main, "base", "moved\n", "moved");
+                git(&repo.main, &["push", "-q", "origin", "main"]);
+                prepared(&repo);
+                commit(&repo.wt, "base", "base\n", "fix(KEN-1): keep the base text");
+            }
+            let receipt = prepared(&repo);
+            let (base, head) = (receipt["before"].as_str().unwrap(), &receipt["commit"]);
+            assert_eq!(git(&repo.wt, &["rev-parse", "HEAD^{tree}"]), tree);
+            let out = repo.op(json!({
+                "op": "record-push", "mode": "publish", "worktree": repo.wt,
+                "base": base, "head": head,
+            }));
+            assert_eq!(result(&out)["delivery"]["commit"], *head);
+            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+            let own: Vec<_> = runs
+                .iter()
+                .filter(|run| run.dir != Path::new(&docs_run))
+                .map(|run| (run.get("validate-mode"), run.get("validate-base")))
+                .collect();
+            assert_eq!(
+                own,
+                if moved { vec![("range", base)] } else { vec![] },
+                "moved: {moved}"
+            );
+        }
+    }
+
+    #[test]
     fn publication_validates_the_exact_prepared_head_then_transports_it() {
         let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\n";
         let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));
