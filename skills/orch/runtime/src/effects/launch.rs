@@ -838,6 +838,12 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
             if sandbox.stands {
                 outcome.annotate(SANDBOX, json!(STANDING));
             }
+            if !sandbox.notices.lines.is_empty() {
+                outcome.annotate("create_stderr", json!(sandbox.notices.lines));
+            }
+            if sandbox.notices.elided > 0 {
+                outcome.annotate("create_stderr_elided", json!(sandbox.notices.elided));
+            }
             // A parked lane whose provider holds no sandbox for it resumed
             // nothing: its disk, session and mailbox went with the sandbox.
             if sandbox.absent {
@@ -1068,6 +1074,9 @@ fn local_launch(
 /// the launch's word.
 #[derive(Default)]
 struct HostSandbox {
+    /// The stderr of the create that answered, which the record keeps
+    /// whatever later step fails.
+    notices: crate::provider::Notices,
     /// The provider's start answered `sandbox-started` or its create was
     /// accepted, the answers that take the sandbox up for this lane: it
     /// stands from then, whatever later step fails. A list row is no such
@@ -1198,6 +1207,9 @@ fn hosted_launch(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     );
     sandbox.stands |= created.is_ok();
+    if let Ok(made) = &mut created {
+        sandbox.notices = std::mem::take(&mut made.notices);
+    }
     if let Ok(made) = &mut created
         && made.preparing
     {

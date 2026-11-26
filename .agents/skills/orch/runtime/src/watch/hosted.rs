@@ -965,6 +965,9 @@ pub struct Created {
     /// `tree=unrebased`: the item's retained tree stands on its own head,
     /// its rebase onto the base aborted on a conflict, the work intact.
     pub unrebased: bool,
+    /// The create's stderr, such as a provider's notice of the reviewer or
+    /// the login seed it gave the lane.
+    pub notices: crate::provider::Notices,
 }
 
 /// The provider's `create` line parsed, or the cause. A `75` is an item
@@ -1004,6 +1007,7 @@ pub fn create(
         pi_root: None,
         copilot_home: None,
         unrebased: kept_unrebased(&line),
+        notices: crate::provider::notices(&host::stderr_text(&out)),
     };
     for field in line.split('\t') {
         match field.split_once('=') {
