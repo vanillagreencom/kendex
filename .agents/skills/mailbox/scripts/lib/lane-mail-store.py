@@ -69,13 +69,6 @@ READ_JQ = OBJECTS_JQ + r'''
         elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]
         else [] end)), cursor: null, lowered: null, clamped: null}
   end)
-| . + {legacy: (if $in.item == "overseer" then
-    if $in.verb == "inbox" then
-      [$lane[] | select(.line > $in.seen) | .envelope | select(mailbox_legacy_close) | .id]
-    else
-      ([$lane[].envelope | select(mailbox_legacy_close) | .id] as $legacy | $legacy + $legacy)
-      + [$over[].envelope | select(mailbox_legacy_close) | .id]
-    end else [] end)}
 '''
 
 
@@ -347,9 +340,6 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
             lowered = None
     print("ok\x1f" + "\x1f".join(str(n) if n is not None else "" for n in
           (lowered, seen, result["clamped"], ack)))
-    for id_ in result["legacy"]:
-        print(f"legacy\x1f{id_}")
-    print("output")
     if deliver != "1":
         for line in result["output"]:
             print(line)

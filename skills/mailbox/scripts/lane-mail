@@ -562,7 +562,8 @@ choices), and the owner-channel fields each verb above writes: to, ref, progress
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
-closes (false on new owner answers; absent on legacy closing answers),
+closes (false on new owner answers; absent on pre-1.3 answers, which read as
+owner answers),
 answer_source (`send` or `resolve` on new owner answers; absent on older
 answers whose producing verb cannot be identified),
 draft (a draft ask only: recipient, medium, text and text_hash),
@@ -607,8 +608,6 @@ Full event snapshots, including the Slack relay's imported mailbox reader,
 hold pending tracker asks for 300 seconds from at. An outcome releases the ask.
 At that bound, a missing outcome releases the full question. Cursored events,
 pending and drain still include pending asks, so their cursors cannot lose a later outcome.
-Reads of legacy closing answers warn `lane-mail: legacy-close=<id>` on stderr.
-The old format remains readable through kendex 1.4.
 
 Receipt, the line a `send`, a `peer send` and a `notice` print on stdout once
 the envelope is appended: `lane-mail: sent item=<item> id=<id> bytes=<n> monitor=<m>`, where
@@ -2064,7 +2063,6 @@ lm_header() { # FILE
 # line numbers before that filtering, aligned with the Jarvis session's seen count.
 lm_objects() { # FILE [BOX [AFTER [OUTBOUND]]]
   local count=0 numbers=/dev/null snapshot=false now=0
-  [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
   if [ -n "${2:-}${3:-}" ]; then
     count="$(lm_count "$1")" || return 1
     numbers="$1.index"
@@ -2425,7 +2423,6 @@ lm_guard_owner_notice() { # FILE
 # The record already closing this ask, into WORK_DIR/resolved.earlier as
 # `<id> <by> <delivery_id>`; refuses where one stands.
 lm_guard_resolve() { # FILE
-  mailbox_warn_legacy "$1" || return 2
   jq -r -R --arg re "$MSGID" "$MAILBOX_CLASS_JQ"' (fromjson? // empty) | objects
     | select(overseer_mail_class == "close" and .re == $re)
     | "\(.id) \(.by) \(.delivery_id // "")"' <"$1" >"$WORK_DIR/resolved.earlier" || return 2
@@ -2909,13 +2906,6 @@ lm_fast_read() {
   fi
   [ -z "$READ_EXTRA" ] || lm_notice ack-clamped "$READ_EXTRA" "asked=$READ_ASKED"
   [ -z "$READ_KEY" ] || lm_notice cursor-lowered "$READ_KEY" "was=$READ_VALUE"
-  while [ "${READ_OUT%%$'\n'*}" != output ]; do
-    READ_HEADER="${READ_OUT%%$'\n'*}"
-    READ_OUT="${READ_OUT#*$'\n'}"
-    mailbox_legacy_notice "${READ_HEADER#*$'\x1f'}"
-  done
-  READ_OUT="${READ_OUT#output}"
-  READ_OUT="${READ_OUT#$'\n'}"
   # A batch names each lane once its read answered, so a refused lane
   # leaves no half section.
   [ "$VERB" != drain-many ] || printf 'item=%s\n' "$ITEM"
