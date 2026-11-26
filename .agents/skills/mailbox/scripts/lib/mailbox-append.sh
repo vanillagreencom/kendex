@@ -27,17 +27,36 @@ mailbox_line_complete() { # FILE
   return 1
 }
 
+# Whether a newline-terminated mailbox line is damage a reader must stop at:
+# neither an envelope (a JSON object) nor a fragment mailbox_terminate closed,
+# which carries mailbox_torn_mark at its end. The writer marks with this rule
+# and every lane-mail reader refuses with it, so the two cannot come apart on
+# which line is a killed writer's and which is damage. The mark opens with
+# U+001E, a control character JSON allows nowhere, so a marked line never
+# parses, whatever the fragment before it held.
+# shellcheck disable=SC2034  # read by the scripts that source this.
+MAILBOX_LINE_JQ='def mailbox_torn_mark: "\u001etorn";
+def mailbox_line_invalid:
+  (endswith(mailbox_torn_mark) | not)
+  and (((fromjson? // null) | type) != "object");
+'
+
 # A writer killed inside its write leaves a line with no newline of its own.
-# Closing it makes it a line the reader counts and does not parse, so the
-# envelope that follows lands whole instead of being glued to it and both lost.
-# The caller holds the lock on FILE; the append here is its own open, which the
-# kernel places at the end exactly as the caller's descriptor would.
+# Closing it lets the envelope that follows land whole instead of being glued
+# to it and both lost. A fragment that is not already a whole envelope is
+# closed with mailbox_torn_mark, so readers skip it as a killed writer's line
+# rather than refusing it as damage; one that parses is closed as it stands
+# and read as the envelope it is. The caller holds the lock on FILE; the
+# append here is its own open, which the kernel places at the end exactly as
+# the caller's descriptor would.
 mailbox_terminate() { # FILE
-  local complete=0
+  local complete=0 mark
   mailbox_line_complete "$1" || complete=$?
   [ "$complete" -ne 0 ] || return 0
   [ "$complete" -eq 1 ] || return 1
-  printf '\n' >>"$1" || return 1
+  mark="$(tail -n 1 -- "$1" |
+    jq -j -R "$MAILBOX_LINE_JQ"'if mailbox_line_invalid then mailbox_torn_mark else "" end')" || return 1
+  printf '%s\n' "$mark" >>"$1" || return 1
 }
 
 # The `at` stamp as epoch seconds, null where it does not parse: the one

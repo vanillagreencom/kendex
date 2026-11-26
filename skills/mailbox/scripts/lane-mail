@@ -6,11 +6,14 @@
 # keeps logical numbers beside it. A message survives a restarted sender
 # and receiver alike. Every reader consumes only newline-terminated
 # lines, so a local or an `orch-runtime host append` write in flight costs one poll and
-# never a lost or duplicated message; a terminated line that does not parse is
-# counted and not emitted, keeping `--after` and the cursor aligned with the
-# file. A halt is acknowledged by a plain `inbox` read or a `wait` that
-# hands it over: `--ack` stops short of an unread one, so a hook that hands
-# mail over never consumes it.
+# never a lost or duplicated message. A killed writer's fragment, which the
+# next writer closes with its mark, is counted and skipped, keeping `--after`
+# and the cursor aligned with the file; any other terminated line that is no
+# envelope is damage, which a reader that would hand it over or move a
+# position past it refuses as usage()'s Damaged lines paragraph states. A
+# halt is acknowledged by a plain `inbox` read or a `wait` that hands it
+# over: `--ack` stops short of an unread one, so a hook that hands mail over
+# never consumes it.
 # A send or notice prints its receipt; orch-runtime report write reads the notice id.
 # Silence is a send or notice that did not land. With the repeat guard, a repeat
 # of one envelope to one item inside a minute is refused before the append
@@ -34,7 +37,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
        lane-mail drain-many --file REQUEST
        lane-mail owner-answers --item ITEM [--root ROOT]
-       lane-mail compact --item ITEM [--root ROOT]
+       lane-mail compact --item ITEM [--root ROOT] [--set-aside]
        lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail reserve --item overseer --id MSGID
@@ -122,7 +125,7 @@ Lane side, rooted at the lane's own git worktree:
               orch watch-delivery reference owns that premise
 
 Overseer side:
-  compact --item ITEM [--root ROOT]
+  compact --item ITEM [--root ROOT] [--set-aside]
               archive expired, read, closed rows before rewriting under the
               mailbox inode locks. ORCH_RECORD_RETENTION_DAYS defaults to 5
               with SLACK_THREAD_DAYS (relay default 7) as its minimum.
@@ -137,6 +140,17 @@ Overseer side:
               When rows leave, stderr names their archive as
               `lane-mail: archived=PATH`; prune consumes this path. With no
               ORCH_ARCHIVE_ROOT set, they leave with no archive and no line.
+              --set-aside is the repair for a damaged line (below): every
+              such line of either file leaves it, its logical number kept as
+              a removed row's is, and is appended to FILE.set-aside beside
+              it as {"line": N, "text": "<the line>"} before the rewrite, so
+              its text survives whatever archive is set. The line above then
+              closes with ` set-aside=N`, the lines set aside from both files,
+              and stderr names each set-aside file as
+              `lane-mail: set-aside=PATH`. It refuses `mailbox-missing` where
+              ROOT holds no mailbox for ITEM, as for a hosted lane's, whose
+              files are on its host: run it there, in the lane's checkout.
+              Without it a damaged line stays where it is, whatever its age
   send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask. A lane's MSGID can name a notice: its inbox and
@@ -232,7 +246,8 @@ Overseer side:
               print public envelopes of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its logical line number and `count` that file's logical
-              line count, including lines filtered as invalid JSON,
+              line count, including lines filtered as killed writers'
+              fragments or as damaged lines (below),
               and `mail_class` on to-lane records from the shared mailbox rule,
               answered asks and their answers included. Without --box, hold
               an owner ask whose tracker outcome is pending for up to 300
@@ -548,6 +563,22 @@ Options:
   --interval S  seconds between `wait` and `watch` polls (default 5)
   --once        watch only: exit after the first announcement
 
+Damaged lines: a newline-terminated line that is no envelope, a JSON
+object, is damage, except a fragment a killed writer left, which the next
+writer closes with a mark that ends the line: such a fragment is counted and
+skipped. A read that would hand damage over or carry a position past it,
+`events --box BOX` and `drain` past --after, `inbox` past to-lane.cursor
+and `wait` short of its answer, refuses `envelope-invalid` with the file and
+the first such logical line, exit 2, before it prints a header, an envelope
+or a count or moves a cursor, so the reader stands in front of the line
+until `compact --set-aside` puts it aside. Damage at or below the count the
+box's own consumer keeps, to-lane.cursor for to-lane.jsonl and the local
+to-overseer.seen the --mark-read read saves for to-overseer.jsonl, was
+passed before this rule held: `events --box` and `drain` step over it
+whatever their --after, and refuse only past the higher of the two. `events`
+with no --box and `pending` read both files whole, hold no position, and
+skip the line. A fragment a writer without the mark closed reads as damage.
+
 Header, the first line drain and inbox --peek print: `count=<complete lines>
 first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
@@ -692,12 +723,14 @@ command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 host-peer-call, host-peer-transport, peer-envelope, timeout, item-case-variant,
-mailbox-missing, retention-invalid, archive-failed, archived,
+mailbox-missing, retention-invalid, archive-failed, archived, envelope-invalid, set-aside,
 host-root-required, host-route-missing, state-unreadable, worktree-absent, channel-session,
 session-unrecorded, session-archived, session-send-failed, item-ask-unconfigured.
-Two keys take another separator than `=`. `duplicate`'s value follows ` id=`,
+Five keys take another separator than `=`. `duplicate`'s value follows ` id=`,
 so it names the earlier envelope through the same field the receipt above
-prints. `item-ask-unconfigured`'s value, the item, follows ` issue=`, and
+prints. `envelope-invalid`'s value, the mailbox file, follows ` path=`, and
+` line=<N>` closes it with the damaged line's logical number.
+`item-ask-unconfigured`'s value, the item, follows ` issue=`, and
 ` cause=<cause>` closes it, then ` unset=<keys>` where the cause is
 settings-unset. `replace-unconfigured` and `replace-unmarkable` take
 ` cause=`; `replace-unmarkable` closes with ` id=<id>` naming the replaced
@@ -792,6 +825,8 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     retention-invalid) text='Retention and relay thread age must be positive integers.' ;;
     archive-failed) text='Expired mailbox rows could not be archived, so nothing was removed.' ;;
     archived) text='Expired mailbox rows are kept in this archive.' ;;
+    envelope-invalid) sep=' path='; text='The line named above lies past the position this read starts from, and it is neither an envelope nor a killed writer'"'"'s fragment closed with its mark. Reading past it would lose whatever message it held, so nothing was printed and no position moved. Read the line and ask its sender again if it held a message. Then repair it with `lane-mail compact --item <item> --set-aside`, with the --root this read used: compact sets every such line aside with its text kept, and every reader then reads past it. A hosted lane'"'"'s file is on its host, where compact must run, in the lane'"'"'s checkout there and with a lane-mail that has --set-aside.' ;;
+    set-aside) text='Damaged lines left the mailbox file this path extends. Their logical line numbers are kept, and their text is in this file.' ;;
     orch-missing) text="The orch package is not installed beside mailbox, so this operation cannot read its lane, host or archive helpers. Nothing was written." ;;
     host-append) text='The hosted mailbox could not be appended through orch-runtime host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
     host-peer-call) text='The hosted peer operation failed. The cause follows.' ;;
@@ -801,7 +836,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     host-busy) text='orch-runtime host refused the call at the per-home bound on provider calls, so the mailbox was neither read nor written and the host was not judged. Run the verb again; the line below is the one the runtime printed.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     mail) text='Overseer mail landed in this lane mailbox. Run the command below and act on every envelope it prints, answers and directives alike, as its text directs.' ;;
-    mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane. Run the watch from the lane worktree, or with --root naming it, for the item its launch created.' ;;
+    mailbox-missing) text='The mailbox directory is not there, so no watch of it can wake the lane and no compact --set-aside can repair it. Run the command from the lane worktree, or with --root naming it, for the item its launch created; a hosted lane'"'"'s mailbox is on its host.' ;;
     minutes-invalid) text='The option, or ORCH_ASK_WAIT_MINUTES, takes a non-negative integer number of minutes.' ;;
     to-invalid) text='--to takes owner or peer. A peer ask is `peer ask --repo`, which writes peer itself, so an ask or notice typed here takes owner.' ;;
     ref-invalid) text='--ref takes the id of an envelope: ASCII letters, digits, dot, underscore and hyphen.' ;;
@@ -886,6 +921,7 @@ HOST=0
 AFTER=""
 EVENT_BOX=""
 MARK_READ=0
+SET_ASIDE=0
 MSGID=""
 TIMEOUT=0
 INTERVAL=5
@@ -950,6 +986,7 @@ while [ "$#" -gt 0 ]; do
     --after) need_val "$@"; AFTER="$2"; shift 2 ;;
     --box) need_val "$@"; EVENT_BOX="$2"; shift 2 ;;
     --mark-read) MARK_READ=1; shift ;;
+    --set-aside) SET_ASIDE=1; shift ;;
     --id) need_val "$@"; MSGID="$2"; shift 2 ;;
     --re) need_val "$@"; MSGID="$2"; shift 2 ;;
     --timeout) need_val "$@"; TIMEOUT="$2"; shift 2 ;;
@@ -993,7 +1030,7 @@ done
 
 if [ "$VERB" = compact ] || [ "$VERB" = owner-answers ]; then
   for given in $OPTS_GIVEN; do
-    case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
+    case "$VERB:$given" in *:--item | *:--root | compact:--set-aside) ;; *) refuse option-unknown "$given" ;; esac
   done
 fi
 if [ "$VERB" = reserve ]; then
@@ -1118,6 +1155,7 @@ for given in $OPTS_GIVEN; do
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
+    --set-aside) [ "$VERB" = compact ] || refuse option-unknown --set-aside ;;
     --session) [ "$VERB" = send ] && [ "$ITEM" != overseer ] || refuse option-unknown --session ;;
     --account) [ "$SESSION_GIVEN" -eq 1 ] || refuse option-unknown --account ;;
   esac
@@ -2058,9 +2096,51 @@ lm_header() { # FILE
   printf 'count=%s first=%s\n' "$(lm_count "$1")" "$first"
 }
 
+# A reader that hands lines over or moves a position refuses at the first
+# damaged line it would pass, by mailbox_line_invalid: FILE's lines past
+# logical line AFTER, and short of BEFORE where given, PATH naming the mailbox
+# file they came from. Nothing is printed and no cursor moves, so the reader
+# stands in front of the line until `compact --set-aside` puts it aside.
+lm_invalid() { # FILE AFTER PATH [BEFORE]
+  local line
+  line="$(lm_damaged "$1" "$2" "${4:-}")" || refuse file-unreadable "$3"
+  [ -z "$line" ] || { REFUSE_EXTRA="line=$line"; refuse envelope-invalid "$3"; }
+}
+
+# FILE's first damaged logical line past AFTER and short of BEFORE where
+# given, or nothing.
+lm_damaged() { # FILE AFTER BEFORE
+  # awk reads to the end: an early exit would cut jq's pipe and read as a
+  # failed read under pipefail.
+  jq -r -R "$MAILBOX_LINE_JQ"'mailbox_line_invalid' <"$1" |
+    awk -v after="$2" -v before="$3" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
+      !found && $0 == "true" && line[FNR] > after && (before == "" || line[FNR] < before) { print line[FNR]; found = 1 }' \
+      "$1.index" -
+}
+
+# EVENT_FLOOR raised to the count the box's own consumer keeps for
+# EVENT_BOX, the floor of an `events --box` damage check (usage() Damaged
+# lines): to-lane.cursor, or the local to-overseer.seen the --mark-read read
+# saves. lane-mail-store.py's read_seen reads the same count for drain. An
+# absent count holds no floor; a to-lane.cursor that is no count refuses as
+# every reader of it does, and a to-overseer.seen that is none holds no floor.
+lm_event_floor() {
+  local seen=""
+  if [ "$EVENT_BOX" = to-lane ]; then
+    lm_cursor_read
+    seen="$SEEN"
+  elif [ "$HOST" -eq 0 ] && [ -f "$BOX/to-overseer.seen" ]; then
+    seen="$(awk 'NR == 1 { print; exit }' <"$BOX/to-overseer.seen")" || refuse file-unreadable "$BOX/to-overseer.seen"
+  fi
+  case "$seen" in '' | *[!0-9]*) seen=0 ;; esac
+  [ "$seen" -le "$EVENT_FLOOR" ] || EVENT_FLOOR="$seen"
+}
+
 # The parsing JSON objects among FILE's lines. A terminated line that does not
-# parse is dropped here and counted above. Events name BOX to carry logical
-# line numbers before that filtering, aligned with the Jarvis session's seen count.
+# parse is dropped here and counted above; which readers refuse it first,
+# through lm_invalid, is usage()'s Damaged lines paragraph. Events name BOX
+# to carry logical line numbers before that filtering, aligned with the
+# Jarvis session's seen count.
 lm_objects() { # FILE [BOX [AFTER [OUTBOUND]]]
   local count=0 numbers=/dev/null snapshot=false now=0
   if [ -n "${2:-}${3:-}" ]; then
@@ -2804,11 +2884,14 @@ lm_seconds() { # OPTION VALUE
 # Cursor, outbound, inbound: inbox takes the same cursor-before-mail order.
 # Both mailbox locks span the exchange classification and the rewrite.
 lm_compact_locked() {
-  local counts root total archive
+  local counts root total archive aside name
   lm_cursor_read
-  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ"
+  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$MAILBOX_LINE_JQ" "$SET_ASIDE"
   counts="$(cat -- "$WORK_DIR/counts.json")" || refuse file-unreadable "$BOX"
   total="$(jq '.["to-lane"] + .["to-overseer"]' <<<"$counts")" || refuse file-unreadable "$BOX"
+  aside="$(jq -r '.["set-aside"] | to_entries[] | select(.value > 0) | .key' <<<"$counts")" ||
+    refuse file-unreadable "$BOX"
+  archive=""
   if [ "$total" -gt 0 ]; then
     root="$OWN_ROOT"
     [ -n "$root" ] || root="$ROOT"
@@ -2819,12 +2902,18 @@ lm_compact_locked() {
       --stem "compact-$ITEM-$COMPACT_NOW" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" \
       2>"$WORK_DIR/archive.err" | jq -er '.result.archive | if . == null then "" else strings end' 2>/dev/null)" ||
       refuse archive-failed "$BOX" "$(cat -- "$WORK_DIR/archive.err")"
+  fi
+  if [ "$total" -gt 0 ] || [ -n "$aside" ]; then
     REFUSE_EXTRA="kept=${archive:-none}"
     lm_store rewrite "$BOX" "$WORK_DIR"
     REFUSE_EXTRA=""
     [ -z "$archive" ] || lm_message archived "$archive" >&2
+    for name in $aside; do
+      lm_message set-aside "$BOX/$name.jsonl.set-aside" >&2
+    done
   fi
-  jq -r --arg item "$ITEM" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"' <<<"$counts"
+  jq -r --arg item "$ITEM" --argjson aside "$SET_ASIDE" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"
+    + if $aside == 1 then " set-aside=\(.["set-aside"] | add)" else "" end' <<<"$counts"
 }
 
 # The locks keep the existing cursor-before-outbound-before-inbound order.
@@ -2862,7 +2951,7 @@ fi
 # AFTER and the lm_box paths name the mailbox. A refusal ends the process.
 lm_fast_read() {
   READ_BOX="$BOX"
-  READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
+  READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$MAILBOX_LINE_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
   if [ "$CACHED_READ" -eq 1 ]; then
     # A failed batch says nothing of any file it asked for, whatever status
     # it stored: refused here, never read past and never asked again.
@@ -2961,6 +3050,9 @@ case "$VERB" in
     COMPACT_NOW="$(date -u +%s)" || refuse write-failed "$BOX"
     COMPACT_CUTOFF="$((COMPACT_NOW - COMPACT_DAYS * 86400))"
     if [ ! -d "$BOX" ]; then
+      # The repair of a mailbox that is not here, a hosted lane's above all,
+      # inspected nothing: no answer of zero stands for it.
+      [ "$SET_ASIDE" -eq 0 ] || refuse mailbox-missing "$BOX"
       printf 'compacted item=%s to-lane=0 to-overseer=0\n' "$ITEM"
     else
       lm_existing_lock 7 "$CURSOR.lock" lm_existing_lock 8 "$TO_OVERSEER" lm_existing_lock 9 "$TO_LANE" lm_compact_locked
@@ -3398,6 +3490,12 @@ case "$VERB" in
         lm_terminated "$WORK_DIR/outbound.raw" "$WORK_DIR/outbound.jsonl"
         OUTBOUND="$WORK_DIR/outbound.jsonl"
       fi
+      EVENT_FLOOR="$AFTER"
+      # The floor costs a host read on a hosted to-lane, so only damage past
+      # --after reads it.
+      DAMAGED="$(lm_damaged "$WORK_DIR/events.jsonl" "$AFTER" "")" || refuse file-unreadable "$EVENT_FILE"
+      [ -z "$DAMAGED" ] || lm_event_floor
+      lm_invalid "$WORK_DIR/events.jsonl" "$EVENT_FLOOR" "$EVENT_FILE"
       lm_header "$WORK_DIR/events.jsonl"
       lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" "$OUTBOUND" || refuse file-unreadable "$EVENT_FILE"
       if [ "$MARK_READ" -eq 1 ]; then
@@ -3490,6 +3588,7 @@ case "$VERB" in
         jq -rR '(fromjson? // null) | if type == "object" then .id // "" else "" end' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/ids"
         ANSWER_AT="$(awk -v id="$ANSWER_ID" 'FILENAME == ARGV[1] { line[FNR] = $0; next }
           $0 == id { print line[FNR]; exit }' "$WORK_DIR/lane.jsonl.index" "$WORK_DIR/ids")"
+        lm_invalid "$WORK_DIR/lane.jsonl" "$SEEN" "$TO_LANE" "$ANSWER_AT"
         lm_after_file "$WORK_DIR/lane.jsonl" "$SEEN" "$WORK_DIR/unread" "$ANSWER_AT"
         lm_inbox_objects "$WORK_DIR/unread" >&2
         [ "$SEEN" -ge "$ANSWER_AT" ] || lm_cursor_write "$ANSWER_AT"
@@ -3548,6 +3647,7 @@ case "$VERB" in
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
+    lm_invalid "$WORK_DIR/lane.jsonl" "$SEEN" "$TO_LANE"
     if [ -n "$ACK" ]; then
       # The count stops at the complete lines present: a cursor past them
       # marks read a line not yet written, which no watch then announces and

@@ -1175,18 +1175,19 @@ rc=0
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(fresh.read_bytes(), b'{"id":"fresh"}\n')
         self.assertEqual(fresh.stat().st_mode & 0o777, 0o600)
-        # A fragment an interrupted writer left is closed first, so the line
-        # after it lands whole instead of glued to it and both lost.
+        # A fragment an interrupted writer left is closed first, with the
+        # mark readers skip it by, so the line after it lands whole instead of
+        # glued to it and both lost.
         target.write_bytes(b'{"id":"half"')
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"whole"}\n')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
+        self.assertEqual(target.read_bytes(), b'{"id":"half"\x1etorn\n{"id":"whole"}\n')
         # A stream cut short adds nothing and leaves no staging file behind.
         longer = b'{"id":"a much longer line"}\n'
         cut = self.call("append", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
         self.assertEqual(cut.returncode, 1, cut.stderr)
         self.assertIn(f"lane-host-ssh: append-short expected={len(longer)} arrived=5 fix=".encode(), cut.stderr)
-        self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
+        self.assertEqual(target.read_bytes(), b'{"id":"half"\x1etorn\n{"id":"whole"}\n')
         self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
         # append's control: without the count check a cut stream lands.
         original = self.script.read_text()

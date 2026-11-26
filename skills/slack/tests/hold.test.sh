@@ -97,7 +97,7 @@ while read -r name logical control after; do
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 rows = path.read_text().splitlines(keepends=True)
-rows.insert(-1, "interrupted\n")
+rows.insert(-1, "interrupted\u001etorn\n")
 path.write_text("".join(rows))
 path.with_name(path.name + ".numbering").write_text(json.dumps(
     {"dropped": len(rows) - 1, "first": json.loads(rows[0])["id"],
@@ -321,7 +321,7 @@ while read -r value seen backlog fourth skipped; do
       python3 - "$(sk_box "$R")/to-overseer.jsonl" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
-path.write_text("interrupted\n" + path.read_text() + "interrupted\n")
+path.write_text("interrupted\u001etorn\n" + path.read_text() + "interrupted\u001etorn\n")
 PY
       if [ "$value" = gapped ]; then sk_jarvis_read "$R" 3; else sk_jarvis_read "$R" 99; fi ;;
     *) sk_jarvis_read "$R" "$value" ;;
