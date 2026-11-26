@@ -8,8 +8,8 @@
 //! exited (its `lane-exited` row reads `|reported`), or where the fleet's
 //! provider stopped its sandbox after the lane's current session began. That
 //! stop comes as the provider's `sandbox-stopped` notice in the overseer's
-//! mailbox from a sender on the owner's channel ([`notice`]), which the mail
-//! duty keeps as a [`STOP_ROW`] row per item, and as
+//! mailbox from a sender on the owner's channel or a `data` envelope whose
+//! `source` is `reap` ([`notice`]), which the mail duty keeps as a [`STOP_ROW`] row per item, and as
 //! the `stop` member of the item's row in the provider's `list --json`,
 //! which the heartbeat asks of each `park=verb` host of a `running` or
 //! `stopped` record ([`listed`]). The list's member stands only while the
@@ -117,13 +117,16 @@ impl Stop {
 /// idle harness, so it is read only from a sender on the owner's channel:
 /// an `owner-note`, which `lane-mail send --item overseer --directive`
 /// writes, or a `peer` envelope that no other repository's overseer
-/// (`overseer:` prefix) wrote. A `data` envelope carries text from outside
-/// input, such as an email's summary, and is never read. A stop later than
+/// (`overseer:` prefix) wrote; or fleet's reap pass, a `data` envelope whose
+/// `source` is `reap` (`lane-mail send --item overseer --data reap`). A
+/// `data` envelope from any other source carries text from outside input,
+/// such as an email's summary, and is never read. A stop later than
 /// `wall`, the turn's own clock, is refused, so no stored stop can postdate
 /// a later session's start.
 pub fn notice(envelope: &Envelope, wall: u64) -> Option<(String, Stop)> {
     let trusted = match envelope.mail_class.as_deref() {
         Some("owner-note") => true,
+        Some("data") => envelope.source.as_deref() == Some("reap"),
         Some("peer") => !envelope
             .from
             .as_deref()

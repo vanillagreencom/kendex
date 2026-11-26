@@ -38,7 +38,8 @@
 //! target and its cause on stderr. No box is ever read as empty.
 //!
 //! A provider's `sandbox-stopped` notice from a sender on the owner's
-//! channel in the overseer's box is kept as its item's stop row
+//! channel, or in a `data` envelope whose `source` is `reap`, in the
+//! overseer's box is kept as its item's stop row
 //! (`watch::ended::notice`) when it is announced, and a full
 //! turn clears the row once no record of the item stands short of `done`.
 //!

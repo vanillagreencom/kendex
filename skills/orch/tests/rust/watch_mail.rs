@@ -986,10 +986,11 @@ fn a_first_start_continues_from_the_lead_s_read_cursor_instead_of_replaying_its_
 /// The fleet provider's notice of a sandbox it stopped because its harness
 /// ended (fleet FLT-1791's `sandbox-stopped item= why= at= ...` line, sent
 /// as a directive to the lane's overseer) is kept per item for the
-/// heartbeat's `lane-ended` line only from a sender on the owner's channel:
-/// an owner directive or a program's peer envelope. One row per sender and
-/// shape: a data notice and another overseer's peer note carrying the same
-/// line keep nothing, nor does a stop dated past the turn's clock, the
+/// heartbeat's `lane-ended` line only from a sender on the owner's channel
+/// (an owner directive or a program's peer envelope) or from fleet's reap
+/// pass (a data envelope whose source is `reap`). One row per sender and
+/// shape: a data notice from any other source and another overseer's peer
+/// note carrying the same line keep nothing, nor does a stop dated past the turn's clock, the
 /// `stop-sandbox` verb's own `sandbox-stopped item=ID` or a notice whose
 /// `at` names no time. A full turn clears the row of an item no record
 /// holds or whose only record is done, and keeps the row of an item a
@@ -1015,6 +1016,7 @@ fn a_sandbox_stopped_notice_is_kept_for_its_item_and_its_row_leaves_with_the_ite
     let rows: Vec<(Value, Option<&str>)> = vec![
         (note("s-1", &line("KEN-1", at)), Some("KEN-1")),
         (envelope("s-2", "fleet", &line("KEN-2", at)), Some("KEN-2")),
+        (data("s-8", "reap", &line("KEN-3", at)), Some("KEN-3")),
         (data("s-3", "mail-watch", &line("KEN-3", at)), None),
         (
             envelope("s-4", "overseer:other/repo", &line("KEN-5", at)),
