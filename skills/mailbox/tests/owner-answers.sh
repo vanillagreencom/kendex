@@ -47,6 +47,11 @@ with tempfile.TemporaryDirectory(dir=repo / 'tmp') as scratch:
     tracker.write_text('''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FIXTURE/calls"
+if [[ "$1:$2" == comments:bulk-list ]]; then
+  # The closes the overseer's mailbox holds when the tracker is read.
+  jq -s '[.[] | select(.kind == "resolution")] | length' "$FIXTURE/tmp/lane-mail/overseer/to-lane.jsonl" \
+    > "$FIXTURE/closes-at-read" 2>/dev/null || :
+fi
 if [[ -e "$FIXTURE/quota" ]]; then
   cat "$FIXTURE/quota" >&2
   exit 1
@@ -73,7 +78,9 @@ case "$1:$2" in
         else cat "$FIXTURE/repair"; fi ;;
       *) exit 1 ;;
     esac ;;
-  comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n' ;;
+  comments:create)
+    if [[ -e "$FIXTURE/question-id" ]]; then jq -cn --rawfile id "$FIXTURE/question-id" '{success:true,data:{comment:{id:($id | rtrimstr("\\n"))}}}'
+    else printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n'; fi ;;
   comments:react)
     if [[ -e "$FIXTURE/react-fails" ]]; then cat "$FIXTURE/react-fails" >&2; exit 1; fi
     printf '{"success":true,"data":{"reaction":{"emoji":"eyes"}}}\\n' ;;
@@ -188,6 +195,57 @@ esac
     explicit = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--root', str(worktree), '--peek').stdout.splitlines() if line.startswith('{')]
     assert [row['text'] for row in explicit] == ['explicit'], explicit
     assert [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')] == rows
+    # An ask closed on an answer given elsewhere, before any pass, marks the
+    # owner's comment then: no later pass reads a closed ask's comments. A
+    # deadline close marks nothing, and a comment a pass delivered keeps the
+    # one mark it has.
+    answer = root / 'relayed'
+    answer.write_text('ship\n')
+    # A read that fails names the item it leaves unmarked, and the close stands.
+    for issue, close, pass_first, switch, marked, stderr in [
+            ('KEN-9', ['--text', str(answer)], False, None, True, ''),
+            ('KEN-10', [], False, None, True, ''),
+            ('KEN-11', ['--default'], False, None, False, ''),
+            ('KEN-12', ['--text', str(answer)], True, None, False, ''),
+            ('KEN-13', ['--text', str(answer)], False, ('react-fails', '{"error":"Entity not found: Comment"}\n'), True,
+             'owner-answers: unmarked issue=KEN-13 comment=relay-KEN-13 cause=reaction-failed\n'),
+            ('KEN-14', ['--text', str(answer)], False, ('unread-comments', ''), False,
+             'owner-answers: unmarked issue=KEN-14 cause=comments-unread\n'),
+            ('KEN-15', ['--text', str(answer)], False, ('quota', quota + '\n'), False,
+             'owner-answers: unmarked issue=KEN-15 cause=quota\n')]:
+        (root / 'question-id').write_text(f'question-{issue}\n')
+        message.write_text(f'Ship {issue}?\n')
+        asked = call('ask', '--item', 'overseer', '--to', 'owner', '--issue', issue, '--do', 'Ship change',
+                     '--options', 'ship,hold', '--recommend', 'ship', '--effect', 'none', '--wait', '5', '--file', str(message))
+        ask = asked.stdout.strip().split('=', 1)[1]
+        comment = f'relay-{issue}'
+        (root / 'comments').write_text(json.dumps({issue: [
+            dict(id=f'question-{issue}', body='Question', user_email='bot@example.test', created_at='2026-01-05T00:00:00Z'),
+            dict(id=comment, body='ship', user_email='owner@example.test', created_at='2026-01-06T00:00:00.123Z'),
+            # Written after the close, threaded or not: no route took either to the ask.
+            dict(id=f'late-{issue}', body='later', user_email='owner@example.test', created_at='2100-01-01T00:00:00.500Z'),
+            dict(id=f'late-reply-{issue}', body='later', user_email='owner@example.test',
+                 parent_id=f'question-{issue}', created_at='2100-01-01T00:00:01.500Z')]}))
+        if pass_first:
+            call('owner-answers', '--item', 'overseer')
+        if switch:
+            (root / switch[0]).write_text(switch[1])
+        before = len((root / 'calls').read_text().splitlines())
+        (root / 'closes-at-read').unlink(missing_ok=True)
+        closed = call('resolve', '--item', 'overseer', '--id', ask, *close)
+        # No tracker call holds the local close: the comments are read after it lands.
+        closes = sum(json.loads(line)['kind'] == 'resolution'
+                     for line in (root / 'tmp/lane-mail/overseer/to-lane.jsonl').read_text().splitlines())
+        read_at = (root / 'closes-at-read').read_text().strip() if (root / 'closes-at-read').exists() else None
+        assert read_at == (None if close == ['--default'] else str(closes)), (issue, read_at, closes)
+        if switch:
+            (root / switch[0]).unlink()
+        assert closed.stderr == stderr, (issue, closed)
+        assert closed.stdout.startswith(f'lane-mail: resolved id={ask} '), (issue, closed)
+        later = call('owner-answers', '--item', 'overseer')
+        assert later.stdout.splitlines()[-1] == 'owner-answers: read=read', (issue, later)
+        reacts = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('comments react ')]
+        assert reacts == ([f'comments react {comment} --emoji eyes'] if marked else []), (issue, reacts)
     print('PASS owner answer delivery, filtering, deduplication, repair, absent tracker and quota refusal')
 PY
 pass 'owner answer delivery, filtering, repair and quota contract'
@@ -212,6 +270,9 @@ thread_chain|a reply under another mailbox's question is not delivered, while a 
 flat_comment|a top-level comment after the open question reaches its ask, after a re-ask the newest one's, and one with no open question before it is left out
 missing_item|an item Linear holds no issue for is named on stderr and the other items are read
 uuid_ref|an ask made by a UUID is read off the owner list by its recorded identifier, and one known by a UUID alone is named on stderr while the other items are read
+close_replaced|a reply posted before its question was replaced takes no mark from the replacement's close, and one mark when owner-answers delivers it to the replacing ask
+close_chat|a chat ask that replaced an item question marks the reply under that question once when it closes on an answer given elsewhere
+close_missing|a close whose replaced question is on a missing item names that item and marks the reply on the live item
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
   cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/scripts"

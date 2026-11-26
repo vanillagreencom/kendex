@@ -293,6 +293,12 @@ class Overseer:
         if result.returncode:
             raise RuntimeError("resolve exit=%d: %s" % (result.returncode, result.stderr))
 
+    def close_with(self, ask, text):
+        """resolve --text: an answer given outside the mailbox closes ASK."""
+        answer = self.root / "answer"
+        answer.write_text(text)
+        return self.run("resolve", "--item", "overseer", "--id", ask, "--text", str(answer))
+
     def rows(self, box):
         path = self.root / "tmp/lane-mail/overseer" / box
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
@@ -635,6 +641,56 @@ def uuid_ref(case, facts):
                          == ["owner-answers: item-unreadable issue=%s cause=ref-form" % case.uuids["KEN-9"]])
 
 
+def reacts(case, before):
+    """The eyes marks the tracker took since call BEFORE, by comment id."""
+    return [call.split()[2] for call in case.calls()[before:] if call.startswith("comments react ")]
+
+
+def close_replaced(case, facts):
+    """T15: a reply under a question, posted before an ask replaced it, takes
+    no mark from the replacement's close: the replacing ask takes the reply,
+    and its one mark comes when owner-answers delivers it there."""
+    overseer = case.checkout()
+    first, _ = overseer.item_ask("KEN-7")
+    under = case.reply("KEN-7", overseer.comment(first), "A")
+    before = len(case.calls())
+    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    closing = reacts(case, before)
+    read = overseer.owner_answers()
+    facts["close_replaced"] = (first in overseer.closes() and closing == []
+                               and read.headed(under, first, second, "A") and reacts(case, before) == [under])
+
+
+def close_chat(case, facts):
+    """T16: a chat ask that replaced an item question, closed on an answer
+    given elsewhere, marks the owner's reply under that question once."""
+    overseer = case.checkout()
+    first, _ = overseer.item_ask("KEN-7")
+    chat, _ = overseer.ask("--replaces", first)
+    case.clear("KEN-7")
+    under = case.reply("KEN-7", overseer.comment(first), "A")
+    before = len(case.calls())
+    closed = overseer.close_with(chat, "A\n")
+    read = overseer.owner_answers()
+    facts["close_chat"] = (closed.returncode == 0 and not closed.stderr and chat in overseer.closes()
+                           and read.ok() and under not in read.answers and reacts(case, before) == [under])
+
+
+def close_missing(case, facts):
+    """T17: a close whose replaced question is on an item Linear holds no
+    issue for names that item, and marks the reply on the live item."""
+    overseer = case.checkout()
+    gone, _ = overseer.item_ask("KEN-8")
+    live, _ = overseer.item_ask("KEN-7", "--replaces", gone, text="Approve it on KEN-7?\n")
+    under = case.reply("KEN-7", overseer.comment(live), "approve")
+    case.vanish("KEN-8")
+    before = len(case.calls())
+    closed = overseer.close_with(live, "approve\n")
+    facts["close_missing"] = (closed.returncode == 0 and live in overseer.closes()
+                              and closed.stderr.splitlines() == ["owner-answers: item-missing issue=KEN-8"]
+                              and reacts(case, before) == [under])
+
+
 # --- compact ----------------------------------------------------------------
 
 
@@ -669,7 +725,8 @@ GROUPS = {
     "answers": tuple((replaced_route(fact, steps, cleared), sorted({issue for issue, _ in steps if issue}))
                      for fact, steps, cleared in REPLACED)
                + ((threads, ("KEN-7",)), (flat, ("KEN-7",)), (missing_item, ("KEN-7", "KEN-8")),
-                  (uuid_ref, ("KEN-7", "KEN-8", "KEN-9"))),
+                  (uuid_ref, ("KEN-7", "KEN-8", "KEN-9")), (close_replaced, ("KEN-7",)), (close_chat, ("KEN-7",)),
+                  (close_missing, ("KEN-7", "KEN-8"))),
     "compact": ((retention, ("KEN-7",)),),
 }
 

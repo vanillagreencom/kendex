@@ -307,9 +307,13 @@ def run(source, scratch, bash):
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
                     and error_file.read_bytes() == b"tracker: refused=write\n")
             # The asking overseer's watch owns a closed ask's tracker marks:
-            # the close itself calls no tracker, posted or not.
+            # the close writes no description, label or question comment,
+            # posted or not. Its only tracker calls are the comments read of
+            # the ask's item and an eyes mark per owner comment it marks.
+            closing = [json.loads(line) for line in (root / "calls.jsonl").read_bytes()[len(calls):].splitlines()]
             facts["close_untracked"] &= (after_close == before_close
-                and (root / "calls.jsonl").read_bytes() == calls)
+                and all(args[:3] == ["comments", "bulk-list", "KEN-7"] or args[:2] == ["comments", "react"]
+                        for args in closing))
     return facts
 
 
