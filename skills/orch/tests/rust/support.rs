@@ -1701,6 +1701,60 @@ pub fn release_hold(fifo: &Path, bound: Duration, evidence: impl Fn() -> String)
     }
 }
 
+/// The backstop on [`await_hold`]: an op still short of its hold this long
+/// is hung, never slow. Capped at a quarter of one CPU, the effects rows'
+/// launches reached their holds in 0.6 s to 13.5 s, past the 10 s a loaded
+/// CI runner already overran, so this bound is about nine times the slowest.
+/// It stays far inside the orch-rest leg's suite bound, 1800 s
+/// (`RUN_ALL_SUITE_SECS` in skill-tests.yml), so a hang fails by its row's
+/// name and not by a suite stop.
+const HOLD_REACH_BOUND: Duration = Duration::from_secs(120);
+
+/// Wait for the held op `child` to reach the tmux-hold shim's hold of
+/// `verb`, which creates `mark` just before it blocks. The wait ends on the
+/// op's own progress: the mark, or the op's exit, which fails the row with
+/// its status and stderr. A loaded runner takes as long as it takes; only
+/// an op still running at [`HOLD_REACH_BOUND`] is killed and fails the row
+/// as hung. A failure names the caller's line.
+#[track_caller]
+pub fn await_hold(child: &mut Child, mark: &Path, verb: &str) {
+    let bound = Instant::now() + HOLD_REACH_BOUND;
+    loop {
+        if mark.exists() {
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("the held op's status") {
+            panic!(
+                "the op exited with {status} before its held {verb}: {}",
+                child_stderr(child)
+            );
+        }
+        if Instant::now() >= bound {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "the op still ran at {HOLD_REACH_BOUND:?} short of its held {verb}: {}",
+                child_stderr(child)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// What the ended `child`, spawned by [`Runner::spawn_op_fleet`], wrote to
+/// its piped stderr, or why it is unread.
+fn child_stderr(child: &mut Child) -> String {
+    let mut pipe = child
+        .stderr
+        .take()
+        .expect("spawn_op_fleet pipes the op's stderr");
+    let mut bytes = Vec::new();
+    match std::io::Read::read_to_end(&mut pipe, &mut bytes) {
+        Ok(_) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(e) => format!("stderr unread: {e}"),
+    }
+}
+
 /// Poll the fleet until the intent whose id begins `prefix` records `phase`,
 /// bounded, so a test can tell a held op reached that step.
 pub fn wait_for_phase(runner: &Runner, prefix: &str, phase: &str) {
