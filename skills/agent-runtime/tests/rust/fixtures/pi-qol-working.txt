@@ -1,0 +1,42 @@
+   (https://github.com/yearth)).
+ - Fixed inherited file autocomplete boundaries and path quoting around CJK punctuation (#9746 (https://github.com/earendil-works/pi/pull/9746) by @haoqixu
+   (https://github.com/haoqixu)).
+ - Fixed inherited LaTeX legacy font switches falling back to raw source, centered cases layouts around surrounding equations, and vertically laid out unsupported and nested
+   display scripts (#8827 (https://github.com/earendil-works/pi/issues/8827), #9564 (https://github.com/earendil-works/pi/issues/9564), #7929
+   (https://github.com/earendil-works/pi/issues/7929)).
+ - Fixed inherited fullscreen Kitty images being erased by later row clears in WezTerm (#9169 (https://github.com/earendil-works/pi/issues/9169)).
+
+ ### Removed
+
+ - Removed unavailable inherited GPT-5.4 and GPT-5.4 mini models from OpenAI Codex selection (#9394 (https://github.com/earendil-works/pi/issues/9394)).
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Warning: No models match pattern "pi-claude/claude-fable-5-2"
+
+ Warning: No models match pattern "pi-claude/claude-opus-5-5"
+
+ Warning: No models match pattern "pi-claude/claude-opus-5"
+
+ Warning: No models match pattern "pi-claude/claude-haiku-4-5"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-luna"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-sol"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-terra"
+
+ Warning: No models match pattern "pi-codex/gpt-6-astra"
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+┏━ π ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Run the shell command: sleep 20; echo finished. Then reply with the single word done.                                                                                           ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+● Bash $ sleep 20; echo finished.
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+● work (🦀) Copilot / GPT 5.4 nano / medium 400k     ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 97%
+π

@@ -1,0 +1,45 @@
+
+ Warning: No models match pattern "pi-claude/claude-fable-5-2"
+
+ Warning: No models match pattern "pi-claude/claude-opus-5-5"
+
+ Warning: No models match pattern "pi-claude/claude-opus-5"
+
+ Warning: No models match pattern "pi-claude/claude-haiku-4-5"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-luna"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-sol"
+
+ Warning: No models match pattern "pi-codex/gpt-5.6-terra"
+
+ Warning: No models match pattern "pi-codex/gpt-6-astra"
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+
+ Run the shell command: sleep 20; echo finished. Then reply with the single word done.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+── ⠹ Working ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/dev/.worktrees/kendex/ken-5771/tmp/pi-rec/work (main) • probe session
+1.9%/400k                                                                                                                                     (github-copilot) gpt-5.4-nano • medium

@@ -358,8 +358,8 @@ sys.exit(task.main())
                    + ".write_text(''.join(json.dumps(row)+'\\n' for row in rows))\n")
         # A None outcome is a launch that records running: a harness at its
         # composer, or in a turn, or one that wrote its brief as its turn
-        # under a screen that settles nothing, such as Pi's under pi-qol's
-        # status line and prompt.
+        # under a screen that settles nothing, such as a Pi dialog drawn in
+        # place of its composer.
         rows = (("claude", theme, "harness-not-ready", False),
                 ("codex", captured / "codex-dialog-trust.txt", "harness-not-ready", False),
                 ("codex", captured / "codex-rate-limit-switch.txt", "harness-not-ready", False),
@@ -371,7 +371,7 @@ sys.exit(task.main())
                 ("copilot", IDLE / "copilot-model-turn-sidebar.txt", None, False),
                 ("codex", captured / "codex-composer-idle.txt", None, False),
                 ("codex", captured / "codex-working.txt", None, False),
-                ("pi", captured / "pi-qol-idle.txt", None, True))
+                ("pi", captured / "pi-tree-confirm.txt", None, True))
         for index, (harness, screen, reason, turn) in enumerate(rows):
             with self.subTest(harness=harness, screen=screen.name):
                 path = self.bin / harness
