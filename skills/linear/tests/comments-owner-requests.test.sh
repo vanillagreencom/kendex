@@ -29,7 +29,7 @@ def comments: {pageInfo:{hasNextPage:false,endCursor:null},nodes:[
   comment("unrelated";"https://linear.app/example/profiles/owner-other is another user")]}
   | if $mode == "large-comments" then .nodes += [range(80) | comment("history-"+tostring; "retained conversation " * 150)] else . end;
 def issue_page($nodes; $next): {data:{issues:{nodes:$nodes,pageInfo:{hasNextPage:($next != null),endCursor:$next}}}};
-def first_issue: {id:"issue-uuid",identifier:"KEN-1",comments:(comments |
+def first_issue: {id:"issue-uuid",identifier:"KEN-1",state:(if $mode == "stateless" then null else {type:"started"} end),comments:(comments |
   if $mode == "paginated" then .pageInfo = {hasNextPage:true,endCursor:"comment-page-2"} |
     .nodes |= map(select(.id != "ask-b")) else . end)};
 if (.query | contains("GetUserByEmail")) then
@@ -60,7 +60,7 @@ elif (.query | contains("ListIssues")) then
   elif $mode == "paginated" then
     if .variables.after == null then issue_page([first_issue]; "issue-page-2")
     elif .variables.after == "issue-page-2" then
-      issue_page([{id:"other-uuid",identifier:"KEN-2",comments:{pageInfo:{hasNextPage:false,endCursor:null},
+      issue_page([{id:"other-uuid",identifier:"KEN-2",state:{type:"completed"},comments:{pageInfo:{hasNextPage:false,endCursor:null},
         nodes:[comment("ask-c";"https://linear.app/example/profiles/owner another issue") | .url |= sub("KEN-1";"KEN-2")]}}]; null)
     else error("unexpected issue continuation") end
   else issue_page([first_issue]; null) end
@@ -99,6 +99,7 @@ run_requests normal
 if [[ "$RC" != 0 ]]; then cat "$TMP_ROOT/err" >&2; fi
 assert_eq "complete projection succeeds" "$RC" 0
 assert_jq "distinct same-issue asks and exact profile mention" "$OUT" '[.requests[].comment.id] == ["ask-a","ask-b"]'
+assert_jq "an item in an open state is not closed" "$OUT" '.closed_items == []'
 assert_jq "original attribution, date, thread and URL" "$OUT" \
     '.workspace == "example" and all(.requests[]; .issueUuid == "issue-uuid" and .comment.user_id == "original-author" and .comment.user == "Original asker" and .comment.created_at == "2026-11-01T01:00:00Z" and .thread == "original-thread" and (.comment.url | startswith("https://linear.app/example/issue/KEN-1#comment-")))'
 assert_jq "existing list filter owner receives assignment and label" "$(jq -s 'map(select(.query | contains("ListIssues")))[0]' "$TMP_ROOT/calls")" \
@@ -132,6 +133,10 @@ assert_jq "both issue and comment continuations preserve requests" "$OUT" \
      any(.requests[]; .comment.id == "ask-b" and .comment.user_id == "original-author" and
        .thread == "original-thread" and .comment.url == "https://linear.app/example/issue/KEN-1#comment-ask-b") and
      any(.requests[]; .comment.id == "ask-c" and .issueUuid == "other-uuid" and .issue == "KEN-2")'
+assert_jq "an item in a closed state is named closed" "$OUT" '.closed_items == ["other-uuid"]'
+run_requests stateless
+assert_not "an item with an unread state fails the projection" test "$RC" -eq 0
+assert_eq "an unread state publishes no partial projection" "$OUT" ''
 run_requests failed-comments
 assert_not "an unread configured source fails" test "$RC" -eq 0
 assert_eq "an unread source publishes no partial projection" "$OUT" ''

@@ -52,8 +52,10 @@ def mailbox_projection(home):
 
 # Linear's GraphQL endpoint for the readers the list uses, over the issues
 # in TRACKER_DATABASE: {"issues": {IDENTIFIER: [comment rows]}, "assigned":
-# [the owner's labelled view]}. A .mode file beside it fails, truncates or
-# omits the assigned view. Each request appends its operation to a .log file
+# [the owner's labelled view], "states": {IDENTIFIER: state type, started
+# where absent}, "former": {FORMER IDENTIFIER: IDENTIFIER}}, a moved issue's
+# earlier identifier that issue(id:) and a create still resolve. A .mode
+# file beside it fails, truncates or omits the assigned view. Each request appends its operation to a .log file
 # beside it and each filtered comment request to .comment-ids. Past
 # TRACKER_REQUEST_LIMIT requests, the tracker refuses. A
 # create appends its input and Authorization header to a .writes file and,
@@ -70,7 +72,7 @@ path = Path(os.environ['TRACKER_DATABASE'])
 database = json.loads(path.read_text())
 mode_path = path.with_suffix('.mode')
 mode = mode_path.read_text() if mode_path.exists() else 'present'
-operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'ListComments',
+operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'GetIssue', 'ListComments',
                                    'IssueRefs', 'BulkGetComments', 'CreateComment', 'OwnerReply', 'OwnerRuling') if name in query)
 if operation == 'IssueRefs':
     operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
@@ -108,7 +110,7 @@ if operation == 'CreateComment':
         sys.exit(0)
     if outcome != 'failed':
         issue_ref = fields['issueId']
-        identifier = issue_ref[:-len('-uuid')] if issue_ref.endswith('-uuid') else issue_ref
+        identifier = issue_ref[:-len('-uuid')] if issue_ref.endswith('-uuid') else database.get('former', {}).get(issue_ref, issue_ref)
         actor = 'app-id' if 'Bearer tracker-app-fixture' in authorization else 'owner-id'
         comment_id = fields.get('id') or 'minted-%d' % len(database['issues'][identifier])
         database['issues'][identifier].append({
@@ -142,14 +144,22 @@ elif 'ListIssues' in query:
     if mode == 'failed':
         print('___HTTP_CODE___403', end='')
         sys.exit(0)
-    issues = connection([] if mode == 'omitted' else [issue(identifier, updatedAt='2026-11-01T01:00:00Z')
-                                                      for identifier in database['assigned']])
+    issues = connection([] if mode == 'omitted' else [
+        issue(identifier, updatedAt='2026-11-01T01:00:00Z', state={'type': database.get('states', {}).get(identifier, 'started')})
+        for identifier in database['assigned']])
     if 'comments {' in query:
         for node in issues['nodes']:
             node['comments'] = comments(node['identifier'])
     if mode == 'incomplete':
         issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
     data = {'issues': issues}
+elif operation == 'GetIssue':
+    ref = variables['id']
+    identifier = ref[:-len('-uuid')] if ref.endswith('-uuid') else database.get('former', {}).get(ref, ref)
+    if identifier not in database['issues']:
+        print(json.dumps({'errors': [{'message': 'Entity not found: Issue'}]}) + '___HTTP_CODE___200', end='')
+        sys.exit(0)
+    data = {'issue': {'id': identifier + '-uuid'}}
 elif 'GetIssueWithBundle' in query:
     data = {'issue': issue(variables['id'], labels=connection([]), relations=connection([]),
                            inverseRelations=connection([]), children=connection([]))}
@@ -846,10 +856,11 @@ class PublicOwnerAsks(MailWorld):
                 self.assertEqual(record["key"], ["project-list", "registration-unreadable", state])
                 self.assertNotIn("activeCount", error)
 
-    def tracker_api(self, comments, issues=None, assigned=("KEN-1",)):
+    def tracker_api(self, comments, issues=None, assigned=("KEN-1",), states=None, former=None):
         """Linear's API for the caller's reads, answered from COMMENTS on issue KEN-1 and any further ISSUES."""
         database = self.root / "tracker.json"
-        database.write_text(json.dumps({"issues": dict(issues or {}, **{"KEN-1": comments}), "assigned": list(assigned)}))
+        database.write_text(json.dumps({"issues": dict(issues or {}, **{"KEN-1": comments}), "assigned": list(assigned),
+                                        "states": dict(states or {}), "former": dict(former or {})}))
         self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture", LINEAR_FORMAT="raw")
         self.executable("curl", "#!" + sys.executable + "\n" + TRACKER_API)
         return database
@@ -1236,6 +1247,26 @@ print(json.dumps(owner._presence('ssh:fixture')))
                 self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "refused", None))
         self.assertFalse(database.with_suffix(".writes").exists())
 
+    def test_a_closed_item_settles_its_questions(self):
+        # The item's own state settles its questions, with no ruling, reply
+        # or mailbox record on any of them.
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        mention = "https://linear.app/example/profiles/owner "
+        states = {"KEN-1": "started", "KEN-2": "completed", "KEN-3": "canceled", "KEN-4": "duplicate", "KEN-5": "backlog"}
+        questions = {identifier: dict(request_comment(identifier.lower(), mention + "Question on " + identifier),
+                                      url="https://linear.app/example/issue/" + identifier + "#question")
+                     for identifier in states}
+        self.tracker_api([questions["KEN-1"]], {identifier: [question] for identifier, question in questions.items()
+                                                if identifier != "KEN-1"},
+                         assigned=list(states), states=states)
+
+        result, page = self.run_cli()
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(({row["link"]["url"] for row in page["rows"]}, page["activeCount"]),
+                         ({questions["KEN-1"]["url"], questions["KEN-5"]["url"]}, 2))
+
     def test_runtime_ruling_survives_tracker_actor_change(self):
         (self.home / "kendex.settings.toml").write_text(
             '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
@@ -1246,12 +1277,17 @@ print(json.dumps(owner._presence('ssh:fixture')))
             "default": "This question closed at its deadline with no answer, so its recommendation stands.\n"
                        "\n**Decided by**: recommendation\n\n**Ruling**: yes\n",
             "legacy": "This question closed on its answer.\n\n**Ruling**: Historical answer.\n",
+            # A legacy ask keeps no item UUID, only the ref it was asked
+            # under, which the item has since moved from.
+            "parent-only": "This question closed with no answer.\n",
         }
-        # The orch watch integration supplies the actual argv for all four
-        # outcomes. The standalone Jarvis suite also drives the shipped writer.
+        former = "OLD-7"
+        # The orch watch integration supplies the actual argv for each
+        # outcome. The standalone Jarvis suite also drives the shipped writer.
         native_args = json.loads(os.environ.get("KENDEX_TEST_RULING_ARGS", "null"))
         argv_by_kind = native_args if native_args is not None else {
-            kind: ["comments", "create", issue + "-uuid", "--body", body, "--parent", question_id, "--owner-ruling"]
+            kind: ["comments", "create", former if kind == "parent-only" else issue + "-uuid", "--body", body,
+                   "--parent", question_id, "--owner-ruling"]
             for kind, body in bodies.items()}
         self.assertEqual(set(argv_by_kind), set(bodies))
         # Exercise the default attribution serializer without building a second
@@ -1267,11 +1303,13 @@ print(json.dumps(owner._presence('ssh:fixture')))
         for kind, asker in cases:
             with self.subTest(ruling=kind, asker=asker):
                 question = dict(request_comment(question_id, mention + "Closed question"), user_id=asker)
-                database = self.tracker_api([], {issue: [question, peer, direct, owner_reply]}, assigned=[issue])
+                database = self.tracker_api([], {issue: [question, peer, direct, owner_reply]}, assigned=[issue],
+                                            former={former: issue})
                 self.env.pop("LINEAR_API_KEY_OVERRIDE")
                 self.env["LINEAR_APP_TOKEN"] = "tracker-app-fixture"
                 args = argv_by_kind[kind]
-                database.with_suffix(".create").write_text("malformed" if kind == "text" else "")
+                # A lost answer leaves the write unconfirmed: only its readback settles it.
+                database.with_suffix(".create").write_text({"text": "malformed", "parent-only": "lost"}.get(kind, ""))
                 result = self.command([BASH, linear, *args], self.home)
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 copied = self.command([BASH, linear, "comments", "create", issue, "--body", bodies[kind],
@@ -1285,11 +1323,13 @@ print(json.dumps(owner._presence('ssh:fixture')))
                 self.assertEqual((result.returncode, page.get("activeCount")), (0, 1), result.stderr + result.stdout)
                 self.assertEqual(page["rows"][0]["link"]["url"], peer["url"])
 
-                if kind == "explicit" and asker == "prior-actor":
+                if kind in ("explicit", "parent-only") and asker == "prior-actor":
+                    # The watch's retry of a write it saw fail posts nothing more.
                     repeated = self.command([BASH, linear, *args], self.home)
                     self.assertEqual(repeated.returncode, 0, repeated.stderr + repeated.stdout)
                     self.assertEqual(json.loads(repeated.stdout)["data"]["comment"]["id"], ruling["id"])
                     self.assertEqual(json.loads(database.read_text()), world)
+                if kind == "explicit" and asker == "prior-actor":
                     ruling["parent_id"] = peer["id"]
                     database.write_text(json.dumps(world))
                     collision = self.command([BASH, linear, *args], self.home)

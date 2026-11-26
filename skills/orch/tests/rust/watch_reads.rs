@@ -5342,7 +5342,9 @@ fn posted_owner_ask(
 
 /// A watch ruling leaves the active view after the Linear writer posts it
 /// under the exact question, even when the account and issue identifier changed.
-/// The Jarvis regression consumes the watch's actual argv for each form.
+/// The Jarvis regression consumes the watch's actual argv for each form, and
+/// proves the writer confirms the parent-only form's unconfirmed write, and
+/// the watch's retry of it, through the item's former identifier.
 #[test]
 fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
     const NAME: &str = "watch_rulings_leave_the_active_view_after_a_tracker_account_change";
@@ -5411,22 +5413,49 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
         }
         let closed = close.output().unwrap();
         assert!(closed.status.success(), "{form}: {}", stderr(&closed));
-        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        let mut wall = SINCE_EPOCH + 1240;
+        if form == "parent-only" {
+            // The writer refuses a write it could not confirm; the watch
+            // keeps the mark standing and sends the same write again.
+            world.linear(
+                "comments create",
+                json!({"exit": 5, "stderr": "jq: error (at <stdin>:1): owner-ruling-unconfirmed"}),
+            );
+            pass(&mut body, &mut baseline, &clock, wall).unwrap();
+            let marks = baseline.get(tracker::OWNER_MARK_ROW, "ask-1").unwrap_or("");
+            assert!(!marks.contains("ruling=ok"), "{form}: {marks}");
+            world.linear("comments create", json!({"body": {"success": true}}));
+            wall += 240;
+        }
+        pass(&mut body, &mut baseline, &clock, wall).unwrap();
+        let marks = baseline.get(tracker::OWNER_MARK_ROW, "ask-1").unwrap_or("");
+        assert!(marks.starts_with("ruling=ok"), "{form}: {marks}");
         let calls = world.comment_calls();
-        assert_eq!(calls.len(), 1, "{form}: {calls:?}");
+        let tries = if form == "parent-only" { 2 } else { 1 };
+        assert_eq!(calls.len(), tries, "{form}: {calls:?}");
+        assert!(
+            calls.iter().all(|call| call["args"] == calls[0]["args"]),
+            "{form}: {calls:?}"
+        );
         let args = calls[0]["args"].as_array().unwrap();
-        if question.is_some() && uuid.is_some() {
-            assert_eq!(args[2], ITEM_UUID, "{form}: {calls:?}");
+        if let Some(parent) = question {
+            let item = uuid.unwrap_or(FORMER_REF);
+            assert_eq!(
+                &args[..4],
+                &["comments", "create", item, "--body"].map(Value::from)
+            );
+            assert_eq!(
+                &args[5..],
+                &["--parent", parent, "--owner-ruling"].map(Value::from),
+                "{form}: {calls:?}"
+            );
             rulings.insert(form, calls[0]["args"].clone());
         } else {
             assert_eq!(
                 &args[..4],
                 &["comments", "create", FORMER_REF, "--body"].map(Value::from)
             );
-            let expected = question.map_or_else(Vec::new, |parent| {
-                vec![Value::from("--parent"), Value::from(parent)]
-            });
-            assert_eq!(&args[5..], expected.as_slice(), "{form}: {calls:?}");
+            assert_eq!(args.len(), 5, "{form}: {calls:?}");
         }
     }
     let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../jarvis/tests/owner-asks.test.sh");
