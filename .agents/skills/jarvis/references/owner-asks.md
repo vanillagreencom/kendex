@@ -33,9 +33,15 @@ Cross-source suppression requires confirmed tracker posting and equality of the 
 
 `scripts/lib/owner_asks.py` declares the page row and encoded byte bounds. A successful page contains `v`, `homeId`, `revision`, `observedAt`, canonical `activeCount` and `snoozedCount`, `rows`, `nextCursor` and `complete`. Each row carries its stable identity, revision, kind, request text, original author and time, HTTP conversation link or a null link, opaque thread reference, current state, snooze time and actions.
 
-On a request without a cursor, the main reads each configured source in full once. It looks up tracker comment links for open mailbox asks and uses retained mailbox evidence for closed and replaced asks. It computes the counts and public revision from that observation and its action deltas. Continuation pages reuse the saved rows, observation time, revision and counts. A change during collection may appear on the next refresh. An incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
+On a request without a cursor, the main reads each configured source in full once, unless its last complete collection is less than `COLLECTION_SECONDS`, 60 seconds, old. It looks up tracker comment links for open mailbox asks and uses retained mailbox evidence for closed and replaced asks. It computes the counts and public revision from that observation and its action deltas. Continuation pages reuse the saved rows, observation time, revision and counts. A change during collection may appear on the next refresh. An incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
 
-Rows sort by original asked-at time, then identity. A cursor binds the home, view, refresh revision and next position. A successful refresh invalidates earlier cursors for its view and cursors in either view with a different public revision. An accepted Done or Later invalidates cursors in both views.
+A request without a cursor inside that window takes the last collection and reads no source. Consoles that poll an unchanged list therefore cost at most 60 collections an hour, about 240 Linear requests at 4 per collection, however many poll. A change can take up to 60 seconds to show.
+
+- A request that waits on the home's lock while a collection runs takes that collection.
+- An action's own complete read becomes the last collection, so a list the action refused as changed shows the revision the action judged.
+- A Reply or Done ends the window once its send settles, so the next request reads the sources.
+
+Rows sort by original asked-at time, then identity. A cursor binds the home, view, public revision and next position. The revision covers every row, so a walk reads on through any refresh that finds the same revision. A refresh that finds a different revision invalidates the earlier cursors in either view. An accepted Done or Later invalidates cursors in both views.
 
 - Refresh from the first pages after a stale-cursor result.
 
