@@ -814,7 +814,8 @@ pub(crate) fn landings(
     Ok(out)
 }
 
-/// The repositories the lane inventories and the report's pull-request read:
+/// The repositories the lane inventories, the report's pull-request read
+/// and the security-alert pass read:
 /// the caller's, the lanes' and the connected ones, lowercased, in that
 /// order, once each.
 pub(super) fn repositories(repos: &[String], lanes: &[Lane], settings: &Settings) -> Vec<String> {
@@ -1049,10 +1050,13 @@ fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
         &mut produced,
     )?;
     outside::pass(&gh, &ctx.settings, &audits, tick.baseline, &mut produced)?;
+    // The alert pass reads every repository the inventories read, each
+    // lane's own included, so a watch started with no `--repo` still reads
+    // the alerts of the repositories its lanes work in.
     inventory.bot_fix = security::pass(
         &gh,
         &ctx.settings,
-        &audits,
+        &repositories(&ctx.repos, &fleet.lanes, &ctx.settings),
         &verdicts,
         tick.baseline,
         &mut produced,
