@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # LaneMail answer failures, event field validation, a read directive from an
-# older producer, and root-error isolation.
+# older producer, root-error isolation, and owner delivery to a new root whose
+# mailbox read refuses.
 # Controls keep the malformed producer and remove each reader rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -526,5 +527,34 @@ sk_mutant status-isolation relay.py 'except Exception as status_err:' 'except Re
 sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
 assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Root control.')" "1=0" "control: a failed error-status write prevents the healthy root from posting"
 sk_bin_reset
+
+# A newly bound root takes an owner's queued message while its mailbox read
+# refuses a damaged unread line: the message lands, and the poll that would
+# seed the mailbox position refuses with the line and posts nothing. Once the
+# line is set aside, the seed passes the notice already there, never the
+# overseer's reply written to the delivered message meanwhile.
+FRESH="$(sk_new_root damaged-unseeded)"
+sk_bind "$FRESH"
+FRESH_CH="$(sk_channel "$FRESH")"
+sk_lm "$FRESH" notice --item overseer --to owner --file "$(sk_text damaged-unseeded 'Before the damage.')" >/dev/null
+printf 'bad-json\n' >> "$(sk_box "$FRESH")/to-overseer.jsonl"
+python3 - "${SK_BIN%/*}/lib" "$FRESH" "$FRESH_CH" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from inbound import directory, write
+write(directory(Path(sys.argv[2]), "inbox") / "owner.json", {"type": "message", "channel": sys.argv[3],
+      "ts": "1794111600.000001", "user": "U001", "text": "Owner message past the damage."})
+PY
+sk_poll "$FRESH" SLACK_INBOUND=queue
+assert_eq "$RC=$(landed "$FRESH" "$FRESH_CH:1794111600.000001" 1)=$(asks "$FRESH_CH" 'Before the damage.')" \
+  "1=Owner message past the damage.=0" "a new root delivers an owner message while its mailbox read refuses, and posts nothing"
+assert_has "$ERR" "envelope-invalid path=$(sk_box "$FRESH")/to-overseer.jsonl line=2" "the refused poll names the damaged line"
+FRESH_ID="$(jq -r --arg d "$FRESH_CH:1794111600.000001" 'select(.delivery_id == $d) | .id' "$(sk_box "$FRESH")/to-lane.jsonl")"
+sk_lm "$FRESH" notice --item overseer --to owner --ref "$FRESH_ID" --file "$(sk_text damaged-reply 'Reply past the damage.')" >/dev/null
+sk_lm "$FRESH" compact --item overseer --set-aside >/dev/null 2>&1
+sk_poll "$FRESH" SLACK_INBOUND=queue
+assert_eq "$RC=$(asks "$FRESH_CH" 'Reply past the damage.')=$(asks "$FRESH_CH" 'Before the damage.')" "0=1=0" \
+  "after the repair the seed passes the earlier notice and posts the reply to the delivered message"
 
 sk_summary

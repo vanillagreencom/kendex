@@ -297,6 +297,25 @@ finally:
         os.close(fd)
     for stream in streams:
         stream.close()
+# A mailbox package from before its damaged-line rule supplies every read
+# definition but MAILBOX_LINE_JQ, and its read_events calls none: Slack still
+# reads beside it.
+import mailbox as slack_mailbox
+import shlex
+older = root / "tmp/older-mailbox"
+older.mkdir(parents=True, exist_ok=True)
+(older / "mailbox-append.sh").write_text(f". {shlex.quote(str(MAILBOX_READ_FILES[1]))}\nunset MAILBOX_LINE_JQ\n")
+(older / "lane-mail-store.py").write_text(
+    "def read_events(box, jq_defs, previous, receipts=False, timeout=30):\n    return [{'defs': jq_defs}], None\n")
+installed = slack_mailbox.MAILBOX_READ_FILES
+slack_mailbox.MAILBOX_READ_FILES = (older / "lane-mail-store.py", older / "mailbox-append.sh", installed[2])
+try:
+    older_rows, _ = LaneMail(root)._read_events()
+finally:
+    slack_mailbox.MAILBOX_READ_FILES = installed
+older_defs = older_rows[0]["defs"]
+assert "def overseer_mail_class" in older_defs and "mailbox_line_invalid" not in older_defs, older_defs[:200]
+
 if linked:
     assert mail.box == box
     assert not (root / "tmp/lane-mail/overseer").exists(), "reads must not create a second mailbox"
