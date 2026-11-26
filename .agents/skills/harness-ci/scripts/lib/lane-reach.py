@@ -112,9 +112,6 @@ case $fixture in
 esac
 done 3<<<"$fixtures"
 done""".splitlines()
-# A shell word that is a quoted string or a parameter expansion, and a comment.
-SHELL_QUOTED = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|\$\{[^{}'"]*\}""")
-SHELL_COMMENT = re.compile(r"(?:^|\s)#.*")
 SHELL_KEYWORDS = {
     "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for",
     "function", "if", "in", "select", "then", "time", "until", "while",
@@ -134,18 +131,40 @@ QUEUE_NARROWING = re.compile(
 )
 
 
-def closes_inside(line):
-    # Whether a brace outside quotes and expansions can close the enclosing
-    # function before the line that is a bare "}", so lines after it would
-    # run at the top level.
-    while (stripped := SHELL_QUOTED.sub("", line)) != line:
-        line = stripped
-    line = SHELL_COMMENT.sub("", line)
-    depth = 0
-    for character in line:
-        depth += {"{": 1, "}": -1}.get(character, 0)
-        if depth < 0:
+# A quoted string or a ${...} expansion, holding no command substitution,
+# no quote inside an expansion and no nested expansion, whose own quotes and
+# braces could end it.
+SHELL_EXPANSION = r"\$\{(?:[^{}'\"`$\\]|\$(?![({]))*\}"
+SHELL_STRING = re.compile(rf"""'[^']*'|"(?:[^"\\`$]|\\.|\$(?![({{])|{SHELL_EXPANSION})*"|{SHELL_EXPANSION}""")
+
+
+def boundary_unproved(body):
+    # Whether bash could end the function before the line that is "}" alone,
+    # so lines after it would run at the top level. Any brace outside a
+    # string counts, since a "{" argument and a closing "}" look alike, and
+    # so does text this scan cannot follow: a quote left open, a string it
+    # cannot match, ANSI-C quoting, whose escapes can hide a quote, and a
+    # heredoc.
+    text = "\n".join(body)
+    index, word_start = 0, True
+    while index < len(text):
+        character = text[index]
+        string = SHELL_STRING.match(text, index)
+        if character == "\\":
+            index += 2
+        elif character == "#" and word_start:
+            index = len(text) if (end := text.find("\n", index)) < 0 else end
+        elif string:
+            index = string.end()
+        elif character in "{}'\"" or text.startswith(("${", "$'"), index) or (
+            text.startswith("<<", index) and not text.startswith("<<<", index)
+        ):
             return True
+        else:
+            index += 3 if text.startswith("<<<", index) else 1
+            word_start = character in " \t\n;&|()"
+            continue
+        word_start = False
     return False
 
 
@@ -184,8 +203,8 @@ def lane_table(lines, lane):
         close = lines.index("}", index + 1, end)
         # The caller reads only the selected lane's steps, so another step's
         # body must end where this split ends it.
-        require(not any(closes_inside(line) for line in lines[index + 1:close]),
-                "unsupported-runner-function")
+        require(not boundary_unproved(lines[index + 1:close]),
+                f"runner-function-boundary-unproved function={definition[1]}")
         functions[definition[1]] = lines[index + 1:close]
         index = close + 1
     return members[lane], functions, fixtures
@@ -315,7 +334,7 @@ class Evidence:
                 require(step in functions, f"runner-step-unresolved step={step}")
                 body = [args for line in functions[step] if (args := words(line))]
                 require(body and all(args[0] not in SHELL_KEYWORDS for args in body),
-                        "unsupported-runner-body")
+                        f"unsupported-runner-body step={step}")
                 for command in body:
                     self.shell_command(command, directory, reads, visited)
             if fixtures:
@@ -334,12 +353,15 @@ class Evidence:
         reads.update(name for name in self.changed if under(name, folder) or under(folder, name))
         for path, mode in sorted(self.files.items()):
             # find -type f lists regular files and no link.
-            if Path(path).parent.as_posix() != folder or mode not in {"100644", "100755"}:
+            if (Path(path).parent.as_posix() != folder or mode not in {"100644", "100755"}
+                    or not path.endswith((".sh", ".py"))):
                 continue
+            # The runner reads the list by line, so it would run each part of
+            # a name that holds a newline as a path of its own.
+            require("\n" not in path, f"runner-fixture-name-newline folder={folder}")
             if path.endswith(".py"):
                 raise Unreadable(f"runner-fixture-opaque fixture={path}")
-            if path.endswith(".sh"):
-                self.shell_reads(path, directory, reads, visited)
+            self.shell_reads(path, directory, reads, visited)
 
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args

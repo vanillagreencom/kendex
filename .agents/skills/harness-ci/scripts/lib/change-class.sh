@@ -534,10 +534,7 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
-  elif [ "$derived" = true ] && [ -n "$reach" ] &&
-    { [ "${prereqs[$index]:-false}" = true ] ||
-      { [ "$reach_kind" = unclaimed-path ] &&
-        { [ "${lane_queue[$index]}" != true ] || [ "$EVENT" != pull_request ]; }; }; }; then
+  elif [ "$derived" = true ] && [ -n "$reach" ] && [ "${prereqs[$index]:-false}" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=$reach_cause $reach"
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]; then
     [ "$reader_missing" != unread ] || reader_missing="$(render_reader_missing "$queue_reader")"
