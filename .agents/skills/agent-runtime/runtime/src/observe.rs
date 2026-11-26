@@ -279,6 +279,12 @@ static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
+/// Codex 0.172.0's dialog at a workspace member's usage limit, which offers
+/// to ask the owner for more (`fixtures/stops/codex-limit-increase.txt`). It
+/// stands only while the account is at its limit, so a caller's assertion of
+/// room never judges past it: no key or line is ever typed into it.
+static LIMIT_OFFER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*Request a limit increase from your owner").unwrap());
 /// A login wall's line, anchored at the row start so a quoted copy is not
 /// one. Claude Code 2.1.332 draws the expired-token error under its `●`
 /// answer bullet, and a pane narrower than the line wraps it onto an
@@ -485,15 +491,6 @@ pub fn start_epoch(identity: &Identity) -> Reading<u64> {
     Reading::Live(btime + ticks / process::USER_HZ)
 }
 
-/// The StopFailure error kinds that refuse every turn on the account until
-/// a person acts: a login wall, never a usage mark.
-pub const AUTH_FAILURE_ERRORS: [&str; 4] = [
-    "authentication_failed",
-    "oauth_org_not_allowed",
-    "account_on_hold",
-    "billing_error",
-];
-
 /// The last twelve nonblank rows of a captured pane, in their drawn order.
 pub fn screen_tail(screen: &str) -> Vec<String> {
     let mut tail: Vec<_> = screen
@@ -600,6 +597,18 @@ pub fn limit_banner(slice: &str) -> Option<String> {
     while let Some(&row) = rows.get(i) {
         if USAGE_LIMIT.is_match(row) || AUTH_FAILURE.is_match(row) {
             banner.push(row);
+            // Codex draws its error as one paragraph under `■`, and a pane
+            // narrower than it wraps the rest, the reset clause among it, onto
+            // the rows below (`fixtures/stops/codex-purchase-offer.txt`).
+            if CODEX_API_ERROR.is_match(row) {
+                while let Some(&next) = rows.get(i + 1)
+                    && !next.trim().is_empty()
+                    && !MARKER.is_match(next)
+                {
+                    banner.push(next);
+                    i += 1;
+                }
+            }
         } else if let Some(&next) = rows.get(i + 1)
             && wrapped_auth_failure(row, next)
         {
@@ -624,12 +633,14 @@ fn wrapped_auth_failure(row: &str, next: &str) -> bool {
         && AUTH_FAILURE.is_match(&format!("{} {}", row.trim_end(), next.trim_start()))
 }
 
-pub fn is_auth_failure(banner: &str, error_kind: Option<&str>) -> bool {
-    if let Some(kind) = error_kind
-        && AUTH_FAILURE_ERRORS.contains(&kind)
-    {
-        return true;
-    }
+/// Whether a failed Pi turn's `errorMessage` is a refused sign-in. Pi writes
+/// a provider's refusal as its HTTP status, a space and the body
+/// (`pi-auth.jsonl`, an expired OAuth token's 401).
+pub fn pi_auth_failure(message: &str) -> bool {
+    message.starts_with("401 ")
+}
+
+pub fn is_auth_failure(banner: &str) -> bool {
     banner.lines().any(|l| AUTH_FAILURE.is_match(l))
         || banner
             .lines()
@@ -670,7 +681,7 @@ fn judge_slice(
         | ProcessReading::Unread { .. } => {}
     }
     if let Some(banner) = limit_banner(slice) {
-        if is_auth_failure(&banner, None) {
+        if is_auth_failure(&banner) {
             return State::Walled {
                 kind: WallKind::Auth,
                 banner,
@@ -678,6 +689,14 @@ fn judge_slice(
         }
         match account_room {
             None | Some(false) => {
+                return State::Walled {
+                    kind: WallKind::Usage,
+                    banner,
+                };
+            }
+            // An asserted room judges past a stale banner, never past a
+            // dialog that stands only on a limited account.
+            Some(true) if slice.lines().any(|row| LIMIT_OFFER.is_match(row)) => {
                 return State::Walled {
                     kind: WallKind::Usage,
                     banner,

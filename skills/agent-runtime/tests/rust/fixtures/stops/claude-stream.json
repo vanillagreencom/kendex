@@ -1,0 +1,1 @@
+{"session_id": "s1", "transcript_path": "/home/u/.claude/projects/-work/s1.jsonl", "cwd": "/work", "prompt_id": "p1", "hook_event_name": "StopFailure", "error": "server_error", "last_assistant_message": "API Error: Connection to the API was lost (ECONNRESET). This is usually temporary \u2014 try again."}

@@ -964,6 +964,13 @@ enum WatchOp {
     Wall {
         #[arg(long)]
         file: PathBuf,
+        /// `codex` or `copilot`: `--file` is that harness's own session
+        /// record, a Codex rollout or a file in a Copilot session's
+        /// directory, whose last turn, where it ended on a failure, is
+        /// judged as its row. Those harnesses write no failure row of their
+        /// own.
+        #[arg(long)]
+        harness: Option<String>,
     },
 }
 
@@ -2500,19 +2507,44 @@ fn reexec_with_github_auth(settings: &Settings) -> Error {
     Error::Runtime(agent_runtime::Error::io("exec", exe, e))
 }
 
-fn watch_wall(file: &Path) -> Result<serde_json::Value> {
+fn watch_wall(file: &Path, harness: Option<&str>) -> Result<serde_json::Value> {
     use agent_runtime::accounts::wall::{LimitReport, WallChannel, harness_own_limit};
+    use agent_runtime::harness::Harness;
     use agent_runtime::observe::WallKind::Usage;
     use agent_runtime::reading::Reading;
     use agent_runtime::rows::{self, SessionVerdict};
+    use agent_runtime::session;
+    use agent_runtime::stop::reset;
     use serde_json::json;
-    use watch::lanes::{Readers, reset};
+    use watch::lanes::Readers;
 
-    Ok(match rows::last_row(file) {
+    let last = match harness.map(Harness::named).transpose()? {
+        None => rows::last_row(file),
+        Some(harness @ (Harness::Codex | Harness::Copilot)) => {
+            match session::last_failure(harness, file) {
+                Reading::Live(Some(failure)) => Reading::Live(rows::failure_row(harness, &failure)),
+                // A last turn that ended on no failure leaves no stop to judge.
+                Reading::Live(None) => {
+                    return Ok(json!({"reading": "live", "verdict": "live", "stop": null}));
+                }
+                Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            }
+        }
+        Some(harness @ (Harness::Claude | Harness::Pi)) => {
+            return Err(agent_runtime::Error::refused(
+                "wall-record-unsupported",
+                &[("harness", harness.name())],
+            )
+            .into());
+        }
+    };
+    Ok(match last {
         Reading::Live(row) => {
             let verdict = rows::judge_session(&row);
             let mut fields = serde_json::to_value(&verdict)?;
             fields["reading"] = "live".into();
+            fields["stop"] = json!(rows::stop_of(&row));
             if let SessionVerdict::Walled { kind: Usage } = verdict {
                 let text = row.message.as_deref().unwrap_or_default();
                 let report = harness_own_limit(text, WallChannel::Row);
@@ -2543,7 +2575,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     // A run's reach is judged before the settings are read: a start that
     // names none has asked no server and alerted no mailbox.
     let named = match &op {
-        WatchOp::Wall { file } => return watch_wall(file),
+        WatchOp::Wall { file, harness } => return watch_wall(file, harness.as_deref()),
         WatchOp::Run { reach, .. } => Some(reach.named()?),
         WatchOp::Start { .. }
         | WatchOp::Status { .. }

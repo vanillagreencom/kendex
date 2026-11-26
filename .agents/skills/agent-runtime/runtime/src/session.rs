@@ -473,6 +473,146 @@ pub fn user_texts_after(harness: Harness, file: &Path, cursor: u64) -> Result<Ve
     Ok(texts)
 }
 
+/// A turn a harness's own session record ends on a failure: its typed
+/// word, its HTTP status where the record gives one, its text and the epoch
+/// second the record wrote it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub error: Option<String>,
+    pub status: Option<u16>,
+    pub message: String,
+    pub at: Option<u64>,
+}
+
+/// How the last turn in a Codex rollout or a Copilot `events.jsonl` ended:
+/// `Live(Some)` on a failure, `Live(None)` for a turn that ended otherwise,
+/// is still running or never began. `file` names a Copilot session by any
+/// file in its directory, as [`user_texts_after`] takes it. Claude Code and
+/// Pi write their failure as a hook row instead, so their records are
+/// refused, never read as holding none.
+///
+/// - Codex: an `event_msg` `task_complete` whose `error` carries
+///   `codex_error_info` and `message`; a `task_started` opens the next turn.
+/// - Copilot CLI: a `session.error` with `errorType`, `statusCode` and
+///   `message`, written after the failed turn's `assistant.turn_end`; a
+///   `user.message` opens the next turn.
+pub fn last_failure(harness: Harness, file: &Path) -> Reading<Option<Failure>> {
+    let (rows_file, marks): (PathBuf, &[&str]) = match harness {
+        Harness::Codex => (
+            file.to_path_buf(),
+            &["\"task_started\"", "\"task_complete\""],
+        ),
+        Harness::Copilot => (
+            file.with_file_name("events.jsonl"),
+            &["\"user.message\"", "\"session.error\""],
+        ),
+        Harness::Claude | Harness::Pi => {
+            return Reading::Unreadable {
+                cause: "record-no-failure-rows",
+            };
+        }
+    };
+    let f = match fs::File::open(&rows_file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "record-unreadable",
+            };
+        }
+    };
+    let mut last = None;
+    for line in BufReader::new(f).lines() {
+        let Ok(line) = line else {
+            return Reading::Unreadable {
+                cause: "record-unreadable",
+            };
+        };
+        // Only a turn's opening and closing rows decide; the rest of a long
+        // rollout is never parsed.
+        if !marks.iter().any(|mark| line.contains(mark)) {
+            continue;
+        }
+        // A row the harness is still writing is a partial line.
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        // A subagent's turn is not the lead's: its failure is no stop of the
+        // session, and its prompt opens no lead turn.
+        if !lead_row(harness, &row) {
+            continue;
+        }
+        if let Some(end) = turn_end(harness, &row) {
+            last = end;
+        }
+    }
+    Reading::Live(last)
+}
+
+/// The word of a Codex `codex_error_info`: a unit variant is its name, a
+/// variant that carries data, such as `{"http_connection_failed":
+/// {"http_status_code": 502}}`, is an object with that name as its one key.
+fn codex_error_word(info: Option<&Value>) -> Option<String> {
+    match info? {
+        Value::String(word) => Some(word.clone()),
+        Value::Object(map) if map.len() == 1 => map.keys().next().cloned(),
+        Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {
+            None
+        }
+    }
+}
+
+/// A row that opens a turn (`Some(None)`) or ends one on a failure
+/// (`Some(Some)`); `None` for a row that does neither.
+fn turn_end(harness: Harness, row: &Value) -> Option<Option<Failure>> {
+    let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_owned);
+    let at = text(row.get("timestamp"))
+        .and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok())
+        .and_then(|stamp| u64::try_from(stamp.as_second()).ok());
+    match harness {
+        Harness::Codex => {
+            if row.get("type")?.as_str()? != "event_msg" {
+                return None;
+            }
+            let payload = row.get("payload")?;
+            match payload.get("type")?.as_str()? {
+                "task_started" => Some(None),
+                "task_complete" => {
+                    Some(
+                        payload
+                            .get("error")
+                            .filter(|e| !e.is_null())
+                            .map(|e| Failure {
+                                error: codex_error_word(e.get("codex_error_info")),
+                                status: None,
+                                message: text(e.get("message")).unwrap_or_default(),
+                                at,
+                            }),
+                    )
+                }
+                _ => None,
+            }
+        }
+        Harness::Copilot => match row.get("type")?.as_str()? {
+            "user.message" => Some(None),
+            "session.error" => {
+                let data = row.get("data")?;
+                Some(Some(Failure {
+                    error: text(data.get("errorType")),
+                    status: data
+                        .get("statusCode")
+                        .and_then(Value::as_u64)
+                        .and_then(|code| u16::try_from(code).ok()),
+                    message: text(data.get("message")).unwrap_or_default(),
+                    at,
+                }))
+            }
+            _ => None,
+        },
+        Harness::Claude | Harness::Pi => None,
+    }
+}
+
 fn user_text(harness: Harness, row: &Value) -> Option<String> {
     let kind = row.get("type").and_then(Value::as_str);
     match harness {

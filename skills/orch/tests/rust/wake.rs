@@ -1222,23 +1222,29 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
     assert_eq!(codex_turns(&fleet.home, "lead-4"), Vec::<String>::new());
 }
 
+/// A provider stop's resume, by each word agent-runtime names a provider
+/// stop: Claude Code's `server_error` for an overload, a broken stream or a
+/// dropped connection, and `refusal`, the rows reader's word for its safety
+/// refusal.
 #[test]
 fn a_controller_provider_resume_is_delivered_once_to_its_own_pane() {
-    let fleet = Fleet::new();
-    let pane = fleet.open("overseer", "claude", "controller", &[]);
-    fleet.server.await_composer(&pane.id);
-    fleet.set_overseer(fleet.overseer("claude", &pane));
-    let row = format!("server_error|{} {}|Some(1)|12", fleet.server.pid, pane.id);
-    let baseline = resume_row(OVERSEER_TARGET, &row);
-    let clock = FakeClock::new();
-    let mut body = fleet.body();
-    let first = run_once(&mut body, &baseline, &clock).unwrap();
-    assert_eq!(
-        rendered(&first),
-        vec!["EVENT wake-delivered overseer resume=server_error"]
-    );
-    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
-    assert_eq!(fleet.turns("controller").len(), 1);
+    for cause in ["server_error", "refusal"] {
+        let fleet = Fleet::new();
+        let pane = fleet.open("overseer", "claude", "controller", &[]);
+        fleet.server.await_composer(&pane.id);
+        fleet.set_overseer(fleet.overseer("claude", &pane));
+        let row = format!("{cause}|{} {}|Some(1)|12", fleet.server.pid, pane.id);
+        let baseline = resume_row(OVERSEER_TARGET, &row);
+        let clock = FakeClock::new();
+        let mut body = fleet.body();
+        let first = run_once(&mut body, &baseline, &clock).unwrap();
+        assert_eq!(
+            rendered(&first),
+            vec![format!("EVENT wake-delivered overseer resume={cause}")]
+        );
+        assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+        assert_eq!(fleet.turns("controller").len(), 1, "{cause}");
+    }
 }
 
 #[test]

@@ -494,7 +494,7 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 Read the closing lines under the `idle-after-return` line.
 
 - `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
-- `cause=api-error` on Codex or Copilot, `cause=server_error` on a local Claude session, and `cause=error` on Pi are failed provider turns. The watch continues a session it reaches once. This event reports a repeated failure, a continuation the wake could not deliver, an unreachable session, or a reading worker with a posted result. For a reading worker, use the result and close steps above. For another worker, send a one-line continuation directive if the workflow calls for another turn.
+- `cause=api-error` on Codex or Copilot, `cause=server_error` or `cause=refusal` (a safety refusal) on a local Claude session, and `cause=error` on Pi are failed provider turns, as agent-runtime's stop reading names them. The watch continues a session it reaches once. This event reports a repeated failure, a continuation the wake could not deliver, an unreachable session, or a reading worker with a posted result. For a reading worker, use the result and close steps above. For another worker, send a one-line continuation directive if the workflow calls for another turn.
 - `stop-cause=allow-all-blocked-by-policy`: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of sending a directive. That section names the `session-record=` reasons.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line.
 - A lane inside `merge-pr.md` § 5 step 1 waits on its queue. That is work in flight, not idle.

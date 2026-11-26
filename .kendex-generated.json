@@ -59,6 +59,8 @@
   ".agents/skills/agent-runtime/runtime/src/rows.rs",
   ".agents/skills/agent-runtime/runtime/src/session.rs",
   ".agents/skills/agent-runtime/runtime/src/settings.rs",
+  ".agents/skills/agent-runtime/runtime/src/stop.rs",
+  ".agents/skills/agent-runtime/runtime/src/stop/reset.rs",
   ".agents/skills/agent-runtime/runtime/src/subagent.rs",
   ".agents/skills/agent-runtime/runtime/src/trust.rs",
   ".agents/skills/agent-runtime/scripts/agent-runtime",

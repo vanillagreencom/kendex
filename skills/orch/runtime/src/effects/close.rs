@@ -32,13 +32,14 @@ use crate::watch::hosted::{
     self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StopKind,
     WorktreeHead,
 };
-use crate::watch::lanes::{self, LaneState, reset};
+use crate::watch::lanes::{self, LaneState};
 use crate::watch::tracker::{self, TerminalState};
 use agent_runtime::clock::Clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::intent::Intent;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
+use agent_runtime::stop::reset;
 
 use super::Effected;
 use super::lane_operation::{self, Unread};

@@ -6,8 +6,8 @@ Read before changing what orch, agent-runtime or mailbox does for another, or ad
 
 Three packages run agent work on a repository. Each owns one kind of state.
 
-- orch owns the work. Its runtime, `skills/orch/runtime/`, holds the item records, the fleet record, every transition over them and every decision: admit, launch, wake, close, accept, hold.
-- agent-runtime owns the session. Its runtime, `skills/agent-runtime/runtime/`, builds the harness command and wraps it in its confinement. It opens the window, holds the process and session identity, types into the pane and stops by identity. It holds no tracker, review, report or fleet policy.
+- orch owns the work. Its runtime, `skills/orch/runtime/`, holds the item records, the fleet record, every transition over them and every decision: admit, launch, wake, close, accept, hold. Its wake reads a provider stop's kind from agent-runtime before it continues a session.
+- agent-runtime owns the session. Its runtime, `skills/agent-runtime/runtime/`, builds the harness command and wraps it in its confinement. It opens the window, holds the process and session identity, types into the pane and stops by identity. It names a stop's kind and holds the table that maps a kind to an action (`skills/agent-runtime/runtime/src/stop.rs`). That table's callers are planned: orch's lane and overseer triggers, which supply the fleet's account ground and send the notices, and the jarvis package's own session, which needs the decision without orch (KEN-5775 to KEN-5777). It holds no tracker, review or report policy, and no other fleet policy.
 - mailbox owns the messages. Its program, `skills/mailbox/scripts/lane-mail`, writes every box, judges every delivery key and moves every read cursor.
 
 The manifests set the direction. `skills/orch/runtime/Cargo.toml` depends on the agent-runtime crate, and `skills/orch/SKILL.md` requires agent-runtime and mailbox. The agent-runtime crate depends on neither, so it cannot name an orch type. `skills/mailbox/SKILL.md` declares orch and agent-runtime optional, and `lane-mail` runs their programs only for the verbs that need them.
