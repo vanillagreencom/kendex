@@ -9662,7 +9662,121 @@ fn a_held_turn_that_stops_leaves_its_episode_to_the_walk_or_the_resume() {
             "{case}"
         );
         assert_eq!(transfers.borrow().len(), moved, "{case}");
+        if resumed {
+            // The wake has not typed it yet: the next reading of the same
+            // returned turn keeps it asked.
+            let asked = driver.baseline.get("resume", "overseer").map(str::to_owned);
+            driver.pass(&state);
+            assert_eq!(
+                driver.baseline.get("resume", "overseer").map(str::to_owned),
+                asked,
+                "{case}: kept"
+            );
+        }
     }
+}
+
+/// A pending account wall read live, its own account unread, settles the
+/// transfer its walk asked before anything ends the wall: the launch fails
+/// with its account left unproved, the case is asked again, and the next
+/// walk holds that account out.
+#[test]
+fn a_pending_wall_read_live_settles_the_transfer_its_walk_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (_, _, key, _) = live_overseer(dir.path(), &server, &fleet);
+    let unread = Cell::new(false);
+    let judge = |_: &Caller, _: Option<&str>| {
+        if unread.get() {
+            let mut m = marks(
+                MarkKey::Unmeasured(MarkKind::Headroom),
+                "",
+                "",
+                Succession::On,
+                "",
+            );
+            m.reason = "headroom-unreadable".to_owned();
+            return Ok(m);
+        }
+        Ok(marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        ))
+    };
+    let asked: RefCell<Vec<WalkRequest>> = RefCell::new(Vec::new());
+    let walk = |request: &WalkRequest| {
+        asked.borrow_mut().push(request.clone());
+        if !unread.get() {
+            return walk_none(request);
+        }
+        let mut walked = walk_b(request)?;
+        if request.exclude.iter().any(|a| a == "/home/me/.bclaude")
+            && let WalkAnswer::Lane(chosen) = &mut walked.answer
+        {
+            chosen.account = Some("/home/me/.cclaude".to_owned());
+        }
+        Ok(walked)
+    };
+    let accept = |_: &str, _: &str| Ok(());
+    overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+    driver.alert = &accept;
+    let state = fleet.read();
+    driver.pass(&state);
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("pending")
+    );
+    unread.set(true);
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("requested")
+    );
+    let failed_at = driver.now - 200;
+    let mut doc = fleet.runner.fleet();
+    doc["controller"]["unproved"] = json!([
+        {"account": "/home/me/.bclaude", "note": "successor-not-ready", "at": clock::iso_utc(failed_at + 10)}
+    ]);
+    doc["intents"] = json!([{
+        "id": "request-transfer:overseer:1", "op": "request-transfer", "target": "overseer",
+        "created_at": clock::iso_utc(failed_at), "outcome": "failed",
+        "observation": {"note": "successor-not-ready"}
+    }]);
+    fleet.runner.write_fleet(&doc);
+    let state = fleet.read();
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("announced")
+    );
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("requested")
+    );
+    let last = asked.borrow().last().cloned().unwrap();
+    assert!(
+        last.exclude.iter().any(|a| a == "/home/me/.bclaude"),
+        "{:?}",
+        last.exclude
+    );
+    let accounts: Vec<Option<String>> = transfers
+        .borrow()
+        .iter()
+        .map(|t| t.successor.account.clone())
+        .collect();
+    assert_eq!(
+        accounts,
+        [
+            Some("/home/me/.bclaude".to_owned()),
+            Some("/home/me/.cclaude".to_owned())
+        ]
+    );
 }
 
 /// A pending usage wall's own account that cannot be read past its reset

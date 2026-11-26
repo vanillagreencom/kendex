@@ -974,10 +974,11 @@ fn continue_overseer(
     };
     let pane_key = record.pane_key();
     let target = wake::OVERSEER_TARGET;
-    let prior = pass
-        .baseline
-        .get(wake::RESUME_KIND, target)
-        .filter(|row| wake::resume_cause(row, &pane_key).is_some());
+    // A wall's resume is the walled case's, asked on a turn that already
+    // returned: that return does not answer it.
+    let prior = pass.baseline.get(wake::RESUME_KIND, target).filter(|row| {
+        wake::resume_cause(row, &pane_key).is_some_and(|cause| cause != wake::WALL_CAUSE)
+    });
     let row = match &reads.rows {
         Some(Reading::Live(row)) if row.harness.as_deref() == Some(harness.name()) => Some(row),
         Some(Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. }) | None => None,
@@ -1347,7 +1348,18 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     // without room or with it (Pi keeps the last turn's usage error on its
     // screen while the next turn works), is the overseer resumed, so no
     // standing failure row, account reading or reserve walls or moves it.
-    let pending = pass.baseline.get("overseer-walled", &key) == Some(PENDING);
+    // The case stays pending while a transfer its walk asked is outstanding
+    // (its row `requested`, or `announced` again after a failure), marked
+    // by the episode's pending notice: a pass that reads it live then still
+    // settles that transfer before anything ends the wall.
+    let pending = match pass.baseline.get("overseer-walled", &key) {
+        Some(PENDING) => true,
+        Some("requested" | "announced") => pass
+            .baseline
+            .get(NOTICE_ROW, &key)
+            .is_some_and(|told| told.split(' ').any(|told| told == WALLED_STATE)),
+        Some(_) | None => false,
+    };
     let with_room = || {
         reads.as_ref().and_then(|reads| {
             Some(
