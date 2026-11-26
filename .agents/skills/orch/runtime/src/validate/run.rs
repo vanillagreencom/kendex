@@ -1068,7 +1068,8 @@ fn send_and_mark(
         | Validated::Start(_)
         | Validated::Launch(_)
         | Validated::End(_)
-        | Validated::Stop(_) => String::new(),
+        | Validated::Stop(_)
+        | Validated::Refuse(_) => String::new(),
     })
 }
 

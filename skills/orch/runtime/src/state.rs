@@ -324,6 +324,16 @@ pub struct Stage {
     // stage before it ended the run's job.
     #[serde(default)]
     pub stop: Option<Stop>,
+    // The key of the last start refused before it recorded the run, on an
+    // open stage no start has recorded since: a wait that follows the run
+    // by its id ends on it, and the admission stays open for the next
+    // start under the same id.
+    #[serde(default)]
+    pub refused: Option<String>,
+    // What closed an admitted run its job did not close: the launcher's
+    // refusal, or the reconcile's reading of the run.
+    #[serde(default)]
+    pub cause: Option<crate::ops::RunCause>,
 }
 
 /// An intentional stop of a validation run, recorded on its open stage

@@ -2100,14 +2100,27 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
         Never,
         Late,
         Refused,
+        RefusedUnrecorded,
+        Reconciled,
         Unadmitted,
     }
     let rows = [
         (Seat::Ends, Ok(("done", 0))),
         (Seat::Never, Ok(("queued", 3))),
         (Seat::Late, Ok(("running", 3))),
-        (Seat::Refused, Err("run-ended-unstarted")),
-        (Seat::Unadmitted, Err("run-unadmitted")),
+        (
+            Seat::Refused,
+            Err(("run-ended-unstarted", Some("launch-failed"))),
+        ),
+        (
+            Seat::RefusedUnrecorded,
+            Err(("start-refused", Some("memory-short"))),
+        ),
+        (
+            Seat::Reconciled,
+            Err(("run-ended-unstarted", Some("run-dir-absent"))),
+        ),
+        (Seat::Unadmitted, Err(("run-unadmitted", None))),
     ];
     for (seat, want) in rows {
         let w = World::new();
@@ -2121,6 +2134,15 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
             ));
             PathBuf::from(admitted["report"]["run_dir"].as_str().unwrap())
         };
+        let wt = w.worktree.display().to_string();
+        let id = dir
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .strip_prefix("dev-validate-")
+            .unwrap()
+            .to_owned();
         let clock = Arc::new(support::FakeClock::new());
         let (c, d, state) = (clock.clone(), dir.clone(), w.state.clone());
         let (sent, received) = mpsc::channel();
@@ -2184,15 +2206,6 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                 // The seat's start is refused after its admission: a
                 // directory already stands where the run was to be written.
                 fs::create_dir(&dir).unwrap();
-                let wt = w.worktree.display().to_string();
-                let id = dir
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .strip_prefix("dev-validate-")
-                    .unwrap()
-                    .to_owned();
                 let out = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
                 assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
                 assert!(
@@ -2200,6 +2213,25 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                     "{}",
                     stderr(&out)
                 );
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::RefusedUnrecorded => {
+                // The seat's start is refused before it records the run: the
+                // host has no room for the run's need.
+                let out = w.entry(
+                    &["--worktree", &wt, "--run-id", &id],
+                    &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")],
+                );
+                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                assert!(
+                    stderr(&out).starts_with("validate: memory-short"),
+                    "{}",
+                    stderr(&out)
+                );
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::Reconciled => {
+                ok(&w.op(&json!({"op":"reconcile-round","round_id":ROUND}), &[]));
                 clock.release(Duration::from_secs(30));
             }
             Seat::Unadmitted => {}
@@ -2220,16 +2252,45 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                     _ => assert_eq!(field(states[0], "elapsed-secs"), "60", "{text}"),
                 }
             }
-            (Err(want), Err(error)) => {
+            (Err((want, cause)), Err(error)) => {
                 assert_eq!(error.key(), want, "{error}");
-                let fields: std::collections::BTreeMap<_, _> = error.fields().into_iter().collect();
-                assert_eq!(fields["run_dir"], dir.display().to_string());
+                // The public wait answers the same refusal on its keyed
+                // line, the one a lane reads.
+                let out = w.entry(
+                    &[
+                        "--wait",
+                        "--worktree",
+                        &wt,
+                        "--run-id",
+                        &id,
+                        "--budget",
+                        "1",
+                    ],
+                    &[],
+                );
+                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                let line = stderr(&out);
+                let line = line.lines().next().unwrap_or_default();
+                assert_eq!(
+                    line.strip_prefix("validate: ")
+                        .and_then(|l| l.split(' ').next()),
+                    Some(want),
+                    "{line}"
+                );
+                assert_eq!(field(line, "run_dir"), dir.display().to_string());
+                assert_eq!(field(line, "cause"), cause.unwrap_or_default(), "{line}");
                 if want == "run-ended-unstarted" {
-                    assert_eq!(fields["outcome"], "stopped", "{error}");
-                    assert_eq!(fields["cause"], "run-exists", "{error}");
+                    assert_eq!(field(line, "outcome"), "stopped", "{line}");
                 }
             }
             (want, answer) => panic!("want {want:?}, answered {answer:?}"),
+        }
+        if seat == Seat::RefusedUnrecorded {
+            // The refusal left the admission open: the same id starts.
+            let out = w.entry(&["--worktree", &wt, "--run-id", &id, "--poll", "1"], &[]);
+            assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+            assert_eq!(directory(&out), dir.display().to_string());
+            w.wait_marked(&dir.display().to_string());
         }
     }
 }
@@ -3367,6 +3428,21 @@ fn an_admitted_entry_run_resolves_its_mode_from_its_base_and_an_unadmitted_id_is
     let id = admitted["report"]["run_id"].as_str().unwrap();
     let dir = admitted["report"]["run_dir"].as_str().unwrap();
     let wt = w.worktree.display().to_string();
+    // Before the start, a wait by the worktree and run id reads the run
+    // queued in the directory the admission named.
+    let queued = w.entry(
+        &["--wait", "--worktree", &wt, "--run-id", id, "--budget", "1"],
+        &[],
+    );
+    assert_eq!(queued.status.code(), Some(3), "{}", stderr(&queued));
+    let states: Vec<_> = text(&queued)
+        .lines()
+        .filter(|l| l.starts_with("state="))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(states.len(), 1, "{}", text(&queued));
+    assert_eq!(field(&states[0], "state"), "queued", "{}", states[0]);
+    assert_eq!(field(&states[0], "run-dir"), dir, "{}", states[0]);
     let out = w.entry(
         &[
             "--worktree",

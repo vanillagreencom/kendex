@@ -595,9 +595,11 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
 /// exists, for `budget` seconds in all: queued while its `start` record is
 /// absent, read every `poll` seconds, then followed as [`wait`] follows it.
 /// A budget that ends before the start prints `state=queued` and exits 3.
-/// A run no stage in `state_dir` admitted refuses `run-unadmitted`, and one
+/// A run no stage in `state_dir` admitted refuses `run-unadmitted`, one
 /// whose stage closed with no start record refuses `run-ended-unstarted`
-/// with the stage's word and cause, as no verdict will come.
+/// with the stage's word and cause, as no verdict will come, and one whose
+/// last start was refused before it recorded the run refuses
+/// `start-refused` with that refusal's key.
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"
@@ -638,7 +640,17 @@ pub fn wait_queued(
             return Err(Error::RunEndedUnstarted {
                 run_dir: run_dir.display().to_string(),
                 outcome: stage.outcome.map_or("none", StageOutcome::word),
-                cause: stage.job.and_then(|job| job.cause),
+                cause: stage.cause.map(crate::ops::RunCause::word),
+                detail: stage.job.and_then(|job| job.cause),
+            });
+        }
+        // A start clears the key when it records the run, before it writes
+        // the `start` record, so a key read after an absent record stood
+        // with no start.
+        if let Some(cause) = stage.refused {
+            return Err(Error::StartRefused {
+                run_dir: run_dir.display().to_string(),
+                cause,
             });
         }
         let now = clock.now();

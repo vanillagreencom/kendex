@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::ops::validate::{
-    RecordEnd, RecordLaunch, RecordStart, SettleRound, Validate, Validated,
+    RecordEnd, RecordLaunch, RecordRefusal, RecordStart, SettleRound, Validate, Validated,
 };
 use crate::ops::{self, Report, Request, RunState};
 use crate::settings::Settings;
@@ -1653,7 +1653,7 @@ pub(crate) fn memory_bound(settings: &crate::settings::ValidateSettings) -> Resu
 /// The bound from the room read and the consumer's value: the value where
 /// one is set, which narrows the room and is the run's need, else the room.
 /// A need over the room, the value or the [`MEMORY_FLOOR`], refuses the
-/// start `memory-short need=<bytes> room=<bytes>` before anything is
+/// start `memory-short need=<bytes> room=<bytes>` before the run is
 /// recorded or launched: a run the host cannot hold is refused, never
 /// widened past the host.
 fn bound_of(
@@ -1814,11 +1814,9 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
     }
 }
 
-/// Start a validation run: read, record, launch.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "validation admission serializes the host check, stage record and launch under the worktree lock"
-)]
+/// Start a validation run: read, record, launch. A start of a named run
+/// refused before it records the run leaves the refusal's key on the run's
+/// admitted stage, which stays open for the next start under the same id.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1834,6 +1832,42 @@ pub fn start(
             });
         }
     };
+    let path = state::item_path(&settings.state_dir, &item);
+    let recorded = std::cell::Cell::new(false);
+    let reply = start_admitted(settings, req, env, locking, item, round.clone(), &recorded);
+    if let (Err(error), Some(run_dir), false) = (&reply, &req.run_dir, recorded.get()) {
+        // The refusal is the caller's answer whatever this write does: one
+        // that fails leaves the stage as it stood, which a wait reads as
+        // queued, never as a verdict.
+        let _ = apply(
+            &path,
+            Validate::Refuse(RecordRefusal {
+                round_id: round,
+                run_dir: run_dir.clone(),
+                cause: error.key().to_owned(),
+            }),
+            env,
+            locking,
+        );
+    }
+    reply
+}
+
+/// The start of an admitted run; `recorded` turns true once the run's stage
+/// holds its record.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "validation admission serializes the host check, stage record and launch under the worktree lock"
+)]
+fn start_admitted(
+    settings: &Settings,
+    req: &StartRequest,
+    env: &Env,
+    locking: Locking,
+    item: String,
+    round: String,
+    recorded: &std::cell::Cell<bool>,
+) -> Result<StartReply> {
     let path = state::item_path(&settings.state_dir, &item);
     let snapshot = load(&path)?.ok_or_else(|| {
         Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
@@ -1938,6 +1972,7 @@ pub fn start(
         let Validated::Start(started) = started else {
             unreachable!("a start reports its start")
         };
+        recorded.set(true);
         let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
         let run_dir_path = PathBuf::from(&run_dir);
         let launched = match write_run_dir(

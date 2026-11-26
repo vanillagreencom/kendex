@@ -2,7 +2,8 @@
 //! record written on the admitted stage before the launch, the launcher's
 //! answer written after it, the one close with the lane's end notice
 //! recorded `owed` in the same write, the mark that says how the send went,
-//! and the stop recorded on an open stage before its job is ended. Every
+//! the stop recorded on an open stage before its job is ended, and the key
+//! of a start refused before it recorded the run. Every
 //! step is one in-process request, `Request::Validate`, so the envelope's
 //! exhaustive matches take one arm. The reads that precede the
 //! start (the settings, the tree, the launcher) are `crate::validate`'s;
@@ -37,6 +38,7 @@ pub enum Validate {
     End(RecordEnd),
     Mark(MarkNotice),
     Stop(RecordStop),
+    Refuse(RecordRefusal),
 }
 
 impl Validate {
@@ -49,6 +51,7 @@ impl Validate {
             Validate::End(_) => "end",
             Validate::Mark(_) => "mark",
             Validate::Stop(_) => "stop",
+            Validate::Refuse(_) => "refuse",
         }
     }
 }
@@ -134,6 +137,18 @@ pub struct RecordStop {
     pub run_dir: String,
 }
 
+/// Record the key of a start refused before it recorded the run on the
+/// run's admitted stage, open and not yet started, without closing it: a
+/// wait that follows the run by its id ends on it, and the next start under
+/// the same id records the run and clears it. A stage that has closed, or
+/// one a start has recorded, keeps what it holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordRefusal {
+    pub round_id: String,
+    pub run_dir: String,
+    pub cause: String,
+}
+
 /// The notice's key and text; `to` and `owner` are the transition's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoticeText {
@@ -192,6 +207,7 @@ pub enum Validated {
     End(Ended),
     Mark(Marked),
     Stop(Stopped),
+    Refuse(Refused),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,6 +272,13 @@ pub struct Stopped {
     pub recorded_now: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refused {
+    pub round_id: String,
+    pub run_dir: String,
+    pub recorded_now: bool,
+}
+
 /// The item's stages, read once per transition.
 pub(super) fn stages(path: &Path, doc: &Document) -> Result<Vec<Stage>> {
     Ok(ItemState::view(path, doc)?.stages)
@@ -294,6 +317,7 @@ pub(super) fn apply(path: &Path, doc: &mut Document, r: &Validate, env: &Env) ->
         Validate::End(r) => end(path, doc, r, env).map(Validated::End),
         Validate::Mark(r) => mark(path, doc, r).map(Validated::Mark),
         Validate::Stop(r) => stop(path, doc, r, env).map(Validated::Stop),
+        Validate::Refuse(r) => refuse(path, doc, r).map(Validated::Refuse),
     }
 }
 
@@ -348,6 +372,7 @@ fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<
     let index = stage_index(&after, &r.round_id, &admitted.run_dir)?;
     let rows = record::array_mut(path, doc, "stages")?;
     let row = record::element_mut(path, rows, index, "stages")?;
+    record::delete(row, "refused");
     record::set(row, "proof", serde_json::to_value(&r.proof)?);
     record::set(
         row,
@@ -406,12 +431,18 @@ fn launch(path: &Path, doc: &mut Document, r: &RecordLaunch, env: &Env) -> Resul
             None
         }
     };
-    if let Some(outcome) = outcome {
-        item::close_stage(path, doc, index, stage, env.now_secs, outcome, env)?;
-    }
+    let closed = match outcome {
+        Some(outcome) => {
+            item::close_stage(path, doc, index, stage, env.now_secs, outcome, env)?.closed_now
+        }
+        None => false,
+    };
     let rows = record::array_mut(path, doc, "stages")?;
     let row = record::element_mut(path, rows, index, "stages")?;
     record::set(row, "job", serde_json::to_value(job)?);
+    if closed {
+        record::set(row, "cause", item::RunCause::LaunchFailed.word());
+    }
     Ok(Launched {
         round_id: r.round_id.clone(),
         run_dir: r.run_dir.clone(),
@@ -529,6 +560,23 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
         run_dir: r.run_dir.clone(),
         stop,
         recorded_now: true,
+    })
+}
+
+fn refuse(path: &Path, doc: &mut Document, r: &RecordRefusal) -> Result<Refused> {
+    let stages = stages(path, doc)?;
+    let index = stage_index(&stages, &r.round_id, &r.run_dir)?;
+    let stage = &stages[index];
+    let recorded_now = stage.end.is_none() && stage.job.is_none();
+    if recorded_now {
+        let rows = record::array_mut(path, doc, "stages")?;
+        let row = record::element_mut(path, rows, index, "stages")?;
+        record::set(row, "refused", r.cause.as_str());
+    }
+    Ok(Refused {
+        round_id: r.round_id.clone(),
+        run_dir: r.run_dir.clone(),
+        recorded_now,
     })
 }
 
