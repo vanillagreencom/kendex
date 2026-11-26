@@ -249,6 +249,8 @@ For a local lane whose session has ended, run the relaunch from the checkout wit
 - Exit 0 prints `resumed item=[ITEM_KEY] route=resume|fresh account=[DIR|-]`.
 - A failed close prints `close-failed` on stderr at exit 3, and an open one `close-unconfirmed` at exit 75. Nothing is launched after either.
 - A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
+- After `launch-failed`, the lane reads `stopped` with `restart_closed`. A rerun of the relaunch sends the launch alone, and its lines name that close as `close=[ID]`. `jarvis-session resume` reruns it for each such lane.
+- After `launch-unconfirmed`, the lane reads `preparing` until the launch's reconcile settles it. A reconcile that settles the launch failed leaves it `stopped` with `restart_closed`.
 - Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `handoff-unreadable` where a place the item's handoff is read from cannot be read, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
 
 Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, for a lane whose session still runs, which step 2's `no_landing` close ends, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.

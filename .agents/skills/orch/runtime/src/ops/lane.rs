@@ -1760,9 +1760,11 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
 /// The lane's recorded session read ended, as a close with no stated
 /// ground and a restart's relaunch both need it: its harness read gone, or
 /// no harness recorded and no pane either; a recorded pane with no identity
-/// is a lane not known exited, unless that pane is a viewer's, which holds
-/// no harness. A live harness refuses `lane-live`, an unreadable one
-/// `harness-unreadable`.
+/// is a lane not known exited, whatever the status, unless that pane is a
+/// viewer's, which holds no harness. A launch that settled failed on its
+/// pane read gone leaves no pane ([`record_launch_outcome`]); one a close
+/// superseded keeps it until the close ends what it holds. A live harness
+/// refuses `lane-live`, an unreadable one `harness-unreadable`.
 pub(crate) fn ended(lane: &Lane, host: &Host) -> Result<()> {
     session_ended(lane, recorded_harness(lane, host).as_ref())
 }
@@ -2292,8 +2294,9 @@ impl LaneOutcome {
 
 /// The launch arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` runs the lane with the identity and
-/// session the effect read, `failed` stops it, `unconfirmed` keeps the pane
-/// the effect holds so a reconcile can re-observe it.
+/// session the effect read, `failed` stops it and drops a pane with no
+/// identity that its settle read gone, `unconfirmed` keeps the pane the
+/// effect holds so a reconcile can re-observe it.
 pub(super) fn record_launch_outcome(
     path: &Path,
     doc: &mut Document,
@@ -2344,6 +2347,7 @@ pub(super) fn record_launch_outcome(
             }
             record::set(lane, "status", LaneStatus::Running.word());
             sandbox_ended(lane);
+            record::delete(lane, state::RESTART_CLOSED);
             record::set(lane, "running_at", at);
             record::set(lane, "launch", serde_json::to_value(&r.launch)?);
             if let Some(position) = members.session_rows_at_launch {
@@ -2370,8 +2374,25 @@ pub(super) fn record_launch_outcome(
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed => {
+            // The reconcile's pane-gone settle (`observed: gone`) read the
+            // pane an unconfirmed launch kept with no identity gone, and no
+            // later read re-observes it: left on the record, it reads as a
+            // session not known exited ([`ended`]). A settle a close
+            // superseded keeps the pane, which that close stops by.
+            let pane_gone = r
+                .observation
+                .as_ref()
+                .and_then(|o| o.get("observed"))
+                .is_some_and(|o| o == "gone");
+            let pane_only = lane_at(path, doc, index)?
+                .launch
+                .as_ref()
+                .is_some_and(|l| occupancy::identity_of(l).is_none());
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, "status", LaneStatus::Stopped.word());
+            if pane_gone && pane_only {
+                record::set(lane, "launch", Value::Null);
+            }
             if r.observation
                 .as_ref()
                 .and_then(|o| o.get(state::SANDBOX))
@@ -2554,7 +2575,9 @@ impl RecoveryReason {
 /// `kept` where its set says it did; on a `no-landing`
 /// ground it reads the lane stopped and keeps everything else, the attempt
 /// retired with the item's work and history intact, and records an
-/// attempt below `standard` retired for its outcome as `class_missed`. `failed`
+/// attempt below `standard` retired for its outcome as `class_missed`. Only
+/// a `restart-recovery` close leaves [`state::RESTART_CLOSED`] on the lane;
+/// a close on any other ground takes it off. `failed`
 /// and `unconfirmed` move nothing.
 pub(super) fn record_close_outcome(
     path: &Path,
@@ -2584,6 +2607,11 @@ pub(super) fn record_close_outcome(
                     ..
                 }) => {
                     record::set(lane, "status", LaneStatus::Stopped.word());
+                    if RecoveryReason::read(reason) == Some(RecoveryReason::RestartRecovery) {
+                        record::set(lane, state::RESTART_CLOSED, intent.id.as_str());
+                    } else {
+                        record::delete(lane, state::RESTART_CLOSED);
+                    }
                     // A kept sandbox bills until a confirmed park, launch or
                     // close ends it, whoever kept it.
                     if hosted {
@@ -2616,6 +2644,7 @@ pub(super) fn record_close_outcome(
                 | None => {
                     record::set(lane, "status", LaneStatus::Done.word());
                     sandbox_ended(lane);
+                    record::delete(lane, state::RESTART_CLOSED);
                     record::delete(lane, "pending_pr");
                     record::delete(lane, "parked");
                     record::delete(lane, "reservation");
@@ -4122,6 +4151,69 @@ mod tests {
         assert_eq!(row["kind"], json!("close"));
         assert_eq!(row["verdict"], json!("completed"));
         assert_eq!(row["source"], json!("linear"));
+    }
+
+    /// A confirmed `restart-recovery` close marks its stopped lane with its
+    /// intent id, and a later confirmed close on any other ground takes the
+    /// mark off, so a lane no restart relaunch left down is never relaunched
+    /// as one.
+    #[test]
+    fn a_restart_recovery_mark_stands_only_until_a_close_on_another_ground() {
+        let closing = |no_landing: Option<&str>, terminal: Option<Terminal>| {
+            Request::CloseOwnedResources(CloseOwnedResources {
+                item: "KEN-4468".into(),
+                terminal,
+                no_landing: no_landing.map(|reason| NoLanding {
+                    reason: reason.into(),
+                    source: "overseer".into(),
+                    interrupt: false,
+                    park: None,
+                }),
+                ended: None,
+                identity: None,
+                cycle: None,
+                disposed: None,
+            })
+        };
+        let closed = |path: &Path, request: &Request| {
+            let id = intend(path, request);
+            run(path, &outcome(&id, Outcome::Confirmed)).unwrap();
+            id
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let id = intend(&path, &launch("KEN-4468"));
+        run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
+        let rows = [
+            (
+                "another no-landing reason",
+                closing(Some("usage-limit"), None),
+            ),
+            (
+                "terminal",
+                closing(
+                    None,
+                    Some(Terminal {
+                        verdict: TerminalVerdict::Completed,
+                        source: "linear".into(),
+                    }),
+                ),
+            ),
+        ];
+        for (row, later) in rows {
+            let restart = closed(&path, &closing(Some("restart-recovery"), None));
+            assert_eq!(
+                lane(&path, "KEN-4468").restart_closed(),
+                Some(restart.as_str()),
+                "{row}"
+            );
+            closed(&path, &later);
+            assert_eq!(
+                lane_doc(&path, "KEN-4468").get(state::RESTART_CLOSED),
+                None,
+                "{row}"
+            );
+        }
     }
 
     /// `park-lane` records the park `close-lane` writes after the

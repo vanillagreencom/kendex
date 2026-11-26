@@ -1069,7 +1069,8 @@ class Session:
     def resume(self):
         """After a restart, each recorded session through its owner's verb, one
         at a time: the delegate, then each registered checkout's overseer, then
-        each running lane. One line each; exit 1 where any refused."""
+        each lane the restart left down. One line each; exit 1 where any
+        refused."""
         refused = 0
 
         def report(kind, refusal, **names):
@@ -1117,7 +1118,12 @@ class Session:
             if (isinstance(controller, dict) and controller.get("off") is None
                     and path != self.fleet_path and root != Path(self.home)):
                 overseers.append(root)
-            lanes += [(root, lane["item"]) for lane in state.get("lanes") or [] if lane.get("status") == "running"]
+            # A lane reads down where it was running, or where orch's own
+            # restart-recovery close stopped it and no launch has confirmed
+            # since: orch writes `restart_closed` there and relaunches it alone.
+            lanes += [(root, lane["item"]) for lane in state.get("lanes") or []
+                      if lane.get("status") == "running"
+                      or (lane.get("status") == "stopped" and lane.get("restart_closed"))]
         for root in overseers:
             self.deadline = time.monotonic() + RESUME_SECONDS
             refusal = self.orch_step(root, "resume-controller", "--fleet")

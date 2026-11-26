@@ -788,7 +788,9 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
 /// A relaunch whose launch fails after a confirmed close, here on a
 /// recorded socket whose directory its server may not bind in, answers
 /// `launch-failed` at exit 3 naming the close's intent and the server's own
-/// line: the one signal that the lane now stands closed.
+/// line, and leaves the lane stopped and marked with that close. The next
+/// relaunch, once the server can bind, sends the launch alone and runs the
+/// lane, with no second close.
 #[test]
 fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     use std::os::unix::fs::PermissionsExt;
@@ -831,11 +833,96 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
         .find(|l| !l.trim().is_empty())
         .unwrap_or_else(|| panic!("the server said nothing: {line}"));
     assert!(line.ends_with(&format!(" detail={said}")), "{line}");
-    assert_ne!(
-        fleet["lanes"][0]["status"], "running",
-        "{}",
-        fleet["lanes"][0]
-    );
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["restart_closed"], closes[0], "{lane}");
+    let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();
+    assert_eq!(again.status.code(), Some(0), "{line} {}", stderr(&again));
+    assert!(line.starts_with("resumed item=KEN-1 "), "{line}");
+    let fleet = runner.fleet();
+    let closes = fleet["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-1")
+        .count();
+    assert_eq!(closes, 1, "the rerun sends no second close");
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane.get("restart_closed"), None, "{lane}");
+}
+
+/// A relaunch whose launch is still unconfirmed after a confirmed close
+/// leaves the lane preparing over the pane it opened. A reconcile that then
+/// settles the launch failed, here on a server a restart ended, leaves no
+/// pane on the record that reads as a live session, so the next relaunch
+/// sends the launch alone and runs the lane.
+#[test]
+fn lane_relaunch_whose_unconfirmed_launch_settles_failed_relaunches_on_the_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
+    end_server(&server, harness_pid(&runner, "KEN-1"));
+    runner.stub = stub("stub-unconfirmed");
+    runner.verify = Some(1);
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
+    let fleet = runner.fleet();
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "preparing", "{lane}");
+    let pane = lane["launch"]["pane"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the unconfirmed launch kept no pane: {lane}"))
+        .to_owned();
+    end_server(&server, server.harness_pid(&pane));
+    let settled = runner.reconcile_one();
+    assert_eq!(settled["intent"]["outcome"], "failed", "{settled}");
+    let lane = &runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert!(lane["restart_closed"].is_string(), "{lane}");
+    runner.stub = stub("stub-confirm");
+    runner.verify = Some(5);
+    let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();
+    assert_eq!(again.status.code(), Some(0), "{line} {}", stderr(&again));
+    assert!(line.starts_with("resumed item=KEN-1 "), "{line}");
+    let lane = &runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+}
+
+/// A close that supersedes a restart relaunch's unconfirmed launch settles
+/// the launch failed with its harness still live in the pane. Where the
+/// close's stop does not end that harness, the lane reads stopped with the
+/// pane it stands in, and a relaunch refuses `lane-live` rather than start
+/// a second harness beside it.
+#[test]
+fn a_lane_whose_superseding_close_left_its_harness_live_refuses_a_relaunch() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
+    end_server(&server, harness_pid(&runner, "KEN-1"));
+    runner.stub = stub("stub-unconfirmed");
+    runner.verify = Some(1);
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
+    let fleet = runner.fleet();
+    let pane = fleet["lanes"][0]["launch"]["pane"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the unconfirmed launch kept no pane: {fleet}"))
+        .to_owned();
+    let harness = server.harness_pid(&pane);
+    let usage_bin = runner.tools.replace(fixtures().join("kill-noop"));
+    let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-1")));
+    assert_eq!(closed["intent"]["outcome"], "unconfirmed", "{closed}");
+    assert_eq!(closed["intent"]["observation"]["timeout_pid"], harness);
+    assert!(live(harness), "the stop signalled nothing");
+    let fleet = runner.fleet();
+    assert_eq!(fleet["lanes"][0]["status"], "stopped", "{fleet}");
+    runner.tools = usage_bin;
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(refused_by(&out), "lane-live");
+    assert!(live(harness), "the refused relaunch stopped nothing");
 }
 
 /// A launch whose server is gone from a socket the controller record does
