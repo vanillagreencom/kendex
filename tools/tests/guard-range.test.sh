@@ -613,6 +613,22 @@ printf '%s\n' 'printf "Read references/guide.md for details"' >>"$D/scripts/brie
 printf 'brief="Read .agents/skills/doc-readers/schemas/review-finding-prompt.md"\n' >"$D/scripts/lib/brief.sh"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\n' >"$D/scripts/unused"
 printf '#!/usr/bin/env bash\nschema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"\nprintf "%%s\\n" "$schema_file"\n' >"$D/scripts/printed-path"
+# Quoted paths ending in a folder of a doc-copies doc's name: a copy of
+# another package's references, a copy into a variable not named for a skill
+# root and a fixture repository's .github/workflows read none of the tree's
+# docs. Its own folder spelled through `.`, `..` or the tree's name is read.
+# A tree of its own, so these suites change no doc-readers set.
+C="$R/skills/doc-copies"
+mkdir -p "$C/tests" "$C/references" "$C/schemas" "$C/workflows" "$C/notes"
+for f in references/guide schemas/rec workflows/flow notes/note; do printf '# Doc\n' >"$C/$f.md"; done
+M=$C
+suite_running sibling-copy 'src="$(dirname "$0")/.."; : "$src/../change-scope/references"'
+suite_running unnamed-copy 'copy="$(mktemp -u)"; : "$copy/schemas"'
+suite_running workflow-fixture 'seed="$(mktemp -u)"; : "$seed/.github/workflows"'
+suite_running dot-dir ': "./notes"'
+suite_running parent-dir 'here="$(dirname "$0")"; : "$here/../notes"'
+suite_running own-name 'root="$(dirname "$0")/../../.."; : "$root/skills/doc-copies/notes"'
+M=$M_SAVED
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -q -m "chore: two skills and hooks with suites named for their files"
@@ -696,6 +712,10 @@ MAP_ROWS=(
   "quoted find operands and an assigned workflow directory select their readers without API or brief readers|append|skills/doc-readers/workflows/flow.md|assigned-dir catalogscan quoted-find|$(mapped_note 2/9 skills/doc-readers)"
   "a quoted reference directory in an array selects its reader beside find without a printed for details brief|append|skills/doc-readers/references/guide.md|array-dir catalogscan quoted-find|$(mapped_note 2/9 skills/doc-readers)"
   "assigned schema paths used by sed select script and lib readers without briefs or unread assignments|append|skills/doc-readers/schemas/review-finding-prompt.md|assigned-lib assigned-script catalogscan quoted-find|$(mapped_note 3/9 skills/doc-readers)"
+  "a quoted path to another package's folder of the same name reads no reference|append|skills/doc-copies/references/guide.md|catalogscan|$(mapped_note 0/6 skills/doc-copies)"
+  "a quoted path on a variable not named for a skill root reads no schema|append|skills/doc-copies/schemas/rec.md|catalogscan|$(mapped_note 0/6 skills/doc-copies)"
+  "a quoted fixture .github/workflows reads no workflow|append|skills/doc-copies/workflows/flow.md|catalogscan|$(mapped_note 0/6 skills/doc-copies)"
+  "a quoted path to the tree's own folder through ., .. or its name selects its reader|append|skills/doc-copies/notes/note.md|catalogscan dot-dir own-name parent-dir|$(mapped_note 3/6 skills/doc-copies)"
   "a changed hook no suite reaches runs the whole hooks set and says so|append|hooks/lone.sh|$HOOKS_ALL|$(note_for unmapped hooks/lone.sh)"
   "a hooks doc runs its reader alone|append|hooks/README.md|beta.test|$(mapped_note 1/5 hooks)"
   "a hooks doc no file reads runs nothing|append|hooks/unused.md||$(mapped_note 0/5 hooks)"
