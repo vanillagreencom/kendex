@@ -16,7 +16,8 @@ class Unreadable(Exception):
     pass
 
 
-class UnresolvedDispatch(Unreadable):
+class NamedUnreadable(Unreadable):
+    # The cause names the input it failed on, so the job's dispatches add nothing.
     pass
 
 
@@ -263,7 +264,7 @@ class Evidence:
                 for command in functions[step]:
                     self.shell_command(command, directory, reads, visited)
         except UNAVAILABLE as error:
-            raise UnresolvedDispatch(
+            raise NamedUnreadable(
                 f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}"
             ) from error
 
@@ -722,24 +723,36 @@ def literal_job_dispatches(job):
     return sorted(commands)
 
 
-def workflow_env_words(env):
+def workflow_env(env):
     # Every step inherits the workflow env, and a tool can read a path a value
-    # names, as bash does BASH_ENV, so each word is a path input of each step.
-    # literal() refuses an absolute or home path, which can name the checkout
-    # from outside it. An option word can join a path to its flag.
+    # names, so each word is a path input of each step. literal() refuses an
+    # absolute or home path, which can name the checkout from outside it. An
+    # option word can join a path to its flag. Non-interactive bash sources the
+    # one file BASH_ENV names before the step, and no other variable.
     require(isinstance(env, dict) and all(isinstance(value, str) for value in env.values()),
             "opaque-workflow-env")
-    found = [word for value in env.values() for word in re.split(r"[\s=:,;]+", value) if word]
+    script = env.get("BASH_ENV", "")
+    require(not script or (literal(script) and not script.startswith("-")),
+            f"opaque-workflow-env key=BASH_ENV path={shlex.quote(script)}")
+    found = [word for key, value in env.items() if key != "BASH_ENV"
+             for word in re.split(r"[\s=:,;]+", value) if word]
     require(all(literal(word) and not (word.startswith("-") and re.search(r"[/.]", word))
                 for word in found), "opaque-workflow-env")
-    return found
+    return found, script
 
 
-def names_lane_output(document, lane):
+def names_lane_output(document, classifier, lane):
     # A step condition, an action input or any other value can read the
-    # output, and GitHub matches context property names without case.
-    pattern = re.compile(rf"(?<![a-z0-9_-])lane_{re.escape(lane)}(?![a-z0-9_-])", re.IGNORECASE)
-    pending = [document]
+    # output, and GitHub matches context property names without case. The
+    # classifier's own mapping of the output defines it and reads nothing.
+    output = f"lane_{lane}"
+    pattern = re.compile(rf"(?<![a-z0-9_-]){re.escape(output)}(?![a-z0-9_-])", re.IGNORECASE)
+    mapping = re.compile(r"\$\{\{ steps\.[A-Za-z0-9_-]+\.outputs\." + re.escape(output) + r" \}\}",
+                         re.IGNORECASE)
+    control = document["jobs"][classifier]
+    outputs = {key: value for key, value in control["outputs"].items()
+               if not (key.lower() == output and mapping.fullmatch(value))}
+    pending = [{**document, "jobs": {**document["jobs"], classifier: {**control, "outputs": outputs}}}]
     while pending:
         node = pending.pop()
         if isinstance(node, dict):
@@ -763,7 +776,7 @@ def declared_lanes(work):
     return listed.decode().splitlines()
 
 
-def job_reads(evidence, job, env_words):
+def job_reads(evidence, job, env_words, bash_env):
     require(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                         "permissions", "steps", "defaults"}, "opaque-job")
     ordinary = set()
@@ -793,10 +806,19 @@ def job_reads(evidence, job, env_words):
             path, passed = evidence.checkout_path(directory, word)
             ordinary.update({path} | passed)
             ordinary.update(name for name in evidence.changed if under(name, path))
-            if path in evidence.files:
-                # bash sources BASH_ENV before the step, so a tracked file a
-                # word names is read as a sourced script.
-                evidence.shell_reads(path, directory, ordinary, visited)
+        if bash_env:
+            try:
+                script, passed = evidence.checkout_path(directory, bash_env)
+                ordinary.update({script} | passed)
+                ordinary.update(name for name in evidence.changed if under(name, script))
+                # bash skips a BASH_ENV file that does not exist.
+                if script in evidence.files:
+                    evidence.shell_reads(script, directory, ordinary, visited)
+            except UNAVAILABLE as error:
+                named = os.path.normpath(Path(directory) / bash_env)
+                raise NamedUnreadable(
+                    f"opaque-workflow-env key=BASH_ENV path={named} reason={error}"
+                ) from error
         for line in step["run"].splitlines():
             args = words(line)
             if not args:
@@ -821,14 +843,14 @@ def derived(evidence, exceptions, settings, declared):
     if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
     require("defaults" not in document, "opaque-workflow-defaults")
-    env_words = workflow_env_words(document.get("env", {}))
+    env_words, bash_env = workflow_env(document.get("env", {}))
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
     # A declared lane that gates no job selects nothing in this workflow,
     # unless a value the roster does not read names its output.
     ungated = sorted(set(declared) - set(lane_by_job.values()))
-    named = {lane for lane in ungated if names_lane_output(document, lane)}
+    named = {lane for lane in ungated if names_lane_output(document, classifier, lane)}
     lanes = {*lane_by_job.values(), *ungated}
 
     def keep_prerequisites(outcomes):
@@ -884,7 +906,7 @@ def derived(evidence, exceptions, settings, declared):
 
     def job_reach(name):
         try:
-            ordinary, readers = job_reads(evidence, jobs[name], env_words)
+            ordinary, readers = job_reads(evidence, jobs[name], env_words, bash_env)
             reads = ordinary | set().union(*(read for read, _ in readers))
             packages = {evidence.owner(path) for path in reads} - {None}
             hits = (reads & evidence.changed) | {
@@ -895,7 +917,7 @@ def derived(evidence, exceptions, settings, declared):
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
             diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
-            if not isinstance(error, UnresolvedDispatch):
+            if not isinstance(error, NamedUnreadable):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
             return set(), evidence.changed
