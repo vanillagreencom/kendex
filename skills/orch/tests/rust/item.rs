@@ -3133,6 +3133,10 @@ mod dev_artifacts {
     #[test]
     fn fix_receipt_names_the_unproved_range_base() {
         let w = World::new();
+        // The range base is the merge base with origin/main, and the round
+        // base stays in the work's history: the merge-base route does not
+        // apply to an unrewritten round.
+        w.with_origin();
         let range_base = w.head();
         w.commit("app.txt");
         let round_base = w.head();
@@ -3227,6 +3231,8 @@ mod dev_artifacts {
         fn with_origin(&self) {
             let origin = self.root.join("origin.git");
             git(&self.root, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+            git(&origin, &["config", "gc.auto", "0"]);
+            git(&origin, &["config", "maintenance.auto", "false"]);
             git(&self.wt, &["remote", "add", "origin", origin.to_str().unwrap()]);
             git(&self.wt, &["push", "-q", "origin", "main"]);
         }
@@ -3354,22 +3360,27 @@ mod dev_artifacts {
         let mut doc = w.doc();
         doc["rebase_map"] = json!({ round_base: fold, fixed: fold });
 
-        // Each attempt is cited in place of the overseer's run beside it.
-        let docs = w.finished_run("docs", "docs");
-        w.record_start(&docs, &format!("tree={}", w.tree()));
-        w.record_start(&docs, "validate-base=");
+        // A docs-only snapshot that ran the range command from the prepared
+        // base, the only pass at the tree, proves no code.
+        let docs = w.range_run("docs", &prepared_base);
         w.record_start(&docs, "docs-only=true");
+        doc["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(World::ledger_stage(&docs));
+        fs::write(w.item(), doc.to_string()).unwrap();
+        refused(&w.range_write("r1", &docs), "run-off-round");
+
+        // A reuse is cited in place of the overseer's run beside it.
         let overseer = w.range_run("overseer", &prepared_base);
         let reused = w.range_run("reused", &prepared_base);
         w.record_start(&reused, &format!("pass-run={}", overseer.display()));
         let stages = doc["stages"].as_array_mut().unwrap();
-        for run in [&docs, &reused, &overseer] {
+        for run in [&reused, &overseer] {
             stages.push(World::ledger_stage(run));
         }
         fs::write(w.item(), doc.to_string()).unwrap();
-        for attempt in [&docs, &reused] {
-            refused(&w.range_write("r1", attempt), "run-off-round");
-        }
+        refused(&w.range_write("r1", &reused), "run-off-round");
 
         let written = result(&w.range_write("r1", &overseer));
         let check = w.check("r1");

@@ -185,6 +185,7 @@ A `fix` receipt that names a run must bind it to its round record ([dev-round.md
 - A run directory whose start record names no tree, and a foreground record, prove their recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain --untracked-files=all` prints nothing.
 - A `pass` also needs the round's proof: the runtime's proof reader, as `read-proof --need round` reads it, answers the tree `complete` or `pending`. A `no-verdict` needs the run itself to have ended `no-verdict`.
 - A `pass` the rules above refuse still binds, with no rebase map, where all of these hold:
+  - The receipt commit no longer contains the record's `base_sha`. Where it does, only a range from that base proves the round.
   - The named run itself passed in `range` mode and is no docs-only run.
   - Its recorded `validate-base` is the receipt commit's merge base with `refs/remotes/origin/<base>`. A local base branch names no merge base.
   - The proof reader answers the tree `complete` from that merge base on the named row alone, with no chain through base trees. A `pass-run` reuse is no such row, and a newer pass at the tree that the receipt did not name refuses it.

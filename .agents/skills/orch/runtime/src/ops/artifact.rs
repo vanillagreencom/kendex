@@ -847,10 +847,17 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     let base = round["base_sha"].as_str().expect("round schema");
     let tree = run_tree(&r.id, run)?;
     let carried = carries(settings, &r.id, run, base, &tree)?;
-    // A completed range pass may still bind from the merge base
-    // (`merge_base_pass`). A failure, a no-verdict and a pass left to CI bind
-    // only where the round's base carries.
-    let range_pass = r.validate == "pass" && run.verdict == "pass" && run.mode == "range";
+    // A completed range pass of a round whose base the receipt commit no
+    // longer contains may still bind from the merge base
+    // (`merge_base_pass`). Where the commit still holds the round's base, a
+    // range from the merge base can omit a path the round restored to the
+    // base branch's content, so only the round's own base proves it. A
+    // failure, a no-verdict and a pass left to CI bind only where the
+    // round's base carries.
+    let range_pass = r.validate == "pass"
+        && run.verdict == "pass"
+        && run.mode == "range"
+        && !ancestor(&r.id.worktree, base, commit)?;
     if !carried && !range_pass {
         return Err(refuse("run-off-round", OFF_BASE));
     }

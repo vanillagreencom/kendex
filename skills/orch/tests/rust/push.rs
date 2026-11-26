@@ -557,9 +557,15 @@ mod push {
     #[test]
     fn a_round_closed_by_hand_acceptance_is_not_live() {
         let repo = Repo::new("KEN-1", BASE);
+        // A finished run of the round and an earlier round's close leave it
+        // live.
         repo.record(json!({
             "dev_round_id": "1-1",
-            "stages": [{"kind": "dev", "round_id": "1-1", "start": 1, "end": null}],
+            "stages": [
+                {"kind": "dev", "round_id": "0-1", "start": 1, "end": 2, "outcome": "pass"},
+                {"kind": "dev", "round_id": "1-1", "start": 3, "end": null},
+                {"kind": "validate", "round_id": "1-1", "start": 4, "end": 5, "outcome": "pass"},
+            ],
         }));
         fs::write(repo.wt.join("tmp/dev-round-KEN-1-1-1.json"), "{}").unwrap();
         let out = repo.push("check-live-round");
