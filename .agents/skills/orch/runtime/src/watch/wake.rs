@@ -953,7 +953,7 @@ impl Wake {
     /// Whether a walled overseer's resume at its reset may be typed: the
     /// reset its row names (`usage-limit|<pane key>|<reset>`) has passed and
     /// the overseer's own account, read as its marks read it
-    /// (`Caller::own_account`), has room. Any other reading waits.
+    /// (`overseer::own_account`), has room. Any other reading waits.
     #[allow(
         clippy::disallowed_methods,
         reason = "the kernel host for the judge's occupancy read, which acts on nothing"
@@ -967,27 +967,15 @@ impl Wake {
         else {
             return false;
         };
-        let (true, Some(harness), Ok(accounts)) =
-            (passed, caller.harness, self.settings.accounts.get())
-        else {
-            return false;
-        };
-        let host = crate::ops::Host::kernel();
-        let mut pick = |request: &agent_runtime::accounts::PickRequest| {
-            crate::ops::accounts::pick_fleet(
+        passed
+            && super::overseer::own_account(
                 &self.settings,
                 &self.fleet,
-                &host,
-                None,
-                None,
-                request,
+                &crate::ops::Host::kernel(),
+                &caller,
                 now,
             )
-        };
-        caller
-            .own_account(harness, &mut pick, accounts.controller_headroom_pct, now)
-            .state
-            == AccountState::HasRoom
+            .is_ok_and(|account| account.state == AccountState::HasRoom)
     }
 
     /// Set or drop the target's mark in `record` and write the record
