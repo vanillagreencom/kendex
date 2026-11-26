@@ -431,18 +431,24 @@ enum Verb {
         account: Option<String>,
     },
     /// Resume the recorded controller's own native session once its pane
-    /// ended, as after a restart: the record's own launch with `resume` set
-    /// to its `session_id`, on the record's `server_socket`, where a server
-    /// gone from it is started again, and with the watch flags the last
-    /// claimed runner recorded beside the fleet state. One stdout line, the
-    /// effect's outcome: `controller-resumed intent=ID generation=N pane=%P
-    /// session=ID socket=PATH` at exit 0, `controller-resume-failed
-    /// intent=ID note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
+    /// ended, as after a restart: the checkout brought to the landed base
+    /// by `sync-base`, then the record's own launch with `resume` set to its
+    /// `session_id`, on the record's `server_socket`, where a server gone
+    /// from it is started again, and with the watch flags the last claimed
+    /// runner recorded beside the fleet state. A base sync that refuses
+    /// leaves the checkout where it stood, and the start still runs. One
+    /// stdout line, the effect's outcome:
+    /// `controller-resumed intent=ID generation=N pane=%P session=ID
+    /// socket=PATH` at exit 0, `controller-resume-failed intent=ID
+    /// note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
     /// intent=ID` at 75 with the intent left for its reconcile. Where the
     /// start was refused, `note` is the refusal's key and `cause` its own
     /// cause; otherwise `note` names the failure and `cause` its cause, `-`
-    /// where it carries none. A refusal,
-    /// with nothing started, at exit 1: `server-socket-unrecorded
+    /// where it carries none. Where the sync refused with REASON, a resumed
+    /// controller's line leads `sync-base-REASON` in place of
+    /// `controller-resumed`, at exit 4, and a failed or unconfirmed one
+    /// carries `base=sync-base-REASON` after its `intent`. A refusal, with
+    /// nothing started or synced, at exit 1: `server-socket-unrecorded
     /// field=server_socket`, `session-unrecorded field=session_id`,
     /// `harness-unnamed`, `session-missing`, `watch-flags-unrecorded`.
     ResumeController {
@@ -3769,17 +3775,22 @@ fn resume_controller(
         path: PathBuf::from("<resume-controller>"),
         cause: e.to_string(),
     })?;
-    let settled = match applied_live(
-        &path,
-        admitted(&path, request, &settings)?,
-        &settings,
-        locking,
-    ) {
+    let admitted = admitted(&path, request, &settings)?;
+    // An unattended restart must not leave the overseer down: a sync that
+    // refuses leaves the checkout where it stood, and the start goes on
+    // with the refusal on its line for its caller to read.
+    let base = effects::follow_base(&settings.roots.project, "resume-controller")
+        .err()
+        .map(|reason| format!("sync-base-{reason}"));
+    let base_word = base
+        .as_deref()
+        .map_or_else(String::new, |key| format!(" base={key}"));
+    let settled = match applied_live(&path, admitted, &settings, locking) {
         Ok(settled) => settled,
         Err(Error::Persisted { intent, error }) => answered(
             true,
             &format!(
-                "controller-resume-unconfirmed intent={intent} {}",
+                "controller-resume-unconfirmed intent={intent}{base_word} {}",
                 refusal_words(&error)
             ),
             agent_runtime::effects::UNCONFIRMED_EXIT,
@@ -3798,10 +3809,14 @@ fn resume_controller(
                     .unwrap_or("-")
                     .to_owned()
             };
+            let (lead, status) = match &base {
+                Some(key) => (key.as_str(), BASE_UNFOLLOWED_EXIT),
+                None => ("controller-resumed", 0),
+            };
             answered(
                 true,
                 &format!(
-                    "controller-resumed intent={} generation={} pane={} session={} socket={}",
+                    "{lead} intent={} generation={} pane={} session={} socket={}",
                     intent.id,
                     overseer
                         .generation
@@ -3810,13 +3825,13 @@ fn resume_controller(
                     overseer.session_id.as_deref().unwrap_or("-"),
                     text("server_socket"),
                 ),
-                0,
+                status,
             )
         }
         3 => answered(
             true,
             &format!(
-                "controller-resume-failed intent={} {}",
+                "controller-resume-failed intent={}{base_word} {}",
                 intent.id,
                 observed(intent)
             ),
@@ -3824,11 +3839,20 @@ fn resume_controller(
         ),
         status => answered(
             true,
-            &format!("controller-resume-unconfirmed intent={}", intent.id),
+            &format!(
+                "controller-resume-unconfirmed intent={}{base_word}",
+                intent.id
+            ),
             status,
         ),
     }
 }
+
+/// A resumed controller's exit where its checkout's base sync refused: a
+/// nonzero answer apart from a refusal's 1, a failed start's 3 and an
+/// unconfirmed one's 75, so a caller that reads only a failed call's line
+/// still reads the sync's key.
+const BASE_UNFOLLOWED_EXIT: i32 = 4;
 
 /// A request the command composed itself, admitted as `op` admits a
 /// request file before its transition, with the brief it opens on held

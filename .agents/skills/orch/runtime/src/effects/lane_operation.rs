@@ -718,48 +718,12 @@ impl<'a> LaneOperation<'a> {
         .unwrap_or(Ok(false)))
     }
 
-    /// The project's base checkout brought to the landed base by
-    /// `sync-base`, which judges whether it may move (a checkout with
-    /// tracked changes refuses): `followed branch=B`, or `refused cause=C`
-    /// with its reason, `timeout` for a fetch past the read bound.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the close's one run of the orch package's base sync through the one runner, its repository named"
-    )]
+    /// The close's base follow ([`follow_base`]), as its observation
+    /// spells it: `followed branch=B`, or `refused cause=C`.
     pub(super) fn follow_base(&self) -> String {
-        let project = &self.run.settings.roots.project;
-        let script = crate::watch::overseer::scripts_dir(project).join("sync-base");
-        let repository = project.display().to_string();
-        match agent_runtime::host::run_tagged_in(
-            "close",
-            "sync-base",
-            &script,
-            "base-follow",
-            &[repository.as_str()],
-            agent_runtime::host::Place {
-                cwd: Some(project),
-                env: &[],
-            },
-            crate::watch::hosted::READ_BOUND,
-        ) {
-            Ok(out) if out.status.success() => format!(
-                "followed branch={}",
-                agent_runtime::host::stdout_text(&out).trim()
-            ),
-            Ok(out) => {
-                let stderr = agent_runtime::host::stderr_text(&out);
-                let reason = stderr
-                    .lines()
-                    .find_map(|l| l.strip_prefix("sync-base: "))
-                    .and_then(|rest| rest.split_whitespace().next())
-                    .map_or_else(
-                        || format!("exit-{}", out.status.code().unwrap_or(-1)),
-                        str::to_owned,
-                    );
-                format!("refused cause={reason}")
-            }
-            Err(agent_runtime::Error::NotStarted { .. }) => "refused cause=unstarted".to_owned(),
-            Err(_) => "refused cause=timeout".to_owned(),
+        match follow_base(&self.run.settings.roots.project, "close") {
+            Ok(branch) => format!("followed branch={branch}"),
+            Err(reason) => format!("refused cause={reason}"),
         }
     }
 
@@ -836,6 +800,50 @@ impl<'a> LaneOperation<'a> {
     /// held with everything standing.
     pub(super) fn refuse(self, cause: &str, observation: Value) -> EffectOutcome {
         self.engine.refuse(cause, observation)
+    }
+}
+
+/// The checkout at `project` brought to the landed base by the orch
+/// package's `sync-base`, which judges whether it may move (a checkout with
+/// tracked changes refuses), run for the duty `tag` names: `Ok` the branch
+/// it followed, `Err` the reason its `sync-base: REASON` line leads with,
+/// `exit-N` where it printed none, `unstarted` where it could not start and
+/// `timeout` for a fetch past the read bound.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "orch's one run of the orch package's base sync through the one runner, its repository named, for a close and a controller resume"
+)]
+pub fn follow_base(project: &Path, tag: &'static str) -> std::result::Result<String, String> {
+    let script = crate::watch::overseer::scripts_dir(project).join("sync-base");
+    let repository = project.display().to_string();
+    match agent_runtime::host::run_tagged_in(
+        tag,
+        "sync-base",
+        &script,
+        "base-follow",
+        &[repository.as_str()],
+        agent_runtime::host::Place {
+            cwd: Some(project),
+            env: &[],
+        },
+        crate::watch::hosted::READ_BOUND,
+    ) {
+        Ok(out) if out.status.success() => {
+            Ok(agent_runtime::host::stdout_text(&out).trim().to_owned())
+        }
+        Ok(out) => {
+            let stderr = agent_runtime::host::stderr_text(&out);
+            Err(stderr
+                .lines()
+                .find_map(|l| l.strip_prefix("sync-base: "))
+                .and_then(|rest| rest.split_whitespace().next())
+                .map_or_else(
+                    || format!("exit-{}", out.status.code().unwrap_or(-1)),
+                    str::to_owned,
+                ))
+        }
+        Err(agent_runtime::Error::NotStarted { .. }) => Err("unstarted".to_owned()),
+        Err(_) => Err("timeout".to_owned()),
     }
 }
 

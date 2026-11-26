@@ -72,6 +72,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - After a machine restart, or once a tmux server holding the delegate, an overseer or a lane is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
   - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.
   - It then resumes the overseer of each checkout `kendex project list --json` registers, through `orch-runtime resume-controller --fleet` run from that checkout. It skips the home's own controller, which is the delegate, and a controller stopped on purpose.
+    - That resume first brings the checkout to the landed base. Where `sync-base` refuses to move the checkout, the overseer still starts, and its line reads `refused` with `cause=sync-base-REASON`, such as `sync-base-dirty` for a checkout with tracked changes.
   - It then relaunches each lane whose record reads `running`, and each lane recorded `stopped` with `restart_closed`, through `orch-runtime lane relaunch --fleet ITEM` run from its checkout. It leaves a lane hosted on another machine as it is.
   - Each session starts only after the one before it ends, so the command runs past the 60-second bound an app gives Start.
   - It does nothing to a session that still runs and prints it `resumed`: a delegate Start answers `existing`, an overseer whose start fails `controller-resume-failed` with `note=overseer-live`, and a lane refused `lane-live`.

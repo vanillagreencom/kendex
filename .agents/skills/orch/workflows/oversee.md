@@ -116,16 +116,18 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 8. A start over a recorded controller refuses while that controller may still run. On `predecessor-unproven`, adopt the session from its pane instead (step 3).
 
-9. To resume a recorded native session after its pane ends, as after a restart, run the state check (step 1) and `sync-base` (step 5) first, then the resume from the checkout:
+9. To resume a recorded native session after its pane ends, as after a restart, run the state check (step 1) first, then the resume from the checkout:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime resume-controller --fleet
    ```
 
+   - It first brings the checkout to the landed base through `sync-base`. A sync that refuses leaves the checkout where it stood, and the start still runs.
    - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
    - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
    - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
    - On `controller-resume-failed`, where the start was refused, `note` is the refusal's key and `cause` its own cause. Otherwise `note` names the failure, and `cause` is its cause, or `-` where it carries none.
+   - Where the sync refused with `sync-base: [REASON]`, a resumed controller's line leads `sync-base-[REASON]` in place of `controller-resumed`, at exit 4. A failed or unconfirmed one carries `base=sync-base-[REASON]` after its `intent`. Run `sync-base` (step 5) once the cause is cleared, before the overseer's first decision.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 
