@@ -190,6 +190,55 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
     .unwrap();
     let process_only = dir.path().join("process-only.txt");
     std::fs::write(&process_only, "Copilot v1.0.109 uses AI.\n").unwrap();
+    // pi-qol screens a shipped setting or state draws, each one substitution
+    // away from a real capture.
+    let derive = |name: &str, base: &str, from: &str, to: &str| {
+        assert_eq!(base.matches(from).count(), 1, "{name}: {from:?}");
+        let path = dir.path().join(name);
+        std::fs::write(&path, base.replacen(from, to, 1)).unwrap();
+        path
+    };
+    let qol_idle = std::fs::read_to_string(fixtures.join("pi-qol-idle.txt")).unwrap();
+    let qol_working = std::fs::read_to_string(fixtures.join("pi-qol-working.txt")).unwrap();
+    let tree = std::fs::read_to_string(
+        runtime.join("../../orch/tests/fixtures/oversee-watch/pi-tree-confirm.txt"),
+    )
+    .unwrap();
+    // No context reading yet, as after a compaction until the next reply.
+    let qol_unread = derive("qol-unread.txt", &qol_idle, " 97%\n", " …%\n");
+    // A pi-agents child pane: its name after the percent.
+    let qol_child = derive("qol-child.txt", &qol_idle, " 97%\n", " 97%  reviewer\n");
+    // pi-qol's non-static mode hands it Pi's default spinner, and
+    // pi-tool-renderer's pulse draws its own frames, unicode or ASCII.
+    let qol_frames: Vec<_> = ["⠹", "○", "·", "o", "-", "*"]
+        .into_iter()
+        .enumerate()
+        .map(|(n, frame)| {
+            derive(
+                &format!("qol-frame-{n}.txt"),
+                &qol_working,
+                "● work",
+                &format!("{frame} work"),
+            )
+        })
+        .collect();
+    // Pi's own editor border under pi-tool-renderer's hidden mode: the word
+    // with no indicator frame.
+    let pi_hidden = derive(
+        "pi-hidden.txt",
+        &std::fs::read_to_string(fixtures.join("pi-working.txt")).unwrap(),
+        "── ⠹ Working",
+        "── Working",
+    );
+    // Transcript text that looks like the status line over a `π` composer,
+    // with Pi's selector drawn where the composer stands.
+    assert_eq!(qol_idle.matches("\ndone\n").count(), 1);
+    let qol_selector = derive(
+        "qol-selector.txt",
+        &qol_idle.replacen("\ndone\n", "\nProgress: 97%\nπ approximation\n", 1),
+        "\nπ\n",
+        &format!("\n{tree}"),
+    );
     let ask = |screen: &std::path::Path, harness: &str| {
         reply_of(&[
             "judge".as_ref(),
@@ -199,7 +248,19 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
             harness.as_ref(),
         ])
     };
-    for (screen, harness, want, ready, banner) in [
+    let qol_rows = [
+        (qol_unread, "pi", "idle", true, None),
+        (qol_child, "pi", "idle", true, None),
+        (qol_selector, "pi", "unjudged", false, None),
+        (pi_hidden, "pi", "working", true, None),
+    ]
+    .into_iter()
+    .chain(
+        qol_frames
+            .into_iter()
+            .map(|frame| (frame, "pi", "working", true, None)),
+    );
+    for (screen, harness, want, ready, banner) in qol_rows.chain([
         (fixtures.join("pi-idle.txt"), "pi", "idle", true, None),
         (fixtures.join("pi-working.txt"), "pi", "working", true, None),
         // Pi 1.6.1 with a session name, whose prompt line ends ` • <name>`.
@@ -270,7 +331,7 @@ fn judge_answers_the_screen_s_state_and_refuses_a_harness_it_does_not_know() {
         ),
         (dialog, "copilot", "asking", false, None),
         (process_only, "copilot", "unjudged", false, None),
-    ] {
+    ]) {
         let (code, reply) = ask(&screen, harness);
         assert_eq!(code, Some(0), "{}: {reply}", screen.display());
         let state: State = serde_json::from_value(reply["result"].clone()).unwrap();

@@ -305,9 +305,11 @@ static CLAUDE_COMPOSER: LazyLock<Regex> = LazyLock::new(|| Regex::new("^❯\u{a0
 static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^› ").unwrap());
 /// Copilot's composer is the marker line with a rule drawn under it.
 static FRAME_RULE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[─━]{10,}\s*$").unwrap());
-/// Pi's editor border while a turn runs: a spinner glyph and the word.
+/// Pi's editor border while a turn runs: an indicator frame and the word, or
+/// the word alone where pi-tool-renderer's hidden mode sets no frame
+/// (`installWorkingIndicator`, pi-tui `components/loader.js`).
 static PI_WORKING_BORDER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^── \S+ Working ─+\s*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^── (?:\S+ )?Working ─+\s*$").unwrap());
 /// Pi's prompt line under the editor: the working directory, then the
 /// branch in parentheses when there is one, then ` • <name>` once the
 /// session has a name (Pi 1.6.1 `modes/interactive/components/footer.js`).
@@ -330,10 +332,12 @@ static QOL_STATUS: LazyLock<Regex> =
 /// composer.
 static QOL_PANEL_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[┏┃┗]").unwrap());
 /// pi-qol draws Pi's working indicator at the head of its status line while
-/// a turn runs: its own static `●` (`applyWorkingIndicatorMode`), or a frame
-/// of Pi's default spinner (pi-tui `components/loader.js`), then a space. At
-/// rest the line opens on the project's name.
-static QOL_TURN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[●⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ").unwrap());
+/// a turn runs: its own static `●` (`applyWorkingIndicatorMode`), a frame of
+/// Pi's default spinner (pi-tui `components/loader.js`), or a frame of
+/// pi-tool-renderer's pulse, `· ○ ● ○` or in ASCII `- o * o`
+/// (`installWorkingIndicator`), then a space. At rest the line opens on the
+/// project's name.
+static QOL_TURN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[●○·⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏*o-] ").unwrap());
 /// Pi's footer carries the context token `<used>%/<window>` from the first
 /// draw; the token counts before it and the model after it come and go.
 static PI_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
@@ -561,19 +565,34 @@ pub fn is_working(slice: &str) -> bool {
 
 /// Whether Pi's editor border, or pi-qol's status line, says a turn is
 /// running.
+///
+/// Pi also reports a running turn as Program Status (OSC 7501), but sends it
+/// only to a terminal that answers the protocol's query, and tmux forwards
+/// none of it (Pi 1.6.1's terminal setup document, § Program status). A tmux
+/// pane capture holds the cells drawn, never a sequence tmux consumed, so the
+/// pane read cannot see that report.
 pub fn pi_working(slice: &str) -> bool {
     slice.lines().any(|l| PI_WORKING_BORDER.is_match(l))
         || qol_status(slice).is_some_and(|status| QOL_TURN.is_match(status))
 }
 
 /// pi-qol's status line when its composer is drawn: the last `π` line, with
-/// the status line the first row above it that is no panel row. A draft's
-/// further lines and the completion list draw indented below the `π` line.
-/// Any other row there, a blank one included, is a drawing this rule does
-/// not know, and settles nothing.
+/// the status line the first row above it that is no panel row. Any other
+/// row there, a blank one included, is a drawing this rule does not know,
+/// and settles nothing. Below a live composer stand only its blank padding
+/// rows and the rows it indents by the width of `π `: a draft's further
+/// lines and the completion list. Any other row below means the `π` line is
+/// transcript text, with something else, such as a Pi selector, drawn where
+/// the composer stands.
 fn qol_status(slice: &str) -> Option<&str> {
     let lines: Vec<&str> = slice.lines().collect();
     let prompt = lines.iter().rposition(|l| QOL_PROMPT.is_match(l))?;
+    if !lines[prompt + 1..]
+        .iter()
+        .all(|l| l.trim().is_empty() || l.starts_with("  "))
+    {
+        return None;
+    }
     let status = *lines[..prompt]
         .iter()
         .rev()
