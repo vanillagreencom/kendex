@@ -29,7 +29,7 @@ LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
                           "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local",
-                          "peer-mail=verb"))
+                          "peer-mail=verb", "validate=verb"))
 
 
 def notice(key, **values):
@@ -1121,6 +1121,276 @@ def stop(row, item):
     lifecycle_output(row, f"stopped item={item} processes={signalled}\n".encode())
 
 
+# The inventory row validation units run on: a clone no lane row names, so a
+# unit's worktree never shares a clone with a lane's.
+VALIDATION_ROW = "validation"
+# The exit the protocol gives a unit still running or still preparing: ask
+# again.
+UNIT_RUNNING = 3
+# The exit for a run the host's runtime refused to launch: final, ask no more.
+UNIT_REFUSED = 4
+UNIT_FIX = "repair what cause= names on the host, then ask again"
+# What each call reads of a host run: the runtime's least wait budget, so a
+# call holds its slot for a read, never a follow; the caller waits between
+# calls.
+UNIT_READ_SECS = "1"
+# The lane's runner record names the lane's caller, on the control machine;
+# the host's launch writes the host copy's own, and the unit reads a run as
+# launched only once it stands.
+LANE_RUNNER = "runner"
+# stop_unit CLONE UNIT: end the unit's run through the unit's own runtime,
+# which stops the runs of its tree by their recorded identities, then remove
+# the unit. A unit with no copy launched, no runner record under its tree's
+# tmp, runs nothing; its copy may still hold the lane's start, which names
+# the host run. A detached build of the
+# tree's runtime reads the tree until it releases its claim, and a build that
+# loses its sources records its key failed for every later detached setup
+# (agent-runtime setup --help): while a claim UNIT/building names stands, the
+# unit is left to a detached waiter that removes it once no such claim does,
+# and the run counts as stopped.
+STOP_UNIT = '''remove_unit() {
+  if test -d "$2/tree"; then git -C "$1" worktree remove --force "$2/tree" >&2; fi
+  rm -rf -- "${2:?}"
+}
+claims_held() {
+  test -s "$1/building" || return 1
+  while IFS= read -r claim; do
+    if test -L "$claim" || test -e "$claim"; then return 0; fi
+  done < "$1/building"
+  return 1
+}
+stop_unit() {
+  if test -e "$2/stopping"; then return 0; fi
+  launched=
+  for runner in "$2"/tree/tmp/*/runner; do
+    if test -e "$runner"; then launched=1; fi
+  done
+  if test -n "$launched" && test -s "$2/runtime"; then
+    (cd -- "$2/tree" && ORCH_STATE_DIR="$2/tree/tmp" "$(cat -- "$2/runtime")" validate entry --stop --worktree "$2/tree" >&2) || return 1
+  fi
+  if claims_held "$2"; then
+    if ! test -e "$2/stopping"; then
+      : > "$2/stopping"
+      set -m
+      (
+        trap '' HUP
+        while claims_held "$2"; do sleep 5; done
+        remove_unit "$1" "$2"
+      ) < /dev/null > /dev/null 2>&1 &
+    fi
+    return 0
+  fi
+  remove_unit "$1" "$2"
+}
+'''
+
+
+def unit_run(unit, args):
+    """The host's copy of the lane's run: under the unit tree's tmp, named
+    as the lane's start named its own folder, so the unit's runtime stops it
+    as a run of that tree and launches it under that run's own key."""
+    return f"{unit}/tree/tmp/{Path(args.run_dir).name}"
+
+
+def preparing(row, step):
+    """End a call that prepared the unit one step further: ask again."""
+    lifecycle_output(row, f"host={row['target']} state=preparing step={step}\n".encode())
+    raise SystemExit(UNIT_RUNNING)
+
+
+def release_unit(row, unit):
+    """Stop the unit's run and remove the unit from the clone."""
+    return remote(row, STOP_UNIT + 'stop_unit "$1" "$2"', row["clone"], unit, accept=None)
+
+
+def prepare_unit(row, args, unit):
+    """Carry the commits the host's origin lacks and check the commit out in
+    a worktree of its own. The item's other units are runs its lane no longer
+    holds, since a lane holds one run at a time: they are stopped and removed
+    first, so an abandoned run never holds the host beside this one."""
+    def source(*words):
+        read = subprocess.run(["git", "-C", args.source, *words], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if read.returncode != 0:
+            step_failed("validate-source-unreadable", read.stderr, "repair the lane's repository the cause names",
+                        source=args.source, read=words[0])
+            raise SystemExit(1)
+        return read.stdout
+
+    if source("rev-parse", "--verify", "HEAD^{commit}").decode().strip() != args.commit:
+        notice("validate-commit-moved", source=args.source, commit=args.commit,
+               fix="start the run again at the source's current commit")
+        raise SystemExit(1)
+    # Commits a remote-tracking ref holds are on the host once its clone
+    # fetches origin; the bundle carries the rest.
+    bundle = b""
+    if int(source("rev-list", "--count", "HEAD", "--not", "--remotes=origin")) > 0:
+        bundle = source("bundle", "create", "-", "HEAD", "--not", "--remotes=origin")
+    remote(row, STOP_UNIT + '''clone=$1 unit=$2 commit=$3
+for other in "${unit%/*}"/*; do
+  if test -e "$other" && test "$other" != "$unit"; then stop_unit "$clone" "$other"; fi
+done
+mkdir -p -- "$unit"
+"$clone/.agents/skills/github/scripts/git-https-auth" -C "$clone" fetch -q origin >&2
+cat > "$unit/commits.bundle"
+if test -s "$unit/commits.bundle"; then git -C "$clone" fetch -q "$unit/commits.bundle" HEAD >&2; fi
+rm -f -- "${unit:?}/commits.bundle"
+git -C "$clone" worktree add -q --detach "$unit/tree" "$commit" >&2''', row["clone"], unit, args.commit, data=bundle)
+    preparing(row, "tree")
+
+
+def build_unit(row, unit):
+    """Record the runtime the unit's own tree builds, as a local run of the
+    same commit runs its own. The tree's orch setup builds detached, at most
+    once per key, so a cold build outlasts no call: a call that finds it
+    still building answers preparing, and the next one asks again. Each ask
+    records at UNIT/building the claim of every build it found running,
+    <cache>/build/<name>/<key>.lock beside the log its answer names, and
+    while it asks, UNIT/asking, since the setup may start a build: a stop
+    waits on each before it removes the tree."""
+    step = remote(row, '''setup="$1/tree/.agents/skills/orch/scripts/setup"
+if [ ! -x "$setup" ]; then
+  printf 'lane-host-ssh: runtime-setup-missing path=%s fix=run a commit whose tree carries the orch render\\n' "$setup" >&2
+  exit 1
+fi
+: > "$1/asking"
+printf '%s\\n' "$1/asking" > "$1/building"
+answers=$("$setup" --detach) || { rm -f -- "$1/asking"; exit 1; }
+printf '%s\\n' "$answers" | while IFS= read -r answer; do
+  case "$answer" in
+    *" runtime-building "*" log="*) log=${answer##* log=}; printf '%s\\n' "${log%.log}.lock" ;;
+  esac
+done > "$1/building.part"
+mv -f -- "$1/building.part" "$1/building"
+rm -f -- "$1/asking"
+line=$(printf '%s\\n' "$answers" | tail -n 1)
+case "$line" in
+  *" binary=/"*) printf '%s\\n' "${line##* binary=}" > "$1/runtime"; printf built ;;
+  *" runtime-building "*) printf building ;;
+  *) printf 'lane-host-ssh: runtime-unbuilt output=%s fix=run that setup in the unit tree on the host and repair the build it reports\\n' "$line" >&2; exit 1 ;;
+esac''', unit).stdout
+    preparing(row, "runtime" if step == b"built" else "building")
+
+
+def launch_unit(row, args, unit):
+    """Ship the lane's run folder to the unit and launch its host copy with
+    the unit's runtime (validate entry --host-child), which keeps the
+    executor's inputs and writes its start for the unit's tree. A launch the
+    runtime refused with no runner record of its own removes the unit and is
+    final; any other failed launch keeps it, and the next call reads
+    whatever run it left."""
+    shipped = io.BytesIO()
+    with tarfile.open(fileobj=shipped, mode="w") as archive:
+        for path in sorted(Path(args.run_dir).iterdir()):
+            if path.is_file() and not path.is_symlink() and path.name != LANE_RUNNER:
+                archive.add(str(path), arcname=path.name)
+    answer = remote(row, '''unit=$1 run=$2
+mkdir -p -- "$run"
+tar -xf - -C "$run"
+runtime=$(cat -- "$unit/runtime")
+cd -- "$unit/tree"
+ORCH_STATE_DIR="$unit/tree/tmp" exec "$runtime" validate entry --host-child --worktree "$unit/tree" --run-dir "$run"''',
+                    unit, unit_run(unit, args), data=shipped.getvalue(), accept=None)
+    if answer.returncode == 0 and any(line.startswith(b"state=started ") for line in answer.stdout.splitlines()):
+        lifecycle_output(row, f"host={row['target']} state=running\n".encode())
+        raise SystemExit(UNIT_RUNNING)
+    # Only the runtime's own refusal, exit 2, says no run launched; even then
+    # a runner record it left is a run the next call reads.
+    if answer.returncode == 2:
+        launched = remote(row, 'if test -e "$1/runner"; then printf launched; fi', unit_run(unit, args)).stdout
+        if launched != b"launched":
+            released = release_unit(row, unit)
+            if released.returncode != 0:
+                notice("validate-unit-kept", target=row["target"], path=unit, exit=released.returncode)
+            step_failed("validate-launch-refused", answer.stderr, "repair what cause= names on the host, then start a new run",
+                        target=row["target"])
+            raise SystemExit(UNIT_REFUSED)
+    step_failed("validate-start-failed", answer.stderr, UNIT_FIX, target=row["target"], exit=answer.returncode)
+    raise SystemExit(1)
+
+
+def fetch_unit(row, args, unit, into):
+    """Carry the ended run's folder to INTO, whole or not at all, then remove
+    the unit from the host. Only the folder's regular files travel; which of
+    them the lane keeps is the runtime's choice."""
+    data = remote(row, 'cd -- "$1" && exec tar -cf - .', unit_run(unit, args)).stdout
+    staged = Path(tempfile.mkdtemp(prefix=into.name + ".", dir=into.parent))
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            for member in archive.getmembers():
+                name = member.name[2:] if member.name.startswith("./") else member.name
+                if not member.isfile() or not name or "/" in name or name in (".", ".."):
+                    continue
+                (staged / name).write_bytes(archive.extractfile(member).read())
+        os.rename(staged, into)
+    except BaseException:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    removed = release_unit(row, unit)
+    if removed.returncode != 0:
+        notice("validate-unit-kept", target=row["target"], path=unit, exit=removed.returncode)
+
+
+def validate(row, args):
+    """One step of a validation unit on the validation row's host, by what the
+    host holds of it: check the commit out, build that tree's runtime, launch
+    the host copy of the lane's run, or read it, carrying its folder back
+    once it ends. With --stop, end the unit's run and remove the unit."""
+    for field, value in (("item", args.item), ("run-id", args.run_id)):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value):
+            notice("validate-name-invalid", field=field, value=value, fix="name the item and run as the runtime does")
+            raise SystemExit(1)
+    unit = f"{row['clone']}/tmp/validate-host/{args.item}/{args.run_id}"
+    if args.stop:
+        stopped = release_unit(row, unit)
+        if stopped.returncode != 0:
+            step_failed("validate-stop-failed", stopped.stderr, UNIT_FIX, target=row["target"],
+                        exit=stopped.returncode)
+            raise SystemExit(1)
+        lifecycle_output(row, f"host={row['target']} stopped item={args.item} run-id={args.run_id}\n".encode())
+        return
+    missing = [name for name in ("commit", "source", "run_dir", "into") if not getattr(args, name)]
+    if missing:
+        notice("validate-arguments", missing=",".join(missing), fix="name every argument of a validate step")
+        raise SystemExit(1)
+    into = Path(args.into)
+    if into.exists() or into.is_symlink():
+        notice("validate-into-exists", path=into, fix="place or remove that folder, then ask again")
+        raise SystemExit(1)
+    held = remote(row, '''if ! test -d "$1/.git"; then
+  printf 'lane-host-ssh: validate-clone-missing path=%s fix=clone the repository at the validation row'"'"'s clone on the host\\n' "$1" >&2
+  exit 1
+fi
+test -d "$2/tree" || exit 0
+head=$(git -C "$2/tree" rev-parse HEAD) || exit 1
+if test "$head" != "$3"; then
+  printf 'lane-host-ssh: validate-commit-moved path=%s head=%s fix=start a new run for the lane'"'"'s current commit\\n' "$2/tree" "$head" >&2
+  exit 1
+fi
+if ! test -s "$2/runtime"; then printf tree; exit 0; fi
+if test -e "$4/runner"; then printf run; else printf built; fi''', row["clone"], unit, args.commit, unit_run(unit, args)).stdout
+    if held == b"":
+        prepare_unit(row, args, unit)
+    if held == b"tree":
+        build_unit(row, unit)
+    if held == b"built":
+        launch_unit(row, args, unit)
+    answer = remote(row, '''unit=$1 run=$2
+runtime=$(cat -- "$unit/runtime")
+cd -- "$unit/tree"
+ORCH_STATE_DIR="$unit/tree/tmp" exec "$runtime" validate entry --wait --run-dir "$run" --budget "$3"''',
+                    unit, unit_run(unit, args), UNIT_READ_SECS, accept=None)
+    states = [line for line in answer.stdout.decode("utf-8", errors="replace").splitlines()
+              if line.startswith("state=")]
+    word = states[-1].split()[0] if states else ""
+    if word == "state=running":
+        lifecycle_output(row, f"host={row['target']} {states[-1]}\n".encode())
+        raise SystemExit(UNIT_RUNNING)
+    if word not in ("state=done", "state=lost"):
+        step_failed("validate-unit-failed", answer.stderr, UNIT_FIX, target=row["target"], exit=answer.returncode)
+        raise SystemExit(1)
+    fetch_unit(row, args, unit, into)
+
+
 def main():
     """Dispatch the provider protocol against an explicit per-item inventory."""
     parser = argparse.ArgumentParser(description="""One static SSH host and clone per item.
@@ -1263,6 +1533,40 @@ session's own stderr (SSH's or the lock script's), which arrives when that
 session closes.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
+validate --item ID --run-id RUN --commit SHA --source DIR --run-dir RUNDIR
+--into STAGE runs one validation unit, the run the lane's start wrote at
+RUNDIR, on the inventory row whose item is validation, a clone no lane row
+names. It takes one step per call by what the host holds of the unit at
+clone/tmp/validate-host/ID/RUN. With no unit, it stops and removes the item's
+other units, which its lane no longer holds, fetches the clone's origin,
+carries the commits DIR's HEAD holds and its origin refs lack as a git bundle
+on stdin, and checks SHA out at UNIT/tree. With a tree and no runtime, it asks
+that tree's own orch setup detached (setup --detach), which builds at most
+once per key, and records the binary once it stands (runtime-setup-missing and
+runtime-unbuilt refuse). With a runtime and no launched run, it ships RUNDIR's
+regular files but its runner record to UNIT/tree/tmp/NAME, NAME being
+RUNDIR's own, and launches them with that
+runtime (validate entry --host-child), which keeps the executor's inputs and
+writes the start for UNIT/tree. With a launched run, it reads the run's state
+for one second. A step that prepared the unit exits 3 with host=TARGET
+state=preparing step=STEP, and a run still going exits 3 with host=TARGET
+state=running, both on stdout. A run that ended, with its sentinel or read
+lost, travels back whole: its folder's regular files land in STAGE, a folder
+this call creates on the control machine, and the unit leaves the host
+(validate-unit-kept names one that would not). A launch the runtime refused,
+exit 2 with no runner record, removes the unit (validate-unit-kept names one
+that would not go) and exits 4 with validate-launch-refused, which is final;
+any other failed launch keeps the unit, and the next call reads the run it may
+have launched, exiting 1 with validate-start-failed. validate --item ID
+--run-id RUN --stop ends the unit's run through the unit's own runtime
+(validate entry --stop --worktree UNIT/tree), removes the unit and prints
+stopped item=ID run-id=RUN, also where the host holds no unit; a unit whose
+tree a runtime build is still reading is removed by a detached waiter once the
+build releases its claim. validate-stop-failed names a stop that failed.
+validate-arguments refuses a step that names no --commit, --source, --run-dir
+or --into. validate-clone-missing, validate-commit-moved (DIR's
+HEAD or the unit's tree is not SHA), validate-into-exists and
+validate-unit-failed refuse before any run moves.
 capabilities prints the static ssh host kind's one capability line
 (schemas/lane-host.md § Host kinds) and reads no inventory.
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1284,6 +1588,12 @@ capabilities prints the static ssh host kind's one capability line
         stopping = sub.add_parser(verb)
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+    unit = sub.add_parser("validate")
+    for field in ("item", "run-id"):
+        unit.add_argument("--" + field, required=True)
+    for field in ("commit", "source", "run-dir", "into"):
+        unit.add_argument("--" + field)
+    unit.add_argument("--stop", action="store_true")
     peer = sub.add_parser("peer-append")
     peer.add_argument("--item", required=True, choices=("overseer",))
     peer.add_argument("--repo", required=True)
@@ -1297,7 +1607,7 @@ capabilities prints the static ssh host kind's one capability line
     # Exit 2 is the protocol's absent verb, and lane-mail reports the status
     # in host-peer-call's exit= field, so a setup failure of this present
     # verb exits 1.
-    inventory_error = 1 if args.verb == "peer-append" else 2
+    inventory_error = 1 if args.verb in ("peer-append", "validate") else 2
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
     if not inventory:
         notice("inventory-required", variable="LANE_HOST_SSH_INVENTORY")
@@ -1329,6 +1639,13 @@ capabilities prints the static ssh host kind's one capability line
                 continue
             state = remote(row, 'if test -f "$1/.git/lane-host-item"; then printf hosted; else printf available; fi', row["clone"])
             print(f"{row['repo']}/{row['item']}\t{state.stdout.decode()}\t-\t{row['target']}")
+        return
+    if args.verb == "validate":
+        units = [row for row in rows if row["item"] == VALIDATION_ROW]
+        if not units:
+            notice("item-unconfigured", item=VALIDATION_ROW)
+            raise SystemExit(1)
+        validate(units[0], args)
         return
     if args.item == "overseer" and args.verb not in ("peer-append", "cat", "touch"):
         notice("peer-only", verb=args.verb, item=args.item)

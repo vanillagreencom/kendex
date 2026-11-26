@@ -13,10 +13,10 @@
 //! user. A slot is a file named for its owner's pid and holding the start
 //! the kernel reports for that pid, so a pid the kernel gave to another
 //! process owns no slot; a slot whose owner is gone is removed by the next
-//! take. `create`, `wait`, `start`, `close`, `stop` and `stop-sandbox` take
-//! the long pool and every other verb but `capabilities` the short one, so
-//! long calls cannot starve the mail reads; `capabilities` reads no host
-//! state and takes none.
+//! take. `create`, `wait`, `start`, `close`, `stop`, `stop-sandbox` and
+//! `validate` take the long pool and every other verb but `capabilities` the
+//! short one, so long calls cannot starve the mail reads; `capabilities`
+//! reads no host state and takes none.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -49,6 +49,10 @@ pub const MAX_CALLS_KEY: &str = "ORCH_LANE_HOST_MAX_CALLS";
 pub const BUSY_WAIT_KEY: &str = "ORCH_LANE_HOST_BUSY_WAIT_SECS";
 pub const SHORT_MAX_CALLS_KEY: &str = "ORCH_LANE_HOST_SHORT_MAX_CALLS";
 pub const SHORT_BUSY_WAIT_KEY: &str = "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS";
+/// The provider a `validate entry --host` run goes to; unset, host runs are
+/// off. A host run's stop resolves its provider here, in the settings of the
+/// process that stops it, never from the lane-writable run folder.
+pub const VALIDATE_HOST_KEY: &str = "ORCH_VALIDATE_HOST";
 const DEFAULT_CAP: u32 = 4;
 const DEFAULT_WAIT_SECS: u64 = 30;
 /// The slot directories, one per pool, under the home.
@@ -69,7 +73,7 @@ enum Pool {
 
 /// Every verb the provider contract names (`schemas/lane-host.md`), with
 /// the pool it takes; `capabilities` takes none.
-const VERBS: [(&str, Option<Pool>); 19] = [
+const VERBS: [(&str, Option<Pool>); 20] = [
     ("capabilities", None),
     ("create", Some(Pool::Long)),
     ("wait", Some(Pool::Long)),
@@ -77,6 +81,7 @@ const VERBS: [(&str, Option<Pool>); 19] = [
     ("close", Some(Pool::Long)),
     ("stop", Some(Pool::Long)),
     ("stop-sandbox", Some(Pool::Long)),
+    ("validate", Some(Pool::Long)),
     ("read-many", Some(Pool::Short)),
     ("cat", Some(Pool::Short)),
     ("put", Some(Pool::Short)),
@@ -217,6 +222,7 @@ fn refused(key: &'static str, fields: Vec<(&'static str, String)>, exit: i32) ->
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dispatch {
     pub host: Option<String>,
+    validate_host: Option<String>,
     home: Option<PathBuf>,
     long: (Option<String>, Option<String>),
     short: (Option<String>, Option<String>),
@@ -227,6 +233,7 @@ impl Dispatch {
     pub fn read(get: impl Fn(&str) -> Option<String>) -> Dispatch {
         Dispatch {
             host: get(crate::settings::LANE_HOST_KEY),
+            validate_host: get(VALIDATE_HOST_KEY),
             home: get(agent_runtime::settings::HOME_KEY).map(PathBuf::from),
             long: (get(MAX_CALLS_KEY), get(BUSY_WAIT_KEY)),
             short: (get(SHORT_MAX_CALLS_KEY), get(SHORT_BUSY_WAIT_KEY)),
@@ -239,6 +246,11 @@ impl Dispatch {
             .as_deref()
             .filter(|h| !h.is_empty())
             .unwrap_or(LOCAL)
+    }
+
+    /// The provider host runs go to, `None` while host runs are off.
+    pub fn validate_host(&self) -> Option<&str> {
+        self.validate_host.as_deref().filter(|h| !h.is_empty())
     }
 
     /// The pool's cap and wait, or the setting that is outside its form: a
@@ -286,6 +298,16 @@ static INSTALLED: OnceLock<Dispatch> = OnceLock::new();
 /// binary's.
 pub fn install(dispatch: Dispatch) {
     let _ = INSTALLED.set(dispatch);
+}
+
+/// The provider host runs go to under this process's installed settings
+/// ([`Dispatch::validate_host`]), `None` where host runs are off or none
+/// were installed.
+pub fn installed_validate_host() -> Option<String> {
+    INSTALLED
+        .get()
+        .and_then(Dispatch::validate_host)
+        .map(str::to_owned)
 }
 
 /// The verb's static name and pool, or `verb-invalid`.
@@ -811,6 +833,7 @@ mod tests {
     fn dispatch(home: &Path, cap: &str) -> Dispatch {
         Dispatch {
             host: None,
+            validate_host: None,
             home: Some(home.to_path_buf()),
             long: (Some(cap.to_owned()), Some("0".to_owned())),
             short: (Some(cap.to_owned()), Some("0".to_owned())),

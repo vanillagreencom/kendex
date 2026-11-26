@@ -28,9 +28,11 @@ A dev start that resolves to ci prints validate-mode=ci local-checks=targeted-on
 
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
---record reads mode, selection, verdict, identity, scope, fallback and wall time. A run whose executor and command are gone with no sentinel reads verdict=FAILING state=lost there, as --wait reads it state=lost validate=FAILING; one a stop ended reads verdict=no-verdict, as --wait reads it state=done stopped validate=no-verdict. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
+--record reads mode, selection, verdict, identity, scope, fallback, wall time and the host of a --host run. A run whose executor and command are gone with no sentinel reads verdict=FAILING state=lost there, as --wait reads it state=lost validate=FAILING; one a stop ended reads verdict=no-verdict, as --wait reads it state=done stopped validate=no-verdict. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
 
-A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
+A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure.
+
+--host runs an admitted --run-id's executor on a second host at the lane's commit, through the provider ORCH_VALIDATE_HOST names (a path, as ORCH_LANE_HOST names one). With ORCH_VALIDATE_HOST unset, host runs are off: a --host start takes the local route a start without it takes, and no host step runs. The start is the admitted start: it resolves the proof here, records it on the admitted stage and writes the run directory, with host=KIND, the kind the host's capability line declares, and item=ITEM in its start record; --record prints the host. A worktree that holds anything its HEAD lacks, the commit the host runs (a change to a tracked file, or an untracked file the project does not ignore), refuses host-tree-uncommitted; a host whose capability line does not declare validate=verb refuses host-validate-undeclared, and an unreadable line host-capabilities-unreadable. The executor then asks the provider's validate verb, one long-pool call per step of the unit, waiting --poll seconds (default 30) outside any slot after a call that read the run running, found its tree's runtime still building or found the pool full, and hands the host's log, warning, timing and sentinel back into the run directory; the stage then closes and the end notice is sent as for a local run. The call holds the caller's process tree for the run's length, as --foreground does, and takes no --budget, --foreground, --fresh, --reproduce or --restack. A host the executor cannot read ends the run no-verdict with validate-host: host-call-failed in its log; a host run that ended with no sentinel fails with validate-host: host-run-lost. A stop of a host run (validate stop by its run directory, closed stage included, or a lane close's or a round recovery's stop of its worktree) asks the provider the stopping process's ORCH_VALIDATE_HOST names for validate --stop, whether or not the run's caller still runs, and refuses stop-failed with host-stop-failed until the host answers stopped. --stop reads its settings from the worktree, which the lane writes, so it asks no provider and refuses stop-failed with host-stop-failed for a host run its host may still hold. --stop --release-host first releases each ended such run of the worktree: host-released released=operator with the cause, which its log also names; a run with no sentinel keeps the refusal."
 )]
 pub struct Args {
     #[arg(long)]
@@ -71,6 +73,12 @@ pub struct Args {
     pub restack: bool,
     #[arg(long, hide = true)]
     pub restack_check: bool,
+    #[arg(long)]
+    pub host: bool,
+    #[arg(long)]
+    pub release_host: bool,
+    #[arg(long, hide = true)]
+    pub host_child: bool,
 }
 
 /// How long one start or `--wait` call follows a run: under the 600-second
@@ -143,6 +151,7 @@ fn arguments(args: &Args) -> Result<()> {
         args.last_pass,
         args.live,
         args.restack_check,
+        args.host_child,
     ];
     if actions.into_iter().filter(|v| *v).count() > 1 {
         return Err(files::unreadable("mode-conflict", "one action required"));
@@ -153,7 +162,7 @@ fn arguments(args: &Args) -> Result<()> {
     let queued = args.wait && args.run_id.is_some();
     let unused = if file_read && !queued && args.worktree.is_some() {
         Some("--worktree")
-    } else if (!file_read || queued) && args.run_dir.is_some() {
+    } else if (!file_read || queued) && !args.host_child && args.run_dir.is_some() {
         Some("--run-dir")
     } else if !(args.wait || (start && !args.foreground)) && args.budget.is_some() {
         Some("--budget")
@@ -176,6 +185,31 @@ fn arguments(args: &Args) -> Result<()> {
     };
     if let Some(option) = unused {
         return Err(files::unread_value("option-unused", "cause", option));
+    }
+    if args.release_host && !args.stop {
+        return Err(files::unread_value(
+            "option-unused",
+            "cause",
+            "--release-host",
+        ));
+    }
+    if args.host {
+        // A host run is an admitted start held in the caller's process
+        // tree, run fresh on the host's own executor.
+        let unused = [
+            (!start, "--host"),
+            (args.foreground, "--foreground"),
+            (args.fresh, "--fresh"),
+            (args.reproduce, "--reproduce"),
+            (args.restack, "--restack"),
+            (args.budget.is_some(), "--budget"),
+        ];
+        if let Some((_, option)) = unused.into_iter().find(|(set, _)| *set) {
+            return Err(files::unread_value("option-unused", "cause", option));
+        }
+        if args.run_id.is_none() {
+            return Err(files::unread_value("required", "cause", "--run-id"));
+        }
     }
     if let Some(id) = &args.run_id {
         let bytes = id.as_bytes();
@@ -314,6 +348,20 @@ fn entry(
         return Ok(TextReply::new(text, exit));
     }
     let worktree = worktree()?;
+    if args.host_child {
+        // A host's half of a run the lane's start sent it: the copy at
+        // --run-dir runs in this tree, under this host's bound.
+        let dir = dir()?;
+        let settings = resolve_at(&worktree, flags)?;
+        let memory = super::memory_bound(&settings.validate)?;
+        run::host_copy(dir, &worktree, &memory)?;
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        launch_child(dir, name, &memory)?;
+        return Ok(TextReply::new(
+            format!("state=started run-dir={}", dir.display()),
+            0,
+        ));
+    }
     if args.live {
         return Ok(match files::live(&worktree)? {
             Some((dir, pid)) => TextReply::new(format!("run-dir={} pid={pid}", dir.display()), 0),
@@ -335,6 +383,11 @@ fn entry(
     }
     let settings = resolve_at(&worktree, flags)?;
     if args.stop {
+        // No dispatch is installed: these settings are the worktree's, which
+        // the lane writes, so they never name a provider this stop runs.
+        if args.release_host {
+            run::release_ended_hosts(&worktree).map_err(unanswered_refusal)?;
+        }
         let reach = crate::effects::fleet_mailbox(&settings);
         let run::WorktreeStop { units, groups } =
             run::stop_worktree(&settings, &reach, &worktree, None, env, locking)
@@ -395,18 +448,47 @@ fn entry(
     req.caller = if args.restack { "restack" } else { "dev" }.into();
     if let Some(id) = &args.run_id {
         req.run_dir = Some(super::run_dir_of(&worktree, id).display().to_string());
-        let started = super::start(&settings, &req, env, locking)?;
+        // Host runs are off unless the settings name their provider: a
+        // `--host` start then takes the local route, and no host step runs.
+        let host = settings
+            .dispatch
+            .validate_host()
+            .filter(|_| args.host)
+            .map(str::to_owned);
+        if host.is_some() {
+            // The entry loads its own settings, apart from the binary's
+            // other verbs: a provider call takes its pool's slot only once
+            // they are installed.
+            crate::provider::install(settings.dispatch.clone());
+        }
+        let started = super::start_on(&settings, &req, host.as_deref(), env, locking)?;
         write_started(&started.started_line, started.mode, req.restack)?;
-        if req.foreground && started.launched {
-            run::run(
-                &settings,
-                &crate::effects::fleet_mailbox(&settings),
-                &started.item,
-                &started.round_id,
-                &started.run_dir,
-                env,
-                locking,
-            )?;
+        let reach = crate::effects::fleet_mailbox(&settings);
+        match &host {
+            Some(host) if started.launched => {
+                run::run_on(
+                    &settings,
+                    &reach,
+                    &started.item,
+                    &started.round_id,
+                    &started.run_dir,
+                    env,
+                    locking,
+                    &|dir| run::execute_on_host(dir, host, &started.item, &SystemClock),
+                )?;
+            }
+            None if req.foreground && started.launched => {
+                run::run(
+                    &settings,
+                    &reach,
+                    &started.item,
+                    &started.round_id,
+                    &started.run_dir,
+                    env,
+                    locking,
+                )?;
+            }
+            Some(_) | None => {}
         }
         // An attached run has ended by now; a detached one is followed for
         // one call's budget.
@@ -443,26 +525,11 @@ fn entry(
                 env.now_secs,
                 locking,
                 &memory,
+                None,
             )
             .map_err(|e| files::unreadable("run-dir", e))?;
             if resolved.ran_nothing.is_none() && !req.foreground {
-                let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
-                let exe = exe.display().to_string();
-                let rd = run_dir.display().to_string();
-                let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
-                let launch = agent_runtime::effects::job::launch_recorded(
-                    "validate",
-                    &id,
-                    &run_dir.join("runner"),
-                    &argv,
-                    Some(&run_dir.join("job.err")),
-                    agent_runtime::effects::job::Bounds {
-                        memory: memory.bytes(),
-                        outlives_oom: false,
-                    },
-                    &SystemClock,
-                );
-                super::launch_refusal(run_dir.display().to_string(), launch.answer())?;
+                launch_child(&run_dir, &id, &memory)?;
             }
             if req.foreground {
                 fs::write(
@@ -490,4 +557,30 @@ fn entry(
     }
     let (text, exit) = files::wait(&run_dir.0, budget, &SystemClock)?;
     Ok(TextReply::new(text, exit))
+}
+
+/// Launch the detached executor of the run directory `run_dir` under the
+/// job launcher, its record at `runner`, keyed `id`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the detached executor's one launch, through the shared recorded launcher"
+)]
+fn launch_child(run_dir: &Path, id: &str, memory: &super::MemoryBound) -> Result<()> {
+    let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
+    let exe = exe.display().to_string();
+    let rd = run_dir.display().to_string();
+    let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
+    let launch = agent_runtime::effects::job::launch_recorded(
+        "validate",
+        id,
+        &run_dir.join("runner"),
+        &argv,
+        Some(&run_dir.join("job.err")),
+        agent_runtime::effects::job::Bounds {
+            memory: memory.bytes(),
+            outlives_oom: false,
+        },
+        &SystemClock,
+    );
+    super::launch_refusal(rd, launch.answer())
 }

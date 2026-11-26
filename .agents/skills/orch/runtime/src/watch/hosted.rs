@@ -150,6 +150,8 @@ pub enum PaneKind {
 /// (`schemas/lane-host.md` § Host kinds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
+    /// The host's kind (`kind=`), the word a host run's start records.
+    pub kind: &'static str,
     pub files: Files,
     pub status: Status,
     pub pane: PaneKind,
@@ -165,6 +167,16 @@ pub struct Capabilities {
     pub park: ParkKind,
     /// The credit a kind's lane spends (`pool=`).
     pub pool: CreditPool,
+    /// Whether the kind's provider runs a validation unit (`validate=`).
+    pub validate: UnitKind,
+}
+
+/// Whether a kind's provider runs a validation unit on its host
+/// (`validate=`): `Verb` serves the `validate` verb, `None` names no key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitKind {
+    Verb,
+    None,
 }
 
 /// The credit a kind's lane spends (`pool=`): an account's plan, or the
@@ -239,7 +251,8 @@ impl Capabilities {
 
     /// One tab-separated `key=value` line holding every key of
     /// [`CAPABILITY_SETS`] once, with an optional `peer-mail=verb` for the
-    /// mailbox sender. Missing required keys, repeated or unknown keys,
+    /// mailbox sender and an optional `validate=verb` for a host that runs
+    /// validation units. Missing required keys, repeated or unknown keys,
     /// and invalid values are refused `capability-invalid key=KEY value=VALUE`.
     pub fn parse(line: &str) -> Result<Capabilities, String> {
         let line = line.strip_suffix('\n').unwrap_or(line);
@@ -250,7 +263,7 @@ impl Capabilities {
         for field in line.split('\t') {
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
             let allowed = match key {
-                "peer-mail" => value == "verb",
+                "peer-mail" | "validate" => value == "verb",
                 _ => CAPABILITY_SETS
                     .iter()
                     .find(|(k, _)| *k == key)
@@ -265,6 +278,12 @@ impl Capabilities {
         }
         let of = |key: &str| given.get(key).copied().unwrap_or("");
         Ok(Capabilities {
+            kind: CAPABILITY_SETS[0]
+                .1
+                .iter()
+                .find(|kind| **kind == of("kind"))
+                .copied()
+                .unwrap_or(""),
             files: match of("files") {
                 "local" => Files::Local,
                 "verb" => Files::Verb,
@@ -298,6 +317,10 @@ impl Capabilities {
             pool: match of("pool") {
                 "plan" => CreditPool::Plan,
                 _ => CreditPool::CloudCredit,
+            },
+            validate: match of("validate") {
+                "verb" => UnitKind::Verb,
+                _ => UnitKind::None,
             },
         })
     }
@@ -2863,6 +2886,7 @@ mod tests {
         assert_eq!(
             Capabilities::parse(&format!("{SSH}\n")),
             Ok(Capabilities {
+                kind: "ssh",
                 files: Files::Verb,
                 status: Status::Verb,
                 pane: PaneKind::Local,
@@ -2870,7 +2894,12 @@ mod tests {
                 stop: Some(StopKind::Verb),
                 park: ParkKind::None,
                 pool: CreditPool::Plan,
+                validate: UnitKind::None,
             })
+        );
+        assert_eq!(
+            Capabilities::parse(&format!("{SSH}\tvalidate=verb")).map(|c| c.validate),
+            Ok(UnitKind::Verb)
         );
         let refused = |line: String| Capabilities::parse(&line).unwrap_err();
         for (line, key) in [
@@ -2889,6 +2918,14 @@ mod tests {
             (
                 format!("{SSH}\tkind=ssh"),
                 "capability-invalid key=kind value=ssh",
+            ),
+            (
+                format!("{SSH}\tvalidate=none"),
+                "capability-invalid key=validate value=none",
+            ),
+            (
+                format!("{SSH}\tvalidate=verb\tvalidate=verb"),
+                "capability-invalid key=validate value=verb",
             ),
             (
                 format!("{SSH}\nkind=ssh"),

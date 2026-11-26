@@ -187,6 +187,7 @@ See [provider.rs](../runtime/src/provider.rs) for provider call limits and waits
 | `ORCH_LANE_PREFERENCE` | The `harness[@host]:model:effort` entries a lane launch walks (`orch-runtime lane walk`). |
 | `ORCH_LANE_OUTPUT` | `quiet` or `normal`: what a lane prints in its pane, stated in its brief. |
 | `ORCH_LANE_HOST` | The lane host: `local`, `claude-cloud` or a provider executable: [lane-host.md](../schemas/lane-host.md) § Host kinds. |
+| `ORCH_VALIDATE_HOST` | The host a `validate entry --host` run goes to, in `ORCH_LANE_HOST`'s forms: [lane-host.md](../schemas/lane-host.md) § Host selection. |
 | `ORCH_LANE_HOST_MAX_CALLS`, `ORCH_LANE_HOST_BUSY_WAIT_SECS` | The provider's long-call cap per home, and the seconds to wait at it. |
 | `ORCH_LANE_HOST_SHORT_MAX_CALLS`, `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | The independent short-call cap and wait, so mailbox reads run while long calls wait. |
 | `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` | Seconds the provider's `accounts` verb may take. `0` asks for no bound. |
@@ -205,6 +206,9 @@ The keys' rules, in the table's order:
 
 - `ORCH_LANE_PREFERENCE`: unset, a launch takes the model it names.
 - `ORCH_LANE_PREFERENCE`: the grammar is the example's § Fleet.
+- `ORCH_VALIDATE_HOST`: unset, host runs are off. A `--host` start takes the local route, and no host step runs.
+- `ORCH_VALIDATE_HOST`: a stop of a host run by its directory (`validate stop --run-dir`), and a lane close's or a round recovery's stop of its worktree, read it from the stopping process's settings, never from the run folder.
+- `ORCH_VALIDATE_HOST`: `validate entry --stop` never reads it, since that stop's settings are the worktree's, which the lane writes.
 - `ORCH_LANE_CLOUD_REPOS`: a `cloud-session` pick admits an account on it.
 - `ORCH_LANE_WRITABLE`: it is read from the overseer's settings alone, never the lane's tree.
 - `ORCH_LANE_WRITABLE`: a fleet whose `origin` is a local path or a `file://` remote names that repository here, or its lanes cannot push.
