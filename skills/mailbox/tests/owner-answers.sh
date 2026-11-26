@@ -221,7 +221,11 @@ esac
         comment = f'relay-{issue}'
         (root / 'comments').write_text(json.dumps({issue: [
             dict(id=f'question-{issue}', body='Question', user_email='bot@example.test', created_at='2026-01-05T00:00:00Z'),
-            dict(id=comment, body='ship', user_email='owner@example.test', created_at='2026-01-06T00:00:00Z')]}))
+            dict(id=comment, body='ship', user_email='owner@example.test', created_at='2026-01-06T00:00:00.123Z'),
+            # Written after the close, threaded or not: no route took either to the ask.
+            dict(id=f'late-{issue}', body='later', user_email='owner@example.test', created_at='2100-01-01T00:00:00.500Z'),
+            dict(id=f'late-reply-{issue}', body='later', user_email='owner@example.test',
+                 parent_id=f'question-{issue}', created_at='2100-01-01T00:00:01.500Z')]}))
         if pass_first:
             call('owner-answers', '--item', 'overseer')
         if switch:

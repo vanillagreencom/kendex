@@ -2712,9 +2712,12 @@ owner_close_open() { # ASK_ID
 # delivery rule gave the ask while it stood open is marked, unless a pass
 # delivered it already, or the asks still open take it now and a pass will
 # deliver it, as an ask that replaced this one takes a reply under its
-# question. The mark is advisory: a read that fails names each item it
-# leaves unmarked, and the close stands.
-owner_close_seen() { # ASK_ID
+# question. A comment written in or after the close's second never reached
+# the ask: CLOSED_AT is the close envelope's `at`, whole seconds, and Linear's
+# times carry fractions, which are dropped before the two compare. A time
+# that does not parse marks nothing. The mark is advisory: a read that fails
+# names each item it leaves unmarked, and the close stands.
+owner_close_seen() { # ASK_ID CLOSED_AT
   local ref issue id cause="" ids=()
   while IFS= read -r ref; do ids+=("$ref"); done <"$WORK_DIR/close-refs"
   [[ ${#ids[@]} -gt 0 ]] || return 0
@@ -2728,11 +2731,15 @@ owner_close_seen() { # ASK_ID
     ! owner_answer_rows "$WORK_DIR/close-comments" "$WORK_DIR/close-asks-after" >"$WORK_DIR/close-rows-after" 2>/dev/null; then
     cause=comments-format
   # A comment a pass delivered carries the delivery id that pass gave it.
-  elif ! jq -rn --arg ask "$1" --slurpfile open "$WORK_DIR/close-rows" --slurpfile after "$WORK_DIR/close-rows-after" \
-      --slurpfile mail "$WORK_DIR/close-events" '
-      [$after[].comment.id] as $taken
+  elif ! jq -rn --arg ask "$1" --arg closed "$2" --slurpfile open "$WORK_DIR/close-rows" \
+      --slurpfile after "$WORK_DIR/close-rows-after" --slurpfile mail "$WORK_DIR/close-events" "$MAILBOX_TIME_JQ"'
+      ($closed | at_epoch) as $close
+      | [$after[].comment.id] as $taken
       | [$mail[] | select(.box == "to-lane") | .delivery_id | strings] as $delivered
-      | $open[] | select(.ask == $ask) | .comment.id as $id
+      | $open[] | select(.ask == $ask)
+      | select((.comment.created_at | sub("\\.[0-9]+Z$"; "Z") | at_epoch) as $at
+          | $close != null and $at != null and $at < $close)
+      | .comment.id as $id
       | select(($id | IN($taken[])) or (("linear:" + $id) | IN($delivered[])) | not)
       | "\(.issue) \($id)"' >"$WORK_DIR/close-answers" 2>/dev/null; then
     cause=mail-unread
@@ -3514,7 +3521,8 @@ case "$VERB" in
     CLOSE_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
-      owner_close_seen "$MSGID"
+      CLOSED_AT="$(jq -r '.at' <<<"$LINE")" || CLOSED_AT=""
+      owner_close_seen "$MSGID" "$CLOSED_AT"
     else
       [ ! -e "$WORK_DIR/reserved.earlier" ] || refuse ask-reserved "$MSGID"
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||
