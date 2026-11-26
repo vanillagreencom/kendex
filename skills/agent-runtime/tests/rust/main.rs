@@ -2077,12 +2077,12 @@ fn rows_verdict_reads_each_word_of_both_tables_from_a_file_and_from_stdin() {
         (
             "lane",
             r#"{"harness":"claude","event":"StopFailure","error":"rate_limit"}"#.into(),
-            live(json!({"verdict": "walled"})),
+            live(json!({"verdict": "walled", "kind": "usage"})),
         ),
         (
             "lane",
             r#"{"harness":"claude","event":"StopFailure","error":"authentication_failed"}"#.into(),
-            live(json!({"verdict": "walled"})),
+            live(json!({"verdict": "walled", "kind": "auth"})),
         ),
         (
             "lane",
@@ -2107,7 +2107,7 @@ fn rows_verdict_reads_each_word_of_both_tables_from_a_file_and_from_stdin() {
         (
             "lane",
             r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"429 Usage limit reached for this model"}"#.into(),
-            live(json!({"verdict": "walled"})),
+            live(json!({"verdict": "walled", "kind": "usage"})),
         ),
         (
             "lane",

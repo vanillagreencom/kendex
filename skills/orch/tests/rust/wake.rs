@@ -1224,10 +1224,11 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
 
 /// A provider stop's resume, by each word agent-runtime names a provider
 /// stop: Claude Code's `server_error` for an overload, a broken stream or a
-/// dropped connection, and its `invalid_request` for a safety flag.
+/// dropped connection, and `refusal`, the rows reader's word for its safety
+/// refusal.
 #[test]
 fn a_controller_provider_resume_is_delivered_once_to_its_own_pane() {
-    for cause in ["server_error", "invalid_request"] {
+    for cause in ["server_error", "refusal"] {
         let fleet = Fleet::new();
         let pane = fleet.open("overseer", "claude", "controller", &[]);
         fleet.server.await_composer(&pane.id);

@@ -544,6 +544,19 @@ pub fn last_failure(harness: Harness, file: &Path) -> Reading<Option<Failure>> {
     Reading::Live(last)
 }
 
+/// The word of a Codex `codex_error_info`: a unit variant is its name, a
+/// variant that carries data, such as `{"http_connection_failed":
+/// {"http_status_code": 502}}`, is an object with that name as its one key.
+fn codex_error_word(info: Option<&Value>) -> Option<String> {
+    match info? {
+        Value::String(word) => Some(word.clone()),
+        Value::Object(map) if map.len() == 1 => map.keys().next().cloned(),
+        Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {
+            None
+        }
+    }
+}
+
 /// A row that opens a turn (`Some(None)`) or ends one on a failure
 /// (`Some(Some)`); `None` for a row that does neither.
 fn turn_end(harness: Harness, row: &Value) -> Option<Option<Failure>> {
@@ -565,7 +578,7 @@ fn turn_end(harness: Harness, row: &Value) -> Option<Option<Failure>> {
                             .get("error")
                             .filter(|e| !e.is_null())
                             .map(|e| Failure {
-                                error: text(e.get("codex_error_info")),
+                                error: codex_error_word(e.get("codex_error_info")),
                                 status: None,
                                 message: text(e.get("message")).unwrap_or_default(),
                                 at,

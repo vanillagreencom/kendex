@@ -482,13 +482,9 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             Reading::Unreadable { cause } => Reading::Unreadable { cause },
         };
         match verdict {
-            Reading::Live((row, LaneVerdict::Walled)) => {
+            Reading::Live((_, LaneVerdict::Walled { kind })) => {
                 return LaneState::Walled {
-                    kind: if auth_stop_failure(row) {
-                        WallKind::Auth
-                    } else {
-                        WallKind::Usage
-                    },
+                    kind,
                     banner: String::new(),
                     source: WallSource::Rows,
                 };
@@ -523,15 +519,6 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         };
     }
     screen_state
-}
-
-fn auth_stop_failure(row: &rows::Row) -> bool {
-    matches!(
-        rows::judge_session(row),
-        rows::SessionVerdict::Walled {
-            kind: WallKind::Auth
-        }
-    )
 }
 
 /// One pass's inputs beyond the readers.
@@ -596,7 +583,15 @@ impl Observed<'_> {
         self.row
             .as_ref()
             .zip(self.lane.session_rows_at_launch)
-            .is_some_and(|(row, at)| row.position > at && auth_stop_failure(row))
+            .is_some_and(|(row, at)| {
+                row.position > at
+                    && matches!(
+                        rows::judge_lane(row),
+                        Reading::Live(LaneVerdict::Walled {
+                            kind: WallKind::Auth
+                        })
+                    )
+            })
     }
 }
 

@@ -5,8 +5,8 @@
 //! and Copilot's `session.error` type and status, each recorded from a real
 //! or injected stop under the integration tests' `fixtures/stops/`. This
 //! module holds the one table of those words. The row and record readers
-//! (`crate::rows`) judge with it, and a caller that kept a stop's word reads
-//! the word's kind here, never from a list of its own.
+//! (`crate::rows`) judge with it, and the fleet watch's continuation reads a
+//! kept word's kind here.
 //!
 //! [`action`] turns a kind, the stop's age, the session's kind and what the
 //! account walk found into the one thing to do next. The caller supplies the
@@ -19,7 +19,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::harness::Harness;
-use crate::observe::{IdleTurn, PaneObservation, State, WallKind};
+use crate::observe::WallKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -37,25 +37,30 @@ pub enum Kind {
     Exited,
 }
 
-/// Each harness's words for a failed turn and the kind each names. A word
-/// absent here names no stop: the turn ended for a reason the overseer
-/// reads from its idle line.
+/// Each harness's words for a failed turn and the kind each names. A
+/// Claude or Pi word absent here names no stop: the turn ended for a reason
+/// the overseer reads from its idle line.
 ///
 /// - Claude Code's StopFailure `error`: `server_error` for a 529, a broken
-///   stream and a dropped connection alike, `invalid_request` for a safety
-///   refusal and `billing_error` for "Credit balance is too low"
-///   (`claude-*.json`).
+///   stream and a dropped connection alike, and `billing_error` for "Credit
+///   balance is too low" (`claude-*.json`). Its safety refusal shares
+///   `invalid_request` with deterministic refusals such as a prompt too
+///   long, so the rows reader names it `refusal` by its message
+///   ([`claude_refusal`]).
 /// - Codex's `codex_error_info`: `server_overloaded`, `other` for a broken
 ///   stream or a dropped connection, `invalid_prompt` for a flagged prompt,
 ///   and `usage_limit_exceeded` for a limit and for an out-of-credit
-///   workspace alike (`codex-*.jsonl`).
+///   workspace alike (`codex-*.jsonl`). The limit and sign-in words are the
+///   variants Codex 0.172.0's binary names beside them.
 /// - Copilot's `session.error` `errorType`: `query` for every failure but
-///   a 429, which is `rate_limit` (`copilot-*.jsonl`).
+///   a 429, which is `rate_limit` (`copilot-*.jsonl`). Its sign-in and quota
+///   types are the categories Copilot CLI 1.0.116's SDK names
+///   (`copilot-sdk/generated/session-events.d.ts`, `ErrorData.errorType`).
 /// - `api-error`: the watch's word for a Codex or Copilot turn whose pane
 ///   shows the provider's error (`crate::observe::IdleTurn::ApiError`).
 /// - Pi's `error`: the carrier's StopFailure and a lane Stop row's
 ///   `stop_reason`. Pi's limit and sign-in are read from the message
-///   instead (`crate::rows::judge_session`).
+///   instead (`crate::rows`).
 const WORDS: &[(Harness, &str, Kind)] = &[
     (Harness::Claude, "rate_limit", Kind::Usage),
     (Harness::Claude, "billing_error", Kind::Usage),
@@ -63,18 +68,49 @@ const WORDS: &[(Harness, &str, Kind)] = &[
     (Harness::Claude, "oauth_org_not_allowed", Kind::Auth),
     (Harness::Claude, "account_on_hold", Kind::Auth),
     (Harness::Claude, "server_error", Kind::Provider),
-    (Harness::Claude, "invalid_request", Kind::Provider),
+    (Harness::Claude, REFUSAL, Kind::Provider),
     (Harness::Codex, "usage_limit_exceeded", Kind::Usage),
+    (Harness::Codex, "session_budget_exceeded", Kind::Usage),
+    (Harness::Codex, "rate_limit_exceeded", Kind::Usage),
+    (Harness::Codex, "api_key_spend_limit_exceeded", Kind::Usage),
+    (Harness::Codex, "project_spend_limit_exceeded", Kind::Usage),
+    (
+        Harness::Codex,
+        "organization_spend_limit_exceeded",
+        Kind::Usage,
+    ),
+    (Harness::Codex, "unauthorized", Kind::Auth),
     (Harness::Codex, "server_overloaded", Kind::Provider),
     (Harness::Codex, "other", Kind::Provider),
     (Harness::Codex, "invalid_prompt", Kind::Provider),
     (Harness::Codex, "api-error", Kind::Provider),
     (Harness::Copilot, "rate_limit", Kind::Usage),
+    (Harness::Copilot, "quota", Kind::Usage),
+    (Harness::Copilot, "session_limits", Kind::Usage),
+    (Harness::Copilot, "authentication", Kind::Auth),
+    (Harness::Copilot, "authorization", Kind::Auth),
     (Harness::Copilot, "query", Kind::Provider),
     (Harness::Copilot, "api-error", Kind::Provider),
     (Harness::Pi, "error", Kind::Provider),
 ];
 
+/// The rows reader's word for Claude Code's safety refusal.
+pub const REFUSAL: &str = "refusal";
+
+/// The usage-policy link every Claude Code 2.1.332 safety refusal carries,
+/// "Learn more: …" under its "can't help with this" (`claude-safety.json`)
+/// and in its "safeguards flagged this message (…)" form. A prompt too long
+/// and the other `invalid_request` refusals carry none.
+const POLICY_LINK: &str = "https://www.anthropic.com/legal/aup";
+
+/// Whether a Claude Code StopFailure with this `error` and message is its
+/// safety refusal.
+pub fn claude_refusal(error: Option<&str>, message: &str) -> bool {
+    error == Some("invalid_request") && message.contains(POLICY_LINK)
+}
+
+/// Copilot's HTTP status for a refused sign-in.
+const COPILOT_SIGNED_OUT: u16 = 401;
 /// Copilot's HTTP status for a spent pool, which it types `query` like any
 /// other failure (`copilot-quota.jsonl`).
 const COPILOT_SPENT: u16 = 402;
@@ -87,45 +123,41 @@ pub fn of_cause(harness: Harness, cause: &str) -> Option<Kind> {
         .map(|(_, _, kind)| *kind)
 }
 
-/// The kind of a failed turn that a record states with its word and its HTTP
-/// status. Copilot types a spent pool as an ordinary failure and gives its
-/// status. Every other harness's word settles the kind alone.
+/// The kind of a failed turn that a row states with its word and its HTTP
+/// status. Copilot types a refused sign-in and a spent pool by status. A
+/// Codex or Copilot failure row comes only from the turn its own record
+/// shows failed, so a word the table does not list there is still a
+/// provider stop. A Claude or Pi word settles the kind alone.
 pub fn of_failure(harness: Harness, cause: Option<&str>, status: Option<u16>) -> Option<Kind> {
-    if harness == Harness::Copilot && status == Some(COPILOT_SPENT) {
-        return Some(Kind::Usage);
+    match (harness, status) {
+        (Harness::Copilot, Some(COPILOT_SIGNED_OUT)) => return Some(Kind::Auth),
+        (Harness::Copilot, Some(COPILOT_SPENT)) => return Some(Kind::Usage),
+        (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => {}
     }
-    cause.and_then(|cause| of_cause(harness, cause))
+    let named = cause.and_then(|cause| of_cause(harness, cause));
+    match harness {
+        Harness::Codex | Harness::Copilot => Some(named.unwrap_or(Kind::Provider)),
+        Harness::Claude | Harness::Pi => named,
+    }
 }
 
-/// The kind of stop a pane shows: a wall's kind, a harness gone from its
-/// pane, or an idle turn the provider refused (`IdleTurn::ApiError`, Codex's
-/// capacity refusal). Any other screen names none.
-pub fn of_pane(pane: &PaneObservation) -> Option<Kind> {
-    match (&pane.state, pane.idle) {
-        (
-            State::Walled {
-                kind: WallKind::Usage,
-                ..
-            },
-            _,
-        ) => Some(Kind::Usage),
-        (
-            State::Walled {
-                kind: WallKind::Auth,
-                ..
-            },
-            _,
-        ) => Some(Kind::Auth),
-        (State::Exited, _) => Some(Kind::Exited),
-        (State::Idle, Some(IdleTurn::ApiError | IdleTurn::Capacity)) => Some(Kind::Provider),
-        (
-            State::Idle
-            | State::Working
-            | State::Asking { .. }
-            | State::RateLimitSwitch
-            | State::Unjudged { .. },
-            _,
-        ) => None,
+impl From<WallKind> for Kind {
+    fn from(wall: WallKind) -> Kind {
+        match wall {
+            WallKind::Usage => Kind::Usage,
+            WallKind::Auth => Kind::Auth,
+        }
+    }
+}
+
+impl Kind {
+    /// The wall this kind is: an account's limit or its sign-in.
+    pub fn wall(self) -> Option<WallKind> {
+        match self {
+            Kind::Usage => Some(WallKind::Usage),
+            Kind::Auth => Some(WallKind::Auth),
+            Kind::Provider | Kind::Exited => None,
+        }
     }
 }
 
@@ -193,8 +225,9 @@ pub const PROVIDER_PATIENCE: Duration = Duration::from_secs(30 * 60);
 
 /// The action for a stop of `kind` first read `age` ago on a `session`,
 /// over the walk's `ground`. A session stops for good, and its owner is
-/// told, only when no entry in the walk has room and none has a known
-/// reset. A provider stop never ends so: its own account still has room.
+/// told, only when no entry in the walk has room and, for a limit or an
+/// exited harness, none has a known reset. An ended sign-in never waits for
+/// a reset. A provider stop never ends so: its own account still has room.
 pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Action {
     let move_or_wait = |tell: Option<Owner>| {
         if ground.room {
@@ -209,7 +242,13 @@ pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Ac
     };
     match kind {
         Kind::Usage => move_or_wait(None),
-        Kind::Auth => move_or_wait(Some(session.owner())),
+        // A reset does not repair a sign-in.
+        Kind::Auth if ground.room => Action::MoveAccount {
+            tell: Some(session.owner()),
+        },
+        Kind::Auth => Action::Notify {
+            to: session.owner(),
+        },
         Kind::Provider if age < PROVIDER_PATIENCE || !ground.room => Action::Resume,
         Kind::Provider => Action::MoveProvider,
         Kind::Exited if ground.own_room => Action::Resume,
@@ -275,6 +314,16 @@ mod tests {
                 Session::Jarvis,
                 ground(false, false, false),
                 Action::Notify { to: Owner::Channel },
+            ),
+            // A reset does not repair a sign-in: no other account notifies.
+            (
+                Kind::Auth,
+                MINUTE,
+                Session::Worker,
+                ground(false, false, true),
+                Action::Notify {
+                    to: Owner::Overseer,
+                },
             ),
             // An exited harness starts again on its own account with room.
             (

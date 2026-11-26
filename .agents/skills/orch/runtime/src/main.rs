@@ -966,8 +966,9 @@ enum WatchOp {
         file: PathBuf,
         /// `codex` or `copilot`: `--file` is that harness's own session
         /// record, a Codex rollout or a file in a Copilot session's
-        /// directory, whose last failed turn is judged as its row. Those
-        /// harnesses write no failure row of their own.
+        /// directory, whose last turn, where it ended on a failure, is
+        /// judged as its row. Those harnesses write no failure row of their
+        /// own.
         #[arg(long)]
         harness: Option<String>,
     },

@@ -58,7 +58,7 @@ The loop adds `EVENT owner-unanswered` for a delivered owner message that no rep
 Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-env.sh wall HOME` names the bound controller and its rows file.
 
 - `orch-runtime watch wall --file PATH` reads agent-runtime's session verdict of the rows its hooks write for the controller's pane. The usage verdict carries the window and reset read from the failure row.
-- The verdict reads usage walls on Claude Code and Pi, and auth walls on Claude Code alone. A controller on another harness never reads walled, and this check tells nobody about it.
+- The verdict reads usage walls on Claude Code and Pi, Claude Code's `billing_error` (spent credit) among them, and auth walls on Claude Code and Pi, a failed Pi turn whose message opens with a 401 among them. A controller on another harness never reads walled, and this check tells nobody about it.
 - It reads the live controller from the fleet record, including a session that has written no context stamp. A quiet session that is not walled starts nothing.
 - For an authentication wall, it runs `jarvis-session succeed --home HOME --account-walled` once per episode. The owner notice follows the attempt and carries its outcome. If the loop ends with the predecessor, the next loop sends the owed notice once a controller is bound.
 - For a usage wall, it sends the owner a notice as soon as it reads that stop. The notice names the session, account, usage window and reset time where the row supplies them.
