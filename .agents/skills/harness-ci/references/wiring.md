@@ -412,6 +412,14 @@ if: >-
   needs.changes.outputs.queue_deferred != 'true') || needs.changes.outputs.lane_scan != 'false'))) }}
 ```
 
+**Workflow shape**
+
+- A top-level `env:` holds literal values. The reader splits each value at blanks, `=`, `:`, `,` and `;`, and reads each word as a path every run step reads from its working directory. A word starting with `/` or `~` names a path outside the checkout.
+- An `env:` value with a `${{ }}` expression, or a word with any character outside letters, digits, `_`, `.`, `/`, `+` and `-`, leaves the roster unreadable with `cause=opaque-workflow-env`.
+- A top-level `defaults:` leaves the roster unreadable with `cause=opaque-workflow-defaults`.
+- A gated job uses only the job keys, step keys and `actions/checkout` inputs `job_reads` in `lane-reach.py` accepts. Any other key or action, a job or step `env:` among them, keeps that lane eligible.
+- A lane the declaration names that gates no job reads `false` with `cause=unreached`. Where the reader keeps every lane, as on a shared input or a change to the workflow, it reads `true`.
+
 **Command evidence**
 
 - Run a literal `cargo test`, `cargo check`, `cargo clippy` or `cargo build`. The reader supports `-p NAME`, `--workspace` and the literal flags in `lane-reach.py`. It asks Cargo for offline package metadata and follows local dependencies and literal Rust includes. A build script, proc macro, external dependency or opaque input keeps the lane.

@@ -722,7 +722,31 @@ def literal_job_dispatches(job):
     return sorted(commands)
 
 
-def job_reads(evidence, job):
+def workflow_env_words(env):
+    # Every step inherits the workflow env, and a tool can read a path a value
+    # names, as bash does BASH_ENV, so each word is a path input of each step.
+    # A word starting at / or ~ names a path outside the checkout.
+    require(isinstance(env, dict) and all(isinstance(value, str) for value in env.values()),
+            "opaque-workflow-env")
+    found = [word for value in env.values() for word in re.split(r"[\s=:,;]+", value)
+             if word and not word.startswith(("/", "~"))]
+    require(all(literal(word) for word in found), "opaque-workflow-env")
+    return found
+
+
+def declared_lanes(work):
+    # ci-lanes.sh is the one reader of the lane file. change-class leaves the
+    # base copy here, emptied where the base declares no lane.
+    declaration = work / "derived-ci-lanes.conf"
+    if not declaration.read_text():
+        return []
+    script = '. "$1" && ci_lanes_read "$2" && printf "%s\\n" "${lane_names[@]}"'
+    listed = command(["bash", "-c", script, "ci-lanes", str(Path(__file__).with_name("ci-lanes.sh")),
+                      str(declaration)], work)
+    return listed.decode().splitlines()
+
+
+def job_reads(evidence, job, env_words):
     require(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                         "permissions", "steps", "defaults"}, "opaque-job")
     ordinary = set()
@@ -748,6 +772,10 @@ def job_reads(evidence, job):
             # A checkout materializes directories through their tracked entries.
             require(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"),
                     "working-directory-unproved")
+        for word in env_words:
+            path, passed = evidence.checkout_path(directory, word)
+            ordinary.update({path} | passed)
+            ordinary.update(name for name in evidence.changed if under(name, path))
         for line in step["run"].splitlines():
             args = words(line)
             if not args:
@@ -763,7 +791,7 @@ def job_reads(evidence, job):
     return ordinary, readers
 
 
-def derived(evidence, exceptions, settings):
+def derived(evidence, exceptions, settings, declared):
     path, document, classifiers = workflow(evidence)
     jobs = document["jobs"]
     if not classifiers:
@@ -771,10 +799,13 @@ def derived(evidence, exceptions, settings):
     advertised = any(publishes_lanes(jobs[name]) for name, _ in classifiers)
     if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
-    require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
+    require("defaults" not in document, "opaque-workflow-defaults")
+    env_words = workflow_env_words(document.get("env", {}))
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
+    # A declared lane that gates no job selects nothing in this workflow.
+    lanes = {*lane_by_job.values(), *declared}
 
     def keep_prerequisites(outcomes):
         # A shared lane runs its entire group. Keep each running job's gated
@@ -812,7 +843,7 @@ def derived(evidence, exceptions, settings):
             owner = evidence.owner(installed)
             if owner:
                 authority.update(name for name in evidence.changed if evidence.owner(name) == owner)
-    retain_all = dict.fromkeys(lane_by_job.values(), "unread")
+    retain_all = dict.fromkeys(lanes, "unread")
     # Checkout attributes can change the bytes of a lane input without
     # changing its blob. Both ends of a removed or moved file are in the diff.
     if evidence.changed & authority or any(Path(name).name == ".gitattributes"
@@ -829,10 +860,10 @@ def derived(evidence, exceptions, settings):
 
     first_reader = {}
     shared_input = False
-    outcomes = dict.fromkeys(lane_by_job.values(), "miss")
+    outcomes = dict.fromkeys(lanes, "miss")
     for name, lane in lane_by_job.items():
         try:
-            ordinary, readers = job_reads(evidence, jobs[name])
+            ordinary, readers = job_reads(evidence, jobs[name], env_words)
             reads = ordinary | set().union(*(read for read, _ in readers))
             packages = {evidence.owner(path) for path in reads} - {None}
             hits = (reads & evidence.changed) | {
@@ -880,7 +911,8 @@ def main():
     try:
         evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render")
         exceptions = set((Path(work) / "lane-exceptions").read_text().splitlines())
-        for name, result in sorted(derived(evidence, exceptions, settings.split()).items()):
+        declared = declared_lanes(Path(work))
+        for name, result in sorted(derived(evidence, exceptions, settings.split(), declared).items()):
             print(f"{name}\t{result}")
     except (*UNAVAILABLE, ImportError) as error:
         cause = str(error).splitlines()

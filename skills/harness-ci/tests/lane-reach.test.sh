@@ -295,6 +295,36 @@ printf 'cat ./tools/cache/../input.txt\n' >"$repo/tools/check.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'shell input through a tracked directory and a parent component'
 parent_hop_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-workflow-env "$static_base"
+# A consumer ci.yml shape: literal workflow env that every job inherits.
+python3 - "$repo/.github/workflows/ci.yml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+updated = source.replace("\njobs:\n", "\nenv:\n  CARGO_TERM_COLOR: always\n  RUSTFLAGS: -D warnings\n"
+                         "  BASH_ENV: ./tools/env.sh\njobs:\n", 1)
+assert updated != source
+path.write_text(updated)
+PY
+printf 'true\n' >"$repo/tools/env.sh"
+printf '%s\n' 'orphan orphan.settings # reason: a job in another workflow reads the setting' \
+  >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a literal workflow env and a declared lane that gates no job'
+workflow_env_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-workflow-env-expression "$workflow_env_base"
+python3 - "$repo/.github/workflows/ci.yml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+updated = source.replace("  RUSTFLAGS: -D warnings\n", "  RUSTFLAGS: ${{ vars.RUSTFLAGS }}\n", 1)
+assert updated != source
+path.write_text(updated)
+PY
+git -C "$repo" commit -qam 'a workflow env value with an expression'
+workflow_env_expression_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
 cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
 #[path = "../../spare/src/mod.rs"]
@@ -780,7 +810,7 @@ PY
 }
 
 rows=0
-while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes; do
+while IFS='|' read -r label path shell cargo web installed event expected_gate scans host other dispatch_cause dispatch_lanes ungated; do
   [ -z "${LANE_REACH_CASE:-}" ] || [ "$label" = "$LANE_REACH_CASE" ] || continue
   rows=$((rows + 1))
   base="$opted_base"
@@ -795,6 +825,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
+    workflow-env|workflow-env-input) base="$workflow_env_base" ;;
+    workflow-env-expression) base="$workflow_env_expression_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -958,6 +990,18 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         esac
       done ;;
   esac
+  if [ -n "$ungated" ]; then
+    for implementation in action local; do
+      assert_eq "$label $implementation ungated lane" "$ungated" \
+        "$(verdict orphan "$SANDBOX/$implementation")"
+    done
+  fi
+  if [ "$label" = workflow-env-expression ]; then
+    for implementation in action local; do
+      assert_eq "$label $implementation diagnostic" opaque-workflow-env \
+        "$(sed -n 's/^lane-reach: cause=//p' "$SANDBOX/$implementation-log")"
+    done
+  fi
   if [ "$label" = vitest-disabled-sibling ]; then
     # Package ownership selects the reader; the unowned-marker fallback
     # would keep the lane as unread instead.
@@ -984,6 +1028,9 @@ shell-workdir|tools/other/context.sh|true||false|false
 shell-symlink|other/input.txt|true||false|false
 deleted-workdir|check-cwd/only.txt|true||false|false
 shell-parent-hop|tools/cache/only.txt|true||false|false
+workflow-env|tools/input.sh|true||false|false||||||||false
+workflow-env-input|tools/env.sh|true||true|true||||||||true
+workflow-env-expression|tools/input.sh||||
 agent-pair|.codex/agents/auditor.toml|true||false|false
 command-pair|.claude/commands/audit.md.disabled|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
