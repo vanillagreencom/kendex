@@ -172,9 +172,14 @@ Each verb, its arguments, and its answer:
 - `validate --item ID --run-id RUN --commit SHA --source DIR --run-dir RUNDIR --into STAGE`, asked only of a `validate=verb` host.
   - Runs the run the lane's start wrote at `RUNDIR` on the host, at `SHA`, the HEAD of the lane's worktree `DIR`. The lane's start resolved its proof and holds its stage; the host runs only its executor.
   - Each call takes one step of the unit: it prepares the unit, launches the host's copy of the run, or reads the run's state. It waits for no run inside the call.
-  - Exit `3` with `state=preparing` on stdout is a unit one step further along. Exit `3` with `state=running` is a run still going. The caller asks again with the same arguments.
+  - Exit `3` with `state=preparing` on stdout is a unit still preparing: `step=tree` and `step=runtime` moved it a step, and `step=building` is a build still running. Exit `3` with `state=running` is a run still going. The caller asks again with the same arguments, at once after a step that moved the unit and after its poll otherwise.
   - Exit `0` is a run that ended. Its folder stands at `STAGE`, a folder the call creates on the control machine. The host removes its copy, and names on stderr one it could not remove.
+  - Exit `4` is a run the host's runtime refused to launch, its cause on stderr. The host keeps no unit, and the caller asks no more.
   - A launch that may have started a run keeps the unit, and the next call reads that run.
+  - Preparing a unit first stops and removes the item's other units: a lane holds one run at a time, so another unit of its item is a run it no longer holds.
+- `validate --item ID --run-id RUN --stop`.
+  - Ends the unit's run on the host and removes the unit, then exits `0` with `stopped item=ID run-id=RUN` on stdout, also where the host holds no unit.
+  - The caller asks it when the run ends here without the host's answer: a recorded stop, a host that answered no call for the start's quiet time, or a folder an earlier call staged.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
