@@ -303,8 +303,17 @@ require_issue_reach() {
 # body holding neither header word skips the call, since neither reader can
 # find a header in it. A reader that reaches no verdict refuses: skipping it
 # would file the body unread.
+#
+# The reader is given the change-scope beside it, the sibling orch requires,
+# so the probe above and the arm it runs sit in one install: orch's default
+# resolves change-scope under the cwd's project, which a home-scope install or
+# a cwd outside the package's checkout does not hold, and a checkout's own
+# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. The reader needs
+# no Linear credential, so none reaches it or what it runs.
 require_issue_launch_read() {
-	local reader="${BASH_SOURCE[0]%/*}/../../../orch/scripts/orch-runtime"
+	local skills reader
+	skills="$(cd "${BASH_SOURCE[0]%/*}/../../.." && pwd)"
+	reader="$skills/orch/scripts/orch-runtime"
 	local lower body="" out line cause="" rc=0
 	[[ -x "$reader" ]] || return 0
 	lower="${1,,}"
@@ -315,7 +324,10 @@ require_issue_launch_read() {
 		jq -cn '{error: "Refusing to create an issue: no scratch file could hold its body for the launch read of its Location and Expected delta."}' >&2
 		return 1
 	fi
-	out=$("$reader" tier --filing --body "$body" 2>&1 >/dev/null) || rc=$?
+	out=$(env -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE -u LINEAR_APP_TOKEN \
+		-u LINEAR_CLIENT_ID -u LINEAR_CLIENT_SECRET \
+		CHANGE_SCOPE_PATHS_CLI="$skills/change-scope/scripts/harness-only" \
+		"$reader" tier --filing --body "$body" 2>&1 >/dev/null) || rc=$?
 	rm -f -- "$body"
 	[[ "$rc" -ne 0 ]] || return 0
 

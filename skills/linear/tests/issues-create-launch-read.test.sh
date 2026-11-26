@@ -34,23 +34,52 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-# project DIR: a checkout holding this package, under the filing bar.
-project() {
-  mkdir -p "$1/.agents/skills"
+# checkout DIR: a repository under the filing bar, holding no package.
+checkout() {
+  mkdir -p "$1"
   git -C "$1" init -q -b main
   git -C "$1" config gc.auto 0
   git -C "$1" config maintenance.auto false
-  cp -R "$SKILL_DIR" "$1/.agents/skills/linear"
   printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_REQUIRE_REACH = "1"\n' >"$1/kendex.settings.toml"
 }
 
-# The real reader: every other catalog package beside this one.
+# project DIR: a checkout holding this package.
+project() {
+  checkout "$1"
+  mkdir -p "$1/.agents/skills"
+  cp -R "$SKILL_DIR" "$1/.agents/skills/linear"
+}
+
+# install SKILLS_DIR: this package with every other catalog package beside
+# it, the real reader among them.
+install() {
+  mkdir -p "$1"
+  [ -d "$1/linear" ] || cp -R "$SKILL_DIR" "$1/linear"
+  for package in "$SKILLS"/*/; do
+    package="${package%/}"
+    [ "${package##*/}" = linear ] || ln -s "$package" "$1/${package##*/}"
+  done
+}
+
 LAUNCH="$TMP_ROOT/launch"
 project "$LAUNCH"
-for package in "$SKILLS"/*/; do
-  package="${package%/}"
-  [ "${package##*/}" = linear ] || ln -s "$package" "$LAUNCH/.agents/skills/${package##*/}"
-done
+install "$LAUNCH/.agents/skills"
+
+# A home-scope install, and a checkout that holds no package filing from it.
+HOME_SKILLS="$TMP_ROOT/home/.agents/skills"
+install "$HOME_SKILLS"
+BARE="$TMP_ROOT/bare"
+checkout "$BARE"
+
+# A checkout whose settings name a change-scope of its own, which records
+# that it ran.
+PLANTED="$TMP_ROOT/planted"
+checkout "$PLANTED"
+mkdir -p "$PLANTED/scope"
+printf '#!/usr/bin/env bash\n: >"%s"\nexit 0\n' "$PLANTED/ran" >"$PLANTED/scope/change-scope"
+cp "$PLANTED/scope/change-scope" "$PLANTED/scope/harness-only"
+chmod +x "$PLANTED/scope/change-scope" "$PLANTED/scope/harness-only"
+printf 'CHANGE_SCOPE_PATHS_CLI = "%s"\n' "$PLANTED/scope/harness-only" >>"$PLANTED/kendex.settings.toml"
 
 # A reader that reaches no verdict: orch's wrapper with its runtime unbuilt
 # and no cargo to build it.
@@ -61,14 +90,22 @@ printf '#!/usr/bin/env bash\necho "orch-runtime: setup-required key=k run=setup"
   >"$UNBUILT/.agents/skills/orch/scripts/orch-runtime"
 chmod +x "$UNBUILT/.agents/skills/orch/scripts/orch-runtime"
 
+# A reader that records which Linear credential reached it.
+WITNESS="$TMP_ROOT/witness"
+project "$WITNESS"
+mkdir -p "$WITNESS/.agents/skills/orch/scripts"
+printf '#!/usr/bin/env bash\nprintf %%s "${LINEAR_API_KEY-unset}" >"%s"\nexit 0\n' "$WITNESS/credential" \
+  >"$WITNESS/.agents/skills/orch/scripts/orch-runtime"
+chmod +x "$WITNESS/.agents/skills/orch/scripts/orch-runtime"
+
 # The parent environment wins over project files, so every key either
 # package reads is unset for the run and the settings file is the only source.
-run_create() { # PROJECT BODY_FILE
+run_create() { # CWD BODY_FILE [SKILLS_DIR]
   : >"$CURL_LOG"
   RC=0
   (cd "$1" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS -u LINEAR_REQUIRE_REACH -u CHANGE_SCOPE_PATHS_CLI \
     PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token CURL_LOG="$CURL_LOG" \
-    bash "$1/.agents/skills/linear/scripts/linear.sh" issues create --title "Launch read" --description-file "$2" \
+    bash "${3:-$1/.agents/skills}/linear/scripts/linear.sh" issues create --title "Launch read" --description-file "$2" \
     >/dev/null 2>"$ERR_FILE") || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
@@ -120,3 +157,25 @@ run_create "$UNBUILT" "$TMP_ROOT/body.md"
 assert_ne "an unbuilt reader's create is refused" "$RC" 0
 assert_eq "an unbuilt reader's create is refused before any API call" "$(api_calls)" 0
 assert_contains "the refusal relays the reader's setup line" "$ERR" "orch-runtime: setup-required"
+
+echo "=== the reader reads beside the install, whatever checkout the create runs from ==="
+TEMPLATE_DELTA='**Expected delta**: 30 lines, 40 test lines'
+TEMPLATE_LOCATION='**Location**: `skills/linear/tests`'
+body "$TMP_ROOT/body.md" "$TEMPLATE_DELTA" "$TEMPLATE_LOCATION"
+run_create "$BARE" "$TMP_ROOT/body.md" "$HOME_SKILLS"
+assert_eq "a home-scope install creates the template form from a checkout with no package" "$RC" 0
+assert "a home-scope install's create reaches issueCreate" jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG"
+body "$TMP_ROOT/body.md" '**Expected delta**: 20 test lines' "$TEMPLATE_LOCATION"
+run_create "$BARE" "$TMP_ROOT/body.md" "$HOME_SKILLS"
+assert_eq "a home-scope install's refused body is refused before any API call" "$(api_calls)" 0
+assert_contains "a home-scope install's refused body is refused on the reader's invalid-delta" "$ERR" "orch-runtime: tier cause=invalid-delta"
+body "$TMP_ROOT/body.md" "$TEMPLATE_DELTA" "$TEMPLATE_LOCATION"
+run_create "$PLANTED" "$TMP_ROOT/body.md" "$HOME_SKILLS"
+assert_eq "a checkout naming its own change-scope creates the template form" "$RC" 0
+assert_eq "a checkout's own change-scope never runs in the create" "$([ -e "$PLANTED/ran" ] && echo ran || echo not-run)" not-run
+
+echo "=== the reader gets no Linear credential ==="
+body "$TMP_ROOT/body.md" "$TEMPLATE_DELTA" "$TEMPLATE_LOCATION"
+run_create "$WITNESS" "$TMP_ROOT/body.md"
+assert_eq "a reader's create proceeds" "$RC" 0
+assert_eq "the reader runs without the Linear credential" "$(cat "$WITNESS/credential")" unset
