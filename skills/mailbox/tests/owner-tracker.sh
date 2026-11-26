@@ -51,7 +51,7 @@ close_rows() {
   assert_eq "$(jq '.unposted' <<<"$CLOSE_FACTS")" true 'failed tracker writes preserve description and labels'
   assert_eq "$(jq '.notice' <<<"$CLOSE_FACTS")" true 'failed tracker writes retain their failure notice'
   assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'a confirmed tracker post projects as posted'
-  assert_eq "$(jq '.close_untracked' <<<"$CLOSE_FACTS")" true 'a close calls no tracker'
+  assert_eq "$(jq '.close_untracked' <<<"$CLOSE_FACTS")" true 'a close writes nothing to the tracker and reads only its comments'
   assert_eq "$(jq '.retained_error' <<<"$CLOSE_FACTS")" true 'a refused label retains tracker error bytes after close'
   assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'only successful tracker posts leave a question comment'
   assert_eq "$(jq '.rollback_owned' <<<"$CLOSE_FACTS")" true 'failed comments restore the exact description the ask replaced'
@@ -204,7 +204,7 @@ if [[ $# -eq 0 && -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"' \
         'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"; "$SCRIPT_DIR/../../linear/scripts/linear.sh" issues update KEN-7 --clear-labels >/dev/null 2>&1 || :'
-      assertion='a close calls no tracker'
+      assertion='a close writes nothing to the tracker and reads only its comments'
     elif [[ "$rule" == retained-error ]]; then
       phase=close
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \

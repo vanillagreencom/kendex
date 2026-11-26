@@ -47,6 +47,11 @@ with tempfile.TemporaryDirectory(dir=repo / 'tmp') as scratch:
     tracker.write_text('''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FIXTURE/calls"
+if [[ "$1:$2" == comments:bulk-list ]]; then
+  # The closes the overseer's mailbox holds when the tracker is read.
+  jq -s '[.[] | select(.kind == "resolution")] | length' "$FIXTURE/tmp/lane-mail/overseer/to-lane.jsonl" \
+    > "$FIXTURE/closes-at-read" 2>/dev/null || :
+fi
 if [[ -e "$FIXTURE/quota" ]]; then
   cat "$FIXTURE/quota" >&2
   exit 1
@@ -196,13 +201,18 @@ esac
     # one mark it has.
     answer = root / 'relayed'
     answer.write_text('ship\n')
-    for issue, close, pass_first, react_fails, marked, stderr in [
-            ('KEN-9', ['--text', str(answer)], False, False, True, ''),
-            ('KEN-10', [], False, False, True, ''),
-            ('KEN-11', ['--default'], False, False, False, ''),
-            ('KEN-12', ['--text', str(answer)], True, False, False, ''),
-            ('KEN-13', ['--text', str(answer)], False, True, True,
-             'owner-answers: unmarked issue=KEN-13 comment=relay-KEN-13 cause=reaction-failed\n')]:
+    # A read that fails names the item it leaves unmarked, and the close stands.
+    for issue, close, pass_first, switch, marked, stderr in [
+            ('KEN-9', ['--text', str(answer)], False, None, True, ''),
+            ('KEN-10', [], False, None, True, ''),
+            ('KEN-11', ['--default'], False, None, False, ''),
+            ('KEN-12', ['--text', str(answer)], True, None, False, ''),
+            ('KEN-13', ['--text', str(answer)], False, ('react-fails', '{"error":"Entity not found: Comment"}\n'), True,
+             'owner-answers: unmarked issue=KEN-13 comment=relay-KEN-13 cause=reaction-failed\n'),
+            ('KEN-14', ['--text', str(answer)], False, ('unread-comments', ''), False,
+             'owner-answers: unmarked issue=KEN-14 cause=comments-unread\n'),
+            ('KEN-15', ['--text', str(answer)], False, ('quota', quota + '\n'), False,
+             'owner-answers: unmarked issue=KEN-15 cause=quota\n')]:
         (root / 'question-id').write_text(f'question-{issue}\n')
         message.write_text(f'Ship {issue}?\n')
         asked = call('ask', '--item', 'overseer', '--to', 'owner', '--issue', issue, '--do', 'Ship change',
@@ -214,12 +224,20 @@ esac
             dict(id=comment, body='ship', user_email='owner@example.test', created_at='2026-01-06T00:00:00Z')]}))
         if pass_first:
             call('owner-answers', '--item', 'overseer')
-        if react_fails:
-            (root / 'react-fails').write_text('{"error":"Entity not found: Comment"}\n')
+        if switch:
+            (root / switch[0]).write_text(switch[1])
         before = len((root / 'calls').read_text().splitlines())
+        (root / 'closes-at-read').unlink(missing_ok=True)
         closed = call('resolve', '--item', 'overseer', '--id', ask, *close)
-        (root / 'react-fails').unlink(missing_ok=True)
+        # No tracker call holds the local close: the comments are read after it lands.
+        closes = sum(json.loads(line)['kind'] == 'resolution'
+                     for line in (root / 'tmp/lane-mail/overseer/to-lane.jsonl').read_text().splitlines())
+        read_at = (root / 'closes-at-read').read_text().strip() if (root / 'closes-at-read').exists() else None
+        assert read_at == (None if close == ['--default'] else str(closes)), (issue, read_at, closes)
+        if switch:
+            (root / switch[0]).unlink()
         assert closed.stderr == stderr, (issue, closed)
+        assert closed.stdout.startswith(f'lane-mail: resolved id={ask} '), (issue, closed)
         later = call('owner-answers', '--item', 'overseer')
         assert later.stdout.splitlines()[-1] == 'owner-answers: read=read', (issue, later)
         reacts = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('comments react ')]
@@ -248,6 +266,9 @@ thread_chain|a reply under another mailbox's question is not delivered, while a 
 flat_comment|a top-level comment after the open question reaches its ask, after a re-ask the newest one's, and one with no open question before it is left out
 missing_item|an item Linear holds no issue for is named on stderr and the other items are read
 uuid_ref|an ask made by a UUID is read off the owner list by its recorded identifier, and one known by a UUID alone is named on stderr while the other items are read
+close_replaced|a reply posted before its question was replaced takes no mark from the replacement's close, and one mark when owner-answers delivers it to the replacing ask
+close_chat|a chat ask that replaced an item question marks the reply under that question once when it closes on an answer given elsewhere
+close_missing|a close whose replaced question is on a missing item names that item and marks the reply on the live item
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
   cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/scripts"
