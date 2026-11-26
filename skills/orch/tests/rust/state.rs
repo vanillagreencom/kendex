@@ -1128,9 +1128,10 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
 
 /// A kept verdict for an item still in Triage would acknowledge it while
 /// the watch's triage line and launch selection both skip it, so it refuses
-/// naming the item, and so does an unreadable state; a canceled verdict for
-/// that item, a kept one outside Triage and a kept GitHub-synced mirror in
-/// Triage, which § Outside contributions leaves there, record.
+/// naming the item, and so does an unreadable state and a GitHub-synced item
+/// no outside-contribution ruling row names; a canceled verdict for that
+/// item, a kept one outside Triage and a kept mirror whose ruling row names
+/// its GitHub issue, which § Outside contributions leaves there, record.
 #[test]
 fn a_kept_verdict_records_only_once_the_item_left_triage() {
     let store = Store::new();
@@ -1141,20 +1142,30 @@ fn a_kept_verdict_records_only_once_the_item_left_triage() {
         let file = store.write_file(&format!("{issue}-{verdict}.json"), &row.to_string());
         json!({"op": "record-overseer-ledger", "entry": "triage", "file": file}).to_string()
     };
+    let ruling = |key: &str| {
+        let row = json!({"kind": "ruling", "item": key,
+            "text": format!("EVENT outside-contribution {key} kind=issue author=someone")});
+        let file = store.write_file(
+            &format!("ruling-{}.json", key.replace(['/', '#'], "-")),
+            &row.to_string(),
+        );
+        store.ok(&["state", "log", "append", "--fleet", &file]);
+    };
+    ruling("Reporter/Project#7");
     let before = fs::read_to_string(store.fleet_path()).unwrap();
-    for (env, key) in [
-        (
-            vec![("OVERSEE_WATCH_TRACKER", tracker.as_str())],
-            "triage-kept-in-triage",
-        ),
-        (vec![], "triage-state-unreadable"),
+    let traced = vec![("OVERSEE_WATCH_TRACKER", tracker.as_str())];
+    for (issue, env, key) in [
+        ("KEN-T", traced.clone(), "triage-kept-in-triage"),
+        ("KEN-T", vec![], "triage-state-unreadable"),
+        ("KEN-M", traced.clone(), "triage-kept-in-triage"),
     ] {
-        let args = ["op", "--fleet", "--request-json", &request("KEN-T", "kept")];
+        let args = ["op", "--fleet", "--request-json", &request(issue, "kept")];
         let (refused, line) = refused_env(&store, &args, &env);
         assert_eq!(refused, key);
-        assert!(line.contains("issue=KEN-T"), "{line}");
+        assert!(line.contains(&format!("issue={issue}")), "{line}");
         assert_eq!(fs::read_to_string(store.fleet_path()).unwrap(), before);
     }
+    ruling("reporter/project#42");
     for (issue, verdict) in [
         ("KEN-T", "canceled"),
         ("KEN-4137", "kept"),
