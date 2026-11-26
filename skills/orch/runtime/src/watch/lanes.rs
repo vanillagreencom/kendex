@@ -1985,8 +1985,10 @@ fn auth_recovery(lane: &Lane, pass: &Pass) -> Result<AuthRecovery, String> {
     })
 }
 
-/// A Claude Stop follows a completed turn. Startup idleness and open-turn
-/// rows can both occur before the replacement's credentials have worked.
+/// A Stop row that ends a turn with no error follows a completed turn: Claude
+/// Code's, and Pi's, whose carrier writes the turn's `stop_reason` and its
+/// working-agent count. Startup idleness and open-turn rows can both occur
+/// before the replacement's credentials have worked.
 #[allow(
     clippy::disallowed_methods,
     reason = "the wall route reads the lane's turn rows after its recorded launch position"
@@ -1995,7 +1997,8 @@ fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
     let (Some(at), Some(root)) = (lane.session_rows_at_launch, lane.mail_root.as_deref()) else {
         return Ok(false);
     };
-    if hosted::host_of(lane) != "local" || lane.harness.as_deref() != Some("claude") {
+    let harness = lane.harness.as_deref();
+    if hosted::host_of(lane) != "local" || !matches!(harness, Some("claude" | "pi")) {
         return Ok(false);
     }
     let file = lane_rows_file(root, &lane.item);
@@ -2008,7 +2011,7 @@ fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
         matches!(
             reading,
             Reading::Live(row)
-                if row.harness.as_deref() == Some("claude")
+                if row.harness.as_deref() == harness
                     && row.event.as_deref() == Some("Stop")
                     && matches!(rows::judge_lane(&row), Reading::Live(LaneVerdict::Idle { cause: None }))
         )
@@ -3459,6 +3462,35 @@ mod tests {
     /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
     /// index each case plants): each row's five words, and `None` for the
     /// shape the count refuses.
+    /// A Pi lane relaunched once for its sign-in, whose replacement completed
+    /// a turn and then met a new 401, has worked on its credentials, so the
+    /// auth route may relaunch it again.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test plants the lane's rows file the carrier writes"
+    )]
+    fn a_pi_replacement_s_completed_turn_confirms_its_sign_in() {
+        let root = tempfile::tempdir().unwrap();
+        let lane: Lane = serde_json::from_value(json!({
+            "item": "KEN-1",
+            "harness": "pi",
+            "status": "running",
+            "session_rows_at_launch": 1,
+            "mail_root": root.path(),
+        }))
+        .unwrap();
+        let file = lane_rows_file(&root.path().display().to_string(), "KEN-1");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let signed_out = r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\"}}","working_agents":0}"#;
+        let completed =
+            r#"{"harness":"pi","event":"Stop","stop_reason":"stop","working_agents":0}"#;
+        std::fs::write(&file, format!("{signed_out}\n")).unwrap();
+        assert_eq!(completed_turn_since_launch(&lane), Ok(false));
+        std::fs::write(&file, format!("{signed_out}\n{completed}\n{signed_out}\n")).unwrap();
+        assert_eq!(completed_turn_since_launch(&lane), Ok(true));
+    }
+
     /// A predecessor's safety refusal, at or before the launch position,
     /// is not the relaunched lane's state; the same row after it is.
     #[test]

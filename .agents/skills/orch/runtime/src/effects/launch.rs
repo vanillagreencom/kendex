@@ -912,8 +912,9 @@ fn open_and_confirm(
     }
     // The relaunch has retired the predecessor. Read its last possible
     // row now, before the new window can start a hook, and keep the
-    // boundary through reconciliation of this opening.
-    if harness == Harness::Claude
+    // boundary through reconciliation of this opening. Claude's hooks and
+    // Pi's carrier write the lane's turn rows here.
+    if matches!(harness, Harness::Claude | Harness::Pi)
         && let Sessions::Store { cwd, .. } = &sessions
     {
         let file = marker::mailbox_path(cwd, &r.item).join(rows::LANE_FILE);
