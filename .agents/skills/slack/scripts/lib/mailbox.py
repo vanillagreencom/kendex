@@ -232,11 +232,15 @@ class LaneMail:
         reads only messages from users the binding names as owner, so the
         answer records the owner as its sender."""
         path = self._text_file(text)
+        send = ("send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id)
         try:
-            code, out, err = self._run(
-                "send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id,
-                "--sender", "owner",
-            )
+            code, out, err = self._run(*send, "--sender", "owner")
+            # A bound root whose installed mailbox package predates --sender
+            # refuses it before it appends anything. The same delivery then
+            # lands with no sender and reads as unrecorded. Remove this retry
+            # once no root a relay binds runs a lane-mail without --sender.
+            if code != 0 and _first(err) == "lane-mail: option-unknown=--sender":
+                code, out, err = self._run(*send)
         finally:
             os.unlink(path)
         if code == 0:

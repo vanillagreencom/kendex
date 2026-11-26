@@ -726,7 +726,7 @@ seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress
 recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-open-invalid, source-invalid, purpose-invalid, memory-too-long,
+open-invalid, source-invalid, sender-invalid, purpose-invalid, memory-too-long,
 issue-unread, replace-unconfigured, replace-unmarkable, owner-action-missing,
 overseer-only, not-owner-ask, overseer-unreadable, no-reader, reader-unjudged,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
