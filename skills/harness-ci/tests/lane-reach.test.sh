@@ -354,11 +354,13 @@ workflow-env-option|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: -C link-arg=-Tlink.x
 workflow-defaults|\nenv:\n|\ndefaults:\n  run:\n    working-directory: tools\nenv:\n
 ROWS
 # A consumer whose Rust and Vitest jobs the reader refuses keeps a reasoned
-# claim for each, beside a shell lane it proves.
+# claim for each, beside a shell lane it proves. The Vitest job reads a file
+# before the step the reader refuses.
 git -C "$repo" checkout -qb fixture-refused-claims "$opted_base"
 edit_workflow '      - working-directory: cargo\n' \
   '      - uses: dtolnay/rust-toolchain@stable\n      - working-directory: cargo\n' \
-  '      - working-directory: web\n' '      - working-directory: web\n        run: npm ci\n      - working-directory: web\n'
+  '      - working-directory: web\n' \
+  '      - run: cat ./ops/notes.txt\n      - working-directory: web\n        run: npm ci\n      - working-directory: web\n'
 printf '%s\n' 'cargo cargo/* # reason: the toolchain action picks the compiler' \
   'web web/* # reason: npm ci installs what the suite loads' >>"$repo/.github/ci-lanes.conf"
 mkdir -p "$repo/ops"
@@ -377,6 +379,19 @@ edit_workflow '      - uses: dtolnay/rust-toolchain@stable\n      - working-dire
   '      - uses: actions/checkout@v7\n        with:\n          path: subject\n      - working-directory: subject\n'
 git -C "$repo" commit -qam 'a refused job runs in the directory its checkout creates'
 checkout_path_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-cargo-source "$refused_claims_base"
+# The Cargo reader refuses this source after it has read the toolchain file.
+printf 'use std::fs as _;\npub fn value() -> u8 { 42 }\n' >"$repo/cargo/primary/src/lib.rs"
+git -C "$repo" commit -qam 'the Cargo reader refuses a claimed crate source'
+refused_cargo_source_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-executable "$refused_claims_base"
+# The claimed shell job runs a script whose interpreter the reader refuses.
+edit_workflow '        run: bash ../shared.sh\n' '        run: bash ../shared.sh\n      - run: ./tools/run.py\n'
+printf '#!/usr/bin/env python3\nprint("run")\n' >"$repo/tools/run.py"
+chmod +x "$repo/tools/run.py"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed shell job runs a Python script'
+refused_executable_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
 printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" commit -qam 'a Cargo lane the reader can read keeps a reasoned claim'
@@ -1042,9 +1057,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     workflow-env-*|workflow-defaults) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
-    refused-claim-hit|refused-claim-miss|refused-proved-read) base="$refused_claims_base" ;;
+    refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
-    checkout-path) base="$checkout_path_base" ;;
+    refused-cargo-source) base="$refused_cargo_source_base" ;;
+    refused-executable) base="$refused_executable_base" ;;
+    checkout-path|restored-workdir) base="$checkout_path_base" ;;
     cargo-tool-failure) base="$claimed_cargo_base" ;;
     vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -1093,6 +1110,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
+    restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
@@ -1263,8 +1281,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   fi
   refused_jobs=""
   case "$label" in
+    refused-cargo-source) refused_jobs='job=cargo cause=cargo-opaque-source,job=web cause=opaque-shell-command' ;;
+    refused-executable)
+      refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
     refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
-    checkout-path) refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
+    checkout-path|restored-workdir) refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
@@ -1335,7 +1356,11 @@ refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
 refused-proved-read|rust-toolchain.toml|false|true|false|false
+refused-cargo-source|rust-toolchain.toml|false|true|false|false
+refused-ordinary-read|ops/notes.txt|false|false|true|false
+refused-executable|tools/run.py|true|false|false|false
 checkout-path|tools/input.sh|true|false|false|false
+restored-workdir|subject/restored.txt|false|true|false|false
 cargo-tool-failure|tools/input.sh|true|true|true|true
 vitest-owner-unresolved|.codex/skills/math/SKILL.md|true||true|true|merge_group|true,derived-reach
 vitest-changed-unread|web/back\slash.mjs|false||true|false
