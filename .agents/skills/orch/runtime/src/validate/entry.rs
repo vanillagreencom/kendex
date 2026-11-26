@@ -18,6 +18,8 @@ const VALIDATE: &str = "validate";
 #[command(
     long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues: it prints state=running with the run directory, and --wait --run-dir follows the run on.
 
+--wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on.
+
 A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
 An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Every start but --reproduce and a docs-only snapshot asks whether required CI takes the change, at an open pull request's base or, before one opens, the resolved base branch; ORCH_PR_ORDER is no input. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
@@ -147,9 +149,11 @@ fn arguments(args: &Args) -> Result<()> {
     }
     let file_read = args.wait || args.child || args.record;
     let start = !actions.into_iter().any(|v| v);
-    let unused = if file_read && args.worktree.is_some() {
+    // A wait on a run another seat starts names the run as its start does.
+    let queued = args.wait && args.run_id.is_some();
+    let unused = if file_read && !queued && args.worktree.is_some() {
         Some("--worktree")
-    } else if !file_read && args.run_dir.is_some() {
+    } else if (!file_read || queued) && args.run_dir.is_some() {
         Some("--run-dir")
     } else if !(args.wait || (start && !args.foreground)) && args.budget.is_some() {
         Some("--budget")
@@ -162,7 +166,7 @@ fn arguments(args: &Args) -> Result<()> {
             || args.fresh
             || args.reproduce
             || args.restack
-            || args.run_id.is_some())
+            || (args.run_id.is_some() && !queued))
     {
         Some("start options")
     } else if !start && !args.resolve_mode && !args.restack_check && args.base.is_some() {
@@ -283,18 +287,31 @@ fn entry(
     if args.record {
         return Ok(TextReply::new(files::RunFile::read(dir()?)?.record()?, 0));
     }
+    let worktree = || -> Result<PathBuf> {
+        let worktree = args
+            .worktree
+            .as_deref()
+            .ok_or_else(|| files::unreadable("required", "--worktree"))?;
+        let worktree =
+            fs::canonicalize(worktree).map_err(|e| files::unreadable("not-directory", e))?;
+        if !worktree.is_dir() {
+            return Err(files::unreadable("not-directory", worktree.display()));
+        }
+        Ok(worktree)
+    };
     if args.wait {
-        let (text, exit) = files::wait(dir()?, budget, &SystemClock)?;
+        let (text, exit) = match &args.run_id {
+            Some(id) => files::wait_queued(
+                &super::run_dir_of(&worktree()?, id),
+                budget,
+                super::POLL_DEFAULT,
+                &SystemClock,
+            )?,
+            None => files::wait(dir()?, budget, &SystemClock)?,
+        };
         return Ok(TextReply::new(text, exit));
     }
-    let worktree = args
-        .worktree
-        .as_deref()
-        .ok_or_else(|| files::unreadable("required", "--worktree"))?;
-    let worktree = fs::canonicalize(worktree).map_err(|e| files::unreadable("not-directory", e))?;
-    if !worktree.is_dir() {
-        return Err(files::unreadable("not-directory", worktree.display()).into());
-    }
+    let worktree = worktree()?;
     if args.live {
         return Ok(match files::live(&worktree)? {
             Some((dir, pid)) => TextReply::new(format!("run-dir={} pid={pid}", dir.display()), 0),
@@ -375,13 +392,7 @@ fn entry(
     req.restack = args.restack;
     req.caller = if args.restack { "restack" } else { "dev" }.into();
     if let Some(id) = &args.run_id {
-        req.run_dir = Some(
-            worktree
-                .join("tmp")
-                .join(format!("dev-validate-{id}"))
-                .display()
-                .to_string(),
-        );
+        req.run_dir = Some(super::run_dir_of(&worktree, id).display().to_string());
         let started = super::start(&settings, &req, env, locking)?;
         write_started(&started.started_line, started.mode, req.restack)?;
         if req.foreground && started.launched {
@@ -422,7 +433,7 @@ fn entry(
                 std::process::id(),
                 env.nonce
             );
-            let run_dir = worktree.join("tmp").join(format!("dev-validate-{id}"));
+            let run_dir = super::run_dir_of(&worktree, &id);
             super::write_run_dir(
                 &worktree,
                 &run_dir,

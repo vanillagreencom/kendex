@@ -1439,6 +1439,22 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
         (vec!["--resolve-mode"], "required cause=--worktree"),
         (vec!["--wait"], "required cause=--run-dir"),
         (
+            vec!["--wait", "--run-id", "20300101T000000Z-queued"],
+            "required cause=--worktree",
+        ),
+        (
+            vec![
+                "--wait",
+                "--worktree",
+                &wt,
+                "--run-id",
+                "20300101T000000Z-queued",
+                "--run-dir",
+                &empty,
+            ],
+            "option-unused cause=--run-dir",
+        ),
+        (
             vec!["--stop", "--worktree", "/absent-u8z2p"],
             "not-directory",
         ),
@@ -2065,6 +2081,62 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
         assert_eq!(field(&line, "state"), want);
         assert_eq!(exit, if want == "running" { 3 } else { 1 });
         assert!(!w.worktree.join("must-not-run").exists());
+    }
+}
+
+/// A wait on a run another seat starts holds one call from before the run's
+/// directory exists: a run that starts and ends inside the budget answers
+/// its verdict line alone, and one that never starts ends at the budget
+/// with its own `state=queued` line.
+#[test]
+fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budget() {
+    use std::sync::{Arc, mpsc};
+    for (starts, want, exit) in [(true, "done", 0), (false, "queued", 3)] {
+        let w = World::new();
+        let dir = w.worktree.join("tmp/dev-validate-20300101T000000Z-queued");
+        let clock = Arc::new(support::FakeClock::new());
+        let (c, d) = (clock.clone(), dir.clone());
+        let (sent, received) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            sent.send(orch_runtime::validate::files::wait_queued(
+                &d,
+                60,
+                30,
+                c.as_ref(),
+            ))
+            .unwrap()
+        });
+        clock.await_sleepers(1);
+        if starts {
+            // The seat's start lands whole, its command already ended.
+            let staged = executor_dir(&w, "true", 20);
+            fs::write(
+                staged.join("exit"),
+                "guard-exit=0 at=2026-01-30T15:20:00Z\n",
+            )
+            .unwrap();
+            fs::write(
+                staged.join("timing"),
+                "started-at=2026-01-30T15:20:00Z\nended-at=2026-01-30T15:20:00Z\nseconds=0\n",
+            )
+            .unwrap();
+            fs::rename(&staged, &dir).unwrap();
+        } else {
+            clock.pass(Duration::from_secs(30));
+        }
+        clock.release(Duration::from_secs(30));
+        let (text, code) = received.recv_timeout(JOB_BOUND).unwrap().unwrap();
+        task.join().unwrap();
+        let states: Vec<_> = text.lines().filter(|l| l.starts_with("state=")).collect();
+        assert_eq!(states.len(), 1, "{text}");
+        assert_eq!(field(states[0], "state"), want, "{text}");
+        assert_eq!(field(states[0], "run-dir"), dir.display().to_string());
+        assert_eq!(code, exit, "{text}");
+        if starts {
+            assert_eq!(field(states[0], "validate"), "pass", "{text}");
+        } else {
+            assert_eq!(field(states[0], "waited-secs"), "60", "{text}");
+        }
     }
 }
 
@@ -3224,6 +3296,15 @@ fn an_admitted_entry_run_resolves_its_mode_from_its_base_and_an_unadmitted_id_is
     );
     assert_eq!(w.wait_closed(dir)["outcome"], "pass");
     w.wait_marked(dir);
+    // A wait by the worktree and run id, as a seat that did not start the
+    // run holds it, reads the directory the start ran in.
+    let waited = w.entry(&["--wait", "--worktree", &wt, "--run-id", id], &[]);
+    assert_eq!(waited.status.code(), Some(0), "{}", stderr(&waited));
+    let line = text(&waited);
+    let line = line.lines().last().unwrap();
+    assert_eq!(field(line, "state"), "done", "{line}");
+    assert_eq!(field(line, "validate"), "pass", "{line}");
+    assert_eq!(field(line, "run-dir"), dir, "{line}");
     let out = w.entry(
         &["--worktree", &wt, "--run-id", "20300101T000000Z-unadmitted"],
         &[],

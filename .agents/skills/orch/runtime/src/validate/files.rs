@@ -591,6 +591,46 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
     Ok((format!("{warnings}{line}"), exit))
 }
 
+/// Follow an admitted run another seat starts, from before its directory
+/// exists, for `budget` seconds in all: queued while its `start` record is
+/// absent, read every `poll` seconds, then followed as [`wait`] follows it.
+/// A budget that ends before the start prints `state=queued` and exits 3.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "validation waits read the injected clock and never start work"
+)]
+pub fn wait_queued(
+    run_dir: &Path,
+    budget: u64,
+    poll: u64,
+    clock: &dyn Clock,
+) -> Result<(String, i32)> {
+    let begun = clock.now();
+    let call = begun + Duration::from_secs(budget);
+    loop {
+        match fs::symlink_metadata(run_dir.join("start")) {
+            Ok(_) => {
+                let left = call.saturating_duration_since(clock.now()).as_secs();
+                return wait(run_dir, left, clock);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(unreadable("start", e)),
+        }
+        let now = clock.now();
+        if now >= call {
+            return Ok((
+                format!(
+                    "state=queued waited-secs={} run-dir={}",
+                    now.duration_since(begun).as_secs(),
+                    run_dir.display()
+                ),
+                3,
+            ));
+        }
+        clock.sleep(Duration::from_secs(poll).min(call.saturating_duration_since(now)));
+    }
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"

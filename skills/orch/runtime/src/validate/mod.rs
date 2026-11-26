@@ -46,6 +46,12 @@ const RUN_DIR_PREFIX: &str = "dev-validate-";
 /// The run inventory the lane facts and the report read.
 const RUN_INDEX: &str = "validation-runs";
 
+/// The directory of run `id` in `worktree`: the start that runs it and a
+/// wait that follows it from before it starts read the one path.
+pub fn run_dir_of(worktree: &Path, id: &str) -> PathBuf {
+    worktree.join("tmp").join(format!("{RUN_DIR_PREFIX}{id}"))
+}
+
 /// What the caller asks for.
 #[derive(Debug, Clone)]
 pub struct StartRequest {
@@ -1492,10 +1498,13 @@ fn write_run_dir(
     }
     write("paths", &paths)?;
     write("cmd", &resolved.proof.cmd)?;
+    // A wait on a queued run reads the run as started once `start` exists,
+    // so the record lands whole by a rename, never seen half written.
     write(
-        "start",
+        ".start",
         &start_record(worktree, &resolved.proof, start, memory),
     )?;
+    fs::rename(run_dir.join(".start"), run_dir.join("start")).map_err(|e| format!("start: {e}"))?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let dirs = files::run_dirs(worktree)?;
         let mut names: Vec<_> = dirs

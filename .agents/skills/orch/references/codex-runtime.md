@@ -104,10 +104,13 @@ Start and Resume each return an `exit_code` once the command ended inside their 
 | Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | The output so far. |
 | Wait | `write_stdin` on the `session_id` a Start or Resume returned, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | The output since the previous return. |
 | Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | As Start. |
+| Follow | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --wait --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | As Start. |
 
 - The start prints its `state=started` line once it has launched the run. The line can come on a Wait return. Keep its `run-dir=` value.
 - The start follows the run for its wait budget (`orch-runtime validate entry --help`), then exits 3 with `state=running`.
 - Take Resume only for a run whose `state=started` line was read, when a call exits 3 with `state=running` or its session ended with no verdict line and no refusal line.
+- Take Follow in place of Start for a run another seat starts, such as the overseer for a confined lane. It holds the run from before its run directory exists, through the same Wait step.
+- Take Follow again, never a shorter poll, when a Follow call exits 3 with `state=queued` or `state=running`.
 - A call that exits 2 with a `validate: [REASON]` line on stderr was refused; never resume it. `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [validation.md § Run-live refusal](../../dev/references/validation.md#run-live-refusal).
 - Once a `state=started` line is read, never end the turn before the run prints `state=done` or `state=lost`.
 
