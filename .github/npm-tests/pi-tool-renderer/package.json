@@ -9,5 +9,9 @@
     "@earendil-works/pi-codemode": "1.0.1",
     "@earendil-works/pi-mcp": "1.0.1",
     "@earendil-works/pi-telemetry": "1.0.1"
+  },
+  "overrides": {
+    "minimatch": "11.0.1",
+    "undici": "8.12.2"
   }
 }
