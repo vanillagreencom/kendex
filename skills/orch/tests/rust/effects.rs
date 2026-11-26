@@ -5135,9 +5135,21 @@ fn assert_released(report: &Value, wt: &Path) {
     assert!(!wt.exists(), "the worktree was not removed");
 }
 
+/// A close after a push to the base GitHub names as the default, which a
+/// stale `origin/HEAD` does not, reads that base under the credential the
+/// push published under: an inherited token GitHub refuses that yields to
+/// the saved sign-in, or a token only the checkout's private settings
+/// configure, with no saved sign-in. Each consumes a rebase map whose
+/// commits that base holds, and keeps one whose commits it lacks.
 #[test]
 fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
-    for (unlanded, archived) in [(false, false), (true, false), (false, true)] {
+    for (unlanded, archived, configured) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+        (true, false, true),
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let runner = Runner::new(&server, "stub-confirm");
@@ -5150,7 +5162,7 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
             .unwrap()
             .to_path_buf();
         std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
-        std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
+        std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n/.env.local\n").unwrap();
         let origin = dir.path().join("origin.git");
         git(
             dir.path(),
@@ -5166,21 +5178,33 @@ fn a_direct_landing_close_consumes_only_a_base_contained_rebase_map() {
         git(&repo, &["checkout", "-qb", "develop"]);
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        // GitHub's default moved while origin/HEAD stayed stale. The
-        // inherited token is refused, but the saved sign-in can read it.
+        // GitHub's default moved while origin/HEAD stayed stale. GitHub
+        // answers the checkout's configured token, else the saved sign-in
+        // where one stands, and refuses every other token.
+        let (inherited, keyring) = if configured {
+            std::fs::write(repo.join(".env.local"), "GH_TOKEN=checkout-token\n").unwrap();
+            (None, false)
+        } else {
+            (Some(("GH_TOKEN", "expired-fixture-token")), true)
+        };
         write_executable(
             &bin.join("gh"),
-            r#"#!/bin/sh
+            format!(
+                r#"#!/bin/sh
+keyring={keyring}
+token="${{GH_TOKEN:-}}${{GITHUB_TOKEN:-}}"
+reads() {{ [ "$token" = checkout-token ] || {{ [ -z "$token" ] && $keyring; }}; }}
 case "$1 $2" in
     'repo view') echo o/repo ;;
-    'api user') printf 'HTTP/2.0 401 Unauthorized\n\n'; exit 1 ;;
-    'auth status') [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] ;;
-    'api repos/o/repo')
-        [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || exit 1
-        echo develop ;;
+    'api user')
+        [ "$token" = checkout-token ] || {{ printf 'HTTP/2.0 401 Unauthorized\n\n'; exit 1; }}
+        printf 'HTTP/2.0 200 OK\n\nfixture\n' ;;
+    'auth status') [ -z "$token" ] && $keyring ;;
+    'api repos/o/repo') reads || exit 1; echo develop ;;
     *) exit 1 ;;
 esac
-"#,
+"#
+            ),
         );
         let path = tool_path(&[&bin]);
         let advance_base = || {
@@ -5254,7 +5278,10 @@ esac
         let answer = reply(&runner.op_fleet_in(
             &repo,
             &json!({"op": "close-lane", "item": "KEN-M", "delivery": {"commit": {"commit": delivered}}}),
-            &[("WORKTREE_CLI", &worktree_cli()), ("PATH", &path), ("GH_TOKEN", "expired-fixture-token")],
+            &[("WORKTREE_CLI", worktree_cli().as_str()), ("PATH", &path)]
+                .into_iter()
+                .chain(inherited)
+                .collect::<Vec<_>>(),
         ));
         assert_eq!(answer["result"]["word"], "closed", "{answer}");
         let lane = &runner.fleet()["lanes"][0];
@@ -5293,6 +5320,180 @@ esac
             assert_eq!(saved["restack_landing"], restack_landing);
         }
     }
+}
+
+/// An ended item's close deletes on origin each branch named for the item
+/// whose work the base holds: the head of a pull request closed unmerged
+/// whose replacement was squash-merged, and a probe at an ancestor of the
+/// base. It keeps, each named with its cause, the branch whose work the
+/// base lacks, which one tracker comment names with its tip, a `recovery/`
+/// branch, and a branch whose delete origin refuses; a branch named for
+/// another item is not touched, and the close confirms.
+#[test]
+fn an_ended_items_close_deletes_the_origin_branches_whose_work_the_base_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    let replies = runner.state_dir().join("linear.json");
+    std::fs::write(
+        &replies,
+        json!({"comments create": {"body": {"success": true}}}).to_string(),
+    )
+    .unwrap();
+    let comments = runner.state_dir().join("linear-comments.jsonl");
+    runner.env = vec![
+        (
+            "OVERSEE_WATCH_TRACKER".to_owned(),
+            fixtures()
+                .join("linear-fixture/linear.sh")
+                .display()
+                .to_string(),
+        ),
+        (
+            "LINEAR_FAKE_REPLIES".to_owned(),
+            replies.display().to_string(),
+        ),
+        (
+            "LINEAR_FAKE_LOG".to_owned(),
+            runner.state_dir().join("linear.log").display().to_string(),
+        ),
+        (
+            "LINEAR_FAKE_COMMENTS".to_owned(),
+            comments.display().to_string(),
+        ),
+    ];
+    runner.init_fleet();
+    let repo = repository_fixture(dir.path());
+    std::fs::create_dir_all(repo.join(".agents")).unwrap();
+    let skills = Path::new(&worktree_cli())
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .to_path_buf();
+    std::os::unix::fs::symlink(skills, repo.join(".agents/skills")).unwrap();
+    std::fs::write(repo.join(".git/info/exclude"), "/.agents/\n").unwrap();
+    let origin = dir.path().join("origin.git");
+    git(
+        dir.path(),
+        &["init", "-q", "--bare", origin.to_str().unwrap()],
+    );
+    for checkout in [&repo, &origin] {
+        git(checkout, &["config", "gc.auto", "0"]);
+        git(checkout, &["config", "maintenance.auto", "false"]);
+    }
+    git(
+        &repo,
+        &["remote", "set-url", "origin", origin.to_str().unwrap()],
+    );
+    let init = git(&repo, &["rev-parse", "HEAD"]);
+    let change = |file: &str| {
+        std::fs::write(repo.join(file), format!("{file}\n")).unwrap();
+        git(&repo, &["add", file]);
+        commit(&repo, file);
+        git(&repo, &["rev-parse", "HEAD"])
+    };
+    git(&repo, &["checkout", "-qb", "ken-b"]);
+    change("feature");
+    git(&repo, &["checkout", "-q", "main"]);
+    git(&repo, &["checkout", "-qb", "ken-b-wip"]);
+    let wip = change("wip");
+    git(&repo, &["checkout", "-q", "main"]);
+    // The closed pull request's replacement, squash-merged.
+    change("feature");
+    let push = |refspec: String| git(&repo, &["push", "-q", "origin", &refspec]);
+    push("main".to_owned());
+    push("ken-b".to_owned());
+    push("ken-b-wip".to_owned());
+    for name in [
+        "ken-b-probe",
+        "recovery/KEN-B/stash",
+        "ken-b-locked",
+        "ken-b2",
+    ] {
+        push(format!("{init}:refs/heads/{name}"));
+    }
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["remote", "set-head", "origin", "main"]);
+    write_executable(
+        &origin.join("hooks/pre-receive"),
+        "#!/bin/sh\nwhile read -r old new ref; do\n  [ \"$ref\" != refs/heads/ken-b-locked ] || { echo 'deletion refused' >&2; exit 1; }\ndone\n",
+    );
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([lane("KEN-B", "running", &runner, Value::Null)]);
+    runner.write_fleet(&fleet);
+
+    let report = effect_report(&runner.op_fleet_in(&repo, &terminal_close("KEN-B"), &[]));
+
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    let branches = &report["intent"]["observation"]["branches"];
+    assert_eq!(
+        branches["deleted"],
+        json!(["ken-b", "ken-b-probe"]),
+        "{report}"
+    );
+    let mut kept: Vec<(&str, &str, &str)> = branches["kept"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{report}"))
+        .iter()
+        .map(|k| {
+            let cause = k["cause"].as_str().unwrap();
+            (
+                k["branch"].as_str().unwrap(),
+                k["tip"].as_str().unwrap(),
+                cause.split(' ').next().unwrap(),
+            )
+        })
+        .collect();
+    kept.sort();
+    assert_eq!(
+        kept,
+        [
+            ("ken-b-locked", init.as_str(), "delete-failed"),
+            ("ken-b-wip", wip.as_str(), "unmerged"),
+            ("recovery/KEN-B/stash", init.as_str(), "recovery"),
+        ],
+        "{report}"
+    );
+    let standing = git(
+        dir.path(),
+        &[
+            "--git-dir",
+            origin.to_str().unwrap(),
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/",
+        ],
+    );
+    let standing: Vec<&str> = standing.lines().collect();
+    assert_eq!(
+        standing,
+        [
+            "ken-b-locked",
+            "ken-b-wip",
+            "ken-b2",
+            "main",
+            "recovery/KEN-B/stash"
+        ],
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["branches_comment"], "posted",
+        "{report}"
+    );
+    let posted: Vec<Value> = std::fs::read_to_string(&comments)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(posted.len(), 1, "{posted:?}");
+    assert_eq!(posted[0]["issue"], "KEN-B");
+    let body = posted[0]["body"].as_str().unwrap();
+    assert!(body.contains("ken-b-wip") && body.contains(&wip), "{body}");
+    assert!(
+        !body.contains("ken-b-locked") && !body.contains("recovery/"),
+        "{body}"
+    );
 }
 
 /// The report of `item`'s terminal close with the worktree package at

@@ -774,6 +774,123 @@ impl<'a> LaneOperation<'a> {
         )
     }
 
+    /// The origin branches named for the lane's item ([`names_item`]),
+    /// released once its work ended: each whose work the publication base
+    /// holds ([`base_holds`]) is deleted under a lease on the tip judged,
+    /// signalled before the first delete; every other is kept with why.
+    /// `recovery/*` is fleet's to release and always kept. The reads and the
+    /// delete run from the main checkout of the lane's trusted common git
+    /// folder through the github package's `git-https-auth`, whose push binds
+    /// the push-purpose credential. `Err` names a read that judged nothing:
+    /// no branch is deleted.
+    pub(super) fn release_branches(
+        &mut self,
+        lane: &Lane,
+    ) -> Result<std::result::Result<BranchRelease, String>> {
+        let common = self.checkout_common(lane);
+        let main = match (common.file_name(), common.parent()) {
+            (Some(name), Some(main)) if name == ".git" => main.to_path_buf(),
+            _ => return Ok(Err(format!("checkout-unread common={}", common.display()))),
+        };
+        let project = &self.run.settings.roots.project;
+        // A lane in another repository than the checkout's pushed nothing to
+        // this origin, whose branches named for its key are not its own.
+        if let Some(repo) = lane.repo.as_deref().filter(|r| !r.is_empty()) {
+            match crate::repo::origin(&crate::repo::resolver(project), &main) {
+                Ok(origin) if origin.eq_ignore_ascii_case(repo) => {}
+                Ok(origin) => return Ok(Err(format!("repo-other origin={origin} lane={repo}"))),
+                Err(unread) => return Ok(Err(format!("origin-unread {unread}"))),
+            }
+        }
+        let auth = project.join(GIT_HTTPS_AUTH);
+        let heads = match branch_git(
+            &auth,
+            &main,
+            "ls-remote",
+            &["ls-remote", "--heads", "origin"],
+        ) {
+            Ok(out) => out,
+            Err(cause) => return Ok(Err(cause)),
+        };
+        let heads: Vec<(&str, &str)> = heads
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .filter_map(|(tip, name)| Some((name.strip_prefix("refs/heads/")?, tip)))
+            .collect();
+        let mut named: Vec<(&str, &str)> = heads
+            .iter()
+            .copied()
+            .filter(|(name, _)| names_item(name, &lane.item))
+            .collect();
+        let mut release = BranchRelease::default();
+        if named.is_empty() {
+            return Ok(Ok(release));
+        }
+        let base = match crate::repo::publication_base(project, &main) {
+            Ok(base) => base,
+            Err(unread) => return Ok(Err(format!("base-unread {unread}"))),
+        };
+        let Some(base) = base.strip_prefix("refs/remotes/origin/") else {
+            return Ok(Err(format!("base-unread ref={base}")));
+        };
+        let Some(&(_, base_tip)) = heads.iter().find(|(name, _)| *name == base) else {
+            return Ok(Err(format!("base-absent branch={base}")));
+        };
+        // A configured publication base is not GitHub's default branch,
+        // which alone GitHub refuses to delete.
+        named.retain(|(name, _)| *name != base);
+        let keep = |release: &mut BranchRelease, name: &str, tip: &str, cause: BranchKept| {
+            release.kept.push(KeptBranch {
+                branch: name.to_owned(),
+                tip: tip.to_owned(),
+                cause,
+            });
+        };
+        let (recovery, judged): (Vec<_>, Vec<_>) = named
+            .into_iter()
+            .partition(|(name, _)| name.starts_with("recovery/"));
+        for (name, tip) in recovery {
+            keep(&mut release, name, tip, BranchKept::Recovery);
+        }
+        let mut fetch = vec![
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "origin",
+            base_tip,
+        ];
+        fetch.extend(judged.iter().map(|(_, tip)| *tip));
+        if let Err(cause) = branch_git(&auth, &main, "fetch", &fetch) {
+            return Ok(Err(cause));
+        }
+        let mut signalled = false;
+        for (name, tip) in judged {
+            match base_holds(&main, base_tip, tip) {
+                Ok(true) => {}
+                Ok(false) => {
+                    keep(&mut release, name, tip, BranchKept::Unmerged);
+                    continue;
+                }
+                Err(cause) => {
+                    keep(&mut release, name, tip, BranchKept::Unread(cause));
+                    continue;
+                }
+            }
+            if !signalled {
+                let _signalled = self.engine.signal()?;
+                signalled = true;
+            }
+            let lease = format!("--force-with-lease=refs/heads/{name}:{tip}");
+            let delete = format!(":refs/heads/{name}");
+            match branch_git(&auth, &main, "push", &["push", &lease, "origin", &delete]) {
+                Ok(_) => release.deleted.push(name.to_owned()),
+                Err(cause) => keep(&mut release, name, tip, BranchKept::DeleteFailed(cause)),
+            }
+        }
+        Ok(Ok(release))
+    }
+
     /// The terminal `word` once both sets are settled: the engine's settle
     /// runs only with the lane set's proof in hand, and a lane obligation
     /// standing holds the intent with what stands. The first reason a lane
@@ -804,6 +921,159 @@ impl<'a> LaneOperation<'a> {
     pub(super) fn refuse(self, cause: &str, observation: Value) -> EffectOutcome {
         self.engine.refuse(cause, observation)
     }
+}
+
+/// The github package's git wrapper, as the project installs it.
+const GIT_HTTPS_AUTH: &str = ".agents/skills/github/scripts/git-https-auth";
+/// How long one git call of the branch release may run.
+const BRANCH_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What [`LaneOperation::release_branches`] did with the item's origin
+/// branches.
+#[derive(Debug, Default)]
+pub(super) struct BranchRelease {
+    pub(super) deleted: Vec<String>,
+    pub(super) kept: Vec<KeptBranch>,
+}
+
+/// An origin branch the release kept, at the tip it judged.
+#[derive(Debug)]
+pub(super) struct KeptBranch {
+    pub(super) branch: String,
+    pub(super) tip: String,
+    pub(super) cause: BranchKept,
+}
+
+/// Why the release kept a branch.
+#[derive(Debug)]
+pub(super) enum BranchKept {
+    /// The base lacks its work: the one cause the item is told of.
+    Unmerged,
+    /// A `recovery/*` branch, which fleet's reap releases.
+    Recovery,
+    /// A read the judgement of this branch needed failed.
+    Unread(String),
+    /// The base holds its work, and the delete failed.
+    DeleteFailed(String),
+}
+
+impl BranchKept {
+    pub(super) fn word(&self) -> String {
+        match self {
+            BranchKept::Unmerged => "unmerged".to_owned(),
+            BranchKept::Recovery => "recovery".to_owned(),
+            BranchKept::Unread(cause) => format!("unread {cause}"),
+            BranchKept::DeleteFailed(cause) => format!("delete-failed {cause}"),
+        }
+    }
+}
+
+/// Whether `branch` carries the item key `item`, case-insensitive, bounded
+/// by `/`, `-` or the name's ends, so `ken-200` names no `ken-2008`.
+fn names_item(branch: &str, item: &str) -> bool {
+    let (branch, item) = (branch.to_ascii_lowercase(), item.to_ascii_lowercase());
+    let bound = |c: Option<u8>| c.is_none_or(|c| c == b'/' || c == b'-');
+    !item.is_empty()
+        && branch.match_indices(&item).any(|(at, _)| {
+            bound(at.checked_sub(1).map(|i| branch.as_bytes()[i]))
+                && bound(branch.as_bytes().get(at + item.len()).copied())
+        })
+}
+
+/// Whether the commit `base` holds the work of the commit `tip`: `tip` is
+/// its ancestor, or merging `tip` into it changes nothing, as a squash merge
+/// or a superseding change leaves it. The stored graph alone is read, never
+/// a replacement's parents. `Err` is a read that did not answer.
+fn base_holds(main: &Path, base: &str, tip: &str) -> std::result::Result<bool, String> {
+    let git = |operation: &'static str, args: &[&str]| {
+        let mut argv = vec!["--no-replace-objects"];
+        argv.extend_from_slice(args);
+        branch_run(Path::new("git"), main, operation, &argv)
+    };
+    let ancestor = git("is-ancestor", &["merge-base", "--is-ancestor", tip, base])?;
+    match ancestor.status.code() {
+        Some(0) => return Ok(true),
+        Some(1) => {}
+        _ => return Err(failed("is-ancestor", &ancestor)),
+    }
+    let merged = git("merge-tree", &["merge-tree", "--write-tree", base, tip])?;
+    match merged.status.code() {
+        Some(0) => {}
+        Some(1) => return Ok(false),
+        _ => return Err(failed("merge-tree", &merged)),
+    }
+    let tree = format!("{base}^{{tree}}");
+    let base_tree = git("base-tree", &["rev-parse", "--verify", &tree])?;
+    if !base_tree.status.success() {
+        return Err(failed("base-tree", &base_tree));
+    }
+    let first = |out: &std::process::Output| {
+        agent_runtime::host::stdout_text(out)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_owned()
+    };
+    Ok(first(&merged) == first(&base_tree))
+}
+
+/// `git-https-auth -C main ARGS` that must succeed: its stdout, or `Err`
+/// naming the operation, its exit and the first line it printed on stderr.
+fn branch_git(
+    auth: &Path,
+    main: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<String, String> {
+    let out = branch_run(auth, main, operation, args)?;
+    if !out.status.success() {
+        return Err(failed(operation, &out));
+    }
+    Ok(agent_runtime::host::stdout_text(&out))
+}
+
+/// `program -C main ARGS` through the one runner, under the read
+/// credential the watch's sign-in renewed where one stands.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the close's branch release, git and the github package's git wrapper run through the one runner in the lane's main checkout"
+)]
+fn branch_run(
+    program: &Path,
+    main: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<std::process::Output, String> {
+    let main = main.display().to_string();
+    let mut argv = vec!["-C", main.as_str()];
+    argv.extend_from_slice(args);
+    let credential = crate::watch::github::renewed_credential();
+    let env = crate::watch::github::credential_env(&credential);
+    agent_runtime::host::run_tagged_in(
+        "close",
+        "git",
+        program,
+        operation,
+        &argv,
+        agent_runtime::host::Place {
+            cwd: None,
+            env: &env,
+        },
+        BRANCH_BOUND,
+    )
+    .map_err(|e| format!("{operation}: {e}"))
+}
+
+fn failed(operation: &str, out: &std::process::Output) -> String {
+    format!(
+        "{operation}: status={} {}",
+        out.status.code().unwrap_or(-1),
+        agent_runtime::host::stderr_text(out)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+    )
 }
 
 /// `cause` written as the outcome's `cause` where its observation names
