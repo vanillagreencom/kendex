@@ -28,13 +28,14 @@ A usage-limit banner on the overseer's pane proves no wall by itself: the pane a
 
 ### Pending walled case
 
-A walled case is pending when its walk chooses no successor, or leaves a provider unread 30 minutes after the case was announced. A pending case has three ways out:
+A walled case is pending when its walk chooses no successor, or leaves a provider unread 30 minutes after the case was announced. A pending case has two ways out:
 
 - The watch walks again on each pass. Once the walk chooses an account with room, the watch requests the transfer.
 - When the account judgement reads the overseer's own account with room, whatever mark it answers, and the pane, read with that room, stands idle, the watch asks the wake to resume the overseer there, once for the wall. The wake types the resume past the usage banner, as it does for a lane at a passed wall.
-- A turn run on the overseer, as one the owner types, holds the case on every pass it runs: nothing announces the wall again, resumes the overseer or moves it, whatever the account or the session's last failure reads. Once the session's rows record that turn returning after the case was announced, the case ends with no resume and no transfer.
 
-A failed turn that a Codex or Copilot session's own record holds stays walled whatever its account reads (§ Recovery requests), so its own account's room never resumes it: the walk or a turn run on it ends it.
+A turn run on the overseer, as one the owner types, holds the case on every pass it runs without ending it: nothing announces the wall again, resumes the overseer or moves it, whatever the account or the session's last failure reads. Once the turn stops, the case is pending as before, and only the walk or the resume ends it. This holds for a wall that a session's own record holds too.
+
+A failed turn that a Codex or Copilot session's own record holds stays walled whatever its account reads (§ Recovery requests), so its own account's room never resumes it: only the walk ends it.
 
 Every other pass that does not read the own account with room keeps the case walled: the account read fails, its headroom is unmeasured or unreadable, or the judgement answers before reading it. Such a pass walks and reads the reset as a walled pass does.
 

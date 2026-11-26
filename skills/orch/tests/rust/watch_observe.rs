@@ -9537,66 +9537,132 @@ fn a_pending_wall_whose_pane_runs_a_turn_is_held_with_no_resume_and_no_transfer(
     }
 }
 
-/// A pending wall the hook's failure row holds ends once a turn returns
-/// past that row, its own account unread and a successor with room
-/// standing by: nothing is resumed or moved, and its rows go.
+/// A pending wall's turn the owner typed is held while it runs, and once
+/// it stops, its return in the hook's rows, the episode is the walk's or
+/// the resume's again: with no room on the own account and none from the
+/// walk it stays pending, with no resume and no move; its own account read
+/// with room and its pane idle resumes it; a walk with room moves it.
 #[test]
-fn a_pending_wall_ends_with_no_resume_once_a_turn_returns_past_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
-    let returned = Cell::new(false);
-    let judge = |_: &Caller, _: Option<&str>| {
-        if returned.get() {
-            let mut m = marks(
-                MarkKey::Unmeasured(MarkKind::Headroom),
-                "",
-                "",
-                Succession::On,
-                "",
-            );
-            m.reason = "headroom-unreadable".to_owned();
-            return Ok(m);
-        }
-        Ok(marks(
+fn a_held_turn_that_stops_leaves_its_episode_to_the_walk_or_the_resume() {
+    let reset = 1_800_000_000 + 3600;
+    let zero = || {
+        let mut m = marks(
             MarkKey::Reached(MarkKind::Headroom),
             "0",
             "5",
             Succession::On,
             "/home/me/.eclaude",
-        ))
+        );
+        m.resets = clock::iso_utc(reset);
+        m
     };
-    let walk = |request: &WalkRequest| {
-        if returned.get() {
-            walk_b(request)
-        } else {
-            walk_none(request)
+    let unread = || {
+        let mut m = marks(
+            MarkKey::Unmeasured(MarkKind::Headroom),
+            "",
+            "",
+            Succession::On,
+            "",
+        );
+        m.reason = "headroom-unreadable".to_owned();
+        m
+    };
+    let room = || marks(MarkKey::Below, "", "", Succession::On, "");
+    type Reading<'a> = &'a dyn Fn() -> Marks;
+    // case, the reading once the turn stopped, whether the walk then has
+    // room, the walled row after, whether a resume is asked, the transfers
+    let cases: [(&str, Reading, bool, &str, bool, usize); 3] = [
+        ("no room, no successor", &unread, false, "pending", false, 0),
+        ("own account reads room", &room, false, "", true, 0),
+        (
+            "a successor with room",
+            &unread,
+            true,
+            "requested",
+            false,
+            1,
+        ),
+    ];
+    for (case, stopped, walk_room, walled, resumed, moved) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(&server, dir.path(), "overseer", "claude", "❯\u{a0}\n");
+        await_named(&server, &pane, "claude");
+        let rows = dir.path().join("session-rows.jsonl");
+        std::fs::write(
+            &rows,
+            "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"rate_limit\",\"message\":\"You've hit your weekly limit\"}\n",
+        )
+        .unwrap();
+        let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), dir.path());
+        record["harness_pid"] = json!(identity.pid.to_string());
+        record["harness_start"] = json!(identity.start);
+        record["session_rows"] = json!(rows.display().to_string());
+        fleet.set_overseer(record);
+        let key = format!("{} {pane}", server.pid);
+        let ended = Cell::new(false);
+        let judge = |_: &Caller, _: Option<&str>| Ok(if ended.get() { stopped() } else { zero() });
+        let walk = |request: &WalkRequest| {
+            if ended.get() && walk_room {
+                walk_b(request)
+            } else {
+                walk_none(request)
+            }
+        };
+        let accept = |_: &str, _: &str| Ok(());
+        overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+        driver.alert = &accept;
+        let state = fleet.read();
+        driver.pass(&state);
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("pending"),
+            "{case}"
+        );
+        redraw(
+            &server,
+            &pane,
+            dir.path(),
+            "overseer-working.txt",
+            "❯ Resume the work\n✻ Working… (esc to interrupt)\n",
+            "Resume the work",
+        );
+        for _ in 0..2 {
+            driver.pass(&state);
+            assert_eq!(
+                driver.baseline.get("overseer-walled", &key),
+                Some("pending"),
+                "{case}: held"
+            );
         }
-    };
-    let accept = |_: &str, _: &str| Ok(());
-    overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
-    driver.alert = &accept;
-    let key = format!("{} {pane}", server.pid);
-    let state = fleet.read();
-    driver.pass(&state);
-    driver.pass(&state);
-    assert_eq!(
-        driver.baseline.get("overseer-walled", &key),
-        Some("pending")
-    );
-    let rows = dir.path().join("session-rows.jsonl");
-    let mut text = std::fs::read_to_string(&rows).unwrap();
-    text.push_str("{\"harness\":\"claude\",\"event\":\"UserPromptSubmit\"}\n{\"harness\":\"claude\",\"event\":\"Stop\"}\n");
-    std::fs::write(&rows, text).unwrap();
-    returned.set(true);
-    driver.pass(&state);
-    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
-    for row in ["overseer-walled", "overseer-walled-at", "overseer-wall-row"] {
-        assert_eq!(driver.baseline.get(row, &key), None, "{row}");
+        // The turn returns: its rows, then the idle composer.
+        let mut text = std::fs::read_to_string(&rows).unwrap();
+        text.push_str("{\"harness\":\"claude\",\"event\":\"UserPromptSubmit\"}\n{\"harness\":\"claude\",\"event\":\"Stop\"}\n");
+        std::fs::write(&rows, text).unwrap();
+        redraw(
+            &server,
+            &pane,
+            dir.path(),
+            "overseer-returned.txt",
+            "❯ Resume the work\n⏺ Done.\n❯\u{a0}\n",
+            "Done.",
+        );
+        ended.set(true);
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key).unwrap_or(""),
+            walled,
+            "{case}"
+        );
+        assert_eq!(
+            driver.baseline.get("resume", "overseer").is_some(),
+            resumed,
+            "{case}"
+        );
+        assert_eq!(transfers.borrow().len(), moved, "{case}");
     }
-    assert_eq!(driver.baseline.get("resume", "overseer"), None);
-    assert!(transfers.borrow().is_empty());
 }
 
 /// A pending usage wall's own account that cannot be read past its reset
