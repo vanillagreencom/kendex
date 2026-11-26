@@ -57,7 +57,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local render_base render_head path index delta name claimed
   local lane_hits=() lane_changed=() render_hits=()
   local reader_missing queue_reader per_push_reader standdown_missing hit
-  local reach reach_kind unclaimed_unproved
+  local reach reach_kind reach_cause unclaimed_unproved
   local derived=false reach_status=0 prereqs=() derived_causes=()
   local declared_paths=""
   local unread_globs unread_hit queue_globs
@@ -491,10 +491,13 @@ fi
 # marked `:queue` with a reach stands down only where this run's
 # change-class answered queue_only=true and both renders read the mark, so
 # pr-merge, asking the same question from either, keeps the pull request off
-# the admin merge, and a render is no exception; an unclaimed reach also
-# needs a queue-only cause pr-merge reproduces, above. Otherwise it runs, its
-# cause naming what was missing. The merge group runs every lane a reach
-# turns on. A declaration change alone defers no queue lane. A failed
+# the admin merge, and a render is no exception. An unclaimed reach, a
+# changed path no lane claims or a derived reach no reasoned claim matched,
+# matches no glob of the mark, so it also needs a queue-only cause pr-merge
+# reproduces, above. A derived prerequisite of a running job runs.
+# Otherwise it runs, its cause naming what was missing. The merge group
+# runs every lane a reach turns on. A declaration change alone defers no
+# queue lane. A failed
 # declaration comparison permits no queue deferral, and a diff whose paths
 # could not be read runs every other lane.
 lane_values=()
@@ -514,10 +517,14 @@ while [ "$index" -lt "$lane_count" ]; do
   else
     hit="${lane_hits[$index]:-}"
   fi
-  reach="$hit" reach_kind=claimed
-  [ "$derived" = false ] || reach_kind="derived-reach"
+  reach="$hit" reach_kind=claimed reach_cause=claimed
+  if [ "$derived" = true ]; then
+    reach_cause=derived-reach
+    # A derived reach no reasoned claim matched takes an unclaimed reach's proof.
+    grep -qxF -- "${lane_names[$index]}" "$work/lane-exceptions" || reach_kind=unclaimed-path
+  fi
   if [ -z "$hit" ] && [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; then
-    reach="path=$unclaimed_path claim=none" reach_kind=unclaimed-path
+    reach="path=$unclaimed_path claim=none" reach_kind=unclaimed-path reach_cause=unclaimed-path
   fi
   if [ "$lanes_cause" = full-run ]; then
     lane_values[$index]=true lane_causes[$index]="cause=full-run event=$EVENT"
@@ -527,10 +534,8 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
-  elif [ "$derived" = true ] && [ -n "$reach" ] &&
-    { [ "${prereqs[$index]:-false}" = true ] ||
-      ! grep -qxF -- "${lane_names[$index]}" "$work/lane-exceptions"; }; then
-    lane_values[$index]=true lane_causes[$index]="cause=$reach_kind $reach"
+  elif [ "$derived" = true ] && [ -n "$reach" ] && [ "${prereqs[$index]:-false}" = true ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=$reach_cause $reach"
   elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]; then
     [ "$reader_missing" != unread ] || reader_missing="$(render_reader_missing "$queue_reader")"
     if [ -n "$reader_missing" ]; then
@@ -552,7 +557,7 @@ while [ "$index" -lt "$lane_count" ]; do
   elif [ "$no_changed_paths" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"
   elif [ -n "$reach" ]; then
-    lane_values[$index]=true lane_causes[$index]="cause=$reach_kind $reach"
+    lane_values[$index]=true lane_causes[$index]="cause=$reach_cause $reach"
   elif [ "${lane_changed[$index]}" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   elif [ "${lane_nightly[$index]}" = true ]; then

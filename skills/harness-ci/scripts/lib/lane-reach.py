@@ -87,6 +87,31 @@ case $member in
 esac
 done
 done""".splitlines()
+# The same dispatch, then the lane's fixture files: each .sh and .py file
+# directly in bin/fixtures/LANE/, listed when the lane runs. The list is on
+# fd 3, so a fixture that reads stdin cannot consume it.
+LANE_FIXTURE_DISPATCH = """case ${1-} in
+--lane) run=$2 ;;
+*) exit 2 ;;
+esac
+for entry in "${lane_table[@]}"; do
+name=${entry%%:*}
+[ "$name" = "$run" ] || continue
+for member in ${entry#*:}; do
+case $member in
+@*|+host|+isolated|*.sh|*.py) ;;
+*) "step_${member//-/_}" ;;
+esac
+done
+[ -d "bin/fixtures/$name" ] || continue
+fixtures=$(find "bin/fixtures/$name" -mindepth 1 -maxdepth 1 -type f \\( -name '*.sh' -o -name '*.py' \\) | LC_ALL=C sort)
+while IFS= read -r fixture <&3; do
+case $fixture in
+*.sh) bash "$fixture" ;;
+*.py) python3 "$fixture" ;;
+esac
+done 3<<<"$fixtures"
+done""".splitlines()
 SHELL_KEYWORDS = {
     "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for",
     "function", "if", "in", "select", "then", "time", "until", "while",
@@ -106,10 +131,29 @@ QUEUE_NARROWING = re.compile(
 )
 
 
+# A ${...} expansion holding no brace, quote, blank, backslash or operator,
+# so its "}" cannot be a word of its own, even where a quote around it
+# makes the "${" plain text.
+PLAIN_EXPANSION = re.compile(r"\$\{[^{}\s'\"`\\;&|<>()]*\}")
+
+
+def boundary_unproved(body):
+    # Whether bash could end the function before the line that is "}" alone,
+    # so lines after it would run at the top level. The rule reads no quote
+    # or comment: any brace outside a plain expansion counts, and so does a
+    # line continuation or a "<<", which can join lines or hide them.
+    return any(re.search(r"[{}]", PLAIN_EXPANSION.sub("", line)) or line.endswith("\\")
+               or "<<" in line for line in body)
+
+
 def lane_table(lines, lane):
-    end = len(lines) - len(LANE_TABLE_DISPATCH)
-    require(end > 0 and lines[end:] == LANE_TABLE_DISPATCH and
-            lines[0] == "lane_table=(", "unsupported-runner-dispatch")
+    """The lane's step names, the runner's step bodies, and whether the runner
+    also runs the lane's fixture directory."""
+    dispatch = next((shape for shape in (LANE_TABLE_DISPATCH, LANE_FIXTURE_DISPATCH)
+                     if len(lines) > len(shape) and lines[-len(shape):] == shape), None)
+    require(dispatch and lines[0] == "lane_table=(", "unsupported-runner-dispatch")
+    fixtures = dispatch is LANE_FIXTURE_DISPATCH
+    end = len(lines) - len(dispatch)
     index = 1
     members = {}
     while index < end and lines[index] != ")":
@@ -117,26 +161,31 @@ def lane_table(lines, lane):
         require(entry and entry[1] not in members, "unsupported-runner-table")
         close = lines.index('"', index + 1, end)
         selected = []
-        for row in lines[index + 1:close]:
-            if re.fullmatch(r"@[A-Za-z0-9_./+*?-]+|\+(?:host|isolated)", row):
+        for word in " ".join(lines[index + 1:close]).split():
+            if re.fullmatch(r"@[A-Za-z0-9_./+*?-]+|\+(?:host|isolated)", word) or (
+                fixtures and re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:sh|py)", word)
+            ):
                 continue
-            require(re.fullmatch(LANE_ID, row), "unsupported-runner-member")
-            selected.append(row)
+            require(re.fullmatch(LANE_ID, word), "unsupported-runner-member")
+            selected.append(word)
         members[entry[1]] = selected
         index = close + 1
-    require(index < end and lane in members and members[lane], "runner-lane-unresolved")
+    # A lane with no step can still run its fixture files.
+    require(index < end and lane in members and (fixtures or members[lane]),
+            "runner-lane-unresolved")
     index += 1
     functions = {}
     while index < end:
         definition = re.fullmatch(r"(step_[a-z0-9_]+)\(\) \{", lines[index])
         require(definition and definition[1] not in functions, "unsupported-runner-function")
         close = lines.index("}", index + 1, end)
-        body = [args for line in lines[index + 1:close] if (args := words(line))]
-        require(body and all(args[0] not in SHELL_KEYWORDS for args in body),
-                "unsupported-runner-body")
-        functions[definition[1]] = body
+        # The caller reads only the selected lane's steps, so another step's
+        # body must end where this split ends it.
+        require(not boundary_unproved(lines[index + 1:close]),
+                f"runner-function-boundary-unproved function={definition[1]}")
+        functions[definition[1]] = lines[index + 1:close]
         index = close + 1
-    return members[lane], functions
+    return members[lane], functions, fixtures
 
 
 class Evidence:
@@ -256,17 +305,41 @@ class Evidence:
             lines = [line.strip(" \t") for line in body[1:] if line.strip(" \t")]
             if lines[:1] in STRICT_MODE:
                 lines = lines[1:]
-            members, functions = lane_table(lines, lane)
+            members, functions, fixtures = lane_table(lines, lane)
             reads.add(script)
             for member in members:
                 step = "step_" + member.replace("-", "_")
                 require(step in functions, f"runner-step-unresolved step={step}")
-                for command in functions[step]:
+                body = [args for line in functions[step] if (args := words(line))]
+                require(body and all(args[0] not in SHELL_KEYWORDS for args in body),
+                        f"unsupported-runner-body step={step}")
+                for command in body:
                     self.shell_command(command, directory, reads, visited)
+            if fixtures:
+                self.lane_fixtures(lane, directory, reads, visited)
         except UNAVAILABLE as error:
             raise NamedUnreadable(
                 f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}"
             ) from error
+
+    def lane_fixtures(self, lane, directory, reads, visited):
+        folder, passed = self.checkout_path(directory, f"bin/fixtures/{lane}")
+        reads.update(passed)
+        # The runner lists the directory when the lane runs, so a path added,
+        # removed or changed in it, or a change to the directory itself or an
+        # ancestor, reaches the lane.
+        reads.update(name for name in self.changed if under(name, folder) or under(folder, name))
+        for path, mode in sorted(self.files.items()):
+            # find -type f lists regular files and no link.
+            if (Path(path).parent.as_posix() != folder or mode not in {"100644", "100755"}
+                    or not path.endswith((".sh", ".py"))):
+                continue
+            # The runner reads the list by line, so it would run each part of
+            # a name that holds a newline as a path of its own.
+            require("\n" not in path, f"runner-fixture-name-newline folder={folder}")
+            if path.endswith(".py"):
+                raise Unreadable(f"runner-fixture-opaque fixture={path}")
+            self.shell_reads(path, directory, reads, visited)
 
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args

@@ -738,6 +738,144 @@ git -C "$repo" checkout -qb fixture-wrong-event "$dispatch_base"
 write_dispatch_workflow classify wrong-event >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'a step shadows the job event with a pull request constant'
 dispatch_wrong_event_base="$(git -C "$repo" rev-parse HEAD)"
+# The shape of fleet's bin/check at fleet f016d9f8: marks beside fixture names
+# in the lane entries, lanes with no step, a step with more than literal
+# commands on a lane no job runs, and each lane's fixture files found under
+# bin/fixtures/LANE/ after its steps.
+git -C "$repo" checkout -qb fixture-fleet-dispatch "$dispatch_base"
+write_fleet_runner() { # TMUX_GUARD_CLOSE
+  cat <<'SH'
+#!/bin/bash
+set -euo pipefail
+lane_table=(
+  "check-scans:
+    scan
+    @always
+  "
+  "check-lane-host:
+    lane-host-home-guard
+    lane-host-accounts.sh +isolated
+  "
+  "check-other:
+    +host
+  "
+  "check-tmux:
+    tmux-guard
+  "
+)
+step_scan() {
+  bash ./bin/check-scans.sh
+}
+step_lane_host_home_guard() {
+  bash ./bin/check-lane-host.sh
+}
+step_tmux_guard() {
+  local entry word
+  for entry in "${lane_table[@]}"; do
+    for word in ${entry#*:}; do
+      bash "./bin/${word%.sh}.sh"
+SH
+  printf '%s\n' "$1"
+  cat <<'SH'
+}
+case ${1-} in
+  --lane) run=$2 ;;
+  *) exit 2 ;;
+esac
+for entry in "${lane_table[@]}"; do
+  name=${entry%%:*}
+  [ "$name" = "$run" ] || continue
+  for member in ${entry#*:}; do
+    case $member in
+      @*|+host|+isolated|*.sh|*.py) ;;
+      *) "step_${member//-/_}" ;;
+    esac
+  done
+  [ -d "bin/fixtures/$name" ] || continue
+  fixtures=$(find "bin/fixtures/$name" -mindepth 1 -maxdepth 1 -type f \( -name '*.sh' -o -name '*.py' \) | LC_ALL=C sort)
+  while IFS= read -r fixture <&3; do
+    case $fixture in
+      *.sh) bash "$fixture" ;;
+      *.py) python3 "$fixture" ;;
+    esac
+  done 3<<<"$fixtures"
+done
+SH
+}
+write_fleet_runner '    done
+  done' >"$repo/bin/check"
+mkdir -p "$repo/bin/fixtures/check-lane-host" "$repo/bin/fixtures/check-other"
+printf 'cat ./bin/host.txt\n' >"$repo/bin/fixtures/check-lane-host/lane-host-accounts.sh"
+printf 'host input\n' >"$repo/bin/host.txt"
+printf 'cat ./bin/other.txt\n' >"$repo/bin/fixtures/check-other/client.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a runner runs each lane fixture its directory holds'
+dispatch_fleet_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-fleet-python "$dispatch_fleet_base"
+printf 'print("client")\n' >"$repo/bin/fixtures/check-other/client.py"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a lane runs a Python fixture'
+dispatch_fleet_python_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-fleet-brace "$dispatch_fleet_base"
+# The step's function ends on its last command's line, after a literal "{"
+# argument, so the cat runs at the top level of every lane.
+write_fleet_runner '    done
+  done; echo {; }
+cat ./bin/top.txt
+step_after() {
+  true' >"$repo/bin/check"
+printf 'top input\n' >"$repo/bin/top.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a step function closes before its brace line'
+dispatch_fleet_brace_base="$(git -C "$repo" rev-parse HEAD)"
+# A ")#" does not start a comment, so the "}" after it ends the step, and
+# the "{" a later ")#" hides opens a group that closes the function's line.
+git -C "$repo" checkout -qb fixture-fleet-brace-comment "$dispatch_fleet_brace_base"
+write_fleet_runner '    done
+  done; echo $(echo a)#b; }
+cat ./bin/top.txt
+: $(true)#; {
+  true' >"$repo/bin/check"
+git -C "$repo" commit -qam 'a step function closes after a comment-like word'
+dispatch_fleet_brace_comment_base="$(git -C "$repo" rev-parse HEAD)"
+# The backslash-newline joins "<<", and the quote in the heredoc's data
+# pairs with the one in the later comment.
+git -C "$repo" checkout -qb fixture-fleet-brace-heredoc "$dispatch_fleet_brace_base"
+write_fleet_runner "    done
+  done
+  cat <\\
+<EOF
+'
+EOF
+  true; }
+cat ./bin/top.txt
+step_after() {
+  true # it's" >"$repo/bin/check"
+git -C "$repo" commit -qam 'a step function closes after a continued heredoc'
+dispatch_fleet_brace_heredoc_base="$(git -C "$repo" rev-parse HEAD)"
+# find lists a fixture name holding a newline as two lines, so the runner
+# runs ./run.sh, a file no fixture names.
+git -C "$repo" checkout -qb fixture-fleet-newline "$dispatch_fleet_base"
+printf 'true\n' >"$repo/bin/fixtures/check-other/x"$'\n'"run.sh"
+printf 'echo split\n' >"$repo/run.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a fixture name holds a newline'
+dispatch_fleet_newline_base="$(git -C "$repo" rev-parse HEAD)"
+# The host lane also reads a path on the shipped queue list, whose
+# queue_only answer reads inputs=run, and claims another such path.
+git -C "$repo" checkout -qb fixture-fleet-queue "$dispatch_fleet_base"
+printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "per-lane queue marks"\n' >"$repo/kendex.settings.toml"
+printf '%s\n' 'check-lane-host:queue bin/fixtures/check-lane-host/* skills/review-gate/standard.json # reason: the queue proves the host lane' \
+  >"$repo/.github/ci-lanes.conf"
+mkdir -p "$repo/skills/review-gate/scripts"
+printf 'queue input\n' >"$repo/skills/review-gate/scripts/x.txt"
+printf '{}\n' >"$repo/skills/review-gate/standard.json"
+printf 'cat ./skills/review-gate/scripts/x.txt\n' >>"$repo/bin/fixtures/check-lane-host/lane-host-accounts.sh"
+mkdir -p "$repo/.agents/skills/harness-ci/scripts/lib"
+cp "$HARNESS_CI_PACKAGE/scripts/lib/ci-lanes.sh" "$repo/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'the host lane takes the merge queue'
+dispatch_fleet_queue_base="$(git -C "$repo" rev-parse HEAD)"
 git clone --quiet "$repo" "$trusted"
 if [ -x "$root/ui/node_modules/.bin/vitest" ]; then
   modules="$root/ui/node_modules"
@@ -876,6 +1014,13 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-opaque-prefix) base="$dispatch_opaque_prefix_base" ;;
     dispatch-opaque-host) base="$dispatch_opaque_host_base" ;;
     dispatch-wrong-event) base="$dispatch_wrong_event_base" ;;
+    dispatch-fleet-python) base="$dispatch_fleet_python_base" ;;
+    dispatch-fleet-brace) base="$dispatch_fleet_brace_base" ;;
+    dispatch-fleet-brace-comment) base="$dispatch_fleet_brace_comment_base" ;;
+    dispatch-fleet-brace-heredoc) base="$dispatch_fleet_brace_heredoc_base" ;;
+    dispatch-fleet-newline) base="$dispatch_fleet_newline_base" ;;
+    dispatch-fleet-queue-*) base="$dispatch_fleet_queue_base" ;;
+    dispatch-fleet-*) base="$dispatch_fleet_base" ;;
     queued-render-push) base="$queue_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
@@ -931,6 +1076,15 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
       assert_eq "$label $member reads the helper at runtime" "$(cat "$repo/$fixture_helper")" \
         "$(cd "$repo" && bin/check --lane "$member")"
     done ;;
+  dispatch-fleet-fixture)
+    assert_eq "$label lane host runs its step, then its fixture" \
+      "$(cat "$repo/$fixture_helper" "$repo/bin/host.txt")" "$(cd "$repo" && bin/check --lane check-lane-host)" ;;
+  dispatch-fleet-brace*)
+    assert_eq "$label lane other reads the top-level input at runtime" \
+      "$(cat "$repo/bin/top.txt" "$repo/bin/other.txt")" "$(cd "$repo" && bin/check --lane check-other)" ;;
+  dispatch-fleet-newline)
+    assert_eq "$label lane other runs the split name's second line" \
+      "$(cat "$repo/bin/other.txt")"$'\n'split "$(cd "$repo" && bin/check --lane check-other)" ;;
   cargo-external-child|cargo-linked-child|cargo-parent-hop)
     base_status=0 head_status=0
     (cd "$trusted/cargo" && CARGO_TARGET_DIR="$SANDBOX/base-cargo-target" cargo test --offline --locked -p primary) \
@@ -1006,6 +1160,20 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
             assert_eq "$label $implementation diagnostic" \
               "job=check-lane-host cause=unresolved-lane-dispatch command=$runner --lane check-lane-host" \
               "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=unresolved-lane-dispatch command=.*\) reason=.*/\1/p' "$log")" ;;
+          dispatch-fleet-python|dispatch-fleet-brace*|dispatch-fleet-newline)
+            case "$label" in
+              dispatch-fleet-python) reason='runner-fixture-opaque fixture=bin/fixtures/check-other/client.py' ;;
+              dispatch-fleet-brace*) reason='runner-function-boundary-unproved function=step_tmux_guard' ;;
+              *) reason='runner-fixture-name-newline folder=bin/fixtures/check-other' ;;
+            esac
+            assert_eq "$label $implementation diagnostic" \
+              "cause=unresolved-lane-dispatch command=bin/check --lane check-other reason=$reason" \
+              "$(sed -n 's/^lane-reach: job=check-other //p' "$log")" ;;
+          dispatch-fleet-queue-*)
+            cause=queue-deferred
+            [ "$label" != dispatch-fleet-queue-unproved ] || cause=queue-cause-unproved
+            assert_eq "$label $implementation host cause" "$cause" \
+              "$(sed -n 's/^lane: name=check-lane-host verdict=[a-z]* cause=\([a-z-]*\) .*/\1/p' "$log")" ;;
           dispatch-opaque-prefix)
             assert_eq "$label $implementation conditional step diagnostic" \
               'job=check-scans cause=opaque-step command=bin/check --lane check-scans' \
@@ -1129,6 +1297,17 @@ dispatch-scan-gated|bin/markdown.sh||||||||||lane-reach-unreadable
 dispatch-opaque-prefix|bin/other.txt|||||||true|true|true|derived-reach
 dispatch-opaque-host|bin/unplaced.txt|||||||false|true|false|derived-reach
 dispatch-wrong-event|bin/other.txt||||||||||lane-reach-unreadable
+dispatch-fleet-fixture|bin/host.txt|||||||false|true|false|derived-reach
+dispatch-fleet-step|bin/markdown.sh|||||||false|true|false|derived-reach
+dispatch-fleet-added|bin/fixtures/check-other/added.sh|||||||false|false|true|derived-reach
+dispatch-fleet-python|bin/unplaced.txt|||||||false|false|true|derived-reach
+dispatch-fleet-brace|bin/top.txt|||||||true|true|true|derived-reach
+dispatch-fleet-brace-comment|bin/top.txt|||||||true|true|true|derived-reach
+dispatch-fleet-brace-heredoc|bin/top.txt|||||||true|true|true|derived-reach
+dispatch-fleet-newline|run.sh|||||||false|false|true|derived-reach
+dispatch-fleet-queue-claimed|skills/review-gate/standard.json|||||pull_request||false|false|false|derived-reach
+dispatch-fleet-queue-derived|bin/host.txt|||||pull_request||false|false|false|derived-reach
+dispatch-fleet-queue-unproved|skills/review-gate/scripts/x.txt|||||pull_request||false|true|false|derived-reach
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
