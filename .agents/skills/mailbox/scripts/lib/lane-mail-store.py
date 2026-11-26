@@ -32,7 +32,20 @@ def objects($box):
       | {line: $box.numbers[$i], envelope: .}];
 '''
 READ_JQ = OBJECTS_JQ + r'''
-. as $in | objects(.lane) as $lane | objects(.over) as $over
+def damaged($box; $after):
+  first(range(0; $box.raw | length) as $i
+    | select($box.numbers[$i] > $after and ($box.raw[$i] | mailbox_line_invalid))
+    | $box.numbers[$i]) // null;
+. as $in
+# A read that would hand a damaged line over, or carry a position past it,
+# stops in front of it: mailbox_line_invalid judges the line, as the writer
+# that marks a killed writer's fragment and every lane-mail reader do.
+| (if $in.verb == "inbox" then {box: "to-lane", line: damaged($in.lane; $in.seen)}
+   elif $in.verb == "drain" then
+     {box: "to-overseer", line: damaged($in.over; if $in.after == "" then 0 else ($in.after | tonumber) end)}
+   else {line: null} end) as $damaged
+| if $damaged.line != null then {damaged: $damaged} else
+objects(.lane) as $lane | objects(.over) as $over
 | [$lane[].envelope | select(.kind == "answer") | .re // empty] as $answered
 | [$lane[].envelope | select(overseer_mail_class == "close") | .re] as $closed
 | (if $in.receipts and $in.item == "overseer" then
@@ -68,7 +81,7 @@ READ_JQ = OBJECTS_JQ + r'''
               | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"]
         elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]
         else [] end)), cursor: null, lowered: null, clamped: null}
-  end)
+  end) end
 '''
 
 
@@ -88,6 +101,7 @@ def validate_mailbox(box):
     """
     for path in (box.parent, box, box / "to-overseer.jsonl", box / "to-lane.jsonl",
                  box / "to-overseer.jsonl.numbering", box / "to-lane.jsonl.numbering",
+                 box / "to-overseer.jsonl.set-aside", box / "to-lane.jsonl.set-aside",
                  box / "to-lane.cursor", box / "to-lane.cursor.lock", box / "to-lane.watch"):
         try:
             mode = os.lstat(path).st_mode
@@ -316,6 +330,10 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
                             capture_output=True, check=True,
                             env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
     result = json.loads(result.stdout)
+    if "damaged" in result:
+        damaged = result["damaged"]
+        print(f"error\x1fenvelope-invalid\x1f{box / (damaged['box'] + '.jsonl')}\x1fline={damaged['line']}")
+        return
     lowered = result["lowered"]
     if deliver == "1":
         # The caller's stdout bypasses its control-result capture. A failed or
@@ -406,10 +424,10 @@ def snapshot(fd, path, dest):
 
 def row_metadata(rows, jq_defs):
     """Use lane-mail's stamp parser and mailbox classifier in one jq call."""
-    program = jq_defs + ''' split("\\n")[:-1] | map((fromjson? // null)
+    program = jq_defs + ''' split("\\n")[:-1] | map(mailbox_line_invalid as $invalid | (fromjson? // null)
         | if type == "object" then
-            {epoch: (.at // "" | at_epoch), class: overseer_mail_class}
-          else {epoch: null, class: null} end)'''
+            {epoch: (.at // "" | at_epoch), class: overseer_mail_class, invalid: false}
+          else {epoch: null, class: null, invalid: $invalid} end)'''
     result = subprocess.run(["jq", "-Rs", program], input=b"".join(rows),
                             capture_output=True, check=True)
     return json.loads(result.stdout)
@@ -428,8 +446,11 @@ def row_links(obj):
     return ids
 
 
-def plan(box, dest, cutoff, seen, jq_defs):
-    """Keep unread rows, needed exchanges and the current halt directive."""
+def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
+    """Keep unread rows, needed exchanges and the current halt directive.
+
+    With set_aside, every damaged row leaves its box for the set-aside file
+    beside it instead, its text kept whatever archive the caller has."""
     boxes = [read_box(8, box / "to-overseer.jsonl"), read_box(9, box / "to-lane.jsonl")]
     objects = [[envelope(row) for row in data[0]] for data in boxes]
     directives = [(i, obj) for i, obj in enumerate(objects[1])
@@ -473,25 +494,41 @@ def plan(box, dest, cutoff, seen, jq_defs):
                 keep[b][i] = True
                 protected.update(ids)
                 changed = True
-    counts = {}
+    counts = {"set-aside": {}}
     for b, name in enumerate(("to-overseer", "to-lane")):
         rows, numbers, record, fragment = boxes[b]
+        # A damaged row has no stamp, so retention always keeps it: only the
+        # set-aside takes it out.
+        aside = {i for i in range(len(rows)) if set_aside and metadata[b][i]["invalid"]}
         removed = [row for i, row in enumerate(rows) if not keep[b][i]]
-        retained = [row for i, row in enumerate(rows) if keep[b][i]]
-        logical = [n for i, n in enumerate(numbers) if keep[b][i]]
-        dropped = record["dropped"] + len(removed)
+        retained = [row for i, row in enumerate(rows) if keep[b][i] and i not in aside]
+        logical = [n for i, n in enumerate(numbers) if keep[b][i] and i not in aside]
+        dropped = record["dropped"] + len(removed) + len(aside)
         # The last logical line can have been removed too. The count, rather
         # than the last retained line, sets where a waiting writer continues.
         record = {"dropped": dropped, "first": record["first"], "lines": logical}
         (dest / (name + ".kept")).write_bytes(b"".join(retained) + fragment)
         (dest / (name + ".jsonl")).write_bytes(b"".join(removed))
         (dest / (name + ".numbering")).write_text(json.dumps(record) + "\n")
+        (dest / (name + ".set-aside")).write_text("".join(
+            json.dumps({"line": numbers[i], "text": rows[i][:-1].decode(errors="replace")}) + "\n"
+            for i in sorted(aside)))
         counts[name] = len(removed)
+        counts["set-aside"][name] = len(aside)
     (dest / "counts.json").write_text(json.dumps(counts) + "\n")
 
 
 def rewrite(fd, path, dest, name):
-    """Rewrite through the locked inode, so an already waiting writer survives."""
+    """Rewrite through the locked inode, so an already waiting writer survives.
+
+    Set-aside rows land durably beside the box before the rewrite drops them:
+    a failure between leaves a row in both places, never in neither."""
+    aside = (dest / (name + ".set-aside")).read_bytes()
+    if aside:
+        with open(str(path) + ".set-aside", "ab") as stream:
+            stream.write(aside)
+            stream.flush()
+            os.fsync(stream.fileno())
     kept = (dest / (name + ".kept")).read_bytes()
     os.lseek(fd, 0, os.SEEK_SET)
     with os.fdopen(os.dup(fd), "r+b") as stream:
@@ -535,12 +572,13 @@ def main():
             else:
                 print(error)
     elif op == "plan":
-        plan(Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6])
+        plan(Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6],
+             sys.argv[7] == "1")
     elif op == "rewrite":
         box, dest = Path(sys.argv[2]), Path(sys.argv[3])
         counts = json.loads((dest / "counts.json").read_text())
         for fd, name in ((8, "to-overseer"), (9, "to-lane")):
-            if counts[name]:
+            if counts[name] or counts["set-aside"][name]:
                 rewrite(fd, box / (name + ".jsonl"), dest, name)
     else:
         raise ValueError(f"unknown operation: {op}")

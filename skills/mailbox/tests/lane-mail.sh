@@ -702,6 +702,84 @@ lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(.text) | join(",")')" "whole,after the fragment" \
   "an envelope appended after an interrupted one is read whole"
 
+# A damaged line at logical line 8 of both files, an envelope at 9, and the
+# lane's cursor at 7: each reader that would pass line 8 stops in front of it.
+# LINE8 is the damage itself, or a killed writer's fragment that the line 9
+# send closes through mailbox_terminate.
+damaged_world() { # NAME damaged|torn
+  local box i
+  new_lane "$1"
+  box="$LANE/tmp/lane-mail/KEN-1"
+  mkdir -p "$box"
+  for i in 1 2 3 4 5 6 7; do
+    printf '{"id":"n%s","kind":"notice","at":"2026-11-26T00:00:00Z","text":"n%s"}\n' "$i" "$i" >> "$box/to-overseer.jsonl"
+    printf '{"id":"d%s","kind":"directive","at":"2026-11-26T00:00:00Z","text":"d%s"}\n' "$i" "$i" >> "$box/to-lane.jsonl"
+  done
+  printf '7\n' > "$box/to-lane.cursor"
+  if [ "$2" = damaged ]; then
+    printf '{"id":"lost","kind":"directive"\n' | tee -a "$box/to-overseer.jsonl" >> "$box/to-lane.jsonl"
+    printf '{"id":"n9","kind":"notice","at":"2026-11-26T00:00:00Z","text":"n9"}\n' >> "$box/to-overseer.jsonl"
+    printf '{"id":"a9","kind":"answer","re":"n1","at":"2026-11-26T00:00:00Z","text":"a9"}\n' >> "$box/to-lane.jsonl"
+  else
+    printf '{"id":"half","kind":"directive"' | tee -a "$box/to-overseer.jsonl" >> "$box/to-lane.jsonl"
+    lm notice --item KEN-1 --file "$(text n9 'n9')"
+    lm send --item KEN-1 --root "$LANE" --re n1 --file "$(text a9 'a9')"
+  fi
+}
+# The header a read printed, then the text of each envelope it handed over.
+damaged_shown() {
+  jq -R -r 'select(length > 0) | if startswith("count=") then . else fromjson | .text end' <<<"$OUT" | tr '\n' ' ' | sed 's/ $//'
+}
+# COMMAND | WORLD | RC=ERR=SHOWN, @BOX@ naming the mailbox | the cursor after
+DAMAGED_ROWS=(
+  "events --box to-lane --after 7|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-lane.jsonl line=8=|7"
+  "events --box to-overseer --after 7|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-overseer.jsonl line=8=|7"
+  "drain --after 7|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-overseer.jsonl line=8=|7"
+  "inbox|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-lane.jsonl line=8=|7"
+  "inbox --peek|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-lane.jsonl line=8=|7"
+  "inbox --ack 9|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-lane.jsonl line=8=|7"
+  "wait --id n1 --timeout 1|damaged|2=lane-mail: envelope-invalid path=@BOX@/to-lane.jsonl line=8=|7"
+  "events --box to-lane --after 8|damaged|0==count=9 first=d1 a9|7"
+  "drain --after 8|damaged|0==count=9 first=n1 n9|7"
+  "events --box to-lane --after 7|torn|0==count=9 first=d1 a9|7"
+  "drain --after 7|torn|0==count=9 first=n1 n9|7"
+  "inbox|torn|0==a9|9"
+)
+DAMAGED_SERIAL=0
+for row in "${DAMAGED_ROWS[@]}"; do
+  IFS='|' read -r cmd world want cursor <<<"$row"
+  DAMAGED_SERIAL=$((DAMAGED_SERIAL + 1))
+  damaged_world "damaged_$DAMAGED_SERIAL" "$world"
+  BOX="$LANE/tmp/lane-mail/KEN-1"
+  read -r -a args <<<"$cmd"
+  lm "${args[@]}" --item KEN-1 --root "$LANE"
+  assert_eq "$RC=$ERR=$(damaged_shown)" "${want//@BOX@/$BOX}" \
+    "$world line 8, $cmd: a read stops in front of damage and reads past a closed fragment"
+  assert_eq "$(cat "$BOX/to-lane.cursor")" "$cursor" "$world line 8, $cmd: the cursor moves only past lines read"
+done
+
+# compact --set-aside is the repair: the damaged lines leave both files with
+# their text kept beside them, their logical numbers stay, and every reader
+# then reads past them. A compact without it moves no reader.
+damaged_world damaged_repair damaged
+BOX="$LANE/tmp/lane-mail/KEN-1"
+lm compact --item KEN-1 --root "$LANE"
+lm events --item KEN-1 --root "$LANE" --box to-lane --after 7
+assert_eq "$RC=$ERR" "2=lane-mail: envelope-invalid path=$BOX/to-lane.jsonl line=8" \
+  "a compact without --set-aside leaves the damaged line in front of the reader"
+lm compact --item KEN-1 --root "$LANE" --set-aside
+assert_eq "$RC=$(grep -c '^lane-mail: set-aside=' "$TMP_ROOT/err")" "0=2" "compact --set-aside names each file it set lines aside in"
+for file in to-overseer to-lane; do
+  assert_eq "$(jq -c . "$BOX/$file.jsonl.set-aside")" '{"line":8,"text":"{\"id\":\"lost\",\"kind\":\"directive\""}' \
+    "the set-aside $file line keeps its logical number and its text"
+done
+lm events --item KEN-1 --root "$LANE" --box to-lane --after 7
+assert_eq "$RC=$ERR=$(damaged_shown)" "0==count=9 first=d1 a9" "events reads past a set-aside line with its numbering kept"
+lm drain --item KEN-1 --root "$LANE" --after 7
+assert_eq "$RC=$ERR=$(damaged_shown)" "0==count=9 first=n1 n9" "drain reads past a set-aside line with its numbering kept"
+lm inbox --item KEN-1
+assert_eq "$RC=$ERR=$(damaged_shown)=$(cat "$BOX/to-lane.cursor")" "0==a9=9" "inbox reads past a set-aside line and moves its cursor"
+
 new_lane restart
 lm ask --item KEN-1 --file "$(text q 'first')"
 FIRST="${OUT#id=}"
@@ -1733,8 +1811,8 @@ LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'q')" >/dev/null
 printf '{"id":"half","kind":"notice","at":"t","text":"trunc' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 mutant_reader partial-consumed 'rows = [line + b"\n" for line in raw[:end].split(b"\n")[:-1]]' 'rows = raw.splitlines(keepends=True)'
 lm drain --item KEN-1 --root "$LANE" --after 0
-assert_eq "$(count_line)" "count=3" \
-  "control: without the terminated-prefix rule the half-written line is counted as read"
+assert_eq "$RC=$ERR" "2=lane-mail: envelope-invalid path=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl line=3" \
+  "control: without the terminated-prefix rule the half-written line is read, as damage"
 
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"

@@ -16,7 +16,9 @@ def prepare(root, state):
             {"id": "notice", "kind": "notice", "text": "Notice"},
             {"id": "open", "kind": "ask", "to": "owner", "deadline": "2000-01-01T00:00:00Z"}]
     for name, rows in (("to-lane", lane), ("to-overseer", over)):
-        raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows[:1]) + b"invalid\n"
+        # Line 2 is a killed writer's fragment as the next writer closes it,
+        # with the mark: counted, and skipped by every reader.
+        raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows[:1]) + b'{"id":"cut"\x1etorn\n'
         raw += b"".join(json.dumps(row).encode() + b"\n" for row in rows[1:])
         if state == "broken":
             raw += b'{"id":"unfinished"}'
