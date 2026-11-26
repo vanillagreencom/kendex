@@ -308,18 +308,26 @@ require_issue_reach() {
 # so the probe above and the arm it runs sit in one install: orch's default
 # resolves change-scope under the cwd's project, which a home-scope install or
 # a cwd outside the package's checkout does not hold, and a checkout's own
-# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. Both siblings are
-# found from this package's physical directory: a harness alias of it is a
-# symlink into the shared skills tree, and a logical `cd` collapses `..`
-# before following it, landing in the alias directory, which need not alias
-# orch. The reader needs no Linear credential, so none reaches it or what it
-# runs.
+# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. Orch is looked
+# for in the skills directory this package was invoked from, then in the one
+# it physically sits in, and change-scope is taken from the directory that
+# held orch. A harness alias of this package is a link into the shared skills
+# tree: the harness's own directory holds an orch delivered to it, a link or
+# a copy, and the shared tree holds an orch installed only for another
+# harness. The reader needs no Linear credential, so none reaches it or what
+# it runs.
 require_issue_launch_read() {
-	local skills reader
-	skills="$(cd -P "${BASH_SOURCE[0]%/*}/../../.." && pwd)"
+	local here skills="" candidate reader
+	here="${BASH_SOURCE[0]%/*}/../../.."
+	for candidate in "$(cd -L "$here" && pwd)" "$(cd -P "$here" && pwd)"; do
+		if [[ -n "$candidate" && -x "$candidate/orch/scripts/orch-runtime" ]]; then
+			skills="$candidate"
+			break
+		fi
+	done
+	[[ -n "$skills" ]] || return 0
 	reader="$skills/orch/scripts/orch-runtime"
 	local lower body="" out line cause="" rc=0
-	[[ -x "$reader" ]] || return 0
 	lower="${1,,}"
 	[[ "$lower" == *location* || "$lower" == *delta* ]] || return 0
 

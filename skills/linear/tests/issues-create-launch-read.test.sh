@@ -69,6 +69,18 @@ install "$LAUNCH/.agents/skills"
 mkdir -p "$LAUNCH/.claude/skills"
 ln -s ../../.agents/skills/linear "$LAUNCH/.claude/skills/linear"
 
+# orch copied into Claude's own directory alone, beside a Claude alias of this
+# package, so the shared tree holds no orch. The copy relays to the catalog's
+# reader and records the change-scope it was given.
+COPIED="$TMP_ROOT/copied"
+project "$COPIED"
+mkdir -p "$COPIED/.claude/skills/orch/scripts"
+ln -s ../../.agents/skills/linear "$COPIED/.claude/skills/linear"
+ln -s "$SKILLS/change-scope" "$COPIED/.claude/skills/change-scope"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$CHANGE_SCOPE_PATHS_CLI" >"%s"\nexec "%s" "$@"\n' \
+  "$COPIED/scope" "$SKILLS/orch/scripts/orch-runtime" >"$COPIED/.claude/skills/orch/scripts/orch-runtime"
+chmod +x "$COPIED/.claude/skills/orch/scripts/orch-runtime"
+
 # A home-scope install, and a checkout that holds no package filing from it.
 HOME_SKILLS="$TMP_ROOT/home/.agents/skills"
 install "$HOME_SKILLS"
@@ -188,6 +200,11 @@ body "$TMP_ROOT/body.md" '**Expected delta**: 20 test lines' "$TEMPLATE_LOCATION
 run_create "$LAUNCH" "$TMP_ROOT/body.md" "$LAUNCH/.claude/skills"
 assert_eq "a create through a Claude alias with no orch alias is refused before any API call" "$(api_calls)" 0
 assert_contains "a create through a Claude alias is refused on the shared orch's invalid-delta" "$ERR" "orch-runtime: tier cause=invalid-delta"
+run_create "$COPIED" "$TMP_ROOT/body.md" "$COPIED/.claude/skills"
+assert_eq "a create through a Claude alias with orch copied for Claude alone is refused before any API call" "$(api_calls)" 0
+assert_contains "a create through a Claude alias is refused on the copied orch's invalid-delta" "$ERR" "orch-runtime: tier cause=invalid-delta"
+assert_eq "the copied orch's read is given the change-scope beside it" \
+  "$(cat "$COPIED/scope" 2>/dev/null || echo unread)" "$COPIED/.claude/skills/change-scope/scripts/harness-only"
 
 echo "=== the reader gets no Linear credential ==="
 body "$TMP_ROOT/body.md" "$TEMPLATE_DELTA" "$TEMPLATE_LOCATION"
