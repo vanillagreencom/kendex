@@ -153,9 +153,9 @@ fn page_size(auxv: &[u8]) -> Option<u64> {
 
 /// What one `/proc/<pid>/stat` read says. No entry (ENOENT, or the ESRCH
 /// some kernels report for a process that exited between a listing and the
-/// read) is `Gone`; so is a process that has exited and waits for its
-/// parent (`Z`, `X`), which holds its pid and nothing else. Any other read
-/// error, and a line this crate cannot parse, is `Unreadable`.
+/// read) is `Gone`; so is a line that marks its task exited (`exited`).
+/// Any other read error, and a line this crate cannot parse, is
+/// `Unreadable`.
 #[cfg(target_os = "linux")]
 fn stat_reading(read: std::io::Result<String>) -> Reading<Stat> {
     let text = match read {
@@ -169,10 +169,7 @@ fn stat_reading(read: std::io::Result<String>) -> Reading<Stat> {
             };
         }
     };
-    // A task being reaped (`X`) writes its process group and session as
-    // -1, which no group parses from; its state alone says it is gone, as a
-    // zombie's does.
-    if matches!(stat_state(&text), Some('Z' | 'X')) {
+    if exited(&text) {
         return Reading::Gone;
     }
     match parse_stat(&text) {
@@ -183,12 +180,24 @@ fn stat_reading(read: std::io::Result<String>) -> Reading<Stat> {
     }
 }
 
-/// The state field of a stat line: the first field after the command
-/// name's closing parenthesis.
+/// Whether a stat line marks its task exited, checked before the line is
+/// parsed since a released task's group parses as no `u32`. A zombie (`Z`)
+/// or a task being reaped (`X`) holds its pid and nothing else. A released
+/// task writes its process group as -1: `do_task_stat` (`fs/proc/array.c`)
+/// starts the group at -1 and replaces it only under `lock_task_sighand`,
+/// which fails once `__exit_signal` (`kernel/exit.c`) has cleared the
+/// task's `sighand`, and a group read from a pid is never negative. That
+/// function reads the state before the lock, so a task released mid-read
+/// writes a running state beside the -1 group.
 #[cfg(target_os = "linux")]
-fn stat_state(stat: &str) -> Option<char> {
-    let close = stat.rfind(')')?;
-    stat[close + 1..].split_whitespace().next()?.chars().next()
+fn exited(stat: &str) -> bool {
+    let Some(close) = stat.rfind(')') else {
+        return false;
+    };
+    let mut fields = stat[close + 1..].split_whitespace();
+    let state = fields.next().and_then(|field| field.chars().next());
+    let pgrp = fields.nth(1);
+    matches!(state, Some('Z' | 'X')) || pgrp == Some("-1")
 }
 
 #[cfg(target_os = "linux")]
@@ -1340,6 +1349,21 @@ mod tests {
             )),
             Reading::Gone,
             "a task being reaped, its group and session written as -1"
+        );
+        assert_eq!(
+            stat_reading(Ok(
+                "2412049 (sh) R 0 -1 -1 0 -1 4227084 171 0 0 0 0 0 0 0 20 0 0 0 21454565 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 17 16 0 0 0 0 0 0 0 0 0 0 0 0 0
+".to_owned()
+            )),
+            Reading::Gone,
+            "a task released while its line was read: its state read before the release"
+        );
+        assert!(
+            matches!(
+                stat_reading(Ok(stat_line("claude", "S").replace(" 4567 ", " -1 "))),
+                Reading::Live(_)
+            ),
+            "no controlling terminal is no exit mark"
         );
         assert_eq!(
             stat_reading(Err(Io::from(ErrorKind::NotFound))),
