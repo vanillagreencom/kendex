@@ -1388,8 +1388,10 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
 # (`lane-mail compact` too), tools' guard-selection and validation-routing
 # (`orch-runtime validate entry`) and Jarvis's session, succession, task,
 # controls, succession-controls and owner-note suites run it, and so do the
-# worktree suites whose reuse or restack reads `validate entry --live`, so a leg
-# owning one of those suites on either
+# worktree suites whose reuse or restack reads `validate entry --live`, and
+# linear's issues-create-launch-read suite and the must-fail controls that run
+# it, whose create reads `orch-runtime tier --filing`, so a leg owning one of
+# those suites on either
 # runner builds both runtimes first, read from that step's real `if:`. The runtimes' own Rust targets run in one step, the
 # orch-rest Linux leg's, wherever the changes job's `rust_targets` list is
 # not empty.
@@ -1430,7 +1432,8 @@ runtime_suites() { # OWNERS OUT ; the `shard<tab>path` rows of OWNERS whose suit
       skills/worktree/tests/worktree_no_worktree_installs.sh | skills/worktree/tests/worktree_push_rebase.sh | \
       skills/worktree/tests/worktree_restack_hook_hold.sh | skills/worktree/tests/worktree_restack_replay.sh | \
       skills/worktree/tests/worktree_reuse_dropped_links.sh | skills/worktree/tests/worktree_session_guard_lifecycle.sh | \
-      skills/worktree/tests/worktree_symlink_shadows_tracked.sh)
+      skills/worktree/tests/worktree_symlink_shadows_tracked.sh | \
+      skills/linear/tests/issues-create-launch-read.test.sh | skills/linear/tests/must-fail-controls.sh)
         printf '%s\t%s\n' "$shard" "$path" >> "$2" ;;
     esac
   done < "$1"
@@ -1438,9 +1441,16 @@ runtime_suites() { # OWNERS OUT ; the `shard<tab>path` rows of OWNERS whose suit
 suite_owners "$WORKFLOW" files > "$TMP/runtime-owners"
 suite_owners "$WORKFLOW" files 3 > "$TMP/runtime-owners-macos"
 runtime_suites "$TMP/runtime-owners" "$TMP/runtime-suites"
-runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos"
-check "the Linux legs owning a suite that runs orch-runtime are the two orch legs, both hook legs, guards-tools, jarvis, mailbox, rest, slack and both worktree legs" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools jarvis mailbox orch-rest orch-state rest slack worktree worktree-restack)" \
+runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos-claimed"
+# The pool's stub suites carry no `# bash-runtime:` line, so the macOS pass
+# also claims a Bash 4 suite the real leg leaves out; the eligibility owner
+# reads the real file, as the coverage universe does.
+cut -f2 "$TMP/runtime-suites-macos-claimed" | sort -u |
+  "$ROOT/tools/macos-test-contracts" --filter > "$TMP/runtime-native" || exit 1
+awk -F '\t' 'NR == FNR { keep[$0] = 1; next } $2 in keep' \
+  "$TMP/runtime-native" "$TMP/runtime-suites-macos-claimed" > "$TMP/runtime-suites-macos"
+check "the Linux legs owning a suite that runs orch-runtime are the two orch legs, both hook legs, guards-tools, jarvis, both linear legs, mailbox, rest, slack and both worktree legs" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools jarvis linear linear-controls mailbox orch-rest orch-state rest slack worktree worktree-restack)" \
   "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
 check "the macOS legs owning a suite that runs orch-runtime are both orch legs, both hook legs, guards-tools, rest, slack and worktree" \
   "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools orch-rest orch-state rest slack worktree)" \
@@ -1460,11 +1470,11 @@ plant "$WORKFLOW" " || matrix.shard == 'rest' || matrix.shard == 'jarvis'" " || 
   "$TMP/runtime-rest-linux.yml" "skill-suites-shard/$RUNTIME_STEP"
 check "must-fail: a build step keeping rest to Linux names the macOS leg whose presence suite would refuse" "macOS rest" \
   "$(unbuilt_runtime_legs "$TMP/runtime-rest-linux.yml" macOS "$TMP/runtime-suites-macos")"
-printf '%s\t%s\n' review-gate skills/jarvis/tests/controls.test.sh linear skills/jarvis/tests/succession-controls.test.sh \
+printf '%s\t%s\n' review-gate skills/jarvis/tests/controls.test.sh guards-scans skills/jarvis/tests/succession-controls.test.sh \
   pi-claude-bridge skills/jarvis/tests/owner-note.test.sh > "$TMP/runtime-jarvis-owners"
 runtime_suites "$TMP/runtime-jarvis-owners" "$TMP/runtime-jarvis-suites"
 check "must-fail: Jarvis's controls, succession-controls and owner-note suites on legs that build nothing name each leg" \
-  "$(printf '%s\n' 'Linux linear' 'Linux pi-claude-bridge' 'Linux review-gate')" \
+  "$(printf '%s\n' 'Linux guards-scans' 'Linux pi-claude-bridge' 'Linux review-gate')" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-jarvis-suites")"
 # The run block of one step, split under DIR, found by its `if:` text.
 step_block() { # WORKFLOW STEP DIR ; that block's path, or `no-step` / `two-steps` and status 1

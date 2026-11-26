@@ -35,7 +35,6 @@ SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
 SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
 SUITE_KILL_GRACE=1
-source "$TESTS_DIR/lib/control-runner.sh" || exit 2
 source "$TESTS_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 # Cap diagnostics must reach CI even while an earlier roster entry is pending.
 exec 5>&2
@@ -364,11 +363,19 @@ timed_suite() {
 	return "$rc"
 }
 
-# stage_copy ROOT — a fresh, unmutated copy of the skill at ROOT.
+# stage_copy ROOT — a fresh, unmutated copy of the skill at ROOT, with each
+# package beside the skill linked beside the copy, as an install lays them
+# out: a suite that runs a sibling's program, such as orch's launch reader,
+# runs the one it runs from the source tree, and the runner's own orch lib is
+# among them. Controls mutate only the copy, so no sibling is written.
 stage_copy() {
-	mkdir -p "$(dirname "$1")"
+	local parent="${1%/*}" package
+	mkdir -p "$parent"
 	cp -R "$SKILL_DIR" "$1"
-	control_runner_install "$1"
+	for package in "$SKILL_DIR"/../*/; do
+		package="${package%/}"
+		[[ "$package" -ef "$SKILL_DIR" ]] || ln -s "$package" "$parent/${package##*/}"
+	done
 }
 
 # apply_control ROOT ONLY — source the control against ROOT, applying only

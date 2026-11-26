@@ -257,7 +257,8 @@ issue_marked_value() {
 }
 
 # require_issue_reach DESCRIPTION PRIORITY REVIEW_BORN — 0 to proceed, 1 + a
-# JSON error on stderr for the caller to return on.
+# JSON error on stderr for the caller to return on. The body's launch read,
+# require_issue_launch_read, runs under the same setting.
 #
 # The symptom check is bound to REVIEW_BORN ("1" from `--review-born`). A
 # review finding files as priority 2 only with a reported symptom; priority 2
@@ -289,7 +290,80 @@ require_issue_reach() {
 		return 1
 	fi
 
+	require_issue_launch_read "$description" || return 1
 	return 0
+}
+
+# require_issue_launch_read DESCRIPTION — 0 to proceed, 1 + a JSON error on
+# stderr. The body's Location and Expected delta lines are read as an orch
+# lane's launch reads them, through `orch-runtime tier --filing`, the owner of
+# both grammars, so a body the launch refuses or reads as no delta is refused
+# while its filer is still here. With no orch beside this package there is no
+# reader to ask and this package keeps no copy, so the check is skipped. A
+# body holding neither header word skips the call, since neither reader can
+# find a header in it. A reader that reaches no verdict refuses: skipping it
+# would file the body unread.
+#
+# The reader is given the change-scope beside it, the sibling orch requires,
+# so the probe above and the arm it runs sit in one install: orch's default
+# resolves change-scope under the cwd's project, which a home-scope install or
+# a cwd outside the package's checkout does not hold, and a checkout's own
+# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. Orch is looked
+# for in the skills directory this package was invoked from, then in the one
+# it physically sits in, and change-scope is taken from the directory that
+# held orch. A harness alias of this package is a link into the shared skills
+# tree: the harness's own directory holds an orch delivered to it, a link or
+# a copy, and the shared tree holds an orch installed only for another
+# harness. The reader needs no Linear credential, so none reaches it or what
+# it runs.
+require_issue_launch_read() {
+	local here skills="" candidate reader
+	here="${BASH_SOURCE[0]%/*}/../../.."
+	for candidate in "$(cd -L "$here" && pwd)" "$(cd -P "$here" && pwd)"; do
+		if [[ -n "$candidate" && -x "$candidate/orch/scripts/orch-runtime" ]]; then
+			skills="$candidate"
+			break
+		fi
+	done
+	[[ -n "$skills" ]] || return 0
+	reader="$skills/orch/scripts/orch-runtime"
+	local lower body="" out line cause="" rc=0
+	# Folded with tr, not Bash 4's case expansion: the Jarvis progress-log
+	# suite sources this lib under macOS's Bash 3.2. A failed fold reads the
+	# body rather than skip it.
+	if lower=$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'); then
+		[[ "$lower" == *location* || "$lower" == *delta* ]] || return 0
+	fi
+
+	if ! body=$(mktemp 2>/dev/null) || ! printf '%s\n' "$1" >"$body"; then
+		[[ -z "$body" ]] || rm -f -- "$body"
+		jq -cn '{error: "Refusing to create an issue: no scratch file could hold its body for the launch read of its Location and Expected delta."}' >&2
+		return 1
+	fi
+	out=$(env -u LINEAR_API_KEY -u LINEAR_API_KEY_OVERRIDE -u LINEAR_APP_TOKEN \
+		-u LINEAR_CLIENT_ID -u LINEAR_CLIENT_SECRET \
+		CHANGE_SCOPE_PATHS_CLI="$skills/change-scope/scripts/harness-only" \
+		"$reader" tier --filing --body "$body" 2>&1 >/dev/null) || rc=$?
+	rm -f -- "$body"
+	[[ "$rc" -ne 0 ]] || return 0
+
+	# The reader's keyed refusal line, `orch-runtime tier --help`'s contract.
+	while IFS= read -r line; do
+		[[ "$line" =~ ^orch-runtime:\ tier\ cause=([a-z-]+)(\ |$) ]] && cause="${BASH_REMATCH[1]}"
+	done <<<"$out"
+	[[ "$rc" -eq 1 ]] || cause=""
+	case "$cause" in
+		location-unread)
+			jq -cn --arg read "$out" '{error: ("Refusing to create an issue whose \"**Location**:\" line names no path on that line. The launch reads each path in backticks on the Location line itself, as project-management templates/issue-description-template.md writes it: **Location**: `path/one` `path/two`. Launch read: " + $read)}' >&2
+			;;
+		invalid-delta)
+			jq -cn --arg read "$out" '{error: ("Refusing to create an issue whose \"**Expected delta**:\" line the launch reads as no delta. Write it in the accepted form the launch read names, or drop the line. Launch read: " + $read)}' >&2
+			;;
+		*)
+			jq -cn --arg read "$out" --arg rc "$rc" '{error: ("Refusing to create an issue: the launch read of its Location and Expected delta (orch-runtime tier --filing) reached no verdict, exit " + $rc + ". Fix what it names and retry. Launch read: " + $read)}' >&2
+			;;
+	esac
+	return 1
 }
 
 # The supersession half of the filing bar: the record the comparison that
