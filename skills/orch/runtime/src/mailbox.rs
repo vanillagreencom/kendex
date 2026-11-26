@@ -218,6 +218,11 @@ pub struct Envelope {
     pub re: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// An owner answer alone: who wrote it, `owner` or `jarvis`, as its
+    /// sending command recorded it. `from` is a routing value and names no
+    /// author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<String>,
     /// A data notice alone: the program or origin its text came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,

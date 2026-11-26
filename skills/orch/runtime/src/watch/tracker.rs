@@ -1868,26 +1868,26 @@ fn mark_closed_owner_asks(
 
 /// The reply under a closed ask's question, read from its latest answer.
 /// Ids stay in the mailbox. The opening says how the question closed. Who
-/// decided is a field, since a deadline's recommendation rules with
-/// delegated authority, not the owner's. The ruling comes last because the
-/// owner's answer can span lines.
+/// decided is a field, since a deadline's recommendation and Jarvis rule
+/// with delegated authority, not the owner's. It names only the sender the
+/// answer recorded: every answer's `from` is `owner`, whoever wrote it. The
+/// ruling comes last because the answer can span lines.
 fn ruling_comment(answer: Option<&Envelope>) -> String {
     let Some(answer) = answer else {
         return "This question closed with no answer.\n".to_owned();
     };
-    let (opening, decided) = match answer.by.as_deref() {
-        Some("text") => ("This question closed on your answer.", Some("owner")),
-        Some("default") => (
+    let (opening, decided) = match (answer.by.as_deref(), answer.sender.as_deref()) {
+        (Some("default"), _) => (
             "This question closed at its deadline with no answer, so its recommendation stands.",
-            Some("recommendation"),
+            "recommendation",
         ),
-        // A legacy closing answer names no `by`.
-        _ => ("This question closed on its answer.", None),
+        (_, Some("owner")) => ("This question closed on your answer.", "owner"),
+        (_, Some("jarvis")) => ("This question closed on its answer.", "Jarvis"),
+        // lane-mail writes no other sender; an answer sent without one, a
+        // legacy answer with no `by` included, proves no author.
+        _ => ("This question closed on its answer.", "unrecorded"),
     };
-    let mut body = format!("{opening}\n");
-    if let Some(decided) = decided {
-        body.push_str(&format!("\n**Decided by**: {decided}\n"));
-    }
+    let mut body = format!("{opening}\n\n**Decided by**: {decided}\n");
     if let Some(ruling) = answer.text.as_deref().filter(|t| !t.is_empty()) {
         body.push_str(&format!("\n**Ruling**: {ruling}\n"));
     }

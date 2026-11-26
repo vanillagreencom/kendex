@@ -81,6 +81,15 @@ The owner can answer more than once. Each answer lands as `lane-mail send --item
 
 Record each chat answer with `send --re` before acting on it. `lane-mail resolve --item overseer --id [ASK_ID] --text [PATH]` records a chat answer and closes the ask together. Use it only when that answer is the ruling and came outside the mailbox.
 
+Record who wrote each answer with `--sender` on `send --re` or `resolve --text`:
+
+- Pass `--sender owner` only for words that came directly from the owner, per § Recording.
+- Pass `--sender jarvis` for an answer Jarvis gave under delegated authority.
+- Leave it out where neither is proved. The ruling comment then names the sender as unrecorded.
+- If lane-mail refuses `option-unknown=--sender`, that repository's lane-mail predates the option:
+  - For `--sender owner`, run the same command without `--sender`. Where that repository's orch watch also predates the option, the ruling comment names the owner. Where only its lane-mail predates it, the comment names the sender as unrecorded.
+  - For `--sender jarvis`, keep the answer and send it again unchanged once that repository's orch and mailbox packages are both updated. Never send it without `--sender`: an orch watch that predates the option names the owner for every answer that carries no sender.
+
 ### Closing
 
 - Close the ask once you hold the ruling: `lane-mail resolve --item overseer --id [ASK_ID]`.

@@ -482,6 +482,10 @@ notice --item KEN-1 --attach x --file $F|2=lane-mail: option-unknown=--attach
 send --item overseer --re $OWNER_NOTE --file $F|2=lane-mail: ask-unknown=$OWNER_NOTE
 send --item overseer --directive --host --root $LANE --delivery-id k --file $F|2=lane-mail: option-conflict=--host,--delivery-id
 send --item overseer --directive --default --file $F|2=lane-mail: option-unknown=--default
+send --item overseer --directive --sender owner --file $F|2=lane-mail: option-unknown=--sender
+send --item KEN-1 --re x --sender owner --file $F|2=lane-mail: option-unknown=--sender
+send --item overseer --re x --sender Jarvis --file $F|2=lane-mail: sender-invalid=Jarvis
+resolve --item overseer --id x --default --sender owner|2=lane-mail: option-unknown=--sender
 resolve --item KEN-1 --id x --default|2=lane-mail: overseer-only=KEN-1
 resolve --item overseer --default|2=lane-mail: option-required=--id
 resolve --item overseer --id x|2=lane-mail: ask-unknown=x
@@ -958,6 +962,18 @@ lm resolve --item overseer --id "$ASK" --text "$(text a 'cut it')" --delivery-id
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "another delivery is refused as resolved already"
 lm resolve --item overseer --id "$ASK" --default
 assert_eq "$RC=$ERR" "2=lane-mail: resolved-already=$ASK id=$ANSWER" "the deadline's default cannot override the owner's answer"
+
+# An answer records the sender its sending command names, and none where it
+# names none. `from` stays owner on each: a routing value, not an author.
+new_repo answer_sender
+owner_ask 'Cut the scanner?' cut,keep cut 120
+lm send --item overseer --re "$ASK" --sender owner --file "$(text a 'keep it')"
+lm send --item overseer --re "$ASK" --file "$(text a 'cut it')"
+lm resolve --item overseer --id "$ASK" --text "$(text a 'keep both')" --sender jarvis
+assert_eq "$RC=$(field "$BOX/to-lane.jsonl" 'select(.kind == "answer") | [.answer_source, .from, .sender // "none"] | join(" ")')" \
+  "0=send owner owner
+send owner none
+resolve owner jarvis" "each answer carries the sender it was sent with, and none where none was given"
 
 # Slack sends distinct answers, and the deadline closes without replacing them.
 new_repo answered_deadline

@@ -1276,7 +1276,7 @@ print(json.dumps(owner._presence('ssh:fixture')))
             "text": "This question closed on your answer.\n\n**Decided by**: owner\n\n**Ruling**: Approved.\n",
             "default": "This question closed at its deadline with no answer, so its recommendation stands.\n"
                        "\n**Decided by**: recommendation\n\n**Ruling**: yes\n",
-            "legacy": "This question closed on its answer.\n\n**Ruling**: Historical answer.\n",
+            "legacy": "This question closed on its answer.\n\n**Decided by**: unrecorded\n\n**Ruling**: Historical answer.\n",
             # A legacy ask keeps no item UUID, only the ref it was asked
             # under, which the item has since moved from.
             "parent-only": "This question closed with no answer.\n",
@@ -1430,7 +1430,9 @@ sys.exit(result.returncode)
                 result, receipt = self.act_cli("done", row, "done-" + name, text="Merged")
                 self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "accepted", "checking"),
                                  result.stderr)
-                answers = [(envelope["from"], envelope["re"], envelope["closes"], envelope["text"])
+                # The console carries the owner's own words, so each answer
+                # records the owner as its sender.
+                answers = [(envelope.get("sender"), envelope["re"], envelope["closes"], envelope["text"])
                            for envelope in self.box(root, "to-lane") if envelope["kind"] == "answer"]
                 self.assertEqual(answers, [("owner", asks[name], False, "Second option"),
                                            ("owner", asks[name], False, owner_asks.DONE_CLAIM + "\n\nMerged")])

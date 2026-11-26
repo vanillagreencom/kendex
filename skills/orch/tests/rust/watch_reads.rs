@@ -5467,7 +5467,7 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
             "text" => {
                 let answer = root.join("answer.txt");
                 std::fs::write(&answer, "Approved.\n").unwrap();
-                close.arg("--text").arg(answer);
+                close.arg("--text").arg(answer).args(["--sender", "owner"]);
             }
             "default" => {
                 close.arg("--default");
@@ -5538,6 +5538,89 @@ fn watch_rulings_leave_the_active_view_after_a_tracker_account_change() {
         .output()
         .unwrap();
     assert!(view.status.success(), "{}", stderr(&view));
+}
+
+/// A ruling comment names the sender its answer recorded, and an answer
+/// that recorded none never reads as the owner's: `from` is `owner` on
+/// every answer, whoever wrote it. The opening is the line the Linear
+/// writer's `owner-questions` reads a ruling by.
+#[test]
+fn a_ruling_names_the_sender_its_answer_recorded() {
+    for (sender, opening, decided) in [
+        (
+            Some("owner"),
+            "This question closed on your answer.",
+            "owner",
+        ),
+        (
+            Some("jarvis"),
+            "This question closed on its answer.",
+            "Jarvis",
+        ),
+        (None, "This question closed on its answer.", "unrecorded"),
+    ] {
+        let mut world = World::new();
+        let (mut settings, _) = posted_owner_ask(
+            &world,
+            "ask-1",
+            ("KEN-7", Some("KEN-7-uuid")),
+            Some("question-1"),
+            "2099-01-01T00:00:00Z",
+        );
+        settings.linear_team = None;
+        world
+            .linear("issues list --assignee", json!({"body": []}))
+            .linear("comments bulk-list", comments(&["KEN-7"], &[]))
+            .linear("comments create", json!({"body": {"success": true}}))
+            .linear("issues update", json!({"body": {}}))
+            .linear(
+                "graphql OwnerAskItem",
+                json!({"body": {"issue": {
+                    "description": "Body.", "assignee": null, "labels": {"nodes": []}
+                }}}),
+            );
+        let mut body = tracker::body(world.context(settings, None));
+        let mut baseline = Baseline::default();
+        let clock = FakeClock::new();
+        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        let root = world.dir.path().canonicalize().unwrap();
+        let answer = root.join("answer.txt");
+        std::fs::write(&answer, "Approved.\n").unwrap();
+        let mut close = program(lane_mail());
+        close
+            .args(["resolve", "--item", "overseer", "--id", "ask-1", "--root"])
+            .arg(&root)
+            .arg("--text")
+            .arg(&answer)
+            .current_dir(&root);
+        if let Some(sender) = sender {
+            close.args(["--sender", sender]);
+        }
+        let closed = close.output().unwrap();
+        assert!(closed.status.success(), "{sender:?}: {}", stderr(&closed));
+        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        let rulings: Vec<_> = world
+            .posted_comments()
+            .into_iter()
+            .map(|(_, parent, body)| {
+                let first = body.lines().next().unwrap_or_default().to_owned();
+                (
+                    parent,
+                    first,
+                    record_fields(&body).get("Decided by").cloned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rulings,
+            [(
+                "question-1".to_owned(),
+                opening.to_owned(),
+                Some(decided.to_owned())
+            )],
+            "{sender:?}"
+        );
+    }
 }
 
 #[test]
@@ -6069,7 +6152,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
 /// A posted owner ask closed by any route gets its tracker marks from the
 /// asking overseer's watch, on the real mailbox program: the asks closed
 /// before the first pass are the floor and are never written; a later
-/// close, here Jarvis's typed answer through `resolve --text`, gets its
+/// close, here a typed answer through `resolve --text`, gets its
 /// ruling comment under the question and its item write, the other open
 /// ask on the item keeping its label, assignee and line; a refused comment
 /// stops not the item write, is said once per cause, and is tried again
@@ -6197,7 +6280,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             (0, 0),
             "an ask closed before the first pass is never written"
         );
-        // Jarvis's typed answer closes ask-1 through the real program.
+        // A typed answer closes ask-1 through the real program.
         resolve("ask-1");
         let second = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
         assert_eq!(
@@ -6210,13 +6293,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             .posted_comments()
             .into_iter()
             .map(|(issue, parent, body)| {
-                let fields = record_fields(&body);
-                (
-                    issue,
-                    parent,
-                    fields.get("Decided by").cloned(),
-                    fields.get("Ruling").cloned(),
-                )
+                (issue, parent, record_fields(&body).get("Ruling").cloned())
             })
             .collect();
         assert_eq!(
@@ -6224,7 +6301,6 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             [(
                 "KEN-7".to_owned(),
                 "question-1".to_owned(),
-                Some("owner".to_owned()),
                 Some("Approved.".to_owned())
             )],
             "the ruling, a reply under the question"

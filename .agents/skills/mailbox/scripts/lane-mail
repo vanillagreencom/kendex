@@ -39,7 +39,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail owner-answers --item ITEM [--root ROOT]
        lane-mail compact --item ITEM [--root ROOT] [--set-aside]
        lane-mail attach-check --attach PATH
-       lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
+       lane-mail resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [options]
        lane-mail reserve --item overseer --id MSGID
        lane-mail replace --item overseer --id MSGID [--root ROOT]
        lane-mail peer ask|send --repo REPO [--host] [options]
@@ -375,14 +375,14 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               judges PATH as notice --attach does, appending nothing, and
               prints `lane-mail: attach=<physical path>`, the path a notice
               would record; refused `attach-outside` as notice refuses it
-  resolve --item overseer --id MSGID [--text PATH | --default] [--delivery-id KEY]
+  resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [--delivery-id KEY]
               closes any ask this overseer sent with a separate `resolution` envelope,
               `re=MSGID`, and `by=explicit` when neither option is given.
-              --text FILE records the file as the person's own answer with
-              `by=text` and `answer_source=resolve`. The Slack relay posts
-              it as theirs unless this ask already has an answer from Slack.
-              Use it only for an answer they gave elsewhere. The agent's
-              own reply is a notice with --ref.
+              --text FILE records the file as the answer with `by=text`,
+              `answer_source=resolve` and the --sender given, if any. The
+              Slack relay posts it to the ask's thread unless this ask
+              already has an answer from Slack. Use it only for an answer
+              given elsewhere. The agent's own reply is a notice with --ref.
               --text and --default require an owner ask; a peer ask or an
               ask with no audience refuses either as `option-conflict`.
               --default supplies the recommendation with `by=default` only
@@ -437,8 +437,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               hand it over as any other envelope. It needs the overseer
               record a directive needs; --re, --directive and --halt beside
               it are refused `option-conflict`
-  send --item overseer --re MSGID --file PATH [--delivery-id KEY]
+  send --item overseer --re MSGID --file PATH [--sender WHO] [--delivery-id KEY]
               every answer to an open owner ask lands separately with by=text.
+              --sender records who wrote the answer, as it does on resolve --text.
               An answer leaves the ask pending until resolve closes it.
               The lock judges repeats before closure, so a replay after close
               still names its original answer. New answers after close refuse.
@@ -552,7 +553,14 @@ Options:
   --replaces MSGID
                 ask --to owner only: an open owner ask this ask replaces
   --due         pending only: asks whose deadline has passed
-  --text PATH   resolve only: the owner's answer, read as --file is
+  --text PATH   resolve only: the answer, read as --file is
+  --sender WHO  send --item overseer --re and resolve --text only: who wrote
+                the answer, owner or jarvis, recorded as the answer's
+                `sender`. Pass owner only where the route proves the owner
+                wrote the text, as the Slack relay and owner-answers do.
+                An answer with no sender reads as unrecorded: `from` is
+                owner on every send into the overseer mailbox, so it names
+                no author
   --default     resolve only: close at deadline; recommend only if unanswered
   --delivery-id KEY
                 ask, send, resolve and a lane's notice only: the sender's name
@@ -612,11 +620,13 @@ question is confirmed), tracker_label (the confirmed label used for close
 when settings change or cannot be read), tracker_comment (the posted
 question comment's tracker id, which owner replies follow), tracker_cause (the
 failed operation of an unposted tracker question),
-and by (`text` or `default` on an owner answer; `explicit`, `text` or
-`default` on a close). kind is ask, notice, answer, resolution, directive or
-data;
+by (`text` or `default` on an owner answer; `explicit`, `text` or
+`default` on a close), and sender (`owner` or `jarvis` on an owner answer
+whose sending command passed --sender; absent otherwise). kind is ask,
+notice, answer, resolution, directive or data;
 at is UTC; id is <epoch>-<pid>-<random>. from
-is the sender, read from its own checkout and never from an option: a lane
+is the sending side, a routing value that names no author, read from its
+own checkout and never from an option: a lane
 verb writes the item, a send into the overseer's own mailbox and a `resolve
 --text` write `owner`, and everything else an overseer sends, a `resolve
 --default` included, writes `overseer:<repository>`. The repository is the `[marketplace]` name in the
@@ -716,7 +726,7 @@ seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress
 recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-open-invalid, source-invalid, purpose-invalid, memory-too-long,
+open-invalid, source-invalid, sender-invalid, purpose-invalid, memory-too-long,
 issue-unread, replace-unconfigured, replace-unmarkable, owner-action-missing,
 overseer-only, not-owner-ask, overseer-unreadable, no-reader, reader-unjudged,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
@@ -843,6 +853,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     purpose-invalid) text='--purpose takes memory only, on an owner ask.' ;;
     memory-too-long) text='A memory proposal takes at most 256 UTF-8 bytes of text.' ;;
     open-invalid) text='--open takes exactly one https URL.' ;;
+    sender-invalid) text='--sender takes owner or jarvis: who wrote the answer. Leave it out where the route does not prove either.' ;;
     source-invalid) text='--data names the source of a data notice as one word of printable ASCII, with no space or control character, so the watch reports it as one field.' ;;
     progress-needs-ref) text='A progress notice requires --ref to bind the step report to its request.' ;;
     ref-unknown) text='No message this reply may answer carries exactly that id, so nothing here can be answered by it. A --ref names an owner note in to-lane.jsonl or an owner ask in to-overseer.jsonl; a line a peer overseer sent and a resolution there are neither. A peer send --re names a line a peer overseer sent to this overseer'"'"'s own to-lane.jsonl. Read the message again and pass the whole id it carries.' ;;
@@ -954,6 +965,7 @@ PARENT_JSON=null
 ONCE=0
 SESSION=""
 SESSION_GIVEN=0
+SENDER=""
 ACCOUNT=""
 ISSUE=""
 OWNER_DO=""
@@ -1016,6 +1028,7 @@ while [ "$#" -gt 0 ]; do
     --due) DUE=1; shift ;;
     --default) DEFAULT=1; shift ;;
     --delivery-id) need_val "$@"; DELIVERY_ID="$2"; shift 2 ;;
+    --sender) need_val "$@"; SENDER="$2"; shift 2 ;;
     --thread-ts) need_val "$@"; THREAD_TS="$2"; shift 2 ;;
     --parent) need_val "$@"; PARENT="$2"; shift 2 ;;
     --once) ONCE=1; shift ;;
@@ -1154,6 +1167,15 @@ for given in $OPTS_GIVEN; do
       jq -en --arg source "$DATA_SOURCE" '$source | test("\\A[!-~]+\\z")' >/dev/null || refuse source-invalid "$DATA_SOURCE" ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
+    # The sender rides the answer envelope alone: a send that answers an
+    # owner ask, or a resolve that records one.
+    --sender)
+      case "$VERB:$ITEM:$DIRECTIVE:$DATA_SOURCE" in
+        send:overseer:0:) [ -n "$MSGID" ] || refuse option-unknown --sender ;;
+        resolve:overseer:*) [ -n "$FILE" ] && [ "$DEFAULT" -eq 0 ] || refuse option-unknown --sender ;;
+        *) refuse option-unknown --sender ;;
+      esac
+      case "$SENDER" in owner | jarvis) ;; *) refuse sender-invalid "$SENDER" ;; esac ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
     --set-aside) [ "$VERB" = compact ] || refuse option-unknown --set-aside ;;
     --session) [ "$VERB" = send ] && [ "$ITEM" != overseer ] || refuse option-unknown --session ;;
@@ -1558,7 +1580,8 @@ owner_answers() {
       else "Comment on the item after the replaced question of ask \(.replaced); the open question is ask \(.ask).", "" end,
       .comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
     rc=0
-    "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
+    # The comments read above are the configured owner's own (`owned`).
+    "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" --sender owner \
       --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
     if [[ "$rc" -ne 0 && "$(head -n 1 "$WORK_DIR/tracker.err")" != lane-mail:\ delivery-repeated=* ]]; then
       echo 'KEN-3624-unread cause=delivery' >&2; return 0
@@ -2323,7 +2346,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
     --arg re_owner_notice "$RE_OWNER_NOTICE" \
-    --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --slurpfile parent "$WORK_DIR/parent.json" \
+    --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --arg sender "$SENDER" --slurpfile parent "$WORK_DIR/parent.json" \
     --argjson replaces "$REPLACES_FIELD" --argjson identity "$IDENTITY_FIELD" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       $parent[0] as $parent |
@@ -2350,6 +2373,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $re_owner_notice == "1" then {re_owner_notice: true} else {} end)
       + (if $by == "" then {} else {by: $by} end)
       + (if $kind == "answer" and $by != "" then {closes: false, answer_source: $verb} else {} end)
+      + (if $kind == "answer" and $sender != "" then {sender: $sender} else {} end)
       + (if $draft == [] then {} else {draft: $draft[0]} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \

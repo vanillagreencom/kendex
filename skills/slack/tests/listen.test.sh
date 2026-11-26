@@ -2,7 +2,8 @@
 # `slack listen`: owner text to the mailbox and the mailbox to Slack, through
 # the real lane-mail and a fake Slack API paged two messages at a time. The
 # rows: a directive with its delivery id, an ask posted with the mention and
-# answered repeatedly in its thread until the asker closes, a chat answer
+# answered repeatedly in its thread until the asker closes, and answered
+# under a root whose lane-mail predates --sender, a chat answer
 # and a deadline default shown in the thread, a notice threaded on its ref, a
 # notice on an owner's reply threaded under that reply's parent, a report
 # uploaded and its thread bound from the share, a non-owner and an empty
@@ -59,7 +60,7 @@ directives() { # ROOT — every directive's key and text; none before the first 
   [ -f "$(sk_box "$1")/to-lane.jsonl" ] || return 0
   jq -r 'select(.kind == "directive") | [.delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"
 }
-answers() { jq -r 'select(.kind == "answer") | [.re, .by, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
+answers() { jq -r 'select(.kind == "answer") | [.re, .by, .sender, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
 posts() { sk_state ".messages.${1}[] | select(.user == \"UBOT\") | [(.thread_ts // \"top\"), .text] | join(\" | \")"; }
 
 # --- refusals before any poll -------------------------------------------------
@@ -106,11 +107,11 @@ sk_poll "$ROOT"
 assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("<@U001>"))] | length')" "1" "the ask is posted once"
 R1="$(sk_inject C001 U002 'keep' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep" "the first reply lands as an answer with its delivery id"
+assert_eq "$(answers "$ROOT")" "$ASK text owner C001:$R1 keep" "the first reply lands as the owner's answer with its delivery id"
 R2="$(sk_inject C001 U001 'and keep the tests' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep
-$ASK text C001:$R2 and keep the tests" "both replies land once as answers to the ask"
+assert_eq "$(answers "$ROOT")" "$ASK text owner C001:$R1 keep
+$ASK text owner C001:$R2 and keep the tests" "both replies land once as answers to the ask"
 assert_eq "$(sk_reactions C001 "$R1") $(sk_reactions C001 "$R2")" "eyes eyes" "both answers get eyes"
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.id')" "$ASK" "an answered ask stays pending"
 assert_eq "$(sk_state "[.messages.C001[] | select(.user == \"UBOT\" and .thread_ts == \"$ASK_TS\")] | length")" "0" "the relay posts no text in the ask's thread"
@@ -825,6 +826,34 @@ while IFS=$'\t' read -r sent want; do
   assert_eq "$(text_of "$LAMBDA" "$LAMBDA_CH:${MARKUP_TS[$n]}")" "$want" "Slack's text [$sent] lands as [$want]"
   n=$((n + 1))
 done <<<"$(markup_rows)"
+
+# --- a root whose lane-mail predates --sender still takes the owner's reply ----
+# Its lane-mail refuses --sender with the line and status a lane-mail from
+# before the option prints, and runs the real program for every other call.
+OLDMAIL="$(sk_new_root oldmail)"
+sk_bind "$OLDMAIL"
+OLDMAIL_CH="$(sk_channel "$OLDMAIL")"
+rm -- "${OLDMAIL:?}/.agents/skills/mailbox/scripts"
+mkdir -- "${OLDMAIL:?}/.agents/skills/mailbox/scripts"
+cat >"$OLDMAIL/.agents/skills/mailbox/scripts/lane-mail" <<OLD
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  if [ "\$arg" = --sender ]; then
+    printf 'lane-mail: option-unknown=--sender\nThe option is not supported by this command. Run lane-mail --help.\n' >&2
+    exit 2
+  fi
+done
+exec "$SK_LANE_MAIL" "\$@"
+OLD
+chmod +x "$OLDMAIL/.agents/skills/mailbox/scripts/lane-mail"
+sk_lm "$OLDMAIL" ask --item overseer --to owner --file "$(sk_text oldmail-q 'Keep the scanner?')" --options cut,keep --recommend cut --effect none --wait 30 >"$SK_TMP/oldmail.out"
+OLDMAIL_ASK="$(sed 's/^id=//' "$SK_TMP/oldmail.out")"
+sk_poll "$OLDMAIL"
+OLDMAIL_TS="$(sk_state ".messages.${OLDMAIL_CH}[] | select(.text | startswith(\"<@U001> <@U002> Question\")) | .ts")"
+OLDMAIL_R="$(sk_inject "$OLDMAIL_CH" U001 'keep' "$OLDMAIL_TS")"
+sk_poll "$OLDMAIL"
+assert_eq "$RC=$(answers "$OLDMAIL")" "0=$OLDMAIL_ASK text  $OLDMAIL_CH:$OLDMAIL_R keep" \
+  "the reply lands once under its delivery id, with no sender, where the root's lane-mail refuses --sender"
 
 # --- controls, one mutant per rule ------------------------------------------------------------
 sk_mutant answer-origin relay.py 'envelope\.get\("re"\) in slack_answered' 'envelope.get("re") in slack_answered and False'

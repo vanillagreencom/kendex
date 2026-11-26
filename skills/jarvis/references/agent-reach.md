@@ -41,7 +41,7 @@ An agent writes a notice only when its workflow or the user directs it. With no 
 
 1. Show the user each envelope with `kind: ask` and `to: owner`, with its options.
 2. Write the user's answer to a file.
-3. Run `[LANE_MAIL] resolve --item overseer --id [ASK_ID] --text [PATH]`.
+3. Run `[LANE_MAIL] resolve --item overseer --id [ASK_ID] --text [PATH] --sender owner`. If it refuses `option-unknown=--sender`, follow orch's [communication-modes.md § Answers](../../orch/references/communication-modes.md#answers).
 
 Answering needs no registered session.
 
