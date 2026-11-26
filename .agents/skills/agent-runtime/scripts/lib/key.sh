@@ -72,8 +72,9 @@ agent_runtime_fetch() ( # BINARY
   mkdir -p -- "${binary%/*}" || { unavailable cache-unwritable; return 1; }
   scratch="$(mktemp -d -- "${binary%/*}/.fetch.XXXXXXXX")" || { unavailable cache-unwritable; return 1; }
   trap 'rm -rf -- "${scratch:?}"' EXIT
-  # Leave time to start detached setup before Jarvis's 10-second
-  # op_fifo.py record read expires. The version probe shares this budget.
+  # Without cargo, the refusal must reach Jarvis's 10-second op_fifo.py
+  # record read; with it, this bounds how long a stalled request delays
+  # setup. The version probe shares this budget.
   SECONDS=0
   within_budget() {
     local left=$((6 - SECONDS))
@@ -147,15 +148,16 @@ agent_runtime_setup_required() { # BINARY SETUP_PATH KEY
 
 agent_runtime_prepare() { # BINARY SETUP_PATH KEY
   local binary="$1" setup="$2" key="$3" fetch_log name="${1##*/}"
+  if command -v cargo >/dev/null 2>&1; then
+    # The fetch runs inside the job, so a caller whose bound ends while a
+    # request stalls has already read this line and leaves setup running.
+    printf '%s: setup-building key=%s run=%s\n' "${name%-*}" "$key" "$setup" >&2
+    agent_runtime_run_setup "$binary" "$setup"
+    return
+  fi
   if fetch_log="$(agent_runtime_fetch "$binary" 2>&1)" || [ -x "$binary" ]; then
     [ -z "$fetch_log" ] || printf '%s\n' "$fetch_log" >&2
     return 0
-  fi
-  if command -v cargo >/dev/null 2>&1; then
-    printf '%s: setup-building key=%s run=%s\n' "${name%-*}" "$key" "$setup" >&2
-    [ -z "$fetch_log" ] || printf '%s\n' "$fetch_log" >&2
-    agent_runtime_run_setup "$setup"
-    return
   fi
   # Jarvis's jarvis_bound forwards only the first line of a refusal.
   agent_runtime_setup_required "$binary" "$setup" "$key"
@@ -163,14 +165,15 @@ agent_runtime_prepare() { # BINARY SETUP_PATH KEY
   return 69
 }
 
-# The setup job has its own process group, so it survives a caller's
-# group timeout. Relay both streams to the caller's stderr while it reads.
-# If that pipe closes, keep draining so setup never writes to a broken pipe.
-agent_runtime_run_setup() { # SETUP_PATH
+# The job tries the published build, then setup where none was placed. It
+# has its own process group, so it survives a caller's group timeout. Relay
+# both streams to the caller's stderr while it reads. If that pipe closes,
+# keep draining so setup never writes to a broken pipe.
+agent_runtime_run_setup() { # BINARY SETUP_PATH
   set -m
   (
     trap '' HUP
-    "$1" </dev/null 2>&1 | (
+    { agent_runtime_fetch "$1" || [ -x "$1" ] || "$2"; } </dev/null 2>&1 | (
       # TOSTOP can stop this background writer at the caller's terminal.
       trap '' TTOU
       cat 2>/dev/null || cat >/dev/null
