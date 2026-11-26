@@ -1648,6 +1648,94 @@ fn a_passed_wall_is_resumed_once_when_its_account_reads_room_and_a_later_mail_wa
     assert_eq!(turns().len(), 2, "the resume typed once, the mail once");
 }
 
+/// A walled overseer the watch found no successor for is resumed at its
+/// account's reset (`usage-limit|<pane key>|<reset>`): nothing is typed
+/// past its reset while its account reads walled, nor before its reset
+/// while the account reads room; after both, the resume sentence is typed past
+/// its usage banner once, `wake-delivered overseer resume=usage-limit`, and
+/// the standing row types nothing again.
+#[test]
+fn a_walled_overseer_is_resumed_once_past_its_reset_when_its_account_reads_room() {
+    if !isolated_row("a_walled_overseer_is_resumed_once_past_its_reset_when_its_account_reads_room")
+    {
+        return;
+    }
+    let mut fleet = Fleet::new();
+    let clock = FakeClock::new();
+    let now = clock.wall_secs();
+    let accounts = fleet.root.join("accounts");
+    let account_state = fleet.root.join("account-state");
+    let account = accounts.join("home/.aclaude");
+    let env = plant_listing(&accounts, &account_state, &[account_row(20, now)], now).env;
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    fleet.settings = settings_with(&fleet.root, agent_runtime(), &env);
+    let banner = "  ⎿ \u{a0}You've hit your weekly limit · resets Oct 4, 2025, 6pm (UTC)";
+    account_wall::record_account_wall(
+        &account_state,
+        &AccountWallWrite {
+            config_dir: account.display().to_string(),
+            reset: Some(now + 60),
+            now,
+            first_seen: now,
+            banner: banner.to_owned(),
+            channel: WallChannel::Pane,
+        },
+    )
+    .unwrap();
+    let wall = fleet.root.join("wall.txt");
+    std::fs::write(
+        &wall,
+        format!("⏺ Working through the queue.\n{banner}\nRun /usage-credits to raise it\n"),
+    )
+    .unwrap();
+    let pane = fleet.open(
+        "overseer",
+        "claude",
+        "controller",
+        &[
+            ("CLAUDE_CONFIG_DIR", &account.display().to_string()),
+            ("STUB_TURNS_WALL", &wall.display().to_string()),
+        ],
+    );
+    fleet.server.await_composer(&pane.id);
+    let mut record = fleet.overseer("claude", &pane);
+    record["account"] = json!(account.display().to_string());
+    record["home"] = json!(account.display().to_string());
+    fleet.set_overseer(record);
+    let turns = || file_turns(&project_dir(&account, &fleet.cwd).join("controller.jsonl"));
+    let row = |reset: u64| format!("usage-limit|{} {}|{reset}", fleet.server.pid, pane.id);
+    let mut body = fleet.body();
+    // The clock stays inside the planted reading's freshness, past which
+    // the judge would query the account's usage again.
+    for (case, release, reset) in [
+        ("account walled", 40, now + 30),
+        ("reset ahead", 30, now + 600),
+    ] {
+        clock.release(Duration::from_secs(release));
+        let held = run_once(&mut body, &resume_row(OVERSEER_TARGET, &row(reset)), &clock).unwrap();
+        assert!(rendered(&held).is_empty(), "{case}: {:?}", rendered(&held));
+        assert_eq!(turns(), Vec::<String>::new(), "{case}: nothing typed");
+        assert_eq!(fleet.mark(OVERSEER_TARGET), None, "{case}");
+    }
+    let row = row(now + 30);
+    let baseline = resume_row(OVERSEER_TARGET, &row);
+    let resumed = run_once(&mut body, &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&resumed),
+        vec!["EVENT wake-delivered overseer resume=usage-limit"]
+    );
+    assert_eq!(turns().len(), 1, "{:?}", turns());
+    assert_eq!(
+        fleet
+            .mark(OVERSEER_TARGET)
+            .and_then(|m| m.resume)
+            .as_deref(),
+        Some(row.as_str())
+    );
+    assert!(rendered(&run_once(&mut body, &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(turns().len(), 1, "typed once");
+}
+
 /// A lane the wake may not type into is typed nothing and marked nothing:
 /// its recorded pane gone; its recorded server one the socket does not
 /// answer for; its harness mid-turn (the stub holding a line whose echo

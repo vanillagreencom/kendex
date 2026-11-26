@@ -38,7 +38,8 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
-use agent_runtime::controller::TransferCause;
+use agent_runtime::controller::successor::{self as choice, Leaving};
+use agent_runtime::controller::{Pending, TransferCause};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -49,6 +50,7 @@ use agent_runtime::observe::{self, IdleTurn, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Level, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, SessionIdle, SessionObservation, SessionVerdict};
+use agent_runtime::stop::{self, Action, Kind, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -65,7 +67,7 @@ use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
 use agent_runtime::controller::views::{AccountState, Caller, MarkKind, Record, text};
 use agent_runtime::effects::overseer_socket;
-use agent_runtime::settings::Succession;
+use agent_runtime::settings::{DEFAULT_CONTROLLER_PREFERENCE, Succession};
 
 use crate::settings::{Settings, WatchSettings};
 use crate::state::FleetState;
@@ -753,6 +755,9 @@ struct Reads {
     process: ProcessReading,
     screen: Result<String, String>,
     rows: Option<Reading<SessionObservation>>,
+    /// The row is a Codex or Copilot session's own record of its failed
+    /// last turn (`Readers::session_failure`), not a hook's.
+    record_failure: bool,
     /// A pane holding only shells whose harness is proven gone: its
     /// recorded process read gone, or no process recorded under a record
     /// that names a harness, the reading a start takes as `harness-gone`.
@@ -850,10 +855,16 @@ fn judge(
                     .message
                     .clone()
                     .unwrap_or_else(|| "message=unrecorded".to_owned());
-                // A rows usage wall stands unless the account judgement
-                // measures room (`overseer-wall-lifted`); an auth wall
-                // stands whatever it reads.
-                if kind == WallKind::Usage && marks().is_some_and(|m| m.key == MarkKey::Below) {
+                // A hook row's usage wall stands unless the account
+                // judgement measures room (`overseer-wall-lifted`); an auth
+                // wall stands whatever it reads, and so does a failed turn
+                // the session's own record holds, since no turn ran after
+                // it and Copilot's 429 rate limit is no window an account
+                // reading measures.
+                if kind == WallKind::Usage
+                    && !reads.record_failure
+                    && marks().is_some_and(|m| m.key == MarkKey::Below)
+                {
                     return Verdict::Live;
                 }
                 return Verdict::Walled {
@@ -917,14 +928,23 @@ fn judge(
     }
 }
 
-/// A controller that can take another turn keeps the same resume row as a
-/// worker. A Claude or Pi StopFailure supplies its current row position;
-/// Codex and Copilot supply the screen below the current user turn.
+/// The watch's word for a provider stop a Codex or Copilot session shows
+/// (`stop`'s table): the resume row's cause, which the wake resumes.
+const API_ERROR: &str = "api-error";
+
+/// A controller its provider stopped (`stop::Kind::Provider`) is resumed
+/// on its own account once per pass, a fresh resume row each pass, which
+/// the wake types once: a Claude or Pi StopFailure row names the stop, a
+/// Codex or Copilot session's own record or its screen below the current
+/// user turn does, Codex's capacity refusal among them. Past the patience
+/// `stop::action` holds it moves to the first entry on another provider
+/// the walk finds room on; with none it is resumed still. The first turn
+/// that returns ends the episode and its rows.
 fn continue_overseer(
     record: &Record,
     reads: &Reads,
     idle: IdleTurn,
-    baseline: &Baseline,
+    pass: &Pass,
     out: &mut Produced,
 ) {
     let (Some(harness), Ok(screen)) = (record.harness, &reads.screen) else {
@@ -932,29 +952,44 @@ fn continue_overseer(
     };
     let pane_key = record.pane_key();
     let target = wake::OVERSEER_TARGET;
-    let prior = baseline.get(wake::RESUME_KIND, target).and_then(|row| {
-        let (_, key) = row.split_once('|')?;
-        key.strip_prefix(&pane_key)?.starts_with('|').then_some(row)
-    });
+    let prior = pass
+        .baseline
+        .get(wake::RESUME_KIND, target)
+        .and_then(|row| {
+            let (_, key) = row.split_once('|')?;
+            key.strip_prefix(&pane_key)?.starts_with('|').then_some(row)
+        });
     let row = match &reads.rows {
         Some(Reading::Live(row)) if row.harness.as_deref() == Some(harness.name()) => Some(row),
         Some(Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. }) | None => None,
     };
+    let failed = row.and_then(|row| row.idle.as_ref());
     let (cause, finished) = match harness {
-        Harness::Claude | Harness::Pi => match row.and_then(|row| row.idle.as_ref()) {
+        Harness::Claude | Harness::Pi => match failed {
             Some(SessionIdle::Failed { cause }) => (Some(cause.as_str()), false),
             Some(SessionIdle::Returned) => (None, true),
             None => (None, false),
         },
-        Harness::Codex | Harness::Copilot => match idle {
-            IdleTurn::ApiError => (Some("api-error"), false),
-            IdleTurn::Ordinary { after_prompt } => (None, after_prompt),
-            IdleTurn::Capacity => (None, false),
+        // The session's own record names the failed turn; the screen's
+        // provider error and Codex's capacity refusal are the same stop
+        // read off the pane.
+        Harness::Codex | Harness::Copilot => match (failed, idle) {
+            (Some(SessionIdle::Failed { .. }), _)
+            | (_, IdleTurn::ApiError | IdleTurn::Capacity) => (Some(API_ERROR), false),
+            (Some(SessionIdle::Returned) | None, IdleTurn::Ordinary { after_prompt }) => {
+                (None, after_prompt)
+            }
         },
     };
+    let episode = pass.baseline.get(PROVIDER_ROW, &pane_key);
     let Some(cause) = cause.filter(|cause| wake::can_continue(harness, cause, false)) else {
-        if finished && prior.is_some() {
-            out.changes.push(clear(wake::RESUME_KIND, target));
+        if finished {
+            if prior.is_some() {
+                out.changes.push(clear(wake::RESUME_KIND, target));
+            }
+            if episode.is_some() {
+                out.changes.push(clear(PROVIDER_ROW, &pane_key));
+            }
         }
         return;
     };
@@ -969,23 +1004,110 @@ fn continue_overseer(
             agent_runtime::session::text_digest(screen)
         ),
     };
-    if prior
-        .and_then(|row| row.split_once('|'))
-        .is_some_and(|(_, old)| old == key)
+    let (since, moved) = match episode.map(|value| value.split_once('|').unwrap_or((value, ""))) {
+        Some((since, moved)) => (
+            since.parse::<u64>().unwrap_or(pass.now),
+            Some(moved).filter(|moved| !moved.is_empty()),
+        ),
+        None => {
+            out.changes
+                .push(set(PROVIDER_ROW, &pane_key, pass.now.to_string()));
+            (pass.now, None)
+        }
+    };
+    let age = Duration::from_secs(pass.now.saturating_sub(since));
+    let ground = |room| stop::Ground {
+        own_room: true,
+        room,
+        reset: false,
+    };
+    // The patience is the action's own: asked as though another provider
+    // had room, a session still inside it is resumed with no walk.
+    let successor = (stop::action(Kind::Provider, age, Session::Overseer, ground(true))
+        == Action::MoveProvider)
+        .then(|| provider_successor(record, harness, moved, pass, out))
+        .flatten();
+    match stop::action(
+        Kind::Provider,
+        age,
+        Session::Overseer,
+        ground(successor.is_some()),
+    ) {
+        Action::Resume => out.changes.push(set(
+            wake::RESUME_KIND,
+            target,
+            format!("{cause}|{key}|pass:{}", pass.now),
+        )),
+        Action::MoveProvider => {
+            let (Some(successor), Some(spent)) = (successor, record.account.clone()) else {
+                unreachable!("a provider move is asked only on a successor the walk chose")
+            };
+            let request = RequestTransfer {
+                expected: record.expected(),
+                successor,
+                brief_file: None,
+                session: None,
+                // A provider-stopped session is retired as a walled one
+                // is: its harness runs and takes no turn.
+                cause: TransferCause::Walled,
+                exclude_account: Some(spent),
+                handoff_session_id: None,
+                recovery: None,
+                death: None,
+            };
+            match (pass.transfer)(request) {
+                Ok(intent) => {
+                    context::note(
+                        "overseer-provider-move",
+                        &format!(
+                            "pane={} cause={cause} since={since} intent={intent}",
+                            record.pane
+                        ),
+                    );
+                    out.changes
+                        .push(set(PROVIDER_ROW, &pane_key, format!("{since}|{intent}")));
+                }
+                Err(refusal) => {
+                    out.failed
+                        .get_or_insert(format!("transfer-refused cause={refusal}"));
+                }
+            }
+        }
+        Action::MoveAccount { .. } | Action::WaitForReset | Action::Notify { .. } => {
+            unreachable!("a provider stop is resumed or moved to another provider")
+        }
+    }
+}
+
+/// The successor of a provider stop past its patience: the walk's first
+/// entry with room on another provider, the accounts a failed attempt left
+/// unproved held out. A move whose attempt failed and left no account
+/// unproved would choose the same successor again, and a record naming no
+/// account leaves no account for the walled retirement to spend: neither
+/// moves, so the session is resumed on its own account.
+fn provider_successor(
+    record: &Record,
+    harness: Harness,
+    moved: Option<&str>,
+    pass: &Pass,
+    out: &mut Produced,
+) -> Option<Pending> {
+    record.account.as_ref()?;
+    if let Some(intent) = moved.and_then(|id| pass.fleet.intents.iter().find(|i| i.id == id))
+        && !left_unproved(intent, pass)
     {
-        return;
+        return None;
     }
-    if wake::continued(prior) {
-        out.changes
-            .push(set(wake::RESUME_KIND, target, format!("told|{key}")));
-        out.events.push(Event::IdleAfterReturn {
-            lane: target.to_owned(),
-            note: Some(format!("cause={cause}")),
-        });
-    } else {
-        out.changes
-            .push(set(wake::RESUME_KIND, target, format!("{cause}|{key}")));
-    }
+    let caller = Caller::of(record);
+    let mut request = choice::recovery_walk(
+        &caller,
+        harness,
+        Leaving::Provider {
+            preference: pass.preference.unwrap_or(DEFAULT_CONTROLLER_PREFERENCE),
+        },
+    );
+    choice::hold_unproved(&mut request, unproved(pass), pass.now);
+    walk_successor(&caller, &request, pass, out).ok()
 }
 
 fn set(kind: &str, identity: &str, value: String) -> Change {
@@ -1004,7 +1126,7 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 7] = [
+const ROWS: [&str; 9] = [
     "overseer-dead",
     "overseer-walled",
     "overseer-mark",
@@ -1012,7 +1134,28 @@ const ROWS: [&str; 7] = [
     context::GAP_ROW,
     OOM_ROW,
     DEAD_ALERT_ROW,
+    PROVIDER_ROW,
+    NOTICE_ROW,
 ];
+
+/// A dead recovery's transfers: the first and one more after a failure the
+/// next attempt may not repeat.
+const DEAD_ATTEMPTS: u32 = 2;
+
+/// A provider stop's episode on the controller's pane: `<since>`, the
+/// epoch second its first failed turn was read, then `<since>|<intent>`
+/// once a move to another provider was asked.
+const PROVIDER_ROW: &str = "overseer-provider-stop";
+
+/// The owner's one notice of an episode, `<state>|alerted` once the owner
+/// holds the words: an ended sign-in's (`auth`), or a succession's that
+/// found no successor (`no-successor`).
+const NOTICE_ROW: &str = "overseer-notice";
+
+/// The ended sign-in's notice file under the state directory.
+const AUTH_ALERT_FILE: &str = "overseer-auth-wall.txt";
+/// The no-successor notice file under the state directory.
+const NO_SUCCESSOR_ALERT_FILE: &str = "overseer-no-successor.txt";
 
 /// The owner's alert for the death the `overseer-dead` row said, `alerted`
 /// once the owner holds the words; owed while the death stands without it.
@@ -1027,10 +1170,6 @@ const OOM_ROW: &str = "overseer-oom";
 /// `<attempt>:<intent>`: the case row is the admission, and the intent's
 /// own outcome is what the next pass reads.
 const TRANSFER_ROW: &str = "overseer-transfer";
-
-/// A recovery's transfers: the first and one more after a failure, as the
-/// recovery's bounded retry runs them.
-const TRANSFER_ATTEMPTS: u32 = 2;
 
 /// The duty's pass: the one verdict, stored in `slot`, then the count, the
 /// line and the request.
@@ -1106,14 +1245,13 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                         Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
                         None => record.harness.is_some(),
                     };
+                let (rows, record_failure) = session_rows(&record, pass);
                 (
                     Some(Reads {
                         process,
                         screen: (pass.readers.capture)(&fields.pane),
-                        rows: record
-                            .session_rows
-                            .as_deref()
-                            .map(|path| (pass.readers.rows)(path).map(rows::observe_session)),
+                        rows,
+                        record_failure,
                         harness_gone,
                     }),
                     Some(fields.pid),
@@ -1243,6 +1381,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             out.changes.push(clear("overseer-dead", &key));
             out.changes.push(clear(DEAD_ALERT_ROW, &key));
             out.changes.push(clear(TRANSFER_ROW, &key));
+            out.changes.push(clear(NOTICE_ROW, &key));
             let prior = pass.baseline.get("overseer-walled", &key).unwrap_or("");
             if !prior.starts_with("reserve:")
                 || marks_now.as_ref().is_some_and(|m| m.key == MarkKey::Below)
@@ -1255,19 +1394,30 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                 oom_baseline(&key, pid, pass, out);
             }
             if let (Some(reads), Some(idle)) = (&reads, pane.and_then(|pane| pane.idle)) {
-                continue_overseer(&record, reads, idle, pass.baseline, out);
+                continue_overseer(&record, reads, idle, pass, out);
             }
         }
         return judged(verdict, Some(key));
     };
+    // A walled controller's resume at its reset stands while the wall
+    // does; every other resume belongs to a session that can take a turn.
+    let waiting = |row: &str| {
+        case == OverseerCase::Walled
+            && row
+                .strip_prefix(WALL_RESUME)
+                .and_then(|rest| rest.strip_prefix('|'))
+                .and_then(|rest| rest.strip_prefix(key.as_str()))
+                .is_some_and(|rest| rest.starts_with('|'))
+    };
     if pass
         .baseline
         .get(wake::RESUME_KIND, wake::OVERSEER_TARGET)
-        .is_some()
+        .is_some_and(|row| !waiting(row))
     {
         out.changes
             .push(clear(wake::RESUME_KIND, wake::OVERSEER_TARGET));
     }
+    out.changes.push(clear(PROVIDER_ROW, &key));
     let (row, other) = match case {
         OverseerCase::Dead => ("overseer-dead", "overseer-walled"),
         OverseerCase::Walled | OverseerCase::Reserve => ("overseer-walled", "overseer-dead"),
@@ -1331,9 +1481,10 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         OverseerCase::Dead | OverseerCase::Walled | OverseerCase::Reserve => None,
     };
-    // A new episode counts its own transfers and owes its own alert.
+    // A new episode counts its own transfers and owes its own alerts.
     out.changes.push(clear(TRANSFER_ROW, &key));
     out.changes.push(clear(DEAD_ALERT_ROW, &key));
+    out.changes.push(clear(NOTICE_ROW, &key));
     let cause = match case {
         OverseerCase::Dead => pane_pid.and_then(|pid| memory_cap(&key, pid, pass)),
         OverseerCase::Walled | OverseerCase::Reserve => None,
@@ -1388,6 +1539,43 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     ));
     out.next_due = (plan_relaunch || case == OverseerCase::Dead).then_some(pass_next_due());
     judged(verdict, Some(key))
+}
+
+/// The rows the session's verdict reads, and whether they are the
+/// session's own record of a failed turn. A Codex or Copilot session
+/// writes no hook row for a failed turn, so its own record is read first
+/// for one, under the home its account names (each harness's account is
+/// its home), else the record's home; a last turn that ended on no failure
+/// leaves the hook rows to read, as for Claude and Pi.
+fn session_rows(record: &Record, pass: &Pass) -> (Option<Reading<SessionObservation>>, bool) {
+    let hook_rows = || {
+        record
+            .session_rows
+            .as_deref()
+            .map(|path| (pass.readers.rows)(path).map(rows::observe_session))
+    };
+    let caller = Caller::of(record);
+    let (Some(harness @ (Harness::Codex | Harness::Copilot)), Some(home), Some(cwd), Some(id)) = (
+        record.harness,
+        caller.account.or(caller.home),
+        caller.cwd,
+        pass.fleet
+            .overseer
+            .as_ref()
+            .and_then(|overseer| overseer.session_id.as_deref()),
+    ) else {
+        return (hook_rows(), false);
+    };
+    match (pass.readers.session_failure)(harness, Path::new(&home), Path::new(&cwd), id) {
+        Reading::Live(Some(failure)) => (
+            Some(Reading::Live(rows::observe_session(rows::failure_row(
+                harness, &failure,
+            )))),
+            true,
+        ),
+        Reading::Live(None) | Reading::Gone => (hook_rows(), false),
+        Reading::Unreadable { cause } => (Some(Reading::Unreadable { cause }), false),
+    }
 }
 
 /// Whether a dead verdict's reads prove the session ended, so its first
@@ -1611,8 +1799,14 @@ fn pass_next_due() -> std::time::Instant {
 /// The transfer a `requested` row asked for, read by its outcome: in
 /// flight, or confirmed, it holds, a confirmed transfer having moved the
 /// record; failed, it is said as `overseer-relaunch-failed` with the
-/// intent's note as its step and asked again on the next run while the
-/// recovery's attempts last, else the row is `reported`.
+/// intent's note as its step. A walked recovery's failure that left its
+/// successor's account unproved is asked again on the next run, whose walk
+/// holds that account out (agent-runtime's retry over successors); any
+/// other failure would ask for the same successor. A dead recovery's
+/// successor is the recorded launch, which no walk chooses, so it is asked
+/// [`DEAD_ATTEMPTS`] times. A recovery asked no more is `reported` and, for
+/// a dead or walled controller, the owner told once with the step as its
+/// cause.
 fn transfer_settled(
     record: &Record,
     row: &str,
@@ -1646,7 +1840,11 @@ fn transfer_settled(
     let step = observed("note")
         .or_else(|| observed("cause"))
         .unwrap_or_else(|| "failed".to_owned());
-    let retry = attempt < TRANSFER_ATTEMPTS;
+    let retry = if row == "overseer-dead" {
+        attempt < DEAD_ATTEMPTS
+    } else {
+        left_unproved(intent, pass)
+    };
     context::note(
         if prefix.is_empty() {
             "overseer-relaunch-failed"
@@ -1666,16 +1864,24 @@ fn transfer_settled(
     } else {
         out.changes.push(set(row, key, format!("{prefix}reported")));
         out.changes.push(clear(TRANSFER_ROW, key));
+        if prefix.is_empty() {
+            no_successor(record, key, &format!("transfer failed: {step}"), pass, out);
+        }
     }
 }
 
 /// The announced succession: `request-transfer` with the case's cause and
-/// the spent account, the successor a walled case takes from the overseer
-/// walk with the spent account and the record's unproved accounts
-/// excluded; a refusal is the duty's failure,
-/// said on the log by the runner, and the row stays announced so the next
-/// pass asks again. An admitted transfer is `requested`, its intent and
-/// attempt on the transfer row for the next pass to read its outcome.
+/// the spent account; a walled case's successor is agent-runtime's walk
+/// leaving the spent account (`successor::recovery_walk`), the record's
+/// unproved accounts held out. A walled case then takes `stop::action`'s
+/// step for its wall: a move to the walk's successor, an ended sign-in's
+/// telling the owner once which account to sign in again; with no
+/// successor, a wait for the account's known reset, which the wake resumes
+/// it at, else the owner's one notice with the cause. A refusal is the
+/// duty's failure, said on the log by the runner, and the row stays
+/// announced so the next pass asks again. An admitted transfer is
+/// `requested`, its intent and attempt on the transfer row for the next
+/// pass to read its outcome.
 fn transfer(
     record: &Record,
     case: OverseerCase,
@@ -1689,69 +1895,84 @@ fn transfer(
         OverseerCase::Dead => "overseer-dead",
         OverseerCase::Walled | OverseerCase::Reserve => "overseer-walled",
     };
-    let (cause, exclude_account, successor) = match case {
-        OverseerCase::Dead => (TransferCause::Dead, None, record.held_successor()),
+    let caller = Caller::of(record);
+    let (cause, exclude_account, chosen) = match case {
+        OverseerCase::Dead => (
+            TransferCause::Dead,
+            None,
+            record
+                .held_successor()
+                .ok_or_else(|| "successor-unrecorded".to_owned()),
+        ),
         OverseerCase::Walled | OverseerCase::Reserve => {
-            let spent = match verdict {
-                Verdict::Walled {
-                    source: Source::Account,
-                    ..
+            let chosen = match (record.harness, record.account.as_ref()) {
+                (Some(harness), Some(_)) => {
+                    let mut request = choice::recovery_walk(&caller, harness, Leaving::Account);
+                    choice::hold_unproved(&mut request, unproved(pass), pass.now);
+                    walk_successor(&caller, &request, pass, out)
                 }
-                | Verdict::Live => record.account.clone(),
-                Verdict::Walled { .. } => record.account.clone(),
-                Verdict::Exited { .. }
-                | Verdict::Transferring { .. }
-                | Verdict::Unwatched { .. }
-                | Verdict::Unreadable { .. } => None,
+                (None, _) => Err("harness-unrecorded".to_owned()),
+                (_, None) => Err("account-unrecorded".to_owned()),
             };
-            let caller = Caller::of(record);
-            let successor = match (record.harness, spent.as_deref()) {
-                (Some(harness), Some(spent)) => {
-                    let mut request = WalkRequest {
-                        scope: walk::Scope::Overseer,
-                        preference: None,
-                        lane: None,
-                        exclude: vec![spent.to_owned()],
-                        max_pct: None,
-                        min_headroom_pct: None,
-                        source: Some(agent_runtime::controller::successor::source(
-                            &caller, harness,
-                        )),
-                        caller: Some(caller.walk_entry(harness)),
-                        keep_unmeasured: true,
-                    };
-                    agent_runtime::controller::successor::hold_unproved(
-                        &mut request,
-                        pass.fleet
-                            .overseer
-                            .as_ref()
-                            .and_then(|overseer| overseer.extra.get("unproved")),
-                        pass.now,
-                    );
-                    match (pass.judges.walk)(&request) {
-                        Ok(walked) => match &walked.answer {
-                            walk::WalkAnswer::Lane(chosen) => Some(caller.successor_of(chosen)),
-                            walk::WalkAnswer::None | walk::WalkAnswer::Held { .. } => {
-                                if let Some(line) = unread_hosts(&walked) {
-                                    out.events.push(Event::Tail(line));
-                                }
-                                None
-                            }
-                        },
-                        Err(refusal) => {
-                            out.events.push(Event::Tail(keyed(&refusal)));
-                            None
-                        }
-                    }
-                }
-                (None, _) | (_, None) => None,
-            };
-            (TransferCause::Walled, spent, successor)
+            (TransferCause::Walled, record.account.clone(), chosen)
         }
     };
-    let Some(successor) = successor else {
-        out.changes.push(set(row, key, format!("{prefix}reported")));
-        return;
+    if let (OverseerCase::Walled, Verdict::Walled { kind, text, .. }) = (case, verdict) {
+        let reset = match &chosen {
+            Ok(_) => None,
+            Err(_) => own_reset(&caller, pass),
+        };
+        let ground = stop::Ground {
+            own_room: false,
+            room: chosen.is_ok(),
+            reset: reset.is_some(),
+        };
+        let account = record.account.as_deref().unwrap_or("unrecorded");
+        // A wall's step does not turn on its age.
+        match stop::action(Kind::from(*kind), Duration::ZERO, Session::Overseer, ground) {
+            Action::MoveAccount { tell: None } => {}
+            Action::MoveAccount { tell: Some(_) } => {
+                let to = chosen
+                    .as_ref()
+                    .ok()
+                    .and_then(|pending| pending.account.as_deref())
+                    .unwrap_or("unrecorded");
+                let text = format!(
+                    "overseer-auth-wall: the overseer in pane {} can no longer sign in on account {account} ({}). The watch moves it to account {to}. Sign in again on {account}; the remedy is under overseer-walled in the orch skill's references/overseer-session-events.md.\n",
+                    record.pane,
+                    text.lines().next().unwrap_or_default().trim(),
+                );
+                notice_once(record, key, "auth", AUTH_ALERT_FILE, &text, pass, out);
+            }
+            Action::WaitForReset => {
+                if let Some(at) = reset {
+                    out.changes.push(set(
+                        wake::RESUME_KIND,
+                        wake::OVERSEER_TARGET,
+                        format!("{WALL_RESUME}|{key}|{at}"),
+                    ));
+                }
+                out.changes.push(set(row, key, format!("{prefix}reported")));
+                return;
+            }
+            Action::Notify { .. } => {
+                let cause = chosen.as_ref().err().map_or("walk-none", String::as_str);
+                let cause = format!("{} wall on account {account}: {cause}", kind_word(*kind));
+                no_successor(record, key, &cause, pass, out);
+                out.changes.push(set(row, key, format!("{prefix}reported")));
+                return;
+            }
+            Action::Resume | Action::MoveProvider => {
+                unreachable!("a wall is moved, waited out or told, never resumed in place")
+            }
+        }
+    }
+    let successor = match chosen {
+        Ok(successor) => successor,
+        Err(_) => {
+            out.changes.push(set(row, key, format!("{prefix}reported")));
+            return;
+        }
     };
     let death = match case {
         OverseerCase::Dead => (pass.baseline.get(OOM_ROW, key)
@@ -1788,6 +2009,126 @@ fn transfer(
             out.failed
                 .get_or_insert(format!("transfer-refused cause={cause}"));
         }
+    }
+}
+
+/// The resume row's cause for a wall the overseer waits out, the wake's
+/// `usage-limit` resume, typed past the banner once its account reads room.
+const WALL_RESUME: &str = "usage-limit";
+
+fn kind_word(kind: WallKind) -> &'static str {
+    match kind {
+        WallKind::Usage => "usage",
+        WallKind::Auth => "auth",
+    }
+}
+
+/// The controller record's `unproved` accounts, each a failed attempt's.
+fn unproved<'p>(pass: &Pass<'p>) -> Option<&'p Value> {
+    pass.fleet
+        .overseer
+        .as_ref()
+        .and_then(|overseer| overseer.extra.get("unproved"))
+}
+
+/// Whether the failed attempt `intent` left its successor's account
+/// unproved in the controller record, a stamp at or after the attempt
+/// began, so the next walk holds that account out
+/// (`successor::hold_unproved`) and chooses another.
+fn left_unproved(intent: &agent_runtime::intent::Intent, pass: &Pass) -> bool {
+    let Some(began) = agent_runtime::clock::epoch_secs(&intent.created_at) else {
+        return false;
+    };
+    unproved(pass)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("at").and_then(Value::as_str))
+        .filter_map(agent_runtime::clock::epoch_secs)
+        .any(|at| at >= began)
+}
+
+/// The successor the walk `request` chooses for `caller`, or why it chose
+/// none: the walk's refusal, or its unread hosts, each its own line under
+/// the overseer's.
+fn walk_successor(
+    caller: &Caller,
+    request: &WalkRequest,
+    pass: &Pass,
+    out: &mut Produced,
+) -> Result<Pending, String> {
+    match (pass.judges.walk)(request) {
+        Ok(walked) => match &walked.answer {
+            walk::WalkAnswer::Lane(chosen) => Ok(caller.successor_of(chosen)),
+            walk::WalkAnswer::None | walk::WalkAnswer::Held { .. } => match unread_hosts(&walked) {
+                Some(line) => {
+                    out.events.push(Event::Tail(line.clone()));
+                    Err(line)
+                }
+                None => Err("walk-none".to_owned()),
+            },
+        },
+        Err(refusal) => {
+            let line = keyed(&refusal);
+            out.events.push(Event::Tail(line.clone()));
+            Err(line)
+        }
+    }
+}
+
+/// The epoch second the overseer's own account resets at, as the account
+/// judgement reads it; `None` where it reads none or could not answer.
+fn own_reset(caller: &Caller, pass: &Pass) -> Option<u64> {
+    let marks = (pass.judges.marks)(caller, None).ok()?;
+    agent_runtime::clock::epoch_secs(&marks.resets)
+}
+
+/// The owner's one notice for a succession that found no successor, with
+/// its cause.
+fn no_successor(record: &Record, key: &str, cause: &str, pass: &Pass, out: &mut Produced) {
+    let text = format!(
+        "overseer-no-successor: the overseer in pane {} (window {}) has stopped and the watch found no successor for it: {cause}. Replace it as the orch skill's workflows/oversee.md says under Controller start and adoption; the remedy is under Recovery outcomes in the orch skill's references/overseer-session-events.md.\n",
+        record.pane, record.window
+    );
+    notice_once(
+        record,
+        key,
+        "no-successor",
+        NO_SUCCESSOR_ALERT_FILE,
+        &text,
+        pass,
+        out,
+    );
+}
+
+/// One owner notice per episode for the condition `state`: sent until the
+/// owner holds the words, then nothing while the episode stands.
+fn notice_once(
+    record: &Record,
+    key: &str,
+    state: &str,
+    file: &str,
+    text: &str,
+    pass: &Pass,
+    out: &mut Produced,
+) {
+    let prior = pass.baseline.get(NOTICE_ROW, key).unwrap_or("");
+    if Word::of_row(prior, state) == Some(Word::Alerted) {
+        return;
+    }
+    match (pass.alert)(file, text) {
+        Ok(()) => {
+            context::note(
+                "overseer-notice-sent",
+                &format!("pane={} notice={state}", record.pane),
+            );
+            out.changes
+                .push(set(NOTICE_ROW, key, Word::Alerted.row(state)));
+        }
+        Err(cause) => context::note(
+            "overseer-notice-failed",
+            &format!("channel=owner cause={cause}"),
+        ),
     }
 }
 

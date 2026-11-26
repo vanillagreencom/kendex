@@ -10,7 +10,17 @@ Once per pass, the watch judges the recorded controller's session, account and c
 - Walled controller, or live controller on its credit reserve: the watch requests `request-transfer` with `cause: walled`, and the overseer walk excludes the spent account.
 - Under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, the watch requests no recovery for a dead, walled or reserve controller.
 
-Recovery opens a fresh session, never a native resume.
+Recovery opens a fresh session, never a native resume. A Codex or Copilot controller's failed turn is read from its own session record, so a Copilot 429 rate limit walls it whatever its account reads.
+
+## Provider stops
+
+The watch recovers a stopped overseer by the stop's kind, which agent-runtime names, with nobody typing:
+
+1. A usage limit, spent credit or an empty pool is the account's limit. The overseer moves to the first account with room in the walk. If no account has room and the account's reset is known, the watch waits for the reset and the wake resumes the overseer on its own account once that account reads room.
+2. An ended or refused sign-in moves the overseer to another account at once, never back to the same one. The owner gets one notice naming the account to sign in again.
+3. An overload, a server error, a broken stream, a network drop, a safety flag or Codex's capacity refusal is the provider not answering. The wake resumes the overseer on its own account once per pass. The first turn that returns ends the episode. After 30 minutes the overseer moves to the first entry with room on another provider. With no such entry it is resumed still.
+4. A case nothing recovers reaches the owner once, with its cause: a wall the walk finds no successor for and no known reset, or a transfer the watch asks no more.
+5. The owner's notices go through the overseer mailbox's owner channel, once per episode.
 
 A usage-limit banner on the overseer's pane proves no wall by itself: the pane also relays lane banners. A current login wall needs no usage confirmation.
 
@@ -19,12 +29,14 @@ A usage-limit banner on the overseer's pane proves no wall by itself: the pane a
 The line announces a recovery; the duty's next run submits its request. An admitted transfer is not confirmed: its open intent owns completion. The outcomes land on the watch's stderr, `oversee-watch.err` beside the fleet state:
 
 - `transfer-refused cause=[KEY]` under a `watch-step-failed` line: the request was refused. The recovery stays announced, and the next pass asks again.
-- `overseer-relaunch-failed pane=[PANE] attempt=[N] retry=[pending|exhausted] step=[STEP]`, or `overseer-capacity-failed` for a reserve recovery: the transfer failed. `retry=pending` asks once more on the duty's next run. Read the failed intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
+- `overseer-relaunch-failed pane=[PANE] attempt=[N] retry=[pending|exhausted] step=[STEP]`, or `overseer-capacity-failed` for a reserve recovery: the transfer failed. `retry=pending` asks again on the duty's next run: a dead recovery once more, a walked recovery while each failure leaves its successor's account unproved, which the next walk holds out. Read the failed intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
+- `overseer-provider-move pane=[PANE] cause=[CAUSE] since=[EPOCH] intent=[INTENT]`: a provider stop past 30 minutes asked the move to another provider.
+- `overseer-notice-sent pane=[PANE] notice=[auth|no-successor]`: the owner got the episode's notice, `overseer-auth-wall.txt` or `overseer-no-successor.txt` in the fleet state directory.
 
 Replace the overseer by hand ([oversee.md § Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption)):
 
 - after `retry=exhausted`;
-- after a walled walk that chose no successor;
+- after an `overseer-no-successor` notice;
 - wherever the watch requests no recovery: under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, or for a dead record that supplies no successor.
 
 While a pass reads the controller exited or walled, or a controller intent stands open, the native-observation duty judges no lane. The other duties keep their schedule, so the watch still reads lane mail and owner asks.

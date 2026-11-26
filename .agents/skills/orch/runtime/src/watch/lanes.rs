@@ -124,6 +124,10 @@ pub type PaneRead<'a> = &'a dyn Fn(&[PathBuf], u64, Option<u64>, &str) -> Readin
 /// Who holds a pane's terminal, read for the lane's harness and recorded
 /// identity.
 pub type ForegroundRead<'a> = &'a dyn Fn(u32, Option<Harness>, Option<&Identity>) -> ProcessReading;
+/// A Codex or Copilot session's last failed turn, by its harness, home,
+/// directory and id.
+pub type SessionFailureRead<'a> =
+    &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<session::Failure>>;
 /// The windows of a session on the server at the socket the controller
 /// record names, else the one the fleet's reach names, with the server's
 /// pid.
@@ -193,6 +197,11 @@ pub struct Readers<'a> {
     pub start_epoch: &'a dyn Fn(&Identity) -> Reading<u64>,
     /// One read binds the lane verdict to its row position.
     pub rows: &'a dyn Fn(&Path) -> Reading<rows::Row>,
+    /// How the last turn of the Codex or Copilot session whose id the
+    /// record names, under its home and directory, ended: its own session
+    /// record read through `session::last_failure`, the one reading of a
+    /// failed turn those harnesses write no hook row for.
+    pub session_failure: SessionFailureRead<'a>,
     /// Whether a lane's status file stands.
     pub status_file: &'a dyn Fn(&Path) -> Reading<()>,
     /// The windows of the fleet session; `Gone` for no such session.
@@ -250,6 +259,18 @@ impl Readers<'static> {
                 },
             }
         }
+        fn session_failure(
+            harness: Harness,
+            home: &Path,
+            cwd: &Path,
+            id: &str,
+        ) -> Reading<Option<session::Failure>> {
+            match session::fixed_id_file(harness, home, cwd, id) {
+                Reading::Live(file) => session::last_failure(harness, &file),
+                Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            }
+        }
         fn zone(name: Option<&str>) -> Option<TimeZone> {
             match name {
                 Some(name) => TimeZone::get(name).ok(),
@@ -262,6 +283,7 @@ impl Readers<'static> {
             capture: &capture,
             start_epoch: &observe::start_epoch,
             rows: &rows::last_row,
+            session_failure: &session_failure,
             status_file: &status_file,
             windows: &windows,
             receipts: &receipts_in,

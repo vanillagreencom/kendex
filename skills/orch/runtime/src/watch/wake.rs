@@ -32,7 +32,9 @@
 //! line once per row value: the mark keeps the value typed. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room and for any standing halt to lift, then is typed past its usage banner (`deliver
-//! --account-room`).
+//! --account-room`). The overseer's, asked for a wall no successor could
+//! leave, waits for the reset its row names and for its own account, read
+//! as its marks read it, to read room.
 //!
 //! Hosted: a running lane whose host's line reads `launch=ssh`,
 //! `pane=local`, `status=verb` runs its harness on that host under the ssh
@@ -77,6 +79,7 @@
 //! the owner told once, as for its mail.
 
 use agent_runtime::controller::Overseer;
+use agent_runtime::controller::views::{AccountState, Caller, Record as ControllerRecord};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -789,10 +792,10 @@ impl Wake {
                     continue;
                 };
                 let key_prefix = format!("{} {}|", target.server, target.pane);
-                if resume.wall
-                    || !row
-                        .split_once('|')
-                        .is_some_and(|(_, key)| key.starts_with(&key_prefix))
+                if !row
+                    .split_once('|')
+                    .is_some_and(|(_, key)| key.starts_with(&key_prefix))
+                    || resume.wall && !self.overseer_room(overseer, &row, tick.wall)
                 {
                     continue;
                 }
@@ -933,6 +936,46 @@ impl Wake {
             self.serve(&target, &state, tick.wall, &mut record, &mut produced)?;
         }
         Ok(produced)
+    }
+
+    /// Whether a walled overseer's resume at its reset may be typed: the
+    /// reset its row names (`usage-limit|<pane key>|<reset>`) has passed and
+    /// the overseer's own account, read as its marks read it
+    /// (`Caller::own_account`), has room. Any other reading waits.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the kernel host for the judge's occupancy read, which acts on nothing"
+    )]
+    fn overseer_room(&self, overseer: &Overseer, row: &str, now: u64) -> bool {
+        let passed = row
+            .rsplit_once('|')
+            .and_then(|(_, reset)| reset.parse::<u64>().ok())
+            .is_some_and(|reset| reset <= now);
+        let Some(caller) = ControllerRecord::read(Some(overseer)).map(|record| Caller::of(&record))
+        else {
+            return false;
+        };
+        let (true, Some(harness), Ok(accounts)) =
+            (passed, caller.harness, self.settings.accounts.get())
+        else {
+            return false;
+        };
+        let host = crate::ops::Host::kernel();
+        let mut pick = |request: &agent_runtime::accounts::PickRequest| {
+            crate::ops::accounts::pick_fleet(
+                &self.settings,
+                &self.fleet,
+                &host,
+                None,
+                None,
+                request,
+                now,
+            )
+        };
+        caller
+            .own_account(harness, &mut pick, accounts.controller_headroom_pct, now)
+            .state
+            == AccountState::HasRoom
     }
 
     /// Set or drop the target's mark in `record` and write the record
