@@ -803,7 +803,8 @@ enum LaneOp {
     /// after a restart: the record's own account judged by the launch's own
     /// judge with the lane's charge left out, and both the close and the
     /// `launch-lane` request a recovery relaunch composes from the record,
-    /// on the start brief, admitted before the close; then both applied in
+    /// on the start brief, closed by the interrupted sentence where no
+    /// handoff stands, admitted before the close; then both applied in
     /// order on the controller record's `server_socket`, where a server gone
     /// from it is started again. Exit 0 prints `resumed item=ITEM
     /// route=resume|fresh account=DIR|-`. A close that failed is
@@ -813,6 +814,7 @@ enum LaneOp {
     /// `launch-unconfirmed ... close=ID` at 75. Every refusal at exit 1
     /// closes nothing: `server-socket-unrecorded`, `lane-missing`,
     /// `lane-hosted`, `lane-live` where the lane's session still runs,
+    /// `handoff-unreadable` where a handoff place cannot be read,
     /// `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared
     /// cause=CAUSE`, the launch's account refusals (`account-walled`,
     /// `account-reserved`, `account-retired`, `account-unmeasured`,

@@ -424,7 +424,7 @@ Each answer:
 
 1. Inspect its worktree and pull request.
 2. When the tracker reads the lane's item completed or canceled, the lane has ended its work, including a no-change round's item ([start-worktree.md § 2](../workflows/start-worktree.md#2-implement)). Close it through the runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) and relaunch nothing.
-3. Otherwise relaunch it once with the same brief through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+3. Otherwise relaunch it once through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 4. Tell the owner of a second death. Do not retry it.
 5. After the relaunched lane finishes, close it through the runtime close. Do not rebuild the pane, host and state steps by hand.
 
