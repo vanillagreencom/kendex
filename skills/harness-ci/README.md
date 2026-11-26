@@ -60,7 +60,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 - `HARNESS_CI_TRIVIAL_SETTINGS`: add key globs, or prefix a glob with `!` to remove them.
 - `HARNESS_CI_TRIVIAL_SETTINGS`: list only keys that no CI job or review gate reads.
 
-harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. Incomplete evidence keeps the lane eligible. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands and exceptions.
+harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands, and its Exception and legacy declarations paragraph states which lanes run when the reader cannot read a job.
 
 ### Lane file cut-over
 

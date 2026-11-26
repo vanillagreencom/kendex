@@ -13,17 +13,36 @@ from functools import cached_property
 
 
 class Unreadable(Exception):
-    pass
+    # A shape refusal judges the job's own text and sources at the base, which
+    # a lane's reasoned claims describe. Any other refusal, from a tool on this
+    # run, from a read of the change itself or from inside the Cargo reader,
+    # leaves the job's reads unknown.
+    shape = False
+
+
+class ShapeUnreadable(Unreadable):
+    shape = True
 
 
 class NamedUnreadable(Unreadable):
     # The cause names the input it failed on, so the job's dispatches add nothing.
-    pass
+    def __init__(self, cause, shape):
+        super().__init__(cause)
+        self.shape = shape
+
+
+def is_shape(error):
+    return isinstance(error, Unreadable) and error.shape
 
 
 def require(condition, cause):
     if not condition:
         raise Unreadable(cause)
+
+
+def require_shape(condition, cause):
+    if not condition:
+        raise ShapeUnreadable(cause)
 
 
 def command(args, cwd, *, data=None, env=None):
@@ -45,8 +64,11 @@ def literal(value):
 def words(line):
     if line.lstrip().startswith("#"):
         return []
-    tokens = shlex.split(line)
-    require(all(literal(word) or word == ":" for word in tokens), "computed-command")
+    try:
+        tokens = shlex.split(line)
+    except ValueError as error:
+        raise ShapeUnreadable(str(error)) from error
+    require_shape(all(literal(word) or word == ":" for word in tokens), "computed-command")
     return tokens
 
 
@@ -70,6 +92,8 @@ VITEST_STATIC_IMPORT = re.compile(
 JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
+# A symlink or a submodule: git tracks no entry below either.
+LINK_MODES = {"120000", "160000"}
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
 BASH_SHEBANGS = [["#!/usr/bin/env bash"], ["#!/bin/bash"]]
 STRICT_MODE = [["set -euo pipefail"], ["set -eu"]]
@@ -151,14 +175,15 @@ def lane_table(lines, lane):
     also runs the lane's fixture directory."""
     dispatch = next((shape for shape in (LANE_TABLE_DISPATCH, LANE_FIXTURE_DISPATCH)
                      if len(lines) > len(shape) and lines[-len(shape):] == shape), None)
-    require(dispatch and lines[0] == "lane_table=(", "unsupported-runner-dispatch")
+    require_shape(dispatch and lines[0] == "lane_table=(", "unsupported-runner-dispatch")
     fixtures = dispatch is LANE_FIXTURE_DISPATCH
     end = len(lines) - len(dispatch)
     index = 1
     members = {}
     while index < end and lines[index] != ")":
         entry = re.fullmatch(rf'"({LANE_ID}):', lines[index])
-        require(entry and entry[1] not in members, "unsupported-runner-table")
+        require_shape(entry and entry[1] not in members and '"' in lines[index + 1:end],
+                      "unsupported-runner-table")
         close = lines.index('"', index + 1, end)
         selected = []
         for word in " ".join(lines[index + 1:close]).split():
@@ -166,23 +191,24 @@ def lane_table(lines, lane):
                 fixtures and re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:sh|py)", word)
             ):
                 continue
-            require(re.fullmatch(LANE_ID, word), "unsupported-runner-member")
+            require_shape(re.fullmatch(LANE_ID, word), "unsupported-runner-member")
             selected.append(word)
         members[entry[1]] = selected
         index = close + 1
     # A lane with no step can still run its fixture files.
-    require(index < end and lane in members and (fixtures or members[lane]),
-            "runner-lane-unresolved")
+    require_shape(index < end and lane in members and (fixtures or members[lane]),
+                  "runner-lane-unresolved")
     index += 1
     functions = {}
     while index < end:
         definition = re.fullmatch(r"(step_[a-z0-9_]+)\(\) \{", lines[index])
-        require(definition and definition[1] not in functions, "unsupported-runner-function")
+        require_shape(definition and definition[1] not in functions and "}" in lines[index + 1:end],
+                      "unsupported-runner-function")
         close = lines.index("}", index + 1, end)
         # The caller reads only the selected lane's steps, so another step's
         # body must end where this split ends it.
-        require(not boundary_unproved(lines[index + 1:close]),
-                f"runner-function-boundary-unproved function={definition[1]}")
+        require_shape(not boundary_unproved(lines[index + 1:close]),
+                      f"runner-function-boundary-unproved function={definition[1]}")
         functions[definition[1]] = lines[index + 1:close]
         index = close + 1
     return members[lane], functions, fixtures
@@ -209,7 +235,7 @@ class Evidence:
 
     def blob(self, path, rev=None):
         if rev is None:
-            require(self.files.get(path) in {"100644", "100755"}, "non-regular-input")
+            require_shape(self.files.get(path) in {"100644", "100755"}, "non-regular-input")
         return self.git("cat-file", "blob", f"{rev or self.authority}:{path}").decode()
 
     @cached_property
@@ -222,6 +248,10 @@ class Evidence:
         command(["git", "-c", "core.hooksPath=/dev/null", "checkout", "--quiet",
                  "--detach", self.authority], path)
         return path
+
+    @cached_property
+    def head_files(self):
+        return self.tree(self.head)
 
     def relative(self, path):
         return Path(path).resolve().relative_to(self.checkout).as_posix()
@@ -294,32 +324,31 @@ class Evidence:
         name, _, lane = args
         try:
             script, passed = self.resolve(directory, name)
-            reads.update(passed)
+            reads.update({script} | passed)
             invocation = (script, directory, lane)
             if invocation in visited:
                 return
             visited.add(invocation)
             body = self.blob(script).split("\n")
-            require(self.files[script] == "100755" and body[:1] in BASH_SHEBANGS,
-                    "unsupported-runner-interpreter")
+            require_shape(self.files[script] == "100755" and body[:1] in BASH_SHEBANGS,
+                          "unsupported-runner-interpreter")
             lines = [line.strip(" \t") for line in body[1:] if line.strip(" \t")]
             if lines[:1] in STRICT_MODE:
                 lines = lines[1:]
             members, functions, fixtures = lane_table(lines, lane)
-            reads.add(script)
             for member in members:
                 step = "step_" + member.replace("-", "_")
-                require(step in functions, f"runner-step-unresolved step={step}")
+                require_shape(step in functions, f"runner-step-unresolved step={step}")
                 body = [args for line in functions[step] if (args := words(line))]
-                require(body and all(args[0] not in SHELL_KEYWORDS for args in body),
-                        f"unsupported-runner-body step={step}")
+                require_shape(body and all(args[0] not in SHELL_KEYWORDS for args in body),
+                              f"unsupported-runner-body step={step}")
                 for command in body:
                     self.shell_command(command, directory, reads, visited)
             if fixtures:
                 self.lane_fixtures(lane, directory, reads, visited)
         except UNAVAILABLE as error:
             raise NamedUnreadable(
-                f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}"
+                f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}", is_shape(error),
             ) from error
 
     def lane_fixtures(self, lane, directory, reads, visited):
@@ -336,45 +365,44 @@ class Evidence:
                 continue
             # The runner reads the list by line, so it would run each part of
             # a name that holds a newline as a path of its own.
-            require("\n" not in path, f"runner-fixture-name-newline folder={folder}")
-            if path.endswith(".py"):
-                raise Unreadable(f"runner-fixture-opaque fixture={path}")
+            require_shape("\n" not in path, f"runner-fixture-name-newline folder={folder}")
+            require_shape(not path.endswith(".py"), f"runner-fixture-opaque fixture={path}")
             self.shell_reads(path, directory, reads, visited)
 
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         if name in {"source", ".", "bash"} and len(operands) == 1:
-            require(name == "bash" or "/" in operands[0], "shell-source-uses-path")
+            require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
             script, passed = self.resolve(directory, operands[0])
             reads.update(passed)
             self.shell_reads(script, directory, reads, visited)
         elif lane_invocation(args):
-            require(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
+            require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
             self.lane_dispatch(args, directory, reads, visited)
         elif name.startswith("./") and not operands:
             script, passed = self.resolve(directory, name)
-            reads.update(passed)
-            require(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
-                    in [*BASH_SHEBANGS, ["#!/bin/sh"]],
-                    "unsupported-script-interpreter")
+            reads.update({script} | passed)
+            require_shape(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
+                          in [*BASH_SHEBANGS, ["#!/bin/sh"]],
+                          "unsupported-script-interpreter")
             self.shell_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 path, passed = self.resolve(directory, path)
                 reads.update({path} | passed)
         elif name == "test":
-            require(len(operands) == 2 and operands[0] in {"-f", "-r", "-e"},
-                    "unsupported-shell-test")
+            require_shape(len(operands) == 2 and operands[0] in {"-f", "-r", "-e"},
+                          "unsupported-shell-test")
             path, passed = self.resolve(directory, operands[1])
             reads.update({path} | passed)
             reads.update(name for name in self.changed if under(name, path))
         elif name == "set" and operands in [["-euo", "pipefail"], ["-eu"]]:
             return
         else:
-            require(name in {":", "true", "false"} and not operands, "opaque-shell-command")
+            require_shape(name in {":", "true", "false"} and not operands, "opaque-shell-command")
 
     def resolve(self, directory, path):
-        require(literal(path) and not path.startswith("-"), "computed-path")
+        require_shape(literal(path) and not path.startswith("-"), "computed-path")
         return self.checkout_path(directory, path)
 
     def checkout_path(self, directory, path):
@@ -382,9 +410,9 @@ class Evidence:
         prefixes = [os.path.normpath(prefix) for prefix in original.parents]
         # Check each original prefix before a later '..' can hide a link.
         for prefix in (os.path.normpath(original), *prefixes):
-            require(self.files.get(prefix) not in {"120000", "160000"}, "indirect-path")
+            require_shape(self.files.get(prefix) not in LINK_MODES, "indirect-path")
         result = os.path.normpath(original)
-        require(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
+        require_shape(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
         # A kernel walk must enter each directory the path names before a
         # later '..' leaves it, and the result's own existence does not prove
         # that directory exists. The starting directory has its own evidence.
@@ -394,6 +422,63 @@ class Evidence:
                   if not under(result, prefix)
                   for name in self.changed if under(name, prefix)}
         return result, passed
+
+    def working_directory(self, directory, reads):
+        # A checkout materializes a directory through its tracked entries, and
+        # git tracks none below a link. One absent at both ends, such as a
+        # checkout's own path, is the job's shape, and so is one reached
+        # through the same links at both ends. One the change adds, removes or
+        # swaps with a link leaves the job unread.
+        original = Path(directory)
+        result = os.path.normpath(original)
+        prefixes = {os.path.normpath(prefix) for prefix in (original, *original.parents)}
+
+        def state(files):
+            links = frozenset(prefix for prefix in prefixes if files.get(prefix) in LINK_MODES)
+            present = any(path.startswith(result + "/") for path in files)
+            return ("link" if links else "directory" if present else "absent"), links
+
+        base, head = state(self.files), state(self.head_files)
+        reads.update(base[1] | head[1])
+        require(base == head, "working-directory-unproved")
+        if base[0] == "link":
+            self.link_reads(directory, reads)
+            raise ShapeUnreadable("indirect-path")
+        result, passed = self.resolve(".", directory)
+        reads.update(passed)
+        require_shape(base[0] == "directory", "working-directory-unproved")
+        return result
+
+    def link_reads(self, path, reads):
+        """Record each base link a kernel walk of path follows, and the changed
+        paths under where the walk ends. A link the change replaces is itself
+        a changed path, so no head link is followed."""
+        parts = list(Path(path).parts)
+        current = []
+        followed = 0
+        while parts:
+            part = parts.pop(0)
+            if part == "..":
+                if not current:
+                    # The walk leaves the tree, where the change reaches nothing.
+                    return
+                current.pop()
+                continue
+            current.append(part)
+            name = "/".join(current)
+            if self.files.get(name) not in LINK_MODES:
+                continue
+            reads.add(name)
+            followed += 1
+            # Linux refuses a walk past 40 links. A submodule has no target.
+            if self.files[name] == "160000" or followed > 40:
+                return
+            target = self.blob(name, self.authority)
+            if target.startswith("/"):
+                return
+            current.pop()
+            parts = [*Path(target).parts, *parts]
+        reads.update(name for name in self.changed if under(name, "/".join(current) or "."))
 
     def cargo_reads(self, args, directory):
         require(args[:1] in [["test"], ["check"], ["clippy"], ["build"]],
@@ -514,86 +599,95 @@ class Evidence:
         )}
         return reads, covered | reads
 
-    def vitest_reads(self, directory):
+    def vitest_reads(self, directory, reads):
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
+        paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
+        config_dirs = {Path(directory), *Path(directory).parents}
+
+        def ungraphed(path):
+            # A changed file the module graph does not judge: a non-module
+            # under the root, or a package file the resolution can read.
+            return (under(path, directory) and not MODULE.search(path)) or (
+                Path(path).parent in config_dirs and Path(path).name in JS_PACKAGES
+            )
+
+        reads.update((self.changed - paths) | set(filter(ungraphed, paths)))
         members = {path for path in self.files if under(path, directory)}
         for path in members:
             name = Path(path).name
-            require(not name.startswith(("vitest.config.", "vite.config.", "vitest.workspace.",
-                                         "tsconfig", "jsconfig", ".env")) and
-                    self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
+            require_shape(not name.startswith(("vitest.config.", "vite.config.", "vitest.workspace.",
+                                               "tsconfig", "jsconfig", ".env")) and
+                          self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
         pending = {path for path in members if MODULE.search(path)}
         scanned = set()
         package_imports = set()
-        config_dirs = {Path(directory), *Path(directory).parents}
         while pending:
             path = pending.pop()
             if path in scanned:
                 continue
             scanned.add(path)
+            reads.add(path)
             parent = Path(path).parent
             config_dirs.update((parent, *parent.parents))
+            reads.update(filter(ungraphed, paths))
             source = self.blob(path)
-            require(not re.search(
+            require_shape(not re.search(
                 r"\b(?:require|eval|Function|fetch|process|globalThis)\b"
                 r"|\bimport\.meta|\b(?:node:|new\s+URL)|Snapshot\b|\\u", source,
             ), "vitest-opaque-source")
             for reference in JS_REFERENCE.finditer(source):
-                require(not reference[1], "vitest-runtime-import")
+                require_shape(not reference[1], "vitest-runtime-import")
                 start = reference.end()
                 if source[start:start + 1] not in {"'", '"'}:
                     continue
                 specifier = JS_SPECIFIER.match(source, start)
-                require(specifier, "vitest-computed-import")
+                require_shape(specifier, "vitest-computed-import")
                 target = specifier[2]
                 if target == "vitest":
                     # Namespace access and passed or extracted bindings can
                     # load modules without a Vitest transform edge.
                     line = source.rfind("\n", 0, reference.start()) + 1
                     named = VITEST_STATIC_IMPORT.fullmatch(source[line:reference.start()])
-                    require(named, "vitest-runtime-binding")
+                    require_shape(named, "vitest-runtime-binding")
                     bindings = r"\b(?:" + "|".join(binding.strip() for binding in named[1].split(",")) + r")\b"
                     uses = source[:line] + source[specifier.end():]
-                    require(all(re.match(JS_TRIVIA + r"\(", uses[use.end():])
-                                for use in re.finditer(bindings, uses)), "vitest-runtime-binding")
+                    require_shape(all(re.match(JS_TRIVIA + r"\(", uses[use.end():])
+                                      for use in re.finditer(bindings, uses)), "vitest-runtime-binding")
                     continue
-                require(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
-                        "vitest-opaque-import")
+                require_shape(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
+                              "vitest-opaque-import")
                 # Vite and Node resolve a relative specifier by name, so a
                 # directory it passes through need not exist.
                 imported, _ = self.checkout_path(parent.as_posix(), target)
-                require(imported in self.files and MODULE.search(imported), "vitest-module-unresolved")
+                # A shape refusal keeps every module the walk resolved.
+                reads.add(imported)
+                require_shape(imported in self.files and MODULE.search(imported),
+                              "vitest-module-unresolved")
                 if self.package_path(imported):
+                    # Package ownership also needs imports outside Vitest's changed graph.
                     package_imports.add(imported)
                 pending.add(imported)
         if any(self.package_path(path) for path in self.changed):
             require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
-        require(not any(
+        require_shape(not any(
             Path(path).parent in config_dirs and Path(path).name in JS_CONFIG
             for path in self.files
         ), "vitest-inherited-config")
+        # No later refusal is a shape refusal, so Vitest's related-test listing
+        # alone judges a changed module the walk read.
+        reads.difference_update(scanned - package_imports)
         cwd = self.checkout / directory
         upstream = self.trusted / directory / "node_modules"
         binary = upstream / ".bin/vitest"
         require(binary.is_file(), "vitest-install-unavailable")
         if not (cwd / "node_modules").is_symlink():
             (cwd / "node_modules").symlink_to(upstream, target_is_directory=True)
-        paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
-        reads = (self.changed - paths) | {
-            path for path in paths if (
-                under(path, directory) and not MODULE.search(path)
-            ) or (
-                Path(path).parent in config_dirs and Path(path).name in JS_PACKAGES
-            )
-        }
-        paths -= reads
-        # Package ownership also needs imports outside Vitest's changed graph.
-        reads.update(package_imports)
+        paths = {path for path in paths if not ungraphed(path)}
         if not paths:
-            return reads, self.changed
+            return self.changed
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
@@ -619,7 +713,9 @@ class Evidence:
                 "vitest-changed-paths-unread")
         selected = listing(["--changed"], env)
         require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
-        return reads | (paths if selected else set()), self.changed
+        if selected:
+            reads.update(paths)
+        return self.changed
 
 
 def workflow_document(source):
@@ -789,7 +885,7 @@ def literal_job_dispatches(job):
         for line in step.get("run", "").splitlines():
             try:
                 args = words(line)
-            except (Unreadable, ValueError):
+            except Unreadable:
                 continue
             if lane_invocation(args) and re.fullmatch(LANE_ID, args[2]):
                 commands.add(shlex.join(args))
@@ -849,32 +945,30 @@ def declared_lanes(work):
     return listed.decode().splitlines()
 
 
-def job_reads(evidence, job, env_words, bash_env):
-    require(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
-                        "permissions", "steps", "defaults"}, "opaque-job")
-    ordinary = set()
+def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
+    """Fill ordinary with the job's shell reads and readers with one read set
+    per graph reader, so a shape refusal keeps what was proved before it.
+    Return each graph reader's covered paths."""
+    covered = []
+    require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
+                              "permissions", "steps", "defaults"}, "opaque-job")
     visited = set()
-    readers = []
     opaque_action = None
     default = job.get("defaults", {}).get("run", {})
-    require(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
+    require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
     for step in job["steps"]:
-        require(set(step) <= {"id", "name", "uses", "run", "working-directory",
-                             "shell", "with", "timeout-minutes"}, "opaque-step")
+        require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
+                                   "shell", "with", "timeout-minutes"}, "opaque-step")
         if "uses" in step:
             if not (re.fullmatch(CHECKOUT, step["uses"]) and
                     set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"}):
                 opaque_action = step["uses"]
             continue
-        require(step.get("shell", default.get("shell", "bash")) == "bash",
-                "unsupported-shell")
+        require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
+                      "unsupported-shell")
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
-            directory, passed = evidence.resolve(".", directory)
-            ordinary.update(passed)
-            # A checkout materializes directories through their tracked entries.
-            require(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"),
-                    "working-directory-unproved")
+            directory = evidence.working_directory(directory, ordinary)
         for word in env_words:
             path, passed = evidence.checkout_path(directory, word)
             ordinary.update({path} | passed)
@@ -890,21 +984,29 @@ def job_reads(evidence, job, env_words, bash_env):
             except UNAVAILABLE as error:
                 named = os.path.normpath(Path(directory) / bash_env)
                 raise NamedUnreadable(
-                    f"opaque-workflow-env key=BASH_ENV path={named} reason={error}"
+                    f"opaque-workflow-env key=BASH_ENV path={named} reason={error}", is_shape(error),
                 ) from error
         for line in step["run"].splitlines():
             args = words(line)
             if not args:
                 continue
             if args[0] == "cargo":
-                readers.append(evidence.cargo_reads(args[1:], directory))
+                try:
+                    cargo, paths = evidence.cargo_reads(args[1:], directory)
+                except Unreadable as error:
+                    # A refusal drops every read the Cargo reader made, so no
+                    # claim stands in for what it could not rule out.
+                    raise Unreadable(str(error)) from error
+                readers.append(cargo)
+                covered.append(paths)
             elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                           ["npx", "--no-install", "vitest", "run"]):
-                readers.append(evidence.vitest_reads(directory))
+                readers.append(set())
+                covered.append(evidence.vitest_reads(directory, readers[-1]))
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
-    require(opaque_action is None, f"opaque-action action={opaque_action}")
-    return ordinary, readers
+    require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
+    return covered
 
 
 def derived(evidence, exceptions, settings, declared):
@@ -977,29 +1079,36 @@ def derived(evidence, exceptions, settings, declared):
             if name in evidence.proved_head_ownership:
                 packages.add(evidence.proved_head_ownership[name])
 
-    def job_reach(name):
+    def job_reach(name, lane):
+        ordinary, readers = set(), []
         try:
-            ordinary, readers = job_reads(evidence, jobs[name], env_words, bash_env)
-            reads = ordinary | set().union(*(read for read, _ in readers))
-            packages = {evidence.owner(path) for path in reads} - {None}
-            hits = (reads & evidence.changed) | {
-                rendered_path for rendered_path, package_owners in owners.items()
-                if packages & package_owners
-            }
-            return hits, set().union(*(evidence.changed - covered for _, covered in readers))
+            covered = job_reads(evidence, jobs[name], env_words, bash_env, ordinary, readers)
+            unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
             diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
             if not isinstance(error, NamedUnreadable):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
-            return set(), evidence.changed
+            if not is_shape(error):
+                return set(), evidence.changed
+            # The lane's reasoned claims name what the reader misses in this
+            # shape, and the reads proved before the refusal still reach the
+            # job. A lane with no claim could read any changed path.
+            unresolved = set() if lane in declared else evidence.changed
+        reads = ordinary.union(*readers)
+        packages = {evidence.owner(path) for path in reads} - {None}
+        hits = (reads & evidence.changed) | {
+            rendered_path for rendered_path, package_owners in owners.items()
+            if packages & package_owners
+        }
+        return hits, unresolved
 
     first_reader = {}
     shared_input = False
     outcomes = {lane: "unread" if lane in named else "miss" for lane in lanes}
     for name, lane in [*lane_by_job.items(), *((None, lane) for lane in ungated)]:
-        hits, unresolved = job_reach(name) if name is not None else (set(), set())
+        hits, unresolved = job_reach(name, lane) if name is not None else (set(), set())
         if lane in exceptions:
             # The legacy claim pass gives us lane names across the diff.
             hits = evidence.changed

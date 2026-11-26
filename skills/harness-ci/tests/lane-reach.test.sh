@@ -284,6 +284,8 @@ ln -s other/subdir "$repo/link"
 printf 'old\n' >"$repo/other/input.txt"
 printf 'root\n' >"$repo/input.txt"
 printf 'cat ./link/../input.txt\n' >"$repo/tools/check.sh"
+# The link refuses the shell job; a claim would select the lane in its place.
+git -C "$repo" rm -q -- .github/ci-lanes.conf
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'shell input through a symlink and parent component'
 symlink_base="$(git -C "$repo" rev-parse HEAD)"
@@ -351,8 +353,79 @@ workflow-env-bash-env-blank|  BASH_ENV: ./tools/env.sh\n|  BASH_ENV: ./tools/env
 workflow-env-option|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: -C link-arg=-Tlink.x\n
 workflow-defaults|\nenv:\n|\ndefaults:\n  run:\n    working-directory: tools\nenv:\n
 ROWS
+# A consumer whose Rust and Vitest jobs the reader refuses keeps a reasoned
+# claim for each, beside a shell lane it proves. The Vitest job reads a file
+# before the step the reader refuses.
+git -C "$repo" checkout -qb fixture-refused-claims "$opted_base"
+edit_workflow '      - working-directory: cargo\n' \
+  '      - uses: dtolnay/rust-toolchain@stable\n      - working-directory: cargo\n' \
+  '      - working-directory: web\n' \
+  '      - run: cat ./ops/notes.txt\n      - working-directory: web\n        run: npm ci\n      - working-directory: web\n'
+printf '%s\n' 'cargo cargo/* # reason: the toolchain action picks the compiler' \
+  'web web/* # reason: npm ci installs what the suite loads' >>"$repo/.github/ci-lanes.conf"
+mkdir -p "$repo/ops"
+printf 'notes\n' >"$repo/ops/notes.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'refused Rust and Vitest jobs with reasoned claims'
+refused_claims_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-unclaimed "$refused_claims_base"
+sed '/^web /d' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
+mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+git -C "$repo" commit -qam 'the refused Vitest job has no claim'
+refused_unclaimed_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-checkout-path "$refused_claims_base"
+# The CI template's layout: the job runs in the directory its checkout creates.
+edit_workflow '      - uses: dtolnay/rust-toolchain@stable\n      - working-directory: cargo\n' \
+  '      - uses: actions/checkout@v7\n        with:\n          path: subject\n      - working-directory: subject\n'
+git -C "$repo" commit -qam 'a refused job runs in the directory its checkout creates'
+checkout_path_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-executable "$refused_claims_base"
+# The claimed shell job runs a script whose interpreter the reader refuses.
+edit_workflow '        run: bash ../shared.sh\n' '        run: bash ../shared.sh\n      - run: ./tools/run.py\n'
+printf '#!/usr/bin/env python3\nprint("run")\n' >"$repo/tools/run.py"
+chmod +x "$repo/tools/run.py"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed shell job runs a Python script'
+refused_executable_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-linked-workdir "$refused_claims_base"
+# The claimed Cargo job runs in its crates through a tracked link.
+ln -s cargo "$repo/crates"
+edit_workflow '      - working-directory: cargo\n' '      - working-directory: crates\n'
+sed 's|^cargo cargo/\* |cargo rust-toolchain.toml |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
+mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed Cargo job runs in a linked directory'
+linked_workdir_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-refused-import "$static_base"
+# The Vitest reader refuses an import it has resolved, and no shell lane reads it.
+printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
+printf '%s\n' 'export const shared = process.env.SHARED ? 0 : 42' >"$repo/shared.mjs"
+printf '%s\n' 'web web/fixtures/* # reason: the suite reads its fixtures at runtime' >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" commit -qam 'a claimed Vitest suite imports a module that reads the environment'
+vitest_refused_import_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
+printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" commit -qam 'a Cargo lane the reader can read keeps a reasoned claim'
+claimed_cargo_base="$(git -C "$repo" rev-parse HEAD)"
+# A claimed Vitest lane whose read the change itself leaves unproved: a
+# changed package path beside an import no package owns, or a changed name
+# git quotes in the private index.
+git -C "$repo" checkout -qb fixture-vitest-change-caused "$static_base"
+printf '%s\n' 'web web/fixtures/* # reason: the suite reads its fixtures at runtime' >>"$repo/.github/ci-lanes.conf"
+mkdir -p "$repo/.agents/skills/loose"
+printf '%s\n' 'export const helper = 42' >"$repo/.agents/skills/loose/helper.mjs"
+printf '%s\n' 'export const slash = 42' >"$repo/web/back\\slash.mjs"
+cat >"$repo/web/check.test.mjs" <<'JS'
+import { expect, test } from 'vitest'
+import { helper } from '../.agents/skills/loose/helper.mjs'
+test('unowned package module', () => expect(helper).toBe(42))
+JS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed Vitest lane imports a module no package owns'
+vitest_change_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
 cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
+// let path = "/etc/hosts";
 #[path = "../../spare/src/mod.rs"]
 mod external;
 
@@ -363,6 +436,12 @@ fn checks_child() {
 RS
 printf 'pub mod child;\n' >"$repo/cargo/spare/src/mod.rs"
 printf 'pub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/child.rs"
+# The Cargo reader's literal-path scan meets the commented path first, which
+# the shared resolver refuses as a shape cause. The claim names no child of
+# the out-of-package module, so only the reader turning that refusal into one
+# that leaves the job unread keeps the lane.
+printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain file picks the compiler' \
+  >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'Cargo compiles a child of an out-of-package module'
 cargo_child_base="$(git -C "$repo" rev-parse HEAD)"
@@ -902,6 +981,9 @@ case "$*" in
 esac
 VERIFY
 chmod +x "$SANDBOX/bin/kendex"
+mkdir -p "$SANDBOX/failing-cargo"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$SANDBOX/failing-cargo/cargo"
+chmod +x "$SANDBOX/failing-cargo/cargo"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
 
@@ -993,6 +1075,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     workflow-env-*|workflow-defaults) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
+    refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
+    refused-unclaimed) base="$refused_unclaimed_base" ;;
+    refused-executable) base="$refused_executable_base" ;;
+    linked-workdir-*) base="$linked_workdir_base" ;;
+    vitest-refused-import) base="$vitest_refused_import_base" ;;
+    checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
+    cargo-tool-failure) base="$claimed_cargo_base" ;;
+    vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
     cargo-external-child) base="$cargo_child_base" ;;
     cargo-linked-child) base="$cargo_linked_base" ;;
@@ -1039,6 +1129,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
+    restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
+    symlink-workdir) ln -s cargo "$repo/$path" ;;
+    linked-workdir-swap)
+      git -C "$repo" rm -q -- "$path"; mkdir "$repo/$path"; printf 'restored\n' >"$repo/$path/restored.txt" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
@@ -1065,6 +1159,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the base directory" 0 "$base_status"
     assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
+  symlink-workdir)
+    head_status=0
+    (cd "$repo/$path") 2>/dev/null || head_status=$?
+    assert_eq "$label can enter the linked directory" 0 "$head_status" ;;
   shell-parent-hop)
     base_status=0 head_status=0
     (cd "$trusted" && bash ./tools/check.sh) >/dev/null 2>&1 || base_status=$?
@@ -1098,6 +1196,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   esac
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
+  tools="$SANDBOX/bin"
+  # Cargo fails on this run, which says nothing of the job's shape.
+  [ "$label" != cargo-tool-failure ] || tools="$SANDBOX/failing-cargo:$tools"
   head="$(git -C "$repo" rev-parse HEAD)"
   cli="$CHANGE_CLASS"
   case "$label" in
@@ -1105,7 +1206,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   esac
   printf '{"ref":"%s","before":"%s","after":"%s","forced":false,"repository":{"default_branch":"main"}}\n' \
     "$push_ref" "$base" "$head" >"$SANDBOX/event"
-  PATH="$SANDBOX/bin:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" \
+  PATH="$tools:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" \
     GITHUB_REPOSITORY=example/lane-reach GITHUB_JOB=changes GITHUB_REF="$push_ref" \
     GITHUB_WORKFLOW_REF="example/lane-reach/.github/workflows/ci.yml@$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
     QUEUE_ONLY_DEFAULT=true \
@@ -1113,7 +1214,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     >"$SANDBOX/stdout" 2>"$SANDBOX/action-log" || { cat "$SANDBOX/action-log"; exit 1; }
   (
     unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
-    PATH="$SANDBOX/bin:$PATH" GITHUB_REF="$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
+    PATH="$tools:$PATH" GITHUB_REF="$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
       "$cli" --event "$event" --base "$base" --head "$head" --queue-only-default true \
       --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/local"
   ) \
@@ -1204,6 +1305,27 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         "$(sed -n 's/^lane-reach: cause=//p' "$SANDBOX/$implementation-log")"
     done
   fi
+  refused_jobs=""
+  case "$label" in
+    cargo-external-child) refused_jobs='job=cargo cause=computed-path' ;;
+    refused-executable)
+      refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
+    refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
+    checkout-path|restored-workdir|symlink-workdir|linked-workdir-swap)
+      refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
+    linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-shell-command' ;;
+    vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
+    cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
+    vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
+    vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
+  esac
+  if [ -n "$refused_jobs" ]; then
+    # Each row holds only while the reader refuses these jobs for these causes.
+    for implementation in action local; do
+      assert_eq "$label $implementation refused jobs" "$refused_jobs" \
+        "$(sed -n 's/^lane-reach: \(job=[a-z]* cause=[a-z0-9-]*\).*/\1/p' "$SANDBOX/$implementation-log" | sort | paste -sd, -)"
+    done
+  fi
   if [ "$label" = workflow-env-unreadable ]; then
     for implementation in action local; do
       assert_eq "$label $implementation diagnostic" \
@@ -1243,7 +1365,7 @@ workflow-env-config|ci/settings.toml|true||true|true||||||||true
 workflow-env-claimed|orphan.settings|false||false|false||||||||true
 workflow-env-step|tools/input.sh|true||false|false||||||||true
 workflow-env-mapped|tools/input.sh|true||false|false||||||||false
-workflow-env-unreadable|tools/input.sh|true||true|true||||||||true
+workflow-env-unreadable|tools/input.sh|true||false|true||||||||false
 workflow-env-expression|tools/input.sh||||
 workflow-env-absolute|tools/input.sh||||
 workflow-env-bash-env-absolute|tools/input.sh||||
@@ -1259,6 +1381,21 @@ cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-parent-hop|cargo/spare/cache/only.txt|false|true|false|false
 cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
+refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
+refused-claim-miss|tools/input.sh|true|false|false|false
+refused-unclaimed|ops/notes.txt|false|false|true|false
+refused-proved-read|rust-toolchain.toml|false|true|false|false
+refused-ordinary-read|ops/notes.txt|false|false|true|false
+refused-executable|tools/run.py|true|false|false|false
+checkout-path|tools/input.sh|true|false|false|false
+restored-workdir|subject/restored.txt|false|true|false|false
+symlink-workdir|subject|false|true|false|false
+linked-workdir-target|cargo/primary/src/lib.rs|false|true|false|false
+linked-workdir-swap|crates|false|true|false|false
+linked-workdir-miss|tools/input.sh|true|false|false|false
+cargo-tool-failure|tools/input.sh|true|true|true|true
+vitest-owner-unresolved|.codex/skills/math/SKILL.md|true||true|true|merge_group|true,derived-reach
+vitest-changed-unread|web/back\slash.mjs|false||true|false
 vitest-import|web/café.mjs|false||true|false
 vitest-package-sibling|.codex/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
 vitest-copilot-sibling|.github/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
@@ -1267,6 +1404,7 @@ vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
+vitest-refused-import|shared.mjs|false||true|false
 queue-prerequisite|shared.mjs|true||true|true|pull_request
 shared-runtime|shared.mjs|true||true|true
 runtime-only|runtime-only.mjs|||true|
