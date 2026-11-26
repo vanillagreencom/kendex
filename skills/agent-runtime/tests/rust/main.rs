@@ -134,6 +134,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         program: None,
         grants: None,
         claude_sign_in: None,
+        context_tier: Default::default(),
     };
     let flag = "--dangerously-skip-permissions".to_owned();
     let bypass = build(&intent(Permission::Bypass)).unwrap();
@@ -3642,6 +3643,7 @@ fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself
             brief_arg: None,
             brief_path: None,
             confinement: Some(confinement(Host::Linux, Harness::Claude, &grants).unwrap()),
+            copilot_model_list_unavailable: None,
         };
         match build_runtimes(&[setup], &command) {
             Err(Error::Refused { key, fields }) => (key, fields),

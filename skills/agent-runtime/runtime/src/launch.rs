@@ -149,6 +149,26 @@ pub struct LaunchIntent {
     /// that resolved the account sets it.
     #[serde(skip)]
     pub claude_sign_in: Option<ClaudeSignIn>,
+    /// The context tier the session starts on, decided once by the step
+    /// that starts a local session ([`copilot_context_tier`]) and spelled
+    /// here. Off the JSON contract, so only a site that decided it sets it;
+    /// a hosted launch decides none and keeps [`ContextTier::Native`].
+    #[serde(skip)]
+    pub context_tier: ContextTier,
+}
+
+/// The context tier a launch starts on.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ContextTier {
+    /// No tier word: the harness's own setting chooses, Copilot's persisted
+    /// `contextTier`.
+    #[default]
+    Native,
+    /// Copilot's long-context tier ([`COPILOT_LONG_TIER`]), for a model
+    /// Copilot's own list prices the same at both tiers.
+    Long,
+    /// No tier word, since Copilot's model list could not be read: the cause.
+    Unread(String),
 }
 
 fn brief_none() -> Brief {
@@ -180,6 +200,11 @@ pub struct LaunchCommand {
     /// program under, or why this harness runs without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confinement: Option<Confinement>,
+    /// Why the launch's Copilot model list could not be read, where it
+    /// could not ([`ContextTier::Unread`]): the session then starts with no
+    /// tier word, on Copilot's own setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copilot_model_list_unavailable: Option<String>,
 }
 
 /// The names every launch clears, so the child never writes the launching
@@ -391,11 +416,26 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         }
     }
     args.extend(h.settings_words().into_iter().map(str::to_owned));
+    let copilot_model_list_unavailable = match (&intent.context_tier, h) {
+        (ContextTier::Native, _) => None,
+        (ContextTier::Long, Harness::Copilot) => {
+            args.extend(COPILOT_LONG_TIER.map(str::to_owned));
+            None
+        }
+        (ContextTier::Unread(cause), Harness::Copilot) => Some(cause.clone()),
+        (
+            ContextTier::Long | ContextTier::Unread(_),
+            Harness::Claude | Harness::Codex | Harness::Pi,
+        ) => {
+            return Err(Error::Unsupported {
+                operation: "context-tier",
+                subject: h.name().to_owned(),
+                cause: "the harness has no launch word for a context tier".to_owned(),
+            });
+        }
+    };
     if let Some(model) = &intent.model {
         args.extend(h.model_words(model, intent.effort.as_deref()));
-        if h == Harness::Copilot && copilot_long_tier(intent, model, &env, &env_remove) {
-            args.extend(COPILOT_LONG_TIER.map(str::to_owned));
-        }
     } else if let Some(effort) = &intent.effort {
         args.extend(h.effort_words(effort));
     }
@@ -549,42 +589,52 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         brief_arg,
         brief_path,
         confinement,
+        copilot_model_list_unavailable,
     })
 }
 
-/// Whether a Copilot launch of `model` starts on the long-context tier: where
-/// Copilot's own model list, read at this launch, prices the model the same
-/// at both tiers ([`copilot_long_tier_at_par`]). The read runs the launch's
-/// configured program, else the `copilot` on `PATH`, under the environment
-/// the session gets: each `env_remove` name and the `COPILOT_GITHUB_TOKEN`
-/// the launch clears set empty, which Copilot CLI 1.0.116 reads as unset,
-/// then `env` set over them. So it reads the list of the account the session
-/// signs in as. A unit-test build reads only a program its test planted, so
-/// no test starts the host's own Copilot.
-fn copilot_long_tier(
-    intent: &LaunchIntent,
-    model: &str,
-    env: &BTreeMap<String, String>,
-    env_remove: &[String],
-) -> bool {
-    let executable = match &intent.program {
-        Some(program) => program.as_path(),
-        None if cfg!(test) => return false,
-        None => Path::new(Harness::Copilot.binary()),
+/// The tier a local Copilot launch of `intent` starts on, decided once by
+/// the step that starts the session, before its one final build. Copilot's
+/// own model list is read through the command `intent` spells, so the read
+/// runs the program the session runs under the environment it gets: each
+/// name the command clears set empty, which Copilot CLI 1.0.116 reads as
+/// unset (`COPILOT_GITHUB_TOKEN` among them), then each name it sets. A
+/// local launch therefore reads the list of the account its session signs
+/// in as on this machine. A hosted launch's session signs in on its host,
+/// which no read here reaches, so a hosted launch decides nothing.
+/// [`ContextTier::Long`] where the list prices the model the same at both
+/// tiers ([`copilot_long_tier_at_par`]), [`ContextTier::Unread`] with the
+/// cause where the list cannot be read, else [`ContextTier::Native`],
+/// which a launch on another harness or naming no model also takes with no
+/// read. Refuses what the build refuses.
+pub fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
+    let model = match (intent.harness, intent.model.as_deref()) {
+        (Harness::Copilot, Some(model)) if !model.is_empty() => model,
+        (Harness::Copilot | Harness::Claude | Harness::Codex | Harness::Pi, _) => {
+            return Ok(ContextTier::Native);
+        }
     };
-    let cleared = env_remove
+    let mut native = intent.clone();
+    native.context_tier = ContextTier::Native;
+    let command = build(&native)?;
+    let env: Vec<(&str, &OsStr)> = command
+        .env_remove
         .iter()
-        .map(String::as_str)
-        .chain(["COPILOT_GITHUB_TOKEN"])
-        .map(|name| (name, OsStr::new("")));
-    let read_env: Vec<(&str, &OsStr)> = cleared
+        .map(|name| (name.as_str(), OsStr::new("")))
         .chain(
-            env.iter()
+            command
+                .env
+                .iter()
                 .map(|(name, value)| (name.as_str(), OsStr::new(value))),
         )
         .collect();
-    copilot_model_list(executable, &read_env)
-        .is_some_and(|list| copilot_long_tier_at_par(&list, model))
+    Ok(
+        match copilot_model_list(Path::new(&command.program), &env) {
+            Ok(list) if copilot_long_tier_at_par(&list, model) => ContextTier::Long,
+            Ok(_) => ContextTier::Native,
+            Err(cause) => ContextTier::Unread(cause),
+        },
+    )
 }
 
 /// Whether a launch of `harness` under `permission` with the caller's
@@ -801,6 +851,7 @@ mod tests {
             program: None,
             grants: None,
             claude_sign_in: None,
+            context_tier: ContextTier::Native,
         }
     }
 
@@ -1053,14 +1104,16 @@ mod tests {
         }
     }
 
-    /// A Copilot launch reads Copilot's own model list at launch and starts
-    /// on the long tier only for a model priced the same at both tiers. The
-    /// stand-in is the CLI's SDK server: it answers only its server form
-    /// under the launch's home, reads one framed `models.list` request, and
-    /// sends an event before the answer carrying the request's id, then
+    /// A local Copilot launch's tier is decided from Copilot's own model list
+    /// and spelled by the builder: the long tier only for a model priced the
+    /// same at both tiers. The stand-in is the CLI's SDK server: it answers
+    /// only its server form under the launch's home, reads one framed
+    /// `models.list` request, and sends an event before the answer carrying
+    /// the request's id, then
     /// waits for its input to end. The prices are Copilot CLI 1.0.116's own
     /// for these two models. A CLI that gives no answer leaves the tier to
-    /// Copilot's own setting.
+    /// Copilot's own setting, and the command names why the list was not
+    /// read.
     #[test]
     fn a_copilot_launch_takes_the_long_tier_only_for_a_model_its_list_prices_alike_at_both() {
         let dir = tempfile::tempdir().unwrap();
@@ -1109,28 +1162,56 @@ cat > /dev/null
         );
         let silent = dir.path().join("silent");
         crate::host::write_executable(&silent, "#!/bin/sh\nexit 1\n");
+        #[derive(Debug, PartialEq)]
+        enum Want {
+            Long,
+            Native,
+            Unread,
+        }
         let rows = [
-            ("claude-opus-5.5", &server, true),
-            ("gpt-6.2-sol", &server, false),
-            ("claude-opus-5.5", &silent, false),
+            ("claude-opus-5.5", &server, Want::Long),
+            ("gpt-6.2-sol", &server, Want::Native),
+            ("claude-opus-5.5", &silent, Want::Unread),
         ];
-        for (model, program, long) in rows {
+        for (model, program, want) in rows {
             let mut i = bare(Harness::Copilot);
             i.home = Some(home.clone());
             i.program = Some(program.clone());
             i.model = Some(model.to_owned());
-            let args = build(&i).unwrap().args;
+            i.context_tier = copilot_context_tier(&i).unwrap();
+            let got = match &i.context_tier {
+                ContextTier::Long => Want::Long,
+                ContextTier::Native => Want::Native,
+                ContextTier::Unread(_) => Want::Unread,
+            };
+            assert_eq!(got, want, "{model} through {}", program.display());
+            let command = build(&i).unwrap();
             assert_eq!(
-                args.windows(2).any(|w| w == COPILOT_LONG_TIER),
-                long,
-                "{model} through {}: {args:?}",
-                program.display()
+                command.args.windows(2).any(|w| w == COPILOT_LONG_TIER),
+                want == Want::Long,
+                "{model}: {:?}",
+                command.args
             );
             assert!(
-                args.iter().filter(|a| *a == "--context").count() <= 1,
-                "{args:?}"
+                command.args.iter().filter(|a| *a == "--context").count() <= 1,
+                "{:?}",
+                command.args
             );
+            let cause = match &i.context_tier {
+                ContextTier::Unread(cause) => Some(cause.clone()),
+                ContextTier::Long | ContextTier::Native => None,
+            };
+            assert!(cause.as_ref().is_none_or(|c| !c.is_empty()), "{model}");
+            assert_eq!(command.copilot_model_list_unavailable, cause, "{model}");
         }
+        // A launch naming no model, or on another harness, reads no list.
+        let mut unnamed = bare(Harness::Copilot);
+        unnamed.program = Some(silent.clone());
+        unnamed.model = None;
+        assert_eq!(copilot_context_tier(&unnamed).unwrap(), ContextTier::Native);
+        let mut claude = bare(Harness::Claude);
+        claude.program = Some(silent.clone());
+        assert_eq!(copilot_context_tier(&claude).unwrap(), ContextTier::Native);
     }
 
     /// The provider gives the switches no effect outside bypassPermissions

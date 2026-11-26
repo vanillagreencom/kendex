@@ -586,7 +586,7 @@ impl Successor {
             Some(_) => Compaction::Off,
             None => Compaction::Native,
         };
-        let (mut intent, command) = build_launch(
+        let (mut intent, _) = build_launch(
             settings.launch,
             settings.engine,
             &Spec {
@@ -610,32 +610,29 @@ impl Successor {
                 claude_sign_in: self.claude_sign_in.clone(),
             },
         )?;
-        let command = if self.resume.is_none() && !self.cleared {
-            command
-        } else {
-            if self.cleared {
-                intent.env_remove.push(self.harness.home_var().to_owned());
-                // The implicit default is read under `HOME`: a resumed session
-                // keeps the store and `.claude.json` it ran with, whatever
-                // `HOME` the resume's caller or the fleet server holds.
-                if self.resume.is_some() {
-                    let user_home = self.home.parent().ok_or_else(|| {
-                        refused("home-unresolved", &[("harness", self.harness.name())])
-                    })?;
-                    intent
-                        .env
-                        .insert("HOME".to_owned(), user_home.display().to_string());
-                }
+        if self.cleared {
+            intent.env_remove.push(self.harness.home_var().to_owned());
+            // The implicit default is read under `HOME`: a resumed session
+            // keeps the store and `.claude.json` it ran with, whatever
+            // `HOME` the resume's caller or the fleet server holds.
+            if self.resume.is_some() {
+                let user_home = self.home.parent().ok_or_else(|| {
+                    refused("home-unresolved", &[("harness", self.harness.name())])
+                })?;
+                intent
+                    .env
+                    .insert("HOME".to_owned(), user_home.display().to_string());
             }
-            if let Some(id) = &self.resume {
-                intent.resume = Some(Resume {
-                    session_id: id.clone(),
-                    session_file: self.resume_file.clone(),
-                });
-            }
-            crate::launch::build(&intent)?
-        };
-        Ok(command)
+        }
+        if let Some(id) = &self.resume {
+            intent.resume = Some(Resume {
+                session_id: id.clone(),
+                session_file: self.resume_file.clone(),
+            });
+        }
+        // The tier is decided once, on the intent this one build spells.
+        intent.context_tier = crate::launch::copilot_context_tier(&intent)?;
+        crate::launch::build(&intent)
     }
 
     /// The runner's own native session file: the file its

@@ -648,6 +648,9 @@ fn prepare_launch(
         intent.env.insert(name, value);
     }
     intent.grants = Some(granted.grants.clone());
+    // A local lane signs in on this machine, so its tier is decided here,
+    // once, on the intent its one build spells.
+    intent.context_tier = agent_runtime::launch::copilot_context_tier(&intent)?;
     let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
@@ -1072,6 +1075,9 @@ fn local_launch(
     if prep.unrebased {
         outcome.annotate("tree", json!("unrebased"));
     }
+    if let Some(cause) = &prep.command.copilot_model_list_unavailable {
+        outcome.annotate("copilot_model_list_unavailable", json!(cause));
+    }
     if let Value::Object(granted) = prep.granted.record() {
         for (key, value) in granted {
             outcome.annotate(&key, value);
@@ -1491,6 +1497,10 @@ fn hosted_command(
         },
     )?;
     intent.program = None;
+    // The session signs in on its host under the host's own Copilot home,
+    // which no model-list read from this machine reaches, so a hosted lane
+    // decides no tier and starts on the host's own `contextTier` setting.
+    intent.context_tier = agent_runtime::launch::ContextTier::Native;
     lane_words(&mut intent, &remote_cwd);
     let mut remote = if claude_launch_consent {
         agent_runtime::launch::build_with_hosted_claude_consent(&intent)?
@@ -1535,6 +1545,7 @@ fn hosted_command(
         brief_arg: None,
         brief_path: None,
         confinement: None,
+        copilot_model_list_unavailable: None,
     })
 }
 
@@ -2642,6 +2653,7 @@ mod tests {
             brief_arg: None,
             brief_path: None,
             confinement: None,
+            copilot_model_list_unavailable: None,
         }
     }
 
@@ -3062,6 +3074,7 @@ mod tests {
                 program: None,
                 grants: None,
                 claude_sign_in: None,
+                context_tier: Default::default(),
             };
             let cwd = intent.cwd.clone();
             lane_words(&mut intent, &cwd);

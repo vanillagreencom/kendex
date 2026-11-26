@@ -400,9 +400,9 @@ impl Harness {
                 "notice.hide_rate_limit_model_nudge=true",
                 "--dangerously-bypass-hook-trust",
             ],
-            // The context tier is no setting every launch carries: a launch
-            // adds `COPILOT_LONG_TIER` for its model alone, where
-            // `copilot_long_tier_at_par` holds.
+            // The context tier is no setting every launch carries: the
+            // builder adds `COPILOT_LONG_TIER` to a launch whose step decided
+            // the long tier (`launch::copilot_context_tier`).
             Harness::Copilot => vec![
                 "--autopilot",
                 "--max-autopilot-continues",
@@ -722,9 +722,14 @@ const COPILOT_LIST_BOUND: Duration = Duration::from_secs(10);
 /// `CopilotClient.startCLIServer`), framed as JSON-RPC with `Content-Length`
 /// headers, and the list sends no prompt. Its stdin stays open until the
 /// answer stands, since a server whose input ends first answers that its
-/// connection is no longer active. `None` where the CLI cannot start, gives no answer within
-/// [`COPILOT_LIST_BOUND`] or answers with an error.
-pub fn copilot_model_list(executable: &Path, env: &[(&str, &OsStr)]) -> Option<serde_json::Value> {
+/// connection is no longer active. `Err` names why no list stands: the
+/// runner's own cause where the CLI cannot start or gives no answer within
+/// [`COPILOT_LIST_BOUND`], the server's `error.message` where it answers
+/// with an error, or that no framed answer came.
+pub fn copilot_model_list(
+    executable: &Path,
+    env: &[(&str, &OsStr)],
+) -> std::result::Result<serde_json::Value, String> {
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": COPILOT_LIST_ID,
@@ -747,8 +752,23 @@ pub fn copilot_model_list(executable: &Path, env: &[(&str, &OsStr)]) -> Option<s
         }),
         COPILOT_LIST_BOUND,
     )
-    .ok()?;
-    copilot_list_reply(&out.stdout)?.get("result").cloned()
+    .map_err(|e| e.to_string())?;
+    let reply = copilot_list_reply(&out.stdout).ok_or_else(|| {
+        let stderr = host::stderr_text(&out);
+        format!(
+            "no models.list reply: exit={} stderr={}",
+            out.status.code().unwrap_or(-1),
+            stderr.lines().next().unwrap_or("")
+        )
+    })?;
+    if let Some(result) = reply.get("result") {
+        return Ok(result.clone());
+    }
+    let message = reply
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("an error with no message");
+    Err(format!("models.list answered: {message}"))
 }
 
 /// The whole message answering the model-list request among the framed

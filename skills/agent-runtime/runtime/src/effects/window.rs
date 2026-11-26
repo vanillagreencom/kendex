@@ -1086,6 +1086,7 @@ mod tests {
             brief_arg: None,
             brief_path: None,
             confinement: None,
+            copilot_model_list_unavailable: None,
         };
         let pane = operation
             .open_window(server, "t", "wrapped", &command, &opening)

@@ -294,6 +294,7 @@ mod tests {
             brief_arg: None,
             brief_path: None,
             confinement: None,
+            copilot_model_list_unavailable: None,
         };
         let line = launch_line(&path, ID, &command).unwrap();
         // The pane shell is bash here; the line's own words run under sh.
@@ -353,6 +354,7 @@ mod tests {
             brief_arg: None,
             brief_path: None,
             confinement: None,
+            copilot_model_list_unavailable: None,
         };
         (command, long)
     }

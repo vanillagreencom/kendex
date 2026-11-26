@@ -199,9 +199,10 @@ fn a_launch_never_confirms_when_its_harness_execs_a_shell_before_capture() {
 
     // The harness stays foreground until the test releases it through the
     // terminal. The shell that replaces it draws Copilot's framed composer.
+    // The launch's model-list read (`--headless`) is answered with no list.
     write_executable(
         &dir.path().join("copilot-bin/copilot"),
-        "#!/bin/bash\nread -r _ || exit 1\nPS1=$'❯\\n──────────' exec bash --noprofile --norc -i\n",
+        "#!/bin/bash\n[ \"$1\" = --headless ] && exit 1\nread -r _ || exit 1\nPS1=$'❯\\n──────────' exec bash --noprofile --norc -i\n",
     );
     let fifo = dir.path().join("capture.fifo");
     mkfifo(&fifo);
@@ -4135,9 +4136,16 @@ fn copilot_survivor(
     plant_hooks_off(tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
     let bin = dir.join("copilot-bin");
     std::fs::create_dir_all(&bin).unwrap();
+    // The launch's model-list read starts the same program with
+    // `--headless`; the stand-in answers it at once with no list, so the
+    // read never waits out its bound and the session starts on no tier.
+    let survivor = std::fs::read_to_string(stub("stub-survivor")).unwrap();
     write_executable(
         &bin.join("copilot"),
-        std::fs::read_to_string(stub("stub-survivor")).unwrap(),
+        format!(
+            "#!/bin/bash\n[ \"$1\" = --headless ] && exit 1\n{}",
+            survivor.strip_prefix("#!/bin/bash\n").unwrap()
+        ),
     );
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -10941,11 +10949,29 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
             HostedLaunch::new(&server, dir.path(), record)
         };
         world.runner.verify = Some(1);
-        std::os::unix::fs::symlink(
-            fixtures().join("stub-record").join("copilot"),
-            world.tools.join("copilot"),
-        )
-        .unwrap();
+        // The one `copilot` this machine and the host run. Started as the
+        // SDK server, it marks that a model-list read ran and lists the
+        // launch's model at one price at both tiers, so a read would put
+        // the long tier on the line; a hosted launch makes none.
+        let probed = dir.path().join("model-list-read");
+        write_executable(
+            &world.tools.join("copilot"),
+            format!(
+                r#"#!/bin/bash
+if [ "$1" = --headless ]; then
+  touch '{probed}'
+  prices='{{"inputPrice":400,"outputPrice":2000}}'
+  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
+  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
+  cat > /dev/null
+  exit 0
+fi
+exec '{stub}' "$@"
+"#,
+                probed = probed.display(),
+                stub = fixtures().join("stub-record").join("copilot").display(),
+            ),
+        );
         let home = if shipped {
             world
                 .clone()
@@ -11000,6 +11026,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         }
         let mut request = world.request();
         request["harness"] = json!("copilot");
+        request["model"] = json!("claude-opus-5.5");
         let panes_before = server.panes().len();
         let report = effect_report(&world.runner.op_fleet(&request));
         let calls = world.calls();
@@ -11030,6 +11057,15 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                     Some("copilot"),
                     "{case}: {launched}"
                 );
+                assert!(
+                    !launched["argv"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|word| word == "--context"),
+                    "{case}: a hosted line decides no tier: {launched}"
+                );
+                assert!(!probed.exists(), "{case}: no model list was read");
                 assert!(
                     calls
                         .iter()
