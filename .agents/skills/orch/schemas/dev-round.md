@@ -111,7 +111,7 @@ A cut item names work, not a finding, so its reach is the branch the round shrin
 ## Readers
 
 - `orch-runtime dev-return --text check --expect-items-from-round` derives the expected items and additions from the record. [artifact-checks.md § Receipt check answers](../references/artifact-checks.md#receipt-check-answers) states its answers.
-- `orch-runtime dev-return --text write --kind fix` reads `base_sha` and binds the receipt's run to it, or refuses `run-off-round` ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
+- `orch-runtime dev-return --text write --kind fix` reads `base_sha` to bind the receipt's run to its round, or refuses `run-off-round` ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
 - `orch-runtime round --text recover` reads the record to parse a stalled fix round's report.
 - A respawned dev agent reads `items[]` to recover the item numbers, texts and reaches. The fix round's report-only nudge points at the record.
 

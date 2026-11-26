@@ -3387,6 +3387,12 @@ mod dev_artifacts {
         refused(&w.range_write("r1", &reused), "run-off-round");
 
         let written = result(&w.range_write("r1", &overseer));
+        // A newer round-less run this round's receipt is not keyed to
+        // leaves the selection where it was.
+        let mut later = World::ledger_stage(&w.range_run("later", &prepared_base));
+        later["round_id"] = Value::Null;
+        doc["stages"].as_array_mut().unwrap().push(later);
+        fs::write(w.item(), doc.to_string()).unwrap();
         let check = w.check("r1");
         assert_eq!(check["reason"], "valid", "{check}");
         assert_eq!(check["verdict"], "accept");
