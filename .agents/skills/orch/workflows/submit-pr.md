@@ -299,6 +299,7 @@ Record whether `autoMergeRequest` is set.
 
    - Never defer, queue or gate CI behind bot review activity.
    - `[ISSUE_TITLE]` comes from `.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --repo [OWNER/REPO] --json title --jq '.title'`.
+   - The title names no tracker id but `[ISSUE_ID]`: Linear's GitHub automation moves every item a merged pull request's title names. Where `[ISSUE_TITLE]` names another item, drop that id from the title and name the item in the body as `Related to [ID]`.
 
    ```bash
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-create --title "[PREFIX]([ISSUE_ID]): [ISSUE_TITLE]" --body-file "$BODY_FILE"
