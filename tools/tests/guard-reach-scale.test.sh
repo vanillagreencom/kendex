@@ -7,9 +7,10 @@
 # misses it more than threefold: in an awk array element or a bash one under
 # GNU Awk, and in an awk string under mawk and BWK awk. The scan as it stands
 # answers in a few seconds under each of the three on the same host. The
-# deadline is a coarse scale bound, not a latency figure. A second suite of
-# SCALE_LINES lines reads a changed doc on its last line, so its answer needs
-# the whole joined text a doc query's prefilter reads.
+# deadline is a coarse scale bound, not a latency figure. A second suite,
+# four lines long, reads a changed doc on its last line before its echo, so
+# its answer needs the whole joined text a doc query's prefilter reads; the
+# long suite already carries the join's scale.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -43,8 +44,10 @@ echo "=== --suite-reach answers a long suite inside the deadline ==="
 # before its echo spells it, so only a scan that read the whole long file
 # answers both. guide.md reaches late.test.sh alone, whose last line before
 # its echo reads it: big.test.sh would answer for tool-a whatever a doc
-# query found in it. The demo suite of the world reaches none, so an answer
-# of the whole tree fails too.
+# query found in it. That read is the third of late.test.sh's four kept
+# lines, past the middle, so a join that keeps only the first half of a
+# file's kept lines drops it. The demo suite of the world reaches none, so an
+# answer of the whole tree fails too.
 mkdir -p "$R/skills/demo/references"
 printf '# guide\n' >"$R/skills/demo/references/guide.md"
 printf '#!/usr/bin/env bash\necho a\n' >"$R/skills/demo/scripts/tool-a"
@@ -60,12 +63,8 @@ awk -v lines="$SCALE_LINES" -v names="$SCALE_NAMES_PER_LINE" 'BEGIN {
   print ": /tool-a"
   print "echo \"pass: 1   fail: 0\""
 }' >"$R/skills/demo/tests/big.test.sh"
-awk -v lines="$SCALE_LINES" 'BEGIN {
-  print "#!/usr/bin/env bash"
-  for (n = 1; n <= lines; n++) print ": " n
-  print "cat \"$PWD/skills/demo/references/guide.md\" >/dev/null"
-  print "echo \"pass: 1   fail: 0\""
-}' >"$R/skills/demo/tests/late.test.sh"
+printf '%s\n' '#!/usr/bin/env bash' ': 1' ': 2' 'cat "$PWD/skills/demo/references/guide.md" >/dev/null' \
+  'echo "pass: 1   fail: 0"' >"$R/skills/demo/tests/late.test.sh"
 chmod +x "$R/skills/demo/scripts/tool-a" "$R/skills/demo/tests/a.test.sh" "$R/skills/demo/tests/big.test.sh" \
   "$R/skills/demo/tests/late.test.sh"
 printf '%s\n' skills/demo/scripts/tool-a skills/demo/references/guide.md >"$TMP/changed"
