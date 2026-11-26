@@ -91,6 +91,8 @@ VITEST_STATIC_IMPORT = re.compile(
 JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
+# A symlink or a submodule: git tracks no entry below either.
+LINK_MODES = {"120000", "160000"}
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
 BASH_SHEBANGS = [["#!/usr/bin/env bash"], ["#!/bin/bash"]]
 STRICT_MODE = [["set -euo pipefail"], ["set -eu"]]
@@ -245,6 +247,10 @@ class Evidence:
         command(["git", "-c", "core.hooksPath=/dev/null", "checkout", "--quiet",
                  "--detach", self.authority], path)
         return path
+
+    @cached_property
+    def head_files(self):
+        return self.tree(self.head)
 
     def relative(self, path):
         return Path(path).resolve().relative_to(self.checkout).as_posix()
@@ -403,7 +409,7 @@ class Evidence:
         prefixes = [os.path.normpath(prefix) for prefix in original.parents]
         # Check each original prefix before a later '..' can hide a link.
         for prefix in (os.path.normpath(original), *prefixes):
-            require_shape(self.files.get(prefix) not in {"120000", "160000"}, "indirect-path")
+            require_shape(self.files.get(prefix) not in LINK_MODES, "indirect-path")
         result = os.path.normpath(original)
         require_shape(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
         # A kernel walk must enter each directory the path names before a
@@ -415,6 +421,63 @@ class Evidence:
                   if not under(result, prefix)
                   for name in self.changed if under(name, prefix)}
         return result, passed
+
+    def working_directory(self, directory, reads):
+        # A checkout materializes a directory through its tracked entries, and
+        # git tracks none below a link. One absent at both ends, such as a
+        # checkout's own path, is the job's shape, and so is one reached
+        # through the same links at both ends. One the change adds, removes or
+        # swaps with a link leaves the job unread.
+        original = Path(directory)
+        result = os.path.normpath(original)
+        prefixes = {os.path.normpath(prefix) for prefix in (original, *original.parents)}
+
+        def state(files):
+            links = frozenset(prefix for prefix in prefixes if files.get(prefix) in LINK_MODES)
+            present = any(path.startswith(result + "/") for path in files)
+            return ("link" if links else "directory" if present else "absent"), links
+
+        base, head = state(self.files), state(self.head_files)
+        reads.update(base[1] | head[1])
+        require(base == head, "working-directory-unproved")
+        if base[0] == "link":
+            self.link_reads(directory, reads)
+            raise ShapeUnreadable("indirect-path")
+        result, passed = self.resolve(".", directory)
+        reads.update(passed)
+        require_shape(base[0] == "directory", "working-directory-unproved")
+        return result
+
+    def link_reads(self, path, reads):
+        """Record each base link a kernel walk of path follows, and the changed
+        paths under where the walk ends. A link the change replaces is itself
+        a changed path, so no head link is followed."""
+        parts = list(Path(path).parts)
+        current = []
+        followed = 0
+        while parts:
+            part = parts.pop(0)
+            if part == "..":
+                if not current:
+                    # The walk leaves the tree, where the change reaches nothing.
+                    return
+                current.pop()
+                continue
+            current.append(part)
+            name = "/".join(current)
+            if self.files.get(name) not in LINK_MODES:
+                continue
+            reads.add(name)
+            followed += 1
+            # Linux refuses a walk past 40 links. A submodule has no target.
+            if self.files[name] == "160000" or followed > 40:
+                return
+            target = self.blob(name, self.authority)
+            if target.startswith("/"):
+                return
+            current.pop()
+            parts = [*Path(target).parts, *parts]
+        reads.update(name for name in self.changed if under(name, "/".join(current) or "."))
 
     def cargo_reads(self, args, directory, reads):
         # Any Cargo command reads the toolchain files and Cargo configuration.
@@ -486,8 +549,15 @@ class Evidence:
             # Cargo reads a package's whole tree once the package is in the build.
             scope = Path(manifest).parent.as_posix()
             reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
+            if manifest in manifests:
+                reads.update(self.relative(target["src_path"])
+                             for target in manifests[manifest]["targets"])
             return scope
 
+        # A source check below can refuse before the scan reaches another
+        # selected package.
+        for root in roots:
+            package(root)
         pending = roots[:]
         while pending:
             manifest = pending.pop()
@@ -571,6 +641,7 @@ class Evidence:
             if path in scanned:
                 continue
             scanned.add(path)
+            reads.add(path)
             parent = Path(path).parent
             config_dirs.update((parent, *parent.parents))
             reads.update(filter(ungraphed, paths))
@@ -603,12 +674,13 @@ class Evidence:
                 # Vite and Node resolve a relative specifier by name, so a
                 # directory it passes through need not exist.
                 imported, _ = self.checkout_path(parent.as_posix(), target)
+                # A shape refusal keeps every module the walk resolved.
+                reads.add(imported)
                 require_shape(imported in self.files and MODULE.search(imported),
                               "vitest-module-unresolved")
                 if self.package_path(imported):
                     # Package ownership also needs imports outside Vitest's changed graph.
                     package_imports.add(imported)
-                    reads.add(imported)
                 pending.add(imported)
         if any(self.package_path(path) for path in self.changed):
             require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
@@ -618,6 +690,9 @@ class Evidence:
             Path(path).parent in config_dirs and Path(path).name in JS_CONFIG
             for path in self.files
         ), "vitest-inherited-config")
+        # No later refusal is a shape refusal, so Vitest's related-test listing
+        # alone judges a changed module the walk read.
+        reads.difference_update(scanned - package_imports)
         cwd = self.checkout / directory
         upstream = self.trusted / directory / "node_modules"
         binary = upstream / ".bin/vitest"
@@ -907,15 +982,7 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
                       "unsupported-shell")
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
-            directory, passed = evidence.resolve(".", directory)
-            ordinary.update(passed)
-            # A checkout materializes directories through their tracked entries.
-            # One absent at both ends, such as a checkout's own path, is the
-            # job's shape; one the change adds or removes leaves the job unread.
-            at_base = any(path.startswith(directory + "/") for path in evidence.files)
-            at_head = bool(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"))
-            require(at_base == at_head, "working-directory-unproved")
-            require_shape(at_base, "working-directory-unproved")
+            directory = evidence.working_directory(directory, ordinary)
         for word in env_words:
             path, passed = evidence.checkout_path(directory, word)
             ordinary.update({path} | passed)

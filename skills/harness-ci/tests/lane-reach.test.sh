@@ -392,6 +392,30 @@ chmod +x "$repo/tools/run.py"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a claimed shell job runs a Python script'
 refused_executable_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-cargo-workspace "$refused_claims_base"
+# The scan refuses the first selected crate it visits before it reaches the others.
+edit_workflow 'cargo test -p primary' 'cargo test --workspace'
+printf 'use std::fs as _;\npub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/lib.rs"
+sed 's|^cargo cargo/\* |cargo cargo/spare/* |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
+mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+git -C "$repo" commit -qam 'the Cargo reader refuses one crate of a claimed workspace'
+refused_cargo_workspace_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-linked-workdir "$refused_claims_base"
+# The claimed Cargo job runs in its crates through a tracked link.
+ln -s cargo "$repo/crates"
+edit_workflow '      - working-directory: cargo\n' '      - working-directory: crates\n'
+sed 's|^cargo cargo/\* |cargo rust-toolchain.toml |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
+mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed Cargo job runs in a linked directory'
+linked_workdir_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-refused-import "$static_base"
+# The Vitest reader refuses an import it has resolved, and no shell lane reads it.
+printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
+printf '%s\n' 'export const shared = process.env.SHARED ? 0 : 42' >"$repo/shared.mjs"
+printf '%s\n' 'web web/fixtures/* # reason: the suite reads its fixtures at runtime' >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" commit -qam 'a claimed Vitest suite imports a module that reads the environment'
+vitest_refused_import_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
 printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" commit -qam 'a Cargo lane the reader can read keeps a reasoned claim'
@@ -1061,7 +1085,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     refused-unclaimed) base="$refused_unclaimed_base" ;;
     refused-cargo-source) base="$refused_cargo_source_base" ;;
     refused-executable) base="$refused_executable_base" ;;
-    checkout-path|restored-workdir) base="$checkout_path_base" ;;
+    refused-cargo-workspace) base="$refused_cargo_workspace_base" ;;
+    linked-workdir-*) base="$linked_workdir_base" ;;
+    vitest-refused-import) base="$vitest_refused_import_base" ;;
+    checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
+    swapped-workdir) base="$deleted_workdir_base" ;;
     cargo-tool-failure) base="$claimed_cargo_base" ;;
     vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -1111,6 +1139,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
     restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
+    symlink-workdir) ln -s cargo "$repo/$path" ;;
+    swapped-workdir) git -C "$repo" rm -q -- "$path/only.txt"; ln -s tools "$repo/$path" ;;
+    linked-workdir-swap)
+      git -C "$repo" rm -q -- "$path"; mkdir "$repo/$path"; printf 'restored\n' >"$repo/$path/restored.txt" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
@@ -1137,6 +1169,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the base directory" 0 "$base_status"
     assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
+  symlink-workdir|swapped-workdir)
+    head_status=0
+    (cd "$repo/$path") 2>/dev/null || head_status=$?
+    assert_eq "$label can enter the linked directory" 0 "$head_status" ;;
   shell-parent-hop)
     base_status=0 head_status=0
     (cd "$trusted" && bash ./tools/check.sh) >/dev/null 2>&1 || base_status=$?
@@ -1281,11 +1317,16 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   fi
   refused_jobs=""
   case "$label" in
-    refused-cargo-source) refused_jobs='job=cargo cause=cargo-opaque-source,job=web cause=opaque-shell-command' ;;
+    refused-cargo-source|refused-cargo-workspace)
+      refused_jobs='job=cargo cause=cargo-opaque-source,job=web cause=opaque-shell-command' ;;
     refused-executable)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
     refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
-    checkout-path|restored-workdir) refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
+    checkout-path|restored-workdir|symlink-workdir|linked-workdir-swap)
+      refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
+    linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-shell-command' ;;
+    swapped-workdir) refused_jobs='job=shell cause=working-directory-unproved' ;;
+    vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
@@ -1359,8 +1400,14 @@ refused-proved-read|rust-toolchain.toml|false|true|false|false
 refused-cargo-source|rust-toolchain.toml|false|true|false|false
 refused-ordinary-read|ops/notes.txt|false|false|true|false
 refused-executable|tools/run.py|true|false|false|false
+refused-cargo-workspace|cargo/primary/src/lib.rs|false|true|false|false
 checkout-path|tools/input.sh|true|false|false|false
 restored-workdir|subject/restored.txt|false|true|false|false
+symlink-workdir|subject|false|true|false|false
+swapped-workdir|check-cwd|true||true|true
+linked-workdir-target|cargo/primary/src/lib.rs|false|true|false|false
+linked-workdir-swap|crates|false|true|false|false
+linked-workdir-miss|tools/input.sh|true|false|false|false
 cargo-tool-failure|tools/input.sh|true|true|true|true
 vitest-owner-unresolved|.codex/skills/math/SKILL.md|true||true|true|merge_group|true,derived-reach
 vitest-changed-unread|web/back\slash.mjs|false||true|false
@@ -1372,6 +1419,7 @@ vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
+vitest-refused-import|shared.mjs|false||true|false
 queue-prerequisite|shared.mjs|true||true|true|pull_request
 shared-runtime|shared.mjs|true||true|true
 runtime-only|runtime-only.mjs|||true|
