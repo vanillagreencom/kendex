@@ -121,7 +121,7 @@ Stamp the round immediately before delegating, each command as its own tool call
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"ci"}'
    ```
 
-Arm the watchdog with the CI token and accept the round as [Round Closure](../references/skill-rules.md#round-closure) states for CI rounds. `[WORKTREE_PATH]` is § 3.1's. After accepting the round, publish it through the **Push** steps 2-3 of [review-pr-comments.md § 6.1](review-pr-comments.md#61-delegate-fixes).
+Arm the watchdog with the CI token and accept the round as [Round Closure](../references/skill-rules.md#round-closure) states for CI rounds. `[WORKTREE_PATH]` is § 3.1's. After accepting the round, publish it through the guarded `record-push` `branch` request of **Push** step 2 in [review-pr-comments.md § 6.1](review-pr-comments.md#61-delegate-fixes), whatever `pr_order` reads.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
