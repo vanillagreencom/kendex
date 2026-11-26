@@ -9054,7 +9054,8 @@ fn an_ended_sign_in_after_a_pending_usage_wall_moves_and_tells_the_owner_once() 
 }
 
 /// The own account of a pending usage wall, read with room past its reset,
-/// resumes the overseer through the wake's resume row, once for the wall:
+/// resumes the overseer standing at its usage banner through the wake's
+/// resume row, once for the wall:
 /// a newer failure row on the same wall starts no episode and no notice,
 /// the resume names the wall by its episode, and the resume wins over a
 /// walk with room in the same pass. A new wall with the same reset asks
@@ -9064,7 +9065,12 @@ fn a_pending_usage_wall_is_resumed_once_per_wall_when_its_own_account_reads_room
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+    let (pane, _) = walled_overseer_drawing(
+        dir.path(),
+        &server,
+        &fleet,
+        wall_screen(BANNER).trim_end_matches("❯\u{a0}\n"),
+    );
     let start: u64 = 1_800_000_000;
     let reset = start + 3600;
     let own_room = Cell::new(false);
@@ -9157,71 +9163,154 @@ fn a_pending_usage_wall_is_resumed_once_per_wall_when_its_own_account_reads_room
     assert!(transfers.borrow().is_empty());
 }
 
-/// A pending account wall read live while its account cannot be read is
-/// no wall lifted: no resume is asked and its episode, its notice and its
-/// kept reset stand, until a reading with room resumes it.
+/// A pending account wall read live on a reading that proves no room on
+/// its own account stays walled: the judge's unmeasured headroom, a due
+/// context reading or a reached memory mark, each of which the judge
+/// answers without reading the account's room. No resume is asked, the
+/// walk runs on each pass and the kept reset stands; an account left
+/// unread a whole patience past that reset tells the owner once with the
+/// judge's reason. A later reading with room resumes it.
 #[test]
-fn a_pending_wall_read_live_with_its_account_unread_asks_no_resume() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let (_, _, key, _) = live_overseer(dir.path(), &server, &fleet);
+fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_resume() {
     let reset: u64 = 1_800_000_000 + 3600;
-    // 0: the account walled, 1: its read failing, 2: room.
-    let reading = Cell::new(0);
-    let judge = |_: &Caller, _: Option<&str>| match reading.get() {
-        0 => {
-            let mut m = marks(
-                MarkKey::Reached(MarkKind::Headroom),
-                "0",
-                "5",
-                Succession::On,
-                "/home/me/.eclaude",
+    let walled = || {
+        let mut m = marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        );
+        m.resets = clock::iso_utc(reset);
+        m
+    };
+    let unmeasured = || {
+        let mut m = marks(
+            MarkKey::Unmeasured(MarkKind::Headroom),
+            "",
+            "",
+            Succession::On,
+            "",
+        );
+        m.reason = "headroom-unreadable".to_owned();
+        m
+    };
+    let context_due = || {
+        let mut m = marks(
+            MarkKey::Reached(MarkKind::Context),
+            "190000",
+            "90",
+            Succession::On,
+            "",
+        );
+        m.headroom = "unreadable".to_owned();
+        m
+    };
+    let memory = || {
+        marks(
+            MarkKey::Reached(MarkKind::Memory),
+            "95",
+            "90",
+            Succession::On,
+            "/home/me/.eclaude",
+        )
+    };
+    type Reading<'a> = &'a dyn Fn() -> Marks;
+    // case, the reading past the reset, the owner's unread notice cause
+    let cases: [(&str, Reading, Option<&str>); 3] = [
+        (
+            "headroom unmeasured",
+            &unmeasured,
+            Some("headroom-unreadable"),
+        ),
+        ("context due", &context_due, Some("context-due")),
+        ("memory mark", &memory, None),
+    ];
+    for (case, unproved, cause) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (_, _, key, _) = live_overseer(dir.path(), &server, &fleet);
+        // 0: the account walled, 1: the reading under test, 2: room.
+        let phase = Cell::new(0);
+        let judge = |_: &Caller, _: Option<&str>| {
+            Ok(match phase.get() {
+                0 => walled(),
+                1 => unproved(),
+                _ => marks(MarkKey::Below, "", "", Succession::On, ""),
+            })
+        };
+        let walks = Cell::new(0);
+        let walk = |request: &WalkRequest| {
+            walks.set(walks.get() + 1);
+            walk_none(request)
+        };
+        let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+        let noting = |file: &str, text: &str| {
+            told.borrow_mut().push((file.to_owned(), text.to_owned()));
+            Ok(())
+        };
+        overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+        driver.alert = &noting;
+        let state = fleet.read();
+        let wall = driver.now;
+        driver.pass(&state);
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("pending"),
+            "{case}"
+        );
+        phase.set(1);
+        let kept = reset.to_string();
+        for at in [reset + 60, reset + 1800, reset + 2040] {
+            driver.now = at;
+            driver.pass(&state);
+            assert!(
+                matches!(driver.slot.read().unwrap().verdict, Verdict::Walled { .. }),
+                "{case}"
             );
-            m.resets = clock::iso_utc(reset);
-            Ok(m)
+            assert_eq!(driver.baseline.get("resume", "overseer"), None, "{case}");
+            assert_eq!(
+                driver.baseline.get("overseer-walled", &key),
+                Some("pending"),
+                "{case}"
+            );
+            assert_eq!(
+                driver.baseline.get("overseer-wall-reset", &key),
+                Some(kept.as_str()),
+                "{case}"
+            );
         }
-        1 => Err("accounts-unreadable".to_owned()),
-        _ => Ok(marks(MarkKey::Below, "", "", Succession::On, "")),
-    };
-    let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
-    let noting = |file: &str, _: &str| {
-        told.borrow_mut().push(file.to_owned());
-        Ok(())
-    };
-    overseer_driver!(server, fleet, judge, walk_none, readers, transfers, driver);
-    driver.alert = &noting;
-    let state = fleet.read();
-    let wall = driver.now;
-    driver.pass(&state);
-    driver.pass(&state);
-    assert_eq!(
-        driver.baseline.get("overseer-walled", &key),
-        Some("pending")
-    );
-    reading.set(1);
-    driver.now = reset + 60;
-    driver.pass(&state);
-    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
-    assert_eq!(driver.baseline.get("resume", "overseer"), None);
-    assert_eq!(
-        driver.baseline.get("overseer-walled", &key),
-        Some("pending")
-    );
-    let kept = reset.to_string();
-    assert_eq!(
-        driver.baseline.get("overseer-wall-reset", &key),
-        Some(kept.as_str())
-    );
-    reading.set(2);
-    driver.pass(&state);
-    let asked = format!("usage-limit|{key}|{reset}|wall:{wall}");
-    assert_eq!(
-        driver.baseline.get("resume", "overseer"),
-        Some(asked.as_str())
-    );
-    assert_eq!(*told.borrow(), ["overseer-no-successor.txt"]);
-    assert!(transfers.borrow().is_empty());
+        assert_eq!(walks.get(), 4, "{case}: each pass past the announce walks");
+        {
+            let told = told.borrow();
+            let keys: Vec<&str> = told
+                .iter()
+                .map(|(_, text)| text.split(':').next().unwrap_or_default())
+                .collect();
+            match cause {
+                Some(cause) => {
+                    assert_eq!(
+                        keys,
+                        ["overseer-walled-pending", "overseer-account-unread"],
+                        "{case}"
+                    );
+                    assert!(told[1].1.contains(cause), "{case}: {}", told[1].1);
+                }
+                None => assert_eq!(keys, ["overseer-walled-pending"], "{case}"),
+            }
+        }
+        phase.set(2);
+        driver.pass(&state);
+        let asked = format!("usage-limit|{key}|{reset}|wall:{wall}");
+        assert_eq!(
+            driver.baseline.get("resume", "overseer"),
+            Some(asked.as_str()),
+            "{case}"
+        );
+        assert!(transfers.borrow().is_empty(), "{case}");
+    }
 }
 
 /// A pending usage wall's own account that cannot be read past its reset
@@ -9238,7 +9327,15 @@ fn an_own_account_unread_past_its_reset_keeps_it_and_tells_the_owner_once() {
     let unread = Cell::new(false);
     let judge = |_: &Caller, _: Option<&str>| {
         if unread.get() {
-            return Err("accounts-unreadable".to_owned());
+            let mut m = marks(
+                MarkKey::Unmeasured(MarkKind::Headroom),
+                "",
+                "",
+                Succession::On,
+                "",
+            );
+            m.reason = "headroom-unreadable".to_owned();
+            return Ok(m);
         }
         let mut m = marks(
             MarkKey::Reached(MarkKind::Headroom),
@@ -9295,22 +9392,37 @@ fn an_own_account_unread_past_its_reset_keeps_it_and_tells_the_owner_once() {
         .map(|(_, text)| text.split(':').next().unwrap_or_default())
         .collect();
     assert_eq!(keys, ["overseer-walled-pending", "overseer-account-unread"]);
-    assert!(told[1].1.contains("accounts-unreadable"), "{}", told[1].1);
+    assert!(told[1].1.contains("headroom-unreadable"), "{}", told[1].1);
     assert!(transfers.borrow().is_empty());
 }
 
 /// A Claude overseer walled by its weekly limit, its pane and window.
 fn walled_overseer(dir: &Path, server: &Server, fleet: &Fleet) -> (String, String) {
+    walled_overseer_drawing(dir, server, fleet, "")
+}
+
+/// [`walled_overseer`] with `above` drawn over its composer, such as the
+/// usage banner Claude leaves standing at its wall.
+fn walled_overseer_drawing(
+    dir: &Path,
+    server: &Server,
+    fleet: &Fleet,
+    above: &str,
+) -> (String, String) {
     let claude = named_sleep(dir, "claude");
+    let screen = dir.join("overseer-screen.txt");
+    std::fs::write(&screen, format!("{above}❯\u{a0}\n")).unwrap();
     let pane = server.open_window(
         "overseer",
         dir,
         &format!(
-            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            "bash -c \"cat {}; exec {} 600\"",
+            screen.display(),
             claude.display()
         ),
     );
     let identity = await_named(server, &pane, "claude");
+    await_drawn(server, &pane, "❯");
     let window = window_of(server, &pane);
     let rows_file = dir.join("session-rows.jsonl");
     std::fs::write(

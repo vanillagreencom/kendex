@@ -20,7 +20,7 @@ The watch recovers a stopped overseer by the stop's kind, which agent-runtime na
 2. An ended or refused sign-in moves the overseer to another account at once, never back to the same one. The owner gets one notice naming the account to sign in again. With no other account, the walled case is pending, and its own account's reset does not resume it.
 3. An overload, a server error, a broken stream, a network drop, a safety flag or Codex's capacity refusal is the provider not answering. The wake resumes the overseer on its own account once per pass. The first turn that returns ends the episode, and so does a failure read after 30 minutes with none read. After 30 minutes the overseer moves to the first entry with room on another provider, a move asked and retried as any recovery is. With no such entry, or a move refused or asked no more, it is resumed still.
 4. The owner is told once, with the cause, when a walled case becomes pending, when its own account stays unread 30 minutes past its reset, and when the watch asks a transfer no more.
-5. The owner's notices go through the overseer mailbox's owner channel, once per episode. A notice the channel did not take is sent again on each pass until it lands, whatever its episode has done since.
+5. The owner's notices go through the overseer mailbox's owner channel, each kind once per episode. A notice the channel did not take is sent again on each pass until it lands, whatever its episode has done since.
 
 A walk that is refused or leaves an entry unread decides no successor: the watch walks again on the next pass.
 
@@ -31,13 +31,17 @@ A usage-limit banner on the overseer's pane proves no wall by itself: the pane a
 A walled case is pending when its walk chooses no successor, or leaves a provider unread 30 minutes after the case was announced. A pending case has two ways out:
 
 - The watch walks again on each pass. Once the walk chooses an account with room, the watch requests the transfer.
-- When the watch reads the overseer's own account with room, it asks the wake to resume the overseer there, once for the wall. The wake types the resume past the usage banner, as it does for a lane at a passed wall.
+- When the watch reads the overseer's own account with room and its pane, read with that room, stands idle, it asks the wake to resume the overseer there, once for the wall. The wake types the resume past the usage banner, as it does for a lane at a passed wall.
 
-If the own account reads room, the overseer is resumed on it and nothing is walked on that pass, even where another account has room.
+A failed turn that a Codex or Copilot session's own record holds stays walled whatever its account reads (§ Recovery requests), so only the walk ends it.
+
+The case stays walled on every pass that does not read the own account with room, including a pass where the account read fails, reaches another mark first or leaves its headroom unmeasured. Such a pass walks and reads the reset as a walled pass does.
+
+If the own account reads room and the pane stands idle, the overseer is resumed on it and nothing is walked on that pass, even where another account has room. A pane read running a turn ends the case with no resume.
 
 The owner gets one notice when the case becomes pending. It says whether the walk answered none or could not read a provider. A later failure on the same wall starts no new episode and sends no new notice. A resumed turn that stops at a new wall is a new episode, with its own notice and its own resume.
 
-The watch keeps the reset it last read for the own account. If a later read of that account fails, the reset stands. If the read still fails 30 minutes past that reset, the owner is told once, with the read's cause.
+The watch keeps the reset it last read for the own account. If a later read of that account fails or leaves it unread, the reset stands. If the account is still unread 30 minutes past that reset, the owner is told once, with the cause.
 
 ## Recovery outcomes
 
@@ -47,7 +51,7 @@ The line announces a recovery; the duty's next run submits its request. An admit
 - `successor-unread cause=[LINE]` under a `watch-step-failed` line: the walk could not answer. The recovery stays announced, and the next pass walks again. `[LINE]` names each unread host with its cause, or each unread entry with its judge's answer.
 - `overseer-relaunch-failed pane=[PANE] attempt=[N] retry=[pending|exhausted] step=[STEP]`, or `overseer-capacity-failed` for a reserve recovery: the transfer failed. `retry=pending` asks again on the duty's next run: a dead recovery once more, a walked recovery while each failure leaves its successor's account unproved, which the next walk holds out. Read the failed intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
 - `overseer-provider-move pane=[PANE] cause=[CAUSE] since=[EPOCH] intent=[INTENT]`: a provider stop past 30 minutes asked the move to another provider.
-- `overseer-notice-sent pane=[PANE] notice=[auth|walled|account-unread|no-successor]`: the owner got the episode's notice. The sign-in notice is `overseer-auth-wall.txt` in the fleet state directory, and every other notice is `overseer-no-successor.txt` there. `overseer-notice-failed` says a send the next pass repeats.
+- `overseer-notice-sent pane=[PANE] notice=[auth|walled|account-unread|no-successor]`: the owner got that kind's notice for the episode. The sign-in notice is `overseer-auth-wall.txt` in the fleet state directory, and every other notice is `overseer-no-successor.txt` there. `overseer-notice-failed` says a send the next pass repeats.
 - `overseer-record-unreadable pane=[PANE] harness=[HARNESS] cause=[CAUSE]`: a Codex or Copilot controller's own session record could not be read, so its hook rows were judged alone.
 
 Replace the overseer by hand ([oversee.md § Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption)):
