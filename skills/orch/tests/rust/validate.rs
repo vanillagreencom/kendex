@@ -4891,6 +4891,9 @@ fn a_stale_group_start_never_signals_the_process_that_reused_its_number() {
     child.0.wait().unwrap();
 }
 
+/// A command group outlives its executor and the stage a reconcile closed,
+/// and holds the host until a worktree stop ends it. That stop ended live
+/// work, so the run's readers read it `stopped`, not `lost`.
 #[test]
 fn a_command_group_still_holds_the_host_after_its_executor_dies() {
     let w = World::new();
@@ -4918,6 +4921,16 @@ fn a_command_group_still_holds_the_host_after_its_executor_dies() {
         orch_runtime::validate::files::live(&w.worktree)
             .unwrap()
             .is_none()
+    );
+    assert!(!Path::new(dir).join("exit").exists());
+    let record = read_record(&w, dir);
+    assert_eq!(field(&record, "verdict"), "no-verdict", "{record}");
+    let wait = text(&w.entry(&["--wait", "--run-dir", dir, "--budget", "1"], &[]));
+    assert_eq!(field(&wait, "state"), "done", "{wait}");
+    assert_eq!(field(&wait, "validate"), "no-verdict", "{wait}");
+    assert!(
+        wait.split_whitespace().any(|word| word == "stopped"),
+        "{wait}"
     );
 }
 

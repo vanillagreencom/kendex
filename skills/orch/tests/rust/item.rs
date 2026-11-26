@@ -396,6 +396,26 @@ mod dev_artifacts {
             fs::write(dir.join("exit"), "guard-exit=0 at=2026-01-01T00:00:01Z\n").unwrap();
             dir
         }
+        /// A run a stop ended before its executor wrote the sentinel: it
+        /// reads no verdict with no timing, as its command names this
+        /// process under a start it never had and no runner stands.
+        fn stopped_run(&self, name: &str) -> PathBuf {
+            let stopped = self.finished_run(name, "full");
+            fs::remove_file(stopped.join("exit")).unwrap();
+            let agent_runtime::reading::Reading::Live(me) =
+                agent_runtime::process::identity(std::process::id())
+            else {
+                panic!("this process reads its own identity")
+            };
+            fs::write(
+                stopped.join("command"),
+                json!({"pid": me.pid, "start": format!("{}0", me.start)}).to_string(),
+            )
+            .unwrap();
+            fs::write(stopped.join("execution"), "started\n").unwrap();
+            fs::write(stopped.join("stop"), "stop-requested\n").unwrap();
+            stopped
+        }
         fn record_start(&self, run: &Path, line: &str) {
             let start = run.join("start");
             let text = fs::read_to_string(&start).unwrap();
@@ -899,24 +919,8 @@ mod dev_artifacts {
             ),
             "required",
         );
-        // A run a stop ended before its executor wrote the sentinel reads
-        // no verdict with no timing, so no receipt can carry it: its command
-        // names this process under a start it never had, and no runner
-        // stands.
-        let stopped = w.finished_run("stopped", "full");
-        fs::remove_file(stopped.join("exit")).unwrap();
-        let agent_runtime::reading::Reading::Live(me) =
-            agent_runtime::process::identity(std::process::id())
-        else {
-            panic!("this process reads its own identity")
-        };
-        fs::write(
-            stopped.join("command"),
-            json!({"pid": me.pid, "start": format!("{}0", me.start)}).to_string(),
-        )
-        .unwrap();
-        fs::write(stopped.join("execution"), "started\n").unwrap();
-        fs::write(stopped.join("stop"), "stop-requested\n").unwrap();
+        // No receipt can carry a stopped run's no verdict with no timing.
+        let stopped = w.stopped_run("stopped");
         refused(
             &w.write(
                 "r1",
@@ -2478,6 +2482,23 @@ mod dev_artifacts {
         )
         .unwrap();
         assert_eq!(recover(&w, &pass(&w))["reason"], "validate-unproven");
+        // A report of the no verdict a run a stop ended before its sentinel
+        // reads names a run no receipt can carry: the round is replaced.
+        let w = World::new();
+        w.stopped_run("stopped");
+        let report = format!(
+            "Branch: work\nCommit: {}\nQA: none\nValidate: no-verdict: stopped",
+            w.head()
+        );
+        let replaced = recover(&w, &report);
+        assert_eq!(
+            (replaced["state"].clone(), replaced["reason"].clone()),
+            (json!("redelegate"), json!("validate-unproven")),
+            "{replaced}"
+        );
+        assert_ne!(replaced["round_id"], "r1");
+        assert_eq!(w.doc()["dev_round_id"], replaced["round_id"]);
+        assert!(!w.receipt_path("r1").exists());
         let w = World::new();
         let ci = w.finished_run("ci", "full");
         fs::write(

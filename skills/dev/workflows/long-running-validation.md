@@ -27,6 +27,7 @@ Every harness row below plans without a spawned harness child, a harness process
   - Read the verdict, then resume the tail:
     - The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a command's exit 3 or an unavailable host check, which [validation.md § No-verdict](../references/validation.md#no-verdict) routes. The log holds command output and never an exit status.
     - `state=lost` is a failed validation.
+    - `state=done stopped validate=no-verdict` is a run a stop ended before its sentinel, with no timing, which no `--validate no-verdict` receipt carries. It is a failed validation: `--validate "FAILING: validation entry"` with its `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the stop.
   - A tool-started `claude -p` is the spawned child this workflow forbids: its sign-in is unproven.
 - **Codex.**
   - Start `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` with `exec_command`.
