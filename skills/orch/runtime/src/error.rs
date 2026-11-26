@@ -347,8 +347,9 @@ pub enum Error {
     /// directory: the start that was to run it was refused after its
     /// admission, or the round closed the admission unstarted. A wait that
     /// follows the run by its id ends here, since no verdict will come.
-    /// `cause` is the close's word; `detail`, the launcher's or the run
-    /// files' own text, stays out of the fields.
+    /// `cause` is the key of the refusal that kept the run from starting
+    /// where one stands, else the close's word; `detail`, the launcher's or
+    /// the run files' own text, stays out of the fields.
     #[error(
         "the run {run_dir} closed {outcome} before it started{}",
         .detail.as_deref().map(|d| format!(": {d}")).unwrap_or_default()
@@ -356,8 +357,19 @@ pub enum Error {
     RunEndedUnstarted {
         run_dir: String,
         outcome: &'static str,
-        cause: Option<&'static str>,
+        cause: Option<String>,
         detail: Option<String>,
+    },
+    /// A start refused before it recorded the run could not write its
+    /// refusal on the run's admitted stage: a wait on the run reads it as
+    /// queued, so the start names both the refusal and the failed write.
+    /// `run_dir` is the run the start named, none for a start by round.
+    #[error("round {round_id}: the start's refusal {refused} could not be recorded: {write}")]
+    RefusalUnrecorded {
+        round_id: String,
+        run_dir: Option<String>,
+        refused: &'static str,
+        write: Box<Error>,
     },
     /// The admitted run's last start was refused before it recorded the run,
     /// and no start has recorded it since. A wait that follows the run by
@@ -565,6 +577,7 @@ impl Error {
             Error::RunEnded { .. } => "run-ended",
             Error::RunUnadmitted { .. } => "run-unadmitted",
             Error::RunEndedUnstarted { .. } => "run-ended-unstarted",
+            Error::RefusalUnrecorded { .. } => "refusal-unrecorded",
             Error::StartRefused { .. } => "start-refused",
             Error::RunUnstarted { .. } => "run-unstarted",
             Error::RunClosed { .. } => "run-closed",
@@ -847,9 +860,13 @@ impl Error {
                 pair("round_id", round_id.clone()),
                 pair("run_dir", run_dir.clone()),
             ],
-            Error::RunUnadmitted { run_dir }
-            | Error::RunUnstarted { run_dir }
-            | Error::ValidateLaunchFailed { run_dir, .. } => vec![pair("run_dir", run_dir.clone())],
+            Error::RunUnadmitted { run_dir } | Error::RunUnstarted { run_dir } => {
+                vec![pair("run_dir", run_dir.clone())]
+            }
+            Error::ValidateLaunchFailed { run_dir, cause } => vec![
+                pair("run_dir", run_dir.clone()),
+                pair("cause", launch_refusal_key(cause).to_owned()),
+            ],
             Error::RunEndedUnstarted {
                 run_dir,
                 outcome,
@@ -860,7 +877,19 @@ impl Error {
                     pair("run_dir", run_dir.clone()),
                     pair("outcome", (*outcome).to_owned()),
                 ];
-                fields.extend(cause.map(|c| pair("cause", c.to_owned())));
+                fields.extend(cause.clone().map(|c| pair("cause", c)));
+                fields
+            }
+            Error::RefusalUnrecorded {
+                round_id,
+                run_dir,
+                refused,
+                write,
+            } => {
+                let mut fields = vec![pair("round_id", round_id.clone())];
+                fields.extend(run_dir.clone().map(|d| pair("run_dir", d)));
+                fields.push(pair("refused", (*refused).to_owned()));
+                fields.push(pair("cause", write.key().to_owned()));
                 fields
             }
             Error::StartRefused { run_dir, cause } => {
@@ -872,7 +901,15 @@ impl Error {
             Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
                 vec![pair("run_dir", run_dir.clone())]
             }
-            Error::ValidateUnreadable { read, .. } => vec![pair("read", (*read).to_owned())],
+            Error::ValidateUnreadable { read, cause } => {
+                let mut fields = vec![pair("read", (*read).to_owned())];
+                // A cause of one token, such as the option a call left out,
+                // is a value; a reader's message stays in the text.
+                if !cause.is_empty() && !cause.contains(|c: char| c.is_whitespace() || c == '=') {
+                    fields.push(pair("cause", cause.clone()));
+                }
+                fields
+            }
             Error::AuthorizationMissing { directive } => {
                 vec![pair("directive", directive.clone())]
             }
@@ -926,4 +963,65 @@ impl From<Error> for agent_runtime::effects::prepare::Unready {
     }
 }
 
+/// The key a refused launch's cause leads with, else `launch-failed`. The
+/// cause is text: the validation start's own refusals (`run-exists`,
+/// `run-dir-unwritable file=…`, `owner-unreadable`) and agent-runtime's
+/// launcher refusals (`launch-failed status=…`, `unit-launch-failed
+/// detail=…`, `record-unwritable path=…`, `launcher-unrecorded`, a status
+/// word such as `exited-7`) each open with a hyphenated key. A cause that
+/// opens with anything else, such as an I/O message, whose lower-case forms
+/// (`entity not found`) hold no hyphen, has no key of its own.
+pub(crate) fn launch_refusal_key(cause: &str) -> &str {
+    let lead = cause.split_whitespace().next().unwrap_or_default();
+    let keyed = lead.contains('-')
+        && lead.starts_with(|c: char| c.is_ascii_lowercase())
+        && !lead.ends_with('-')
+        && lead
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if keyed { lead } else { "launch-failed" }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::launch_refusal_key;
+
+    /// Each refused launch's cause, in the form its producer writes it
+    /// (agent-runtime's `effects/job.rs` and the validation start), answers
+    /// its leading key; text with none answers `launch-failed`.
+    #[test]
+    fn a_refused_launch_is_keyed_by_the_word_its_cause_leads_with() {
+        for (cause, key) in [
+            ("run-exists", "run-exists"),
+            (
+                "run-dir-unwritable file=class.log cause=No space left on device (os error 28)",
+                "run-dir-unwritable",
+            ),
+            ("owner-unreadable", "owner-unreadable"),
+            (
+                "launch-failed cause=No such file or directory (os error 2)",
+                "launch-failed",
+            ),
+            (
+                "unit-launch-failed detail=Unknown assignment: OOMPolicy=continue",
+                "unit-launch-failed",
+            ),
+            (
+                "record-unwritable path=/w/tmp/dev-validate-1/runner cause=Permission denied (os error 13)",
+                "record-unwritable",
+            ),
+            ("launcher-unrecorded", "launcher-unrecorded"),
+            ("exited-7", "exited-7"),
+            (
+                "class.log: No space left on device (os error 28)",
+                "launch-failed",
+            ),
+            ("entity not found", "launch-failed"),
+            ("", "launch-failed"),
+        ] {
+            assert_eq!(launch_refusal_key(cause), key, "{cause}");
+        }
+    }
+}

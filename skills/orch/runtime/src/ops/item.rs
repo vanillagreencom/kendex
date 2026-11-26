@@ -766,6 +766,17 @@ pub(crate) fn record_round(
     }
 }
 
+/// The index of the round's open admitted run: its newest open validate
+/// stage that names a run directory.
+pub(super) fn open_admission(stages: &[Stage], round_id: &str) -> Option<usize> {
+    stages.iter().rposition(|s| {
+        s.kind == StageKind::Validate
+            && s.round_id.as_deref() == Some(round_id)
+            && s.end.is_none()
+            && s.run_dir.is_some()
+    })
+}
+
 pub(super) fn record_validation_admission(
     path: &Path,
     doc: &mut Document,
@@ -801,13 +812,8 @@ pub(super) fn record_validation_admission(
             // The operation's identity is the round: the open admission is
             // the request's result until the request asks for the next
             // attempt, so a replay never mints a second run.
-            let open = stages.iter().rev().find_map(|s| {
-                (s.kind == StageKind::Validate
-                    && s.round_id.as_deref() == Some(&r.round_id)
-                    && s.end.is_none())
-                .then(|| s.run_dir.as_deref().map(|d| (d, s.start)))
-                .flatten()
-            });
+            let open = open_admission(&stages, &r.round_id)
+                .and_then(|i| stages[i].run_dir.as_deref().map(|d| (d, stages[i].start)));
             if let (Attempt::Current, Some((run_dir, start))) = (r.attempt, open) {
                 return Ok(ValidationAdmitted {
                     round_id: r.round_id.clone(),

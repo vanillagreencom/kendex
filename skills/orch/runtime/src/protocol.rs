@@ -152,7 +152,7 @@ mod tests {
                 Error::RunEndedUnstarted {
                     run_dir: "/w/tmp/dev-validate-1".into(),
                     outcome: "stopped",
-                    cause: Some("launch-failed"),
+                    cause: Some("launch-failed".into()),
                     detail: Some(launch_cause.into()),
                 },
                 launch_cause,

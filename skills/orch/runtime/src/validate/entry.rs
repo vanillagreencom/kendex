@@ -18,7 +18,7 @@ const VALIDATE: &str = "validate";
 #[command(
     long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues or before it started: it prints state=running with the run directory, which --wait --run-dir follows on, or, for a run not yet started, state=queued, which the next paragraph routes.
 
---wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on. An id no round admitted refuses run-unadmitted; a run whose admission closed with no start record, such as a start refused after the admission, refuses run-ended-unstarted with the admission's outcome and cause; and a run whose last start was refused before it recorded the run refuses start-refused with that start's key as its cause, the admission staying open for the next start under the same id.
+--wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on. An id no round admitted refuses run-unadmitted; a run whose admission closed with no start record, such as a start refused after the admission, refuses run-ended-unstarted with the admission's outcome and, as its cause, the key of the refusal that kept the run from starting where one stood, else the close's word; and a run whose last start was refused before it recorded the run refuses start-refused with that start's key as its cause, the admission staying open for the next start under the same id.
 
 A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
@@ -168,7 +168,7 @@ fn arguments(args: &Args) -> Result<()> {
             || args.restack
             || (args.run_id.is_some() && !queued))
     {
-        Some("start options")
+        Some("start-options")
     } else if !start && !args.resolve_mode && !args.restack_check && args.base.is_some() {
         Some("--base")
     } else {
@@ -208,16 +208,11 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
             answer.exit
         }
         Err(Failure { error, exit }) => {
-            let diagnostic = match &*error {
-                Error::ValidateUnreadable { read, cause } => {
-                    format!("{VALIDATE}: {read} cause={cause}")
-                }
-                _ => crate::protocol::diagnostic_line(&error).replacen(
-                    "orch-runtime:",
-                    &format!("{VALIDATE}:"),
-                    1,
-                ),
-            };
+            let diagnostic = crate::protocol::diagnostic_line(&error).replacen(
+                "orch-runtime:",
+                &format!("{VALIDATE}:"),
+                1,
+            );
             let _ = writeln!(std::io::stderr(), "{diagnostic}");
             exit
         }
@@ -467,13 +462,16 @@ fn entry(
                 match launch.answer() {
                     agent_runtime::effects::job::Launch::Started { .. } => {}
                     agent_runtime::effects::job::Launch::Refused { cause } => {
-                        return Err(files::unreadable("launch-failed", cause));
+                        return Err(Error::ValidateLaunchFailed {
+                            run_dir: run_dir.display().to_string(),
+                            cause,
+                        });
                     }
-                    agent_runtime::effects::job::Launch::Unanswered { cause } => {
-                        return Err(files::unreadable(
+                    agent_runtime::effects::job::Launch::Unanswered { .. } => {
+                        return Err(Error::Runtime(agent_runtime::Error::refused(
                             "launch-unanswered",
-                            format!("run-dir={} {cause}", run_dir.display()),
-                        ));
+                            &[("run_dir", &run_dir.display().to_string())],
+                        )));
                     }
                 }
             }

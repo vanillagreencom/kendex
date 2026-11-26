@@ -1365,7 +1365,7 @@ fn resolve(
             ));
         }
         if crate::ready::on_path("perl").is_none() {
-            return Err(files::unreadable("missing-command", "commands=perl"));
+            return Err(files::unreadable("missing-command", "perl"));
         }
     }
     let selection = match preview.selection.as_deref() {
@@ -1471,8 +1471,10 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64, memory: &MemoryBound
     text
 }
 
-/// Write the run directory the executor reads: refused where it stands
-/// already, since a poll would read its records as this run's.
+/// Write the run directory the executor reads: refused `run-exists` where
+/// it stands already, since a poll would read its records as this run's,
+/// and `run-dir-unwritable` with the file where a write fails. The refusal
+/// opens with its key, which a wait on the run reports.
 #[allow(
     clippy::disallowed_methods,
     reason = "the run directory's files are the executor's inputs, each written whole; the inventory is replaced by rename"
@@ -1485,14 +1487,16 @@ fn write_run_dir(
     locking: Locking,
     memory: &MemoryBound,
 ) -> std::result::Result<(), String> {
-    fs::create_dir_all(worktree.join("tmp")).map_err(|e| format!("tmp: {e}"))?;
+    let unwritable =
+        |name: &str, e: &dyn std::fmt::Display| format!("run-dir-unwritable file={name} cause={e}");
+    fs::create_dir_all(worktree.join("tmp")).map_err(|e| unwritable("tmp", &e))?;
     match fs::create_dir(run_dir) {
         Ok(()) => {}
         Err(e) if e.kind() == ErrorKind::AlreadyExists => return Err("run-exists".to_owned()),
-        Err(e) => return Err(format!("run-dir: {e}")),
+        Err(e) => return Err(unwritable("run-dir", &e)),
     }
     let write = |name: &str, text: &str| {
-        fs::write(run_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
+        fs::write(run_dir.join(name), text).map_err(|e| unwritable(name, &e))
     };
     // The job's error log stands before any other record, so a directory
     // holding neither it nor an executor's claim is a start whose child
@@ -1511,7 +1515,8 @@ fn write_run_dir(
         ".start",
         &start_record(worktree, &resolved.proof, start, memory),
     )?;
-    fs::rename(run_dir.join(".start"), run_dir.join("start")).map_err(|e| format!("start: {e}"))?;
+    fs::rename(run_dir.join(".start"), run_dir.join("start"))
+        .map_err(|e| unwritable("start", &e))?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let dirs = files::run_dirs(worktree)?;
         let mut names: Vec<_> = dirs
@@ -1531,7 +1536,7 @@ fn write_run_dir(
             .and_then(|_| fs::rename(&scratch, worktree.join("tmp").join(RUN_INDEX)))
             .map_err(|e| files::unreadable("run-index", e))
     })
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| unwritable(RUN_INDEX, &e))?;
     if let Some(ran_nothing) = &resolved.ran_nothing {
         write("log", &ran_nothing.log)?;
         let at = ran_nothing
@@ -1736,7 +1741,7 @@ fn ask_launcher(
         Ok(exe) => exe,
         Err(e) => {
             return Launch::Refused {
-                cause: e.to_string(),
+                cause: format!("exe-unreadable cause={e}"),
             };
         }
     };
@@ -1802,7 +1807,7 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
         ),
     ) {
         return Launch::Refused {
-            cause: e.to_string(),
+            cause: format!("runner-unwritable cause={e}"),
         };
     }
     Launch::Started {
@@ -1814,10 +1819,12 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
     }
 }
 
-/// Start a validation run: read, record, launch. A start of a named run
-/// refused before it records the run, other than `run-live`, leaves the
-/// refusal's key on the run's admitted stage, which stays open for the next
-/// start under the same id.
+/// Start a validation run: read, record, launch. A start refused before it
+/// records the run, other than `run-live`, leaves the refusal's key on the
+/// run's admitted stage, the named one or the round's open admission, which
+/// stays open for the next start under the same id. A refusal that cannot
+/// be written refuses `refusal-unrecorded` with its key, since a wait on the
+/// run would read it as queued.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1838,22 +1845,27 @@ pub fn start(
     let reply = start_admitted(settings, req, env, locking, item, round.clone(), &recorded);
     // A `run-live` refusal ends no wait on the run: its seat waits for the
     // live run and starts again under the same id, so the run stays queued.
-    if let (Err(error), Some(run_dir), false) = (&reply, &req.run_dir, recorded.get())
+    if let (Err(error), false) = (&reply, recorded.get())
         && !matches!(error, Error::RunLive { .. })
-    {
-        // The refusal is the caller's answer whatever this write does: one
-        // that fails leaves the stage as it stood, which a wait reads as
-        // queued, never as a verdict.
-        let _ = apply(
+        && let Err(write) = apply(
             &path,
             Validate::Refuse(RecordRefusal {
-                round_id: round,
-                run_dir: run_dir.clone(),
+                round_id: round.clone(),
+                run_dir: req.run_dir.clone(),
                 cause: error.key().to_owned(),
             }),
             env,
             locking,
-        );
+        )
+        // A missing record holds no admission for a wait to follow.
+        && !matches!(write, Error::Runtime(agent_runtime::Error::RecordMissing { .. }))
+    {
+        return Err(Error::RefusalUnrecorded {
+            round_id: round,
+            run_dir: req.run_dir.clone(),
+            refused: error.key(),
+            write: Box::new(write),
+        });
     }
     reply
 }

@@ -140,12 +140,15 @@ pub struct RecordStop {
 /// Record the key of a start refused before it recorded the run on the
 /// run's admitted stage, open and not yet started, without closing it: a
 /// wait that follows the run by its id ends on it, and the next start under
-/// the same id records the run and clears it. A stage that has closed, or
-/// one a start has recorded, keeps what it holds.
+/// the same id records the run and clears it. Without `run_dir`, a start by
+/// item and round, the stage is the round's open admission. Where no stage
+/// stands the refusal records nothing, and a stage that has closed, or one a
+/// start has recorded, keeps what it holds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordRefusal {
     pub round_id: String,
-    pub run_dir: String,
+    #[serde(default)]
+    pub run_dir: Option<String>,
     pub cause: String,
 }
 
@@ -275,7 +278,10 @@ pub struct Stopped {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refused {
     pub round_id: String,
-    pub run_dir: String,
+    /// The admitted run the key was written on; none where no stage of the
+    /// round names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_dir: Option<String>,
     pub recorded_now: bool,
 }
 
@@ -565,7 +571,17 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
 
 fn refuse(path: &Path, doc: &mut Document, r: &RecordRefusal) -> Result<Refused> {
     let stages = stages(path, doc)?;
-    let index = stage_index(&stages, &r.round_id, &r.run_dir)?;
+    let index = match &r.run_dir {
+        Some(run_dir) => stage_index(&stages, &r.round_id, run_dir).ok(),
+        None => item::open_admission(&stages, &r.round_id),
+    };
+    let Some(index) = index else {
+        return Ok(Refused {
+            round_id: r.round_id.clone(),
+            run_dir: None,
+            recorded_now: false,
+        });
+    };
     let stage = &stages[index];
     let recorded_now = stage.end.is_none() && stage.job.is_none();
     if recorded_now {
@@ -575,7 +591,7 @@ fn refuse(path: &Path, doc: &mut Document, r: &RecordRefusal) -> Result<Refused>
     }
     Ok(Refused {
         round_id: r.round_id.clone(),
-        run_dir: r.run_dir.clone(),
+        run_dir: stage.run_dir.clone(),
         recorded_now,
     })
 }
