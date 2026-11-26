@@ -183,9 +183,10 @@ Each verb, its arguments, and its answer:
   - Ends the unit's run on the host and removes the unit, then exits `0` with `stopped item=ID run-id=RUN` on stdout, also where the host holds no unit.
   - A unit whose tree a runtime build still reads is removed once that build ends, since a build that loses its sources records its key failed; its run is stopped all the same.
   - The executor asks it at each end of the run it did not take from a clean hand-back: a recorded stop, a host that answered no call for the start's quiet time, a refused launch, a folder an earlier call staged, or a unit a hand-back kept.
-  - A stop of the run, or of its worktree, asks it whatever holds the run, until the host has answered `stopped` once. Any other answer refuses the stop `stop-failed`. A lane close and a round recovery wait on that answer.
-  - The stop asks the provider the stopping process's `ORCH_VALIDATE_HOST` names, and the item and run id the run's start recorded. The run folder names only the host's kind.
-  - Once the run has ended, `validate entry --stop --release-host --worktree DIR` releases it without the host's answer: `host-released released=operator` with the last cause, which the run's log also names. A run that has not ended keeps the refusal.
+  - A stop of the run by its directory (`validate stop --run-dir`), or a lane close's or a round recovery's stop of its worktree, asks it whatever holds the run, until the host has answered `stopped` once. Any other answer refuses the stop `stop-failed`. A lane close and a round recovery wait on that answer.
+  - Such a stop asks the provider the stopping process's `ORCH_VALIDATE_HOST` names, and the item and run id the run's start recorded. The run folder names only the host's kind.
+  - `validate entry --stop --worktree DIR` reads its settings from the worktree, which the lane writes, so it asks no provider and refuses `stop-failed` for a host run its host may still hold.
+  - Once the run has ended, `validate entry --stop --release-host --worktree DIR` releases it and asks no host: `host-released released=operator` with its stop's cause, which the run's log also names. A run that has not ended keeps the refusal.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
