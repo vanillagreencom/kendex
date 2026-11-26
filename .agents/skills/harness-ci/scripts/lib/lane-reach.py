@@ -725,13 +725,30 @@ def literal_job_dispatches(job):
 def workflow_env_words(env):
     # Every step inherits the workflow env, and a tool can read a path a value
     # names, as bash does BASH_ENV, so each word is a path input of each step.
-    # A word starting at / or ~ names a path outside the checkout.
+    # literal() refuses an absolute or home path, which can name the checkout
+    # from outside it. An option word can join a path to its flag.
     require(isinstance(env, dict) and all(isinstance(value, str) for value in env.values()),
             "opaque-workflow-env")
-    found = [word for value in env.values() for word in re.split(r"[\s=:,;]+", value)
-             if word and not word.startswith(("/", "~"))]
-    require(all(literal(word) for word in found), "opaque-workflow-env")
+    found = [word for value in env.values() for word in re.split(r"[\s=:,;]+", value) if word]
+    require(all(literal(word) and not (word.startswith("-") and re.search(r"[/.]", word))
+                for word in found), "opaque-workflow-env")
     return found
+
+
+def names_lane_output(document, lane):
+    # A step condition, an action input or any other value can read the
+    # output, and GitHub matches context property names without case.
+    pattern = re.compile(rf"(?<![a-z0-9_-])lane_{re.escape(lane)}(?![a-z0-9_-])", re.IGNORECASE)
+    pending = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            pending.extend([*node.keys(), *node.values()])
+        elif isinstance(node, list):
+            pending.extend(node)
+        elif pattern.search(node):
+            return True
+    return False
 
 
 def declared_lanes(work):
@@ -776,6 +793,10 @@ def job_reads(evidence, job, env_words):
             path, passed = evidence.checkout_path(directory, word)
             ordinary.update({path} | passed)
             ordinary.update(name for name in evidence.changed if under(name, path))
+            if path in evidence.files:
+                # bash sources BASH_ENV before the step, so a tracked file a
+                # word names is read as a sourced script.
+                evidence.shell_reads(path, directory, ordinary, visited)
         for line in step["run"].splitlines():
             args = words(line)
             if not args:
@@ -804,8 +825,11 @@ def derived(evidence, exceptions, settings, declared):
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
-    # A declared lane that gates no job selects nothing in this workflow.
-    lanes = {*lane_by_job.values(), *declared}
+    # A declared lane that gates no job selects nothing in this workflow,
+    # unless a value the roster does not read names its output.
+    ungated = sorted(set(declared) - set(lane_by_job.values()))
+    named = {lane for lane in ungated if names_lane_output(document, lane)}
+    lanes = {*lane_by_job.values(), *ungated}
 
     def keep_prerequisites(outcomes):
         # A shared lane runs its entire group. Keep each running job's gated
@@ -858,10 +882,7 @@ def derived(evidence, exceptions, settings, declared):
             if name in evidence.proved_head_ownership:
                 packages.add(evidence.proved_head_ownership[name])
 
-    first_reader = {}
-    shared_input = False
-    outcomes = dict.fromkeys(lanes, "miss")
-    for name, lane in lane_by_job.items():
+    def job_reach(name):
         try:
             ordinary, readers = job_reads(evidence, jobs[name], env_words)
             reads = ordinary | set().union(*(read for read, _ in readers))
@@ -870,14 +891,20 @@ def derived(evidence, exceptions, settings, declared):
                 rendered_path for rendered_path, package_owners in owners.items()
                 if packages & package_owners
             }
-            unresolved = set().union(*(evidence.changed - covered for _, covered in readers))
+            return hits, set().union(*(evidence.changed - covered for _, covered in readers))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
             diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
             if not isinstance(error, UnresolvedDispatch):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
-            hits, unresolved = set(), evidence.changed
+            return set(), evidence.changed
+
+    first_reader = {}
+    shared_input = False
+    outcomes = {lane: "unread" if lane in named else "miss" for lane in lanes}
+    for name, lane in [*lane_by_job.items(), *((None, lane) for lane in ungated)]:
+        hits, unresolved = job_reach(name) if name is not None else (set(), set())
         if lane in exceptions:
             # The legacy claim pass gives us lane names across the diff.
             hits = evidence.changed

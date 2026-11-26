@@ -414,11 +414,11 @@ if: >-
 
 **Workflow shape**
 
-- A top-level `env:` holds literal values. The reader splits each value at blanks, `=`, `:`, `,` and `;`, and reads each word as a path every run step reads from its working directory. A word starting with `/` or `~` names a path outside the checkout.
-- An `env:` value with a `${{ }}` expression, or a word with any character outside letters, digits, `_`, `.`, `/`, `+` and `-`, leaves the roster unreadable with `cause=opaque-workflow-env`.
+- A top-level `env:` holds literal values. The reader splits each value at blanks, `=`, `:`, `,` and `;`, and reads each word as a path every run step reads from its working directory. It reads a word that names a tracked file as a script the step sources, as bash sources `BASH_ENV`, so a file that script sources is an input too. A script line the shell reader cannot follow keeps that job's lane eligible.
+- An `env:` value leaves the roster unreadable with `cause=opaque-workflow-env` when it holds a `${{ }}` expression, or when one of its words starts with `/` or `~`, starts with `-` and holds `/` or `.`, or holds any character outside letters, digits, `_`, `.`, `/`, `+` and `-`.
 - A top-level `defaults:` leaves the roster unreadable with `cause=opaque-workflow-defaults`.
 - A gated job uses only the job keys, step keys and `actions/checkout` inputs `job_reads` in `lane-reach.py` accepts. Any other key or action, a job or step `env:` among them, keeps that lane eligible.
-- A lane the declaration names that gates no job reads `false` with `cause=unreached`. Where the reader keeps every lane, as on a shared input or a change to the workflow, it reads `true`.
+- A lane the declaration names that gates no job reads `true` when one of its globs claims a changed path. It also reads `true` when any workflow key or value names its `lane_NAME` output, such as a step `if:` or a `with:` input. Otherwise it reads `false` with the cause any lane no change reaches gets. Where the reader keeps every lane, as on a shared input or a change to the workflow, it reads `true`.
 
 **Command evidence**
 
