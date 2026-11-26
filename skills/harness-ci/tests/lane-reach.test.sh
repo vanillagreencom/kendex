@@ -828,6 +828,31 @@ printf 'top input\n' >"$repo/bin/top.txt"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a step function closes before its brace line'
 dispatch_fleet_brace_base="$(git -C "$repo" rev-parse HEAD)"
+# A ")#" does not start a comment, so the "}" after it ends the step, and
+# the "{" a later ")#" hides opens a group that closes the function's line.
+git -C "$repo" checkout -qb fixture-fleet-brace-comment "$dispatch_fleet_brace_base"
+write_fleet_runner '    done
+  done; echo $(echo a)#b; }
+cat ./bin/top.txt
+: $(true)#; {
+  true' >"$repo/bin/check"
+git -C "$repo" commit -qam 'a step function closes after a comment-like word'
+dispatch_fleet_brace_comment_base="$(git -C "$repo" rev-parse HEAD)"
+# The backslash-newline joins "<<", and the quote in the heredoc's data
+# pairs with the one in the later comment.
+git -C "$repo" checkout -qb fixture-fleet-brace-heredoc "$dispatch_fleet_brace_base"
+write_fleet_runner "    done
+  done
+  cat <\\
+<EOF
+'
+EOF
+  true; }
+cat ./bin/top.txt
+step_after() {
+  true # it's" >"$repo/bin/check"
+git -C "$repo" commit -qam 'a step function closes after a continued heredoc'
+dispatch_fleet_brace_heredoc_base="$(git -C "$repo" rev-parse HEAD)"
 # find lists a fixture name holding a newline as two lines, so the runner
 # runs ./run.sh, a file no fixture names.
 git -C "$repo" checkout -qb fixture-fleet-newline "$dispatch_fleet_base"
@@ -991,6 +1016,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-wrong-event) base="$dispatch_wrong_event_base" ;;
     dispatch-fleet-python) base="$dispatch_fleet_python_base" ;;
     dispatch-fleet-brace) base="$dispatch_fleet_brace_base" ;;
+    dispatch-fleet-brace-comment) base="$dispatch_fleet_brace_comment_base" ;;
+    dispatch-fleet-brace-heredoc) base="$dispatch_fleet_brace_heredoc_base" ;;
     dispatch-fleet-newline) base="$dispatch_fleet_newline_base" ;;
     dispatch-fleet-queue-*) base="$dispatch_fleet_queue_base" ;;
     dispatch-fleet-*) base="$dispatch_fleet_base" ;;
@@ -1052,7 +1079,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   dispatch-fleet-fixture)
     assert_eq "$label lane host runs its step, then its fixture" \
       "$(cat "$repo/$fixture_helper" "$repo/bin/host.txt")" "$(cd "$repo" && bin/check --lane check-lane-host)" ;;
-  dispatch-fleet-brace)
+  dispatch-fleet-brace*)
     assert_eq "$label lane other reads the top-level input at runtime" \
       "$(cat "$repo/bin/top.txt" "$repo/bin/other.txt")" "$(cd "$repo" && bin/check --lane check-other)" ;;
   dispatch-fleet-newline)
@@ -1133,10 +1160,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
             assert_eq "$label $implementation diagnostic" \
               "job=check-lane-host cause=unresolved-lane-dispatch command=$runner --lane check-lane-host" \
               "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=unresolved-lane-dispatch command=.*\) reason=.*/\1/p' "$log")" ;;
-          dispatch-fleet-python|dispatch-fleet-brace|dispatch-fleet-newline)
+          dispatch-fleet-python|dispatch-fleet-brace*|dispatch-fleet-newline)
             case "$label" in
               dispatch-fleet-python) reason='runner-fixture-opaque fixture=bin/fixtures/check-other/client.py' ;;
-              dispatch-fleet-brace) reason='runner-function-boundary-unproved function=step_tmux_guard' ;;
+              dispatch-fleet-brace*) reason='runner-function-boundary-unproved function=step_tmux_guard' ;;
               *) reason='runner-fixture-name-newline folder=bin/fixtures/check-other' ;;
             esac
             assert_eq "$label $implementation diagnostic" \
@@ -1275,6 +1302,8 @@ dispatch-fleet-step|bin/markdown.sh|||||||false|true|false|derived-reach
 dispatch-fleet-added|bin/fixtures/check-other/added.sh|||||||false|false|true|derived-reach
 dispatch-fleet-python|bin/unplaced.txt|||||||false|false|true|derived-reach
 dispatch-fleet-brace|bin/top.txt|||||||true|true|true|derived-reach
+dispatch-fleet-brace-comment|bin/top.txt|||||||true|true|true|derived-reach
+dispatch-fleet-brace-heredoc|bin/top.txt|||||||true|true|true|derived-reach
 dispatch-fleet-newline|run.sh|||||||false|false|true|derived-reach
 dispatch-fleet-queue-claimed|skills/review-gate/standard.json|||||pull_request||false|false|false|derived-reach
 dispatch-fleet-queue-derived|bin/host.txt|||||pull_request||false|false|false|derived-reach

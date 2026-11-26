@@ -131,41 +131,19 @@ QUEUE_NARROWING = re.compile(
 )
 
 
-# A quoted string or a ${...} expansion, holding no command substitution,
-# no quote inside an expansion and no nested expansion, whose own quotes and
-# braces could end it.
-SHELL_EXPANSION = r"\$\{(?:[^{}'\"`$\\]|\$(?![({]))*\}"
-SHELL_STRING = re.compile(rf"""'[^']*'|"(?:[^"\\`$]|\\.|\$(?![({{])|{SHELL_EXPANSION})*"|{SHELL_EXPANSION}""")
+# A ${...} expansion holding no brace, quote, blank, backslash or operator,
+# so its "}" cannot be a word of its own, even where a quote around it
+# makes the "${" plain text.
+PLAIN_EXPANSION = re.compile(r"\$\{[^{}\s'\"`\\;&|<>()]*\}")
 
 
 def boundary_unproved(body):
     # Whether bash could end the function before the line that is "}" alone,
-    # so lines after it would run at the top level. Any brace outside a
-    # string counts, since a "{" argument and a closing "}" look alike, and
-    # so does text this scan cannot follow: a quote left open, a string it
-    # cannot match, ANSI-C quoting, whose escapes can hide a quote, and a
-    # heredoc.
-    text = "\n".join(body)
-    index, word_start = 0, True
-    while index < len(text):
-        character = text[index]
-        string = SHELL_STRING.match(text, index)
-        if character == "\\":
-            index += 2
-        elif character == "#" and word_start:
-            index = len(text) if (end := text.find("\n", index)) < 0 else end
-        elif string:
-            index = string.end()
-        elif character in "{}'\"" or text.startswith(("${", "$'"), index) or (
-            text.startswith("<<", index) and not text.startswith("<<<", index)
-        ):
-            return True
-        else:
-            index += 3 if text.startswith("<<<", index) else 1
-            word_start = character in " \t\n;&|()"
-            continue
-        word_start = False
-    return False
+    # so lines after it would run at the top level. The rule reads no quote
+    # or comment: any brace outside a plain expansion counts, and so does a
+    # line continuation or a "<<", which can join lines or hide them.
+    return any(re.search(r"[{}]", PLAIN_EXPANSION.sub("", line)) or line.endswith("\\")
+               or "<<" in line for line in body)
 
 
 def lane_table(lines, lane):
