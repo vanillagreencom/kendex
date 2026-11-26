@@ -820,10 +820,14 @@ def roster(jobs, classifier, step):
                 if forwards_verdicts(row, step_id, control.get("env", {}))]
     require(len(emitters) == 1, "unsupported-lanes-emitter")
     prefix = "needs." + classifier
-    fallback = re.escape("${{ !cancelled() && (" + prefix + ".result != 'success' || ")
+    status = re.escape("${{ !cancelled() && ")
+    fallback = re.escape("(" + prefix + ".result != 'success' || ")
+    # An event test outside the fallback limits the events the job runs on.
+    # It leaves what the change reaches, and so the verdict, as it is.
+    event_term = r"(?:github\.event_name == '[a-z_]+' && )?"
     read_output = re.escape(prefix + ".outputs.")
     lane_output = read_output + f"lane_({LANE_ID})" + re.escape(" != 'false'")
-    gate = re.compile(fallback + r"\(" + read_output + "lanes != 'false' && " +
+    gate = re.compile(status + event_term + fallback + r"\(" + read_output + "lanes != 'false' && " +
                       lane_output + r"\)\) \}\}")
     scan_gate = None
     if narrowed and references(outputs, "change_class", step_id, "change_class") and references(
@@ -833,7 +837,7 @@ def roster(jobs, classifier, step):
                  references(outputs, key, narrowed[1], narrowed[2])]
         if len(flags) == 1:
             flag_output = prefix + ".outputs." + flags[0]
-            scan_gate = re.compile(fallback + re.escape(
+            scan_gate = re.compile(status + fallback + re.escape(
                 f"({flag_output} == 'true' && github.event_name == 'merge_group') || "
                 f"({flag_output} != 'true' && (({prefix}.outputs.change_class != 'render' && "
                 f"{prefix}.outputs.queue_deferred != 'true') || "
