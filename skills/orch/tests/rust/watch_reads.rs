@@ -3254,6 +3254,71 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     );
 }
 
+/// A watch started with no `--repo` audits each lane's repository, and a
+/// pass with no repository to read names that on its unread line.
+#[test]
+fn a_watch_with_no_repo_flag_reports_its_lanes_repository_alerts_or_names_none() {
+    let url = "https://github.com/owner/repo/security";
+    let dependabot = json!({"number": 168, "html_url": format!("{url}/dependabot/168"),
+        "dependency": {"package": {"ecosystem": "npm", "name": "undici"}, "manifest_path": ".github/npm-tests/pi-qol/package-lock.json", "scope": "development"},
+        "security_advisory": {"ghsa_id": "GHSA-aaaa-bbbb-cccc", "severity": "high"}});
+    let mut world = World::new();
+    quiet_github(&mut world);
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-1", "tracker": "linear", "repo": "owner/repo", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-1", "status": "stopped"}]}));
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+        json!({"body": []}),
+    );
+    world.gh("search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}));
+    let token = plant_token(&world, "ghs_fixture_overseer");
+    world.gh(
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
+        json!({"body": [dependabot]}),
+    );
+    for list in [
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100",
+        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100",
+    ] {
+        world.gh(list, json!({"body": []}));
+    }
+    world.gh(
+        "graphql owner=owner name=repo",
+        json!({"body": {"data": {"repository": {"vulnerabilityAlerts": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}}}),
+    );
+    let settings = world.settings(&[
+        ("ORCH_SECURITY_ALERTS", "on"),
+        (
+            "ORCH_SECURITY_ALERT_TOKEN_FILE",
+            &token.display().to_string(),
+        ),
+    ]);
+    let clock = FakeClock::new();
+    let mut body =
+        github::body(world.github_context(settings.clone(), None, &[], Shared::default()));
+    let mut baseline = Baseline::default();
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(
+        rendered(&first),
+        vec![format!(
+            "EVENT security-alert owner/repo kind=dependabot number=168 severity=high package=undici manifest=.github/npm-tests/pi-qol/package-lock.json scope=development advisory=GHSA-aaaa-bbbb-cccc url={url}/dependabot/168"
+        )],
+        "the lane's repository is audited with no --repo"
+    );
+    // No lane and no --repo: no repository to read, named on the second pass.
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
+    let mut body = github::body(world.github_context(settings, None, &[], Shared::default()));
+    let mut baseline = Baseline::default();
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1120).unwrap();
+    assert_eq!(rendered(&first), Vec::<String>::new());
+    let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    assert_eq!(
+        rendered(&second),
+        vec!["EVENT security-alerts-unread reads=repositories:none"]
+    );
+}
+
 #[test]
 fn a_security_read_failure_reaches_the_overseer_on_its_second_consecutive_pass_alone() {
     let lists = [

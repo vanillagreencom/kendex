@@ -36,9 +36,11 @@ pub const ALERT_ROW: &str = "security-alert";
 pub const BOT_FIX_ROW: &str = "bot-fix";
 pub const UNREAD_ROW: &str = "security-alerts-unread";
 
-/// The two sources no repository names.
+/// The sources no repository names: the token, the verdicts, and the
+/// repository list itself, failed `none` on a pass that reads no repository.
 const TOKEN_SOURCE: &str = "installation-token";
 const VERDICT_SOURCE: &str = "alerts_triaged";
+const REPOS_SOURCE: &str = "repositories";
 
 /// The alert API's own path segments (`SECURITY_KINDS`).
 const KINDS: [&str; 3] = ["dependabot", "code-scanning", "secret-scanning"];
@@ -405,7 +407,7 @@ impl Unread {
 
 /// Every source a whole pass over `repos` judges.
 fn watched_sources(repos: &[String]) -> BTreeSet<String> {
-    let mut sources: BTreeSet<String> = [TOKEN_SOURCE, VERDICT_SOURCE]
+    let mut sources: BTreeSet<String> = [TOKEN_SOURCE, VERDICT_SOURCE, REPOS_SOURCE]
         .into_iter()
         .map(str::to_owned)
         .collect();
@@ -700,6 +702,12 @@ pub(super) fn pass(
         return Ok(standing_bot_fix(baseline));
     };
     unread.read(VERDICT_SOURCE.to_owned());
+    // A pass with no repository to read reads no alert: it says so.
+    if repos.is_empty() {
+        unread.add(REPOS_SOURCE, "none", "");
+    } else {
+        unread.read(REPOS_SOURCE.to_owned());
+    }
     // The token rides on the alert reads' own handle alone.
     let alerts = gh.adding_env(vec![("GH_TOKEN".to_owned(), token.into())]);
     let reported: BTreeSet<String> = baseline.identities(ALERT_ROW).into_iter().collect();
