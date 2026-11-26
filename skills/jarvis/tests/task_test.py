@@ -95,7 +95,12 @@ class TaskContract(unittest.TestCase):
         for harness in ("claude", "codex", "copilot", "pi"):
             self.bin.joinpath(harness).write_text(native)
             self.bin.joinpath(harness).chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+        # Each task starts from named keys alone, never the caller's whole
+        # environment: a lane's own variables, its ORCH_STATE_DIR among
+        # them, would have the tasks read the lane as theirs. tmux
+        # writes the tabs in its replies only under a UTF-8 locale.
+        self.env = {name: value for name, value in os.environ.items() if name.startswith("JARVIS_TEST_")}
+        self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"], LANG="C.UTF-8",
                         XDG_STATE_HOME=str(self.root / "state"), CLAUDECODE="parent",
                         CLAUDE_CODE_SESSION_ID="parent", CODEX_THREAD_ID="parent",
                         PI_SUBAGENT_PARENT_SESSION_ID="parent", JARVIS_BROWSER_PROFILE="/parent/browser",
@@ -106,7 +111,9 @@ class TaskContract(unittest.TestCase):
         login.mkdir()
         # A task window's shell is the suite's own Bash, which reads nothing
         # of the caller's login.
-        self.env.update(HOME=str(login), XDG_CONFIG_HOME=str(login / ".config"), SHELL=os.environ["JARVIS_TEST_BASH"])
+        self.env.update(HOME=str(login), XDG_CONFIG_HOME=str(login / ".config"),
+                        XDG_DATA_HOME=str(login / ".local/share"), XDG_CACHE_HOME=str(login / ".cache"),
+                        SHELL=os.environ["JARVIS_TEST_BASH"])
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record_path = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
         self.label = "jarvis-" + key[:32]
