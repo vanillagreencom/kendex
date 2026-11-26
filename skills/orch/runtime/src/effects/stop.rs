@@ -37,13 +37,16 @@ use agent_runtime::effects::{
 };
 use agent_runtime::intent::Intent;
 
-fn remove_local_gh_token(lane: &Lane) -> Result<()> {
+fn remove_local_grant_files(lane: &Lane, seat_view: Option<&Path>) -> Result<()> {
     if lane.host.is_none()
         && let Some(root) = lane.mail_root.as_deref()
     {
-        grants::remove_token(
-            &grants::folder(Path::new(root), &lane.item).join(grants::GH_TOKEN_FILE),
-        )?;
+        let root = Path::new(root);
+        if let Some(view) = seat_view {
+            grants::remove_views(root, &lane.item, view)?;
+        }
+        let private = grants::folder(root, &lane.item);
+        grants::remove_token(&private.join(grants::GH_TOKEN_FILE))?;
     }
     Ok(())
 }
@@ -55,11 +58,8 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let intent = read_intent(run.engine.path, intent_id)?;
     let members = LaneMembers::of(run.engine.path, &intent)?;
     let overseer = fleet(run.engine.path)?.overseer;
-    let harness = pane_harness(
-        run.engine.path,
-        &lane,
-        launch_intent_of(run.engine.path, &item)?.as_ref(),
-    )?;
+    let launch = launch_intent_of(run.engine.path, &item)?;
+    let harness = pane_harness(run.engine.path, &lane, launch.as_ref())?;
     // The lane's recorded handles as the durable set, read from the intent
     // where it stands, else bootstrapped from the lane's launch record and
     // written before the first signal. This is the one read of the launch
@@ -69,6 +69,9 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let close = Close {
         item: &item,
         lane: &lane,
+        seat_view: launch
+            .as_ref()
+            .and_then(|launch| launch.seat_view.as_deref()),
         target: harness
             .map(|h| Target::new(&run.settings.engine.harness_binaries, h))
             .transpose()?,
@@ -200,6 +203,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
 struct Close<'a> {
     item: &'a str,
     lane: &'a Lane,
+    seat_view: Option<&'a Path>,
     target: Option<Target>,
     ground: Option<&'a CloseGround>,
     /// The merge cycle this close records on the lane when it confirms.
@@ -536,7 +540,7 @@ impl Close<'_> {
         }
         // The close-out and worktree release can carry the mailbox into
         // the main checkout. The lane's credential must leave first.
-        remove_local_gh_token(self.lane)?;
+        remove_local_grant_files(self.lane, self.seat_view)?;
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
         let ends_item = self.ground.is_some_and(CloseGround::ends_item);
@@ -979,7 +983,13 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             observation["close_out"] = json!("owed");
             return Ok(hold(operation, observation));
         }
-        remove_local_gh_token(&lane)?;
+        let launch = launch_intent_of(run.engine.path, &item)?;
+        remove_local_grant_files(
+            &lane,
+            launch
+                .as_ref()
+                .and_then(|launch| launch.seat_view.as_deref()),
+        )?;
         let mut outcome = operation.settle(
             Word::Confirmed,
             reconcile_observation(&item, observation, intent.observation.as_ref()),

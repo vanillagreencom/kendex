@@ -1623,6 +1623,7 @@ mod tests {
         run(
             &path,
             &Request::RecordProgress(Box::new(RecordProgress {
+                seat_view: None,
                 intent_id: id.clone(),
                 phase: Some(crate::intent::Phase::WindowOpened { opened }),
                 obligations: None,
@@ -1669,6 +1670,7 @@ mod tests {
         };
         let write = |set: ObligationRecord, while_owner: Option<crate::intent::Owner>| {
             Request::RecordProgress(Box::new(RecordProgress {
+                seat_view: None,
                 intent_id: id.clone(),
                 phase: None,
                 obligations: Some(set),
@@ -1745,6 +1747,7 @@ mod tests {
             ..Default::default()
         };
         let progress = Request::RecordProgress(Box::new(RecordProgress {
+            seat_view: None,
             intent_id: id.clone(),
             phase: None,
             obligations: Some(launcher_set),
@@ -1787,6 +1790,7 @@ mod tests {
         // compare-and-swap's refusal, `set-replaced`.
         let open_progress = |revision: u64| {
             Request::RecordProgress(Box::new(RecordProgress {
+                seat_view: None,
                 intent_id: id.clone(),
                 phase: None,
                 obligations: Some(ObligationRecord {
@@ -1858,6 +1862,7 @@ mod tests {
             ..env()
         };
         let request = Request::RecordProgress(Box::new(RecordProgress {
+            seat_view: None,
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
@@ -1926,6 +1931,7 @@ mod tests {
             ..env()
         };
         let sidecar = Request::RecordProgress(Box::new(RecordProgress {
+            seat_view: None,
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
@@ -2362,6 +2368,7 @@ mod tests {
         };
         let marked = |id: &str, notice: &Notice| {
             Request::RecordProgress(Box::new(RecordProgress {
+                seat_view: None,
                 intent_id: id.to_owned(),
                 phase: None,
                 obligations: None,

@@ -32,6 +32,7 @@
 //! - Copilot CLI: a `user.message` row in `events.jsonl`.
 //! - Pi: a `message` row whose `message.role` is `user`.
 
+use std::fmt::Write;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -39,6 +40,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 use crate::harness::Harness;
@@ -51,6 +53,12 @@ pub struct SessionRef {
     pub file: PathBuf,
     pub cwd: PathBuf,
 }
+
+pub const CLAUDE_PROJECTS: &str = "projects";
+pub const CLAUDE_PROJECT_NAME_VAR: &str = "CLAUDE_CODE_PROJECT_DIR_NAME";
+pub const CLAUDE_PROJECT_AMBIGUOUS: &str = "claude-session-project-ambiguous";
+pub const CODEX_SESSIONS: &str = "sessions";
+pub const COPILOT_SESSION_STATE: &str = "session-state";
 
 /// The home a harness reads when the caller names none.
 pub fn default_home(harness: Harness) -> Option<PathBuf> {
@@ -97,7 +105,7 @@ fn uuid_v4(mut bytes: [u8; 16]) -> String {
 pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
     match harness {
         Harness::Claude => Some(
-            home.join("projects")
+            home.join(CLAUDE_PROJECTS)
                 .join(claude_slug(cwd))
                 .join(format!("{id}.jsonl")),
         ),
@@ -160,17 +168,25 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
         },
     };
     match harness {
-        Harness::Claude => match fixed_file(harness, home, cwd, id) {
-            Some(file) => present(file),
-            None => Reading::Gone,
-        },
+        Harness::Claude => {
+            match present(claude_owned_project(home, cwd).join(format!("{id}.jsonl"))) {
+                Reading::Gone => match fixed_file(harness, home, cwd, id) {
+                    Some(file) => match present(file) {
+                        Reading::Gone => claude_named_file(home, cwd, id),
+                        found => found,
+                    },
+                    None => Reading::Gone,
+                },
+                found => found,
+            }
+        }
         Harness::Codex => {
             // The id is the tail of the rollout file name
             // `rollout-<stamp>-<id>.jsonl`, under `sessions/YYYY/MM/DD/`. The
             // store's root is read three-valued through the one listing: no
             // root is a cold home, an absent session; a
             // root that cannot be listed is unreadable, never absent.
-            let root = home.join("sessions");
+            let root = home.join(CODEX_SESSIONS);
             match listed(&root) {
                 Reading::Live(_) => {}
                 Reading::Gone => return Reading::Gone,
@@ -191,7 +207,11 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
                 None => Reading::Gone,
             }
         }
-        Harness::Copilot => present(home.join("session-state").join(id).join("workspace.yaml")),
+        Harness::Copilot => present(
+            home.join(COPILOT_SESSION_STATE)
+                .join(id)
+                .join("workspace.yaml"),
+        ),
         Harness::Pi => {
             // `<stamp>_<id>.jsonl` under the cwd's slug directory.
             let dir = home.join("sessions").join(pi_slug(cwd));
@@ -213,14 +233,170 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
     }
 }
 
-/// Claude Code and Pi name a project directory by its path with every `/`
-/// and `.` replaced by `-`.
+/// Historical launches could use a named project folder in the shell
+/// environment. Search only for the bound id and verify its recorded cwd.
+fn claude_named_file(home: &Path, cwd: &Path, id: &str) -> Reading<PathBuf> {
+    let name = format!("{id}.jsonl");
+    if Path::new(&name)
+        .file_name()
+        .is_none_or(|file| file != name.as_str())
+    {
+        return Reading::Gone;
+    }
+    let root = home.join(CLAUDE_PROJECTS);
+    let projects = match listed(&root) {
+        Reading::Live(projects) => projects,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let mut found = None;
+    for project in projects {
+        let file = project.join(&name);
+        match fs::metadata(&file) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: STORE_UNREADABLE.cause,
+                };
+            }
+        }
+        match identify(Harness::Claude, &file, Some(cwd), Written::Opened) {
+            Ok(Some(session)) if session.id == id => {
+                if found.replace(file).is_some() {
+                    return Reading::Unreadable {
+                        cause: CLAUDE_PROJECT_AMBIGUOUS,
+                    };
+                }
+            }
+            Ok(_) => {}
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: FILE_UNREADABLE.cause,
+                };
+            }
+        }
+    }
+    found.map_or(Reading::Gone, Reading::Live)
+}
+
+/// Whether two spellings name one directory, resolved where both resolve,
+/// or compared as spelled with trailing separators off.
+pub fn same_directory(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => {
+            let trimmed = |p: &Path| p.display().to_string().trim_end_matches('/').to_owned();
+            trimmed(a) == trimmed(b)
+        }
+    }
+}
+
+/// The existing Claude project-folder setting accepts up to 64 ASCII
+/// letters and digits. The full digest distinguishes physical directories
+/// even when the native encoder would give them the same key.
+pub fn claude_owned_key(cwd: &Path) -> String {
+    let physical = fs::canonicalize(cwd).ok();
+    let cwd = physical.as_deref().unwrap_or(cwd);
+    let mut key = String::with_capacity(64);
+    for byte in Sha256::digest(cwd.as_os_str().as_encoded_bytes()) {
+        write!(&mut key, "{byte:02x}").expect("write to String");
+    }
+    key
+}
+
+pub fn claude_owned_project(home: &Path, cwd: &Path) -> PathBuf {
+    home.join(CLAUDE_PROJECTS).join(claude_owned_key(cwd))
+}
+
+/// Check any standing transcript before lending its whole project writable.
+/// A link at the owned key could alias a different checkout's directory.
+pub fn check_claude_project(project: &Path, cwd: &Path) -> Result<()> {
+    let refuse = |path: &Path, reason: &str| {
+        Error::refused(
+            "claude-project-owner",
+            &[
+                ("project", &project.display().to_string()),
+                ("path", &path.display().to_string()),
+                ("checkout", &cwd.display().to_string()),
+                ("reason", reason),
+            ],
+        )
+    };
+    match fs::symlink_metadata(project) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Err(refuse(project, "expected-directory")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::io("read Claude project", project, e)),
+    }
+    for entry in fs::read_dir(project).map_err(|e| Error::io("list Claude project", project, e))? {
+        let file = entry
+            .map_err(|e| Error::io("list Claude project", project, e))?
+            .path();
+        if file.extension().is_none_or(|ext| ext != "jsonl") {
+            continue;
+        }
+        let meta = fs::symlink_metadata(&file)
+            .map_err(|e| Error::io("read Claude transcript", &file, e))?;
+        if !meta.is_file() {
+            return Err(refuse(&file, "expected-transcript-file"));
+        }
+        match identify(Harness::Claude, &file, None, Written::Opened)? {
+            Some(session) if same_directory(cwd, &session.cwd) => {}
+            Some(session) => return Err(refuse(&file, &session.cwd.display().to_string())),
+            None if meta.len() == 0 => {}
+            None => return Err(refuse(&file, "checkout-unreadable")),
+        }
+    }
+    Ok(())
+}
+
+/// Claude Code encodes the physical cwd in its project directory.
+/// See https://code.claude.com/docs/en/agent-sdk/sessions and the
+/// UTF-16 rolling hash observed in Claude Code 2.1.332.
 pub fn claude_slug(cwd: &Path) -> String {
-    cwd.display()
-        .to_string()
-        .chars()
-        .map(|c| if c == '/' || c == '.' { '-' } else { c })
-        .collect()
+    const MAX: usize = 200;
+    let physical = fs::canonicalize(cwd).ok();
+    let path = physical.as_deref().unwrap_or(cwd).to_string_lossy();
+    let mut slug = String::new();
+    let mut length = 0;
+    let mut hash = 0i32;
+    for unit in path.encode_utf16() {
+        if length < MAX {
+            let ch = u8::try_from(unit)
+                .ok()
+                .filter(u8::is_ascii_alphanumeric)
+                .map_or('-', char::from);
+            slug.push(ch);
+        }
+        length += 1;
+        hash = hash.wrapping_mul(31).wrapping_add(i32::from(unit));
+    }
+    if length > MAX {
+        let mut value = hash.unsigned_abs();
+        let mut digits = Vec::new();
+        loop {
+            digits.push(char::from_digit(value % 36, 36).expect("base 36 digit"));
+            value /= 36;
+            if value == 0 {
+                break;
+            }
+        }
+        slug.push('-');
+        slug.extend(digits.into_iter().rev());
+    }
+    slug
 }
 
 /// Pi's slug keeps the path's own characters and wraps it in `--`.
@@ -298,7 +474,7 @@ pub fn identify(
             let (Some(id), Some(row_cwd)) = (id, row_cwd) else {
                 return Ok(None);
             };
-            if cwd.is_some_and(|c| c != row_cwd) {
+            if cwd.is_some_and(|c| !same_directory(c, &row_cwd)) {
                 return Ok(None);
             }
             Ok(Some(SessionRef {
@@ -985,10 +1161,31 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
         Reading::Live(files)
     };
     match harness {
-        Harness::Claude => jsonl_files(home.join("projects").join(claude_slug(cwd))),
+        Harness::Claude => {
+            let mut found = Vec::new();
+            let mut stands = false;
+            for dir in [
+                claude_owned_project(home, cwd),
+                home.join(CLAUDE_PROJECTS).join(claude_slug(cwd)),
+            ] {
+                match jsonl_files(dir) {
+                    Reading::Live(mut files) => {
+                        found.append(&mut files);
+                        stands = true;
+                    }
+                    Reading::Gone => {}
+                    Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+                }
+            }
+            if stands {
+                Reading::Live(found)
+            } else {
+                Reading::Gone
+            }
+        }
         Harness::Pi => jsonl_files(home.join("sessions").join(pi_slug(cwd))),
         Harness::Codex => {
-            let root = home.join("sessions");
+            let root = home.join(CODEX_SESSIONS);
             let mut files = Vec::new();
             match listed(&root) {
                 Reading::Live(paths) => {
@@ -1020,7 +1217,7 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
             Reading::Live(files)
         }
         Harness::Copilot => {
-            let paths = match listed(&home.join("session-state")) {
+            let paths = match listed(&home.join(COPILOT_SESSION_STATE)) {
                 Reading::Live(paths) => paths,
                 Reading::Gone => return Reading::Gone,
                 Reading::Unreadable { cause } => return Reading::Unreadable { cause },
@@ -1542,6 +1739,22 @@ mod tests {
             fixed_file(Harness::Codex, Path::new("/h"), Path::new("/w"), &id),
             None
         );
+    }
+
+    #[test]
+    fn claude_project_keys_match_the_native_writer() {
+        let prefix = format!("/long/{}", "a".repeat(194));
+        let long = format!("{prefix}b");
+        let short_key = format!("-long-{}", "a".repeat(194));
+        let long_key = format!("{short_key}-4qa8gu");
+        for (cwd, key) in [
+            ("/repo/The Work.Tree", "-repo-The-Work-Tree"),
+            ("/repo/e\u{301}🤖", "-repo-e---"),
+            (&prefix, &short_key),
+            (&long, &long_key),
+        ] {
+            assert_eq!(claude_slug(Path::new(cwd)), key, "{cwd}");
+        }
     }
 
     #[test]

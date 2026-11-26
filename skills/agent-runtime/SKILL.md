@@ -81,7 +81,8 @@ The wrapper applies each `Grants` member only as the intent spells it:
 - `read_only`: each path is bound read-only after the writable binds, so it stays read-only inside a writable path.
 - Each `read_only` path must exist; the wrapper refuses a missing one.
 - `runtime_dir`: the user's runtime folder is hidden, and with it the tmux and session-bus sockets. With no `runtime_dir`, the folder stays in reach.
-- `seats`: the launch record names them. The wrapper binds nothing for them, so a seat stays read-only unless `writable` names it.
+- `seats`: the account paths the launch records.
+- `seat_mounts`: ordered source and destination binds for a seat view, each with an explicit read-only or writable mode. The wrapper applies them after the ordinary writable and read-only paths.
 - `Grants` in `runtime/src/confine.rs` names the other members.
 
 When a launch runs unconfined:
@@ -104,10 +105,10 @@ Check the answer after a launch that must run confined:
 
 An account seat:
 
-- An opener reads `Harness::home_writes` in `runtime/src/harness.rs` for a seat's entries. The runtime applies only what the grants list.
-- For Claude Code, `home_writes` names the session folders to list in `writable`. The rest of the home stays read-only.
-- For Codex and Pi, the whole home goes in `writable`, and `home_writes` names the code entries to list in `read_only`.
-- orch's grants also list the seat's settings file in `read_only`.
+- A confined Claude Code worker shares its own project transcript directory. Orch sets Claude's project-folder variable to a key for the physical checkout, using the variable available from Claude Code 2.1.234. Other projects stay read-only. Shell snapshots and memory belong to the lane's view.
+- For a Copilot review seat in a confined worker, orch shares the session store the host reads.
+- For Codex and Pi, the whole home goes in `writable`. `Harness::home_writes` names the code entries that orch lists in `read_only` with the seat's settings file.
+- A Pi worker also takes the ordinary grants for the account it bills and configured review seats.
 
 Inside the boundary:
 

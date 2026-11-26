@@ -3391,6 +3391,7 @@ fn a_program_under_the_words_writes_its_worktree_and_is_refused_its_home_and_the
     let grants = Grants {
         writable: vec![wt.clone(), seat.join("projects")],
         seats: vec![seat.clone()],
+        seat_mounts: Vec::new(),
         read_only: vec![seat.join("settings.json")],
         runtime_dir: Some(rt.clone()),
         sockets: vec![rt.join("agent.sock")],
@@ -3468,6 +3469,7 @@ fn a_program_under_the_words_whose_tmpdir_is_outside_the_grants_writes_its_scrat
     let grants = Grants {
         writable: vec![wt.clone()],
         seats: Vec::new(),
+        seat_mounts: Vec::new(),
         read_only: Vec::new(),
         runtime_dir: None,
         sockets: Vec::new(),
@@ -3542,6 +3544,7 @@ fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself
         let grants = Grants {
             writable: vec![wt.clone()],
             seats: Vec::new(),
+            seat_mounts: Vec::new(),
             read_only,
             runtime_dir: None,
             sockets: Vec::new(),

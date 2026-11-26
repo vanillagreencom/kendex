@@ -1181,6 +1181,11 @@ impl EffectOutcome {
             Terminal::Unconfirmed { .. } => false,
         }
     }
+
+    /// Whether the effect settled as failed after discharging its handles.
+    pub fn failed(&self) -> bool {
+        matches!(self.terminal, Terminal::Failed)
+    }
 }
 
 #[cfg(test)]
@@ -1791,6 +1796,7 @@ mod tests {
             observation: None,
             reconciled: None,
             observed_generation: None,
+            seat_view: None,
             extra: Default::default(),
         };
         let recorded = Obligations::recorded(&intent)

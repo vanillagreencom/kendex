@@ -105,15 +105,13 @@ impl Harness {
         }
     }
 
-    /// What a session writes under the harness's home, which a confined
-    /// launch grants there and nothing more: the home also holds the
-    /// settings, hooks and extensions the operator's next session there
-    /// runs. A named folder that is a link is granted where it leads, since
-    /// an operator's seats share their session folders by link.
+    /// The home entries the grant planner must account for. Claude's list
+    /// identifies directories the seat view keeps local or shares for
+    /// transcript readback. Other harnesses use their existing home grants.
     pub fn home_writes(self) -> HomeWrites {
         match self {
             Harness::Claude => HomeWrites::Folders(&[
-                "projects",
+                crate::session::CLAUDE_PROJECTS,
                 "sessions",
                 "shell-snapshots",
                 "session-env",
@@ -124,7 +122,7 @@ impl Harness {
                 "paste-cache",
                 "telemetry",
             ]),
-            Harness::Copilot => HomeWrites::Folders(&["session-state"]),
+            Harness::Copilot => HomeWrites::Folders(&[crate::session::COPILOT_SESSION_STATE]),
             // Codex opens its state databases at the home's top level as it
             // starts, and refuses to start where it cannot. It only reads
             // its hook registration and scripts, its instructions and its

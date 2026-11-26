@@ -910,11 +910,18 @@ fn reconcile_close_on_a_start_mismatch_records_unconfirmed() {
 #[test]
 fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
     // A pid no process holds is confirmed gone, so the close completes and the
-    // lane reads done.
+    // lane reads done. The launch wrote its view before worktree repair
+    // retargeted the checkout's tmp link.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
+    let checkout = runner.state_dir().canonicalize().unwrap();
+    let backing = checkout.join("scratch-a/lane-mail/KEN-21/seat-views");
+    let current = checkout.join("scratch-b/lane-mail/KEN-21/seat-views");
+    std::fs::create_dir_all(&backing).unwrap();
+    std::fs::create_dir_all(&current).unwrap();
+    std::os::unix::fs::symlink("scratch-b", checkout.join("tmp")).unwrap();
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane(
         "KEN-21",
@@ -922,16 +929,18 @@ fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
         &runner,
         json!({"pane": "%99", "server": server.pid, "pid": GONE_PID, "start": "ticks:1"}),
     )]);
-    fleet["intents"] = json!([lane_intent(
-        "close-resources",
-        "KEN-21",
-        "unconfirmed",
-        None
-    )]);
+    let mut launch = lane_intent("launch-session", "KEN-21", "confirmed", None);
+    launch["seat_view"] = json!(backing);
+    fleet["intents"] = json!([
+        launch,
+        lane_intent("close-resources", "KEN-21", "unconfirmed", None)
+    ]);
     runner.write_fleet(&fleet);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "confirmed");
     assert_eq!(runner.fleet()["lanes"][0]["status"], "done");
+    assert!(!backing.exists(), "close removes the recorded view");
+    assert!(current.is_dir(), "the new tmp location is left intact");
 }
 
 #[test]
@@ -1252,6 +1261,17 @@ fn a_new_window_whose_hook_fails_after_the_window_opened_leaves_no_window() {
     assert_eq!(observation["note"], "launch-line-unsent");
     assert_eq!(observation["refusal"], "tmux-refused");
     assert_eq!(report["lane"]["status"], "stopped", "{report}");
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(observation["confinement"]["state"], "confined", "{report}");
+        assert!(report["intent"]["seat_view"].is_string(), "{report}");
+        assert!(
+            !runner
+                .state_dir()
+                .join("tmp/lane-mail/KEN-1/seat-views")
+                .exists()
+        );
+    }
     assert_eq!(server.panes(), panes, "the window is closed");
 }
 
@@ -3348,19 +3368,8 @@ fn a_relaunch_resumes_where_its_account_holds_the_session_and_starts_fresh_elsew
     assert_eq!(resumed["lane"]["session_id"], rebound);
     effect_report(&runner.op_fleet(&terminal_close("KEN-R")));
     // The same account with the session file gone: fresh again.
-    let slug: String = runner
-        .state_dir()
-        .display()
-        .to_string()
-        .chars()
-        .map(|c| if c == '/' || c == '.' { '-' } else { c })
-        .collect();
-    std::fs::remove_file(
-        b.join("projects")
-            .join(&slug)
-            .join(format!("{rebound}.jsonl")),
-    )
-    .unwrap();
+    std::fs::remove_file(project_dir(&b, runner.state_dir()).join(format!("{rebound}.jsonl")))
+        .unwrap();
     let missing = effect_report(&runner.op_fleet(&request(&b)));
     assert_eq!(missing["intent"]["outcome"], "confirmed", "{missing}");
     assert_eq!(missing["intent"]["observation"]["route"], "fresh");
@@ -3998,6 +4007,11 @@ fn a_receipted_survivor_read_gone_on_a_later_reconcile_settles_the_launch() {
         ],
         "discharged": [],
     });
+    let view = std::fs::canonicalize(runner.state_dir())
+        .unwrap()
+        .join("scratch/lane-mail/KEN-M/seat-views");
+    std::fs::create_dir_all(&view).unwrap();
+    fleet["intents"][0]["seat_view"] = json!(view);
     runner.write_fleet(&fleet);
     assert!(
         tmux(&server.socket, &["kill-pane", "-t", &pane])
@@ -4009,11 +4023,16 @@ fn a_receipted_survivor_read_gone_on_a_later_reconcile_settles_the_launch() {
         first["intent"]["outcome"], "unconfirmed",
         "the receipted survivor stands: {first}"
     );
+    assert!(view.is_dir(), "the live survivor still holds the view");
     reap(pid);
     let second = runner.reconcile_one();
     assert_eq!(
         second["intent"]["outcome"], "failed",
         "the acquired pid read gone settles the launch: {second}"
+    );
+    assert!(
+        !view.exists(),
+        "terminal reconcile removes the recorded backing"
     );
 }
 
@@ -7295,6 +7314,7 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
         "the setup's own refusal, its first build's: {report}"
     );
     assert_eq!(server.panes().len(), 1, "no window opened");
+    assert!(!root.join("tmp/lane-mail/KEN-B/seat-views").exists());
 
     let report = effect_report(&runner.op_fleet(&launch_request("KEN-C", runner.state_dir())));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
@@ -12647,11 +12667,8 @@ fn a_desktop_lane_reaches_the_display_its_relaunch_still_does_and_a_lane_without
 /// A lane's second opinion runs on the accounts its configured targets can
 /// pick: a Claude lane whose roster names Codex writes the configured Codex
 /// account's seat, and is refused a Copilot account's and another Claude
-/// account's, which no target of it can pick. In a Codex seat, written
-/// whole, the lane writes its state database and is refused the hook
-/// registration, the instructions and the command rules the operator's next
-/// session there runs: where they stand, and where the registration or the
-/// rules folder was absent, whose empty form the launch writes.
+/// account's, which no target of it can pick. The Codex view preserves
+/// standing hook registrations and instructions and keeps new files local.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_writes_the_seat_its_review_target_can_pick_and_is_refused_a_third_harness_s() {
@@ -12864,13 +12881,107 @@ fn folder_writes(root: &Path, folders: &[&str]) -> String {
     )
 }
 
-/// A Claude lane cannot replace its seat's settings: the seat is read-only,
-/// so the link every operator seat holds stands and the settings read
-/// through it stay the operator's. The session folder its harness writes in
-/// the seat, made by the launch, takes the lane's session file.
+/// The confined harness's snapshot lives only in its own seat view, and
+/// the close removes the view without touching the fake shared seat.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_claude_lane_writes_its_own_snapshot_and_leaves_the_shared_snapshot_alone() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let seat = outside.join("seat");
+    plant_credential(&seat);
+    let shared = outside.join("shared-snapshots");
+    std::fs::create_dir(&shared).unwrap();
+    std::os::unix::fs::symlink(&shared, seat.join("shell-snapshots")).unwrap();
+    let host_snapshot = shared.join("snapshot-marker");
+    std::fs::write(&host_snapshot, "host marker\n").unwrap();
+    let own = seat.join("shell-snapshots/snapshot-marker");
+    world.probe_env("PROBE_RUN", &format!(
+        "mkdir -p '{dir}' && printf 'lane marker\\n' > '{file}'; test \"$(cat '{file}')\" = 'lane marker' && echo snapshot=written",
+        dir = own.parent().unwrap().display(),
+        file = own.display(),
+    ));
+    let mut request = launch_request("KEN-SNAP", world.runner.state_dir());
+    request["account"] = json!(seat);
+    world.launch(&request);
+    let probe = world.probe("KEN-SNAP", 1);
+    assert!(probe.contains("snapshot=written"), "{probe}");
+    assert_eq!(
+        std::fs::read_to_string(&host_snapshot).unwrap(),
+        "host marker\n"
+    );
+    let views = world
+        .runner
+        .state_dir()
+        .join("tmp/lane-mail/KEN-SNAP/seat-views");
+    assert!(views.is_dir());
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-SNAP")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    assert!(!views.exists());
+}
+
+/// A running confined reader sees a new credential inode published by the host.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_claude_seat_view_keeps_host_credential_replacement_visible_and_read_only() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let seat = outside.join("seat");
+    plant_credential(&seat);
+    let cwd = world.runner.state_dir();
+    world.probe_env(
+        "PROBE_RUN",
+        r#"
+        cat "$CLAUDE_CONFIG_DIR/.credentials.json"
+        printf '\n'
+        (
+            for attempt in $(seq 1 100); do
+                [ ! -e "$PWD/published" ] || break
+                sleep 0.05
+            done
+            [ -e "$PWD/published" ] || exit 1
+            cat "$CLAUDE_CONFIG_DIR/.credentials.json" > "$PWD/readback.tmp"
+            if (printf 'lane marker' > "$CLAUDE_CONFIG_DIR/.credentials.json") 2>/dev/null; then
+                echo wrote >> "$PWD/readback.tmp"
+            fi
+            mv "$PWD/readback.tmp" "$PWD/readback"
+        ) &
+    "#,
+    );
+    let mut request = launch_request("KEN-CREDS", cwd);
+    request["account"] = json!(seat);
+    world.launch(&request);
+    let before = world.probe("KEN-CREDS", 1);
+    assert!(before.contains("planted"), "{before}");
+    let updated = r#"{"claudeAiOauth":{"accessToken":"rotated-fixture","subscriptionType":"max"}}"#;
+    let file = seat.join(".credentials.json");
+    let next = seat.join(".next-credential");
+    std::fs::write(&next, updated).unwrap();
+    std::fs::rename(next, &file).unwrap();
+    std::fs::write(cwd.join("published"), "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let readback = loop {
+        if let Ok(text) = std::fs::read_to_string(cwd.join("readback")) {
+            break text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "confined reader did not acknowledge the replacement"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(readback, updated);
+    assert_eq!(std::fs::read_to_string(file).unwrap(), updated);
+}
+
+/// The projected settings file and projects root stay read-only while
+/// the lane's own project takes its transcript.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
+    use agent_runtime::session::{CLAUDE_PROJECT_NAME_VAR, claude_owned_project, claude_slug};
+    use agent_runtime::{Harness, reading::Reading, session};
+
     let world = Confined::new();
     let (_outside, outside) = outside_tmp();
     let operator = outside.join("operator/.claude/settings.json");
@@ -12879,20 +12990,73 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
     let seat = outside.join("seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
+    let other_memory = seat.join("projects/other-project/memory");
+    std::fs::create_dir_all(&other_memory).unwrap();
+    let initial = world.linked_worktree("ken-sr");
+    let base = outside.join("Work Trees");
+    std::fs::create_dir(&base).unwrap();
+    let physical = base.join("ken-sr");
+    git(
+        world.runner.state_dir(),
+        &[
+            "worktree",
+            "move",
+            initial.to_str().unwrap(),
+            physical.to_str().unwrap(),
+        ],
+    );
+    let alias = outside.join("Checkout Link");
+    std::os::unix::fs::symlink(&base, &alias).unwrap();
+    let worktree = alias.join("ken-sr");
+    let second = world.linked_worktree("ken-sr-other");
+    let sibling_base = outside.join("Work-Trees");
+    std::fs::create_dir(&sibling_base).unwrap();
+    let sibling = sibling_base.join("ken-sr");
+    git(
+        world.runner.state_dir(),
+        &[
+            "worktree",
+            "move",
+            second.to_str().unwrap(),
+            sibling.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(claude_slug(&worktree), claude_slug(&sibling));
+    let other_projects = [
+        seat.join("projects").join(claude_slug(&sibling)),
+        claude_owned_project(&seat, &sibling),
+    ];
+    let planted = neighbour_row("user", &sibling);
+    for path in &other_projects {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("neighbour.jsonl"), &planted).unwrap();
+    }
+    world.file_env(
+        &other_projects
+            .iter()
+            .map(|path| path.join("neighbour.jsonl").display().to_string())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    world.probe_env(CLAUDE_PROJECT_NAME_VAR, "shared-explicit-name");
     let link = seat.join("settings.json");
     std::os::unix::fs::symlink(&operator, &link).unwrap();
     world.probe_env(
         "PROBE_RUN",
         &format!(
-            "rm -f '{s}/settings.json' 2>/dev/null; {{ echo '{{\"hooks\": {{}}}}' > '{s}/settings.json'; }} 2>/dev/null && echo replace=written || echo replace=refused\necho \"settings=$(cat '{s}/settings.json')\"\n{}",
-            folder_writes(&seat, &["projects"]),
+            "rm -f '{s}/settings.json' 2>/dev/null; {{ echo '{{\"hooks\": {{}}}}' > '{s}/settings.json'; }} 2>/dev/null && echo replace=written || echo replace=refused\necho \"settings=$(cat '{s}/settings.json')\"\nprintf 'project-key=%s\\n' \"${{CLAUDE_CODE_PROJECT_DIR_NAME:-}}\"\n{}",
+            folder_writes(&seat, &["projects", "projects/other-project/memory"]),
             s = seat.display()
         ),
     );
-    let mut request = launch_request("KEN-SR", world.runner.state_dir());
+    let mut request = launch_request("KEN-SR", &worktree);
     request["account"] = json!(seat.display().to_string());
-    world.launch(&request);
-    let probe = world.probe("KEN-SR", 1);
+    let launch = world.launch(&request);
+    let probe = world.probe_in(&worktree, "KEN-SR", 1);
+    assert_eq!(
+        launch["intent"]["observation"]["confinement"]["state"], "confined",
+        "{launch}"
+    );
     // The launch records its bypass consent in the settings before the
     // window, through the link.
     let settings = std::fs::read_to_string(&operator).unwrap();
@@ -12902,17 +13066,190 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
         probe.contains(&format!("settings={}", settings.trim_end())),
         "{probe}"
     );
-    assert!(probe.contains("folder=projects written"), "{probe}");
+    assert!(probe.contains("folder=projects refused"), "{probe}");
+    assert!(
+        probe.contains("folder=projects/other-project/memory refused"),
+        "{probe}"
+    );
     assert_eq!(std::fs::read_link(&link).unwrap(), operator);
-    assert!(seat.join("projects/probe").is_file());
+    assert!(!seat.join("projects/probe").exists());
+    assert!(!other_memory.join("probe").exists());
+    assert_eq!(
+        probe.matches("file=neighbour.jsonl refused").count(),
+        2,
+        "{probe}"
+    );
+
+    let own = claude_owned_project(&seat, &worktree);
+    let key = own.file_name().unwrap().to_str().unwrap();
+    assert!(probe.contains(&format!("project-key={key}\n")), "{probe}");
+    assert!(!seat.join("projects/shared-explicit-name").exists());
+    for path in &other_projects {
+        assert_ne!(&own, path);
+        assert_eq!(
+            std::fs::read_to_string(path.join("neighbour.jsonl")).unwrap(),
+            planted
+        );
+    }
+    let id = launch["lane"]["session_id"].as_str().unwrap();
+    let pane = launch["lane"]["launch"]["pane"].as_str().unwrap();
+    let out = tmux(
+        &world.server.socket,
+        &["send-keys", "-t", pane, "readback", "Enter"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let found = loop {
+        match session::lead_at(Harness::Claude, &seat, &worktree, None) {
+            Reading::Live(lead) if lead.id == id => {
+                if session::user_texts_after(Harness::Claude, &lead.file, 0)
+                    .unwrap()
+                    .iter()
+                    .any(|turn| turn == "readback")
+                {
+                    assert_eq!(
+                        session::fixed_id_file(Harness::Claude, &seat, &worktree, id),
+                        Reading::Live(lead.file.clone())
+                    );
+                    break lead.file;
+                }
+            }
+            Reading::Live(lead) => panic!("unexpected session {}", lead.id),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => panic!("{cause}"),
+        }
+        assert!(Instant::now() < deadline, "{id} was not read back");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(found.parent().unwrap(), own);
+    let view = PathBuf::from(launch["intent"]["seat_view"].as_str().unwrap());
+    assert!(view.is_dir());
+    let close = effect_report(&world.runner.op_fleet(&terminal_close("KEN-SR")));
+    assert_eq!(close["intent"]["outcome"], "confirmed", "{close}");
+    assert!(!view.exists());
+    assert!(found.is_file());
+
+    let resumed = world.launch(&request);
+    assert_eq!(
+        resumed["intent"]["observation"]["route"], "resume",
+        "{resumed}"
+    );
+    assert_eq!(resumed["lane"]["session_id"], id, "{resumed}");
+    let pane = resumed["lane"]["launch"]["pane"].as_str().unwrap();
+    let out = tmux(
+        &world.server.socket,
+        &["send-keys", "-t", pane, "resumed-readback", "Enter"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let turns = agent_runtime::session::user_texts_after(Harness::Claude, &found, 0).unwrap();
+        if turns.iter().any(|line| line == "resumed-readback") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{id} did not append after resume"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
-/// A Copilot seat a lane's review can run on and a Pi lane's own root keep
-/// the folders their harness loads code from read-only: the lane is refused
-/// a file in `extensions/`, `hooks/` and `packages/` of each, present or
-/// not. The session folder each harness writes takes one: the Copilot
-/// seat's `session-state/`, made by the launch in a seat otherwise
-/// read-only, and `sessions/` in the Pi root, which Pi must write whole.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_implicit_claude_view_reads_the_original_trust_and_credential_paths() {
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let home = outside.join("operator");
+    let seat = home.join(".claude");
+    plant_credential(&seat);
+    let global = home.join(".claude.json");
+    let named = seat.join(".claude.json");
+    std::fs::write(&global, r#"{"trust":"implicit"}"#).unwrap();
+    std::fs::write(&named, r#"{"trust":"named"}"#).unwrap();
+    world.probe_env("HOME", home.to_str().unwrap());
+    world.probe_env(
+        "PROBE_RUN",
+        r#"
+        test "$(cat "$CLAUDE_CONFIG_DIR/.claude.json")" = '{"trust":"implicit"}' && echo trust=original
+        grep -q planted "$CLAUDE_CONFIG_DIR/.credentials.json" && echo credential=standing
+        (printf 'inert replacement' > "$CLAUDE_CONFIG_DIR/.claude.json") 2>/dev/null || echo trust=read-only
+        "#,
+    );
+    let worktree = world.runner.state_dir();
+    let mut request = launch_request("KEN-IMPLICIT", worktree);
+    request.as_object_mut().unwrap().remove("account");
+    let report = effect_report(
+        &world
+            .runner
+            .op_fleet_env(&request, &[("HOME", home.to_str().unwrap())]),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let probe = world.probe("KEN-IMPLICIT", 1);
+    for expected in ["trust=original", "credential=standing", "trust=read-only"] {
+        assert!(probe.contains(expected), "{expected}: {probe}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(global).unwrap(),
+        r#"{"trust":"implicit"}"#
+    );
+    assert_eq!(
+        std::fs::read_to_string(named).unwrap(),
+        r#"{"trust":"named"}"#
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_confined_claude_resume_refuses_a_named_legacy_session_without_moving_it() {
+    use agent_runtime::session::{CLAUDE_PROJECT_NAME_VAR, claude_owned_project};
+
+    let world = Confined::new();
+    let (_outside, outside) = outside_tmp();
+    let seat = outside.join("seat");
+    plant_credential(&seat);
+    let worktree = world.runner.state_dir();
+    let mut request = launch_request("KEN-LEGACY", worktree);
+    request["account"] = json!(seat);
+    world.launch(&request);
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-LEGACY")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+
+    let id = "98ec72e4-7ec3-442d-8116-2b19c80b2baa";
+    let legacy = seat
+        .join("projects/old-explicit-name")
+        .join(format!("{id}.jsonl"));
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    let history = json!({
+        "type": "user", "sessionId": id, "cwd": worktree,
+        "message": {"role": "user", "content": "inert historical input"}
+    })
+    .to_string();
+    std::fs::write(&legacy, &history).unwrap();
+    let mut fleet = world.runner.fleet();
+    fleet["lanes"][0]["session_id"] = json!(id);
+    world.runner.write_fleet(&fleet);
+    // A prior shell could have set a different name from today's.
+    world.probe_env(CLAUDE_PROJECT_NAME_VAR, "current-explicit-name");
+    let panes = world.server.panes();
+    let refused = effect_report(&world.runner.op_fleet(&request));
+    let observation = &refused["intent"]["observation"];
+    assert_eq!(refused["intent"]["outcome"], "failed", "{refused}");
+    assert_eq!(observation["cause"], "claude-legacy-resume", "{refused}");
+    assert_eq!(observation["session"], id, "{refused}");
+    assert_eq!(observation["path"], json!(legacy), "{refused}");
+    assert_eq!(world.server.panes().len(), panes.len(), "{refused}");
+    assert_eq!(std::fs::read_to_string(&legacy).unwrap(), history);
+    assert!(
+        !claude_owned_project(&seat, worktree)
+            .join(format!("{id}.jsonl"))
+            .exists()
+    );
+}
+
+/// The Copilot review seat keeps standing code read-only, isolates new
+/// names and shares session-state. The Pi root protects its code folders
+/// and keeps its writable sessions folder.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes_their_sessions() {
@@ -12937,10 +13274,13 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     );
     world.launch(&launch_request("KEN-CP", world.runner.state_dir()));
     let probe = world.probe("KEN-CP", 1);
-    for name in ["extensions", "hooks", "packages"] {
-        assert!(probe.contains(&format!("folder={name} refused")), "{probe}");
+    assert!(probe.contains("folder=extensions refused"), "{probe}");
+    for name in ["hooks", "packages"] {
+        assert!(probe.contains(&format!("folder={name} written")), "{probe}");
+        assert!(!copilot.join(name).exists());
     }
     assert!(probe.contains("folder=session-state written"), "{probe}");
+    assert!(copilot.join("session-state/probe").is_file());
 
     let root = outside.join("pi-root");
     pi_root_ready(&root);
@@ -12948,6 +13288,8 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
+    let review = outside.join("claude-review");
+    plant_credential(&review);
     let bin = outside.join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     write_executable(
@@ -12957,16 +13299,32 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     let probe_pi = world.runner.state_dir().join("probe-pi").join("pi");
     std::fs::create_dir_all(probe_pi.parent().unwrap()).unwrap();
     write_executable(&probe_pi, probe_script(&bin.join("pi")));
+    world.runner.env.retain(|(name, _)| {
+        name != "AGENT_RUNTIME_ACCOUNT_DIRS" && name != "SECOND_OPINION_MODELS"
+    });
     world.runner.env.extend([
         (
             "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!("pi={}", probe_pi.display()),
         ),
         ("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()),
+        (
+            "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
+            format!("{}:{}", copilot.display(), review.display()),
+        ),
+        (
+            "SECOND_OPINION_MODELS".to_owned(),
+            "claude copilot".to_owned(),
+        ),
     ]);
     world.probe_env(
         "PROBE_RUN",
-        &folder_writes(&root, &["extensions", "packages", "sessions"]),
+        &format!(
+            "{}\n{}\n{}",
+            folder_writes(&root, &["extensions", "packages", "sessions"]),
+            folder_writes(&seat, &["projects"]),
+            folder_writes(&review, &["projects"]),
+        ),
     );
     let mut request = launch_request("KEN-PR", world.runner.state_dir());
     request["harness"] = json!("pi");
@@ -12986,6 +13344,9 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     }
     assert!(probe.contains("folder=sessions written"), "{probe}");
     assert!(!root.join("extensions/probe").exists());
+    assert!(report["intent"]["seat_view"].is_null(), "{report}");
+    assert!(seat.join("projects/probe").is_file());
+    assert!(review.join("projects/probe").is_file());
 }
 
 /// A confined launch makes no folder in a Pi root on the host: Pi reads an
@@ -13211,42 +13572,125 @@ fn a_pi_lane_starts_past_pi_s_project_trust_question() {
     world.launch(&request);
 }
 
-/// A seat shares its session folders by link, as an operator's seats do:
-/// the lane writes its transcript where the seat's `projects` leads, outside
-/// the seat, and the seat around the link stays read-only. A link that leads
-/// nowhere refuses the launch by name.
+/// The Claude project projection preserves host transcript readback even
+/// when the host projects directory is linked. Git-root memory stays
+/// private in a linked worktree, and a dangling projects link refuses.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_leads() {
     let world = Confined::new();
     let (_outside, outside) = outside_tmp();
     let shared = outside.join("shared/projects");
-    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::create_dir_all(shared.join("other/memory")).unwrap();
+    let slug = agent_runtime::session::claude_owned_key(world.runner.state_dir());
     let seat = outside.join("seat");
     std::fs::create_dir_all(&seat).unwrap();
     plant_credential(&seat);
     std::os::unix::fs::symlink(&shared, seat.join("projects")).unwrap();
     world.probe_env(
         "PROBE_RUN",
-        &format!(
-            "{}\ntouch '{s}/stray' 2>/dev/null && echo stray=written || echo stray=refused",
-            folder_writes(&seat, &["projects"]),
-            s = seat.display()
+        &folder_writes(
+            &seat,
+            &["projects/other/memory", &format!("projects/{slug}/memory")],
         ),
     );
     let mut request = launch_request("KEN-SL", world.runner.state_dir());
     request["account"] = json!(seat.display().to_string());
-    world.launch(&request);
+    let report = world.launch(&request);
     let probe = world.probe("KEN-SL", 1);
-    assert!(probe.contains("folder=projects written"), "{probe}");
-    assert!(probe.contains("stray=refused"), "{probe}");
-    assert!(shared.join("probe").is_file());
+    assert!(
+        probe.contains("folder=projects/other/memory refused"),
+        "{probe}"
+    );
+    assert!(
+        probe.contains(&format!("folder=projects/{slug}/memory written")),
+        "{probe}"
+    );
+    let memory = shared.join(&slug).join("memory");
+    assert!(!memory.join("probe").exists());
+    let id = report["lane"]["session_id"].as_str().unwrap();
+    assert!(shared.join(&slug).join(format!("{id}.jsonl")).is_file());
     assert!(
         std::fs::symlink_metadata(seat.join("projects"))
             .unwrap()
             .file_type()
             .is_symlink()
     );
+
+    let linked_worktree = world.linked_worktree("ken-sl");
+    let linked_slug = agent_runtime::session::claude_owned_key(&linked_worktree);
+    let linked_seat = outside.join("linked-memory-seat");
+    plant_credential(&linked_seat);
+    let git_slug = agent_runtime::session::claude_slug(world.runner.state_dir());
+    let git_root_project = linked_seat.join("projects").join(&git_slug);
+    std::fs::create_dir_all(&git_root_project).unwrap();
+    let linked_memory = outside.join("linked-memory");
+    std::fs::create_dir(&linked_memory).unwrap();
+    std::fs::write(linked_memory.join("standing"), "host memory").unwrap();
+    let link = git_root_project.join("memory");
+    std::os::unix::fs::symlink(&linked_memory, &link).unwrap();
+
+    let setup = linked_worktree.join(".agents/skills/orch/scripts/setup");
+    std::fs::create_dir_all(setup.parent().unwrap()).unwrap();
+    write_executable(&setup, "#!/bin/sh\nexit 0\n");
+    // Long, standing paths used to exhaust the wrapper's per-argument limit.
+    for i in 0..256 {
+        std::fs::create_dir(
+            linked_seat
+                .join("projects")
+                .join(format!("{i}-{}", "p".repeat(180))),
+        )
+        .unwrap();
+    }
+
+    let path = format!("projects/{git_slug}/memory");
+    let probe = format!(
+        "{}\nmv '{}' '{}.moved' 2>/dev/null || echo memory-entry=held",
+        folder_writes(&linked_seat, &[&path]),
+        link.display(),
+        link.display(),
+    );
+    world.probe_env("PROBE_RUN", &probe);
+    let mut request = launch_request("KEN-SML", &linked_worktree);
+    request["account"] = json!(linked_seat);
+    let report = world.launch(&request);
+    let probe = world.probe_in(&linked_worktree, "KEN-SML", 1);
+    assert!(probe.contains(&format!("folder={path} written")), "{probe}");
+    assert!(probe.contains("memory-entry=held"), "{probe}");
+    assert!(!linked_memory.join("probe").exists());
+    assert_eq!(std::fs::read_link(&link).unwrap(), linked_memory);
+    assert_eq!(
+        std::fs::read_to_string(linked_memory.join("standing")).unwrap(),
+        "host memory"
+    );
+    let id = report["lane"]["session_id"].as_str().unwrap();
+    assert!(
+        linked_seat
+            .join("projects")
+            .join(linked_slug)
+            .join(format!("{id}.jsonl"))
+            .is_file()
+    );
+
+    // The same link would be removable when its directory is the
+    // writable transcript project. Refuse that launch before a worker.
+    let owned_project = linked_seat.join("projects").join(&slug);
+    std::fs::create_dir(&owned_project).unwrap();
+    let owned_link = owned_project.join("memory");
+    std::os::unix::fs::symlink(&linked_memory, &owned_link).unwrap();
+    let panes = world.server.panes().len();
+    let mut request = launch_request("KEN-SLINK", world.runner.state_dir());
+    request["account"] = json!(linked_seat);
+    let report = effect_report(&world.runner.op_fleet(&request));
+    let observation = &report["intent"]["observation"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(observation["cause"], "grant-memory-link", "{report}");
+    assert_eq!(observation["project"], json!(owned_project), "{report}");
+    assert_eq!(observation["path"], json!(owned_link), "{report}");
+    assert_eq!(observation["target"], json!(linked_memory), "{report}");
+    assert_eq!(std::fs::read_link(link).unwrap(), linked_memory);
+    assert_eq!(std::fs::read_link(owned_link).unwrap(), linked_memory);
+    assert_eq!(world.server.panes().len(), panes);
 
     let gone = outside.join("seat-gone");
     plant_credential(&gone);
@@ -13301,6 +13745,16 @@ fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
     for name in ["state_5.sqlite", "sessions"] {
         symlink(shared.join(name), linked.join(name)).unwrap();
     }
+    let claude = outside.join("claude-review");
+    plant_credential(&claude);
+    let project = claude
+        .join("projects")
+        .join(agent_runtime::session::claude_owned_key(
+            world.runner.state_dir(),
+        ));
+    std::fs::create_dir_all(&project).unwrap();
+    symlink(&shared, project.join("memory")).unwrap();
+    let configured = claude.display().to_string();
     for (item, seat, confinement) in [
         (
             "KEN-CL",
@@ -13314,7 +13768,13 @@ fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
         let mut request = launch_request(item, world.runner.state_dir());
         request["harness"] = json!("codex");
         request["account"] = json!(seat.display().to_string());
-        let report = effect_report(&world.runner.op_fleet(&request));
+        let extra = [("AGENT_RUNTIME_ACCOUNT_DIRS", configured.as_str())];
+        let env = if seat == &linked {
+            extra.as_slice()
+        } else {
+            &[]
+        };
+        let report = effect_report(&world.runner.op_fleet_env(&request, env));
         assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
         assert_eq!(
             report["intent"]["observation"]["confinement"], confinement,
@@ -13822,4 +14282,76 @@ fn a_confined_launch_refuses_a_worktree_tmp_that_links_outside_it() {
         "{report}"
     );
     assert_eq!(world.server.panes().len(), 1, "no window opened");
+}
+
+/// The worktree's own tmp target holds the backing until its lane closes.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_lane_close_removes_its_view_through_an_in_tree_tmp_link() {
+    let world = Confined::new();
+    let root = world.runner.state_dir();
+    git(root, &["branch", "-M", "main"]);
+    let physical = world.linked_worktree("ken-112");
+    let origin = world.dir.path().join("origin.git");
+    git(root, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    git(root, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(root, &["push", "-u", "origin", "main"]);
+    let alias = world.dir.path().join("tree-alias");
+    std::os::unix::fs::symlink(world.dir.path(), &alias).unwrap();
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../worktree/scripts/worktree");
+    let config = |scratch: &str| {
+        std::fs::write(
+            root.join(".env.local"),
+            format!(
+                "WORKTREE_BASE_DIR=\"{}\"\nWORKTREE_MKDIRS=\"{scratch}\"\nWORKTREE_RELATIVE_SYMLINKS=\"tmp={scratch}\"\n",
+                alias.display()
+            ),
+        ).unwrap();
+    };
+    config("scratch-a");
+    let out = program("bash")
+        .current_dir(root)
+        .env("WORKTREE_DEFAULT_BRANCH", "main")
+        .env("ORCH_RUNTIME_BINARY", env!("CARGO_BIN_EXE_orch-runtime"))
+        .arg(&script)
+        .args(["create", "KEN-112", "--reuse"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "reuse: {text} {}", stderr(&out));
+    let wt = PathBuf::from(text.lines().last().unwrap());
+    assert_eq!(wt, alias.join("ken-112"), "{text}");
+    let fix_links = || {
+        let out = program("bash")
+            .current_dir(root)
+            .arg(&script)
+            .arg("fix-links")
+            .arg(&wt)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "fix-links: {}", stderr(&out));
+    };
+    fix_links();
+    assert_eq!(
+        std::fs::read_link(wt.join("tmp")).unwrap(),
+        Path::new("scratch-a")
+    );
+    let launch = world.launch(&launch_request("KEN-TMP", &wt));
+    let views = physical.join("scratch-a/lane-mail/KEN-TMP/seat-views");
+    assert_eq!(launch["intent"]["seat_view"], json!(views), "{launch}");
+    assert!(views.is_dir());
+
+    config("scratch-b");
+    fix_links();
+    assert_eq!(
+        std::fs::read_link(wt.join("tmp")).unwrap(),
+        Path::new("scratch-b")
+    );
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-TMP")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    assert!(!views.exists());
+    assert_eq!(
+        std::fs::read_link(wt.join("tmp")).unwrap(),
+        Path::new("scratch-b")
+    );
 }

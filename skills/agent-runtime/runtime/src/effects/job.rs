@@ -2066,6 +2066,7 @@ fn mark_notice(
     crate::journal::write_progress(
         run.path,
         &RecordProgress {
+            seat_view: None,
             intent_id: intent.id.clone(),
             phase: None,
             obligations: None,

@@ -1373,13 +1373,13 @@ impl Runner {
 
 /// Claude Code's project directory for `cwd` under `home`.
 pub fn project_dir(home: &Path, cwd: &Path) -> PathBuf {
-    let slug: String = cwd
-        .display()
-        .to_string()
-        .chars()
-        .map(|c| if c == '/' || c == '.' { '-' } else { c })
-        .collect();
-    home.join("projects").join(slug)
+    let owned = agent_runtime::session::claude_owned_project(home, cwd);
+    if owned.is_dir() {
+        owned
+    } else {
+        home.join("projects")
+            .join(agent_runtime::session::claude_slug(cwd))
+    }
 }
 
 /// The user turns one Claude-shaped session file records, as lines; none
@@ -1478,12 +1478,16 @@ pub fn effect_report(out: &Output) -> Value {
 /// A launch of `item` on an account, naming the model and effort a launch
 /// on an account must, and the class and reason every launch states.
 pub fn launch_request(item: &str, mail_root: &Path) -> Value {
+    let seat = mail_root.join("tmp/fixture-claude-seat");
+    if mail_root.is_dir() {
+        plant_credential(&seat);
+    }
     json!({
         "op": "launch-lane",
         "item": item,
         "harness": "claude",
         "mail_root": mail_root.display().to_string(),
-        "account": mail_root.display().to_string(),
+        "account": seat.display().to_string(),
         "model": "claude-fable-5-1",
         "effort": "high",
         "class": CLASS,

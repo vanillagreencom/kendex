@@ -23,6 +23,7 @@ use agent_runtime::launch::{
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::rows;
+use agent_runtime::session::{self, same_directory};
 use agent_runtime::trust;
 use serde_json::{Value, json};
 
@@ -200,6 +201,9 @@ const CLOUD_BOUND: Duration = Duration::from_secs(600);
 /// The bound on the worktree package and git while a launch prepares its
 /// tree: a cloud launch's create and push, a local one's reuse of a claim.
 const WORKTREE_BOUND: Duration = Duration::from_secs(900);
+const CLAUDE_LEGACY_RESUME: &str = "claude-legacy-resume";
+const FRESH_HANDOFF: &str =
+    "Set relaunch to fresh in the standing handoff and send launch-lane again.";
 
 /// The session a launch opens: the lane's bound native session resumed, or
 /// a fresh one, with why where a relaunch could not resume. The route is
@@ -366,6 +370,18 @@ fn route_of(
             Reading::Live(None) => {}
             Reading::Live(Some(recorded)) if same_directory(&recorded, Path::new(&r.mail_root)) => {
             }
+            Reading::Unreadable {
+                cause: session::CLAUDE_PROJECT_AMBIGUOUS,
+            } => {
+                return match handoff {
+                    Some(Relaunch::Fresh) => Route::Fresh {
+                        cause: Some("session-retired"),
+                    },
+                    _ => Route::Refuse {
+                        cause: CLAUDE_LEGACY_RESUME,
+                    },
+                };
+            }
             // On a switch today's answer was always a fresh start, and a
             // fresh start on a new id overwrites nothing: every answer that
             // does not prove this lane's session under the request's account
@@ -397,18 +413,6 @@ fn route_of(
         Some(Relaunch::Fresh) => Route::Fresh {
             cause: Some("session-retired"),
         },
-    }
-}
-
-/// Whether two directory spellings name one directory: resolved where both
-/// resolve, else compared as spelled with trailing separators off.
-fn same_directory(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => {
-            let trimmed = |p: &Path| p.display().to_string().trim_end_matches('/').to_owned();
-            trimmed(a) == trimmed(b)
-        }
     }
 }
 
@@ -549,6 +553,37 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
+    if harness == Harness::Claude
+        && agent_runtime::confine::answer(agent_runtime::confine::Host::this(), harness)
+            == agent_runtime::confine::Answer::Confined
+        && let Route::Resume {
+            session_id,
+            home: Some(home),
+        } = route
+    {
+        let expected =
+            session::claude_owned_project(&home.home, &cwd).join(format!("{session_id}.jsonl"));
+        match session::fixed_id_file(harness, &home.home, &cwd, session_id) {
+            Reading::Live(file) if file == expected => {}
+            Reading::Live(file) => {
+                return Err(refused(
+                    CLAUDE_LEGACY_RESUME,
+                    &[
+                        ("session", session_id),
+                        ("path", &file.display().to_string()),
+                        ("recovery", FRESH_HANDOFF),
+                    ],
+                )
+                .into());
+            }
+            Reading::Gone => {
+                return Err(refused("session-missing", &[("session", session_id)]).into());
+            }
+            Reading::Unreadable { cause } => {
+                return Err(refused(cause, &[("session", session_id)]).into());
+            }
+        }
+    }
     let unrebased = reuse_claim(&settings.worktree_cli, &cwd, &r.item).map_err(Unready::Gate)?;
     let opening = opening_brief(r, lane, harness)?;
     let opening = if unrebased {
@@ -822,7 +857,12 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
     if let Route::Refuse { cause } = &route {
-        return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
+        let observation = if *cause == CLAUDE_LEGACY_RESUME {
+            json!({"cause": cause, "session": lane.session_id, "recovery": FRESH_HANDOFF})
+        } else {
+            json!({"cause": cause})
+        };
+        return Ok(operation.settle(Word::Failed, observation));
     }
     // Whether the launch re-enters a standing record, as the transition
     // judged it: the provider then reuses the worktree it holds.
@@ -994,7 +1034,7 @@ fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet
 /// window and the harness in it.
 fn local_launch(
     run: &Run,
-    operation: Operation,
+    mut operation: Operation,
     r: &LaunchLane,
     lane: &Lane,
     fleet: Fleet,
@@ -1026,13 +1066,27 @@ fn local_launch(
     if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
+    let view = prep.granted.view_path();
+    if let Some(path) = &view {
+        operation.record_seat_view(path.clone())?;
+    }
     if let Err(e) = prep.granted.write() {
-        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
+        return Ok(rollback_local_views(
+            operation.settle(Word::Failed, refusal_observation(&e)),
+            Some(&cwd),
+            &r.item,
+            view.as_deref(),
+        ));
     }
     // The tree's setups run once what the grants bind stands: a confined
     // lane's under its own words, before the window as every launch's.
     if let Err(e) = build_runtimes(run.settings.inherited().setups, &prep.command) {
-        return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
+        return Ok(rollback_local_views(
+            operation.settle(Word::Failed, refusal_observation(&Error::from(e))),
+            Some(&cwd),
+            &r.item,
+            view.as_deref(),
+        ));
     }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(
@@ -1061,7 +1115,31 @@ fn local_launch(
             outcome.annotate(&key, value);
         }
     }
-    Ok(outcome)
+    Ok(rollback_local_views(
+        outcome,
+        Some(&cwd),
+        &r.item,
+        view.as_deref(),
+    ))
+}
+
+fn rollback_local_views(
+    mut outcome: EffectOutcome,
+    mail_root: Option<&Path>,
+    item: &str,
+    view: Option<&Path>,
+) -> EffectOutcome {
+    if outcome.failed()
+        && let Some(view) = view
+    {
+        let removed = mail_root
+            .ok_or_else(|| refused("grant-view-root-missing", &[("item", item)]))
+            .and_then(|root| super::grants::remove_views(root, item, view));
+        if let Err(e) = removed {
+            outcome.annotate("seat_view_cleanup", refusal_observation(&e));
+        }
+    }
+    outcome
 }
 
 /// What a hosted launch's provider answered of the lane's sandbox, whatever
@@ -2306,6 +2384,14 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
         .and_then(|observation| observation.get("confinement"))
     {
         outcome.annotate("confinement", confinement.clone());
+    }
+    if matches!(surface_of(lane.host.as_deref()), Surface::Local(())) {
+        outcome = rollback_local_views(
+            outcome,
+            lane.mail_root.as_deref().map(Path::new),
+            &lane.item,
+            intent.seat_view.as_deref(),
+        );
     }
     Ok(outcome)
 }

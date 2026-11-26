@@ -504,9 +504,11 @@ pub enum Credential {
     },
 }
 
+pub const CLAUDE_CREDENTIALS_FILE: &str = ".credentials.json";
+
 pub fn credential_path(harness: Harness, dir: &str) -> String {
     match harness {
-        Harness::Claude => format!("{dir}/.credentials.json"),
+        Harness::Claude => format!("{dir}/{CLAUDE_CREDENTIALS_FILE}"),
         Harness::Copilot => format!("{dir}/config.json"),
         Harness::Codex | Harness::Pi => format!("{dir}/auth.json"),
     }

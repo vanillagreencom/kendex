@@ -509,9 +509,19 @@ impl<'a> Operation<'a> {
     /// route. An unchanged set the recorded owner still holds is accepted, not
     /// yielded.
     fn write(&mut self) -> Result<()> {
+        self.write_progress(None)
+    }
+
+    /// Reserve the launch view in the existing intent before making it.
+    pub fn record_seat_view(&mut self, path: PathBuf) -> Result<()> {
+        self.write_progress(Some(path))
+    }
+
+    fn write_progress(&mut self, seat_view: Option<PathBuf>) -> Result<()> {
         let r = crate::journal::write_progress(
             self.run.path,
             &RecordProgress {
+                seat_view,
                 intent_id: self.intent_id.clone(),
                 phase: self.phase.clone(),
                 obligations: Some(self.obligations.record().clone()),
@@ -817,6 +827,7 @@ pub fn apply_outcome_with(
         let r = crate::journal::write_progress(
             run.path,
             &RecordProgress {
+                seat_view: None,
                 intent_id: outcome.intent_id.clone(),
                 phase: None,
                 obligations: Some(record_after),
@@ -1431,6 +1442,7 @@ mod tests {
         crate::journal::write_progress(
             &path,
             &RecordProgress {
+                seat_view: None,
                 intent_id: intent.id.clone(),
                 phase: None,
                 obligations: Some(replaced),
@@ -1522,6 +1534,7 @@ mod tests {
         crate::journal::write_progress(
             &path,
             &RecordProgress {
+                seat_view: None,
                 intent_id: intent.id.clone(),
                 phase: None,
                 obligations: Some(replacement),

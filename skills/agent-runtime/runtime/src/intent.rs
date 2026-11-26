@@ -749,6 +749,9 @@ pub struct Intent {
     pub reconciled: Option<Reconciled>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_generation: Option<u64>,
+    /// Physical seat-view directory reserved by the local launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_view: Option<std::path::PathBuf>,
     /// Members the frame does not own, which the program that records
     /// them reads and writes through its own view of the row: kept as
     /// written across every write of the frame, after the frame's own
