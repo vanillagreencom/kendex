@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ LIB = Path(os.environ.get("JARVIS_TEST_SKILLS", str(REPO / "skills"))) / "jarvis
 os.environ["JARVIS_BASH"] = BASH
 sys.path.insert(0, str(LIB))
 import owner_asks
+import session as session_module
 from session import Refusal, Session
 
 
@@ -262,6 +264,7 @@ class OwnerAsksContract(unittest.TestCase):
                  ("not-http", {"url": "javascript:alert(1)"}, owner_asks.Unavailable)]
         for name, link, expected in cases:
             with self.subTest(link=name):
+                self.owner.session.path.unlink(missing_ok=True)
                 self.source.data = data = mailbox_projection(str(self.home))
                 mailbox = data["mailboxes"][0]
                 beside = dict(mailbox["asks"][0], id="beside-ask", text="Linked neighbour")
@@ -303,38 +306,114 @@ class OwnerAsksContract(unittest.TestCase):
         self.source.data["tracker"]["requests"].append(changed)
         self.assertEqual(self.page("snoozed")["revision"], first["revision"])
         self.assertEqual(self.page(cursor=first["nextCursor"]), pages[1])
-        self.assertEqual(self.source.collections, 2)
 
+        # Another reader's refresh that reads the same revision again leaves
+        # every walk in progress reading on; a changed revision ends them.
+        self.now += owner_asks.COLLECTION_SECONDS
         refreshed = self.page()
         self.assertEqual(refreshed["revision"], first["revision"])
-        self.assertEqual(self.source.collections, 3)
-        with self.assertRaises(owner_asks.Unavailable):
-            self.page(cursor=first["nextCursor"])
-        self.assertEqual(self.source.collections, 3)
+        for cursor, expected in ((first["nextCursor"], pages[1]), (pages[1]["nextCursor"], pages[2])):
+            continued = self.page(cursor=cursor, owner=self.new_owner())
+            self.assertEqual(continued, dict(expected, observedAt=refreshed["observedAt"]))
+        self.assertEqual(self.source.collections, 2)
 
+        self.now += owner_asks.COLLECTION_SECONDS
         self.source.data["tracker"]["requests"].pop()
         other_view = self.page("snoozed")
         self.assertEqual(other_view["activeCount"], 69)
         self.assertNotEqual(other_view["revision"], refreshed["revision"])
-        self.assertEqual(self.source.collections, 4)
-        with self.assertRaises(owner_asks.Unavailable):
-            self.page(cursor=refreshed["nextCursor"])
-        self.assertEqual(self.source.collections, 4)
+        self.assertEqual(self.source.collections, 3)
+        for stale in (refreshed["nextCursor"], pages[1]["nextCursor"]):
+            with self.assertRaises(owner_asks.Unavailable):
+                self.page(cursor=stale)
+        self.assertEqual(self.source.collections, 3)
 
         updated = self.page()
         self.assertEqual(updated["revision"], other_view["revision"])
-        self.assertEqual(self.source.collections, 5)
         snooze = self.later(updated["rows"][0], "hide-row", until=owner_asks.iso(self.now + 3600))
         self.assertEqual(snooze["kind"], "accepted")
-        self.assertEqual(self.source.collections, 7)
+        self.assertEqual(self.source.collections, 5)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=updated["nextCursor"])
-        self.assertEqual(self.source.collections, 7)
+        self.assertEqual(self.source.collections, 5)
 
+        self.now += owner_asks.COLLECTION_SECONDS
         self.source.data = projection(str(self.home))
         self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * (16 * 1024)
         with self.assertRaises(owner_asks.Unavailable):
             self.page()
+
+    def test_first_pages_inside_a_window_share_its_collection(self):
+        first = self.page()
+        self.assertEqual(self.source.collections, 1)
+        # A change inside the window shows on the first page after it.
+        self.source.data["tracker"]["requests"].pop()
+        self.now += owner_asks.COLLECTION_SECONDS - 1
+        for view in ("active", "snoozed"):
+            self.assertEqual(self.page(view, owner=self.new_owner())["revision"], first["revision"])
+        self.assertEqual(self.source.collections, 1)
+        self.now += 1
+        self.assertEqual(self.page()["activeCount"], 0)
+        self.assertEqual(self.source.collections, 2)
+
+        # An action's own read is the next first page's collection: a list
+        # it refused as changed lists at the revision that refusal judged.
+        self.source.data = projection(str(self.home), 2)
+        self.now += owner_asks.COLLECTION_SECONDS
+        listed = self.page()
+        self.source.data["tracker"]["requests"].pop()
+        stale = self.act("reply", listed["rows"][0], "stale-reply", text="Yes")
+        self.assertEqual((stale["kind"], stale["state"]), ("refused", "open"))
+        self.assertEqual(self.source.collections, 5)
+        current = self.page()
+        self.assertEqual(self.source.collections, 5)
+        self.assertEqual(current["activeCount"], 1)
+        # A delivery settles only in a new read.
+        self.assertEqual(self.act("reply", current["rows"][0], "reply", text="Yes")["kind"], "accepted")
+        self.assertEqual(self.source.collections, 7)
+        self.page()
+        self.assertEqual(self.source.collections, 8)
+
+    def test_overlapping_first_pages_share_one_collection(self):
+        collecting, waiting = threading.Event(), threading.Event()
+        collect = self.source.collect
+
+        def slow_collect(requests=()):
+            collecting.set()
+            # The second first page waits on the home's lock before this collection ends.
+            if not waiting.wait(timeout=10):
+                raise AssertionError("second-page-not-waiting")
+            return collect(requests)
+
+        class LockClock:
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+            @staticmethod
+            def sleep(seconds):
+                waiting.set()
+                time.sleep(seconds)
+
+        pages, failures = [], []
+
+        def read():
+            try:
+                pages.append(self.page(owner=self.new_owner()))
+            except BaseException as error:
+                failures.append(error)
+
+        with patch.object(self.source, "collect", side_effect=slow_collect), patch.object(session_module, "time", LockClock()):
+            threads = [threading.Thread(target=read)]
+            threads[0].start()
+            self.assertTrue(collecting.wait(timeout=10))
+            threads.append(threading.Thread(target=read))
+            threads[1].start()
+            for thread in threads:
+                thread.join(timeout=20)
+                self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(self.source.collections, 1)
+        self.assertEqual(pages[0], pages[1])
 
     def test_later_receipt_replay_precedes_revision(self):
         row = self.page()["rows"][0]
@@ -421,6 +500,7 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertEqual(self.later(checking, "snooze-claim", until=owner_asks.iso(self.now + 60))["state"], "snoozed")
         self.now += 60
         self.assertEqual(self.page()["rows"][0]["state"], "checking")
+        self.now += owner_asks.COLLECTION_SECONDS
         self.source.data["tracker"]["requests"] = []
         self.assertEqual(self.page()["rows"], [])
         self.assertEqual(self.owner.read()["deltas"], {})
@@ -454,10 +534,11 @@ class OwnerAsksContract(unittest.TestCase):
                 self.source.data = world(str(self.home))
                 row = self.page()["rows"][0]
                 if action:
-                    receipt = self.later(row, "membership-" + name, until=owner_asks.iso(self.now + 60))
+                    receipt = self.later(row, "membership-" + name, until=owner_asks.iso(self.now + 3600))
                     self.assertEqual((receipt["kind"], receipt["state"]), ("accepted", "snoozed"))
                 else:
                     self.assertEqual(self.owner.read()["deltas"], {})
+                self.now += owner_asks.COLLECTION_SECONDS
                 before = self.owner.session.path.read_bytes()
                 # The canonical reader refuses failed/incomplete traversals;
                 # neither refusal supplies an empty membership result.
@@ -717,11 +798,24 @@ class PublicOwnerAsks(MailWorld):
     def register(registry, *folders, state="ok", main=None):
         registry.write_text(listing(*(entry(folder, state, main=main) for folder in folders)))
 
+    def elapse_window(self):
+        """Ends the window of the main home's saved collection, as a console's
+        next poll after it would find it, so each list here reads its sources
+        again. It writes as Session.write does, and only a change."""
+        with patch.dict(os.environ, {"XDG_STATE_HOME": self.env["XDG_STATE_HOME"]}):
+            path = Session(str(self.home), env=self.env).path.with_name("owner-asks.json")
+        if path.exists():
+            state = json.loads(path.read_text())
+            if state.get("collection", {}).get("at", 0) != 0:
+                state["collection"]["at"] = 0
+                path.write_text(json.dumps(state, separators=(",", ":")) + "\n")
+
     def run_cli(self, action="list", home=None, payload=None, *args, view="active", skills=None):
         script = (skills / "jarvis/scripts" if skills else LIB.parent) / "jarvis-session"
         command = [BASH, script, "owner-asks", action, "--home", home or self.home, *args]
         if action == "list":
             command += ["--view", view]
+            self.elapse_window()
         result = subprocess.run(list(map(str, command)), env=self.env, text=True, input=payload,
                                 capture_output=True, cwd=self.home, timeout=20)
         return result, json.loads(result.stdout)
@@ -1068,6 +1162,7 @@ print(json.dumps(owner._presence('ssh:fixture')))
         result, receipt = self.run_cli("later", None, payload, "--id", row["id"])
         self.assertEqual((result.returncode, receipt["state"]), (0, "snoozed"))
         state_path, = (self.root / "runtime").rglob("owner-asks.json")
+        self.elapse_window()
         before = state_path.read_bytes()
         for mode in ("failed", "incomplete"):
             with self.subTest(mode=mode):
@@ -1506,6 +1601,7 @@ sys.exit(result.returncode)
             with self.subTest(view=view), patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
                 log.write_text("")
                 comment_reads.write_text("")
+                self.elapse_window()
                 session = Session(str(self.home))
                 session.path = session.path.with_name("owner-asks.json")
                 session.deadline = owner_asks.time.monotonic() + 600

@@ -16,7 +16,7 @@ Read when setting up a Jarvis home, adding an agent, skill or workstream, choosi
 | `state/archive/INDEX.md` | Committed | One dated line for each file the handoff replacement step archives |
 | Other files under `state/` | Committed | The work a consumer's file and shell tools write |
 | `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The local controller record |
-| `owner-asks.json`, beside the controller record on the main | Outside the home | Owner-ask action deltas and retry receipts |
+| `owner-asks.json`, beside the controller record on the main | Outside the home | Owner-ask action deltas, retry receipts, saved page snapshots and the last complete source collection |
 | `.agents/skills/` and each harness's skill and agent directories, such as `.claude/skills/`, `.claude/agents/` and `.codex/agents/` | Committed | Installed skills and agents, so a clone has them |
 | `tmp/` | Local | Scratch files, which stay on this machine |
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets, which stay on this machine |
@@ -27,6 +27,7 @@ Read when setting up a Jarvis home, adding an agent, skill or workstream, choosi
 - Other files under `state/`: an app-managed home limits model file and shell writes to this folder.
 - The controller record: the session runtime and the native SessionStart hook write it. The runtime writes no start-critical record under `state/`.
 - `owner-asks.json`: the [owner-ask operations](owner-asks.md) retain it. Satellites call this main-owned authority and hold no local copy.
+  - A first page reuses the last complete source collection for `COLLECTION_SECONDS`. That collection holds the ask and tracker comment text and the owner tracker settings.
 - `.agents/skills/` and the harness directories: kendex renders or links installed skills and agents here. In a home where kendex did not install Jarvis, an assistant app such as VGS can copy a kendex-rendered package to these same paths.
 - `tmp/`: scratch files follow [Scratch files](computer-use.md#scratch-files).
 - The private env file: kendex creates it with mode 600.

@@ -32,6 +32,10 @@ CALL_SECONDS = 14
 TRANSPORT_SECONDS = 2
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
+# A first page reuses the last complete collection younger than this, so
+# consoles polling an unchanged list cost at most one collection a window,
+# about four Linear requests, however many poll.
+COLLECTION_SECONDS = 60
 # A Done click is the owner's claim. The delegate who reads it decides
 # completion, so the claim says so where the delegate reads it.
 DONE_CLAIM = "Done claim; delegate verification is still required."
@@ -540,7 +544,8 @@ class OwnerAsks:
             self.session.write(state)
         if (not isinstance(state, dict) or state.get("v") != 1 or state.get("home") != self.session.home or not printable(state.get("homeId"))
                 or type(state.get("sequence")) is not int or not isinstance(state.get("deltas"), dict)
-                or not isinstance(state.get("requests"), dict) or not isinstance(state.get("pageSnapshots", {}), dict)):
+                or not isinstance(state.get("requests"), dict) or not isinstance(state.get("pageSnapshots", {}), dict)
+                or not isinstance(state.get("collection", {}), dict)):
             raise Unavailable("The main home's owner-action record could not be read.")
         return state
 
@@ -572,25 +577,42 @@ class OwnerAsks:
             return "snoozed", until
         return "checking" if delta.get("checking") else "open", None
 
+    @staticmethod
+    def remember(state, source, at):
+        state["collection"] = {"at": at, "source": source}
+
+    def collection(self, state):
+        """The last complete collection while it is younger than COLLECTION_SECONDS, else a new one.
+
+        Every caller holds the home's lock, so a first page that waits on a
+        running collection takes its result here."""
+        saved = state.get("collection")
+        if saved is not None and 0 <= self.clock() - saved["at"] < COLLECTION_SECONDS:
+            return saved
+        source = self.sources.collect(state["requests"].values())
+        self.remember(state, source, self.clock())
+        self.session.write(state)
+        return state["collection"]
+
     def page(self, state, view, cursor):
         snapshots = state.setdefault("pageSnapshots", {})
         offset = 0
         if cursor is None:
-            source = self.sources.collect(state["requests"].values())
-            rows, _, revision, now = self.current(state, source)
+            collection = self.collection(state)
+            rows, _, revision, _ = self.current(state, collection["source"])
             ordered = sorted(rows.values(), key=lambda row: (instant(row["askedAt"]), row["id"]))
             active = [row for row in ordered if row["state"] != "snoozed"]
             snoozed = [row for row in ordered if row["state"] == "snoozed"]
-            # A refresh replaces its cursor even when the evidence revision
-            # used by actions is unchanged.
-            snapshot = {"cursorRevision": uuid.uuid4().hex, "sequence": state["sequence"],
-                        "revision": revision, "observedAt": iso(now), "activeCount": len(active),
-                        "snoozedCount": len(snoozed), "rows": active if view == "active" else snoozed}
+            # The revision digests every row, so a cursor bound to it reads
+            # the same rows from any refresh that finds the same revision.
+            snapshot = {"sequence": state["sequence"], "revision": revision, "observedAt": iso(collection["at"]),
+                        "activeCount": len(active), "snoozedCount": len(snoozed),
+                        "rows": active if view == "active" else snoozed}
         else:
             try:
                 decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
                 snapshot = snapshots[view]
-                if (decoded[:3] != [state["homeId"], snapshot["cursorRevision"], view] or len(decoded) != 4
+                if (decoded[:3] != [state["homeId"], snapshot["revision"], view] or len(decoded) != 4
                         or snapshot["sequence"] != state["sequence"]
                         or type(decoded[3]) is not int or not 0 < decoded[3] < len(snapshot["rows"])):
                     raise ValueError("cursor")
@@ -601,7 +623,7 @@ class OwnerAsks:
         selected = snapshot["rows"]
 
         def result(end):
-            next_cursor = (base64.urlsafe_b64encode(encoded([state["homeId"], snapshot["cursorRevision"], view, end]).encode()).decode()
+            next_cursor = (base64.urlsafe_b64encode(encoded([state["homeId"], snapshot["revision"], view, end]).encode()).decode()
                            if end < len(selected) else None)
             return {"v": 1, "homeId": state["homeId"], "revision": snapshot["revision"], "observedAt": snapshot["observedAt"],
                     "activeCount": snapshot["activeCount"], "snoozedCount": snapshot["snoozedCount"], "rows": selected[offset:end],
@@ -615,8 +637,10 @@ class OwnerAsks:
         if end == offset and offset < len(selected) or len(encoded(page).encode()) + 1 > PAGE_BYTES:
             raise Unavailable("An individual owner ask exceeds the page byte limit.")
         if cursor is None:
+            # A snapshot of the same revision holds the same rows, so one
+            # this refresh would not save still serves a walk in progress.
             retained = {name: previous for name, previous in snapshots.items()
-                        if name != view and previous["revision"] == snapshot["revision"]}
+                        if previous["revision"] == snapshot["revision"]}
             if not page["complete"]:
                 retained[view] = snapshot
             if retained != snapshots:
@@ -639,6 +663,9 @@ class OwnerAsks:
             # identity settles it; the revision it was sent at has moved on.
             return self.deliver(state, previous, retry=True)
         source = self.sources.stable(state["requests"].values())
+        # The next first page lists this read, so a refusal for a changed
+        # list leads to the revision it was judged at.
+        self.remember(state, source, self.clock())
         rows, routes, revision, now = self.current(state, source)
         row = rows.get(key)
 
@@ -675,7 +702,10 @@ class OwnerAsks:
     def deliver(self, state, entry, retry):
         payload = entry["payload"]
         key, request = payload["id"], payload["request"]
-        if not self.sources.deliver(entry["route"], entry["body"], entry["key"], retry):
+        delivered = self.sources.deliver(entry["route"], entry["body"], entry["key"], retry)
+        # Only a new read shows what the delivery settled, or that the ask had closed.
+        state.pop("collection", None)
+        if not delivered:
             entry["receipt"] = self.receipt(request, "refused", "closed",
                                             "This ask is closed in its mailbox, so this request added nothing to it.")
         elif payload["action"] == "done":
