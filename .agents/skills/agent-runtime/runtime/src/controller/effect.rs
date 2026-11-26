@@ -36,7 +36,9 @@ use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::host::tmux;
 use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
-use crate::launch::{ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume};
+use crate::launch::{
+    COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume,
+};
 use crate::observe::WallKind;
 use crate::reading::Reading;
 use crate::settings::{ControllerSettings, EngineSettings, LaunchSettings};
@@ -630,9 +632,7 @@ impl Successor {
                 session_file: self.resume_file.clone(),
             });
         }
-        // The tier is decided once, on the intent this one build spells.
-        intent.context_tier = crate::launch::copilot_context_tier(&intent)?;
-        crate::launch::build(&intent)
+        crate::launch::build_local(&mut intent)
     }
 
     /// The runner's own native session file: the file its
@@ -1501,6 +1501,9 @@ fn succeed(
     }
     if let Some(note) = sign_in_note {
         outcome.annotate("sign_in", note);
+    }
+    if let Some(cause) = &command.copilot_model_list_unavailable {
+        outcome.annotate(COPILOT_MODEL_LIST_UNAVAILABLE, json!(cause));
     }
     Ok(outcome)
 }

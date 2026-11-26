@@ -2041,8 +2041,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 })?;
             intent.claude_sign_in = claude_sign_in(&intent)?;
             prepare_home(&mut intent)?;
-            intent.context_tier = launch::copilot_context_tier(&intent)?;
-            let command = launch::build(&intent)?;
+            let command = launch::build_local(&mut intent)?;
             if let Some(brief) = &command.brief_path
                 && !brief.is_file()
             {

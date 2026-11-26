@@ -12,6 +12,10 @@
 #                    the pasted line.
 # It launches no model and reaches no account; it stands until its stdin
 # closes, which a kill-server or a window kill does.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 drop="${STUB_TURNS_DROP:-}"
 session="stub-$$"
 while [ $# -gt 0 ]; do

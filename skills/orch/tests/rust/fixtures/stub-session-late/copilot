@@ -5,6 +5,10 @@
 # with plain `id:` and `cwd:` lines, then `events.jsonl` beside it at the
 # first turn its `-i` prompt makes, the shape agent-runtime's session module
 # reads. It stands until its stdin closes.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 id="0199c001-0000-7000-8000-$(printf '%012d' "$$")"
 state="$COPILOT_HOME/session-state/$id"
 printf '\xe2\x9d\xaf \n'

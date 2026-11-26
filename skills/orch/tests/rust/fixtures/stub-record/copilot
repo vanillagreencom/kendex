@@ -7,6 +7,10 @@
 # once the record is written and the row reads the record. `opened` holds the
 # variables the opener hands the session, each null where the line left it
 # unset.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 opened() {
   local name out="" sep=""
   for name in SECOND_OPINION_CURRENT_MODEL ORCH_COMPACTION_OVERRIDES; do

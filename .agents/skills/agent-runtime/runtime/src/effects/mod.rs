@@ -470,6 +470,17 @@ impl<'a> Operation<'a> {
         &self.intent_id
     }
 
+    /// The command a local launch of `intent` runs, its context tier decided
+    /// on this final intent ([`crate::launch::build_local`]): the decision
+    /// starts the Copilot CLI to read its model list, so a caller of the
+    /// engine reaches it through the operation, before any window opens.
+    pub fn build_local(
+        &self,
+        intent: &mut crate::launch::LaunchIntent,
+    ) -> Result<crate::launch::LaunchCommand> {
+        crate::launch::build_local(intent)
+    }
+
     /// Whether the record says this intent signalled anything, on this run or
     /// an earlier one.
     pub fn signalled(&self) -> bool {

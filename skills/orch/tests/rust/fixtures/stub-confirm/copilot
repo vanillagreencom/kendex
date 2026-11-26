@@ -8,6 +8,10 @@
 # agent-runtime's session module reads, so a delivery to it is confirmed
 # the way the runtime confirms one to the real harness. It stands until its
 # stdin closes.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 id="0199c002-0000-7000-8000-$(printf '%012d' "$$")"
 state="$COPILOT_HOME/session-state/$id"
 mkdir -p "$state"

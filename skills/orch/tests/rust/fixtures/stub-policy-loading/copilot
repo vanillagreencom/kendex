@@ -10,6 +10,10 @@
 # draft held or a line as itself, each a `user.message` row as
 # `stub-confirm/copilot` writes one. Every line read is appended to
 # `.stub-reads`, so a row counts what was typed into it.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 rule() {
   printf '\xe2\x94\x80%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
   printf '\n'
