@@ -2273,8 +2273,8 @@ with open(sys.argv[1], "ab") as out:
         answers the status read while orch refuses the verdict read with the
         wrapper's exit 69; RUNTIME false leaves no runtime installed; SETUP
         false runs the real wrapper with no binary built on a PATH without
-        cargo, where it builds nothing and refuses every command,
-        setup-required, the status read first."""
+        cargo, whose gh GitHub refuses, where it fetches and builds nothing
+        and refuses every command, setup-required, the status read first."""
         directory = self.packages / "agent-runtime"
         if directory.is_symlink():
             directory.unlink()
@@ -2284,7 +2284,16 @@ with open(sys.argv[1], "ab") as out:
         status = self.root / "status.json"
         wrapper = shlex.quote(str(REPO / "skills/agent-runtime/scripts/agent-runtime"))
         if runtime and not setup:
-            script.write_text('#!/bin/sh\nPATH=' + shlex.quote(str(self.path_without("cargo")))
+            # With no cargo the wrapper first fetches the published build
+            # through gh, and a signed-in host's gh answers it. A gh GitHub
+            # refuses as signed out (exit 4, `gh help exit-codes`) leaves it
+            # nothing to run on any host; a gh the case planted stands in.
+            signed_out = self.root / "signed-out"
+            signed_out.mkdir(exist_ok=True)
+            if not self.bin.joinpath("gh").exists():
+                signed_out.joinpath("gh").write_text("#!/bin/sh\nexit 4\n")
+                signed_out.joinpath("gh").chmod(0o755)
+            script.write_text('#!/bin/sh\nPATH=' + shlex.quote(str(signed_out) + os.pathsep + str(self.path_without("cargo")))
                               + ' AGENT_RUNTIME_CACHE=' + shlex.quote(str(self.root / "unbuilt"))
                               + ' exec ' + wrapper + ' "$@"\n')
             script.chmod(0o755)
