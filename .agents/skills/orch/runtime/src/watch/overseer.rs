@@ -1373,9 +1373,14 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             )
         })
     };
-    // An announced wall whose walk is not yet pending also stays walled
-    // until a reading with room or a returned turn ends it.
-    let announced = !pending && pass.baseline.get("overseer-walled", &key) == Some("announced");
+    // An announced wall whose walk is not yet pending, or the transfer that
+    // walk asked, also stays walled until a reading with room or a returned
+    // turn ends it, so a pass settles that transfer first.
+    let announced = !pending
+        && matches!(
+            pass.baseline.get("overseer-walled", &key),
+            Some("announced" | "requested")
+        );
     let turn = || {
         pane.as_ref()
             .is_some_and(|pane| pane.state == State::Working)

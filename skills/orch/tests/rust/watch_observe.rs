@@ -9849,6 +9849,90 @@ fn an_announced_wall_read_live_over_a_failed_account_read_keeps_its_rows_and_wal
     assert!(transfers.borrow().is_empty());
 }
 
+/// An announced wall whose walk finds a successor, read live with its own
+/// account read failed, settles the transfer that walk asked before
+/// anything ends the wall: the launch fails with its account left
+/// unproved, the case is announced again, and the next walk holds that
+/// account out.
+#[test]
+fn an_announced_wall_read_live_over_a_failed_account_read_settles_its_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (_, _, key, _) = live_overseer(dir.path(), &server, &fleet);
+    let failed = Cell::new(false);
+    let judge = |_: &Caller, _: Option<&str>| {
+        if failed.get() {
+            return Err("marks-unreadable".to_owned());
+        }
+        Ok(marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        ))
+    };
+    let walk = |request: &WalkRequest| {
+        let mut walked = walk_b(request)?;
+        if request.exclude.iter().any(|a| a == "/home/me/.bclaude")
+            && let WalkAnswer::Lane(chosen) = &mut walked.answer
+        {
+            chosen.account = Some("/home/me/.cclaude".to_owned());
+        }
+        Ok(walked)
+    };
+    let accept = |_: &str, _: &str| Ok(());
+    overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+    driver.alert = &accept;
+    let state = fleet.read();
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("announced")
+    );
+    failed.set(true);
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("requested")
+    );
+    let failed_at = driver.now - 200;
+    let mut doc = fleet.runner.fleet();
+    doc["controller"]["unproved"] = json!([
+        {"account": "/home/me/.bclaude", "note": "successor-not-ready", "at": clock::iso_utc(failed_at + 10)}
+    ]);
+    doc["intents"] = json!([{
+        "id": "request-transfer:overseer:1", "op": "request-transfer", "target": "overseer",
+        "created_at": clock::iso_utc(failed_at), "outcome": "failed",
+        "observation": {"note": "successor-not-ready"}
+    }]);
+    fleet.runner.write_fleet(&doc);
+    let state = fleet.read();
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("announced")
+    );
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("requested")
+    );
+    let accounts: Vec<Option<String>> = transfers
+        .borrow()
+        .iter()
+        .map(|t| t.successor.account.clone())
+        .collect();
+    assert_eq!(
+        accounts,
+        [
+            Some("/home/me/.bclaude".to_owned()),
+            Some("/home/me/.cclaude".to_owned())
+        ]
+    );
+}
+
 /// An announced usage wall still ends on a live reading of its own account
 /// with room, or on a turn the pane runs again while that read fails: the
 /// wall, its reset and its notices go, and nothing walks.
