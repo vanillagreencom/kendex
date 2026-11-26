@@ -297,8 +297,8 @@ printf 'cat ./tools/cache/../input.txt\n' >"$repo/tools/check.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'shell input through a tracked directory and a parent component'
 parent_hop_base="$(git -C "$repo" rev-parse HEAD)"
-edit_workflow() { # OLD NEW...: replace the first OLD of each pair, which must be present
-  python3 - "$repo/.github/workflows/ci.yml" "$@" <<'PY'
+edit_file() { # FILE OLD NEW...: replace the first OLD of each pair, which must be present
+  python3 - "$@" <<'PY'
 from pathlib import Path
 import sys
 path, *pairs = sys.argv[1:]
@@ -311,6 +311,7 @@ for old, new in zip(pairs[::2], pairs[1::2]):
 path.write_text(source)
 PY
 }
+edit_workflow() { edit_file "$repo/.github/workflows/ci.yml" "$@"; }
 git -C "$repo" checkout -qb fixture-workflow-env "$static_base"
 # A consumer ci.yml shape: literal workflow env that every job inherits.
 edit_workflow '\njobs:\n' \
@@ -386,8 +387,10 @@ git -C "$repo" add -A
 git -C "$repo" commit -qm 'refused Rust and Vitest jobs with reasoned claims'
 refused_claims_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-refused-unclaimed "$refused_claims_base"
-sed '/^web /d' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
-mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+# The refused Vitest job reads nothing before its refusal, so only the
+# missing claim can select it.
+edit_workflow '      - run: cat ./ops/notes.txt\n' ''
+edit_file "$repo/.github/ci-lanes.conf" 'web web/* # reason: npm ci installs what the suite loads\n' ''
 git -C "$repo" commit -qam 'the refused Vitest job has no claim'
 refused_unclaimed_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-checkout-path "$refused_claims_base"
@@ -408,11 +411,39 @@ git -C "$repo" checkout -qb fixture-linked-workdir "$refused_claims_base"
 # The claimed Cargo job runs in its crates through a tracked link.
 ln -s cargo "$repo/crates"
 edit_workflow '      - working-directory: cargo\n' '      - working-directory: crates\n'
-sed 's|^cargo cargo/\* |cargo rust-toolchain.toml |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
-mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+edit_file "$repo/.github/ci-lanes.conf" 'cargo cargo/* ' 'cargo rust-toolchain.toml '
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a claimed Cargo job runs in a linked directory'
 linked_workdir_base="$(git -C "$repo" rev-parse HEAD)"
+# The Cargo and Vitest readers each read their job, then a shape refusal
+# follows: the toolchain action, and an imported module that reads the
+# environment. The shell job tests for a file a change can add to a package
+# tree Cargo scans.
+git -C "$repo" checkout -qb fixture-refused-scope "$opted_base"
+edit_workflow '      - working-directory: cargo\n' \
+  '      - uses: dtolnay/rust-toolchain@stable\n      - working-directory: cargo\n'
+printf '%s\n' 'export const shared = process.env.SHARED ? 0 : 42' >"$repo/shared.mjs"
+printf '%s\n' 'test -e ./cargo/primary/notes.txt' >>"$repo/tools/check.sh"
+printf '{"lockfileVersion":3}\n' >"$repo/web/package-lock.json"
+printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain action picks the compiler' \
+  'web web/fixtures/* # reason: the suite reads its fixtures at runtime' >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'claimed Cargo and Vitest jobs refused after their readers ran'
+refused_scope_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-runner "$refused_scope_base"
+# The claimed shell job dispatches a lane through a runner whose interpreter
+# the reader refuses.
+edit_workflow '        run: bash ../shared.sh\n' '        run: bash ../shared.sh\n      - run: bin/run --lane check\n'
+mkdir -p "$repo/bin"
+printf '#!/usr/bin/env python3\nprint("check")\n' >"$repo/bin/run"
+chmod +x "$repo/bin/run"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a claimed shell job runs a Python lane runner'
+refused_runner_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-cargo-registry "$opted_base"
+printf 'itoa = "1"\n' >>"$repo/cargo/bridge/Cargo.toml"
+git -C "$repo" commit -qam 'a scanned package has a registry dependency'
+cargo_registry_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-vitest-refused-import "$static_base"
 # The Vitest reader refuses an import it has resolved, and no shell lane reads it.
 printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
@@ -1094,6 +1125,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     shell-symlink) base="$symlink_base" ;;
     refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
+    refused-shell-only|refused-vitest-package) base="$refused_scope_base" ;;
+    refused-runner) base="$refused_runner_base" ;;
+    cargo-registry-dependency) base="$cargo_registry_base" ;;
     refused-executable) base="$refused_executable_base" ;;
     linked-workdir-*) base="$linked_workdir_base" ;;
     vitest-refused-import) base="$vitest_refused_import_base" ;;
@@ -1326,6 +1360,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   refused_jobs=""
   case "$label" in
     cargo-external-child) refused_jobs='job=cargo cause=computed-path' ;;
+    cargo-registry-dependency) refused_jobs='job=cargo cause=cargo-external-dependency' ;;
+    refused-shell-only|refused-vitest-package)
+      refused_jobs='job=cargo cause=opaque-action,job=web cause=vitest-opaque-source' ;;
+    refused-runner)
+      refused_jobs='job=cargo cause=opaque-action,job=shell cause=unresolved-lane-dispatch,job=web cause=vitest-opaque-source' ;;
     refused-executable)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
     refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
@@ -1401,12 +1440,16 @@ cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-parent-hop|cargo/spare/cache/only.txt|false|true|false|false
 cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
+cargo-registry-dependency|tools/input.sh|true|true|true|true
 refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
 refused-proved-read|rust-toolchain.toml|false|true|false|false
 refused-ordinary-read|ops/notes.txt|false|false|true|false
 refused-executable|tools/run.py|true|false|false|false
+refused-shell-only|cargo/primary/notes.txt|true|false|false|false
+refused-vitest-package|web/package-lock.json|false|false|true|false
+refused-runner|bin/run|true|false|false|false
 checkout-path|tools/input.sh|true|false|false|false
 restored-workdir|subject/restored.txt|false|true|false|false
 symlink-workdir|subject|false|true|false|false

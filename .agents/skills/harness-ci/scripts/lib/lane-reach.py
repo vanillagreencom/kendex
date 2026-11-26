@@ -480,7 +480,10 @@ class Evidence:
             parts = [*Path(target).parts, *parts]
         reads.update(name for name in self.changed if under(name, "/".join(current) or "."))
 
-    def cargo_reads(self, args, directory):
+    def cargo_reads(self, args, directory, reads):
+        """Record each input in reads as the reader proves it. Return the
+        scanned packages' trees, which hold only once the whole job is read,
+        and the changed paths the reader judged."""
         require(args[:1] in [["test"], ["check"], ["clippy"], ["build"]],
                 "unsupported-cargo-command")
         options = args[1:]
@@ -525,10 +528,10 @@ class Evidence:
                 reads.add(path)
             return found
 
-        reads = {path for path in self.changed | self.files.keys()
-                 if any(part == ".cargo" for part in Path(path).parts)
-                 or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
-                                         ".clippy.toml"}}
+        reads.update(path for path in self.changed | self.files.keys()
+                     if any(part == ".cargo" for part in Path(path).parts)
+                     or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
+                                             ".clippy.toml"})
         found = inventory()
         defaults = set(found["workspace_default_members"])
         if not workspace and not package:
@@ -544,6 +547,9 @@ class Evidence:
         scanned = set()
         # Other evidence also lands in reads, so reads cannot mark a scan.
         scanned_sources = set()
+        # Cargo discovers targets and a build script in a package's tree, so
+        # the reader takes each path there as an input it did not read.
+        trees = set()
         pending = roots[:]
         while pending:
             manifest = pending.pop()
@@ -555,7 +561,8 @@ class Evidence:
             scanned.add(manifest)
             scope = Path(manifest).parent.as_posix()
             for dependency in entry["dependencies"]:
-                local = dependency["path"]
+                # Cargo metadata gives a registry or Git dependency no path.
+                local = dependency.get("path")
                 require(isinstance(local, str), "cargo-external-dependency")
                 pending.append(self.relative(Path(local) / "Cargo.toml"))
             sources = set()
@@ -593,17 +600,28 @@ class Evidence:
                     r"|\b(?:fs|process|File|Path|PathBuf|Command|extern|unsafe)\b",
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
-            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
+            trees.update(path for path in self.changed | self.files.keys() if under(path, scope))
         covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
-        return reads, covered | reads
+        return trees, covered | reads | trees
 
     def vitest_reads(self, directory, reads):
+        """Record each input in reads as the walk proves it. Return the
+        changed paths the module graph cannot judge, which hold only once the
+        whole job is read, and the changed paths the reader judged."""
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
         paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
-        config_dirs = {Path(directory), *Path(directory).parents}
+        config_dirs = set()
+
+        def resolves_from(folder):
+            # Resolution reads the package files in a module's directory and
+            # its ancestors, so the walk proves them as it reaches the module.
+            added = {folder, *folder.parents} - config_dirs
+            config_dirs.update(added)
+            reads.update(path for path in self.changed
+                         if Path(path).parent in added and Path(path).name in JS_PACKAGES)
 
         def ungraphed(path):
             # A changed file the module graph does not judge: a non-module
@@ -612,7 +630,7 @@ class Evidence:
                 Path(path).parent in config_dirs and Path(path).name in JS_PACKAGES
             )
 
-        reads.update((self.changed - paths) | set(filter(ungraphed, paths)))
+        resolves_from(Path(directory))
         members = {path for path in self.files if under(path, directory)}
         for path in members:
             name = Path(path).name
@@ -629,8 +647,7 @@ class Evidence:
             scanned.add(path)
             reads.add(path)
             parent = Path(path).parent
-            config_dirs.update((parent, *parent.parents))
-            reads.update(filter(ungraphed, paths))
+            resolves_from(parent)
             source = self.blob(path)
             require_shape(not re.search(
                 r"\b(?:require|eval|Function|fetch|process|globalThis)\b"
@@ -679,15 +696,18 @@ class Evidence:
         # No later refusal is a shape refusal, so Vitest's related-test listing
         # alone judges a changed module the walk read.
         reads.difference_update(scanned - package_imports)
+        # A path the base lacks, or holds as no regular file, could be a test,
+        # a config or a package file the graph never reaches.
+        unjudged = (self.changed - paths) | set(filter(ungraphed, paths))
         cwd = self.checkout / directory
         upstream = self.trusted / directory / "node_modules"
         binary = upstream / ".bin/vitest"
         require(binary.is_file(), "vitest-install-unavailable")
         if not (cwd / "node_modules").is_symlink():
             (cwd / "node_modules").symlink_to(upstream, target_is_directory=True)
-        paths = {path for path in paths if not ungraphed(path)}
+        paths -= unjudged
         if not paths:
-            return self.changed
+            return unjudged, self.changed
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
@@ -715,7 +735,7 @@ class Evidence:
         require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
         if selected:
             reads.update(paths)
-        return self.changed
+        return unjudged, self.changed
 
 
 def workflow_document(source):
@@ -952,8 +972,9 @@ def declared_lanes(work):
 def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
-    Return each graph reader's covered paths."""
-    covered = []
+    Return each graph reader's package scope and covered paths, which a
+    shape refusal leaves to the lane's claims."""
+    scopes = []
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                               "permissions", "steps", "defaults"}, "opaque-job")
     visited = set()
@@ -995,22 +1016,21 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
             if not args:
                 continue
             if args[0] == "cargo":
+                readers.append(set())
                 try:
-                    cargo, paths = evidence.cargo_reads(args[1:], directory)
+                    scopes.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
                 except Unreadable as error:
                     # A refusal drops every read the Cargo reader made, so no
                     # claim stands in for what it could not rule out.
                     raise Unreadable(str(error)) from error
-                readers.append(cargo)
-                covered.append(paths)
             elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())
-                covered.append(evidence.vitest_reads(directory, readers[-1]))
+                scopes.append(evidence.vitest_reads(directory, readers[-1]))
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
-    return covered
+    return scopes
 
 
 def derived(evidence, exceptions, settings, declared):
@@ -1086,8 +1106,9 @@ def derived(evidence, exceptions, settings, declared):
     def job_reach(name, lane):
         ordinary, readers = set(), []
         try:
-            covered = job_reads(evidence, jobs[name], env_words, bash_env, ordinary, readers)
-            unresolved = set().union(*(evidence.changed - paths for paths in covered))
+            scopes = job_reads(evidence, jobs[name], env_words, bash_env, ordinary, readers)
+            readers.extend(scope for scope, _ in scopes)
+            unresolved = set().union(*(evidence.changed - covered for _, covered in scopes))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
             diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
