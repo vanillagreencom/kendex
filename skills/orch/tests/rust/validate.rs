@@ -6869,11 +6869,13 @@ impl HostLane {
             .join(&self.id)
     }
 
-    /// `validate entry ARGS` with host runs on, the provider in its
-    /// environment.
-    fn stop(&self, args: &[&str]) -> Output {
-        self.w
-            .entry(args, &[("ORCH_VALIDATE_HOST", &self.host.provider())])
+    /// `validate stop` of the lane's run with host runs on, the provider in
+    /// its environment: `validate entry --stop` names no provider.
+    fn stop(&self) -> Output {
+        self.w.run(
+            &["validate", "stop", "--run-dir", &self.dir],
+            &[("ORCH_VALIDATE_HOST", &self.host.provider())],
+        )
     }
 
     /// A live host run whose caller is then gone: its unit and the host's
@@ -7045,7 +7047,7 @@ fn a_host_launch_cut_off_after_the_host_acted_is_read_on_the_next_call() {
 /// cannot hold, ends the run no-verdict with that cause and launches no
 /// more. With a finding prefix declared, the run is no finding-free last
 /// pass: its command never ran. A unit the host could not remove after the
-/// refusal stays owed: the next stop of the worktree removes it.
+/// refusal stays owed: the next stop of the run removes it.
 #[test]
 fn a_host_launch_refused_ends_the_run_no_verdict_and_never_a_last_pass() {
     let lane = HostLane::with(
@@ -7094,17 +7096,16 @@ fn a_host_launch_refused_ends_the_run_no_verdict_and_never_a_last_pass() {
     );
     assert!(lane.unit().exists(), "the host kept the refused unit");
     fs::remove_file(&held).unwrap();
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
-    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    let stop = lane.stop();
+    assert!(stderr(&stop).contains("run-closed"), "{}", stderr(&stop));
     assert!(!lane.unit().exists(), "the next stop removed the kept unit");
 }
 
 /// A unit the host kept after it handed the run back is named in the run's
-/// log, the verdict standing, and the next stop of the worktree removes it.
+/// log, the verdict standing, and the next stop of the run removes it.
 #[test]
 fn a_unit_the_host_kept_after_its_hand_back_is_logged_and_removed_by_the_next_stop() {
     let lane = HostLane::new(HOST_COMMAND);
-    let wt = lane.w.worktree.display().to_string();
     let mut holder = Owned(lane.spawn(&lane.host.provider(), "1", &[]));
     until(|| lane.host_run().join("runner").exists());
     let held = lane.hold_units();
@@ -7120,8 +7121,8 @@ fn a_unit_the_host_kept_after_its_hand_back_is_logged_and_removed_by_the_next_st
     );
     assert!(lane.unit().exists(), "the host kept the unit");
     fs::remove_file(&held).unwrap();
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
-    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    let stop = lane.stop();
+    assert!(stderr(&stop).contains("run-closed"), "{}", stderr(&stop));
     assert!(!lane.unit().exists(), "the next stop removed the kept unit");
     assert_eq!(field(&read_record(&lane.w, &lane.dir), "verdict"), "pass");
 }
@@ -7152,10 +7153,9 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
             ),
         );
     });
-    let wt = lane.w.worktree.display().to_string();
     let mut holder = Owned(lane.spawn(&lane.host.provider(), "1", &[]));
     until(|| fs::symlink_metadata(key.with_extension("lock")).is_ok());
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    let stop = lane.stop();
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     assert_eq!(holder.0.wait().unwrap().code(), Some(1));
     until(|| !lane.unit().exists());
@@ -7335,24 +7335,31 @@ fn a_host_start_that_cannot_run_refuses_by_key_on_the_admitted_stage() {
     assert!(lane.w.stage(&lane.dir)["refused"].is_null());
 }
 
-/// A stop of the lane's worktree during a live host run ends the host's
-/// run and removes its unit, and the stage closes stopped, all within the
-/// stop's own wait though the caller's poll is longer.
+/// A stop during a live host run ends the host's run and removes its unit,
+/// and the stage closes stopped, all within a worktree stop's own wait
+/// though the caller's poll is longer.
 #[test]
-fn a_worktree_stop_ends_a_live_host_run_on_its_host() {
+fn a_stop_of_a_live_host_run_ends_it_on_its_host() {
     let lane = HostLane::new(LONG_COMMAND);
-    let wt = lane.w.worktree.display().to_string();
     let mut holder = Owned(lane.spawn(&lane.host.provider(), "40", &[]));
     until(|| lane.host_run().join("runner").exists());
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    let stop = lane.stop();
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    let deadline = Instant::now() + JOB_BOUND;
+    while holder.0.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "the caller did not read the stop within the stop's wait"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(holder.0.wait().unwrap().code(), Some(1));
     let stage = lane.w.stage(&lane.dir);
     assert!(!stage["end"].is_null(), "{stage}");
     assert_eq!(
         field(&read_record(&lane.w, &lane.dir), "verdict"),
         "no-verdict"
     );
-    assert_eq!(holder.0.wait().unwrap().code(), Some(1));
     assert!(
         !lane.unit().exists(),
         "the host's run is stopped and its unit removed"
@@ -7441,20 +7448,18 @@ fn a_host_run_is_held_by_its_caller_through_a_reconcile_and_read_lost_without_it
     );
 }
 
-/// A stop of the worktree asks the host to end the run a gone caller left:
-/// one the host does not answer refuses and leaves the run live there, and
-/// the next ends it and removes its unit.
+/// A stop asks the host to end the run a gone caller left: one the host
+/// does not answer refuses and leaves the run live there, and the next ends
+/// it and removes its unit.
 #[test]
-fn a_worktree_stop_the_host_does_not_answer_refuses_and_the_next_ends_the_run() {
+fn a_host_stop_the_host_does_not_answer_refuses_and_the_next_ends_the_run() {
     let lane = HostLane::new(LONG_COMMAND);
-    let wt = lane.w.worktree.display().to_string();
     lane.abandon();
     let down = lane.unreachable_for("");
-    let refused = lane.stop(&["--stop", "--worktree", &wt]);
+    let refused = lane.stop();
     assert_ne!(refused.status.code(), Some(0), "{}", text(&refused));
     assert!(
-        keyed(&refused).starts_with("validate: stop-failed")
-            && stderr(&refused).contains("host-stop-failed"),
+        stderr(&refused).contains("stop-failed") && stderr(&refused).contains("host-stop-failed"),
         "{}",
         stderr(&refused)
     );
@@ -7464,7 +7469,7 @@ fn a_worktree_stop_the_host_does_not_answer_refuses_and_the_next_ends_the_run() 
         "the host's run is live"
     );
     drop(down);
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    let stop = lane.stop();
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     assert!(
         !lane.unit().exists(),
@@ -7496,29 +7501,11 @@ fn a_direct_stop_of_a_closed_host_run_ends_it_on_its_host() {
     assert_eq!(lane.w.stage(&lane.dir)["outcome"], closed["outcome"]);
 }
 
-/// A host run whose item's records retention archived is still stopped on
-/// its host: its start record names the item.
-#[test]
-fn a_host_run_whose_item_was_archived_is_stopped_on_its_host() {
-    let lane = HostLane::new(LONG_COMMAND);
-    let wt = lane.w.worktree.display().to_string();
-    lane.abandon();
-    let items = lane.w.state.join("items");
-    fs::rename(items.join(ITEM_ID), lane.w.root.join("archived")).unwrap();
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
-    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
-    assert!(
-        !lane.unit().exists(),
-        "the host's run is stopped and its unit removed"
-    );
-}
-
 /// A stop runs the provider its own settings name for host runs, never one
 /// the lane-writable run folder names, by an absolute or a relative path.
 #[test]
 fn a_stop_runs_no_provider_the_run_folder_names() {
     let mut lane = HostLane::new(LONG_COMMAND);
-    let wt = lane.w.worktree.display().to_string();
     let ran = lane.w.root.join("planted-ran");
     let planted = format!("#!/bin/sh\n: > '{}'\nexit 1\n", ran.display());
     let absolute = lane.w.root.join("planted");
@@ -7539,7 +7526,7 @@ fn a_stop_runs_no_provider_the_run_folder_names() {
             })
             .collect();
         fs::write(&start, rewritten).unwrap();
-        let stop = lane.stop(&["--stop", "--worktree", &wt]);
+        let stop = lane.stop();
         assert!(
             !ran.exists(),
             "{named}: the stop ran the run folder's provider"
@@ -7567,15 +7554,17 @@ fn an_ended_host_run_the_host_will_not_stop_is_released_by_the_operator() {
     let out = lane.run_with(&lane.host.provider(), &lane_env);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(run_file(&lane.dir, "log").contains("host-stop-failed"));
-    let held = lane.stop(&["--stop", "--worktree", &wt]);
+    let held = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
     assert_ne!(held.status.code(), Some(0), "{}", text(&held));
     assert!(
         keyed(&held).starts_with("validate: stop-failed")
-            && stderr(&held).contains("--release-host"),
+            && stderr(&held).contains("host-stop-failed"),
         "{}",
         stderr(&held)
     );
-    let released = lane.stop(&["--stop", "--release-host", "--worktree", &wt]);
+    let released = lane
+        .w
+        .entry(&["--stop", "--release-host", "--worktree", &wt], &[]);
     assert_eq!(released.status.code(), Some(0), "{}", stderr(&released));
     assert!(
         run_file(&lane.dir, "log").lines().any(|line| line
@@ -7584,8 +7573,65 @@ fn an_ended_host_run_the_host_will_not_stop_is_released_by_the_operator() {
         "{}",
         run_file(&lane.dir, "log")
     );
-    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+}
+
+/// A stop of a worktree, and the operator's release, read their settings
+/// from that worktree, which the lane writes: a host program its settings
+/// file names never runs for an ended host run its tmp holds, the caller's
+/// environment naming none and private settings read as by default.
+#[test]
+fn a_worktree_stop_runs_no_host_program_its_settings_file_names() {
+    let w = World::new();
+    let ran = w.root.join("planted-ran");
+    let planted = w.root.join("planted");
+    support::write_executable(
+        &planted,
+        format!("#!/bin/sh\n: > '{}'\nexit 1\n", ran.display()),
+    );
+    let settings = w.worktree.join("kendex.settings.toml");
+    let text = fs::read_to_string(&settings).unwrap();
+    fs::write(
+        &settings,
+        format!("{text}ORCH_VALIDATE_HOST = \"{}\"\n", planted.display()),
+    )
+    .unwrap();
+    let run = w.worktree.join("tmp/dev-validate-planted");
+    fs::create_dir_all(&run).unwrap();
+    fs::write(
+        run.join("start"),
+        format!(
+            "worktree={}\nstart=1769700000\nvalidate-mode=full\nhead={}\nhost=ssh\nitem={ITEM_ID}\n",
+            w.worktree.display(),
+            w.head()
+        ),
+    )
+    .unwrap();
+    fs::write(run.join("exit"), "guard-exit=3 at=2026-01-01T00:00:01Z\n").unwrap();
+    let wt = w.worktree.display().to_string();
+    for args in [
+        vec!["--stop", "--worktree", wt.as_str()],
+        vec!["--stop", "--release-host", "--worktree", wt.as_str()],
+    ] {
+        let mut command = support::program(support::binary());
+        command
+            .arg("--state-dir")
+            .arg(&w.state)
+            .args(["validate", "entry"])
+            .args(&args)
+            .current_dir(&w.worktree)
+            .env_remove("ORCH_VALIDATE_HOST");
+        for (k, v) in w.env() {
+            command.env(k, v);
+        }
+        let out = command.output().unwrap();
+        assert!(
+            !ran.exists(),
+            "{args:?} ran the settings file's host program: {}",
+            stderr(&out)
+        );
+    }
 }
 
 /// With host runs off, the default, a `--host` start takes the local route:

@@ -1416,29 +1416,16 @@ fn release_host(run_dir: &Path) -> std::result::Result<(), String> {
 /// start recorded, which ends the unit's run and removes the unit. Only its
 /// `stopped` answer for this item and run is a stop, recorded as
 /// `host-released`; anything else is the cause it returns, leading
-/// `host-stop-failed` and ending with the operator's way out. The executor
-/// asks it at its own end even on a released run, since a call it had in
-/// flight when another stop was confirmed may have prepared the unit again.
+/// `host-stop-failed`. The executor asks it at its own end even on a
+/// released run, since a call it had in flight when another stop was
+/// confirmed may have prepared the unit again.
 #[allow(
     clippy::disallowed_methods,
     reason = "the host stop's one provider call, by the host this process's settings name"
 )]
 fn host_stop(run_dir: &Path) -> std::result::Result<(), String> {
-    let start = super::files::fields(&run_dir.join("start"));
-    let field = |key: &str| {
-        start
-            .as_ref()
-            .ok()
-            .and_then(|start| start.get(key).cloned())
-            .unwrap_or_default()
-    };
-    let failed = |cause: &str| {
-        format!(
-            "host-stop-failed {cause} fix=end the run on the host, or once this run has ended release it with validate entry --stop --release-host --worktree {}",
-            field("worktree")
-        )
-    };
-    let start = start.as_ref().map_err(|e| failed(&e.to_string()))?;
+    let failed = |cause: &str| format!("host-stop-failed {cause}");
+    let start = super::files::fields(&run_dir.join("start")).map_err(|e| failed(&e.to_string()))?;
     let kind = start.get("host").map(String::as_str).unwrap_or("");
     let item = start.get("item").map(String::as_str).unwrap_or("");
     let host = crate::provider::installed_validate_host()
@@ -1483,7 +1470,6 @@ pub fn release_ended_hosts(worktree: &Path) -> Result<usize> {
             continue;
         }
         if let Err(cause) = host_stop(&run.dir) {
-            let cause = cause.split(" fix=").next().unwrap_or(&cause).to_owned();
             append_log(
                 &run.dir,
                 &format!("validate-host: host-released released=operator {cause}"),
