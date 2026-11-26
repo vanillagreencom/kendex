@@ -33,8 +33,9 @@ Route the answer:
 
 ## What reads an open thread
 
-Four readers check open threads:
+Five readers check open threads:
 
+- [start.md](../workflows/start.md) § 0, once on a handoff resume where the record names an open pull request, before the record's `remaining` list.
 - This read: from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call.
   - Under the `off` gate mode, § 5 step 1 runs it once more after its review call.
   - The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.

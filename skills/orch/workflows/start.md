@@ -41,7 +41,15 @@ This verb answers whether a lane's handoff record ([oversee-events.md § Hand of
      .agents/skills/orch/scripts/orch-runtime state handoff-resume --item [ISSUE_ID]
      ```
 
-  3. Continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names.
+  3. Where `record.open_pr` is set, read its open review threads. The record is a snapshot, so a thread posted after its write is not in it:
+
+     ```bash
+     .agents/skills/github/scripts/github.sh pr-threads [OPEN_PR] --unresolved
+     ```
+
+     - A non-zero exit, or output with no numeric `unresolved_count`, stops and reports, naming the item and the read.
+     - A nonzero `unresolved_count` takes `⤵ workflows/review-pr-comments.md [OPEN_PR] § 1-8` with managed context before step 4.
+  4. Continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names.
 
 ## 1. Route
 
