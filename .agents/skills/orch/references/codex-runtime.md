@@ -77,6 +77,18 @@ Where an execpolicy rule refuses top-level `git rebase`, no user authorization o
 
 On Linux a local Codex lane runs inside agent-runtime's `bwrap` wrapper, except on a seat whose links lead outside its grants (`linked-seat`); on any other host it runs unconfined ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
 
+A confined lane's `$CODEX_HOME/rules/` is read-only (agent-runtime `harness.rs` `Harness::home_writes`). A person who answers an approval prompt with "Yes, and don't ask again for commands that start with …", or with a host answer that applies "in the future", makes Codex save a rule to `rules/default.rules`. The read-only folder refuses that save, and Codex shows one of these warnings:
+
+- `Failed to apply execpolicy amendment: failed to update rules file <CODEX_HOME>/rules/default.rules: ...`
+- `Failed to apply network policy amendment: ...`
+
+The warning stops nothing:
+
+- The approved command runs once and the session keeps working.
+- Codex keeps no rule, so the next matching command asks again.
+- Do not retry the command and do not report a blocker for the warning.
+- To stop the repeated prompt, answer it with the session option, "Yes, and don't ask again for this command in this session", which saves nothing.
+
 ## Standing watch
 
 Codex starts no turn for output that arrives after a turn ended, from a detached process or a running exec session (agent-runtime `harness.rs` `starts_turn_on_output`). So a Codex overseer holds the oversee watch ([watch-delivery.md](watch-delivery.md)) inside its turn with the unified exec tools:

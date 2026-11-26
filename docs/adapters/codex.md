@@ -45,6 +45,14 @@ The script lands at `<root>/hooks/<name>.sh`; the registration goes into `hooks.
 
 Agent scoping: none. Only `agents = "all"` custom hooks are enforced; scoped ones render as advisory prose in the agent files.
 
+## Command rules
+
+Codex reads command rules from `<root>/rules/*.rules` and the project's `.codex/rules/*.rules`. kendex neither scans nor writes them.
+
+Codex writes one file there itself. When a person answers an approval prompt with "Yes, and don't ask again for commands that start with …", Codex appends an `allow` rule to `<root>/rules/default.rules`. A host answer that applies "in the future" appends a network rule to the same file ([codex-rs `exec_policy.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/exec_policy.rs), `default_policy_path`).
+
+A confined agent-runtime lane binds `rules/` read-only, so the save fails. Codex then shows a warning that starts `Failed to apply execpolicy amendment: failed to update rules file <root>/rules/default.rules`, or `Failed to apply network policy amendment:` for a host rule. The session keeps working. The approved command runs once, and Codex does not keep the rule, so the next matching command asks again ([codex-rs `session/handlers.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/session/handlers.rs), `resolve_exec_approval`).
+
 ## Commands stored as skills
 
 A declared command becomes a one-file skill tree: a generated `SKILL.md` carrying the command's prose, the loader frontmatter and the generated-file banner, recorded in the lock as an emitted skill artifact (`crates/core/src/engine/desired_command.rs`, `crates/core/src/render/command.rs`). Names resolve in one pass over every declared command in name order: a real skill keeps its name, a clashing command takes `<name>__command`, then `<name>__cmd`, each with a warning naming what to type, and when all three are taken nothing is written. At project scope the tree lands in `.agents/skills`, which Pi reads too; that the command appears in Pi's skill list is emitted as a warning.
