@@ -317,6 +317,26 @@ class Task(Session):
                     raise Refusal("result-missing")
                 record.update(state="completed", completion={"at": time.time(), "outcome": outcome})
                 self.write(record)
+            if not record["cleanup"]:
+                # A refused teardown leaves the cleanup unset, so a retry runs
+                # it on the recorded outcome. A failed task's scratch stays
+                # for inspection; `cleanup` removes it. The record is written
+                # before the window closes: a task completing from its own
+                # window ends with it.
+                outcome = record["completion"]["outcome"]
+                self.stop_browser(record)
+                if outcome == "succeeded" and Path(record["scratch"]).exists():
+                    shutil.rmtree(record["scratch"])
+                record["cleanup"] = {"at": time.time(), "state": "done" if outcome == "succeeded" else "kept"}
+                self.write(record)
+                if self.launched.exists():
+                    try:
+                        self.close_window(record)
+                    except BaseException:
+                        record["cleanup"] = None
+                        self.write(record)
+                        raise
+                    self.launched.unlink()
             return record
 
     def cleanup(self):

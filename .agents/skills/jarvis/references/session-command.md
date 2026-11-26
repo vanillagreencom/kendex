@@ -115,9 +115,15 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Retain the returned task id.
   1. Read its record with `task status --home HOME --id ID`.
   2. Record the outcome with `task complete --home HOME --id ID --outcome succeeded|failed`. A succeeded task requires its result file.
+     - Complete stops the browser running on the task's profile and closes the task's window last.
+     - A succeeded task's scratch is removed, and its cleanup reads `done`.
+     - A failed task's scratch stays for inspection, and its cleanup reads `kept`.
+     - If complete refuses after it records the outcome, `task status` reads the completion set and cleanup `null`.
+       1. Read the `refused=` reason. Reason `browser-running` names a browser on the task's profile that could not be stopped; close task-owned browser work.
+       2. Retry `task complete` with the same id. The retry runs the pending teardown on the recorded outcome, whatever `--outcome` it names.
   3. Check the result.
   4. Close task-owned browser work.
-  5. Run `task cleanup --home HOME --id ID`. Cleanup closes that task's window, stops the browser running on its profile, and removes its scratch.
+  5. For a failed task, run `task cleanup --home HOME --id ID` once its scratch is read. Cleanup closes any window still open, stops the browser running on its profile, and removes its scratch.
 
 - A launch records a running task only once the harness can take its brief.
   - When the account's harness cannot take it yet, the launch refuses `harness-setup-pending` or `harness-not-ready` and prints a `fix=` line naming the account and the steps to finish its setup.
