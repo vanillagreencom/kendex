@@ -459,6 +459,40 @@ mod push {
         assert_eq!(repo.remote("ken-1"), "", "nothing was pushed");
     }
 
+    /// A hosted `read_only` launch's record in the worktree's git directory
+    /// refuses every publishing mode before anything runs, whatever the
+    /// delivery, and pushes nothing; with the record gone the same worktree
+    /// pushes its branch.
+    #[test]
+    fn a_read_only_record_refuses_every_publishing_mode_and_its_absence_pushes() {
+        let repo = Repo::new("KEN-1", "");
+        repo.record(json!({}));
+        let record = PathBuf::from(git(&repo.wt, &["rev-parse", "--absolute-git-dir"]))
+            .join("lane-read-only");
+        fs::write(&record, format!("{}\n", repo.wt.display())).unwrap();
+        let head = repo.head();
+        let base = repo.remote("main");
+        for request in [
+            json!({"op": "record-push", "mode": "branch", "worktree": repo.wt}),
+            json!({"op": "record-push", "mode": "checkpoint", "worktree": repo.wt}),
+            json!({"op": "record-push", "mode": "prepare", "worktree": repo.wt}),
+            json!({"op": "record-push", "mode": "publish", "worktree": repo.wt, "base": head, "head": head}),
+        ] {
+            let out = repo.op(request.clone());
+            let line = refusal(&out);
+            assert!(
+                line.starts_with("orch-runtime: push-read-only issue=KEN-1"),
+                "{request}: {line}"
+            );
+            assert_eq!(repo.remote("ken-1"), "", "{request} pushed");
+            assert_eq!(repo.remote("main"), base, "{request} published");
+        }
+        fs::remove_file(&record).unwrap();
+        let out = repo.push("branch");
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(repo.remote("ken-1"), repo.head());
+    }
+
     #[test]
     fn an_unreadable_record_refuses_before_any_push() {
         let repo = Repo::new("KEN-1", "");

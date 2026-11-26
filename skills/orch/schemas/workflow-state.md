@@ -352,7 +352,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `touched`, `in_scope`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
 | `obligation` | `{repo, item, parent_repo, parent_item}`, the item's original lineage. |
 | `tier`, `tier_inputs` | The tier the first launch's brief states, and `{estimate, delta, paths}`. |
-| `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` where the lane's confinement binds its checkout read-only. |
+| `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` on a lane that changes no repository file. |
 | `parked`, `park_owed`, `sandbox` | `parked`, `{head, repo, at, pr?, until_pr?, until_repo?}`, is a hosted lane's park after its sandbox stop. |
 | `pending_pr`, `pauses`, `capacity_wait`, `walled` | `pending_pr`, `{pr, repo, head, until_pr?, until_repo?}`; the paused spans; `capacity_wait`, `{at}`; `walled`, `{at}`. |
 | `wake` | `{pid, start}` of a detached print-mode turn beside the lane's pane. |

@@ -20,12 +20,12 @@
 //! touched set is its record's, else its item's Location paths read now;
 //! a holder whose set cannot be read blocks `holder-unreadable
 //! read=touched`. `changelog.d/` paths never count, and a path the request
-//! names in scope is left out of the comparison. A `read_only` lane, whose
-//! confinement binds its checkout read-only, takes no join on either side:
-//! it is no holder, by a shared path or by the blockers it carries, and its
-//! first launch touches none of its sources' paths, so it meets no holder
-//! and records none while the tier still classifies them, and refuses
-//! `launch-blocked` on any launch blocker, whatever lane carries it.
+//! names in scope is left out of the comparison. A `read_only` lane, which
+//! changes no repository file, takes no join on either side: it is no
+//! holder, by a shared path or by the blockers it carries, and its first
+//! launch touches none of its sources' paths, so it meets no holder and
+//! records none while the tier still classifies them. Its item's launch
+//! blockers are not read: they hold the item's writing launch alone.
 //!
 //! A holder a first launch would join is in its review where it owns an
 //! open pull request of the item's repository: one its record names by its
@@ -45,7 +45,7 @@
 //! `holders-unreadable read=repo`. A request naming neither reads none.
 //!
 //! The item's body is read only where the request names its tracker: a
-//! launch that names none is judged on the sources it does name. A
+//! launch that names none is judged on the sources it does name. A writing
 //! `linear` item's launch blockers are read with it, and every container
 //! ancestor's up its `parent_id` chain: an open blocker anywhere on the
 //! chain refuses `launch-blocked` naming the blockers, and a node the
@@ -390,8 +390,8 @@ pub(super) struct Admission<'r> {
     /// before anything is read; `None` for paths a running lane adds,
     /// bound when it was admitted.
     pub checkout: Option<&'r Path>,
-    /// The lane's grants bind its checkout read-only, as the launch
-    /// enforces them: it touches no path.
+    /// The lane changes no repository file, as its launch enforces: it
+    /// touches no path and is not held on its item's launch blockers.
     pub read_only: bool,
 }
 
@@ -839,8 +839,8 @@ fn holder_branch(fleet: &Path, holder: &str) -> Result<Option<String>> {
 }
 
 /// Whether a lane can hold a path or take a joined item: one of the
-/// request's repository, not `done`, and not `read_only`, whose confinement
-/// lets it write neither its own change nor a joined one's.
+/// request's repository, not `done`, and not `read_only`, which ships
+/// neither its own change nor a joined one's.
 fn holds(lane: &Lane, repo: Option<&str>) -> bool {
     lane.status != LaneStatus::Done && !lane.read_only && same_repo(lane, repo)
 }
@@ -1153,17 +1153,17 @@ pub(super) fn judge(
                 cause,
             });
         }
-        if tracker == "linear" {
+        // A read-only lane, a plan or a tracker-comment lane, ships nothing
+        // the blockers' work must precede, so it starts beside them and
+        // never joins their carrier, which would run its brief outside the
+        // confinement it asked for.
+        if tracker == "linear" && !a.read_only {
             // A first launch whose every blocker one lane carries ships
-            // with that lane where it stands live before its review. A
-            // read-only one ships with none: a writing holder would run its
-            // brief outside the confinement it asked for.
+            // with that lane where it stands live before its review.
             match launch_blockers(a.item, &item, |parent| {
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
             }) {
-                Err(Error::LaunchBlocked { item, blockers })
-                    if a.checkout.is_some() && !a.read_only =>
-                {
+                Err(Error::LaunchBlocked { item, blockers }) if a.checkout.is_some() => {
                     match carrier(lanes, &blockers, a.repo) {
                         Some(index) => blocked = Some((index, blockers)),
                         None => return Err(Error::LaunchBlocked { item, blockers }),

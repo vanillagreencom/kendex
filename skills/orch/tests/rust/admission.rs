@@ -1692,9 +1692,9 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
 /// relaunch keeps, while a launch over its `done` record naming none
 /// records a writing lane. The tier still classifies the Location paths: a
 /// read-only brief requesting `micro` over an instruction file is refused
-/// `tier-narrower`. A read-only lane this machine cannot confine, on a
-/// Copilot harness or a host, is refused `read-only-unconfined`. Each
-/// refusal writes nothing.
+/// `tier-narrower`. A read-only lane nothing holds to changing no file, on
+/// a Copilot harness here or in a cloud session, is refused
+/// `read-only-unconfined`. Each refusal writes nothing.
 #[test]
 fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refused() {
     let fleet = Fleet::new();
@@ -1725,7 +1725,7 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
             "copilot",
             "token-on-session-bus",
         ),
-        (json!({"host": "/w/provider"}), "claude", "hosted"),
+        (json!({"host": "claude-cloud"}), "claude", "cloud"),
     ] {
         let (key, refused) = refusal(&fleet.op(&read_only(fields)));
         assert_eq!(key, "read-only-unconfined", "{harness}: {refused:?}");
@@ -1788,6 +1788,56 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
         (&Value::Null, &json!(["skills/x/SKILL.md", "src/r.sh"])),
         "{lane}"
     );
+}
+
+/// A lane whose brief changes no repository file starts beside its item's
+/// launch blockers, its own or a container ancestor's, on this machine and
+/// on an ssh host: the read-only launch is admitted and recorded
+/// `read_only` with an empty touched set, while the item's writing launch
+/// still refuses `launch-blocked` naming the blocker and writes nothing.
+#[test]
+fn a_read_only_launch_starts_beside_its_items_launch_blockers_and_a_writing_one_waits() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.item_under("CC-1", "", &["CC-9"]);
+    fleet.item_under("CC-2", "CC-3", &[]);
+    fleet.item_under("CC-3", "", &["CC-9"]);
+    let checkout = fleet.checkout("p", None);
+    for (item, host, read_only) in [
+        ("CC-1", None, false),
+        ("CC-1", None, true),
+        ("CC-2", Some("/w/provider"), false),
+        ("CC-2", Some("/w/provider"), true),
+    ] {
+        let row = format!("{item} host={host:?} read_only={read_only}");
+        let mut request = launch(item, &checkout);
+        if let Some(host) = host {
+            request["host"] = json!(host);
+        }
+        if read_only {
+            request["read_only"] = json!(true);
+        }
+        let before = fleet.fleet();
+        let out = fleet.op(&request);
+        if !read_only {
+            let (key, fields) = refusal(&out);
+            assert_eq!(key, "launch-blocked", "{row}: {fields:?}");
+            assert_eq!(
+                fields,
+                pairs(&[("item", item), ("blockers", "CC-9")]),
+                "{row}"
+            );
+            assert_eq!(fleet.fleet(), before, "{row}: nothing written");
+            continue;
+        }
+        assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
+        let lane = fleet.lane(item);
+        assert_eq!(
+            (&lane["read_only"], &lane["touched"], &lane["host"]),
+            (&json!(true), &json!([]), &json!(host)),
+            "{row}: {lane}"
+        );
+    }
 }
 
 /// Two candidates of one pass sharing a path, launched one after the other:
@@ -1974,12 +2024,13 @@ fn a_join_respects_the_current_holders_confinement() {
 /// `linear` candidate whose one launch blocker is its item, its body naming
 /// no path, joins it in place of `launch-blocked`, and so does one sharing
 /// its recorded path. A `read_only` lane takes no join on either side: a
-/// read-only holder, its record holding no path, and a read-only candidate
-/// beside a writing holder each leave the blocked candidate `launch-blocked`.
-/// A holder that owns an open pull request is in its review and refuses the
-/// same. A relaunch naming `read_only` over a stopped writing record keeps
-/// the record writing and its path held: a candidate sharing it joins.
-/// Every refusal writes nothing and leaves the holder's mailbox empty.
+/// read-only holder, its record holding no path, leaves the blocked
+/// candidate `launch-blocked`, and a read-only candidate beside a writing
+/// holder opens its own lane. A holder that owns an open pull request is in
+/// its review and refuses the same. A relaunch naming `read_only` over a
+/// stopped writing record keeps the record writing and its path held: a
+/// candidate sharing it joins. Every refusal writes nothing, and every
+/// outcome but a join leaves the holder's mailbox empty.
 #[test]
 fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_only() {
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1994,12 +2045,18 @@ fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_on
         Candidate,
         HolderRelaunched,
     }
-    for (tie, owns_pull, read_only, joins) in [
-        (Tie::Blocker, false, ReadOnly::Neither, true),
-        (Tie::Blocker, true, ReadOnly::Neither, false),
-        (Tie::Blocker, false, ReadOnly::Holder, false),
-        (Tie::Blocker, false, ReadOnly::Candidate, false),
-        (Tie::File, false, ReadOnly::HolderRelaunched, true),
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Outcome {
+        Joins,
+        Blocked,
+        OwnLane,
+    }
+    for (tie, owns_pull, read_only, outcome) in [
+        (Tie::Blocker, false, ReadOnly::Neither, Outcome::Joins),
+        (Tie::Blocker, true, ReadOnly::Neither, Outcome::Blocked),
+        (Tie::Blocker, false, ReadOnly::Holder, Outcome::Blocked),
+        (Tie::Blocker, false, ReadOnly::Candidate, Outcome::OwnLane),
+        (Tie::File, false, ReadOnly::HolderRelaunched, Outcome::Joins),
     ] {
         let row = format!("{tie:?} owns_pull={owns_pull} read_only={read_only:?}");
         let mut fleet = Fleet::new();
@@ -2058,7 +2115,14 @@ fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_on
         }
         let before_bytes = std::fs::read(fleet.fleet_path()).unwrap();
         let out = fleet.op(&request);
-        if joins {
+        if outcome == Outcome::OwnLane {
+            assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
+            assert_eq!(fleet.lane("CC-1")["read_only"], true, "{row}");
+            assert!(fleet.lane("KEN-H").get("carried").is_none(), "{row}");
+            assert!(inbox(&root, "KEN-H").is_empty(), "{row}");
+            continue;
+        }
+        if outcome == Outcome::Joins {
             let answer = reply(&out);
             assert_eq!(answer["ok"], true, "{row}: {}", stderr(&out));
             let report = joined_or_launched(&answer);
