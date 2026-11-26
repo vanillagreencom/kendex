@@ -10,6 +10,7 @@ use clap::Args as ClapArgs;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The word every refusal and notice of `validate entry` opens with.
 const VALIDATE: &str = "validate";
@@ -28,9 +29,11 @@ A dev start that resolves to ci prints validate-mode=ci local-checks=targeted-on
 
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
---record reads mode, selection, verdict, identity, scope, fallback and wall time. A run whose executor and command are gone with no sentinel reads verdict=FAILING state=lost there, as --wait reads it state=lost validate=FAILING; one a stop ended reads verdict=no-verdict, as --wait reads it state=done stopped validate=no-verdict. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
+--record reads mode, selection, verdict, identity, scope, fallback, wall time and the host of a --host run. A run whose executor and command are gone with no sentinel reads verdict=FAILING state=lost there, as --wait reads it state=lost validate=FAILING; one a stop ended reads verdict=no-verdict, as --wait reads it state=done stopped validate=no-verdict. The last valid command line of the form 'validate: lanes=NAME[,NAME...] selection=all|subset|battery' supplies selection; a malformed last candidate supplies no lanes. --last-pass refuses a later red or unordered run.
 
-A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure."
+A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure.
+
+--host HOST runs an admitted --run-id on a second host at the lane's commit, through the provider HOST names (a path, as ORCH_LANE_HOST names one). The worktree's tracked files must match HEAD, which is the commit the host runs, else it refuses host-tree-uncommitted. It prints state=started run-dir=DIR host=HOST, then asks the provider's validate verb, one long-pool call at a time, until the host's run ends, and holds the caller's process tree for the run's length: it takes no --budget, --poll, --foreground, --fresh, --reproduce or --restack. The run's folder then lands in the admitted directory with start naming this worktree and host=TARGET, the SSH target the run ran on, which --record prints, and the call ends with the run's state=done line. A provider without the verb refuses host-verb-absent; a failed call refuses host-call-failed with the provider's cause, the host's run kept, so the same call asks again and follows it. A refusal after the admission is read leaves its key on the admitted stage, which a wait by --run-id reads as start-refused."
 )]
 pub struct Args {
     #[arg(long)]
@@ -71,6 +74,8 @@ pub struct Args {
     pub restack: bool,
     #[arg(long, hide = true)]
     pub restack_check: bool,
+    #[arg(long)]
+    pub host: Option<String>,
 }
 
 /// How long one start or `--wait` call follows a run: under the 600-second
@@ -176,6 +181,25 @@ fn arguments(args: &Args) -> Result<()> {
     };
     if let Some(option) = unused {
         return Err(files::unread_value("option-unused", "cause", option));
+    }
+    if args.host.is_some() {
+        // A host run is an admitted start held in the caller's process
+        // tree, run fresh on the host's own executor.
+        let unused = [
+            (!start, "--host"),
+            (args.foreground, "--foreground"),
+            (args.fresh, "--fresh"),
+            (args.reproduce, "--reproduce"),
+            (args.restack, "--restack"),
+            (args.budget.is_some(), "--budget"),
+            (args.poll.is_some(), "--poll"),
+        ];
+        if let Some((_, option)) = unused.into_iter().find(|(set, _)| *set) {
+            return Err(files::unread_value("option-unused", "cause", option));
+        }
+        if args.run_id.is_none() {
+            return Err(files::unread_value("required", "cause", "--run-id"));
+        }
     }
     if let Some(id) = &args.run_id {
         let bytes = id.as_bytes();
@@ -381,6 +405,10 @@ fn entry(
     } else {
         args.base.clone()
     };
+    if let (Some(host), Some(id)) = (&args.host, &args.run_id) {
+        let (text, exit) = host_run(&settings, &worktree, id, host, mode, base, env, locking)?;
+        return Ok(TextReply::new(text, exit));
+    }
     let mut req = request(base);
     req.mode = if args.run_id.is_some() {
         explicit_mode
@@ -490,4 +518,253 @@ fn entry(
     }
     let (text, exit) = files::wait(&run_dir.0, budget, &SystemClock)?;
     Ok(TextReply::new(text, exit))
+}
+
+// --- A run on a second host ------------------------------------------------------
+
+/// The tag a host run's provider calls are counted under.
+const HOST_TAG: &str = "validate";
+
+/// How long one provider `validate` call may take: the host's start reads
+/// the selector's preview and the worktree under the start's own bounds,
+/// the provider's fetch, bundle and SSH round trips take one read bound
+/// more, and every call follows the host's run for one poll.
+const HOST_CALL_BOUND: Duration = Duration::from_secs(
+    super::SELECTION_TIMEOUT.as_secs() + 2 * super::READ_TIMEOUT.as_secs() + super::POLL_DEFAULT,
+);
+
+/// The records of a host's run folder the lane keeps: what the record, the
+/// proof and a wait read. The host's process records (`executor`,
+/// `execution`, `command`, `pid`, `runner`, `job.err`) name processes of
+/// that host, which a liveness read here would judge as this machine's.
+const CARRIED: [&str; 8] = [
+    "start",
+    "cmd",
+    "paths",
+    "class.log",
+    "log",
+    "exit",
+    "timing",
+    "warning",
+];
+
+fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    Error::Runtime(agent_runtime::Error::refused(key, fields))
+}
+
+/// Run the admitted run `id` on `host` at the lane's commit, its run folder
+/// placed in the admitted directory once it ends. A refusal after the
+/// admission is read leaves its key on the admitted stage, as a local
+/// start's does, so a wait that follows the run by its id ends on it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the start's settings, worktree, run, host, mode, base and store, each read once here"
+)]
+fn host_run(
+    settings: &Settings,
+    worktree: &Path,
+    id: &str,
+    host: &str,
+    mode: ValidateMode,
+    base: Option<String>,
+    env: &Env,
+    locking: Locking,
+) -> Result<(String, i32)> {
+    let run_dir = super::run_dir_of(worktree, id);
+    let rd = run_dir.display().to_string();
+    let (item, stage) = super::admitted_stage(&settings.state_dir, &rd)?;
+    let round = stage.round_id.clone().unwrap_or_default();
+    if stage.end.is_some() {
+        return Err(Error::RunEnded {
+            round_id: round,
+            run_dir: rd,
+        });
+    }
+    if stage.proof.is_some() {
+        return Err(refused("run-exists", &[("run-dir", &rd)]));
+    }
+    let ran = host_unit(worktree, id, &item, host, mode, base, &run_dir);
+    let Err(error) = ran else { return ran };
+    let write = super::apply(
+        &crate::state::item_path(&settings.state_dir, &item),
+        crate::ops::validate::Validate::Refuse(crate::ops::validate::RecordRefusal {
+            round_id: round.clone(),
+            run_dir: Some(rd.clone()),
+            cause: error.key().to_owned(),
+        }),
+        env,
+        locking,
+    );
+    match write {
+        // A wait would read the run queued past a refusal it cannot see.
+        Err(write) => Err(Error::RefusalUnrecorded {
+            round_id: round,
+            run_dir: Some(rd),
+            refused: Box::new(error),
+            write: Box::new(write),
+        }),
+        Ok(_) => Err(error),
+    }
+}
+
+/// Ask the provider's `validate` until the host's run ends, then place its
+/// folder. A folder a call staged and no placement took is placed first:
+/// the host no longer holds that run.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host run's staged folder in the lane's tmp, and its started line published before the first call"
+)]
+fn host_unit(
+    worktree: &Path,
+    id: &str,
+    item: &str,
+    host: &str,
+    mode: ValidateMode,
+    base: Option<String>,
+    run_dir: &Path,
+) -> Result<(String, i32)> {
+    if fs::symlink_metadata(run_dir).is_ok() {
+        return Err(refused(
+            "run-exists",
+            &[("run-dir", &run_dir.display().to_string())],
+        ));
+    }
+    let mut log = String::new();
+    let status = super::git(
+        worktree,
+        "status",
+        &["status", "--porcelain", "--untracked-files=no"],
+        &mut log,
+    )?;
+    let commit = super::git(
+        worktree,
+        "rev-parse",
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+        &mut log,
+    )?;
+    let (Some(status), Some(commit)) = (status, commit) else {
+        return Err(files::unreadable("git", log.trim()));
+    };
+    if !status.trim().is_empty() {
+        return Err(refused(
+            "host-tree-uncommitted",
+            &[("worktree", &worktree.display().to_string())],
+        ));
+    }
+    let commit = commit.trim().to_owned();
+    let staged = worktree.join("tmp").join(format!("host-validate-{id}"));
+    let into = staged.display().to_string();
+    let wt = worktree.display().to_string();
+    let follow = super::POLL_DEFAULT.to_string();
+    let mut argv = vec![
+        "validate",
+        "--item",
+        item,
+        "--run-id",
+        id,
+        "--commit",
+        &commit,
+        "--source",
+        &wt,
+        "--into",
+        &into,
+        "--follow-secs",
+        &follow,
+        "--validate-mode",
+        mode.word(),
+    ];
+    if let Some(base) = &base {
+        argv.extend(["--base", base.as_str()]);
+    }
+    writeln!(
+        std::io::stdout(),
+        "state=started run-dir={} host={host}",
+        run_dir.display()
+    )
+    .map_err(|e| files::unreadable("stdout", e))?;
+    while fs::symlink_metadata(&staged).is_err() {
+        let out = crate::provider::call(host, &argv, None, HOST_CALL_BOUND, HOST_TAG).map_err(
+            |failure| {
+                refused(
+                    "host-call-failed",
+                    &[("host", host), ("cause", &failure.to_string())],
+                )
+            },
+        )?;
+        match out.status.code() {
+            Some(0) if fs::symlink_metadata(&staged).is_err() => {
+                return Err(refused("host-stage-missing", &[("path", &into)]));
+            }
+            Some(0 | 3) => {}
+            Some(2) => {
+                return Err(refused(
+                    "host-verb-absent",
+                    &[("host", host), ("verb", "validate")],
+                ));
+            }
+            code => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                return Err(refused(
+                    "host-call-failed",
+                    &[
+                        ("host", host),
+                        ("exit", &code.map_or("signal".to_owned(), |c| c.to_string())),
+                        ("cause", crate::provider::cause_line(&stderr)),
+                    ],
+                ));
+            }
+        }
+    }
+    place(&staged, run_dir, worktree)?;
+    files::wait(run_dir, 0, &SystemClock)
+}
+
+/// Turn the staged folder into the admitted run directory: the host's
+/// process records dropped, `start` naming the lane's worktree and the
+/// host, then the folder renamed into place whole, so a wait reads the run
+/// started only once every record stands. A staged folder whose `start`
+/// already names its host is one an earlier placement rewrote.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the staged host folder in the lane's tmp, rewritten and renamed into the admitted run directory"
+)]
+fn place(staged: &Path, run_dir: &Path, worktree: &Path) -> Result<()> {
+    let unreadable = |e: &dyn std::fmt::Display| {
+        refused(
+            "host-stage-unreadable",
+            &[
+                ("path", &staged.display().to_string()),
+                ("cause", &e.to_string()),
+            ],
+        )
+    };
+    let start = fs::read_to_string(staged.join("start")).map_err(|e| unreadable(&e))?;
+    if fs::symlink_metadata(staged.join("exit")).is_err() {
+        return Err(unreadable(&"exit"));
+    }
+    if !start.lines().any(|line| line.starts_with("host=")) {
+        let host = files::fields(&staged.join("host"))
+            .map_err(|e| unreadable(&e))?
+            .remove("host")
+            .filter(|h| !h.is_empty() && !h.contains(char::is_whitespace))
+            .ok_or_else(|| unreadable(&"host"))?;
+        let mut text = String::new();
+        for line in start.lines().filter(|line| !line.is_empty()) {
+            match line.strip_prefix("worktree=") {
+                Some(_) => text.push_str(&format!("worktree={}", worktree.display())),
+                None => text.push_str(line),
+            }
+            text.push('\n');
+        }
+        text.push_str(&format!("host={host}\n"));
+        fs::write(staged.join(".start"), text).map_err(|e| unreadable(&e))?;
+        fs::rename(staged.join(".start"), staged.join("start")).map_err(|e| unreadable(&e))?;
+    }
+    for entry in fs::read_dir(staged).map_err(|e| unreadable(&e))? {
+        let entry = entry.map_err(|e| unreadable(&e))?;
+        if !CARRIED.iter().any(|name| entry.file_name() == *name) {
+            fs::remove_file(entry.path()).map_err(|e| unreadable(&e))?;
+        }
+    }
+    fs::rename(staged, run_dir).map_err(|e| unreadable(&e))
 }

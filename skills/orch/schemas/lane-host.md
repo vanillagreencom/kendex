@@ -63,7 +63,7 @@ Exit statuses:
 
 The recorded cause:
 
-- A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list`, `close`, `stop`, `stop-sandbox` or `viewer-prefix` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`.
+- A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list`, `close`, `stop`, `stop-sandbox`, `validate` or `viewer-prefix` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`.
 - A `create` that exits `75` without `state=preparing` records `item-owned exit=75` and no stderr line, unless its stderr holds `lane-host-ssh: ownership-busy`, the ssh provider's lock: that create records `host-create-busy create exit=75` and its cause line.
 - A `close` that exits `3` records no stderr line, only the path its `close-refused path=` line names, `unknown` without one.
 - Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded.
@@ -168,6 +168,13 @@ Each verb, its arguments, and its answer:
   - Optional, asked only of a `pane=verb` host.
   - One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session.
   - Exit `2`: no viewer.
+- `validate --item ID --run-id RUN --commit SHA --source DIR --into STAGE --follow-secs SECS --validate-mode MODE [--base BASE]`, optional.
+  - Runs one validation unit on the host at `SHA`, the HEAD of the lane's worktree `DIR`.
+  - The first call for `RUN` starts the host's run with `MODE` and `BASE`. Every call follows the run for `SECS` seconds.
+  - Exit `3` with a `state=running` line on stdout is a run still going. The caller asks again with the same arguments.
+  - Exit `0` is a run that ended with its sentinel. Its folder stands at `STAGE`, a folder the call creates on the control machine, and `STAGE/host` holds `host=NAME`, the host it ran on. The host keeps no copy.
+  - A run that ended with no sentinel fails, and the host keeps its folder for its log.
+  - Exit `2`: the verb is absent.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
@@ -203,6 +210,7 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
   - A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`.
   - A Copilot lane on a `pane=local` host gets them in its window after the close transition, then is asked `stop` and `status`.
 - The account listing asks `accounts`.
+- `validate entry --host` asks `validate`, one call at a time, until the host's run ends. It reads exit `2` as a host that cannot run a unit and refuses `host-verb-absent`.
 
 ## Call bound
 
@@ -210,7 +218,7 @@ Every provider call except `capabilities` first takes a slot in one of two pools
 
 | Pool | Verbs | Cap | Wait |
 |---|---|---|---|
-| long | `create`, `wait`, `start`, `close`, `stop`, `stop-sandbox` | `ORCH_LANE_HOST_MAX_CALLS` | `ORCH_LANE_HOST_BUSY_WAIT_SECS` |
+| long | `create`, `wait`, `start`, `close`, `stop`, `stop-sandbox`, `validate` | `ORCH_LANE_HOST_MAX_CALLS` | `ORCH_LANE_HOST_BUSY_WAIT_SECS` |
 | short | every other verb | `ORCH_LANE_HOST_SHORT_MAX_CALLS` | `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` |
 
 [settings.md § Fleet lanes](../references/settings.md#fleet-lanes) holds the settings.
@@ -323,6 +331,7 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 - Static SSH declares `peer-mail=verb`.
 - For peer mail, reserve one inventory row with `item` set to `overseer`, `target` set to the recipient's SSH alias and `clone` set to the absolute path of its main checkout with mailbox and agent-runtime installed. The sender passes that same path as `peer-append --repo`. Keep the `repo` field equal to the inventory's repository, including when the recipient checkout belongs to a different repository. The existing absolute `account` field is required by the inventory and peer mail does not use it.
 - The `overseer` row serves `peer-append`, `touch`, and `cat` and `read-many` for files directly in that checkout's overseer mailbox directory. Reads outside the directory fail with status `1`. The row is omitted from lane listings.
+- For validation units, reserve one inventory row with `item` set to `validation`, `target` set to the host and `clone` set to a clone of the repository that no lane row names. `validate` runs every item's unit on that row, in a detached worktree under `<clone>/tmp/validate-host/`. Without the row, `validate` exits `1` with `item-unconfigured item=validation`.
 
 ## Test provider
 

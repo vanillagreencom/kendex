@@ -250,7 +250,7 @@ impl RunFile {
                 t.seconds, t.started_at, t.ended_at
             ));
         }
-        for key in ["scoped", "ci-fallback"] {
+        for key in ["scoped", "ci-fallback", "host"] {
             self.append(&mut line, key);
         }
         if self.get("ci-event") == "merge_group" {

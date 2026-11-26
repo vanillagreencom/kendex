@@ -6693,3 +6693,217 @@ fn a_missing_pull_request_is_told_apart_from_a_failed_read() {
         stderr(&out)
     );
 }
+
+/// A lane on this disk whose admitted run goes to a static ssh host: the
+/// shipped provider's validation row, its clone made from the host's
+/// source and holding the lane's base, and a lane commit that declares the
+/// command the host runs and carries the render the host's start reads.
+struct HostLane {
+    w: World,
+    host: support::SshHost,
+    id: String,
+    dir: String,
+}
+
+impl HostLane {
+    fn new() -> HostLane {
+        let w = World::new();
+        let root = w.root.join("host");
+        fs::create_dir_all(&root).unwrap();
+        let host = support::SshHost::new(&root, &root.join("scripts"), "validation");
+        let clone = host.clone().display().to_string();
+        let out = program("git")
+            .args(["clone", "-q"])
+            .arg(host.source())
+            .arg(&clone)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "clone: {}", stderr(&out));
+        git(host.clone().as_path(), &["config", "gc.auto", "0"]);
+        git(
+            host.clone().as_path(),
+            &["config", "maintenance.auto", "false"],
+        );
+        git(
+            host.clone().as_path(),
+            &[
+                "fetch",
+                "-q",
+                &w.worktree.display().to_string(),
+                "refs/remotes/origin/main",
+            ],
+        );
+        fs::write(
+            w.worktree.join("kendex.settings.toml"),
+            "[env]\nDEV_VALIDATE_CMD = \"echo 'validate: lanes=unit selection=all'\"\n",
+        )
+        .unwrap();
+        git(
+            &w.worktree,
+            &["add", "-f", "kendex.settings.toml", ".agents"],
+        );
+        git(&w.worktree, &["commit", "-q", "-m", "lane"]);
+        let admitted = ok(&w.op(
+            &json!({"op":"record-validation-admission","round_id":ROUND}),
+            &[],
+        ));
+        let id = admitted["report"]["run_id"].as_str().unwrap().to_owned();
+        let dir = admitted["report"]["run_dir"].as_str().unwrap().to_owned();
+        HostLane { w, host, id, dir }
+    }
+
+    fn run(&self, host: &str, extra: &[&str]) -> Output {
+        let wt = self.w.worktree.display().to_string();
+        let mut args = vec!["--worktree", &wt, "--run-id", &self.id, "--host", host];
+        args.extend_from_slice(extra);
+        self.w.entry(&args, &[])
+    }
+}
+
+/// A run on the host runs the lane's commit there, and its folder comes
+/// back to the admitted directory: the record names the host, the start
+/// the lane's worktree, the host's process records stay behind with the
+/// host's worktree gone, and the lane reads it as its last pass.
+#[test]
+fn a_host_run_returns_its_folder_to_the_admitted_directory_naming_the_host() {
+    let lane = HostLane::new();
+    let out = lane.run(&lane.host.provider(), &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}\n{}\n{:?}",
+        text(&out),
+        stderr(&out),
+        lane.host.calls()
+    );
+    assert_eq!(directory(&out), lane.dir);
+    let done = text(&out);
+    let done = done.lines().last().unwrap();
+    assert_eq!(field(done, "state"), "done", "{done}");
+    assert_eq!(field(done, "validate"), "pass", "{done}");
+    let record = read_record(&lane.w, &lane.dir);
+    assert_eq!(field(&record, "verdict"), "pass", "{record}");
+    assert_eq!(field(&record, "host"), "lane.example", "{record}");
+    assert_eq!(field(&record, "head"), lane.w.head(), "{record}");
+    assert_eq!(
+        field(&record, "tree"),
+        git(&lane.w.worktree, &["rev-parse", "HEAD^{tree}"]),
+        "{record}"
+    );
+    assert_eq!(field(&record, "lanes"), "unit", "{record}");
+    let start = run_file(&lane.dir, "start");
+    assert!(
+        start
+            .lines()
+            .any(|line| line == format!("worktree={}", lane.w.worktree.display())),
+        "{start}"
+    );
+    for record in ["executor", "execution", "command", "runner", "job.err"] {
+        assert!(!Path::new(&lane.dir).join(record).exists(), "{record}");
+    }
+    let unit = lane
+        .host
+        .clone()
+        .join("tmp/validate-host")
+        .join(ITEM_ID)
+        .join(&lane.id);
+    assert!(!unit.exists(), "the host's unit is removed");
+    let wt = lane.w.worktree.display().to_string();
+    let last = lane.w.entry(&["--last-pass", "--worktree", &wt], &[]);
+    assert_eq!(
+        field(&text(&last), "run-dir"),
+        lane.dir,
+        "{}",
+        stderr(&last)
+    );
+    assert!(
+        lane.host
+            .calls()
+            .iter()
+            .all(|call| call.contains(&format!(" validate --item {ITEM_ID} --run-id {}", lane.id))),
+        "{:?}",
+        lane.host.calls()
+    );
+}
+
+/// Each host start that cannot run refuses by its key and leaves the key on
+/// the admitted stage, which a wait by the run's id reads; nothing lands in
+/// the admitted directory. A provider without the verb, as one that
+/// predates it answers, refuses `host-verb-absent`.
+#[test]
+fn a_host_start_that_cannot_run_refuses_by_key_on_the_admitted_stage() {
+    let lane = HostLane::new();
+    let wt = lane.w.worktree.display().to_string();
+    let absent = support::named_host(&lane.w.root, "broker");
+    let commit = lane.w.head();
+    let argv = format!(
+        "validate --item {ITEM_ID} --run-id {id} --commit {commit} --source {wt} --into {wt}/tmp/host-validate-{id} --follow-secs 30 --validate-mode full",
+        id = lane.id
+    );
+    fs::write(
+        lane.w.root.join("lane-host.json"),
+        json!({ argv: {"exit": 2, "stderr": "usage: broker\n"} }).to_string(),
+    )
+    .unwrap();
+    for (case, host, dirty, key) in [
+        (
+            "a tracked change the commit lacks",
+            lane.host.provider(),
+            true,
+            "host-tree-uncommitted",
+        ),
+        (
+            "a provider without the verb",
+            absent.clone(),
+            false,
+            "host-verb-absent",
+        ),
+    ] {
+        if dirty {
+            fs::write(lane.w.worktree.join("a.txt"), "edited\n").unwrap();
+        }
+        let out = lane.run(&host, &[]);
+        assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));
+        assert!(
+            keyed(&out).starts_with(&format!("validate: {key}")),
+            "{case}: {}",
+            keyed(&out)
+        );
+        assert_eq!(lane.w.stage(&lane.dir)["refused"], key, "{case}");
+        let waited = lane
+            .w
+            .entry(&["--wait", "--worktree", &wt, "--run-id", &lane.id], &[]);
+        assert!(
+            stderr(&waited).contains("start-refused"),
+            "{case}: {}",
+            stderr(&waited)
+        );
+        assert!(!Path::new(&lane.dir).exists(), "{case}");
+        git(&lane.w.worktree, &["checkout", "--", "a.txt"]);
+    }
+    for (case, extra, key) in [
+        (
+            "a run with no admitted id",
+            vec![],
+            "read=required cause=--run-id",
+        ),
+        (
+            "a host run held to a budget",
+            vec!["--budget", "5"],
+            "read=option-unused cause=--budget",
+        ),
+    ] {
+        let mut args = vec!["--worktree", wt.as_str(), "--host", absent.as_str()];
+        args.extend(extra.iter().copied());
+        if key.starts_with("read=option-unused") {
+            args.extend(["--run-id", lane.id.as_str()]);
+        }
+        let out = lane.w.entry(&args, &[]);
+        assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));
+        assert_eq!(
+            keyed(&out),
+            format!("validate: validate-unreadable {key}"),
+            "{case}"
+        );
+    }
+}

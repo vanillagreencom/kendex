@@ -13,10 +13,10 @@
 //! user. A slot is a file named for its owner's pid and holding the start
 //! the kernel reports for that pid, so a pid the kernel gave to another
 //! process owns no slot; a slot whose owner is gone is removed by the next
-//! take. `create`, `wait`, `start`, `close`, `stop` and `stop-sandbox` take
-//! the long pool and every other verb but `capabilities` the short one, so
-//! long calls cannot starve the mail reads; `capabilities` reads no host
-//! state and takes none.
+//! take. `create`, `wait`, `start`, `close`, `stop`, `stop-sandbox` and
+//! `validate` take the long pool and every other verb but `capabilities` the
+//! short one, so long calls cannot starve the mail reads; `capabilities`
+//! reads no host state and takes none.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -69,7 +69,7 @@ enum Pool {
 
 /// Every verb the provider contract names (`schemas/lane-host.md`), with
 /// the pool it takes; `capabilities` takes none.
-const VERBS: [(&str, Option<Pool>); 19] = [
+const VERBS: [(&str, Option<Pool>); 20] = [
     ("capabilities", None),
     ("create", Some(Pool::Long)),
     ("wait", Some(Pool::Long)),
@@ -77,6 +77,7 @@ const VERBS: [(&str, Option<Pool>); 19] = [
     ("close", Some(Pool::Long)),
     ("stop", Some(Pool::Long)),
     ("stop-sandbox", Some(Pool::Long)),
+    ("validate", Some(Pool::Long)),
     ("read-many", Some(Pool::Short)),
     ("cat", Some(Pool::Short)),
     ("put", Some(Pool::Short)),
