@@ -853,6 +853,44 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     assert_eq!(lane.get("restart_closed"), None, "{lane}");
 }
 
+/// A relaunch whose launch is still unconfirmed after a confirmed close
+/// leaves the lane preparing over the pane it opened. A reconcile that then
+/// settles the launch failed, here on a server a restart ended, leaves no
+/// pane on the record that reads as a live session, so the next relaunch
+/// sends the launch alone and runs the lane.
+#[test]
+fn lane_relaunch_whose_unconfirmed_launch_settles_failed_relaunches_on_the_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
+    end_server(&server, harness_pid(&runner, "KEN-1"));
+    runner.stub = stub("stub-unconfirmed");
+    runner.verify = Some(1);
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
+    let fleet = runner.fleet();
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "preparing", "{lane}");
+    let pane = lane["launch"]["pane"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the unconfirmed launch kept no pane: {lane}"))
+        .to_owned();
+    end_server(&server, server.harness_pid(&pane));
+    let settled = runner.reconcile_one();
+    assert_eq!(settled["intent"]["outcome"], "failed", "{settled}");
+    let lane = &runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert!(lane["restart_closed"].is_string(), "{lane}");
+    runner.stub = stub("stub-confirm");
+    runner.verify = Some(5);
+    let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();
+    assert_eq!(again.status.code(), Some(0), "{line} {}", stderr(&again));
+    assert!(line.starts_with("resumed item=KEN-1 "), "{line}");
+    let lane = &runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+}
+
 /// A launch whose server is gone from a socket the controller record does
 /// not name, the caller's own, starts no server there: the fleet stays on
 /// its recorded server. A fleet with no controller record names none.

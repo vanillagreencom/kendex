@@ -1760,9 +1760,10 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
 /// The lane's recorded session read ended, as a close with no stated
 /// ground and a restart's relaunch both need it: its harness read gone, or
 /// no harness recorded and no pane either; a recorded pane with no identity
-/// is a lane not known exited, unless that pane is a viewer's, which holds
-/// no harness. A live harness refuses `lane-live`, an unreadable one
-/// `harness-unreadable`.
+/// is a lane not known exited while a launch is still on the lane, unless
+/// that pane is a viewer's, which holds no harness. Off it, the pane's
+/// launch settled failed or a confirmed close stopped what it held. A live
+/// harness refuses `lane-live`, an unreadable one `harness-unreadable`.
 pub(crate) fn ended(lane: &Lane, host: &Host) -> Result<()> {
     session_ended(lane, recorded_harness(lane, host).as_ref())
 }
@@ -1776,7 +1777,10 @@ fn session_ended(lane: &Lane, reading: Option<&Reading<Identity>>) -> Result<()>
         Some(Reading::Gone) => Ok(()),
         Some(Reading::Live(_)) => Err(live()),
         Some(Reading::Unreadable { cause }) => Err(unreadable(lane, cause)),
-        None if !lane.viewer() && lane.launch.as_ref().is_some_and(|l| l.pane.is_some()) => {
+        None if lane.status.in_flight()
+            && !lane.viewer()
+            && lane.launch.as_ref().is_some_and(|l| l.pane.is_some()) =>
+        {
             Err(live())
         }
         None => Ok(()),
