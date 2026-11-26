@@ -146,6 +146,9 @@ pub fn apply_record(
         | Record::RecordSurfaceLane(_)
         | Record::RecordOverseerLedger(_) => None,
     };
+    if let Record::RecordOverseerLedger(RecordOverseerLedger::Triage { file }) = record {
+        ledger::kept_out_of_triage(settings, file)?;
+    }
     record::reread(
         || {
             let snapshot = loaded(path)?;

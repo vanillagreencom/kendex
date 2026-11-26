@@ -5,16 +5,20 @@
 
 use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use agent_runtime::clock;
+use agent_runtime::{clock, host};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::findings::added_entries;
 use super::store::{array_at, one_value, stamp};
 use crate::error::{Error, Result};
+use crate::settings::Settings;
 use crate::state;
 use agent_runtime::journal::Env;
+
+const TRACKER_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -108,6 +112,51 @@ pub(crate) fn triage_row(row: &Value) -> Result<()> {
         Ok(())
     } else {
         Err(refused("triaged-record-invalid", &[("field", "triaged")]))
+    }
+}
+
+/// The tracker's row for one item, from `issues bulk-get ID --format=safe`.
+#[derive(Deserialize)]
+struct ItemState {
+    state_type: String,
+}
+
+/// A kept verdict for an item still in Triage acknowledges it while the
+/// watch's triage line and launch selection both skip it, so nothing
+/// starts the work: refuse it until the pass moves the item. An
+/// unreadable state refuses too, since the verdict would hide the item.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the triage verdict's one tracker read of the item's live state, before the record write"
+)]
+pub(crate) fn kept_out_of_triage(settings: &Settings, file: &Path) -> Result<()> {
+    let row = one_value(file)?;
+    triage_row(&row)?;
+    if row["verdict"] != "kept" {
+        return Ok(());
+    }
+    let issue = row["issue"].as_str().unwrap_or_default();
+    let unreadable = || refused("triage-state-unreadable", &[("issue", issue)]);
+    let out = host::run_tagged(
+        "triage-verdict",
+        "linear",
+        &settings.reads.tracker_cli,
+        "item-state",
+        &["issues", "bulk-get", issue, "--format=safe"],
+        TRACKER_TIMEOUT,
+    )
+    .map_err(|_| unreadable())?;
+    if !out.status.success() {
+        return Err(unreadable());
+    }
+    let [item]: [ItemState; 1] = serde_json::from_slice::<Vec<ItemState>>(&out.stdout)
+        .ok()
+        .and_then(|rows| rows.try_into().ok())
+        .ok_or_else(unreadable)?;
+    match item.state_type.as_str() {
+        "triage" => Err(refused("triage-kept-in-triage", &[("issue", issue)])),
+        "" => Err(unreadable()),
+        _ => Ok(()),
     }
 }
 
