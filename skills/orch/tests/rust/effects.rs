@@ -891,6 +891,40 @@ fn lane_relaunch_whose_unconfirmed_launch_settles_failed_relaunches_on_the_rerun
     assert_eq!(lane["status"], "running", "{lane}");
 }
 
+/// A close that supersedes a restart relaunch's unconfirmed launch settles
+/// the launch failed with its harness still live in the pane. Where the
+/// close's stop does not end that harness, the lane reads stopped with the
+/// pane it stands in, and a relaunch refuses `lane-live` rather than start
+/// a second harness beside it.
+#[test]
+fn a_lane_whose_superseding_close_left_its_harness_live_refuses_a_relaunch() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
+    end_server(&server, harness_pid(&runner, "KEN-1"));
+    runner.stub = stub("stub-unconfirmed");
+    runner.verify = Some(1);
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
+    let fleet = runner.fleet();
+    let pane = fleet["lanes"][0]["launch"]["pane"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the unconfirmed launch kept no pane: {fleet}"))
+        .to_owned();
+    let harness = server.harness_pid(&pane);
+    let usage_bin = runner.tools.replace(fixtures().join("kill-noop"));
+    let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-1")));
+    assert_eq!(closed["intent"]["outcome"], "unconfirmed", "{closed}");
+    assert_eq!(closed["intent"]["observation"]["timeout_pid"], harness);
+    assert!(live(harness), "the stop signalled nothing");
+    let fleet = runner.fleet();
+    assert_eq!(fleet["lanes"][0]["status"], "stopped", "{fleet}");
+    runner.tools = usage_bin;
+    let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    assert_eq!(refused_by(&out), "lane-live");
+    assert!(live(harness), "the refused relaunch stopped nothing");
+}
+
 /// A launch whose server is gone from a socket the controller record does
 /// not name, the caller's own, starts no server there: the fleet stays on
 /// its recorded server. A fleet with no controller record names none.
