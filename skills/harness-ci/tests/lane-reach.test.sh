@@ -425,6 +425,7 @@ git -C "$repo" commit -qm 'a claimed Vitest lane imports a module no package own
 vitest_change_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
 cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
+// let path = "/etc/hosts";
 #[path = "../../spare/src/mod.rs"]
 mod external;
 
@@ -435,8 +436,10 @@ fn checks_child() {
 RS
 printf 'pub mod child;\n' >"$repo/cargo/spare/src/mod.rs"
 printf 'pub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/child.rs"
-# The Cargo reader refuses the out-of-package module. The claim names no
-# child of it, so only the refusal keeps the lane.
+# The Cargo reader's literal-path scan meets the commented path first, which
+# the shared resolver refuses as a shape cause. The claim names no child of
+# the out-of-package module, so only the reader turning that refusal into one
+# that leaves the job unread keeps the lane.
 printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain file picks the compiler' \
   >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" add -A
@@ -1304,7 +1307,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   fi
   refused_jobs=""
   case "$label" in
-    cargo-external-child) refused_jobs='job=cargo cause=cargo-external-module' ;;
+    cargo-external-child) refused_jobs='job=cargo cause=computed-path' ;;
     refused-executable)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
     refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
