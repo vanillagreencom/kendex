@@ -131,6 +131,28 @@ impl Store {
         self.ok(&["op", "--fleet", "--request-json", &request.to_string()])
     }
 
+    /// A tracker stand-in answering `graphql --query DOC --variables JSON`
+    /// for one issue, `syncedWith` only where the document selects it, as
+    /// Linear answers: KEN-T sits in Triage linked to no GitHub issue, KEN-M
+    /// is a GitHub-synced mirror in Triage, every other item is in Todo.
+    fn tracker(&self) -> String {
+        let path = self.dir.path().join("linear.sh");
+        support::write_executable(
+            &path,
+            r#"#!/bin/sh
+[ "$1" = graphql ] || exit 1
+case "$5" in
+  *'"KEN-T"'*) t=triage s='[{"metadata":{}}]' ;;
+  *'"KEN-M"'*) t=triage s='[{"metadata":{"owner":"Reporter","repo":"Project","number":42}}]' ;;
+  *) t=unstarted s=null ;;
+esac
+case "$3" in *syncedWith*) synced=",\"syncedWith\":$s" ;; *) synced= ;; esac
+printf '{"issue":{"state":{"type":"%s"}%s}}\n' "$t" "$synced"
+"#,
+        );
+        path.display().to_string()
+    }
+
     /// The refusal of `request` on the fleet record, the record left byte
     /// for byte as it stood.
     fn fleet_op_refused(&self, request: &Value) -> (String, String) {
@@ -1076,7 +1098,16 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
         "kept.json",
         r#"{"issue":"KEN-4137","verdict":"kept","reason":"checked"}"#,
     );
-    let entered = store.fleet_op_ok(&triage(&kept));
+    let tracker = store.tracker();
+    let entered = store.ok_env(
+        &[
+            "op",
+            "--fleet",
+            "--request-json",
+            &triage(&kept).to_string(),
+        ],
+        &[("OVERSEE_WATCH_TRACKER", &tracker)],
+    );
     assert_eq!(
         (&entered["entry"], &entered["pointer"]),
         (&json!("triage"), &json!("/triaged"))
@@ -1092,6 +1123,73 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
     assert_eq!(
         (&triaged[0]["issue"], &triaged[1]["verdict"]),
         (&json!("KEN-4137"), &json!("canceled"))
+    );
+}
+
+/// A kept verdict for an item still in Triage would acknowledge it while
+/// the watch's triage line and launch selection both skip it, so it refuses
+/// naming the item, and so does an unreadable state and a GitHub-synced item
+/// no outside-contribution ruling row names; a canceled verdict for that
+/// item, a kept one outside Triage and a kept mirror whose ruling row names
+/// its GitHub issue, which § Outside contributions leaves there, record.
+#[test]
+fn a_kept_verdict_records_only_once_the_item_left_triage() {
+    let store = Store::new();
+    store.init_fleet();
+    let tracker = store.tracker();
+    let request = |issue: &str, verdict: &str| {
+        let row = json!({"issue": issue, "verdict": verdict, "reason": "checked"});
+        let file = store.write_file(&format!("{issue}-{verdict}.json"), &row.to_string());
+        json!({"op": "record-overseer-ledger", "entry": "triage", "file": file}).to_string()
+    };
+    let ruling = |key: &str| {
+        let row = json!({"kind": "ruling", "item": key,
+            "text": format!("EVENT outside-contribution {key} kind=issue author=someone")});
+        let file = store.write_file(
+            &format!("ruling-{}.json", key.replace(['/', '#'], "-")),
+            &row.to_string(),
+        );
+        store.ok(&["state", "log", "append", "--fleet", &file]);
+    };
+    ruling("Reporter/Project#7");
+    let before = fs::read_to_string(store.fleet_path()).unwrap();
+    let traced = vec![("OVERSEE_WATCH_TRACKER", tracker.as_str())];
+    for (issue, env, key) in [
+        ("KEN-T", traced.clone(), "triage-kept-in-triage"),
+        ("KEN-T", vec![], "triage-state-unreadable"),
+        ("KEN-M", traced.clone(), "triage-kept-in-triage"),
+    ] {
+        let args = ["op", "--fleet", "--request-json", &request(issue, "kept")];
+        let (refused, line) = refused_env(&store, &args, &env);
+        assert_eq!(refused, key);
+        assert!(line.contains(&format!("issue={issue}")), "{line}");
+        assert_eq!(fs::read_to_string(store.fleet_path()).unwrap(), before);
+    }
+    ruling("reporter/project#42");
+    for (issue, verdict) in [
+        ("KEN-T", "canceled"),
+        ("KEN-4137", "kept"),
+        ("KEN-M", "kept"),
+    ] {
+        store.ok_env(
+            &["op", "--fleet", "--request-json", &request(issue, verdict)],
+            &[("OVERSEE_WATCH_TRACKER", &tracker)],
+        );
+    }
+    let triaged = store.doc(&store.fleet_path())["triaged"].clone();
+    assert_eq!(
+        (
+            &triaged[0]["issue"],
+            &triaged[0]["verdict"],
+            &triaged[1]["issue"],
+            &triaged[2]["issue"]
+        ),
+        (
+            &json!("KEN-T"),
+            &json!("canceled"),
+            &json!("KEN-4137"),
+            &json!("KEN-M")
+        )
     );
 }
 

@@ -146,6 +146,21 @@ pub fn apply_record(
         | Record::RecordSurfaceLane(_)
         | Record::RecordOverseerLedger(_) => None,
     };
+    let mirror = match record {
+        Record::RecordOverseerLedger(RecordOverseerLedger::Triage { file }) => {
+            ledger::kept_out_of_triage(settings, file)?
+        }
+        Record::RecordOverseerLedger(_)
+        | Record::RecordRound(_)
+        | Record::RecordPanel(_)
+        | Record::RecordAgents(_)
+        | Record::RecordDisposition(_)
+        | Record::RecordCommentLedger(_)
+        | Record::RecordRoute(_)
+        | Record::RecordDevReturn(_)
+        | Record::RecordPrProgress(_)
+        | Record::RecordSurfaceLane(_) => None,
+    };
     record::reread(
         || {
             let snapshot = loaded(path)?;
@@ -169,6 +184,9 @@ pub fn apply_record(
                 }
                 Record::RecordSurfaceLane(r) => lane::record_surface_lane(path, &mut doc, r)?,
                 Record::RecordOverseerLedger(r) => {
+                    if let Some(mirror) = &mirror {
+                        mirror.judge(&doc)?;
+                    }
                     ledger::record_overseer_ledger(path, &mut doc, env, r)?
                 }
             };

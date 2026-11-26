@@ -5,16 +5,20 @@
 
 use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use agent_runtime::clock;
+use agent_runtime::{clock, host};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::findings::added_entries;
 use super::store::{array_at, one_value, stamp};
 use crate::error::{Error, Result};
+use crate::settings::Settings;
 use crate::state;
 use agent_runtime::journal::Env;
+
+const TRACKER_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -108,6 +112,149 @@ pub(crate) fn triage_row(row: &Value) -> Result<()> {
         Ok(())
     } else {
         Err(refused("triaged-record-invalid", &[("field", "triaged")]))
+    }
+}
+
+/// The item's state type and GitHub sync links, in one tracker read: the
+/// same `syncedWith` selection `oversee-events.md` § Outside contributions
+/// reads a mirror by.
+const ITEM_READ: &str = "query Item($id: String!) { issue(id: $id) { state { type } \
+     syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } } } }";
+
+#[derive(Deserialize)]
+struct ItemRead {
+    issue: ItemState,
+}
+
+#[derive(Deserialize)]
+struct ItemState {
+    state: StateType,
+    #[serde(rename = "syncedWith", default)]
+    synced_with: Option<Vec<SyncLink>>,
+}
+
+#[derive(Deserialize)]
+struct StateType {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// A link to another integration answers empty metadata.
+#[derive(Deserialize)]
+struct SyncLink {
+    #[serde(default)]
+    metadata: Option<GithubLink>,
+}
+
+#[derive(Deserialize)]
+struct GithubLink {
+    owner: Option<String>,
+    repo: Option<String>,
+    number: Option<u64>,
+}
+
+impl ItemState {
+    /// Each GitHub link as `owner/repo#number` in lower case: a link names
+    /// all three, the linear package's rule for a synced issue
+    /// (`require_unsynced_description`), and GitHub matches names in any case.
+    fn github_links(&self) -> Vec<String> {
+        self.synced_with
+            .iter()
+            .flatten()
+            .filter_map(|link| {
+                let m = link.metadata.as_ref()?;
+                let key = format!("{}/{}#{}", m.owner.as_ref()?, m.repo.as_ref()?, m.number?);
+                Some(key.to_ascii_lowercase())
+            })
+            .collect()
+    }
+}
+
+/// The event line § Outside contributions step 1 records as a ruling row's
+/// text, its `[REPO]#[N]` as the row's `item`.
+const OUTSIDE_EVENT: &str = "EVENT outside-contribution ";
+
+/// A kept item still in Triage with GitHub links: it records only as the
+/// mirror § Outside contributions leaves there, judged on the fleet record
+/// the write holds.
+pub(crate) struct MirrorHold {
+    issue: String,
+    links: Vec<String>,
+}
+
+impl MirrorHold {
+    /// The fleet log holds the outside-contribution ruling row for one of
+    /// the item's links.
+    pub(crate) fn judge(&self, doc: &Document) -> Result<()> {
+        let ruled = doc
+            .get("fleet_log")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["kind"] == "ruling"
+                        && row["text"]
+                            .as_str()
+                            .is_some_and(|text| text.starts_with(OUTSIDE_EVENT))
+                        && row["item"]
+                            .as_str()
+                            .is_some_and(|item| self.links.contains(&item.to_ascii_lowercase()))
+                })
+            });
+        if ruled {
+            Ok(())
+        } else {
+            Err(refused("triage-kept-in-triage", &[("issue", &self.issue)]))
+        }
+    }
+}
+
+/// A kept verdict for an item still in Triage acknowledges it while the
+/// watch's triage line and launch selection both skip it, so nothing
+/// starts the work: refuse it until the pass moves the item. The one item
+/// left there is the mirror of an outside contribution, whose GitHub link
+/// names the `[REPO]#[N]` of its ruling row: such an item comes back as a
+/// hold the record write judges. An unreadable state refuses too, since the
+/// verdict would hide the item.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the triage verdict's one tracker read of the item's live state, before the record write"
+)]
+pub(crate) fn kept_out_of_triage(settings: &Settings, file: &Path) -> Result<Option<MirrorHold>> {
+    let row = one_value(file)?;
+    triage_row(&row)?;
+    if row["verdict"] != "kept" {
+        return Ok(None);
+    }
+    let issue = row["issue"].as_str().unwrap_or_default();
+    let unreadable = || refused("triage-state-unreadable", &[("issue", issue)]);
+    let variables = json!({ "id": issue }).to_string();
+    let out = host::run_tagged(
+        "triage-verdict",
+        "linear",
+        &settings.reads.tracker_cli,
+        "item-state",
+        &["graphql", "--query", ITEM_READ, "--variables", &variables],
+        TRACKER_TIMEOUT,
+    )
+    .map_err(|_| unreadable())?;
+    if !out.status.success() {
+        return Err(unreadable());
+    }
+    let ItemRead { issue: item } = serde_json::from_slice(&out.stdout).map_err(|_| unreadable())?;
+    match item.state.kind.as_str() {
+        "" => Err(unreadable()),
+        "triage" => {
+            let links = item.github_links();
+            if links.is_empty() {
+                Err(refused("triage-kept-in-triage", &[("issue", issue)]))
+            } else {
+                Ok(Some(MirrorHold {
+                    issue: issue.to_owned(),
+                    links,
+                }))
+            }
+        }
+        _ => Ok(None),
     }
 }
 

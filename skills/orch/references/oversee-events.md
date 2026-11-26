@@ -909,6 +909,7 @@ A refused `write`:
    - For a canceled verdict, cancel the item.
    - Leave the verdict unrecorded if a required read or update fails, a required state is unreadable, or neither destination type is available for a kept item in `triage`.
    - After the required routing succeeds, record the verdict. Write `{"issue":"[ID]","verdict":"[kept|canceled]","reason":"[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool, and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"triage","file":"tmp/triage-verdict-[ID].json"}'`.
+   - The write reads the item's live state for a kept verdict. It refuses `triage-kept-in-triage` while the state type is still `triage`, and `triage-state-unreadable` where it cannot read the item. Route the item, then record again.
 
 ### `outside-contribution`
 
@@ -923,6 +924,7 @@ Leave a Linear mirror of a reported GitHub issue untouched.
 - Under [§ `triage`](#triage), take an item out of `[ISSUES]` when its live `syncedWith[].metadata` (`owner`, `repo`, `number`) names a `[REPO]#[N]` that an `outside-contribution` event in the same block, or its step 1 fleet-log row, names.
 - Read that metadata with `linear.sh graphql --query 'query { issue(id: "[ID]") { syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } } } }'`.
 - Post nothing on the mirror, change none of its fields, and record it in `triaged` as `kept` with the reason `mirror of [REPO]#[N]`.
+  - Record the contribution's step 1 `ruling` row in the fleet log first. The write records a kept mirror still in Triage only where one of its GitHub links names that row's `[REPO]#[N]`, and otherwise refuses `triage-kept-in-triage`.
 - Every other item goes to the verifier.
 
 A SKILL.md frontmatter `source:` names the repository that owns the asset, never its install path.
