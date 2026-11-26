@@ -408,6 +408,59 @@ pub fn host_words(ctx: &mut Ctx, text: &str, host_pool: &str) -> Vec<Value> {
         .collect()
 }
 
+/// One account's unused limit resets as a provider's `accounts --json
+/// --headroom` document states them: Fleet's `meters.limit_resets`, OpenAI's
+/// reset credits on a Codex account whose answer states them. The document
+/// names an account by its directory's name without the dot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitResets {
+    pub name: String,
+    pub harness: Harness,
+    pub count: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct Headroom {
+    accounts: Vec<HeadroomAccount>,
+}
+
+#[derive(serde::Deserialize)]
+struct HeadroomAccount {
+    name: String,
+    harness: String,
+    #[serde(default)]
+    meters: Meters,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct Meters {
+    limit_resets: Option<u64>,
+}
+
+/// The count of each account the document `doc` states one for. An account
+/// it states none for is left out, never counted as none. The cause where
+/// the document cannot be read, such as a provider's `accounts` lines
+/// answered in its place.
+pub fn limit_resets(doc: &str) -> std::result::Result<Vec<LimitResets>, String> {
+    let read: Headroom =
+        serde_json::from_str(doc).map_err(|e| format!("limit-resets-unreadable cause={e}"))?;
+    read.accounts
+        .into_iter()
+        .filter_map(|account| Some((account.meters.limit_resets?, account)))
+        .map(|(count, account)| match Harness::parse(&account.harness) {
+            Some(harness) => Ok(LimitResets {
+                name: account.name,
+                harness,
+                count,
+            }),
+            None => Err(format!(
+                "limit-resets-unreadable account={} field=harness",
+                account.name
+            )),
+        })
+        .collect()
+}
+
 /// The question a supplied batch is judged on: the named pick's bound and
 /// its seat rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
