@@ -73,6 +73,8 @@ The shell `read` loop numbers each line as it arrives. Do not use `awk`: `mawk` 
 | Pi | `bg_task` output wakes on a follow: [pi-runtime.md § Standing watch (Pi)](pi-runtime.md#standing-watch-pi). | Respawn in the cases its Re-arm and Exit rows name. |
 | Copilot CLI | § Single passes, run as the list below says. | Start the next pass after each pass exits. |
 
+When a Claude Code notification is cut short with `...(truncated)`, read the numbered lines it did not show from the log, for example `sed -n 'FIRST,LASTp' [RUN_DIR]/watch.log` from the line after the last number shown. Handle each `EVENT` line among them before the next notification.
+
 Copilot CLI runs § Single passes as its standing follow:
 
 - Run each pass as a sync-mode shell call with `initial_wait` 520 seconds, never in async mode: only an async call can take `detach: true`.
