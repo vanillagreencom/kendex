@@ -21,6 +21,12 @@ class NamedUnreadable(Unreadable):
     pass
 
 
+class ChangedUnreadable(Unreadable):
+    # The change itself left the read unproved. A lane's claims name what the
+    # reader misses in the job at the base, so they cannot stand in for it.
+    pass
+
+
 def require(condition, cause):
     if not condition:
         raise Unreadable(cause)
@@ -568,7 +574,8 @@ class Evidence:
                     package_imports.add(imported)
                 pending.add(imported)
         if any(self.package_path(path) for path in self.changed):
-            require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
+            if not all(self.owner(path) for path in package_imports):
+                raise ChangedUnreadable("vitest-import-owner-unresolved")
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
         require(not any(
@@ -605,20 +612,24 @@ class Evidence:
 
         full = listing([])
         require(full, "vitest-no-tests")
-        index = self.work / "vitest-index"
-        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
-        command(["git", "read-tree", self.authority], self.checkout, env=env)
-        names = b"".join(os.fsencode(path) + b"\0" for path in sorted(paths))
-        command(["git", "update-index", "--force-remove", "-z", "--stdin"],
-                self.checkout, data=names, env=env)
-        # Vitest's GitVCSProvider reads line-delimited names from this index.
-        # Git can still quote tabs and backslashes with quotePath disabled.
-        command(["git", "config", "--local", "core.quotePath", "false"], self.checkout)
-        staged = command(["git", "diff", "--cached", "--name-only"], self.checkout, env=env)
-        require(set(staged.split(b"\n")[:-1]) == {os.fsencode(path) for path in paths},
-                "vitest-changed-paths-unread")
-        selected = listing(["--changed"], env)
-        require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
+        # The private index and the related listing read the changed paths.
+        try:
+            index = self.work / "vitest-index"
+            env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+            command(["git", "read-tree", self.authority], self.checkout, env=env)
+            names = b"".join(os.fsencode(path) + b"\0" for path in sorted(paths))
+            command(["git", "update-index", "--force-remove", "-z", "--stdin"],
+                    self.checkout, data=names, env=env)
+            # Vitest's GitVCSProvider reads line-delimited names from this index.
+            # Git can still quote tabs and backslashes with quotePath disabled.
+            command(["git", "config", "--local", "core.quotePath", "false"], self.checkout)
+            staged = command(["git", "diff", "--cached", "--name-only"], self.checkout, env=env)
+            require(set(staged.split(b"\n")[:-1]) == {os.fsencode(path) for path in paths},
+                    "vitest-changed-paths-unread")
+            selected = listing(["--changed"], env)
+            require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
+        except UNAVAILABLE as error:
+            raise ChangedUnreadable(str(error)) from error
         return reads | (paths if selected else set()), self.changed
 
 
@@ -873,8 +884,8 @@ def job_reads(evidence, job, env_words, bash_env):
             directory, passed = evidence.resolve(".", directory)
             ordinary.update(passed)
             # A checkout materializes directories through their tracked entries.
-            require(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"),
-                    "working-directory-unproved")
+            if not evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"):
+                raise ChangedUnreadable("working-directory-unproved")
         for word in env_words:
             path, passed = evidence.checkout_path(directory, word)
             ordinary.update({path} | passed)
@@ -993,13 +1004,19 @@ def derived(evidence, exceptions, settings, declared):
             if not isinstance(error, NamedUnreadable):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
-            return set(), evidence.changed
+            return (set(), evidence.changed) if isinstance(error, ChangedUnreadable) else None
 
     first_reader = {}
     shared_input = False
     outcomes = {lane: "unread" if lane in named else "miss" for lane in lanes}
     for name, lane in [*lane_by_job.items(), *((None, lane) for lane in ungated)]:
-        hits, unresolved = job_reach(name) if name is not None else (set(), set())
+        reach = job_reach(name) if name is not None else (set(), set())
+        if reach is None:
+            # A refused job's reasoned claims are the reads its consumer
+            # states, so its lane goes by them alone, as an ungated lane
+            # does. A lane with no claim could read any changed path.
+            reach = (set(), set() if lane in declared else evidence.changed)
+        hits, unresolved = reach
         if lane in exceptions:
             # The legacy claim pass gives us lane names across the diff.
             hits = evidence.changed
