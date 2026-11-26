@@ -13,6 +13,7 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 use agent_runtime::clock::SystemClock;
+use agent_runtime::confine;
 use agent_runtime::controller::run as controller_run;
 use agent_runtime::journal::Env;
 use orch_runtime::effects;
@@ -1803,8 +1804,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // between their own writes; a push or a prune answers with its
             // reply and the exit its outcome names.
             if let Request::RecordPush(r) = &request {
-                let pushed =
-                    ops::push::run(&path, r, &settings, &flags, &env, locking, confined())?;
+                let pushed = ops::push::run(
+                    &path,
+                    r,
+                    &settings,
+                    &flags,
+                    &env,
+                    locking,
+                    confine::confined(),
+                )?;
                 return replied(serde_json::to_value(&pushed)?, pushed.exit);
             }
             if let Request::PruneRound(r) = &request {
@@ -3133,13 +3141,9 @@ fn init_state(path: &Path, fields: &state::InitFields) -> Result<state::Initiali
 /// and writes lie outside: its line, exit 0, before any lock or write. An
 /// unconfined caller, the overseer or a lane run with no wrapper, goes on.
 fn step_aside(act: &str) {
-    if confined() {
+    if confine::confined() {
         left_to_overseer(act);
     }
-}
-
-fn confined() -> bool {
-    std::env::var_os(agent_runtime::confine::CONFINED_VAR).is_some_and(|value| value == "1")
 }
 
 fn left_to_overseer(act: &str) -> ! {
@@ -3517,7 +3521,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             // close-out write its grants hold, so the overseer's
             // close can tell that merge-pr's verification passed and this
             // step ran: the archive and removals lie outside those grants.
-            if confined() {
+            if confine::confined() {
                 write(
                     &item_target(item),
                     Write::Set {

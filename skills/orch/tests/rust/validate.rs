@@ -5455,6 +5455,80 @@ fn a_worktree_stop_of_a_gone_run_leaves_its_readers_with_the_stage_word() {
     }
 }
 
+/// A lost systemd run, its unit and command gone with no sentinel, as a
+/// follower reads it. Inside the wrapper the user manager is hidden, so
+/// past the launch grace the follower is refused `liveness-unreadable`
+/// with its cause, never `state=running`; within the grace the run is
+/// held. Unconfined, a manager that does not answer holds the run, since
+/// a later read can answer it, and one that has no record of the unit
+/// reads it lost.
+#[test]
+fn a_follower_that_cannot_read_a_unit_runs_liveness_says_so_and_never_reads_it_running() {
+    let systemctl = fixtures().join("systemctl-unit");
+    let path = tool_path(&[&systemctl]);
+    let command = Owned::sleep();
+    // Each row's answer: `Ok` the wait's state, `Err` its keyed refusal.
+    for (confined, manager_rc, age, answer) in [
+        (
+            "1",
+            "1",
+            20,
+            Err("validate: validate-unreadable read=liveness-unreadable cause=manager-hidden"),
+        ),
+        ("1", "1", 0, Ok("running")),
+        ("", "1", 20, Ok("running")),
+        ("", "0", 20, Ok("lost")),
+    ] {
+        let row = format!("confined={confined} manager-rc={manager_rc} age={age}");
+        let w = World::new();
+        let dir = w.worktree.join("tmp/dev-validate-unit-lost");
+        fs::create_dir_all(&dir).unwrap();
+        let started = epoch_now() - age;
+        fs::write(
+            dir.join("start"),
+            format!(
+                "worktree={}\nstart={started}\nquiet-secs=660\npoll-secs=1\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
+                w.worktree.display(),
+                w.head()
+            ),
+        )
+        .unwrap();
+        fs::write(dir.join("job.err"), "").unwrap();
+        fs::write(
+            dir.join("runner"),
+            "runner=systemd\nunit=orch-validate-wt-lost\nline=runner=systemd unit=orch-validate-wt-lost\n",
+        )
+        .unwrap();
+        fs::write(dir.join("execution"), "attempted\n").unwrap();
+        // A held process under another start: the recorded command reads gone.
+        fs::write(
+            dir.join("command"),
+            json!({"pid": command.pid(), "start": "ticks:1"}).to_string(),
+        )
+        .unwrap();
+        let run_dir = dir.display().to_string();
+        let out = w.entry(
+            &["--wait", "--run-dir", &run_dir, "--budget", "1"],
+            &[
+                ("PATH", &path),
+                ("AGENT_RUNTIME_CONFINED", confined),
+                ("SYSTEMCTL_RC", manager_rc),
+            ],
+        );
+        match answer {
+            Ok(state) => {
+                assert_eq!(field(&text(&out), "state"), state, "{row}: {}", text(&out));
+                let exit = if state == "lost" { 1 } else { 3 };
+                assert_eq!(out.status.code(), Some(exit), "{row}: {}", stderr(&out));
+            }
+            Err(refused) => {
+                assert_eq!(out.status.code(), Some(2), "{row}: {}", text(&out));
+                assert_eq!(keyed(&out), refused, "{row}: {}", stderr(&out));
+            }
+        }
+    }
+}
+
 /// Ends the group a row's detached child leads, whatever the row's answer.
 struct Group(PathBuf);
 impl Drop for Group {

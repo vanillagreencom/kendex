@@ -1516,7 +1516,7 @@ fn status_read(status: String) -> SidecarRead {
 /// run the job outside the wrapper, under the user's manager.
 fn probe_manager() -> Runner {
     let setsid = |reason: String| Runner::Setsid { reason };
-    if std::env::var_os(crate::confine::CONFINED_VAR).is_some_and(|v| v == "1") {
+    if crate::confine::confined() {
         return setsid("confined".to_owned());
     }
     if !on_path("systemd-run") {
