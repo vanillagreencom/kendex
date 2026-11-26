@@ -19,6 +19,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::harness::Harness;
+use crate::observe::{IdleTurn, PaneObservation, State, WallKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -94,6 +95,38 @@ pub fn of_failure(harness: Harness, cause: Option<&str>, status: Option<u16>) ->
         return Some(Kind::Usage);
     }
     cause.and_then(|cause| of_cause(harness, cause))
+}
+
+/// The kind of stop a pane shows: a wall's kind, a harness gone from its
+/// pane, or an idle turn the provider refused (`IdleTurn::ApiError`, Codex's
+/// capacity refusal). Any other screen names none.
+pub fn of_pane(pane: &PaneObservation) -> Option<Kind> {
+    match (&pane.state, pane.idle) {
+        (
+            State::Walled {
+                kind: WallKind::Usage,
+                ..
+            },
+            _,
+        ) => Some(Kind::Usage),
+        (
+            State::Walled {
+                kind: WallKind::Auth,
+                ..
+            },
+            _,
+        ) => Some(Kind::Auth),
+        (State::Exited, _) => Some(Kind::Exited),
+        (State::Idle, Some(IdleTurn::ApiError | IdleTurn::Capacity)) => Some(Kind::Provider),
+        (
+            State::Idle
+            | State::Working
+            | State::Asking { .. }
+            | State::RateLimitSwitch
+            | State::Unjudged { .. },
+            _,
+        ) => None,
+    }
 }
 
 /// The session whose stop is judged, which names who is told.

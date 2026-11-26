@@ -279,6 +279,12 @@ static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
+/// A harness's offer to raise the account's limit, drawn only on an account
+/// at its limit: Codex 0.172.0's dialog at a workspace member's usage limit
+/// (`fixtures/stops/codex-limit-increase.txt`). It is a usage wall whatever
+/// the account's reading says, so no turn is typed into it.
+static LIMIT_OFFER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*Request a limit increase from your owner").unwrap());
 /// A login wall's line, anchored at the row start so a quoted copy is not
 /// one. Claude Code 2.1.332 draws the expired-token error under its `●`
 /// answer bullet, and a pane narrower than the line wraps it onto an
@@ -589,7 +595,7 @@ pub fn limit_banner(slice: &str) -> Option<String> {
     let mut banner = Vec::new();
     let mut i = 0;
     while let Some(&row) = rows.get(i) {
-        if USAGE_LIMIT.is_match(row) || AUTH_FAILURE.is_match(row) {
+        if USAGE_LIMIT.is_match(row) || AUTH_FAILURE.is_match(row) || LIMIT_OFFER.is_match(row) {
             banner.push(row);
         } else if let Some(&next) = rows.get(i + 1)
             && wrapped_auth_failure(row, next)
@@ -669,8 +675,15 @@ fn judge_slice(
                 banner,
             };
         }
+        let offered = banner.lines().any(|row| LIMIT_OFFER.is_match(row));
         match account_room {
             None | Some(false) => {
+                return State::Walled {
+                    kind: WallKind::Usage,
+                    banner,
+                };
+            }
+            Some(true) if offered => {
                 return State::Walled {
                     kind: WallKind::Usage,
                     banner,

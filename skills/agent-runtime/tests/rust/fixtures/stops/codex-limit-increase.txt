@@ -1,0 +1,40 @@
+
+  >_ OpenAI Codex (v0.172.0)
+     ~/work
+
+
+› Say hello.
+
+
+■ You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap
+to continue.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Usage limit reached
+  Request a limit increase from your owner to continue using codex. Request increase?
+
+
+  1. Yes (y)
+› 2. No (default) (n)
+
+  enter select · esc back

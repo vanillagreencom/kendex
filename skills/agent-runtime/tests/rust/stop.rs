@@ -14,11 +14,14 @@
 
 use std::path::{Path, PathBuf};
 
+use std::time::Duration;
+
 use agent_runtime::harness::Harness;
+use agent_runtime::observe::{self, ProcessReading};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, Fields, Row, SessionRow};
 use agent_runtime::session;
-use agent_runtime::stop::Kind;
+use agent_runtime::stop::{self, Action, Ground, Kind, Session};
 use serde_json::Value;
 
 fn fixture(name: &str) -> PathBuf {
@@ -118,6 +121,34 @@ fn every_recorded_stop_reads_as_its_kind() {
     ];
     for (name, kind) in rows {
         assert_eq!(rows::stop_of(&row_of(name)), Some(kind), "{name}");
+    }
+}
+
+/// Codex's limit-increase dialog, captured from its pane at a workspace
+/// member's usage limit, is that account's limit even where the account's
+/// reading has room, and no action for it resumes the session, so no turn
+/// is typed into the dialog.
+#[test]
+fn a_limit_increase_prompt_is_a_usage_limit_that_is_never_resumed() {
+    let screen = std::fs::read_to_string(fixture("codex-limit-increase.txt")).unwrap();
+    for room in [None, Some(true)] {
+        let pane = observe::observe_pane(&screen, Harness::Codex, &ProcessReading::HarnessUp, room);
+        assert_eq!(stop::of_pane(&pane), Some(Kind::Usage), "room {room:?}");
+    }
+    for session in [Session::Worker, Session::Overseer, Session::Jarvis] {
+        for (own_room, room, reset) in [
+            (true, true, true),
+            (true, false, false),
+            (false, false, true),
+        ] {
+            let ground = Ground {
+                own_room,
+                room,
+                reset,
+            };
+            let action = stop::action(Kind::Usage, Duration::from_secs(60), session, ground);
+            assert_ne!(action, Action::Resume, "{session:?} {ground:?}");
+        }
     }
 }
 
