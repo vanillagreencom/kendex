@@ -1059,7 +1059,7 @@ The merge route stays the lane's (§ Lanes merge their own pull requests).
 
 `EVENT verifying-invalid [ITEM]`: the item's checklist cannot be judged. Every pass, the watch's stderr carries the cause under `verifying-invalid issue=[ITEM]`. The event prints once while the item stays invalid. Correct the checklist in the tracker; the next pass judges it again. The causes:
 
-- A branch-provable box is still open on a Verifying item.
+- A branch-provable box is still open on a Verifying item. Where the item has no merged pull request of its own, a pull request that names it moved it: move the item back to its prior open state, with a comment that names that pull request.
 - The parser refuses its post-merge metadata, and stderr carries its rule and the box.
 - On a GitHub item, a post-merge box is ticked with no Evidence line, and stderr carries the parser's whole reply. Add the box's `Evidence:` line through § Verification's GitHub form, or untick the box.
 - On a GitHub item, a release trigger names another repository, and stderr carries `rule=release-trigger-repository` with the box. Name the issue's own repository in the trigger.
