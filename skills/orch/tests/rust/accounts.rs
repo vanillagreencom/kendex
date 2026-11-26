@@ -2886,6 +2886,16 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             json!([{"config_dir": dir, "reason": "retired"}]),
         )]
     };
+    // This machine's copy with its week spent and no model window, so a
+    // successor's room is the provider's week.
+    let spent_week = usage_body((0, now() + 1800), (99, now() + 7 * 86_400), &[]);
+    // The provider's week at `pct` with its reset 100 hours away.
+    let far_week = |pct: u64| {
+        format!(
+            "\tsession-5h-pct=0\tweekly-pct={pct}\tweekly-resets={}",
+            stamp(now() + 100 * 3600)
+        )
+    };
     let arms = vec![
         Arm {
             name: "the provider's seat over this machine's copy of the account",
@@ -2917,6 +2927,32 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 "claude:claude-opus-5-5:high".to_owned(),
                 "none",
                 Some(3),
+                [walked(1, 0), vec![("/skipped/0/reason", json!("walled"))]].concat(),
+            )],
+        },
+        Arm {
+            name: "an overseer is charged one hour, never to a weekly reset 100 hours away: 14 points of room on the provider's reading at the default burn are a successor's account; no shell verb asked the walk",
+            usage: spent_week.clone(),
+            provider: Some(claude_row(&far_week(86))),
+            env: vec![],
+            asks: vec![overseer(
+                "claude",
+                "claude:claude-opus-5-5:high".to_owned(),
+                "lane",
+                None,
+                [walked(0, 0), vec![("/chosen/account", json!(claude_dir))]].concat(),
+            )],
+        },
+        Arm {
+            name: "the same account with 3 points of room on the provider's reading stays walled to the successor; no shell verb asked the walk",
+            usage: spent_week.clone(),
+            provider: Some(claude_row(&far_week(97))),
+            env: vec![],
+            asks: vec![overseer(
+                "claude",
+                "claude:claude-opus-5-5:high".to_owned(),
+                "none",
+                None,
                 [walked(1, 0), vec![("/skipped/0/reason", json!("walled"))]].concat(),
             )],
         },

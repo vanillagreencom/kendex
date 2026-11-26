@@ -1243,13 +1243,13 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
 }
 
 /// The projected room of one account on a window that can stop it: the
-/// binding window, or for a launch the 5-hour window, charged `S × burn`, one hour of burn per lane, plus, for an
-/// overseer's launch, `burn × hours_to_reset` for the controller it places.
-/// `S` is the lanes that will spend it: the fleet's live lanes on the
-/// account and, for a lane's launch, the candidate about to join them. A
-/// lane is charged one hour, since a reading is retaken within the hour and
-/// a lane charged to a weekly reset would wall an account with days of room;
-/// a controller runs to the reset, so it is charged to it. `burn` is the window's burn
+/// binding window, or for a launch the 5-hour window, charged `S × burn`, one hour of burn per spender.
+/// `S` is the sessions that will spend it: the fleet's live lanes on the
+/// account and the candidate a launch places beside them, a lane or a
+/// controller. Each is charged one hour, since a reading is retaken within
+/// the hour and a session charged to a weekly reset would wall an account
+/// with days of room; a controller hands over at its own mark, so it never
+/// runs to a far reset on one account. `burn` is the window's burn
 /// per lane hour: `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`, a lane's hourly
 /// spend in points of five hours scaled to the window's length, except
 /// where the reader measured a rate on that same window while lanes are
@@ -1263,17 +1263,15 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
 /// which every launch and relaunch rewrites), never the lanes live now, so a
 /// lane launched or relaunched onto the account after the sample, which
 /// spent none of it, cannot dilute the per-lane burn the sample measured.
-/// `hours_to_reset` is the hours left to the window's reset, at least one
-/// and at most the window's length, one where no reset is known.
 ///
 /// On a seat each controller seated on it is one more spender at the
 /// sample, so the measured rate is shared with it. A seat holds nothing back
 /// from the lanes, so no worker sits idle beside a controller: a seated
 /// controller is never charged in a lane's `headroom`, and a worker on a
 /// seat is held to the bound as on any account. An overseer's choice
-/// charges each other controller seated on the account to the reset as it
-/// charges its candidate (`burn × hours_to_reset × (1 + controllers)`), so
-/// an account the controllers there will spend is no room for one more. A
+/// charges each other controller seated on the account one hour as it
+/// charges its candidate (`burn × (1 + controllers)`), so an account the
+/// controllers there will spend is no room for one more. A
 /// controller whose own account reaches its mark is moved.
 ///
 /// The selection score (`with_lane_selection_score`, `agent-runtime
@@ -1346,7 +1344,6 @@ fn projection(
     binding: &Binding,
     spenders: &Spenders,
     burn_default: f64,
-    now: u64,
 ) -> Projection {
     let Spenders {
         claims,
@@ -1372,15 +1369,13 @@ fn projection(
         Some(share) if claims > 0 || seat => share.max(default),
         Some(_) | None => default,
     };
-    let to_reset = reset_epoch(binding.resets_at.as_deref())
-        .map(|reset| ((reset as f64 - now as f64) / 3600.0).clamp(1.0, window));
-    let (lanes, controller_hours) = match candidate {
-        Candidate::None => (claims, 0.0),
-        Candidate::Lane => (claims + 1, 0.0),
-        Candidate::Controller => (claims, to_reset.unwrap_or(1.0) * f64::from(1 + controllers)),
+    let spending = match candidate {
+        Candidate::None => claims,
+        Candidate::Lane => claims + 1,
+        Candidate::Controller => claims + 1 + controllers,
     };
     Projection {
-        headroom: 100.0 - binding.pct - (f64::from(lanes) + controller_hours) * burn,
+        headroom: 100.0 - binding.pct - f64::from(spending) * burn,
         window: binding.clone(),
         burn,
     }
@@ -1930,7 +1925,7 @@ fn judge(
         controllers,
     };
     let burn = f64::from(settings.burn_pct_per_hour);
-    let project = |b: &Binding| projection(row, b, &spenders, burn, now);
+    let project = |b: &Binding| projection(row, b, &spenders, burn);
     // A start is judged on the windows that can stop it: the binding plan
     // window, and the 5-hour window beside it where the reading carries
     // one, the less projected room deciding (the binding at a tie).
