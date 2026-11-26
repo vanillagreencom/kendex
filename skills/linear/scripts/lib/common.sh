@@ -1460,43 +1460,90 @@ find_user_by_email() {
     jq -c '.users.nodes[0] // empty' <<<"$result"
 }
 
-# resolve_assignee_id REF — the id of the user an --assignee value names, on
-# stdout. `me` is the API key's own user, a user id is taken as given (the
-# form activate_issue passes once it has resolved the person). Owner and Lead
-# writes resolve IDs before mutation. A value
-# containing `@` is an email address (find_user_by_email), and anything else
-# is a name matched as a case-insensitive substring. A miss refuses: every
-# other resolver here fails closed, and dropping the field on an unresolvable
-# name reported success with the issue unassigned.
+# find_user_by_id ID — the user with that id as one {id, app, isAssignable}
+# object on stdout, nothing when no user has it; exits 1 when the query failed.
+find_user_by_id() {
+    local id_vars result
+    id_vars=$(jq -cn --arg id "$1" '{id: $id}') || return 1
+    result=$(graphql_pages 'query GetUserById($id: ID!, $after: String) { users(filter: {id: {eq: $id}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id app isAssignable } } }' "$id_vars" users) || return 1
+    jq -c '.users.nodes[0] // empty' <<<"$result"
+}
+
+# resolve_assignee_id REF [ROLE] — the id of the user an --assignee, --delegate,
+# Owner or Lead value names, on stdout. `me` is the API key's own user, a user
+# id is looked up as given (the form activate_issue passes once it has resolved
+# the person), a value containing `@` is an email address (find_user_by_email),
+# and anything else is a name matched as a case-insensitive substring. A miss
+# refuses: every other resolver here fails closed, and dropping the field on an
+# unresolvable name reported success with the issue unassigned.
+#
+# An Assignee or Delegate is also judged against what Linear accepts, before
+# any write (user_role_refusal).
 resolve_assignee_id() {
-    local ref="$1" role="${2:-Assignee}" result assignee_id
+    local ref="$1" role="${2:-Assignee}" result user="" user_id
+    local judged=false
+    [[ "$role" != Assignee && "$role" != Delegate ]] || judged=true
     if [[ "$ref" =~ $LINEAR_UUID_PATTERN ]]; then
-        if [[ "$role" == Assignee ]]; then
-            assignee_id="$ref"
-        else
-            local id_vars
-            id_vars=$(jq -cn --arg id "$ref" '{id: $id}') || return 1
-            result=$(graphql_pages 'query GetUserById($id: ID!, $after: String) { users(filter: {id: {eq: $id}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }' "$id_vars" users) || return 1
-            assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result") || return 1
-        fi
+        user=$(find_user_by_id "$ref") || return 1
     elif [ "$ref" = "me" ]; then
-        result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
-        assignee_id=$(jq -r '.viewer.id // empty' <<<"$result") || return 1
+        result=$(graphql_query 'query { viewer { id app isAssignable } }' "{}") || return 1
+        user=$(jq -c '.viewer // empty' <<<"$result") || return 1
     elif [[ "$ref" == *@* ]]; then
-        result=$(find_user_by_email "$ref") || return 1
-        assignee_id=$(jq -r '.id // empty' <<<"$result") || return 1
+        user=$(find_user_by_email "$ref") || return 1
+        # The address lookup carries no app flags, so a judged role reads the
+        # user again by id.
+        if [[ "$judged" == true && -n "$user" ]]; then
+            user=$(find_user_by_id "$(jq -r '.id' <<<"$user")") || return 1
+        fi
     else
-        local user_query='query GetUser($name: String!, $after: String) { users(filter: {name: {containsIgnoreCase: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
+        local user_query='query GetUser($name: String!, $after: String) { users(filter: {name: {containsIgnoreCase: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id app isAssignable } } }'
         local user_vars
         user_vars=$(jq -cn --arg name "$ref" '{name: $name}') || return 1
         result=$(graphql_pages "$user_query" "$user_vars" users) || return 1
-        assignee_id=$(jq -r '.users.nodes[0].id // empty' <<<"$result") || return 1
+        user=$(jq -c '.users.nodes[0] // empty' <<<"$result") || return 1
     fi
-    if [ -z "$assignee_id" ]; then
+    user_id=""
+    [ -z "$user" ] || user_id=$(jq -r '.id // empty' <<<"$user") || return 1
+    if [ -z "$user_id" ]; then
         jq -cn --arg who "$ref" --arg role "$role" '{code: "USER_NOT_FOUND", reference: $who, error: ($role + " not found: " + $who)}' >&2
         return 1
     fi
-    printf '%s\n' "$assignee_id"
+    if [[ "$judged" == true ]]; then
+        user_role_refusal "$user" "$role" "$ref" || return 1
+    fi
+    printf '%s\n' "$user_id"
+}
+
+# user_role_refusal USER ROLE REF — exits 0 when Linear accepts USER, a
+# resolved {id, app, isAssignable}, in ROLE (Assignee or Delegate); otherwise
+# prints the refusal as {code, reference, error} on stderr and exits 1.
+#
+# Linear's agent documentation (linear.app/developers/agents) puts an agent in
+# the issue's `delegate`, with the accountable person staying `assignee`, and
+# accepts an app as delegate only once its install grants `app:assignable`
+# (`User.isAssignable`). Linear refuses another actor's app user as assignee
+# with "App user not valid", but an app may assign the issue to itself: its
+# own issues carry it as assignee with itself as the actor.
+user_role_refusal() {
+    local user="$1" role="$2" ref="$3" viewer_id="" result refusal
+    if [[ "$role" == Assignee && "$(jq -r '.app' <<<"$user")" == true && "$ref" != me ]]; then
+        result=$(graphql_query 'query { viewer { id } }' "{}") || return 1
+        viewer_id=$(jq -r '.viewer.id // empty' <<<"$result") || return 1
+    fi
+    refusal=$(jq -c --arg role "$role" --arg ref "$ref" --arg viewer "$viewer_id" '
+        if $role == "Delegate" then
+            if .app != true then
+                {code: "DELEGATE_NOT_APP", error: ("Delegate is not an app user: " + $ref + "; the delegate is the agent working the issue, and the person goes in --assignee")}
+            elif .isAssignable != true then
+                {code: "DELEGATE_NOT_ASSIGNABLE", error: ("Delegate app is not assignable: " + $ref + "; Linear takes an app as delegate only once its install grants app:assignable")}
+            else empty end
+        elif .app == true and $ref != "me" and .id != $viewer then
+            {code: "ASSIGNEE_IS_APP", error: ("Assignee is an app user: " + $ref + "; Linear takes an agent as --delegate, with a person as assignee")}
+        else empty end
+        | {code, reference: $ref, error}' <<<"$user") || return 1
+    [ -n "$refusal" ] || return 0
+    printf '%s\n' "$refusal" >&2
+    return 1
 }
 
 

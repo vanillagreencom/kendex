@@ -136,6 +136,7 @@ format_issue_single() {
         project: (.issue.project.name // ""),
         project_id: (.issue.project.id // ""),
         assignee: (.issue.assignee.name // ""),
+        delegate: (.issue.delegate.name // ""),
         parent_id: (.issue.parent.identifier // ""),
         milestone: (.issue.projectMilestone.name // ""),
         cycle: (if .issue.cycle then (.issue.cycle.name // "Cycle \(.issue.cycle.number)") else "" end),
@@ -201,6 +202,7 @@ format_issue_with_bundle() {
             project: (.issue.project.name // ""),
             project_id: (.issue.project.id // ""),
             assignee: (.issue.assignee.name // ""),
+            delegate: (.issue.delegate.name // ""),
             parent_id: (.issue.parent.identifier // ""),
             milestone: (.issue.projectMilestone.name // ""),
             cycle: (if .issue.cycle then (.issue.cycle.name // "Cycle \(.issue.cycle.number)") else "" end),
@@ -497,7 +499,9 @@ format_users_list() {
         email: (.email // ""),
         display_name: (.displayName // ""),
         active: (.active // false),
-        admin: (.admin // false)
+        admin: (.admin // false),
+        app: .app,
+        assignable: .isAssignable
     }]'
 }
 
@@ -511,6 +515,8 @@ format_user_single() {
         display_name: (.displayName // ""),
         active: (.active // false),
         admin: (.admin // false),
+        app: .app,
+        assignable: .isAssignable,
         teams: [(.teams.nodes // [])[] | .name]
     }'
 }
@@ -635,7 +641,8 @@ readonly ISSUE_FIELDS_TAIL='    labels { pageInfo { hasNextPage endCursor } node
     archivedAt
     trashed
 '"$ISSUE_RELATION_FIELDS"
-readonly ISSUE_RETURN_FIELDS="$ISSUE_FIELDS_HEAD    project { id name }
+readonly ISSUE_RETURN_FIELDS="$ISSUE_FIELDS_HEAD    delegate { name }
+    project { id name }
 $ISSUE_FIELDS_MIDDLE    team { name }
 $ISSUE_FIELDS_TAIL"
 readonly ISSUE_LIST_FIELDS="$ISSUE_FIELDS_HEAD    project { id name }

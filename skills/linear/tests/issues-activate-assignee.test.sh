@@ -61,6 +61,15 @@ case "$query" in
     printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   fi
   ;;
+*"users(filter: {id:"*)
+  # The id activate resolved is read back for its app flag: Dana is a person.
+  if [[ "$(jq -r '.id' <<<"$variables")" == "$(jq -r '.id' <<<"$dana")" ]]; then
+    printf '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}___HTTP_CODE___200' \
+      "$(jq -c '{id, app: false, isAssignable: true}' <<<"$dana")"
+  else
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
+  fi
+  ;;
 *"issueLabels(filter:"*)
   case "$(jq -r '.name' <<<"$variables")" in
   "agent:rust") printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-agent-rust"}]}}}___HTTP_CODE___200' ;;
