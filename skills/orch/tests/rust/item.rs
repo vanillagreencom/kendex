@@ -3408,6 +3408,53 @@ mod dev_artifacts {
         assert_eq!(check["path"], written["path"]);
     }
 
+    /// A fold inside the round leaves no commit where the round's work
+    /// began: a protected file the fold carries and the round did not
+    /// authorize stays unattributed, through the item record and through the
+    /// worktree's map, while the fold is HEAD and after one more commit.
+    #[test]
+    fn a_folded_round_leaves_an_unauthorized_protected_addition_unattributed() {
+        let w = World::new();
+        w.with_origin();
+        w.commit("first.txt");
+        let round_base = w.head();
+        w.stamp("r1");
+        w.upstream("up.txt");
+        w.commit("tools/new");
+        let fixed = w.head();
+        git(&w.wt, &["rebase", "-q", "origin/main"]);
+        git(&w.wt, &["reset", "-q", "--soft", "origin/main"]);
+        git(&w.wt, &["commit", "-qm", "fold"]);
+        let fold = w.head();
+        let map = PathBuf::from(git(
+            &w.wt,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "kendex-rebase-map",
+            ],
+        ));
+        let unmapped = w.doc();
+        for later in [None, Some("after.txt")] {
+            if let Some(path) = later {
+                w.commit(path);
+            }
+            w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
+            let mut doc = unmapped.clone();
+            doc["rebase_map"] = json!({ round_base.as_str(): fold, fixed.as_str(): fold });
+            fs::write(w.item(), doc.to_string()).unwrap();
+            assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+            fs::write(w.item(), unmapped.to_string()).unwrap();
+            let hop = format!(
+                "rebase-hop:\nrebase-map: {round_base} {fold}\nrebase-map: {fixed} {fold}\n"
+            );
+            fs::write(&map, hop).unwrap();
+            assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+            fs::remove_file(&map).unwrap();
+        }
+    }
+
     /// A fix round's red run over staged work keeps its result against the
     /// tree that ran, with no commit between, while a pass still proves only
     /// the committed tree.

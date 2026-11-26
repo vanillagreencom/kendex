@@ -793,7 +793,7 @@ fn carries(settings: &Settings, id: &Identity, run: &Run, base: &str, tree: &str
         return Ok(true);
     }
     match projected_base(settings, &id.issue, &id.worktree, base)? {
-        Some(mapped) => ancestor(&id.worktree, &mapped, &run.head),
+        Some((mapped, _)) => ancestor(&id.worktree, &mapped, &run.head),
         None => Ok(false),
     }
 }
@@ -1713,10 +1713,11 @@ fn protected(path: &str) -> bool {
 }
 
 /// The commits `from` became through the item record's `rebase_map`, one
-/// per recorded rewrite in order: a push consumes the worktree's temporary
-/// map into that record, which then holds every rewrite of the work. A
-/// dropped commit or a loop ends the chain.
-fn rewrites(settings: &Settings, issue: &str, from: &str) -> Result<Vec<String>> {
+/// per recorded rewrite in order, each with whether a rewrite up to it
+/// folded the chain ([`proof::folds`]): a push consumes the worktree's
+/// temporary map into that record, which then holds every rewrite of the
+/// work in order. A dropped commit or a loop ends the chain.
+fn rewrites(settings: &Settings, issue: &str, from: &str) -> Result<Vec<(String, bool)>> {
     let path = state::item_path(&settings.state_dir, issue);
     let Some(snapshot) = crate::validate::load(&path)? else {
         return Ok(Vec::new());
@@ -1724,26 +1725,33 @@ fn rewrites(settings: &Settings, issue: &str, from: &str) -> Result<Vec<String>>
     let Some(Value::Object(map)) = snapshot.doc.get("rebase_map") else {
         return Ok(Vec::new());
     };
-    let mut chain: Vec<String> = Vec::new();
+    let mut chain: Vec<(String, bool)> = Vec::new();
+    let mut folded = false;
     let mut at = from;
     while let Some(next) = map.get(at).and_then(Value::as_str).filter(|n| sha(n)) {
-        if next == from || chain.iter().any(|seen| seen == next) {
+        if next == from || chain.iter().any(|(seen, _)| seen == next) {
             break;
         }
-        chain.push(next.to_owned());
+        let entries = map
+            .iter()
+            .filter_map(|(old, new)| Some((old.as_str(), new.as_str()?)));
+        folded |= proof::folds(entries, at);
+        chain.push((next.to_owned(), folded));
         at = next;
     }
     Ok(chain)
 }
 
+/// The commit HEAD contains that `base` became, and whether a fold merged
+/// it with later work on the way.
 fn projected_base(
     settings: &Settings,
     issue: &str,
     worktree: &Path,
     base: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, bool)>> {
     if ancestor(worktree, base, "HEAD")? {
-        return Ok(Some(base.to_owned()));
+        return Ok(Some((base.to_owned(), false)));
     }
     let map = git(worktree, &["rev-parse", "--git-path", "kendex-rebase-map"])?;
     let map = PathBuf::from(map);
@@ -1753,19 +1761,19 @@ fn projected_base(
         worktree.join(map)
     };
     let Some(text) = optional_text(&map).map_err(|e| refuse("rebase-map-unreadable", e))? else {
-        for mapped in rewrites(settings, issue, base)? {
+        for (mapped, folded) in rewrites(settings, issue, base)? {
             if ancestor(worktree, &mapped, "HEAD")? {
-                return Ok(Some(mapped));
+                return Ok(Some((mapped, folded)));
             }
         }
         return Ok(None);
     };
     // An unmapped rewrite or a map outside the grammar projects nothing.
-    let Ok(mapped) = proof::project_rebase(&text, base) else {
+    let Ok((mapped, folded)) = proof::project_rebase(&text, base) else {
         return Ok(None);
     };
     if sha(&mapped) && ancestor(worktree, &mapped, "HEAD")? {
-        Ok(Some(mapped))
+        Ok(Some((mapped, folded)))
     } else {
         Ok(None)
     }
@@ -1780,16 +1788,25 @@ fn additions(
     if git(&id.worktree, &["cat-file", "-t", base]).ok().as_deref() != Some("commit") {
         return Ok(Err("comparison_failed"));
     }
-    let base = match projected_base(settings, &id.issue, &id.worktree, base) {
-        Ok(Some(base)) => base,
+    // A fold leaves the round's work starting at no commit: read everything
+    // the fold carries, with no rename pairing to clear a destination, and
+    // attribute no protected addition found there to the round alone.
+    let (base, folded) = match projected_base(settings, &id.issue, &id.worktree, base) {
+        Ok(Some((fold, true))) => (format!("{fold}^"), true),
+        Ok(Some((base, false))) => (base, false),
         Ok(None) => return Ok(Err("additions_unattributable")),
         Err(_) => return Ok(Err("comparison_failed")),
+    };
+    let renames = if folded {
+        "--no-renames"
+    } else {
+        "--find-renames"
     };
     let changed = match git(
         &id.worktree,
         &[
             "diff",
-            "--find-renames",
+            renames,
             "--diff-filter=A",
             "--name-only",
             "-z",
@@ -1806,11 +1823,15 @@ fn additions(
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    Ok(Ok(changed
+    let unapproved: Vec<_> = changed
         .split('\0')
         .filter(|p| !p.is_empty() && protected(p) && !authorized.contains(p))
         .map(str::to_owned)
-        .collect()))
+        .collect();
+    if folded && !unapproved.is_empty() {
+        return Ok(Err("additions_unattributable"));
+    }
+    Ok(Ok(unapproved))
 }
 
 fn check_answer(
