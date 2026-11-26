@@ -228,19 +228,7 @@ fn a_launch_never_confirms_when_its_harness_execs_a_shell_before_capture() {
         ("HOLD_BOUND_SECS", "15"),
     ]);
     let mut child = Owned(runner.spawn_op_fleet(&request, &env, dir.path()));
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while !mark.exists() {
-        assert!(
-            child.0.try_wait().unwrap().is_none(),
-            "the launch ended before capture: {}",
-            runner.fleet()
-        );
-        assert!(
-            Instant::now() < deadline,
-            "the capture never reached its hold"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    await_hold(&mut child.0, &mark, "capture-pane");
     let fleet = runner.fleet();
     let intent = &fleet["intents"][0];
     assert!(
@@ -3872,19 +3860,12 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
         ("TMUX_HOLD_READY_COMM", "copilot"),
     ]);
     let mut child = runner.spawn_op_fleet(&request, &held, &fixtures().join("tmux-hold"));
-    wait_for_phase(&runner, "launch-session:", "window-opened");
     // The launch is at its first wait: the shim holds its first capture.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !mark.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "the launch never reached its first wait"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    await_hold(&mut child, &mark, "capture-pane");
     // The record at the first wait: the pane standing with the receipt, nothing
     // discharged that was not read.
     let held = runner.fleet()["intents"][0].clone();
+    assert_eq!(held["phase"]["phase"], "window-opened", "{held}");
     let standing = held["obligations"]["standing"].as_array().unwrap().clone();
     assert!(
         standing.iter().any(|o| o["kind"] == "receipt"),
@@ -7649,19 +7630,7 @@ fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_
     let mut request = launch_request("KEN-M", runner.state_dir());
     request["refresh"] = json!(true);
     let mut child = runner.spawn_op_fleet(&request, &shim_env, &holddir);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while std::fs::metadata(&mark).is_err() {
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "the launch ended before its window: {}",
-            stderr(&child.wait_with_output().unwrap())
-        );
-        assert!(
-            Instant::now() < deadline,
-            "the launch never reached new-window"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    await_hold(&mut child, &mark, "new-window");
     // Held before the window: the record stands.
     assert_eq!(
         marker_of(&root, "KEN-M").as_deref(),
@@ -8179,15 +8148,7 @@ impl HostedLaunch {
             ],
             &fixtures().join("tmux-hold"),
         );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !mark.exists() {
-            if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
-                let _ = child.kill();
-                let out = child.wait_with_output().unwrap();
-                panic!("launch did not reach its pane read: {}", stderr(&out));
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        await_hold(&mut child, &mark, "capture-pane");
         child.kill().unwrap();
         child.wait().unwrap();
         release_hold(&fifo, Duration::from_secs(10), || {
