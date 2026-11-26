@@ -24,14 +24,14 @@ Each stable release needs its major tag `v<major>` moved to the commit `v<versio
 
 The Jarvis session moves or creates `v<major>` at `<SHA>` under the organization-admin bypass of the major-tag ruleset for each stable release. The owner does this when no Jarvis session runs. A lane moves no major tag. A major tag never moves backwards to an older version. If it already names a newer stable release, keep that target. After the move, run `git ls-remote --tags origin v<major>` and require the returned SHA to equal `<SHA>`. A failed read or a different SHA stops release follow-up. Until the tag moves, every shared-workflow refresh run on that major prints `refresh-warning=behind-release`; a new major's first release warns nowhere, because each run compares only its caller's major.
 
-At each stable release, the Jarvis session, or the owner when no Jarvis session runs, also moves organization ruleset 27179484's pin of `.github/workflows/request-copilot-review.yml` to the release's last change to that workflow.
+At each stable release, the Jarvis session, or the owner when no Jarvis session runs, also moves organization ruleset 27179484's pin of `.github/workflows/request-copilot-review.yml` forward to the release's last change to that workflow.
 
 1. Read the pinned `sha`: `gh api orgs/vanillagreencom/rulesets/27179484 --jq '.rules[] | select(.type == "workflows") | .parameters.workflows[] | select(.path == ".github/workflows/request-copilot-review.yml") | .sha'`.
 2. Read the last commit that changed the workflow at the release commit: `git log -1 --format=%H <SHA> -- .github/workflows/request-copilot-review.yml`.
-3. If the two differ, update the ruleset so that entry pins `sha` to that commit, with `ref: refs/heads/main` and `repository_id: 1190866154`. Preserve every other rule, condition and the empty bypass list, as review-gate's references/adoption.md § Central Copilot request workflow requires.
-4. Read the ruleset back and require that only that `sha` changed.
+3. If the pin equals that commit or descends from it, keep the pin: `git merge-base --is-ancestor <commit> <pinned>` exits 0. The pin never moves backwards.
+4. Otherwise, if that commit descends from the pin, `git merge-base --is-ancestor <pinned> <commit>` exiting 0, update the ruleset so that entry pins `sha` to that commit, with `ref: refs/heads/main` and `repository_id: 1190866154`. Preserve every other rule, condition and the empty bypass list, as review-gate's references/adoption.md § Central Copilot request workflow requires.
 
-A failed read or a different read-back stops release follow-up.
+A failed read stops release follow-up. So does an `--is-ancestor` exit other than 0 or 1, or a pin and commit where neither descends from the other.
 
 ## What the workflow does
 
