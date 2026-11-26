@@ -20,6 +20,7 @@ For the organization refresh exception, the organization owner reads and updates
 
 - Require `.github/workflows/request-copilot-review.yml` from `vanillagreencom/kendex` through a `workflows` rule.
 - Pin `sha` to the merged commit that holds the reviewed workflow, with `ref: refs/heads/main` and kendex's repository ID.
+- At each stable kendex release, re-pin `sha` when the workflow changed, by the step in kendex's app-deploy skill § Major tag.
 - Replace the `copilot_code_review` rule only after that commit exists.
 - Preserve every other rule, condition and the empty bypass list.
 
