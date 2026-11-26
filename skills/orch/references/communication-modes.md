@@ -86,6 +86,7 @@ Record who wrote each answer with `--sender` on `send --re` or `resolve --text`:
 - Pass `--sender owner` only for words that came directly from the owner, per § Recording.
 - Pass `--sender jarvis` for an answer Jarvis gave under delegated authority.
 - Leave it out where neither is proved. The ruling comment then names the sender as unrecorded.
+- If lane-mail refuses `option-unknown=--sender`, that repository's lane-mail predates the option. Run the same command without `--sender`. The answer then reads unrecorded.
 
 ### Closing
 
