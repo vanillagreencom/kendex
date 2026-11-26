@@ -857,7 +857,10 @@ sys.exit(task.main())
             ("rollback-browser", "task.py", (("self.stop_browser(record)\n                    shutil.rmtree(scratch)",
                 "shutil.rmtree(scratch)"),), "test_failed_browser_launch_stops_its_browser"),
             ("cleanup-browser", "task.py", (("self.stop_browser(record)\n                scratch = Path(record",
-                "scratch = Path(record"),), "test_cleanup_stops_running_task_browser"),
+                "scratch = Path(record"),), "test_failed_browser_launch_stops_its_browser"),
+            ("complete-teardown", "task.py", (("self.write(record)\n                # A failed task's scratch",
+                "self.write(record)\n                return record\n                # A failed task's scratch"),),
+             "test_complete_closes_the_task_s_window_and_browser"),
             ("browser-endpoint", "task.py", (('env["JARVIS_BROWSER_PORT"] = "0"',
                 'env["JARVIS_BROWSER_PORT"] = "9222"'),), "test_launch_contract"),
             ("desktop", "task.py", (("                    env.update({name: os.environ[name] for name in DESKTOP_DISPLAY if name in os.environ})\n", ""),),
@@ -981,30 +984,38 @@ sys.exit(task.main())
                 self.assertFalse(Path(record["scratch"]).exists())
                 self.assertEqual(self.browser_signals(reader), b"BT1$")
 
-    def test_cleanup_stops_running_task_browser(self):
-        reader = self.browser_harness("completed", exit_status=None)
-        record = self.launch("codex", model="1")
-        self.assertEqual(self.browser_signals(reader, until_exit=False), b"B")
-        Path(record["result_path"]).write_text("Output: checked\n")
-        self.call("complete", "--id", record["id"], "--outcome", "succeeded")
-        cleaned = self.call("cleanup", "--id", record["id"])
-        self.assertEqual(cleaned["cleanup"]["state"], "done")
-        self.assertFalse(Path(record["scratch"]).exists())
-        self.assertEqual(self.browser_signals(reader), b"T1$")
+    def test_complete_closes_the_task_s_window_and_browser(self):
+        # Complete leaves no window or browser running. A succeeded task's
+        # scratch goes with them; a failed task's stays for cleanup.
+        for outcome, cleanup in (("succeeded", "done"), ("failed", "kept")):
+            with self.subTest(outcome=outcome):
+                reader = self.browser_harness(outcome, exit_status=None)
+                record = self.launch("codex", "-" + outcome, model="1")
+                self.assertEqual(self.browser_signals(reader, until_exit=False), b"B")
+                Path(record["result_path"]).write_text("Output: checked\n")
+                completed = self.call("complete", "--id", record["id"], "--outcome", outcome)
+                self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
+                                 [self.terminal["window"]])
+                self.assertEqual(self.browser_signals(reader), b"T1$")
+                self.assertEqual(Path(record["scratch"]).exists(), outcome == "failed")
+                self.assertEqual(completed["cleanup"]["state"], cleanup)
+                self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
+                self.assertFalse(Path(record["scratch"]).exists())
 
     def test_an_unconfirmed_close_keeps_the_cleanup_pending(self):
         # A window close agent-runtime could not confirm leaves the task's
         # cleanup pending and its scratch kept, for a cleanup that can.
         record = self.launch("codex")
         self.acknowledgement(record)
-        self.call("complete", "--id", record["id"], "--outcome", "failed")
         wrapper = self.bin / "tmux"
         wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
             + 'for arg in "$@"; do if [[ $arg == kill-window ]]; then exit 2; fi; done\n'
             + "exec " + shlex.quote(shutil.which("tmux")) + ' "$@"\n')
         wrapper.chmod(0o755)
-        self.call("cleanup", "--id", record["id"], success=False)
-        self.assertIsNone(self.call("status", "--id", record["id"])["cleanup"])
+        self.call("complete", "--id", record["id"], "--outcome", "failed", success=False)
+        status = self.call("status", "--id", record["id"])
+        self.assertEqual(status["completion"]["outcome"], "failed")
+        self.assertIsNone(status["cleanup"])
         self.assertTrue(Path(record["scratch"]).is_dir())
         wrapper.unlink()
         self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
