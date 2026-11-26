@@ -447,12 +447,15 @@ class Sources:
 
     def answer(self, route, body, key):
         # lane-mail judges a repeated delivery id under the mailbox lock and
-        # names the answer that landed, before it judges closure.
+        # names the answer that landed, before it judges closure. Reply and
+        # Done carry the owner's own text from the console, so the answer
+        # records the owner as its sender.
         delivery = "owner-ask-" + key
         target = next((target for target in watch.destinations(self.settings) if target.key == route["destination"]), None)
         if target is None:
             raise Unavailable("The ask's destination is no longer declared.")
-        result = self.call(target, route["root"], "mailbox", "lane-mail", [route["root"], "--re", route["ask"], "--delivery-id", delivery],
+        args = [route["root"], "--re", route["ask"], "--delivery-id", delivery, "--sender", "owner"]
+        result = self.call(target, route["root"], "mailbox", "lane-mail", args,
                            shell_args=["-c", MAILBOX_ANSWER, "owner-asks"], data=body, check=False)
         if watch.send_receipt(result, delivery):
             return True

@@ -228,11 +228,14 @@ class LaneMail:
 
     def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats
-        before closure, so a replay never becomes a directive."""
+        before closure, so a replay never becomes a directive. The relay
+        reads only messages from users the binding names as owner, so the
+        answer records the owner as its sender."""
         path = self._text_file(text)
         try:
             code, out, err = self._run(
-                "send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id
+                "send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id,
+                "--sender", "owner",
             )
         finally:
             os.unlink(path)

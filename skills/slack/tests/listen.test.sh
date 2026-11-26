@@ -59,7 +59,7 @@ directives() { # ROOT — every directive's key and text; none before the first 
   [ -f "$(sk_box "$1")/to-lane.jsonl" ] || return 0
   jq -r 'select(.kind == "directive") | [.delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"
 }
-answers() { jq -r 'select(.kind == "answer") | [.re, .by, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
+answers() { jq -r 'select(.kind == "answer") | [.re, .by, .sender, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
 posts() { sk_state ".messages.${1}[] | select(.user == \"UBOT\") | [(.thread_ts // \"top\"), .text] | join(\" | \")"; }
 
 # --- refusals before any poll -------------------------------------------------
@@ -106,11 +106,11 @@ sk_poll "$ROOT"
 assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("<@U001>"))] | length')" "1" "the ask is posted once"
 R1="$(sk_inject C001 U002 'keep' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep" "the first reply lands as an answer with its delivery id"
+assert_eq "$(answers "$ROOT")" "$ASK text owner C001:$R1 keep" "the first reply lands as the owner's answer with its delivery id"
 R2="$(sk_inject C001 U001 'and keep the tests' "$ASK_TS")"
 sk_poll "$ROOT"
-assert_eq "$(answers "$ROOT")" "$ASK text C001:$R1 keep
-$ASK text C001:$R2 and keep the tests" "both replies land once as answers to the ask"
+assert_eq "$(answers "$ROOT")" "$ASK text owner C001:$R1 keep
+$ASK text owner C001:$R2 and keep the tests" "both replies land once as answers to the ask"
 assert_eq "$(sk_reactions C001 "$R1") $(sk_reactions C001 "$R2")" "eyes eyes" "both answers get eyes"
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.id')" "$ASK" "an answered ask stays pending"
 assert_eq "$(sk_state "[.messages.C001[] | select(.user == \"UBOT\" and .thread_ts == \"$ASK_TS\")] | length")" "0" "the relay posts no text in the ask's thread"
