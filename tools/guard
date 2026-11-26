@@ -1922,7 +1922,7 @@ scan_load() { # DIR
       SCAN_RELS+=("$rel")
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
-      doc_readers "$1" "$rel" "$key" || return 2
+      doc_readers "$rel" "$key" "$1" || return 2
       scan_parts+=("Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl")
     done
   done <<<"$tree_rows"
@@ -2179,14 +2179,14 @@ scan_load() { # DIR
 # whole word, and a change to comments alone has no reader here. A suite
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
-doc_readers() { # TREE REL [KEY]
-  local tree="$1" rel="$2" dir external=0 source_rel source_tree fixed
+doc_readers() { # REL KEY TREE, KEY empty for a path query
+  local rel="$1" tree="$3" dir external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
-  if [ -n "${3-}" ]; then
+  if [ -n "${2-}" ]; then
     # A key the regex spells literally is also its needle.
     fixed=-
-    [[ $3 =~ ^[[:alnum:]_]+$ ]] && fixed=$3
-    reader_patterns=(- "(^|[^[:alnum:]_])$3([^[:alnum:]_]|\$)" - - "$fixed")
+    [[ $2 =~ ^[[:alnum:]_]+$ ]] && fixed=$2
+    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - - "$fixed")
     return 0
   fi
   if [ "$rel:$settings_scope" = ../kendex.settings.toml:inert ]; then
