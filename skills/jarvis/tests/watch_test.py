@@ -2574,6 +2574,119 @@ with open(sys.argv[1], "ab") as out:
                 self.assertEqual(outcome["ref"], root["id"])
                 self.assertIn("/accounts/b", outcome["text"])
 
+    def exited_session(self):
+        """jarvis-session as the loop runs it for an exited controller: each
+        call's arguments logged, and each verb's planted answer printed with
+        its planted exit; a verb with no answer prints nothing and exits 1."""
+        world = self.root / ("session-" + uuid.uuid4().hex)
+        world.mkdir()
+        here = shlex.quote(str(world))
+        self.scripts.joinpath("jarvis-session").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + here + '/calls\n'
+            '[ -f ' + here + '/"$1".json ] || exit 1\ncat ' + here + '/"$1".json\nexit "$(cat ' + here + '/"$1".code)"\n')
+
+        def plant(verb, answer, code=0):
+            for name in (verb + ".json", verb + ".code"):
+                world.joinpath(name).unlink(missing_ok=True)
+            if answer is not None:
+                world.joinpath(verb + ".json").write_text(json.dumps(answer) + "\n")
+                world.joinpath(verb + ".code").write_text(str(code))
+
+        def calls():
+            path = world / "calls"
+            return [line for line in path.read_text().splitlines() if not line.startswith("status ")] \
+                if path.exists() else []
+        return plant, calls
+
+    def exited_passes(self, watch, now):
+        """One wall pass through the loop: the wall read, the status read an
+        unbound one starts, the restart and the succeed after a refused resume."""
+        class Inline:
+            def submit(self, work, *args):
+                future = Future()
+                if work.__name__ in ("wall", "exited", "restart"):
+                    future.set_result(work(*args))
+                return future
+        for offset in range(4):
+            watch._poll(Inline(), Future(), now + offset)
+
+    def test_an_exited_controller_is_started_again_and_reported_once(self):
+        # The failure it stops: a controller whose CLI exited writes no rows,
+        # so the wall check never reads it, and the loop starts nothing and
+        # tells nobody; or a loop that restarts and tells the owner on every
+        # pass, or again after a restart that failed.
+        ended = {"state": "stopped", "reason": "ended", "harness": "claude", "account": "/accounts/a"}
+        running = dict(ended, state="running", reason="resumed")
+        starting = dict(ended, state="starting", reason="launching")
+        signed_out = dict(ended, state="blocked", reason="sign-in-required")
+        moved = dict(running, account="/accounts/b", reason="new-requested")
+        spent = dict(ended, state="failed", reason="handover-failed", detail="No account is left to take over.")
+        resume = "start --home {home} --harness claude --account /accounts/a --mode resume --origin manual"
+        succeed = "succeed --home {home} --exited"
+        # Each row: Start's and succeed's answers with their exits (None: no
+        # answer), how many notices lane-mail refuses first, then one step
+        # per watch pass: the status it reads, the session calls it adds, the
+        # words of each owner notice it adds, and the root-unreachable events
+        # it adds.
+        for name, start, succession, refusals, steps in (
+                ("resumed", (running, 0), (None, 1), 0,
+                 [(ended, [resume], [["/accounts/a", "claude", "started again", "resumed"]], 0), (running, [], [], 0),
+                  # An exit after the episode ended is another one.
+                  (ended, [resume], [["/accounts/a", "resumed"]], 0)]),
+                ("in flight", (starting, 0), (None, 1), 0,
+                 [(ended, [resume], [], 0), (starting, [], [], 0), (running, [], [["/accounts/a", "resumed"]], 0),
+                  (running, [], [], 0)]),
+                ("resume refused", (signed_out, 1), (moved, 0), 0,
+                 [(ended, [resume, succeed], [["started again", "/accounts/b"]], 0), (moved, [], [], 0)]),
+                ("refused after its start", (starting, 0), (spent, 1), 0,
+                 [(ended, [resume], [], 0),
+                  (signed_out, [succeed], [["did not start", "resume sign-in-required", "succeed handover-failed",
+                                            "No account is left"]], 0),
+                  (spent, [], [], 0), (ended, [], [], 0)]),
+                ("no answer", (None, 1), (None, 1), 0,
+                 [(ended, [resume, succeed], [["did not start", "resume", "succeed"]], 0), (ended, [], [], 0)]),
+                ("notice unsent", (running, 0), (None, 1), 1,
+                 [(ended, [resume], [], 1), (running, [], [["/accounts/a", "resumed"]], 0), (running, [], [], 0)]),
+                ("stopped on purpose", (running, 0), (moved, 0), 0,
+                 [(dict(ended, reason="stopped"), [], [], 0), (dict(ended, state="off", reason="app-off"), [], [], 0)]),
+                ("never started", (running, 0), (moved, 0), 0,
+                 [(dict(ended, reason="never-started", harness=None, account=None), [], [], 0)])):
+            with self.subTest(row=name):
+                # Each row's own home: the mailbox refuses an owner notice
+                # whose text it delivered within the last 24 hours.
+                self.home = self.project("exited-" + name.replace(" ", "-"))
+                with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                    # The log keeps every event: no batch settles and takes it.
+                    self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-exited-" + name)),
+                                         JARVIS_WAKE_SETTLE_SECS="86400")
+                    plant, calls = self.exited_session()
+                    plant("start", *start)
+                    plant("succeed", *succession)
+                    if refusals:
+                        refused = shlex.quote(str(self.root / ("refused-" + name.replace(" ", "-"))))
+                        self.intercept_mail(': >> ' + refused + '\nif [ "$1" = notice ] && [ "$(wc -l < ' + refused
+                                            + ')" -lt ' + str(refusals) + ' ]; then\necho >> ' + refused
+                                            + '\necho "lane-mail: send-failed=owner" >&2\nexit 1\nfi')
+                    watch = self.watch()
+                    made, told, alerts = [], [], 0
+                    try:
+                        for index, (status, added, named, alerted) in enumerate(steps):
+                            plant("status", status)
+                            self.exited_passes(watch, 30 * index)
+                            made += [call.format(home=self.home) for call in added]
+                            told += named
+                            alerts += alerted
+                            self.assertEqual(calls(), made)
+                            notices = self.owner_notices()
+                            self.assertEqual(len(notices), len(told), notices)
+                            for notice, words in zip(notices, told):
+                                for word in words:
+                                    self.assertIn(word, notice)
+                            events = watch.log.read_text() if watch.log.exists() else ""
+                            self.assertEqual(len(re.findall(r"^EVENT root-unreachable.*", events, re.M)), alerts, events)
+                    finally:
+                        shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
         class Submitted:
@@ -2834,7 +2947,7 @@ with open(sys.argv[1], "ab") as out:
                 (walled, 'raise Failure("controller-wall", "rows", "unreadable", rows["cause"])', "return None"),
                 (walled, 'return error if error.record["key"][1:] == ["refusal", "dependency"] else None', "return None"),
                 # An unsent notice stays owed.
-                (walled, '                return\n        if usage and not outcome_notice:',
+                (walled, '            return\n        if usage and not outcome_notice:',
                  '        if usage and not outcome_notice:'),
                 # A succession with no answer tells its refusal.
                 (walled, '"No replacement started: " + answer.record["detail"][:200] + "."', '"No replacement started."'),

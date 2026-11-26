@@ -32,6 +32,8 @@ class SuccessionContract(SessionContract):
         argv = [str(session_test.SCRIPT), "succeed", "--home", str(self.home)]
         if kwargs.get("account_walled"):
             argv.append("--account-walled")
+        if kwargs.get("exited"):
+            argv.append("--exited")
         before = kwargs.get("usage_wall")
         if before:
             argv += ["--usage-wall", before["session_id"], f'{before["server"]} {before["pane"]}']
@@ -255,6 +257,25 @@ class SuccessionContract(SessionContract):
         after = self.handed_over(before)
         self.assertEqual((after["account"], after.get("seat")), (str(second), "jarvis"))
         self.assertEqual([row["account"] for row in self.started()], [str(self.account), str(self.account), str(second)])
+
+    def test_an_exited_controller_whose_resume_is_refused_is_handed_to_the_next_account(self):
+        # The failure it stops: a controller whose CLI exited after its
+        # account signed out stays down, since Start's resume refuses that
+        # account and succeed hands over only from a running controller.
+        second = self.plant_account("claude-b", 20)
+        before = self.running()
+        self.sign_out(self.account)
+        os.kill(self.started()[-1]["pid"], signal.SIGKILL)
+        self.wait("stopped", "ended", seconds=30)
+        self.assertEqual(self.succeed()[0]["reason"], "record-unreadable")
+        self.call("start")
+        self.wait("blocked", "sign-in-required")
+        answer, code = self.succeed(exited=True)
+        self.assertEqual((answer["state"], answer["account"], code), ("running", str(second), 0),
+                         self.stderr + self.diagnostics())
+        after = self.handed_over(before)
+        self.assertEqual((after["account"], after.get("seat")), (str(second), "jarvis"))
+        self.assertEqual(self.started()[-1]["account"], str(second))
 
     def test_with_no_account_left_the_answer_names_each_unproved_account_and_jarvis_keeps_running(self):
         # Wanted outcome 2's other half, and a walled account's refusal: with

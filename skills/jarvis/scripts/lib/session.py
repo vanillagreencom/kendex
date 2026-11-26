@@ -840,7 +840,7 @@ class Session:
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
-    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None):
+    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None, exited=False):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
@@ -849,6 +849,19 @@ class Session:
             answer = self.answer(record, status)
             if answer["state"] == "handing-over":
                 return answer, 0
+            if exited:
+                # The caller read the controller's process gone, and Start's
+                # resume on its account refused: the successor leaves that
+                # account, and nothing live is retired. A stop or an open
+                # start is a person's or a start's, never an exit.
+                if (not status or status.get("live") or status.get("open_intents") or record.get("intent") == "stop"
+                        or not (status.get("recorded") or {}).get("harness")):
+                    raise Refusal("record-unreadable")
+                recorded = status["recorded"]
+                self.env = environment(recorded.get("harness"), policy=True)
+                record.update(intent="succeed", failure=None, reason="new-requested")
+                self.write(record)
+                return self._hand_over(record, "headroom", self.server(recorded["harness"]), cause="dead")
             if answer["state"] != "running":
                 raise Refusal("record-unreadable")
             recorded = status["recorded"]
@@ -933,12 +946,13 @@ class Session:
                     "wall_resume": {"cause": result["cause"], "turns_before": result["turns_before"]}}
         return {"wall_recovery": "confirmed"}
 
-    def _hand_over(self, record, mark, socket, posture=None, choice=None):
+    def _hand_over(self, record, mark, socket, posture=None, choice=None, cause=None):
         # Save the handoff, write its generation header, then choose and
         # transfer until an attempt is proved, no account is left, or the
         # outcome is not a failure on a named account. The caller holds the
         # lock. Every successor takes the record's stored private brief, and
-        # `posture` over the one the walk carried from its predecessor.
+        # `posture` over the one the walk carried from its predecessor. A
+        # `dead` CAUSE hands over from a controller whose process is gone.
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
         if not contents.strip():
@@ -970,6 +984,8 @@ class Session:
         # while later attempts ran must not send it back to one, so each
         # account is tried at most once and the call ends.
         tried = set()
+        cause = cause or ("walled" if mark == "headroom" else "live")
+        kept = "" if cause == "dead" else " Jarvis keeps running."
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
@@ -978,7 +994,7 @@ class Session:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
                     raise Refusal("handover-failed", short("No account is left to take over"
-                                                           + (": " + named if named else "") + ". Jarvis keeps running."), "failed")
+                                                           + (": " + named if named else "") + "." + kept), "failed")
                 # The marks as they stood before this attempt: a failure
                 # retries only where it stamped the account it tried, never on
                 # an older mark, which the walk may have let expire.
@@ -986,8 +1002,8 @@ class Session:
                 successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT, **(posture or {}))
                 request.write_text(json.dumps({"expected": choice["expected"], "successor": successor,
                                                "brief_file": str(brief), "session": SESSION_NAME,
-                                               "cause": "walled" if mark == "headroom" else "live",
-                                               **({"exclude_account": recorded["account"]} if mark == "headroom" else {})}))
+                                               "cause": cause,
+                                               **({"exclude_account": recorded["account"]} if cause == "walled" else {})}))
                 choice = None
                 result, code, refusal, errors = self.runtime("controller", "transfer", *self.reach(socket),
                                                              "--request", request, "--effect-exit", timeout=3600)
@@ -1012,7 +1028,7 @@ class Session:
                     continue
                 note = ((((result or {}).get("settled") or {}).get("observation")) or {}).get("note") or refusal
                 raise Refusal("handover-failed", short("The successor on " + str(attempted) + " failed"
-                                                       + (": " + note if note else "") + ". Jarvis keeps running."), "failed")
+                                                       + (": " + note if note else "") + "." + kept), "failed")
         finally:
             for path in (brief, request):
                 path.unlink(missing_ok=True)
@@ -1405,6 +1421,7 @@ def main():
             command.add_argument("--usage-wall", nargs=2, metavar=("SESSION", "PANE"))
             command.add_argument("--reset-passed", action="store_true")
             command.add_argument("--resume-cursor", type=int)
+            command.add_argument("--exited", action="store_true")
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
     for action in ("list", "reply", "done", "later"):
@@ -1473,7 +1490,10 @@ def main():
                 parser.error("usage-wall")
             if args.resume_cursor is not None and (not args.reset_passed or args.resume_cursor < 0):
                 parser.error("resume-cursor")
-            answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed, args.resume_cursor)
+            if args.exited and (args.account_walled or args.usage_wall):
+                parser.error("exited")
+            answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed, args.resume_cursor,
+                                           args.exited)
         elif args.verb == "update-brief":
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":
