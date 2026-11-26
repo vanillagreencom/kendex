@@ -92,11 +92,11 @@ The brief's `Adds:` line and `--adds` carry the same blank-separated path list:
 
 The record is immutable per round. A second stamp of the round with any other field changed refuses `record-conflict`; an identical retry stands. Mint a new round instead, and never fall back to an unbound item list.
 
-The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run.
+The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run, and its stage in workflow state has not ended.
 
 - During it, `record-push` refuses to push as `live-round`.
 - Its `check-live-round` mode answers exit 3, which refuses the restack: a rebase would move the branch off the commit that round works from.
-- The receipt landing ends the live round. So does a fresh `dev_round_id` whose token names no stamped record.
+- The receipt landing ends the live round. So does a closed round stage, which a hand `accept-result` writes with no receipt, and a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 
@@ -131,6 +131,8 @@ Where a rebase moved that commit off the branch, the receipt check projects it t
 
 It changes neither the record nor the map. A missing, unresolved, malformed, incomplete, dropped or unrelated projection answers `reason: "additions_unattributable"` with empty `files`.
 
+A round rebased with no map recorded answers this until the map is recorded in the item record's `rebase_map`, or a fresh round names the paths in `Adds:`. The branch's merge base is no substitute: a protected path the branch deleted before the round and the round restored is an addition from the round's start, not from the merge base.
+
 That answer is not a deferral. A fresh round starts at the current `HEAD`, which already carries the earlier round's additions, so the fresh round's gate cannot derive them again. Settle them first:
 
 1. Read the earlier round's own commits against the scope below.
@@ -138,7 +140,7 @@ That answer is not a deferral. A fresh round starts at the current `HEAD`, which
 3. Name each deliberate path in `Adds:`. That line authorizes those standing paths.
 4. Cut the rest before delegating it.
 
-A map correspondence proves no validation result; the writer still binds the actual run to the round's base and the receipt's tree.
+A map correspondence proves no validation result; the writer still binds the actual run to the receipt's tree ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
 
 Protected additions are:
 

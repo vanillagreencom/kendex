@@ -184,6 +184,12 @@ A `fix` receipt that names a run must bind it to its round record ([dev-round.md
 - The run's HEAD contains the record's `base_sha`; or the base's tree is the run's tree; or the run's start record names that base as its `validate-base`; or the run's HEAD contains the base's rewritten commit in the worktree-private `kendex-rebase-map` (ordered hops per [workflow-state.md](workflow-state.md), `rebase_map` rules). Where no map file stands, the rewritten commit is the first one the item record's `rebase_map` maps the base to, hop by hop, that the worktree's HEAD contains.
 - A run directory whose start record names no tree, and a foreground record, prove their recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain --untracked-files=all` prints nothing.
 - A `pass` also needs the round's proof: the runtime's proof reader, as `read-proof --need round` reads it, answers the tree `complete` or `pending`. A `no-verdict` needs the run itself to have ended `no-verdict`.
+- A `pass` the rules above refuse still binds, with no rebase map, where all of these hold:
+  - The named run itself passed in `range` mode and is no docs-only run.
+  - Its recorded `validate-base` is the receipt commit's merge base with `refs/remotes/origin/<base>`. A local base branch names no merge base.
+  - The proof reader answers the tree `complete` from that merge base on the named row alone, with no chain through base trees. A `pass-run` reuse is no such row, and a newer pass at the tree that the receipt did not name refuses it.
+
+  Its refusal ends with `run-base=` and `merge-base=`, each a commit or `none`.
 
 The check then holds the receipt's mode to the round:
 

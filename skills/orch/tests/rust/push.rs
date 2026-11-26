@@ -552,6 +552,29 @@ mod push {
         assert_eq!(repo.remote("ken-1"), repo.head());
     }
 
+    /// A hand `accept-result` closes the round's stage and writes no
+    /// receipt: no dev agent works the round, so a rewrite may proceed.
+    #[test]
+    fn a_round_closed_by_hand_acceptance_is_not_live() {
+        let repo = Repo::new("KEN-1", BASE);
+        repo.record(json!({
+            "dev_round_id": "1-1",
+            "stages": [{"kind": "dev", "round_id": "1-1", "start": 1, "end": null}],
+        }));
+        fs::write(repo.wt.join("tmp/dev-round-KEN-1-1-1.json"), "{}").unwrap();
+        let out = repo.push("check-live-round");
+        assert_eq!(exit(&out), Some(3), "{}", stderr(&out));
+        assert_eq!(result(&out)["live_round"], "1-1");
+
+        result(&repo.op(json!({"op": "accept-result", "round_id": "1-1", "outcome": "pass"})));
+        let out = repo.push("check-live-round");
+        assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
+        let reply = result(&out);
+        assert_eq!(reply["exit"], 0);
+        assert!(reply.get("live_round").is_none(), "{reply}");
+        prepared(&repo);
+    }
+
     #[test]
     fn the_live_round_check_answers_alone_and_changes_nothing() {
         let repo = Repo::new("KEN-1", "");

@@ -310,9 +310,10 @@ fn stands(path: &Path) -> Result<bool> {
 
 /// The active fix round in flight: the record's `dev_round_id` whose round
 /// record stands in the worktree with no receipt of the round beside it,
-/// bare or keyed by its run. A rebase would move every commit out from
-/// under it.
-fn live_round(doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
+/// bare or keyed by its run, and whose stage has not ended. A rebase would
+/// move every commit out from under it. A hand `accept-result` ends the
+/// stage and writes no receipt: no dev agent works the round after it.
+fn live_round(path: &Path, doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
     let round = doc
         .get("dev_round_id")
         .and_then(Value::as_str)
@@ -337,7 +338,15 @@ fn live_round(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Stri
                 .to_str()
                 .is_some_and(|n| n.starts_with(&keyed) && n.ends_with(".json"))
         });
-    Ok((!receipt).then(|| round.to_owned()))
+    if receipt {
+        return Ok(None);
+    }
+    let ended = validate::stages(path, doc)?.iter().any(|s| {
+        s.kind != state::StageKind::Validate
+            && s.round_id.as_deref() == Some(round)
+            && s.end.is_some()
+    });
+    Ok((!ended).then(|| round.to_owned()))
 }
 
 /// The worktree-private map every rewrite records its hops in, where the
@@ -1209,7 +1218,7 @@ pub fn run(
     let record = state::load(path)?.map(|s| s.doc);
     if let Some(doc) = &record {
         bind(doc, &item, &worktree)?;
-        if let Some(round) = live_round(doc, &item, &worktree)? {
+        if let Some(round) = live_round(path, doc, &item, &worktree)? {
             if let RecordPush::CheckLiveRound { .. } = r {
                 reply.exit = LIVE_EXIT;
                 reply.live_round = Some(round);
