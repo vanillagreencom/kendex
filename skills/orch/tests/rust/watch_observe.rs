@@ -28,7 +28,7 @@ use agent_runtime::accounts::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWall};
 use agent_runtime::clock::{self, Clock};
 use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
-use agent_runtime::controller::views::{Caller, MarkKind};
+use agent_runtime::controller::views::{AccountState, Caller, MarkKind};
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneState};
 use agent_runtime::observe::{self, ProcessReading};
@@ -2399,8 +2399,19 @@ impl OverseerDriver<'_> {
     }
 }
 
-/// A judge's answer as a row plants it.
+/// A judge's answer as a row plants it, its own account read as the judge
+/// reads it for that answer: at the trigger for a headroom mark, unread
+/// for an unmeasured headroom, not read for a due context reading, and
+/// with room otherwise. A row planting another reading sets `own`.
 fn marks(key: MarkKey, value: &str, mark: &str, succession: Succession, account: &str) -> Marks {
+    let own = match key {
+        MarkKey::Reached(MarkKind::Headroom) => Some(AccountState::AtTrigger),
+        MarkKey::Unmeasured(MarkKind::Headroom) => Some(AccountState::Unreadable),
+        MarkKey::Reached(MarkKind::Context) => None,
+        MarkKey::Reached(_) | MarkKey::Unmeasured(_) | MarkKey::Below => {
+            Some(AccountState::HasRoom)
+        }
+    };
     Marks {
         key,
         value: value.to_owned(),
@@ -2414,6 +2425,7 @@ fn marks(key: MarkKey, value: &str, mark: &str, succession: Succession, account:
         headroom: String::new(),
         context: ContextRead::Unjudged,
         decision: None,
+        own,
     }
 }
 
@@ -9053,9 +9065,9 @@ fn an_ended_sign_in_after_a_pending_usage_wall_moves_and_tells_the_owner_once() 
     );
 }
 
-/// The own account of a pending usage wall, read with room past its reset,
-/// resumes the overseer standing at its usage banner through the wake's
-/// resume row, once for the wall:
+/// The own account of a pending usage wall, read with room past its reset
+/// though its rate is still unmeasured, resumes the overseer standing at
+/// its usage banner through the wake's resume row, once for the wall:
 /// a newer failure row on the same wall starts no episode and no notice,
 /// the resume names the wall by its episode, and the resume wins over a
 /// walk with room in the same pass. A new wall with the same reset asks
@@ -9076,7 +9088,17 @@ fn a_pending_usage_wall_is_resumed_once_per_wall_when_its_own_account_reads_room
     let own_room = Cell::new(false);
     let judge = |_: &Caller, _: Option<&str>| {
         if own_room.get() {
-            return Ok(marks(MarkKey::Below, "", "", Succession::On, ""));
+            // An account fresh past its reset that nothing spends: its
+            // headroom read with room, its rate one sample or not rising.
+            let mut m = marks(
+                MarkKey::Unmeasured(MarkKind::Rate),
+                "",
+                "",
+                Succession::On,
+                "",
+            );
+            m.reason = "not-increasing".to_owned();
+            return Ok(m);
         }
         let mut m = marks(
             MarkKey::Reached(MarkKind::Headroom),
@@ -9163,13 +9185,13 @@ fn a_pending_usage_wall_is_resumed_once_per_wall_when_its_own_account_reads_room
     assert!(transfers.borrow().is_empty());
 }
 
-/// A pending account wall read live on a reading that proves no room on
-/// its own account stays walled: the judge's unmeasured headroom, a due
-/// context reading or a reached memory mark, each of which the judge
-/// answers without reading the account's room. No resume is asked, the
-/// walk runs on each pass and the kept reset stands; an account left
-/// unread a whole patience past that reset tells the owner once with the
-/// judge's reason. A later reading with room resumes it.
+/// A pending account wall read live on a reading that leaves its own
+/// account unread stays walled: the judge's unmeasured headroom, a due
+/// context reading, which answers before the account is read, or a memory
+/// mark reached over an unreadable account. No resume is asked, the walk
+/// runs on each pass and the kept reset stands; an account still unread a
+/// whole patience past that reset tells the owner once with its cause. A
+/// later reading with room resumes it.
 #[test]
 fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_resume() {
     let reset: u64 = 1_800_000_000 + 3600;
@@ -9207,24 +9229,26 @@ fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_r
         m
     };
     let memory = || {
-        marks(
+        let mut m = marks(
             MarkKey::Reached(MarkKind::Memory),
             "95",
             "90",
             Succession::On,
             "/home/me/.eclaude",
-        )
+        );
+        m.own = Some(AccountState::Unreadable);
+        m
     };
     type Reading<'a> = &'a dyn Fn() -> Marks;
     // case, the reading past the reset, the owner's unread notice cause
-    let cases: [(&str, Reading, Option<&str>); 3] = [
+    let cases: [(&str, Reading, &str); 3] = [
+        ("headroom unmeasured", &unmeasured, "headroom-unreadable"),
+        ("context due", &context_due, "account-not-read"),
         (
-            "headroom unmeasured",
-            &unmeasured,
-            Some("headroom-unreadable"),
+            "memory mark, account unreadable",
+            &memory,
+            "headroom-unreadable",
         ),
-        ("context due", &context_due, Some("context-due")),
-        ("memory mark", &memory, None),
     ];
     for (case, unproved, cause) in cases {
         let dir = tempfile::tempdir().unwrap();
@@ -9289,17 +9313,12 @@ fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_r
                 .iter()
                 .map(|(_, text)| text.split(':').next().unwrap_or_default())
                 .collect();
-            match cause {
-                Some(cause) => {
-                    assert_eq!(
-                        keys,
-                        ["overseer-walled-pending", "overseer-account-unread"],
-                        "{case}"
-                    );
-                    assert!(told[1].1.contains(cause), "{case}: {}", told[1].1);
-                }
-                None => assert_eq!(keys, ["overseer-walled-pending"], "{case}"),
-            }
+            assert_eq!(
+                keys,
+                ["overseer-walled-pending", "overseer-account-unread"],
+                "{case}"
+            );
+            assert!(told[1].1.contains(cause), "{case}: {}", told[1].1);
         }
         phase.set(2);
         driver.pass(&state);
@@ -9309,6 +9328,94 @@ fn a_pending_wall_read_live_on_a_reading_with_no_room_stays_walled_and_asks_no_r
             Some(asked.as_str()),
             "{case}"
         );
+        assert!(transfers.borrow().is_empty(), "{case}");
+    }
+}
+
+/// A pending account wall whose pane then runs a turn, as one the owner
+/// resumed by hand, ends with no resume and no transfer whatever its own
+/// account reads, a successor with room standing by: room, an unreadable
+/// account or an unmeasured one.
+#[test]
+fn a_pending_wall_whose_pane_runs_a_turn_ends_with_no_resume_and_no_transfer() {
+    let room = || marks(MarkKey::Below, "", "", Succession::On, "");
+    let unread = |own: AccountState, reason: &str| {
+        let mut m = marks(
+            MarkKey::Unmeasured(MarkKind::Headroom),
+            "",
+            "",
+            Succession::On,
+            "",
+        );
+        m.own = Some(own);
+        m.reason = reason.to_owned();
+        m
+    };
+    let unreadable = || unread(AccountState::Unreadable, "headroom-unreadable");
+    let unmeasured = || unread(AccountState::Unmeasured, "headroom-none");
+    type Reading<'a> = &'a dyn Fn() -> Marks;
+    let cases: [(&str, Reading); 3] = [
+        ("room", &room),
+        ("account unreadable", &unreadable),
+        ("account unmeasured", &unmeasured),
+    ];
+    for (case, reading) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(&server, dir.path(), "overseer", "claude", "❯\u{a0}\n");
+        await_drawn(&server, &pane, "❯");
+        let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), dir.path());
+        record["harness_pid"] = json!(identity.pid.to_string());
+        record["harness_start"] = json!(identity.start);
+        fleet.set_overseer(record);
+        let key = format!("{} {pane}", server.pid);
+        let resumed = Cell::new(false);
+        let judge = |_: &Caller, _: Option<&str>| {
+            if resumed.get() {
+                return Ok(reading());
+            }
+            let mut m = marks(
+                MarkKey::Reached(MarkKind::Headroom),
+                "0",
+                "5",
+                Succession::On,
+                "/home/me/.eclaude",
+            );
+            m.resets = clock::iso_utc(1_800_000_000 + 3600);
+            Ok(m)
+        };
+        let walk = |request: &WalkRequest| {
+            if resumed.get() {
+                walk_b(request)
+            } else {
+                walk_none(request)
+            }
+        };
+        let accept = |_: &str, _: &str| Ok(());
+        overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+        driver.alert = &accept;
+        let state = fleet.read();
+        driver.pass(&state);
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("pending"),
+            "{case}"
+        );
+        redraw(
+            &server,
+            &pane,
+            dir.path(),
+            "overseer-working.txt",
+            "❯ Resume the work\n✻ Working… (esc to interrupt)\n",
+            "esc to interrupt",
+        );
+        resumed.set(true);
+        driver.pass(&state);
+        assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live, "{case}");
+        assert_eq!(driver.baseline.get("overseer-walled", &key), None, "{case}");
+        assert_eq!(driver.baseline.get("resume", "overseer"), None, "{case}");
         assert!(transfers.borrow().is_empty(), "{case}");
     }
 }

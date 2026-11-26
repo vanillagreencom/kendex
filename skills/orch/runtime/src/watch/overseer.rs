@@ -214,6 +214,9 @@ pub struct Marks {
     pub context: ContextRead,
     /// The judged reading as the handoff record carries it.
     pub decision: Option<Value>,
+    /// The caller's own account as this answer read it; `None` for an
+    /// answer given before the account is read, a due context reading.
+    pub own: Option<AccountState>,
 }
 
 impl Marks {
@@ -231,24 +234,24 @@ impl Marks {
             headroom: String::new(),
             context: ContextRead::Unjudged,
             decision: None,
+            own: None,
         }
     }
 
-    /// The account judgement read the caller's own account with room: the
-    /// one answer that lifts a usage wall. Every other answer reached a
-    /// mark, some before the account is read, or left it unmeasured.
+    /// The account judgement read the caller's own account with room, the
+    /// one reading that lifts a usage wall, whatever mark it answers.
     fn reads_room(&self) -> bool {
-        self.key == MarkKey::Below
+        self.own == Some(AccountState::HasRoom)
     }
 
-    /// The cause where this answer left the caller's own account unread: an
-    /// unmeasured headroom (`headroom-unreadable`, `headroom-none`), or a
-    /// due context reading, which answers before the account is read.
-    fn account_unread(&self) -> Option<String> {
-        match self.key {
-            MarkKey::Unmeasured(MarkKind::Headroom) => Some(self.reason.clone()),
-            MarkKey::Reached(MarkKind::Context) => Some("context-due".to_owned()),
-            MarkKey::Reached(_) | MarkKey::Unmeasured(_) | MarkKey::Below => None,
+    /// The cause where this answer left the caller's own account unread:
+    /// its headroom unmeasured or unreadable, or not read at all.
+    fn account_unread(&self) -> Option<&'static str> {
+        match self.own {
+            Some(AccountState::HasRoom | AccountState::AtTrigger) => None,
+            Some(AccountState::Unmeasured) => Some("headroom-none"),
+            Some(AccountState::Unreadable) => Some("headroom-unreadable"),
+            None => Some("account-not-read"),
         }
     }
 
@@ -540,6 +543,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     };
     let reached = |kind: MarkKind, value: String, mark: String| {
         let mut m = Marks::new(MarkKey::Reached(kind), succession);
+        m.own = Some(account.state);
         m.value = value;
         m.mark = mark;
         m.account = if account.account.is_empty() {
@@ -587,6 +591,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     }
     let unmeasured = |kind: MarkKind, reason: String| {
         let mut m = Marks::new(MarkKey::Unmeasured(kind), succession);
+        m.own = Some(account.state);
         m.reason = reason;
         m.context = context_read.clone();
         m.decision = decision.clone();
@@ -620,6 +625,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         return Ok(unmeasured(MarkKind::Memory, reason));
     }
     let mut m = Marks::new(MarkKey::Below, succession);
+    m.own = Some(account.state);
     m.headroom = headroom_field;
     m.mark = context_pct.min(CONTEXT_PCT_CEILING).to_string();
     m.context = context_read;
@@ -1391,30 +1397,33 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         };
     }
     let marks_now = marks_read.clone().and_then(Result::ok);
-    // A pending wall read live lifts only on a reading of its own account
-    // with room and a screen that, judged with that room, stands idle for
-    // the resume or runs a turn. A screen or account wall reads live where
-    // that reading failed or reached another mark, and a banner screen
-    // reads walled until room is judged on it: on any such pass the wall
-    // stands, so it is walked and its reset read as on a walled one.
+    // A pending wall read live lifts on a pane that runs a turn, whatever
+    // the account reads, and otherwise only where the own account reads
+    // room and the pane, judged with that room, stands idle for the resume.
+    // A screen or account wall reads live where the account read failed or
+    // left its headroom unread, and a banner screen reads walled until room
+    // is judged on it: on any other pass the wall stands, so it is walked
+    // and its reset read as on a walled one.
     let mut resume = false;
     if verdict == Verdict::Live && pass.baseline.get("overseer-walled", &key) == Some(PENDING) {
         let room = marks_now.as_ref().is_some_and(Marks::reads_room);
-        let screen = reads.as_ref().filter(|_| room).and_then(|reads| {
-            Some(
-                observe::observe_pane(
-                    reads.screen.as_ref().ok()?,
-                    record.harness?,
-                    &reads.process,
-                    Some(true),
-                )
-                .state,
-            )
-        });
-        match screen {
-            Some(State::Idle) => resume = true,
-            Some(State::Working) => {}
-            _ => {
+        let working = pane
+            .as_ref()
+            .is_some_and(|pane| pane.state == State::Working);
+        let idle = || {
+            reads.as_ref().is_some_and(|reads| {
+                reads.screen.as_ref().is_ok_and(|screen| {
+                    record.harness.is_some_and(|harness| {
+                        observe::observe_pane(screen, harness, &reads.process, Some(true)).state
+                            == State::Idle
+                    })
+                })
+            })
+        };
+        if !working {
+            if room && idle() {
+                resume = true;
+            } else {
                 verdict = Verdict::Walled {
                     source: Source::Account,
                     kind: WallKind::Usage,
@@ -2352,7 +2361,9 @@ fn own_reset(
         .get(WALL_RESET_ROW, key)
         .and_then(|at| at.parse::<u64>().ok());
     let read = match reading {
-        Ok(marks) => marks.account_unread().map_or(Ok(marks), Err),
+        Ok(marks) => marks
+            .account_unread()
+            .map_or(Ok(marks), |cause| Err(cause.to_owned())),
         Err(cause) => Err(cause.clone()),
     };
     match read {

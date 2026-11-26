@@ -31,13 +31,13 @@ A usage-limit banner on the overseer's pane proves no wall by itself: the pane a
 A walled case is pending when its walk chooses no successor, or leaves a provider unread 30 minutes after the case was announced. A pending case has two ways out:
 
 - The watch walks again on each pass. Once the walk chooses an account with room, the watch requests the transfer.
-- When the watch reads the overseer's own account with room and its pane, read with that room, stands idle, it asks the wake to resume the overseer there, once for the wall. The wake types the resume past the usage banner, as it does for a lane at a passed wall.
+- When the account judgement reads the overseer's own account with room, whatever mark it answers, and the pane, read with that room, stands idle, the watch asks the wake to resume the overseer there, once for the wall. The wake types the resume past the usage banner, as it does for a lane at a passed wall.
 
 A failed turn that a Codex or Copilot session's own record holds stays walled whatever its account reads (§ Recovery requests), so only the walk ends it.
 
-The case stays walled on every pass that does not read the own account with room, including a pass where the account read fails, reaches another mark first or leaves its headroom unmeasured. Such a pass walks and reads the reset as a walled pass does.
+A pane read running a turn ends the case with no resume and no transfer, whatever the account reads. Every other pass that does not read the own account with room keeps the case walled: the account read fails, its headroom is unmeasured or unreadable, or the judgement answers before reading it. Such a pass walks and reads the reset as a walled pass does.
 
-If the own account reads room and the pane stands idle, the overseer is resumed on it and nothing is walked on that pass, even where another account has room. A pane read running a turn ends the case with no resume.
+If the own account reads room and the pane stands idle, the overseer is resumed on it and nothing is walked on that pass, even where another account has room.
 
 The owner gets one notice when the case becomes pending. It says whether the walk answered none or could not read a provider. A later failure on the same wall starts no new episode and sends no new notice. A resumed turn that stops at a new wall is a new episode, with its own notice and its own resume.
 
