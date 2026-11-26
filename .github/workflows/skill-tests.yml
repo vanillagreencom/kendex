@@ -187,7 +187,6 @@ jobs:
       skipped_suites_macos: ${{ steps.select.outputs.skipped_suites_macos }}
       rust_targets: ${{ steps.select.outputs.rust_targets }}
       cache_compile: ${{ steps.select.outputs.cache_compile }}
-      main_suites: ${{ steps.select.outputs.main_suites }}
       runtime_publish: ${{ steps.select.outputs.runtime_publish }}
       nightly: ${{ steps.select.outputs.nightly }}
     # The installer, classifier and orch contract come from the default
@@ -201,7 +200,6 @@ jobs:
       HEAD: ${{ github.event.merge_group.head_sha }}
       PUSH_BEFORE: ${{ github.event.before }}
       PUSH_AFTER: ${{ github.event.after }}
-      MAIN_ONLY_SUITES: '[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
     steps:
       # THREE CHECKOUTS, and the split is the point. The classifier is the
       # DEFAULT BRANCH's copy, where the change's author cannot change
@@ -575,8 +573,6 @@ jobs:
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      TEMPORARY_SUITE: ${{ matrix.suite || '' }}
-      MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=adopt-refresh.test' || '' }}
       # The suites the changes job skips, which each shell suite step's
       # `tools/ci-job-set --suite-list` leaves out of its candidates; none
       # where that job did not succeed or does not run. A push's macOS legs
@@ -970,9 +966,8 @@ jobs:
             base="${t##*/}"
             refresh+=("=${base%.sh}")
           done
-          [[ -z "${TEMPORARY_SUITE:-}" ]] || refresh=("=$TEMPORARY_SUITE")
           [ "${#refresh[@]}" -gt 0 ] || exit 0
-          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
+          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
           exit "$fail"
       # guards-hooks runs the Claude attention suite. On macOS, guards-hooks
       # and guards-tools also run a Jarvis suite each.
@@ -2066,21 +2061,6 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: *skill-suite-timeout
-    env: *skill-suite-env
-    steps: *skill-suite-steps
-
-  # REVISIT(D026): adopt-refresh stays on main while its placement failure
-  # awaits a causal fix. Preserve the refresh shard's setup and Linux runner.
-  skill-suites-main-only:
-    name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.changes.result != 'success' || needs.changes.outputs.main_suites != '[]') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.changes.result != 'success' && '[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]' || needs.changes.outputs.main_suites) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

@@ -168,8 +168,7 @@ git -C "$PUSH_REPO" add tools/guard
 git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm head
 PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
 PUSH_SHA="$PUSH_AFTER"
-MAIN_ONLY_SUITES="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$ROOT/.github/workflows/skill-tests.yml")"
-export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
+export PUSH_BEFORE PUSH_AFTER
 mkdir -p "$TMP/gh-stub"
 cat >"$TMP/gh-stub/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -411,15 +410,11 @@ P_JARVIS=skills/jarvis/tests/task.test.sh
 P_MERGE=skills/github/tests/pr-merge.test.sh
 P_VIEW=skills/github/tests/pr-view.test.sh
 P_NATIVE=skills/github/tests/native-contracts.test.sh
-P_MAIN_ONLY=refresh/tests/adopt-refresh.test.sh
+P_ADOPTER=refresh/tests/adopt-refresh.test.sh
 # Compare proof to the committed world read by the selector, including when
 # the caller has staged suite additions or deletions outside that world.
 UNIVERSE="$(cd "$PUSH_REPO" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
   ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh' | grep -v '/run-all\.sh$')"
-# The suites a group can prove: no group leg runs a declared main-only
-# suite, and MAIN_ONLY_FILTERS drops each shell one by base name.
-UNIVERSE="$(jq -r '.[].suite + ".sh"' <<<"$MAIN_ONLY_SUITES" | awk '
-  NR == FNR { main_only[$0] = 1; next } { base = $0; sub(/.*\//, "", base) } !(base in main_only)' - <(printf '%s\n' "$UNIVERSE"))"
 count() { # PREFIX — the universe suites under PREFIX
   grep -c "^$1" <<<"$UNIVERSE" || true
 }
@@ -524,13 +519,11 @@ replacement_row() {
   check "push route: an owed original keeps the replacement its group proved" "$P_NATIVE" \
     "$(macos_leg "$P_MERGE" "$P_NATIVE" "$P_VIEW")"
 }
-# A green leg proves no main-only suite it filtered out: the push's
-# dedicated job still runs it.
-main_only_row() {
+# The group's green legs prove each suite returned to the merge group, so
+# the push leaves it out.
+restored_row() {
   push_select all-proved >/dev/null
-  check "push route: a main-only suite the group filtered out stays selected" false "$(in_list skipped_suites "$P_MAIN_ONLY")"
-  check "push route: only the adopter still runs in the dedicated job" '["adopt-refresh.test"]' \
-    "$(field main_suites <"$TMP/push-out$ROW_TAG" | jq -c '[.[].suite]')"
+  check "push route: the group proves the restored adopter suite" true "$(in_list skipped_suites "$P_ADOPTER")"
   check "push route: the group proves the restored ownership partition" true \
     "$(in_list skipped_suites tools/tests/orch-shard-partition.test.sh)"
   check "push route: the group proves the restored deny hook" true \
@@ -549,7 +542,7 @@ one_target_row() {
 row_spawn red_leg_row
 row_spawn kept_subset_row
 row_spawn replacement_row
-row_spawn main_only_row
+row_spawn restored_row
 row_spawn one_target_row
 
 # THE RUNTIME PUBLICATION: a push owes each package runtime build whose
@@ -732,7 +725,7 @@ row_spawn trusting_row
 # The rows below read this no-run world; the table's own may still be written.
 push_world no-run tail
 # Path selection precedes proof subtraction, including a narrowed whole leg.
-reach_row() { # PATH REQUIRED FORBIDDEN BUILD DEDICATED
+reach_row() { # PATH REQUIRED FORBIDDEN BUILD
   local got
   own_push_repo
   mkdir -p "$PUSH_REPO/$(dirname "$1")"
@@ -744,14 +737,13 @@ reach_row() { # PATH REQUIRED FORBIDDEN BUILD DEDICATED
   if jq -e --arg req "$2" --arg forbid "$3" '(($req == "" or index($req) != null) and ($forbid == "" or index($forbid) == null))' <<<"$got" >/dev/null; then
     ok "main path reach: $1"
   else bad "main path reach: $1 ($got)"; fi
-  check "main dedicated reach: $1" "$5" "$(sed -n 's/^main_suites=//p' "$TMP/push-out$ROW_TAG" | jq -c '[.[].suite]')"
 }
-while IFS='|' read -r path required forbidden build dedicated; do
-  row_spawn reach_row "$path" "$required" "$forbidden" "$build" "$dedicated"
+while IFS='|' read -r path required forbidden build; do
+  row_spawn reach_row "$path" "$required" "$forbidden" "$build"
 done <<'ROWS'
-.kendex-lock.json||rest|false|[]
-crates/core/src/lib.rs|rest|node|true|["adopt-refresh.test"]
-pi-extensions/pi-agents-tmux/index.ts|node|linear|false|[]
+.kendex-lock.json||rest|false
+crates/core/src/lib.rs|rest|node|true
+pi-extensions/pi-agents-tmux/index.ts|node|linear|false
 ROWS
 saved_after="$PUSH_AFTER"
 PUSH_AFTER=0000000000000000000000000000000000000000

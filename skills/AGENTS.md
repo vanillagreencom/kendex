@@ -52,6 +52,6 @@ The catalog's skills, one directory per skill, each rendered under `.agents/skil
 - A test that shells out to git clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` together.
   - Under `orch/tests/` that clearing is `skills/orch/tests/lib/git-env.sh`, sourced on the line under each suite's `set -...o pipefail`.
 - A fixture repository a test later removes disables git's background maintenance at creation, `gc.auto 0` and `maintenance.auto false` as `skills/bot-instructions/tests/lib/harness.sh` spells it, so the removal cannot race git's background writer.
-- Before changing CI coverage, read [merge-rail](../docs/architecture/merge-rail.md), which owns shell-suite coverage and its remaining adopter exception.
+- Before changing CI coverage, read [merge-rail](../docs/architecture/merge-rail.md), which owns shell-suite coverage.
   - `tools/ci-job-set` owns CI selection and event parity.
   - `tools/guard`'s `--suite-reach` contract, `INPUTS_NOTE_AWK` and `note_covers` own `# Inputs:` notes.

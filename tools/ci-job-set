@@ -57,7 +57,6 @@
 #   CI_SELECTION   the file a class selection writes its skips and targets
 #                  to, where set
 #   PUSH_BEFORE, PUSH_AFTER  the actual main push endpoints
-#   MAIN_ONLY_SUITES  workflow-owned dedicated declarations as JSON
 #   GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_RUN_ID  the proof lookup identity;
 #                  --runtime-publish reads GITHUB_REPOSITORY alone
 #
@@ -73,11 +72,10 @@
 # kept and whose every owning shard job completed successfully. Each group
 # must select a Rust target and every orch-rest Linux job must succeed to
 # prove that target. A failed, pending, absent or unread proof subtracts
-# nothing. The workflow's main-only suite owes its dedicated job, since no
-# group leg runs it. A proved native replacement stays owed on macOS wherever
-# its original does. Lists of suites outside the reach and suites proved by
-# the group become skipped_suites and skipped_suites_macos. main_suites
-# selects the dedicated declaration and cache_compile selects build inputs.
+# nothing. A proved native replacement stays owed on macOS wherever its
+# original does. Lists of suites outside the reach and suites proved by the
+# group become skipped_suites and skipped_suites_macos. cache_compile
+# selects build inputs.
 # runtime_publish names the package runtime builds the head has no published
 # artifact for, and adds the leg that publishes them; no proof subtracts it.
 # The merge group at the head published them already: its publishing leg is
@@ -519,16 +517,10 @@ main_proof() {
       --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" --slurpfile targets "$work/targets.json" \
       --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
       --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
-      --argjson main_only "$MAIN_ONLY_SUITES" --argjson replacements "$replacements" \
+      --argjson replacements "$replacements" \
       --arg listless "$LISTLESS_SHARDS" '
       $jobs[0] as $jobs | $sels[0] as $sels
-      # No group leg runs a declared main-only suite, so no group proves
-      # it, and the push runs it in its dedicated job, never on a shard leg
-      # it would owe. A shell one matches by base name, as MAIN_ONLY_FILTERS
-      # drops it.
-      | [$main_only[].suite + ".sh"] as $main_only
-      | [$map[0][] | select(.[2] as $s | ($selected_skip | index($s) | not)
-          and ($main_only | index($s | split("/") | last) | not))] as $map
+      | [$map[0][] | select(.[2] as $s | $selected_skip | index($s) | not)] as $map
       | $targets[0] as $universe_targets
       | [$universe_targets[] | select(. as $t | any($selected_targets[]; . as $e | $e == $t or
           (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))] as $targets
@@ -573,7 +565,7 @@ main_proof() {
       | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" &&
       read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed" && [ -n "$targets_n" ]; then
       linux="$(with_publisher "$linux")" || die publisher-unadded "jq could not add the publishing leg"
-      emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" \
+      emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" \
         "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
     else
       state=unread cause=proof-subtraction-unread
@@ -582,7 +574,7 @@ main_proof() {
   rm -rf -- "$work"
   if [ "$state" != read ]; then
     main_linux="$(with_publisher "$main_linux")" || die publisher-unadded "jq could not add the publishing leg"
-    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" \
+    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" \
       "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
   fi
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
@@ -1482,10 +1474,6 @@ if [ "${EVENT:-}" = push ]; then
   main_targets=$FULL_RUNTIME_TARGETS
   if [ "$REACH_READ" = true ] && ! any "$LANE_SOURCES"; then main_targets=$REACH_TARGETS; fi
   main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
-  main_suites="$(jq -ce --argjson selected "$main_linux" '
-    if type != "array" or length == 0 then error("missing main declarations") else
-      [.[] | select(.shard as $s | $selected | index($s))] end' <<<"${MAIN_ONLY_SUITES:-}")" ||
-    die main-suites-unread "the workflow main-only declarations could not be read"
   RUNTIME_PUBLISH="$(runtime_publish)" || exit 2
   main_proof
   exit 0

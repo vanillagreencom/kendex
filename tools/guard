@@ -251,7 +251,7 @@ finding_text() { # KEY VALUE [CAUSE] — the English for one key, and the whole 
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
     suites)
       case "$2" in
-        merge-group*) echo "the ci round runs checks only; the merge group owns these suites, with main-only coverage after merge." ;;
+        merge-group*) echo "the ci round runs checks only; the merge group owns these suites." ;;
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unidentified "*) echo "a scoped run could not identify which files read that changed path, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
