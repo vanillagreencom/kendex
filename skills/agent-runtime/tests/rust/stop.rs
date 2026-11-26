@@ -124,16 +124,24 @@ fn every_recorded_stop_reads_as_its_kind() {
     }
 }
 
-/// Codex's limit-increase dialog, captured from its pane at a workspace
-/// member's usage limit, is that account's limit even where the account's
-/// reading has room, and no action for it resumes the session, so no turn
-/// is typed into the dialog.
+/// Codex's offers past its limit, captured from its pane: the limit-increase
+/// dialog at a workspace member's usage limit, and the error line that
+/// offers Pro and more credits at a Plus plan's 5-hour limit. Each is that
+/// account's limit even where the account's reading has room, and no action
+/// for it resumes the session, so no turn is typed into it.
 #[test]
 fn a_limit_increase_prompt_is_a_usage_limit_that_is_never_resumed() {
-    let screen = std::fs::read_to_string(fixture("codex-limit-increase.txt")).unwrap();
-    for room in [None, Some(true)] {
-        let pane = observe::observe_pane(&screen, Harness::Codex, &ProcessReading::HarnessUp, room);
-        assert_eq!(stop::of_pane(&pane), Some(Kind::Usage), "room {room:?}");
+    for name in ["codex-limit-increase.txt", "codex-purchase-offer.txt"] {
+        let screen = std::fs::read_to_string(fixture(name)).unwrap();
+        for room in [None, Some(true)] {
+            let pane =
+                observe::observe_pane(&screen, Harness::Codex, &ProcessReading::HarnessUp, room);
+            assert_eq!(
+                stop::of_pane(&pane),
+                Some(Kind::Usage),
+                "{name} room {room:?}"
+            );
+        }
     }
     for session in [Session::Worker, Session::Overseer, Session::Jarvis] {
         for (own_room, room, reset) in [

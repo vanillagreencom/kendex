@@ -279,12 +279,16 @@ static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
-/// A harness's offer to raise the account's limit, drawn only on an account
-/// at its limit: Codex 0.172.0's dialog at a workspace member's usage limit
-/// (`fixtures/stops/codex-limit-increase.txt`). It is a usage wall whatever
-/// the account's reading says, so no turn is typed into it.
-static LIMIT_OFFER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*Request a limit increase from your owner").unwrap());
+/// A harness's offer to raise or buy past the account's limit, drawn only on
+/// an account at its limit. Codex 0.172.0 draws it as a dialog at a
+/// workspace member's usage limit (`fixtures/stops/codex-limit-increase.txt`),
+/// and at a Plus plan's 5-hour limit as its error line, which offers Pro and
+/// more credits (`fixtures/stops/codex-purchase-offer.txt`). It is a usage
+/// wall whatever the account's reading says, so the error line is no API
+/// error and no turn is typed into it.
+static LIMIT_OFFER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*Request a limit increase from your owner|^■ You.ve hit your usage limit\. Upgrade to Pro").unwrap()
+});
 /// A login wall's line, anchored at the row start so a quoted copy is not
 /// one. Claude Code 2.1.332 draws the expired-token error under its `●`
 /// answer bullet, and a pane narrower than the line wraps it onto an
