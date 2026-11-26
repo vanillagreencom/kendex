@@ -2089,8 +2089,9 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
 /// its verdict line alone; one that never starts ends at the budget with
 /// its own `state=queued` line; one that starts late is followed only for
 /// what is left of the budget; one whose admission closes with no start
-/// record ends with the admission's cause; an id no round admitted is
-/// refused.
+/// record ends with the admission's cause; one whose start is refused
+/// `run-live` stays queued for the start that follows; an id no round
+/// admitted is refused.
 #[test]
 fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budget() {
     use std::sync::{Arc, mpsc};
@@ -2101,6 +2102,7 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
         Late,
         Refused,
         RefusedUnrecorded,
+        RunLive,
         Reconciled,
         Unadmitted,
     }
@@ -2116,6 +2118,7 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
             Seat::RefusedUnrecorded,
             Err(("start-refused", Some("memory-short"))),
         ),
+        (Seat::RunLive, Ok(("queued", 3))),
         (
             Seat::Reconciled,
             Err(("run-ended-unstarted", Some("run-dir-absent"))),
@@ -2228,6 +2231,32 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                     "{}",
                     stderr(&out)
                 );
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::RunLive => {
+                // The seat's start is refused while another run holds the
+                // worktree; its route waits for that run and starts again.
+                let staged = executor_dir(&w, "true", 20);
+                let held = Owned::sleep();
+                fs::write(staged.join("job.err"), "").unwrap();
+                fs::write(
+                    staged.join("runner"),
+                    format!(
+                        "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+                        held.pid(),
+                        held.start()
+                    ),
+                )
+                .unwrap();
+                holder = Some(held);
+                let out = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
+                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                assert!(
+                    stderr(&out).starts_with("validate: run-live"),
+                    "{}",
+                    stderr(&out)
+                );
+                clock.pass(Duration::from_secs(30));
                 clock.release(Duration::from_secs(30));
             }
             Seat::Reconciled => {

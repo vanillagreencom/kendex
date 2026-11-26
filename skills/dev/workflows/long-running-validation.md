@@ -64,7 +64,7 @@ When another seat starts the admitted run, such as the overseer for a confined l
 - A budget that ends before the start prints `state=queued` and exits 3.
 - An id no round admitted is refused `run-unadmitted`.
 - An admission that closed with no start record, such as one whose start was refused after it, is refused `run-ended-unstarted` with the admission's outcome and cause.
-- A start the other seat ran that was refused before it recorded the run, such as `memory-short` or `run-live`, is refused `start-refused` with that start's key as its cause. The admission stays open, so that seat can start again under the same id.
+- A start the other seat ran that was refused before it recorded the run, such as `memory-short`, is refused `start-refused` with that start's key as its cause. The admission stays open, so that seat can start again under the same id.
 - Each refusal exits 2 and routes as a refused start does.
 - Each harness holds the call as its row above holds the start:
   - Claude Code runs the bare command in the foreground under the maximum command timeout.

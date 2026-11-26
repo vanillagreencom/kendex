@@ -1815,8 +1815,9 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
 }
 
 /// Start a validation run: read, record, launch. A start of a named run
-/// refused before it records the run leaves the refusal's key on the run's
-/// admitted stage, which stays open for the next start under the same id.
+/// refused before it records the run, other than `run-live`, leaves the
+/// refusal's key on the run's admitted stage, which stays open for the next
+/// start under the same id.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1835,7 +1836,11 @@ pub fn start(
     let path = state::item_path(&settings.state_dir, &item);
     let recorded = std::cell::Cell::new(false);
     let reply = start_admitted(settings, req, env, locking, item, round.clone(), &recorded);
-    if let (Err(error), Some(run_dir), false) = (&reply, &req.run_dir, recorded.get()) {
+    // A `run-live` refusal ends no wait on the run: its seat waits for the
+    // live run and starts again under the same id, so the run stays queued.
+    if let (Err(error), Some(run_dir), false) = (&reply, &req.run_dir, recorded.get())
+        && !matches!(error, Error::RunLive { .. })
+    {
         // The refusal is the caller's answer whatever this write does: one
         // that fails leaves the stage as it stood, which a wait reads as
         // queued, never as a verdict.

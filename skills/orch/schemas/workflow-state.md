@@ -179,7 +179,7 @@ A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `out
 - `orch-runtime validate start` writes the run's `proof` and `job` on its entry before the launch.
 - `orch-runtime validate start` first closes each open entry of the round whose `job` reads gone, as `reconcile-round` closes it, and sends its end notice. That close is its own write, so it stands when the start then refuses.
 - An open entry whose `job` still runs refuses the start `run-live`, and one whose `job` cannot be read refuses it `validate-unreadable`; both stay open. A named entry that has ended refuses it `run-ended`.
-- A start of a named entry refused before it writes the entry's `proof` and `job` writes the refusal's key as `refused` on the open entry, which stays open. The next start that writes `proof` and `job` removes it.
+- A start of a named entry refused before it writes the entry's `proof` and `job`, other than `run-live`, writes the refusal's key as `refused` on the open entry, which stays open. The next start that writes `proof` and `job` removes it.
 - `validate stop --item [ISSUE_ID] --run-dir [RUN_DIR]` writes `stop: {at}` before it ends the job.
 - `accept-result {round_id, outcome, run_dir?, end?, authorization?, summary_file?, attachments?}` closes the round's own entry, or with `run_dir` the run's `validate` entry.
 - `accept-result`'s `outcome` is required: `pass`, `fail`, `no-verdict`, `lost`, `stopped`, `no-change`, `handed-over` or `pass-excused`.

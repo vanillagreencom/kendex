@@ -598,8 +598,8 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
 /// A run no stage in `state_dir` admitted refuses `run-unadmitted`, one
 /// whose stage closed with no start record refuses `run-ended-unstarted`
 /// with the stage's word and cause, as no verdict will come, and one whose
-/// last start was refused before it recorded the run refuses
-/// `start-refused` with that refusal's key.
+/// stage holds the key of a start refused before it recorded the run
+/// refuses `start-refused` with that key.
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"
