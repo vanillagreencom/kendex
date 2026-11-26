@@ -88,7 +88,7 @@ Record who wrote each answer with `--sender` on `send --re` or `resolve --text`:
 - Leave it out where neither is proved. The ruling comment then names the sender as unrecorded.
 - If lane-mail refuses `option-unknown=--sender`, that repository's lane-mail predates the option:
   - For `--sender owner`, run the same command without `--sender`. Where that repository's orch watch also predates the option, the ruling comment names the owner. Where only its lane-mail predates it, the comment names the sender as unrecorded.
-  - For `--sender jarvis`, keep the answer and send it again unchanged once that repository's orch package is updated, which carries the mailbox package with it. Never send it without `--sender`: an orch watch that predates the option names the owner for every answer that carries no sender.
+  - For `--sender jarvis`, keep the answer and send it again unchanged once that repository's orch and mailbox packages are both updated. Never send it without `--sender`: an orch watch that predates the option names the owner for every answer that carries no sender.
 
 ### Closing
 
