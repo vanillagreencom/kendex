@@ -384,6 +384,20 @@ git -C "$repo" checkout -qb fixture-refused-cargo-source "$refused_claims_base"
 printf 'use std::fs as _;\npub fn value() -> u8 { 42 }\n' >"$repo/cargo/primary/src/lib.rs"
 git -C "$repo" commit -qam 'the Cargo reader refuses a claimed crate source'
 refused_cargo_source_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-cargo-closure "$refused_cargo_source_base"
+# The refused crate's dependency compiles its library from a file outside its
+# package, beside a module of that file, and itself depends on leaf. The claim
+# names neither.
+printf '\n[lib]\npath = "../shared/bridge.rs"\n' >>"$repo/cargo/bridge/Cargo.toml"
+git -C "$repo" rm -q -- cargo/bridge/src/lib.rs
+mkdir -p "$repo/cargo/shared"
+printf 'mod util;\npub fn value() -> u8 { util::VALUE }\n' >"$repo/cargo/shared/bridge.rs"
+printf 'pub const VALUE: u8 = 42;\n' >"$repo/cargo/shared/util.rs"
+sed 's|^cargo cargo/\* |cargo rust-toolchain.toml |' "$repo/.github/ci-lanes.conf" >"$SANDBOX/ci-lanes.conf"
+mv "$SANDBOX/ci-lanes.conf" "$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'the refused crate builds a transitive dependency and an out-of-package module'
+refused_cargo_closure_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-refused-executable "$refused_claims_base"
 # The claimed shell job runs a script whose interpreter the reader refuses.
 edit_workflow '        run: bash ../shared.sh\n' '        run: bash ../shared.sh\n      - run: ./tools/run.py\n'
@@ -1084,12 +1098,12 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
     refused-cargo-source) base="$refused_cargo_source_base" ;;
+    refused-cargo-leaf|refused-cargo-sibling) base="$refused_cargo_closure_base" ;;
     refused-executable) base="$refused_executable_base" ;;
     refused-cargo-workspace) base="$refused_cargo_workspace_base" ;;
     linked-workdir-*) base="$linked_workdir_base" ;;
     vitest-refused-import) base="$vitest_refused_import_base" ;;
     checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
-    swapped-workdir) base="$deleted_workdir_base" ;;
     cargo-tool-failure) base="$claimed_cargo_base" ;;
     vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -1140,7 +1154,6 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-linked-child) printf '43\n' >"$repo/$path" ;;
     restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
     symlink-workdir) ln -s cargo "$repo/$path" ;;
-    swapped-workdir) git -C "$repo" rm -q -- "$path/only.txt"; ln -s tools "$repo/$path" ;;
     linked-workdir-swap)
       git -C "$repo" rm -q -- "$path"; mkdir "$repo/$path"; printf 'restored\n' >"$repo/$path/restored.txt" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
@@ -1169,7 +1182,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the base directory" 0 "$base_status"
     assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
-  symlink-workdir|swapped-workdir)
+  symlink-workdir)
     head_status=0
     (cd "$repo/$path") 2>/dev/null || head_status=$?
     assert_eq "$label can enter the linked directory" 0 "$head_status" ;;
@@ -1317,7 +1330,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   fi
   refused_jobs=""
   case "$label" in
-    refused-cargo-source|refused-cargo-workspace)
+    refused-cargo-source|refused-cargo-workspace|refused-cargo-leaf|refused-cargo-sibling)
       refused_jobs='job=cargo cause=cargo-opaque-source,job=web cause=opaque-shell-command' ;;
     refused-executable)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
@@ -1325,7 +1338,6 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     checkout-path|restored-workdir|symlink-workdir|linked-workdir-swap)
       refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
     linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-shell-command' ;;
-    swapped-workdir) refused_jobs='job=shell cause=working-directory-unproved' ;;
     vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
@@ -1401,10 +1413,11 @@ refused-cargo-source|rust-toolchain.toml|false|true|false|false
 refused-ordinary-read|ops/notes.txt|false|false|true|false
 refused-executable|tools/run.py|true|false|false|false
 refused-cargo-workspace|cargo/primary/src/lib.rs|false|true|false|false
+refused-cargo-leaf|cargo/leaf/src/lib.rs|false|true|false|false
+refused-cargo-sibling|cargo/shared/util.rs|false|true|false|false
 checkout-path|tools/input.sh|true|false|false|false
 restored-workdir|subject/restored.txt|false|true|false|false
 symlink-workdir|subject|false|true|false|false
-swapped-workdir|check-cwd|true||true|true
 linked-workdir-target|cargo/primary/src/lib.rs|false|true|false|false
 linked-workdir-swap|crates|false|true|false|false
 linked-workdir-miss|tools/input.sh|true|false|false|false

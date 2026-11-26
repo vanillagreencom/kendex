@@ -504,6 +504,7 @@ class Evidence:
 
         cwd = self.checkout / directory
         manifests = {}
+        workspaces = set()
         require_shape(not (package and workspace), "ambiguous-cargo-package-selection")
         require_shape(not any(re.search(r"(?:^|/)\.cargo/config(?:\.toml)?$", path)
                               for path in self.files), "cargo-config-unresolved")
@@ -520,12 +521,10 @@ class Evidence:
             workspace_file = "Cargo.toml" if root == "." else root + "/Cargo.toml"
             reads.add(workspace_file)
             reads.add("Cargo.lock" if root == "." else root + "/Cargo.lock")
-            config = tomllib.loads(self.blob(workspace_file))
-            require_shape(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
+            workspaces.add(workspace_file)
             for entry in found["packages"]:
                 path = self.relative(entry["manifest_path"])
                 reads.add(path)
-                self.blob(path)
                 manifests[path] = entry
             return found
 
@@ -541,50 +540,54 @@ class Evidence:
                  if (entry["name"] == package if package else
                      workspace or entry["id"] in defaults)]
         require_shape(roots and (not package or len(roots) == 1), "cargo-package-unresolved")
-        scanned = set()
-        # Other evidence also lands in reads, so reads cannot mark a scan.
-        scanned_sources = set()
-
-        def package(manifest):
-            # Cargo reads a package's whole tree once the package is in the build.
-            scope = Path(manifest).parent.as_posix()
-            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
-            if manifest in manifests:
-                reads.update(self.relative(target["src_path"])
-                             for target in manifests[manifest]["targets"])
-            return scope
-
-        # A source check below can refuse before the scan reaches another
-        # selected package.
-        for root in roots:
-            package(root)
+        # Pass 1 records every read the metadata proves across the selected
+        # packages' path-dependency closure, and raises no shape refusal, so
+        # a check in pass 2 cannot drop a read of a package still unvisited.
+        package_sources = {}
+        external = False
         pending = roots[:]
         while pending:
             manifest = pending.pop()
-            if manifest in scanned:
+            if manifest in package_sources:
                 continue
             if manifest not in manifests:
                 inventory(str(self.checkout / manifest))
             entry = manifests[manifest]
-            scanned.add(manifest)
-            scope = package(manifest)
-            named = [dependency["path"] for dependency in entry["dependencies"]]
-            dependencies = [self.relative(Path(path) / "Cargo.toml") for path in named
-                            if isinstance(path, str)]
-            for dependency in dependencies:
-                package(dependency)
-            pending.extend(dependencies)
-            require_shape(len(dependencies) == len(named), "cargo-external-dependency")
-            sources = set()
             require(entry["targets"], "cargo-targets-unreadable")
+            # Cargo reads a package's whole tree once the package is in the build.
+            scope = Path(manifest).parent.as_posix()
+            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
+            # A target's source can sit outside the package tree, and the scan
+            # takes each Rust file beside it as a source of the target.
+            sources = set()
             for target in entry["targets"]:
-                require_shape(not ({"custom-build", "proc-macro"} & set(target["kind"])),
-                              "cargo-opaque-target")
                 source = self.relative(target["src_path"])
                 sources.add(source)
                 sources.update(path for path in self.files if path.endswith(".rs") and
                                under(path, Path(source).parent.as_posix()))
-            target_sources = sources.copy()
+            reads.update(sources)
+            package_sources[manifest] = sources
+            named = [dependency["path"] for dependency in entry["dependencies"]]
+            dependencies = [self.relative(Path(path) / "Cargo.toml") for path in named
+                            if isinstance(path, str)]
+            external = external or len(dependencies) != len(named)
+            pending.extend(dependencies)
+
+        # Pass 2 judges what pass 1 read.
+        for workspace_file in sorted(workspaces):
+            config = tomllib.loads(self.blob(workspace_file))
+            require_shape(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
+        for path in manifests:
+            self.blob(path)
+        require_shape(not external, "cargo-external-dependency")
+        # Other evidence also lands in reads, so reads cannot mark a scan.
+        scanned_sources = set()
+        for manifest, target_sources in package_sources.items():
+            scope = Path(manifest).parent.as_posix()
+            for target in manifests[manifest]["targets"]:
+                require_shape(not ({"custom-build", "proc-macro"} & set(target["kind"])),
+                              "cargo-opaque-target")
+            sources = target_sources.copy()
             while sources:
                 source = sources.pop()
                 if source in scanned_sources:
