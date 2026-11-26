@@ -9782,84 +9782,104 @@ fn a_pending_wall_read_live_settles_the_transfer_its_walk_asked() {
 /// A pending usage wall's own account that cannot be read past its reset
 /// keeps the reset it confirmed and is read again on each pass, walked
 /// beside it; still unread a whole patience past the reset, the owner is
-/// told once with the read's cause.
+/// told once with the read's cause. The reset a pending pass read is kept,
+/// and so is one only the announcing pass read.
 #[test]
 fn an_own_account_unread_past_its_reset_keeps_it_and_tells_the_owner_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
-    let reset: u64 = 1_800_000_000 + 3600;
-    let unread = Cell::new(false);
-    let judge = |_: &Caller, _: Option<&str>| {
-        if unread.get() {
+    // case, the passes that read the account before every read fails
+    for (case, read) in [
+        ("a pending pass read it", 2),
+        ("only the announce read it", 1),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+        let reset: u64 = 1_800_000_000 + 3600;
+        let unread = Cell::new(false);
+        let judge = |_: &Caller, _: Option<&str>| {
+            if unread.get() {
+                let mut m = marks(
+                    MarkKey::Unmeasured(MarkKind::Headroom),
+                    "",
+                    "",
+                    Succession::On,
+                    "",
+                );
+                m.reason = "headroom-unreadable".to_owned();
+                return Ok(m);
+            }
             let mut m = marks(
-                MarkKey::Unmeasured(MarkKind::Headroom),
-                "",
-                "",
+                MarkKey::Reached(MarkKind::Headroom),
+                "0",
+                "5",
                 Succession::On,
-                "",
+                "/home/me/.eclaude",
             );
-            m.reason = "headroom-unreadable".to_owned();
-            return Ok(m);
+            m.resets = clock::iso_utc(reset);
+            Ok(m)
+        };
+        let walks = Cell::new(0);
+        let walk = |request: &WalkRequest| {
+            walks.set(walks.get() + 1);
+            walk_none(request)
+        };
+        let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+        let noting = |file: &str, text: &str| {
+            told.borrow_mut().push((file.to_owned(), text.to_owned()));
+            Ok(())
+        };
+        overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
+        driver.alert = &noting;
+        let key = format!("{} {pane}", server.pid);
+        let state = fleet.read();
+        for _ in 0..read {
+            driver.pass(&state);
         }
-        let mut m = marks(
-            MarkKey::Reached(MarkKind::Headroom),
-            "0",
-            "5",
-            Succession::On,
-            "/home/me/.eclaude",
-        );
-        m.resets = clock::iso_utc(reset);
-        Ok(m)
-    };
-    let walks = Cell::new(0);
-    let walk = |request: &WalkRequest| {
-        walks.set(walks.get() + 1);
-        walk_none(request)
-    };
-    let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
-    let noting = |file: &str, text: &str| {
-        told.borrow_mut().push((file.to_owned(), text.to_owned()));
-        Ok(())
-    };
-    overseer_driver!(server, fleet, judge, walk, readers, transfers, driver);
-    driver.alert = &noting;
-    let key = format!("{} {pane}", server.pid);
-    let state = fleet.read();
-    driver.pass(&state);
-    driver.pass(&state);
-    let kept = reset.to_string();
-    assert_eq!(
-        driver.baseline.get("overseer-wall-reset", &key),
-        Some(kept.as_str())
-    );
-    unread.set(true);
-    for at in [reset + 60, reset + 1799] {
-        driver.now = at;
-        driver.pass(&state);
+        unread.set(true);
+        for _ in read..2 {
+            driver.pass(&state);
+        }
+        let kept = reset.to_string();
         assert_eq!(
             driver.baseline.get("overseer-wall-reset", &key),
-            Some(kept.as_str())
+            Some(kept.as_str()),
+            "{case}"
         );
-        assert_eq!(told.borrow().len(), 1, "only the wall's notice");
+        for at in [reset + 60, reset + 1799] {
+            driver.now = at;
+            driver.pass(&state);
+            assert_eq!(
+                driver.baseline.get("overseer-wall-reset", &key),
+                Some(kept.as_str())
+            );
+            assert_eq!(told.borrow().len(), 1, "only the wall's notice");
+        }
+        driver.now = reset + 1800;
+        driver.pass(&state);
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("pending")
+        );
+        assert_eq!(walks.get(), 5, "each pass past the announce walks");
+        let told = told.borrow();
+        let keys: Vec<&str> = told
+            .iter()
+            .map(|(_, text)| text.split(':').next().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            keys,
+            ["overseer-walled-pending", "overseer-account-unread"],
+            "{case}"
+        );
+        assert!(
+            told[1].1.contains("headroom-unreadable"),
+            "{case}: {}",
+            told[1].1
+        );
+        assert!(transfers.borrow().is_empty(), "{case}");
     }
-    driver.now = reset + 1800;
-    driver.pass(&state);
-    driver.pass(&state);
-    assert_eq!(
-        driver.baseline.get("overseer-walled", &key),
-        Some("pending")
-    );
-    assert_eq!(walks.get(), 5, "each pass past the announce walks");
-    let told = told.borrow();
-    let keys: Vec<&str> = told
-        .iter()
-        .map(|(_, text)| text.split(':').next().unwrap_or_default())
-        .collect();
-    assert_eq!(keys, ["overseer-walled-pending", "overseer-account-unread"]);
-    assert!(told[1].1.contains("headroom-unreadable"), "{}", told[1].1);
-    assert!(transfers.borrow().is_empty());
 }
 
 /// A Claude overseer walled by its weekly limit, its pane and window.

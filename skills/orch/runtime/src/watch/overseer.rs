@@ -1595,12 +1595,26 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         OverseerCase::Dead | OverseerCase::Walled | OverseerCase::Reserve => None,
     };
-    // A new episode counts its own transfers, owes its own alerts and
-    // reads its own wall's reset.
+    // A new episode counts its own transfers, owes its own alerts and keeps
+    // its own wall's reset: the one this pass's own reading names, which a
+    // later failed read keeps.
     out.changes.push(clear(TRANSFER_ROW, &key));
     out.changes.push(clear(DEAD_ALERT_ROW, &key));
     out.changes.push(clear(NOTICE_ROW, &key));
-    out.changes.push(clear(WALL_RESET_ROW, &key));
+    let reset = match (&verdict, &marks_now) {
+        (
+            Verdict::Walled {
+                kind: WallKind::Usage,
+                ..
+            },
+            Some(marks),
+        ) if marks.account_unread().is_none() => agent_runtime::clock::epoch_secs(&marks.resets),
+        _ => None,
+    };
+    out.changes.push(match reset {
+        Some(at) => set(WALL_RESET_ROW, &key, at.to_string()),
+        None => clear(WALL_RESET_ROW, &key),
+    });
     let cause = match case {
         OverseerCase::Dead => pane_pid.and_then(|pid| memory_cap(&key, pid, pass)),
         OverseerCase::Walled | OverseerCase::Reserve => None,
