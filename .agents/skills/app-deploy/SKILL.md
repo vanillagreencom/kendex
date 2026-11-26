@@ -26,12 +26,13 @@ The Jarvis session moves or creates `v<major>` at `<SHA>` under the organization
 
 At each stable release, the Jarvis session, or the owner when no Jarvis session runs, also moves organization ruleset 27179484's pin of `.github/workflows/request-copilot-review.yml` forward to the release's last change to that workflow.
 
-1. Read the pinned `sha`: `gh api orgs/vanillagreencom/rulesets/27179484 --jq '.rules[] | select(.type == "workflows") | .parameters.workflows[] | select(.path == ".github/workflows/request-copilot-review.yml") | .sha'`.
+1. Save the full ruleset in the release session's `tmp/`: `gh api orgs/vanillagreencom/rulesets/27179484 > tmp/ruleset-27179484.json`. Read the pinned `sha` from that copy: `jq -r '.rules[] | select(.type == "workflows") | .parameters.workflows[] | select(.path == ".github/workflows/request-copilot-review.yml") | .sha' tmp/ruleset-27179484.json`.
 2. Read the last commit that changed the workflow at the release commit: `git log -1 --format=%H <SHA> -- .github/workflows/request-copilot-review.yml`.
 3. If the pin equals that commit or descends from it, keep the pin: `git merge-base --is-ancestor <commit> <pinned>` exits 0. The pin never moves backwards.
 4. Otherwise, if that commit descends from the pin, `git merge-base --is-ancestor <pinned> <commit>` exiting 0, update the ruleset so that entry pins `sha` to that commit, with `ref: refs/heads/main` and `repository_id: 1190866154`. Preserve every other rule, condition and the empty bypass list, as review-gate's references/adoption.md § Central Copilot request workflow requires.
+5. After an update, read the ruleset again into `tmp/ruleset-27179484-after.json`. Require it to equal the saved copy except that entry's `sha`, which must now be that commit, and `updated_at`, which GitHub sets on every update: `jq -e -n --slurpfile b tmp/ruleset-27179484.json --slurpfile a tmp/ruleset-27179484-after.json --arg c <commit> '($b[0] | del(.updated_at) | (.rules[] | select(.type == "workflows") | .parameters.workflows[] | select(.path == ".github/workflows/request-copilot-review.yml") | .sha) = $c) == ($a[0] | del(.updated_at))'` exits 0.
 
-A failed read stops release follow-up. So does an `--is-ancestor` exit other than 0 or 1, or a pin and commit where neither descends from the other.
+A failed read stops release follow-up. So does a failed update or a different read-back, an `--is-ancestor` exit other than 0 or 1, or a pin and commit where neither descends from the other.
 
 ## What the workflow does
 
