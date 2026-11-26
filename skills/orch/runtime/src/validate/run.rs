@@ -1152,6 +1152,36 @@ pub fn run(
     env: &Env,
     locking: Locking,
 ) -> Result<RunReply> {
+    let leader = super::group_leader(settings);
+    run_on(
+        settings,
+        reach,
+        item,
+        round,
+        run_dir,
+        env,
+        locking,
+        &|dir| execute(dir, &agent_runtime::clock::SystemClock, &leader),
+    )
+}
+
+/// [`run`] with `executor` running the command: this machine's executor, or
+/// [`execute_on_host`] for a run its start sent to a host. Both write the
+/// same run files, which the close reads.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the job main's settings, reach, item, round, run, store and executor, each read once here"
+)]
+pub fn run_on(
+    settings: &Settings,
+    reach: &Reach,
+    item: &str,
+    round: &str,
+    run_dir: &str,
+    env: &Env,
+    locking: Locking,
+    executor: &dyn Fn(&Path) -> Result<()>,
+) -> Result<RunReply> {
     let path = state::item_path(&settings.state_dir, item);
     let (stages, index) = stage_of(&path, run_dir)?;
     let stage = &stages[index];
@@ -1173,11 +1203,7 @@ pub fn run(
         });
     }
     let run_dir_path = PathBuf::from(run_dir);
-    execute(
-        &run_dir_path,
-        &agent_runtime::clock::SystemClock,
-        &super::group_leader(settings),
-    )?;
+    executor(&run_dir_path)?;
     // Stamp the close after the command ends.
     let env = &env_now(env);
     let left = read_left(&run_dir_path)?;
@@ -1260,6 +1286,281 @@ pub fn deliver_owed(
         }
     }
     Ok(())
+}
+
+// --- The executor on a second host ------------------------------------------
+
+/// The tag a host run's provider calls are counted under.
+const HOST_TAG: &str = "validate";
+
+/// How long one provider `validate` call may take. A call takes one step
+/// of the unit, and the longest is the host's launch of the run's child,
+/// which reads its settings and launches under one read bound; the SSH round
+/// trips and the run folder's transfer take one read bound more. A build of
+/// the unit's runtime runs detached on the host and is no call's step.
+const HOST_CALL_BOUND: Duration = Duration::from_secs(2 * super::READ_TIMEOUT.as_secs());
+
+/// The run files the executor reads, which a host's copy of a run keeps.
+const EXECUTOR_INPUTS: [&str; 3] = ["start", "cmd", "paths"];
+
+/// The run files the executor writes and the record reads, which a host's
+/// run hands back: `exit` last, since a reader takes its sentinel as the
+/// run's end.
+const EXECUTOR_OUTPUTS: [&str; 4] = ["log", "warning", "timing", "exit"];
+
+fn host_refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    Error::Runtime(agent_runtime::Error::refused(key, fields))
+}
+
+/// Whether `host` can run a unit of `worktree`: the worktree's tracked files
+/// match its HEAD, the commit the host runs, and the host's capability line
+/// declares `validate=verb`. A caller never reads an exit status as the
+/// verb's absence.
+pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<()> {
+    let mut log = String::new();
+    let status = super::git(
+        worktree,
+        "status",
+        &["status", "--porcelain", "--untracked-files=no"],
+        &mut log,
+    )?
+    .ok_or_else(|| super::files::unreadable("git", log.trim().to_owned()))?;
+    if !status.trim().is_empty() {
+        return Err(host_refused(
+            "host-tree-uncommitted",
+            &[("worktree", &worktree.display().to_string())],
+        ));
+    }
+    match crate::provider::capabilities(host, super::READ_TIMEOUT, HOST_TAG) {
+        Ok(line) => match line.validate {
+            crate::watch::hosted::UnitKind::Verb => Ok(()),
+            crate::watch::hosted::UnitKind::None => {
+                Err(host_refused("host-validate-undeclared", &[("host", host)]))
+            }
+        },
+        Err(failure) => Err(host_refused(
+            "host-capabilities-unreadable",
+            &[("host", host), ("cause", &failure.to_string())],
+        )),
+    }
+}
+
+/// The executor of a run its start sent to `host`: ask the provider's
+/// `validate`, one step of the unit per call, until the host's run ends,
+/// then hand its outputs back into `run_dir`, whose start and proof this
+/// machine wrote. A call that prepared the unit is followed by the next at
+/// once, and one that read the run running, or found the pool full, by the
+/// next after the start's poll, with no slot held. A failed call is asked
+/// again after the poll, since the host's run outlives a dropped connection;
+/// a host that answers no call for the start's quiet time ends the run
+/// no-verdict, the last cause in its log, as a command that shows no work
+/// for that time ends a local run. A host run that ended with no sentinel
+/// fails, as a lost local run does.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host executor's provider calls, the run files it hands back and the wait between calls on the clock"
+)]
+pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock) -> Result<()> {
+    let start = super::files::fields(&run_dir.join("start"))?;
+    let field = |key: &str| start.get(key).map(String::as_str).unwrap_or("");
+    let poll = Duration::from_secs(field("poll-secs").parse().unwrap_or(super::POLL_DEFAULT));
+    let quiet = Duration::from_secs(field("quiet-secs").parse().unwrap_or(super::QUIET_SECS));
+    let name = run_dir
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default();
+    let id = name.strip_prefix(super::RUN_DIR_PREFIX).unwrap_or(name);
+    let staged = run_dir.with_file_name(format!("host-{name}"));
+    let (rd, into) = (run_dir.display().to_string(), staged.display().to_string());
+    let argv = [
+        "validate",
+        "--item",
+        item,
+        "--run-id",
+        id,
+        "--commit",
+        field("head"),
+        "--source",
+        field("worktree"),
+        "--run-dir",
+        &rd,
+        "--into",
+        &into,
+    ];
+    let mut answered = clock.now();
+    loop {
+        let failed = match crate::provider::call(host, &argv, None, HOST_CALL_BOUND, HOST_TAG) {
+            // A full pool is this machine's wait, not the host's silence.
+            Err(crate::provider::Failure::Busy { .. }) => {
+                answered = clock.now();
+                None
+            }
+            Err(failure) => Some(failure.to_string()),
+            Ok(out) => match out.status.code() {
+                Some(0) => break,
+                Some(3) => {
+                    answered = clock.now();
+                    let answer = String::from_utf8_lossy(&out.stdout);
+                    if answer
+                        .split_whitespace()
+                        .any(|word| word == "state=preparing")
+                    {
+                        continue;
+                    }
+                    None
+                }
+                code => Some(format!(
+                    "exit={} {}",
+                    code.map_or("signal".to_owned(), |c| c.to_string()),
+                    crate::provider::cause_line(&String::from_utf8_lossy(&out.stderr))
+                )),
+            },
+        };
+        if let Some(cause) = failed
+            && clock.now().saturating_duration_since(answered) >= quiet
+        {
+            return host_unread(run_dir, field("start"), host, &cause, clock);
+        }
+        clock.sleep(poll);
+    }
+    for name in EXECUTOR_OUTPUTS {
+        match fs::read_to_string(staged.join(name)) {
+            Ok(text) => atomic(run_dir, name, &text)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(Error::ValidateUnreadable {
+                    read: "host-run",
+                    cause: format!("{}: {e}", staged.join(name).display()),
+                });
+            }
+        }
+    }
+    fs::remove_dir_all(&staged).map_err(|e| Error::ValidateUnreadable {
+        read: "host-run",
+        cause: format!("{into}: {e}"),
+    })?;
+    if fs::symlink_metadata(run_dir.join("exit")).is_err() {
+        // The host's run ended with no sentinel, so no command exit is
+        // known: the run fails, as a lost local run does.
+        return host_end(run_dir, field("start"), 1, "host-run-lost", host, clock);
+    }
+    Ok(())
+}
+
+/// End a run whose host could not be read: no verdict, `cause` in its log.
+fn host_unread(
+    run_dir: &Path,
+    start: &str,
+    host: &str,
+    cause: &str,
+    clock: &dyn Clock,
+) -> Result<()> {
+    host_end(
+        run_dir,
+        start,
+        3,
+        &format!("host-call-failed {cause}"),
+        host,
+        clock,
+    )
+}
+
+/// The executor's own end of a host run it could not hand back: the log's
+/// last line names why, then the timing from the start, then the sentinel
+/// of `status`, an exit 3 reading no verdict.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host executor appends its cause to the run's log before its sentinel"
+)]
+fn host_end(
+    run_dir: &Path,
+    start: &str,
+    status: i32,
+    why: &str,
+    host: &str,
+    clock: &dyn Clock,
+) -> Result<()> {
+    use std::io::Write;
+    let ended = clock
+        .wall()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let started = start.parse::<u64>().unwrap_or(ended).min(ended);
+    let fail = |e: std::io::Error| Error::ValidateUnreadable {
+        read: "log",
+        cause: e.to_string(),
+    };
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(run_dir.join("log"))
+        .map_err(fail)?;
+    writeln!(log, "validate-host: {why} host={host}").map_err(fail)?;
+    let ended_at = clock::iso_utc(ended);
+    atomic(
+        run_dir,
+        "timing",
+        &format!(
+            "started-at={}\nended-at={ended_at}\nseconds={}\n",
+            clock::iso_utc(started),
+            ended - started
+        ),
+    )?;
+    atomic(
+        run_dir,
+        "exit",
+        &sentinel(status, &ended_at, &End::Exited, None, false),
+    )
+}
+
+/// The host's own copy of a run the lane's start wrote, made ready for this
+/// host's executor: the executor's inputs kept, every other file dropped,
+/// and `start` written again for `worktree`, the unit's tree, and this
+/// host's memory bound, through the one writer of the record.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the host's copy of a run folder, rewritten in place before its child launches"
+)]
+pub(super) fn host_copy(
+    run_dir: &Path,
+    worktree: &Path,
+    memory: &super::MemoryBound,
+) -> Result<()> {
+    let fail = |e: std::io::Error| Error::ValidateUnreadable {
+        read: "host-copy",
+        cause: format!("{}: {e}", run_dir.display()),
+    };
+    let run = super::files::RunFile::read(run_dir)?;
+    let mut proof = run.proof()?;
+    let word = |key: &str| {
+        Some(run.get(key))
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    proof.ci_fallback = word("ci-fallback");
+    proof.ci_event = word("ci-event");
+    let start = run
+        .get("start")
+        .parse::<u64>()
+        .map_err(|e| super::files::unreadable("start", e))?;
+    for entry in fs::read_dir(run_dir).map_err(fail)? {
+        let entry = entry.map_err(fail)?;
+        if !EXECUTOR_INPUTS
+            .iter()
+            .any(|name| entry.file_name() == *name)
+        {
+            fs::remove_file(entry.path()).map_err(fail)?;
+        }
+    }
+    atomic(
+        run_dir,
+        "start",
+        &super::start_record(worktree, &proof, start, memory, None),
+    )?;
+    // The job's error log stands before any other record, as the start
+    // writes it (`files::unstarted`).
+    fs::write(run_dir.join("job.err"), "").map_err(fail)
 }
 
 // --- The stop -------------------------------------------------------------------

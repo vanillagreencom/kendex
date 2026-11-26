@@ -3,14 +3,13 @@ use super::{StartRequest, files, run};
 use crate::error::{Error, Result};
 use crate::settings::{self, Settings};
 use crate::state::ValidateMode;
-use agent_runtime::clock::{Clock, SystemClock};
+use agent_runtime::clock::SystemClock;
 use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 use clap::Args as ClapArgs;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The word every refusal and notice of `validate entry` opens with.
 const VALIDATE: &str = "validate";
@@ -33,7 +32,7 @@ A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_C
 
 A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure.
 
---host HOST runs an admitted --run-id on a second host at the lane's commit, through the provider HOST names (a path, as ORCH_LANE_HOST names one). The worktree's tracked files must match HEAD, which is the commit the host runs, else it refuses host-tree-uncommitted. A host whose capability line does not declare validate=verb refuses host-validate-undeclared, and an unreadable line host-capabilities-unreadable. It prints state=started run-dir=DIR host=HOST, then asks the provider's validate verb, one long-pool call per step of the unit, until the host's run ends, waiting --poll seconds (default 30) outside any slot after a call that read the run running or found the pool full; it holds the caller's process tree for the run's length and takes no --budget, --foreground, --fresh, --reproduce or --restack. The run's folder then lands in the admitted directory with start naming this worktree and host=TARGET, the SSH target the run ran on, which --record prints, and the call ends with the run's state=done line. A failed call refuses host-call-failed with the provider's cause, the host's run kept, so the same call asks again and follows it. A refusal after the admission is read leaves its key on the admitted stage, which a wait by --run-id reads as start-refused."
+--host HOST runs an admitted --run-id's executor on a second host at the lane's commit, through the provider HOST names (a path, as ORCH_LANE_HOST names one). The start is the admitted start: it resolves the proof here, records it on the admitted stage and writes the run directory, with host=HOST in its start record, which --record prints. A worktree whose tracked files differ from HEAD, the commit the host runs, refuses host-tree-uncommitted; a host whose capability line does not declare validate=verb refuses host-validate-undeclared, and an unreadable line host-capabilities-unreadable. The executor then asks the provider's validate verb, one long-pool call per step of the unit, waiting --poll seconds (default 30) outside any slot after a call that read the run running or found the pool full, and hands the host's log, warning, timing and sentinel back into the run directory; the stage then closes and the end notice is sent as for a local run. The call holds the caller's process tree for the run's length, as --foreground does, and takes no --budget, --foreground, --fresh, --reproduce or --restack. A host the executor cannot read ends the run no-verdict with validate-host: host-call-failed in its log; a host run that ended with no sentinel fails with validate-host: host-run-lost."
 )]
 pub struct Args {
     #[arg(long)]
@@ -76,6 +75,8 @@ pub struct Args {
     pub restack_check: bool,
     #[arg(long)]
     pub host: Option<String>,
+    #[arg(long, hide = true)]
+    pub host_child: bool,
 }
 
 /// How long one start or `--wait` call follows a run: under the 600-second
@@ -148,6 +149,7 @@ fn arguments(args: &Args) -> Result<()> {
         args.last_pass,
         args.live,
         args.restack_check,
+        args.host_child,
     ];
     if actions.into_iter().filter(|v| *v).count() > 1 {
         return Err(files::unreadable("mode-conflict", "one action required"));
@@ -158,7 +160,7 @@ fn arguments(args: &Args) -> Result<()> {
     let queued = args.wait && args.run_id.is_some();
     let unused = if file_read && !queued && args.worktree.is_some() {
         Some("--worktree")
-    } else if (!file_read || queued) && args.run_dir.is_some() {
+    } else if (!file_read || queued) && !args.host_child && args.run_dir.is_some() {
         Some("--run-dir")
     } else if !(args.wait || (start && !args.foreground)) && args.budget.is_some() {
         Some("--budget")
@@ -337,6 +339,20 @@ fn entry(
         return Ok(TextReply::new(text, exit));
     }
     let worktree = worktree()?;
+    if args.host_child {
+        // A host's half of a run the lane's start sent it: the copy at
+        // --run-dir runs in this tree, under this host's bound.
+        let dir = dir()?;
+        let settings = resolve_at(&worktree, flags)?;
+        let memory = super::memory_bound(&settings.validate)?;
+        run::host_copy(dir, &worktree, &memory)?;
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        launch_child(dir, name, &memory)?;
+        return Ok(TextReply::new(
+            format!("state=started run-dir={}", dir.display()),
+            0,
+        ));
+    }
     if args.live {
         return Ok(match files::live(&worktree)? {
             Some((dir, pid)) => TextReply::new(format!("run-dir={} pid={pid}", dir.display()), 0),
@@ -404,13 +420,6 @@ fn entry(
     } else {
         args.base.clone()
     };
-    if let (Some(host), Some(id)) = (&args.host, &args.run_id) {
-        let poll = args.poll.unwrap_or(super::POLL_DEFAULT);
-        let (text, exit) = host_run(
-            &settings, &worktree, id, host, mode, base, poll, env, locking,
-        )?;
-        return Ok(TextReply::new(text, exit));
-    }
     let mut req = request(base);
     req.mode = if args.run_id.is_some() {
         explicit_mode
@@ -425,18 +434,40 @@ fn entry(
     req.caller = if args.restack { "restack" } else { "dev" }.into();
     if let Some(id) = &args.run_id {
         req.run_dir = Some(super::run_dir_of(&worktree, id).display().to_string());
-        let started = super::start(&settings, &req, env, locking)?;
+        if args.host.is_some() {
+            // The entry loads its own settings, apart from the binary's
+            // other verbs: a provider call takes its pool's slot only once
+            // they are installed.
+            crate::provider::install(settings.dispatch.clone());
+        }
+        let started = super::start_on(&settings, &req, args.host.as_deref(), env, locking)?;
         write_started(&started.started_line, started.mode, req.restack)?;
-        if req.foreground && started.launched {
-            run::run(
-                &settings,
-                &crate::effects::fleet_mailbox(&settings),
-                &started.item,
-                &started.round_id,
-                &started.run_dir,
-                env,
-                locking,
-            )?;
+        let reach = crate::effects::fleet_mailbox(&settings);
+        match &args.host {
+            Some(host) if started.launched => {
+                run::run_on(
+                    &settings,
+                    &reach,
+                    &started.item,
+                    &started.round_id,
+                    &started.run_dir,
+                    env,
+                    locking,
+                    &|dir| run::execute_on_host(dir, host, &started.item, &SystemClock),
+                )?;
+            }
+            None if req.foreground && started.launched => {
+                run::run(
+                    &settings,
+                    &reach,
+                    &started.item,
+                    &started.round_id,
+                    &started.run_dir,
+                    env,
+                    locking,
+                )?;
+            }
+            Some(_) | None => {}
         }
         // An attached run has ended by now; a detached one is followed for
         // one call's budget.
@@ -473,26 +504,11 @@ fn entry(
                 env.now_secs,
                 locking,
                 &memory,
+                None,
             )
             .map_err(|e| files::unreadable("run-dir", e))?;
             if resolved.ran_nothing.is_none() && !req.foreground {
-                let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
-                let exe = exe.display().to_string();
-                let rd = run_dir.display().to_string();
-                let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
-                let launch = agent_runtime::effects::job::launch_recorded(
-                    "validate",
-                    &id,
-                    &run_dir.join("runner"),
-                    &argv,
-                    Some(&run_dir.join("job.err")),
-                    agent_runtime::effects::job::Bounds {
-                        memory: memory.bytes(),
-                        outlives_oom: false,
-                    },
-                    &SystemClock,
-                );
-                super::launch_refusal(run_dir.display().to_string(), launch.answer())?;
+                launch_child(&run_dir, &id, &memory)?;
             }
             if req.foreground {
                 fs::write(
@@ -522,283 +538,28 @@ fn entry(
     Ok(TextReply::new(text, exit))
 }
 
-// --- A run on a second host ------------------------------------------------------
-
-/// The tag a host run's provider calls are counted under.
-const HOST_TAG: &str = "validate";
-
-/// How long one provider `validate` call may take. A call takes one step
-/// of the unit; the longest is the host's start, which reads the selector's
-/// preview and the worktree under the start's own bounds, and the SSH round
-/// trips take one read bound more. A build of the unit's runtime runs
-/// detached on the host and is no call's step.
-const HOST_CALL_BOUND: Duration =
-    Duration::from_secs(super::SELECTION_TIMEOUT.as_secs() + 2 * super::READ_TIMEOUT.as_secs());
-
-/// The records of a host's run folder the lane keeps: what the record, the
-/// proof and a wait read. The host's process records (`executor`,
-/// `execution`, `command`, `pid`, `runner`, `job.err`) name processes of
-/// that host, which a liveness read here would judge as this machine's.
-const CARRIED: [&str; 8] = [
-    "start",
-    "cmd",
-    "paths",
-    "class.log",
-    "log",
-    "exit",
-    "timing",
-    "warning",
-];
-
-fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
-    Error::Runtime(agent_runtime::Error::refused(key, fields))
-}
-
-/// Run the admitted run `id` on `host` at the lane's commit, its run folder
-/// placed in the admitted directory once it ends. A refusal after the
-/// admission is read leaves its key on the admitted stage, as a local
-/// start's does, so a wait that follows the run by its id ends on it.
+/// Launch the detached executor of the run directory `run_dir` under the
+/// job launcher, its record at `runner`, keyed `id`.
 #[allow(
-    clippy::too_many_arguments,
-    reason = "the start's settings, worktree, run, host, mode, base, poll and store, each read once here"
+    clippy::disallowed_methods,
+    reason = "the detached executor's one launch, through the shared recorded launcher"
 )]
-fn host_run(
-    settings: &Settings,
-    worktree: &Path,
-    id: &str,
-    host: &str,
-    mode: ValidateMode,
-    base: Option<String>,
-    poll: u64,
-    env: &Env,
-    locking: Locking,
-) -> Result<(String, i32)> {
-    // The entry loads its own settings, apart from the binary's other verbs:
-    // the provider's calls take their pool's slot only once it is installed.
-    crate::provider::install(settings.dispatch.clone());
-    let run_dir = super::run_dir_of(worktree, id);
+fn launch_child(run_dir: &Path, id: &str, memory: &super::MemoryBound) -> Result<()> {
+    let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
+    let exe = exe.display().to_string();
     let rd = run_dir.display().to_string();
-    let (item, stage) = super::admitted_stage(&settings.state_dir, &rd)?;
-    let round = stage.round_id.clone().unwrap_or_default();
-    if stage.end.is_some() {
-        return Err(Error::RunEnded {
-            round_id: round,
-            run_dir: rd,
-        });
-    }
-    if stage.proof.is_some() {
-        return Err(refused("run-exists", &[("run-dir", &rd)]));
-    }
-    let ran = host_unit(worktree, id, &item, host, mode, base, poll, &run_dir);
-    let Err(error) = ran else { return ran };
-    let write = super::apply(
-        &crate::state::item_path(&settings.state_dir, &item),
-        crate::ops::validate::Validate::Refuse(crate::ops::validate::RecordRefusal {
-            round_id: round.clone(),
-            run_dir: Some(rd.clone()),
-            cause: error.key().to_owned(),
-        }),
-        env,
-        locking,
-    );
-    match write {
-        // A wait would read the run queued past a refusal it cannot see.
-        Err(write) => Err(Error::RefusalUnrecorded {
-            round_id: round,
-            run_dir: Some(rd),
-            refused: Box::new(error),
-            write: Box::new(write),
-        }),
-        Ok(_) => Err(error),
-    }
-}
-
-/// Ask the provider's `validate` until the host's run ends, then place its
-/// folder. A folder a call staged and no placement took is placed first:
-/// the host no longer holds that run. Each call takes one step of the unit
-/// and holds its slot for that step alone: a call that prepared the unit
-/// is followed by the next at once, and one that read the run running, or
-/// found the pool full, by the next after `poll` seconds, outside any slot.
-#[allow(
-    clippy::disallowed_methods,
-    clippy::too_many_arguments,
-    reason = "the host run's staged folder in the lane's tmp, its started line published before the first call, and the wait between calls on the clock"
-)]
-fn host_unit(
-    worktree: &Path,
-    id: &str,
-    item: &str,
-    host: &str,
-    mode: ValidateMode,
-    base: Option<String>,
-    poll: u64,
-    run_dir: &Path,
-) -> Result<(String, i32)> {
-    if fs::symlink_metadata(run_dir).is_ok() {
-        return Err(refused(
-            "run-exists",
-            &[("run-dir", &run_dir.display().to_string())],
-        ));
-    }
-    let mut log = String::new();
-    let status = super::git(
-        worktree,
-        "status",
-        &["status", "--porcelain", "--untracked-files=no"],
-        &mut log,
-    )?;
-    let commit = super::git(
-        worktree,
-        "rev-parse",
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-        &mut log,
-    )?;
-    let (Some(status), Some(commit)) = (status, commit) else {
-        return Err(files::unreadable("git", log.trim()));
-    };
-    if !status.trim().is_empty() {
-        return Err(refused(
-            "host-tree-uncommitted",
-            &[("worktree", &worktree.display().to_string())],
-        ));
-    }
-    let commit = commit.trim().to_owned();
-    // The host declares the verb (`validate=verb`); a caller never reads an
-    // exit status as the verb's absence.
-    match crate::provider::capabilities(host, super::READ_TIMEOUT, HOST_TAG) {
-        Ok(line) => match line.validate {
-            crate::watch::hosted::UnitKind::Verb => {}
-            crate::watch::hosted::UnitKind::None => {
-                return Err(refused("host-validate-undeclared", &[("host", host)]));
-            }
-        },
-        Err(failure) => {
-            return Err(refused(
-                "host-capabilities-unreadable",
-                &[("host", host), ("cause", &failure.to_string())],
-            ));
-        }
-    }
-    let staged = worktree.join("tmp").join(format!("host-validate-{id}"));
-    let into = staged.display().to_string();
-    let wt = worktree.display().to_string();
-    let mut argv = vec![
+    let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
+    let launch = agent_runtime::effects::job::launch_recorded(
         "validate",
-        "--item",
-        item,
-        "--run-id",
         id,
-        "--commit",
-        &commit,
-        "--source",
-        &wt,
-        "--into",
-        &into,
-        "--validate-mode",
-        mode.word(),
-    ];
-    if let Some(base) = &base {
-        argv.extend(["--base", base.as_str()]);
-    }
-    writeln!(
-        std::io::stdout(),
-        "state=started run-dir={} host={host}",
-        run_dir.display()
-    )
-    .map_err(|e| files::unreadable("stdout", e))?;
-    let between = Duration::from_secs(poll);
-    while fs::symlink_metadata(&staged).is_err() {
-        let out = match crate::provider::call(host, &argv, None, HOST_CALL_BOUND, HOST_TAG) {
-            Ok(out) => out,
-            // A full pool is this machine's wait, not the host's fault.
-            Err(crate::provider::Failure::Busy { .. }) => {
-                SystemClock.sleep(between);
-                continue;
-            }
-            Err(failure) => {
-                return Err(refused(
-                    "host-call-failed",
-                    &[("host", host), ("cause", &failure.to_string())],
-                ));
-            }
-        };
-        match out.status.code() {
-            Some(0) if fs::symlink_metadata(&staged).is_err() => {
-                return Err(refused("host-stage-missing", &[("path", &into)]));
-            }
-            Some(0) => {}
-            Some(3) => {
-                let answer = String::from_utf8_lossy(&out.stdout);
-                if !answer
-                    .lines()
-                    .any(|line| line.split(' ').any(|word| word == "state=preparing"))
-                {
-                    SystemClock.sleep(between);
-                }
-            }
-            code => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                return Err(refused(
-                    "host-call-failed",
-                    &[
-                        ("host", host),
-                        ("exit", &code.map_or("signal".to_owned(), |c| c.to_string())),
-                        ("cause", crate::provider::cause_line(&stderr)),
-                    ],
-                ));
-            }
-        }
-    }
-    place(&staged, run_dir, worktree)?;
-    files::wait(run_dir, 0, &SystemClock)
-}
-
-/// Turn the staged folder into the admitted run directory: the host's
-/// process records dropped, `start` naming the lane's worktree and the
-/// host, then the folder renamed into place whole, so a wait reads the run
-/// started only once every record stands. A staged folder whose `start`
-/// already names its host is one an earlier placement rewrote.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the staged host folder in the lane's tmp, rewritten and renamed into the admitted run directory"
-)]
-fn place(staged: &Path, run_dir: &Path, worktree: &Path) -> Result<()> {
-    let unreadable = |e: &dyn std::fmt::Display| {
-        refused(
-            "host-stage-unreadable",
-            &[
-                ("path", &staged.display().to_string()),
-                ("cause", &e.to_string()),
-            ],
-        )
-    };
-    let start = fs::read_to_string(staged.join("start")).map_err(|e| unreadable(&e))?;
-    if fs::symlink_metadata(staged.join("exit")).is_err() {
-        return Err(unreadable(&"exit"));
-    }
-    if !start.lines().any(|line| line.starts_with("host=")) {
-        let host = files::fields(&staged.join("host"))
-            .map_err(|e| unreadable(&e))?
-            .remove("host")
-            .filter(|h| !h.is_empty() && !h.contains(char::is_whitespace))
-            .ok_or_else(|| unreadable(&"host"))?;
-        let mut text = String::new();
-        for line in start.lines().filter(|line| !line.is_empty()) {
-            match line.strip_prefix("worktree=") {
-                Some(_) => text.push_str(&format!("worktree={}", worktree.display())),
-                None => text.push_str(line),
-            }
-            text.push('\n');
-        }
-        text.push_str(&format!("host={host}\n"));
-        fs::write(staged.join(".start"), text).map_err(|e| unreadable(&e))?;
-        fs::rename(staged.join(".start"), staged.join("start")).map_err(|e| unreadable(&e))?;
-    }
-    for entry in fs::read_dir(staged).map_err(|e| unreadable(&e))? {
-        let entry = entry.map_err(|e| unreadable(&e))?;
-        if !CARRIED.iter().any(|name| entry.file_name() == *name) {
-            fs::remove_file(entry.path()).map_err(|e| unreadable(&e))?;
-        }
-    }
-    fs::rename(staged, run_dir).map_err(|e| unreadable(&e))
+        &run_dir.join("runner"),
+        &argv,
+        Some(&run_dir.join("job.err")),
+        agent_runtime::effects::job::Bounds {
+            memory: memory.bytes(),
+            outlives_oom: false,
+        },
+        &SystemClock,
+    );
+    super::launch_refusal(rd, launch.answer())
 }

@@ -6696,12 +6696,14 @@ fn a_missing_pull_request_is_told_apart_from_a_failed_read() {
 
 /// A lane on this disk whose admitted run goes to a static ssh host: the
 /// shipped provider's validation row, its clone made from the host's
-/// source and holding the lane's base, and a lane commit that declares
-/// `command` as the command the host runs and carries the render the host's
-/// start and the unit's setup read.
+/// source and holding the lane's base, and a lane commit that carries the
+/// render the unit's setup and executor read. The lane declares `command`
+/// in its environment, which its start resolves into the run's proof.
 struct HostLane {
     w: World,
     host: support::SshHost,
+    base: String,
+    command: &'static str,
     id: String,
     dir: String,
 }
@@ -6710,8 +6712,9 @@ struct HostLane {
 const HOST_COMMAND: &str = "sleep 2 && echo 'validate: lanes=unit selection=all'";
 
 impl HostLane {
-    fn new(command: &str) -> HostLane {
+    fn new(command: &'static str) -> HostLane {
         let w = World::new();
+        let base = w.head();
         let root = w.root.join("host");
         fs::create_dir_all(&root).unwrap();
         let host = support::SshHost::new(&root, &root.join("scripts"), "validation");
@@ -6737,15 +6740,7 @@ impl HostLane {
                 "refs/remotes/origin/main",
             ],
         );
-        fs::write(
-            w.worktree.join("kendex.settings.toml"),
-            format!("[env]\nDEV_VALIDATE_CMD = \"{command}\"\n"),
-        )
-        .unwrap();
-        git(
-            &w.worktree,
-            &["add", "-f", "kendex.settings.toml", ".agents"],
-        );
+        git(&w.worktree, &["add", "-f", ".agents"]);
         git(&w.worktree, &["commit", "-q", "-m", "lane"]);
         let admitted = ok(&w.op(
             &json!({"op":"record-validation-admission","round_id":ROUND}),
@@ -6753,7 +6748,14 @@ impl HostLane {
         ));
         let id = admitted["report"]["run_id"].as_str().unwrap().to_owned();
         let dir = admitted["report"]["run_dir"].as_str().unwrap().to_owned();
-        HostLane { w, host, id, dir }
+        HostLane {
+            w,
+            host,
+            base,
+            command,
+            id,
+            dir,
+        }
     }
 
     /// The host run, each call after a run read running one second apart.
@@ -6770,7 +6772,7 @@ impl HostLane {
                 "--poll",
                 "1",
             ],
-            &[],
+            &[("DEV_VALIDATE_CMD", self.command)],
         )
     }
 
@@ -6792,9 +6794,11 @@ impl HostLane {
             .join(&self.id)
     }
 
-    /// The run ended pass in the admitted directory, its record naming the
-    /// host and the lane's commit, its start the lane's worktree, the
-    /// host's process records left behind and the host's unit removed.
+    /// The run passed as a local admitted run does: its stage holds the
+    /// proof and closes pass with its notice sent, `read-proof` reads its
+    /// tree complete for the round, the run index lists it, its record
+    /// names the host and the lane's commit, the host's process records
+    /// stay behind and the host's unit is removed.
     fn assert_returned(&self, out: &Output) {
         assert_eq!(
             out.status.code(),
@@ -6804,47 +6808,48 @@ impl HostLane {
             stderr(out),
             self.host.calls()
         );
+        assert_eq!(directory(out), self.dir);
         let done = text(out);
         let done = done.lines().last().unwrap();
         assert_eq!(field(done, "state"), "done", "{done}");
         assert_eq!(field(done, "validate"), "pass", "{done}");
-        assert_eq!(field(done, "run-dir"), self.dir, "{done}");
+        let stage = self.w.wait_marked(&self.dir);
+        assert_eq!(stage["outcome"], "pass", "{stage}");
+        assert_eq!(stage["proof"]["cmd"], self.command, "{stage}");
+        let tree = git(&self.w.worktree, &["rev-parse", "HEAD^{tree}"]);
+        let read = self.w.read_proof(
+            &["--need", "round", "--tree", &tree, "--base", &self.base],
+            &[("DEV_VALIDATE_CMD", self.command)],
+        );
+        assert_eq!(read["proof"], "complete", "{read}");
+        let index = fs::read_to_string(self.w.worktree.join("tmp/validation-runs")).unwrap();
+        let name = Path::new(&self.dir).file_name().unwrap().to_str().unwrap();
+        assert!(index.lines().any(|line| line == name), "{index}");
         let record = read_record(&self.w, &self.dir);
         assert_eq!(field(&record, "verdict"), "pass", "{record}");
-        assert_eq!(field(&record, "host"), "lane.example", "{record}");
+        assert_eq!(field(&record, "host"), self.host.provider(), "{record}");
         assert_eq!(field(&record, "head"), self.w.head(), "{record}");
-        assert_eq!(
-            field(&record, "tree"),
-            git(&self.w.worktree, &["rev-parse", "HEAD^{tree}"]),
-            "{record}"
-        );
+        assert_eq!(field(&record, "tree"), tree, "{record}");
         assert_eq!(field(&record, "lanes"), "unit", "{record}");
-        let start = run_file(&self.dir, "start");
-        assert!(
-            start
-                .lines()
-                .any(|line| line == format!("worktree={}", self.w.worktree.display())),
-            "{start}"
-        );
-        for record in ["executor", "execution", "command", "runner", "job.err"] {
+        for record in ["executor", "execution", "command", "pid"] {
             assert!(!Path::new(&self.dir).join(record).exists(), "{record}");
         }
         assert!(!self.unit().exists(), "the host's unit is removed");
     }
 }
 
-/// A run on the host runs the lane's commit there with the runtime the
-/// commit's own tree builds, one step per provider call, and is read again
-/// until it ends; its folder then comes back to the admitted directory,
-/// which the lane reads as its last pass.
+/// A run on the host runs the lane's start's proof at the lane's commit
+/// with the runtime the commit's own tree builds, one step per provider
+/// call, and is read again until it ends; its outputs then come back into
+/// the run directory the start wrote, and the stage closes as a local
+/// run's does.
 #[test]
 fn a_host_run_returns_its_folder_to_the_admitted_directory_naming_the_host() {
     let lane = HostLane::new(HOST_COMMAND);
     let out = lane.run(&lane.host.provider());
     lane.assert_returned(&out);
-    assert_eq!(directory(&out), lane.dir);
     assert_eq!(lane.ssh_calls("/tree/.agents/skills/orch/scripts/setup"), 1);
-    assert_eq!(lane.ssh_calls("validate entry --worktree"), 1);
+    assert_eq!(lane.ssh_calls("validate entry --host-child"), 1);
     assert!(lane.ssh_calls("validate entry --wait --run-dir") >= 1);
     let calls = lane.host.calls();
     let validate = format!(" validate --item {ITEM_ID} --run-id {}", lane.id);
@@ -6853,34 +6858,23 @@ fn a_host_run_returns_its_folder_to_the_admitted_directory_naming_the_host() {
         calls[1..].iter().all(|call| call.contains(&validate)),
         "{calls:?}"
     );
-    let wt = lane.w.worktree.display().to_string();
-    let last = lane.w.entry(&["--last-pass", "--worktree", &wt], &[]);
-    assert_eq!(
-        field(&text(&last), "run-dir"),
-        lane.dir,
-        "{}",
-        stderr(&last)
-    );
 }
 
-/// A start whose connection drops after the host launched the run keeps
-/// the unit: the call refuses, and the same call again reads that run to
-/// its end, with no second start.
+/// A launch whose connection drops after the host launched the run keeps
+/// the unit, and the executor's next call reads that run to its end: one
+/// launch, and the stage closes pass.
 #[test]
-fn a_host_start_cut_off_after_the_host_acted_is_read_on_the_next_call() {
+fn a_host_launch_cut_off_after_the_host_acted_is_read_on_the_next_call() {
     let lane = HostLane::new(HOST_COMMAND);
-    fs::write(lane.host.tools.join("drop-on"), "validate entry --worktree").unwrap();
-    let cut = lane.run(&lane.host.provider());
-    assert_eq!(cut.status.code(), Some(2), "{}", stderr(&cut));
-    assert!(
-        keyed(&cut).starts_with("validate: host-call-failed"),
-        "{}",
-        keyed(&cut)
-    );
-    assert!(lane.unit().join("tree").is_dir(), "the unit is kept");
+    fs::write(
+        lane.host.tools.join("drop-on"),
+        "validate entry --host-child",
+    )
+    .unwrap();
     let out = lane.run(&lane.host.provider());
     lane.assert_returned(&out);
-    assert_eq!(lane.ssh_calls("validate entry --worktree"), 1);
+    assert_eq!(lane.ssh_calls("validate entry --host-child"), 1);
+    assert!(!lane.host.tools.join("drop-on").exists(), "the drop ran");
 }
 
 /// Each host start that cannot run refuses by its key and leaves the key on
@@ -6967,4 +6961,84 @@ fn a_host_start_that_cannot_run_refuses_by_key_on_the_admitted_stage() {
             "{case}"
         );
     }
+    // The start that then runs clears the refusal it follows.
+    lane.assert_returned(&lane.run(&lane.host.provider()));
+    assert!(lane.w.stage(&lane.dir)["refused"].is_null());
+}
+
+/// A host run is held by its caller, as a foreground run is: while the
+/// caller follows it, the round's reconcile keeps its stage open and a wait
+/// by its id reads it running; once the caller is gone, the wait reads it
+/// lost, never queued.
+#[test]
+fn a_host_run_is_held_by_its_caller_through_a_reconcile_and_read_lost_without_it() {
+    let lane = HostLane::new("sleep 6 && echo 'validate: lanes=unit selection=all'");
+    let wt = lane.w.worktree.display().to_string();
+    let provider = lane.host.provider();
+    let mut command = support::isolated();
+    command
+        .arg("--state-dir")
+        .arg(&lane.w.state)
+        .args([
+            "validate",
+            "entry",
+            "--worktree",
+            &wt,
+            "--run-id",
+            &lane.id,
+            "--host",
+            &provider,
+            "--poll",
+            "1",
+        ])
+        .current_dir(&lane.w.worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    for (k, v) in lane.w.env() {
+        command.env(k, v);
+    }
+    command.env("DEV_VALIDATE_CMD", lane.command);
+    let holder = Owned(command.spawn().unwrap());
+    until(|| lane.unit().join("run/runner").exists());
+    ok(&lane
+        .w
+        .op(&json!({"op":"reconcile-round","round_id":ROUND}), &[]));
+    let stage = lane.w.stage(&lane.dir);
+    assert!(stage["end"].is_null(), "{stage}");
+    let running = lane.w.entry(
+        &[
+            "--wait",
+            "--worktree",
+            &wt,
+            "--run-id",
+            &lane.id,
+            "--budget",
+            "1",
+        ],
+        &[],
+    );
+    assert_eq!(running.status.code(), Some(3), "{}", stderr(&running));
+    assert_eq!(
+        field(text(&running).lines().last().unwrap(), "state"),
+        "running"
+    );
+    drop(holder);
+    let lost = lane.w.entry(
+        &[
+            "--wait",
+            "--worktree",
+            &wt,
+            "--run-id",
+            &lane.id,
+            "--budget",
+            "30",
+        ],
+        &[],
+    );
+    let line = text(&lost);
+    let line = line.lines().last().unwrap();
+    assert_eq!(field(line, "state"), "lost", "{line}");
+    assert_eq!(field(line, "validate"), "FAILING", "{line}");
+    // The host's run ends on its own; the row outlives it.
+    until(|| lane.unit().join("run/exit").exists());
 }

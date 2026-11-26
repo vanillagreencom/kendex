@@ -169,13 +169,12 @@ Each verb, its arguments, and its answer:
   - Optional, asked only of a `pane=verb` host.
   - One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session.
   - Exit `2`: no viewer.
-- `validate --item ID --run-id RUN --commit SHA --source DIR --into STAGE --validate-mode MODE [--base BASE]`, asked only of a `validate=verb` host.
-  - Runs one validation unit on the host at `SHA`, the HEAD of the lane's worktree `DIR`.
-  - Each call takes one step of the unit: it prepares the unit, starts its run with `MODE` and `BASE`, or reads the run's state. It waits for no run inside the call.
+- `validate --item ID --run-id RUN --commit SHA --source DIR --run-dir RUNDIR --into STAGE`, asked only of a `validate=verb` host.
+  - Runs the run the lane's start wrote at `RUNDIR` on the host, at `SHA`, the HEAD of the lane's worktree `DIR`. The lane's start resolved its proof and holds its stage; the host runs only its executor.
+  - Each call takes one step of the unit: it prepares the unit, launches the host's copy of the run, or reads the run's state. It waits for no run inside the call.
   - Exit `3` with `state=preparing` on stdout is a unit one step further along. Exit `3` with `state=running` is a run still going. The caller asks again with the same arguments.
-  - Exit `0` is a run that ended with its sentinel. Its folder stands at `STAGE`, a folder the call creates on the control machine, and `STAGE/host` holds `host=NAME`, the host it ran on. The host removes its copy, and names on stderr one it could not remove.
-  - A run that ended with no sentinel fails, and the host keeps its folder for its log.
-  - A start that may have launched a run keeps the unit, and the next call reads that run.
+  - Exit `0` is a run that ended. Its folder stands at `STAGE`, a folder the call creates on the control machine. The host removes its copy, and names on stderr one it could not remove.
+  - A launch that may have started a run keeps the unit, and the next call reads that run.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
@@ -211,7 +210,7 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
   - A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`.
   - A Copilot lane on a `pane=local` host gets them in its window after the close transition, then is asked `stop` and `status`.
 - The account listing asks `accounts`.
-- `validate entry --host` asks `capabilities`, then `validate`, one call at a time, until the host's run ends.
+- The executor of an admitted start that `validate entry --host` sent to the host asks `capabilities` at the start, then `validate`, one call at a time, until the host's run ends.
 
 ## Call bound
 
