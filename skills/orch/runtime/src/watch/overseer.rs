@@ -50,8 +50,8 @@ use agent_runtime::observe::{self, IdleTurn, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Level, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, SessionIdle, SessionObservation, SessionVerdict};
-use agent_runtime::stop::{self, Action, Kind, Session, reset as stop_reset};
-use serde::{Deserialize, Serialize};
+use agent_runtime::stop::{self, Action, Kind, Session};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::baseline::{Baseline, Change};
@@ -63,10 +63,9 @@ use super::wake;
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts;
 use agent_runtime::accounts::walk::{self, WalkRequest};
-use agent_runtime::accounts::wall::{self as account_wall, WallChannel};
 use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
-use agent_runtime::controller::views::{AccountRead, AccountState, Caller, MarkKind, Record, text};
+use agent_runtime::controller::views::{AccountState, Caller, MarkKind, Record, text};
 use agent_runtime::effects::overseer_socket;
 use agent_runtime::settings::{DEFAULT_CONTROLLER_PREFERENCE, Succession};
 
@@ -79,7 +78,7 @@ const GAP_ALERT_FILE: &str = "overseer-context-gap.txt";
 const DEAD_ALERT_FILE: &str = "overseer-dead.txt";
 
 /// Where the verdict was read, the `source=` word of the line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
     Auth,
@@ -212,10 +211,6 @@ pub struct Marks {
     /// The caller's own headroom as read: a figure, `none` for an account
     /// nothing measured, `unreadable` for a judge that could not answer.
     pub headroom: String,
-    /// The caller's own account as [`own_account`] read it, the reading
-    /// the wake resumes a walled overseer on; none where a due context
-    /// answered before the account was read.
-    pub own: Option<AccountState>,
     pub context: ContextRead,
     /// The judged reading as the handoff record carries it.
     pub decision: Option<Value>,
@@ -234,7 +229,6 @@ impl Marks {
             reserve_only: false,
             reason: String::new(),
             headroom: String::new(),
-            own: None,
             context: ContextRead::Unjudged,
             decision: None,
         }
@@ -492,8 +486,21 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         m.decision = decision;
         return Ok(m);
     }
-    let account = own_account(settings, ask.fleet_path, ask.host, ask.caller, ask.now)?;
-    let own = Some(account.state);
+    let Some(harness) = ask.caller.harness else {
+        return Err(agent_runtime::Error::refused("harness-unnamed", &[]).into());
+    };
+    let mut pick = |request: &PickRequest| {
+        accounts::pick_fleet(
+            settings,
+            ask.fleet_path,
+            ask.host,
+            None,
+            None,
+            request,
+            ask.now,
+        )
+    };
+    let account = ask.caller.own_account(harness, &mut pick, trigger, ask.now);
     let memory = match (memory_pct, &ask.caller.identity) {
         (None, _) => MemoryRead::Inert,
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
@@ -517,7 +524,6 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         let mut m = Marks::new(MarkKey::Reached(kind), succession);
         m.value = value;
         m.mark = mark;
-        m.own = own;
         m.account = if account.account.is_empty() {
             "unknown".to_owned()
         } else {
@@ -564,7 +570,6 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let unmeasured = |kind: MarkKind, reason: String| {
         let mut m = Marks::new(MarkKey::Unmeasured(kind), succession);
         m.reason = reason;
-        m.own = own;
         m.context = context_read.clone();
         m.decision = decision.clone();
         m
@@ -598,32 +603,10 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     }
     let mut m = Marks::new(MarkKey::Below, succession);
     m.headroom = headroom_field;
-    m.own = own;
     m.mark = context_pct.min(CONTEXT_PCT_CEILING).to_string();
     m.context = context_read;
     m.decision = decision;
     Ok(m)
-}
-
-/// The caller's own account at the controller's headroom trigger: the one
-/// read its marks judge and the wake's resume of a walled overseer past its
-/// reset waits on (`wake::overseer_room`), so the watch holds a passed wait
-/// on the very reading the wake resumes on.
-pub fn own_account(
-    settings: &Settings,
-    fleet_path: &Path,
-    host: &crate::ops::Host<'_>,
-    caller: &Caller,
-    now: u64,
-) -> crate::error::Result<AccountRead> {
-    let Some(harness) = caller.harness else {
-        return Err(agent_runtime::Error::refused("harness-unnamed", &[]).into());
-    };
-    let trigger = settings.accounts.get()?.controller_headroom_pct;
-    let mut pick = |request: &PickRequest| {
-        accounts::pick_fleet(settings, fleet_path, host, None, None, request, now)
-    };
-    Ok(caller.own_account(harness, &mut pick, trigger, now))
 }
 
 enum MemoryRead {
@@ -774,20 +757,13 @@ struct Reads {
     rows: Option<Reading<SessionObservation>>,
     /// The row is a Codex or Copilot session's own record of its failed
     /// last turn (`Readers::session_failure`), not a hook's.
-    record_failure: Option<RecordFailure>,
+    record_failure: bool,
     /// A pane holding only shells whose harness is proven gone: its
     /// recorded process read gone, or no process recorded under a record
     /// that names a harness, the reading a start takes as `harness-gone`.
     /// What makes such a pane the session's end rather than a moment
     /// between programs. Read nowhere else.
     harness_gone: bool,
-}
-
-/// A failed turn the session's own record holds: the instant the record
-/// names, where it names one.
-#[derive(Debug, Clone, Copy)]
-struct RecordFailure {
-    at: Option<u64>,
 }
 
 /// One pass's inputs.
@@ -886,7 +862,7 @@ fn judge(
                 // it and Copilot's 429 rate limit is no window an account
                 // reading measures.
                 if kind == WallKind::Usage
-                    && reads.record_failure.is_none()
+                    && !reads.record_failure
                     && marks().is_some_and(|m| m.key == MarkKey::Below)
                 {
                     return Verdict::Live;
@@ -1166,7 +1142,7 @@ fn clear(kind: &str, identity: &str) -> Change {
 const ROWS: [&str; 11] = [
     "overseer-dead",
     "overseer-walled",
-    WALL_ROW,
+    WALLED_AT_ROW,
     "overseer-mark",
     TRANSFER_ROW,
     context::GAP_ROW,
@@ -1442,7 +1418,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             {
                 out.changes.push(clear("overseer-walled", &key));
             }
-            out.changes.push(clear(WALL_ROW, &key));
+            out.changes.push(clear(WALLED_AT_ROW, &key));
             mark_check(&record, &key, marks_now.as_ref(), pass, out);
             context_check(&record, &key, context.as_ref(), pass, out);
             if let Some(pid) = pane_pid {
@@ -1454,6 +1430,14 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         return judged(verdict, Some(key));
     };
+    if pass
+        .baseline
+        .get(wake::RESUME_KIND, wake::OVERSEER_TARGET)
+        .is_some()
+    {
+        out.changes
+            .push(clear(wake::RESUME_KIND, wake::OVERSEER_TARGET));
+    }
     out.changes.push(clear(PROVIDER_ROW, &key));
     out.changes.push(clear(PROVIDER_MOVE_ROW, &key));
     let (row, other) = match case {
@@ -1470,27 +1454,8 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     if case == OverseerCase::Reserve {
         context_check(&record, &key, context.as_ref(), pass, out);
     }
-    // The wall the case judges: one of another kind or source, or a newer
-    // failure, is judged afresh, its count, line and recovery its own.
-    let (wall, fresh) = match Wall::sighted(&verdict, reads.as_ref(), pass.now) {
-        Some(seen) => match pass.baseline.get(WALL_ROW, &key).and_then(Wall::read) {
-            Some(stored) if stored.is(&seen) => (Some(stored), false),
-            stored => {
-                out.changes.push(set(WALL_ROW, &key, seen.row()));
-                (Some(seen), stored.is_some())
-            }
-        },
-        None => {
-            out.changes.push(clear(WALL_ROW, &key));
-            (None, false)
-        }
-    };
     let prefix = case_prefix(case);
-    let prior = if fresh {
-        String::new()
-    } else {
-        pass.baseline.get(row, &key).unwrap_or("").to_owned()
-    };
+    let prior = pass.baseline.get(row, &key).unwrap_or("").to_owned();
     // A reserve attempt neither consumes nor suppresses a real failure's
     // recovery.
     let prior = match (case, prior.strip_prefix("reserve:")) {
@@ -1499,22 +1464,6 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         (OverseerCase::Dead | OverseerCase::Walled, Some(_)) => String::new(),
         (OverseerCase::Dead | OverseerCase::Walled, None) => prior,
     };
-    // A walled controller's resume at its reset stands while the wall it
-    // was asked for does; every other resume belongs to a session that can
-    // take a turn.
-    let waiting = |resume: &str| {
-        case == OverseerCase::Walled
-            && !fresh
-            && wake::resume_cause(resume, &key) == Some(wake::WALL_CAUSE)
-    };
-    if pass
-        .baseline
-        .get(wake::RESUME_KIND, wake::OVERSEER_TARGET)
-        .is_some_and(|resume| !waiting(resume))
-    {
-        out.changes
-            .push(clear(wake::RESUME_KIND, wake::OVERSEER_TARGET));
-    }
     let plan_relaunch = pass.succession == Succession::On
         && match case {
             OverseerCase::Dead => record.held_successor().is_some(),
@@ -1526,7 +1475,6 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         let text = dead_alert_text(&record, source, passes_needed, plan_relaunch);
         dead_turn(&record, &key, &text, pass, out);
     }
-    let judging = |waited: bool| wall.as_ref().map(|wall| Walled { wall, waited });
     match prior.as_str() {
         "reported" => return judged(verdict, Some(key)),
         "requested" => {
@@ -1534,18 +1482,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             return judged(verdict, Some(key));
         }
         "announced" => {
-            transfer(&record, case, &verdict, &key, judging(false), pass, out);
-            return judged(verdict, Some(key));
-        }
-        // A wait for a wall's reset is judged again once the reset passed.
-        WAITING if case == OverseerCase::Walled => {
-            if wall
-                .as_ref()
-                .and_then(|wall| wall.reset)
-                .is_none_or(|reset| reset <= pass.now)
-            {
-                transfer(&record, case, &verdict, &key, judging(true), pass, out);
-            }
+            transfer(&record, case, &verdict, &key, pass, out);
             return judged(verdict, Some(key));
         }
         _ => {}
@@ -1618,6 +1555,10 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
         ),
     ));
+    if plan_relaunch && case == OverseerCase::Walled {
+        out.changes
+            .push(set(WALLED_AT_ROW, &key, pass.now.to_string()));
+    }
     out.next_due = (plan_relaunch || case == OverseerCase::Dead).then_some(pass_next_due());
     judged(verdict, Some(key))
 }
@@ -1629,10 +1570,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
 /// its home), else the record's home; a last turn that ended on no failure
 /// leaves the hook rows to read, as for Claude and Pi, and so does a record
 /// that could not be read, its cause on the log.
-fn session_rows(
-    record: &Record,
-    pass: &Pass,
-) -> (Option<Reading<SessionObservation>>, Option<RecordFailure>) {
+fn session_rows(record: &Record, pass: &Pass) -> (Option<Reading<SessionObservation>>, bool) {
     let hook_rows = || {
         record
             .session_rows
@@ -1649,22 +1587,22 @@ fn session_rows(
             .as_ref()
             .and_then(|overseer| overseer.session_id.as_deref()),
     ) else {
-        return (hook_rows(), None);
+        return (hook_rows(), false);
     };
     match (pass.readers.session_failure)(harness, Path::new(&home), Path::new(&cwd), id) {
         Reading::Live(Some(failure)) => (
             Some(Reading::Live(rows::observe_session(rows::failure_row(
                 harness, &failure,
             )))),
-            Some(RecordFailure { at: failure.at }),
+            true,
         ),
-        Reading::Live(None) | Reading::Gone => (hook_rows(), None),
+        Reading::Live(None) | Reading::Gone => (hook_rows(), false),
         Reading::Unreadable { cause } => {
             context::note(
                 "overseer-record-unreadable",
                 &format!("pane={} harness={harness} cause={cause}", record.pane),
             );
-            (hook_rows(), None)
+            (hook_rows(), false)
         }
     }
 }
@@ -1984,94 +1922,9 @@ fn transfer_settled(
     }
 }
 
-/// The wall a walled case judges, kept as JSON under [`WALL_ROW`] while
-/// the case stands: its kind, where it was read, which failure it is, the
-/// pass that first read it, and the reset the case waits for once it
-/// waits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Wall {
-    kind: WallKind,
-    source: Source,
-    failure: Evidence,
-    first_seen: u64,
-    reset: Option<u64>,
-}
-
-/// Which failure a wall is, so a newer one is told from it: a hook row by
-/// its position, a failed turn the session's own record holds by its
-/// instant and the digest of its words, any other wall by its words'
-/// digest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum Evidence {
-    Row(usize),
-    Record { at: Option<u64>, words: u32 },
-    Words(u32),
-}
-
-impl Wall {
-    /// The wall a walled verdict reads, first seen at `now`.
-    fn sighted(verdict: &Verdict, reads: Option<&Reads>, now: u64) -> Option<Wall> {
-        let Verdict::Walled { source, kind, text } = verdict else {
-            return None;
-        };
-        let words = agent_runtime::session::text_digest(text);
-        let failure = match (source, reads) {
-            (Source::Rows, Some(reads)) => match (reads.record_failure, &reads.rows) {
-                (Some(RecordFailure { at }), _) => Evidence::Record { at, words },
-                (None, Some(Reading::Live(row))) => Evidence::Row(row.position),
-                (None, Some(Reading::Gone | Reading::Unreadable { .. }) | None) => {
-                    Evidence::Words(words)
-                }
-            },
-            (
-                Source::Auth
-                | Source::Record
-                | Source::Rows
-                | Source::Context
-                | Source::Process
-                | Source::Pane
-                | Source::Account,
-                _,
-            ) => Evidence::Words(words),
-        };
-        Some(Wall {
-            kind: *kind,
-            source: *source,
-            failure,
-            first_seen: now,
-            reset: None,
-        })
-    }
-
-    /// Whether `seen` is this wall, whatever pass first read it.
-    fn is(&self, seen: &Wall) -> bool {
-        (self.kind, self.source, &self.failure) == (seen.kind, seen.source, &seen.failure)
-    }
-
-    fn read(value: &str) -> Option<Wall> {
-        serde_json::from_str(value).ok()
-    }
-
-    fn row(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|e| unreachable!("a wall serializes: {e}"))
-    }
-}
-
-/// How a walled case's succession is judged: on the wall it judges, the
-/// first time, or again once the reset it `waited` for passed.
-#[derive(Debug, Clone, Copy)]
-struct Walled<'w> {
-    wall: &'w Wall,
-    waited: bool,
-}
-
-/// The wall a walled case judges ([`Wall`]), keyed by the pane key.
-const WALL_ROW: &str = "overseer-wall";
-
-/// The state word of a walled case waiting for the reset its [`Wall`]
-/// names.
-const WAITING: &str = "waiting";
+/// The epoch seconds a walled case was announced at, keyed by the pane
+/// key: an unread walk's patience runs from it.
+const WALLED_AT_ROW: &str = "overseer-walled-at";
 
 /// The prefix a case's row words carry: a reserve attempt's are kept apart
 /// from a real failure's recovery.
@@ -2086,30 +1939,23 @@ fn case_prefix(case: OverseerCase) -> &'static str {
 /// the spent account; a walled case's successor is agent-runtime's walk
 /// leaving the spent account (`successor::recovery_walk`), the record's
 /// unproved accounts held out. A walled case then takes `stop::action`'s
-/// step for its wall: a move to the walk's successor; an ended sign-in's
-/// telling the owner once which account to sign in again, and with no
-/// successor the owner's one notice, since a reset does not repair a
-/// sign-in; a usage wall with no successor waits for its known reset
-/// ([`wall_reset`]), which the wake resumes it at, else the owner's one
-/// notice with the cause. A wait whose reset passed holds while the
-/// overseer's own account reads room, the one reading the wake resumes it
-/// on ([`own_account`]), and is otherwise judged again.
+/// step for its wall: a move to the walk's successor, an ended sign-in's
+/// telling the owner once which account to sign in again; with no
+/// successor, the owner's one notice with the cause. No reset is waited
+/// for.
 ///
 /// A walk refused or leaving an entry unread decides no successor: its
-/// cause is the duty's failure and the next pass walks again. A usage wall
-/// with a known reset still waits for it, and once a whole
-/// [`stop::PROVIDER_PATIENCE`] passed since the wall was first read the
-/// owner is told, the unread line as the cause. An account judgement that
-/// could not answer, or that reads a reset already passed, decides nothing
-/// either. A refused request is the duty's failure, said on the log by the
-/// runner, and the row stays announced so the next pass asks again. An
-/// admitted transfer is `requested` ([`request`]).
+/// cause is the duty's failure and the next pass walks again, until a
+/// whole [`stop::PROVIDER_PATIENCE`] passed since the walled case was
+/// announced, when the owner is told once, the unread line as the cause.
+/// A refused request is the duty's failure, said on the log by the runner,
+/// and the row stays announced so the next pass asks again. An admitted
+/// transfer is `requested` ([`request`]).
 fn transfer(
     record: &Record,
     case: OverseerCase,
     verdict: &Verdict,
     key: &str,
-    walled: Option<Walled>,
     pass: &Pass,
     out: &mut Produced,
 ) {
@@ -2119,35 +1965,6 @@ fn transfer(
     };
     let prefix = case_prefix(case);
     let caller = Caller::of(record);
-    let account_unread = |out: &mut Produced, cause: &str| {
-        out.failed
-            .get_or_insert(format!("account-unread cause={cause}"));
-    };
-    let mut account = None;
-    if walled.is_some_and(|walled| walled.waited) {
-        let marks = match (pass.judges.marks)(&caller, None) {
-            Ok(marks) => marks,
-            Err(cause) => return account_unread(out, &cause),
-        };
-        match marks.own {
-            Some(AccountState::HasRoom) => return,
-            Some(AccountState::AtTrigger | AccountState::Unmeasured) => {}
-            Some(AccountState::Unreadable) | None => {
-                let cause = if marks.reason.is_empty() {
-                    "account-unjudged"
-                } else {
-                    &marks.reason
-                };
-                return account_unread(out, cause);
-            }
-        }
-        // A reading taken before the reset moves nothing off an account
-        // that may have room again.
-        if let Err(cause) = account_reset(&marks, pass.now) {
-            return account_unread(out, &cause);
-        }
-        account = Some(marks);
-    }
     let (cause, exclude_account, found) = match case {
         OverseerCase::Dead => (
             TransferCause::Dead,
@@ -2179,26 +1996,11 @@ fn transfer(
         out.failed
             .get_or_insert(format!("successor-unread cause={line}"));
     };
-    if let (OverseerCase::Walled, Some(walled), Verdict::Walled { kind, text, .. }) =
-        (case, walled, verdict)
-    {
-        let reset = match (&successor, kind) {
-            (Some(_), _) | (None, WallKind::Auth) => None,
-            (None, WallKind::Usage) => {
-                let mut marks = || match account.take() {
-                    Some(marks) => Ok(marks),
-                    None => (pass.judges.marks)(&caller, None),
-                };
-                match wall_reset(walled, text, &mut marks, pass) {
-                    Ok(reset) => reset,
-                    Err(cause) => return account_unread(out, &cause),
-                }
-            }
-        };
+    if let (OverseerCase::Walled, Verdict::Walled { kind, text, .. }) = (case, verdict) {
         let ground = stop::Ground {
             own_room: false,
             room: successor.is_some(),
-            reset: reset.is_some(),
+            reset: false,
         };
         let account = record.account.as_deref().unwrap_or("unrecorded");
         // A wall's step does not turn on its age.
@@ -2216,29 +2018,9 @@ fn transfer(
                 );
                 notice(record, key, AUTH_STATE, &text, pass, out);
             }
-            Action::WaitForReset => {
-                let Some(at) = reset else {
-                    unreachable!("a wait is asked only on a known reset")
-                };
-                out.changes.push(set(
-                    wake::RESUME_KIND,
-                    wake::OVERSEER_TARGET,
-                    format!("{}|{key}|{at}", wake::WALL_CAUSE),
-                ));
-                let wait = Wall {
-                    reset: Some(at),
-                    ..walled.wall.clone()
-                };
-                out.changes.push(set(WALL_ROW, key, wait.row()));
-                out.changes.push(set(row, key, WAITING.to_owned()));
-                return;
-            }
             Action::Notify { .. } => {
-                // An unread walk is walked again within the patience, the
-                // owner told past it.
                 if let Some(line) = &unread
-                    && pass.now.saturating_sub(walled.wall.first_seen)
-                        < stop::PROVIDER_PATIENCE.as_secs()
+                    && !unread_patience_passed(key, pass, out)
                 {
                     return successor_unread(out, line);
                 }
@@ -2248,8 +2030,8 @@ fn transfer(
                 out.changes.push(set(row, key, format!("{prefix}reported")));
                 return;
             }
-            Action::Resume | Action::MoveProvider => {
-                unreachable!("a wall is moved, waited out or told, never resumed in place")
+            Action::WaitForReset | Action::Resume | Action::MoveProvider => {
+                unreachable!("a wall with no reset asked for is moved or told")
             }
         }
     } else if let Some(line) = &unread {
@@ -2387,53 +2169,22 @@ fn walk_successor(
     }
 }
 
-/// The reset a usage-walled overseer no successor has room for waits for,
-/// from the wall's own evidence: on its first judgement the reset its own
-/// words state, a rows wall's or a confirmed pane banner's, read against
-/// the wall's first sighting as a lane's banner is (`stop::reset`); else,
-/// where the account judgement confirms the wall, that judgement's binding
-/// reset ([`account_reset`]). A failed turn the session's own record holds
-/// stands whatever the account reads, so it takes its own words alone, and
-/// with none the owner is told. Judged again past its reset, the words name
-/// the reset already waited for, so only the account names a later one.
-/// `Err` is a judgement that could not answer.
-fn wall_reset(
-    walled: Walled,
-    text: &str,
-    marks: &mut dyn FnMut() -> Result<Marks, String>,
-    pass: &Pass,
-) -> Result<Option<u64>, String> {
-    let wall = walled.wall;
-    let channel = match wall.source {
-        Source::Rows => Some(WallChannel::Row),
-        Source::Pane => Some(WallChannel::Pane),
-        Source::Auth | Source::Record | Source::Context | Source::Process | Source::Account => None,
-    };
-    let words = channel.filter(|_| !walled.waited).and_then(|channel| {
-        stop_reset::reported_epoch(
-            text,
-            account_wall::harness_own_limit(text, channel),
-            wall.first_seen,
-            pass.readers.zone,
-        )
-    });
-    if words.is_some() || matches!(wall.failure, Evidence::Record { .. }) {
-        return Ok(words);
-    }
-    let marks = marks()?;
-    if !marks.confirms_wall() {
-        return Ok(None);
-    }
-    account_reset(&marks, pass.now)
-}
-
-/// The binding reset an account judgement names: none where it names
-/// none; `Err` where it names one already passed, a reading taken before
-/// the reset that decides nothing until the account is read again.
-fn account_reset(marks: &Marks, now: u64) -> Result<Option<u64>, String> {
-    match agent_runtime::clock::epoch_secs(&marks.resets) {
-        Some(at) if at <= now => Err(format!("reading-before-reset resets={}", marks.resets)),
-        at => Ok(at),
+/// Whether a whole [`stop::PROVIDER_PATIENCE`] passed since the walled
+/// case under `key` was announced ([`WALLED_AT_ROW`]). An announced case
+/// with no instant kept, as a watch of an earlier build leaves one, starts
+/// its patience on this pass.
+fn unread_patience_passed(key: &str, pass: &Pass, out: &mut Produced) -> bool {
+    match pass
+        .baseline
+        .get(WALLED_AT_ROW, key)
+        .and_then(|at| at.parse::<u64>().ok())
+    {
+        Some(at) => pass.now.saturating_sub(at) >= stop::PROVIDER_PATIENCE.as_secs(),
+        None => {
+            out.changes
+                .push(set(WALLED_AT_ROW, key, pass.now.to_string()));
+            false
+        }
     }
 }
 
