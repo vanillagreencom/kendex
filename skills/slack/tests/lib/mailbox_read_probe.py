@@ -84,6 +84,8 @@ rows = [
     {"id": "posted-a", "kind": "tracker-posted", "re": "ask-a", "issue": "FIXTURE-1", "tracker_label": "owner"},
 ]
 over.write_text("".join(json.dumps(row) + "\n" for row in rows) + "bad-json\n[]\n{\"id\":\"partial\"")
+# The Jarvis read has passed the damaged lines 4 and 5, so both readers step over them.
+(box / "to-overseer.seen").write_text("5\n")
 lane.write_text(json.dumps({"id": "directive-a", "kind": "directive", "at": "2026-10-13T00:00:00Z", "text": "Read me"}) + "\n")
 events = equivalent()
 assert [(row["id"], row["line"], row["count"]) for row in events] == [
@@ -189,6 +191,55 @@ try:
 finally:
     mutex.rmdir()
     namespace["time"] = original_time
+
+# A damaged line past its box's consumer count refuses the relay's read, at
+# the line `events --box` refuses at; one at or below it, or a killed
+# writer's marked fragment, reads. A row with no mailbox bytes keeps the
+# previous row's, so the cached snapshot judges the moved count.
+notice = json.dumps(dict(rows[0], id="notice-d")) + "\n"
+directive = json.dumps({"id": "directive-d", "kind": "directive", "at": "2026-10-13T00:00:00Z", "text": "D"}) + "\n"
+for name in ("to-overseer.jsonl.numbering", "to-lane.jsonl.numbering", "to-lane.cursor.lock"):
+    (box / name).unlink(missing_ok=True)
+DAMAGE = [
+    # label, to-overseer bytes, to-lane bytes, to-overseer.seen, to-lane.cursor, refusing box and line
+    ("overseer-unread", notice + "bad-json\n", directive, None, "0", ("to-overseer", 2)),
+    ("overseer-seen-raised", None, None, "2", "0", None),
+    ("overseer-seen", notice + "bad-json\n", directive, "2", "0", None),
+    ("lane-unread", notice, directive + "[]\n", "0", "1", ("to-lane", 2)),
+    ("lane-cursor", notice, directive + "[]\n", "0", "2", None),
+    ("torn-fragment", notice + "{\"id\":\"cut\x1etorn\n", directive, None, "0", None),
+]
+for label, over_bytes, lane_bytes, seen, lane_cursor, refused in DAMAGE:
+    if over_bytes is None:
+        warm = mail.snapshots["stamp"]
+    else:
+        over.write_text(over_bytes)
+        lane.write_text(lane_bytes)
+    seen_path = box / "to-overseer.seen"
+    seen_path.unlink(missing_ok=True)
+    if seen is not None:
+        seen_path.write_text(seen + "\n")
+    cursor.write_text(lane_cursor + "\n")
+    wanted = refused and f"lane-mail: envelope-invalid path={box / (refused[0] + '.jsonl')} line={refused[1]}"
+    for name in ("to-overseer", "to-lane"):
+        cli = subprocess.run([str(mail.script), "events", "--item", "overseer", "--box", name],
+                             cwd=root, capture_output=True, text=True, timeout=30)
+        if refused and refused[0] == name:
+            assert cli.returncode == 2 and cli.stderr.startswith(wanted + "\n"), (label, cli.stderr)
+        else:
+            assert cli.returncode == 0, (label, name, cli.stderr)
+    if refused:
+        try:
+            mail.events()
+        except Exception as error:
+            assert (error.key, error.value) == ("lane-mail-failed", wanted), (label, error)
+        else:
+            raise AssertionError(f"{label}: a damaged unread line must refuse the relay's read")
+    else:
+        assert [row["id"] for row in equivalent()] == ["notice-d", "directive-d"], label
+    if over_bytes is None:
+        assert mail.snapshots["stamp"] == warm, "the raised count must be judged on the cached snapshot"
+(box / "to-overseer.seen").unlink(missing_ok=True)
 
 # The CLI's flock helper leaves ownership on its shell's descriptors. The
 # child inherits this fixture environment unchanged, as the real helper does.
