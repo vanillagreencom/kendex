@@ -1407,8 +1407,10 @@ pub fn stop_worktree(
 
 /// End a run's command group, then its runner unless that runner is
 /// attached, by the identities its own files record. The `stop` file makes
-/// the run's ending read a stop, so `--record` reads it `verdict=no-verdict`
-/// and `--wait` reads it `state=done stopped`, not `lost`. It is written
+/// the run's ending read a stop, so `--record` reads it `verdict=no-verdict`,
+/// and `--wait` reads it `state=done stopped`, not `lost`, where the run
+/// wrote no sentinel, and `state=done guard-exit=N ... validate=no-verdict`
+/// where it wrote one. It is written
 /// before the end it records: at once on a run whose stage records the stop
 /// (`staged`), since that stage's close reads `stopped` whatever the stop
 /// finds, and otherwise only where the command group, or a runner that is

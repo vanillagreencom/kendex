@@ -69,7 +69,7 @@ A command's exit 3 or an unavailable host check prints `validate=no-verdict`: ne
 - A scoped record whose `validate-mode` is not `ci` takes no further start.
 - A record that is not scoped and whose `validate-mode` is not `ci` takes at most one further runner start, `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --validate-mode ci --base [ROUND_BASE] [--run-id [RUN_ID]]`. `--run-id` carries the rerun's own id from the admission step exactly when the delegation carries an admission. The round's verdict is that run's.
 - Run no suite list by hand in place of either.
-- A final `no-verdict` that no stop ended before its sentinel is `--validate no-verdict` with its run's `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the host cause or the command's exit 3, and the return reads `Validate: no-verdict: [CAUSE]`.
+- A final `no-verdict` that no stop ended before its sentinel is `--validate no-verdict` with its run's `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the host cause, the command's exit 3 or a stop, and the return reads `Validate: no-verdict: [CAUSE]`.
 - Only a final record with `validate-mode=ci` leaves the proof to required CI. Any other final `no-verdict` is unproved: its `--validate-note` says so, and the round never presents it as covered by CI.
 
 ## Apple gate
