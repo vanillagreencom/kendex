@@ -18,7 +18,7 @@ A request can arrive through the [message routes](HIW-messages.md). Jarvis reads
 
 ## The work
 
-In a continuing session, work has a tracker item with the result still owed and the check that will establish it. Jarvis connects incoming events to that work and updates the item after acting. It can work directly or ask [another agent](HIW-delegation.md) to provide a result.
+In a continuing session, work has a tracker item with the result still owed and the check that will establish it. Each result you asked for is its own line on that item, with who acts next or what it waits for. Several requests about one matter stay on one item. Jarvis connects incoming events to that work and updates the item after acting. It can work directly or ask [another agent](HIW-delegation.md) to provide a result.
 
 ## The result
 

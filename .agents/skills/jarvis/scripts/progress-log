@@ -4,7 +4,8 @@
 Usage: progress-log [--handoff PATH]  # check the candidate commit
        progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
        progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --next-action TEXT
-                    (--item ID | --task-project UUID --source REF --outcome TEXT) [--state-key KEY]
+                    --source REF --ask N (--item ID | --task-project UUID --outcome TEXT)
+                    [--delivered REF] [--state-key KEY]
        progress-log [--handoff PATH] --archived FILE
        progress-log [--handoff PATH] --check-state
 
@@ -28,11 +29,19 @@ a remove deletes it, and a remove that matches no entry refuses.
 Session entries use durable session, wake or ask ids.
 Success prints `progress-log: recorded id=ID at=TIME`.
 
---next-action sets one inline tracker comment and confirms it by reading it
-back before recording the action and clearing its State entry. A missing
-entry is allowed. --state-key selects a local entry keyed by another id.
-Discovery uses the configured Linear team to create in the named project.
-A tracker refusal leaves the handoff intact. See workflows/tasks.md.
+--next-action writes the line of one requested outcome, ask N of request REF,
+as a Done when box in the item's body, then records the action and clears its
+State entry. A missing entry is allowed. --state-key selects a local entry
+keyed by another id. The writer reads the body just before the write and reads
+it back; every other line must be byte for byte unchanged. A body another
+writer changed meanwhile is read and the line applied again once; a second
+mismatch refuses tracker-body-changed with `resume=COMMAND`. --delivered REF
+closes the box with the delivery to the user as its Evidence line; nothing
+else closes it. Once the line reads back, the writer deletes an older
+`Jarvis next action:` comment on the item and records its text. Discovery
+matches an item that holds the line, and otherwise creates in the named
+project with the configured Linear team. A tracker refusal leaves the handoff
+intact. See workflows/tasks.md.
 
 --archived FILE, an absolute or home-relative path inside the archive beside
 the selected handoff, adds or enriches FILE's line in that archive's INDEX.md in the
@@ -66,6 +75,7 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 from uuid import UUID
@@ -87,6 +97,8 @@ LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
 ACTION_PREFIX = "Jarvis next action: "
 SOURCE_PREFIX = "Jarvis request source: "
 OUTCOME_PREFIX = "Jarvis requested outcome: "
+# One requested outcome's Done when box: its request id and its place in that request.
+OUTCOME_LINE = re.compile(r"- \[[ x]\] Jarvis outcome (\S+) ask ([1-9][0-9]*): ")
 BINDING_FIELD = r"^(?:[-*+] )?(?:\*\*)?(?:%s)(?::\*\*|\*\*:|:)[ \t]+(.+)$"
 BINDING_SOURCE = re.compile(BINDING_FIELD % r"Jarvis request source|Original request(?: reference)?|Request source|Source",
                             re.MULTILINE | re.IGNORECASE)
@@ -98,7 +110,7 @@ TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\
 
 
 class Refusal(Exception):
-    pass
+    """KEY, the value it names, and optionally the command that resumes the write."""
 
 
 def clock():
@@ -159,8 +171,11 @@ def append(handoff, values, *, home=None, action=None):
             item = resolve_item(home, action)
             if action.state_key is None:
                 lines, values["State change"] = edit_state(lines, "remove State " + item, identity, missing_ok=True)
-            comment = retain_action(home, item, action.next_action)
-            values["Observed result and source"] += "\nTracker next action: %s comment=%s" % (item, comment)
+            key = (binding_source(action.source), action.ask)
+            write_outcome(home, item, key, outcome_box(key, action.next_action, action.delivered))
+            values["Observed result and source"] += "\nTracker next action: %s outcome=%s ask=%s" % (item, *key)
+            for row in retire_actions(home, item):
+                values["Observed result and source"] += "\nRetired comment=%s %s" % (row["id"], row["body"].strip())
         start, end = progress_section(lines, "Progress log")
         last = next((index for index in range(end - 1, start, -1) if lines[index].strip()), start)
         prefix = "".join(lines[:last + 1])
@@ -277,11 +292,20 @@ def issue_binding(title, description, comments, source, outcome, source_token):
     return True if not outcomes and title == outcome else None
 
 
-def project_matches(home, project, source, outcome):
+def outcome_keys(body):
+    return [match.groups() for match in map(OUTCOME_LINE.match, body.splitlines()) if match]
+
+
+def project_matches(home, project, source, outcome, key):
     rows = tracker_rows(linear_json(home, "issues", "list", "--project-id", project, "--include-archived", "--max",
                                     "--format=safe"), "issues list " + project, "id", "title", "description", "project_id")
     if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
         raise Refusal("tracker-unread", "issues list " + project)
+    held = [row["id"] for row in rows if key in outcome_keys(row["description"])]
+    if len(held) > 1:
+        raise Refusal("tracker-item-ambiguous", ",".join(held) + " (resolve with --item)")
+    if held:
+        return held[0]
     source, outcome = binding_source(source), outcome.strip()
     source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
     # Either description form may have been followed by a binding comment.
@@ -303,7 +327,7 @@ def resolve_item(home, action):
     if action.item is not None:
         return read_issue(home, action.item)["id"]
     project, source, outcome = action.task_project, action.source, action.outcome
-    existing = project_matches(home, project, source, outcome)
+    existing = project_matches(home, project, source, outcome, (binding_source(source), action.ask))
     if existing is not None:
         return existing
     linear_call(home, "auth-check", "--strict")
@@ -330,26 +354,73 @@ def resolve_item(home, action):
     return created
 
 
-def retain_action(home, item, action):
-    current = [row["id"] for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
-    if len(current) > 1:
-        raise Refusal("tracker-comment-ambiguous", item)
-    body = ACTION_PREFIX + action
-    verb, target = ("update", current[0]) if current else ("create", item)
-    receipt = linear_json(home, "comments", verb, target, "--body", body)
-    if not isinstance(receipt, dict) or receipt.get("success") is not True:
-        raise Refusal("tracker-comment-rejected", item)
-    try:
-        comment = receipt["data"]["comment"]["id"]
-    except (KeyError, TypeError) as error:
-        raise Refusal("tracker-comment-unconfirmed", item) from error
-    if not isinstance(comment, str) or not comment or (current and comment != current[0]):
+def outcome_box(key, action, delivered):
+    box = "- [%s] Jarvis outcome %s ask %s: %s\n" % ("x" if delivered else " ", *key, action)
+    return box + ("  Evidence: delivered %s\n" % delivered if delivered else "")
+
+
+def place_outcome(item, body, key, box):
+    """body with key's box and its indented lines replaced by box, or box added at the end of Done when."""
+    ended = body.endswith("\n")
+    lines = (body if ended or not body else body + "\n").splitlines(keepends=True)
+    found = [index for index, line in enumerate(lines)
+             if OUTCOME_LINE.match(line) and OUTCOME_LINE.match(line).groups() == key]
+    if len(found) > 1:
+        raise Refusal("tracker-line-ambiguous", item)
+    if found:
+        start = found[0]
+        end = start + 1
+        while end < len(lines) and lines[end][:1] in (" ", "\t") and lines[end].strip():
+            end += 1
+    else:
+        try:
+            heading, end = section(lines, "Done when")
+            start = end = next(index for index in range(end, heading, -1) if lines[index - 1].strip())
+        except LookupError as error:
+            if error.args[0] != "unknown-heading":
+                raise Refusal("tracker-section-ambiguous", item) from error
+            # skills/linear issues update refuses a checkbox outside "## Done when".
+            lines += (["\n"] if lines else []) + ["## Done when\n", "\n"]
+            start = end = len(lines)
+    placed = "".join(lines[:start]) + box + "".join(lines[end:])
+    return placed if ended else placed[:-1]
+
+
+def item_body(home, item):
+    body = read_issue(home, item).get("description")
+    if not isinstance(body, str):
+        raise Refusal("tracker-unread", "issues get " + item)
+    return body
+
+
+def write_outcome(home, item, key, box):
+    """Write key's box on item and read it back, again once when another writer changed the body meanwhile.
+
+    skills/linear issues update sends the whole description in one
+    issueUpdate and takes no precondition, so the read just before the write
+    and the readback after it are the only checks a concurrent writer leaves.
+    """
+    for _ in range(2):
+        body = item_body(home, item)
+        placed = place_outcome(item, body, key, box)
+        if placed == body:
+            return
+        linear_call(home, "issues", "update", item, "--description", placed, "--format=ids")
+        if item_body(home, item) == placed:
+            return
+    raise Refusal("tracker-body-changed", item, shlex.join(sys.argv))
+
+
+def retire_actions(home, item):
+    """Delete the item's old next-action comments once its outcome line has read back."""
+    retired = [row for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
+    for row in retired:
+        receipt = linear_json(home, "comments", "delete", row["id"])
+        if not isinstance(receipt, dict) or receipt.get("success") is not True:
+            raise Refusal("tracker-comment-rejected", item)
+    if retired and any(row["body"].startswith(ACTION_PREFIX) for row in comments(home, item)):
         raise Refusal("tracker-comment-unconfirmed", item)
-    retained = [row for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
-    # Linear's comments create and update frame --body with one echo newline.
-    if [(row["id"], row["body"]) for row in retained] != [(comment, body + "\n")]:
-        raise Refusal("tracker-comment-unconfirmed", item)
-    return comment
+    return retired
 
 
 def index(handoff, archived):
@@ -687,25 +758,33 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--item", help="existing Linear item")
     target.add_argument("--task-project", help="Linear project UUID to search")
-    parser.add_argument("--source", help="original request reference for discovery")
+    parser.add_argument("--source", help="original request reference: the outcome line's request id")
+    parser.add_argument("--ask", help="the outcome's place in that request, from 1")
     parser.add_argument("--outcome", help="requested outcome for discovery")
+    parser.add_argument("--delivered", help="the delivery to the user that closes the outcome line")
     parser.add_argument("--state-key", help="local entry key when it differs from the item id")
     args = parser.parse_args()
     values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
     given = [option for option, value in zip(options, values.values()) if value is not None]
     action_fields = {field: getattr(args, field) for field in
-                     ("next_action", "item", "task_project", "source", "outcome", "state_key")
+                     ("next_action", "item", "task_project", "source", "ask", "outcome", "delivered", "state_key")
                      if getattr(args, field) is not None}
     if action_fields:
         if args.next_action is None or args.state_change is not None or args.check_state or args.archived is not None:
             parser.error("tracker options require --next-action and take no --state-change, --check-state or --archived")
-        if args.item is not None and (args.source is not None or args.outcome is not None):
-            parser.error("--item takes no --source or --outcome")
-        if args.item is None and None in (args.task_project, args.source, args.outcome):
-            parser.error("--next-action requires --item or --task-project with --source and --outcome")
+        if args.item is not None and args.outcome is not None:
+            parser.error("--item takes no --outcome")
+        if None in (args.source, args.ask) or (args.item is None and None in (args.task_project, args.outcome)):
+            parser.error("--next-action requires --source, --ask, and --item or --task-project with --outcome")
         for field, value in action_fields.items():
             if not value.strip() or value.splitlines() != [value]:
                 parser.error("--" + field.replace("_", "-") + " requires one nonempty line")
+        if not re.fullmatch(r"[1-9][0-9]*", args.ask):
+            parser.error("--ask requires the outcome's place in the request, from 1")
+        for field in ("source", "delivered"):
+            value = getattr(args, field)
+            if value is not None and len(binding_source(value).split()) != 1:
+                parser.error("--" + field + " requires one message or request id")
         if args.item is not None and (args.item.startswith("-") or len(args.item.split()) != 1):
             parser.error("--item requires one Linear item reference")
         if args.task_project is not None:
@@ -754,11 +833,12 @@ def main():
         else:
             identity, stamp = append(handoff_path(home, args.handoff), values)
     except Refusal as refusal:
-        key, detail = refusal.args
+        key, detail, *resume = refusal.args
         fix = FIX_TASKS if key.startswith("tracker-") else FIX
         if key == "tracker-team-missing":
             fix = FIX_LINEAR
-        print("progress-log: %s=%s %s" % (key, detail, fix), file=sys.stderr)
+        print("progress-log: %s=%s %s%s" % (key, detail, fix, "".join(" resume=" + line for line in resume)),
+              file=sys.stderr)
         return 2
     print("progress-log: recorded id=%s at=%s" % (identity, stamp))
     return 0

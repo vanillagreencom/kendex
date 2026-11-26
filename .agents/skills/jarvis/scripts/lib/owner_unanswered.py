@@ -244,8 +244,9 @@ def unanswered(lane, over, logged, since, now, older):
 def main():
     parser = argparse.ArgumentParser(prog="owner-unanswered", description=(
         "Print one JSON line {id, at, kind, text} per owner message in the Jarvis home's overseer inbox "
-        "that no reply reference, later reply in its thread, closed ask or progress record covers. "
-        "A file the owner sent as its own message within %d seconds of its text, in the same thread or "
+        "that nothing covers. It reads reply coverage only: a reply reference, a later reply in the "
+        "message's thread, a closed ask or a progress record. A promised outcome is held by its own "
+        "acceptance line on its tracker item, not by this list. A file the owner sent as its own message within %d seconds of its text, in the same thread or "
         "both top level, counts as that message." % PAIR_SECS), epilog=(
         "Records come from the selected handoff and the archive beside it, whose INDEX.md skips files that "
         "ended before the window. Gone files INDEX.md lists inside the window print one line "

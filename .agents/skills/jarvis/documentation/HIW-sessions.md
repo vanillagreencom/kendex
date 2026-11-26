@@ -15,7 +15,7 @@ A restart, lost session or need for fresh conversation space can interrupt work.
 
 ## The handoff
 
-The handoff identifies open work, unfinished agents, temporary instructions and the next unresolved actions. It links to the records that own the facts. Durable knowledge stays in [memory](HIW-memory.md), and task evidence stays with the task.
+The handoff names open work by its tracker reference, and lists unfinished agents and temporary instructions. The next steps are on the tracker, and the handoff links to the records that own the facts. Durable knowledge stays in [memory](HIW-memory.md), and task evidence stays with the task.
 
 Before a normal handover, Jarvis collects the attached agents it launched. An emergency handoff records known unfinished agents and any unknown result locations or state. The next session checks available output before repeating work.
 
