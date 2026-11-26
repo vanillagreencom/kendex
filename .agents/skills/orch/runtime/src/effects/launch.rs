@@ -18,8 +18,8 @@ use std::time::Duration;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use agent_runtime::launch::{
-    ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume,
-    shell_quote,
+    COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent,
+    Permission, QuestionTool, Resume, shell_quote,
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::rows;
@@ -648,7 +648,8 @@ fn prepare_launch(
         intent.env.insert(name, value);
     }
     intent.grants = Some(granted.grants.clone());
-    let command = agent_runtime::launch::build(&intent)?;
+    // A local lane signs in on this machine, so its build decides its tier.
+    let command = operation.build_local(&mut intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
         granted,
@@ -805,8 +806,14 @@ const CREATE_STDERR: &str = "create_stderr";
 const CREATE_STDERR_ELIDED: &str = "create_stderr_elided";
 
 /// The launch observation's members only the launcher establishes: the
-/// confinement of the pane and the stderr of the provider's create.
-const LAUNCHER_READINGS: [&str; 3] = ["confinement", CREATE_STDERR, CREATE_STDERR_ELIDED];
+/// confinement of the pane, the stderr of the provider's create and why a
+/// local Copilot lane's model list was not read.
+const LAUNCHER_READINGS: [&str; 4] = [
+    "confinement",
+    CREATE_STDERR,
+    CREATE_STDERR_ELIDED,
+    COPILOT_MODEL_LIST_UNAVAILABLE,
+];
 
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = super::lane_operation::open(run, intent)?;
@@ -1071,6 +1078,9 @@ fn local_launch(
     }
     if prep.unrebased {
         outcome.annotate("tree", json!("unrebased"));
+    }
+    if let Some(cause) = &prep.command.copilot_model_list_unavailable {
+        outcome.annotate(COPILOT_MODEL_LIST_UNAVAILABLE, json!(cause));
     }
     if let Value::Object(granted) = prep.granted.record() {
         for (key, value) in granted {
@@ -1491,6 +1501,10 @@ fn hosted_command(
         },
     )?;
     intent.program = None;
+    // The session signs in on its host under the host's own Copilot home,
+    // which no model-list read from this machine reaches, so a hosted lane
+    // decides no tier and starts on the host's own `contextTier` setting.
+    intent.context_tier = agent_runtime::launch::ContextTier::Native;
     lane_words(&mut intent, &remote_cwd);
     let mut remote = if claude_launch_consent {
         agent_runtime::launch::build_with_hosted_claude_consent(&intent)?
@@ -1535,6 +1549,7 @@ fn hosted_command(
         brief_arg: None,
         brief_path: None,
         confinement: None,
+        copilot_model_list_unavailable: None,
     })
 }
 
@@ -2642,6 +2657,7 @@ mod tests {
             brief_arg: None,
             brief_path: None,
             confinement: None,
+            copilot_model_list_unavailable: None,
         }
     }
 
@@ -3062,6 +3078,7 @@ mod tests {
                 program: None,
                 grants: None,
                 claude_sign_in: None,
+                context_tier: Default::default(),
             };
             let cwd = intent.cwd.clone();
             lane_words(&mut intent, &cwd);

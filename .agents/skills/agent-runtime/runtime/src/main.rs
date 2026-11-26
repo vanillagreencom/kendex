@@ -1323,6 +1323,11 @@ struct LaunchRecord {
     /// the cause it runs without the wrapper.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     confinement: Option<agent_runtime::confine::Answer>,
+    /// Why the launch's Copilot model list could not be read, so the session
+    /// started on Copilot's own tier setting
+    /// (`LaunchCommand::copilot_model_list_unavailable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    copilot_model_list_unavailable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<StopRecord>,
 }
@@ -2036,7 +2041,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 })?;
             intent.claude_sign_in = claude_sign_in(&intent)?;
             prepare_home(&mut intent)?;
-            let command = launch::build(&intent)?;
+            let command = launch::build_local(&mut intent)?;
             if let Some(brief) = &command.brief_path
                 && !brief.is_file()
             {
@@ -2147,6 +2152,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     .confinement
                     .as_ref()
                     .map(agent_runtime::confine::Confinement::answer),
+                copilot_model_list_unavailable: command.copilot_model_list_unavailable.clone(),
                 stopped: None,
             };
             // The record names the window before its line is typed, so an

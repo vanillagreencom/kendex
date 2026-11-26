@@ -36,7 +36,9 @@ use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::host::tmux;
 use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
-use crate::launch::{ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume};
+use crate::launch::{
+    COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume,
+};
 use crate::observe::WallKind;
 use crate::reading::Reading;
 use crate::settings::{ControllerSettings, EngineSettings, LaunchSettings};
@@ -586,7 +588,7 @@ impl Successor {
             Some(_) => Compaction::Off,
             None => Compaction::Native,
         };
-        let (mut intent, command) = build_launch(
+        let (mut intent, _) = build_launch(
             settings.launch,
             settings.engine,
             &Spec {
@@ -610,32 +612,27 @@ impl Successor {
                 claude_sign_in: self.claude_sign_in.clone(),
             },
         )?;
-        let command = if self.resume.is_none() && !self.cleared {
-            command
-        } else {
-            if self.cleared {
-                intent.env_remove.push(self.harness.home_var().to_owned());
-                // The implicit default is read under `HOME`: a resumed session
-                // keeps the store and `.claude.json` it ran with, whatever
-                // `HOME` the resume's caller or the fleet server holds.
-                if self.resume.is_some() {
-                    let user_home = self.home.parent().ok_or_else(|| {
-                        refused("home-unresolved", &[("harness", self.harness.name())])
-                    })?;
-                    intent
-                        .env
-                        .insert("HOME".to_owned(), user_home.display().to_string());
-                }
+        if self.cleared {
+            intent.env_remove.push(self.harness.home_var().to_owned());
+            // The implicit default is read under `HOME`: a resumed session
+            // keeps the store and `.claude.json` it ran with, whatever
+            // `HOME` the resume's caller or the fleet server holds.
+            if self.resume.is_some() {
+                let user_home = self.home.parent().ok_or_else(|| {
+                    refused("home-unresolved", &[("harness", self.harness.name())])
+                })?;
+                intent
+                    .env
+                    .insert("HOME".to_owned(), user_home.display().to_string());
             }
-            if let Some(id) = &self.resume {
-                intent.resume = Some(Resume {
-                    session_id: id.clone(),
-                    session_file: self.resume_file.clone(),
-                });
-            }
-            crate::launch::build(&intent)?
-        };
-        Ok(command)
+        }
+        if let Some(id) = &self.resume {
+            intent.resume = Some(Resume {
+                session_id: id.clone(),
+                session_file: self.resume_file.clone(),
+            });
+        }
+        crate::launch::build_local(&mut intent)
     }
 
     /// The runner's own native session file: the file its
@@ -1504,6 +1501,9 @@ fn succeed(
     }
     if let Some(note) = sign_in_note {
         outcome.annotate("sign_in", note);
+    }
+    if let Some(cause) = &command.copilot_model_list_unavailable {
+        outcome.annotate(COPILOT_MODEL_LIST_UNAVAILABLE, json!(cause));
     }
     Ok(outcome)
 }

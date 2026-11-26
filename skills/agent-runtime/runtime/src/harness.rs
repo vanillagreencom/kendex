@@ -400,12 +400,13 @@ impl Harness {
                 "notice.hide_rate_limit_model_nudge=true",
                 "--dangerously-bypass-hook-trust",
             ],
+            // The context tier is no setting every launch carries: the
+            // builder adds `COPILOT_LONG_TIER` to a launch whose step decided
+            // the long tier (`launch::copilot_context_tier`).
             Harness::Copilot => vec![
                 "--autopilot",
                 "--max-autopilot-continues",
                 "3",
-                "--context",
-                "long_context",
                 "--no-auto-update",
             ],
             // Pi asks "Trust project folder?" before its composer in a folder
@@ -657,6 +658,142 @@ fn probe_executable(harness: Harness, executable: &OsStr) -> Result<Installed> {
     }
 }
 
+/// The words that start a Copilot session on its long-context tier. Copilot
+/// reads them over the persisted `contextTier` setting (`copilot --help`), so
+/// a launch carrying none leaves the tier to that setting; unset, a model
+/// starts on the tier its catalog entry prefers, else `default` (`copilot
+/// help config`).
+pub const COPILOT_LONG_TIER: [&str; 2] = ["--context", "long_context"];
+
+/// The prices of one tier of a Copilot model, by their names in its model
+/// list's `billing.tokenPrices` (Copilot SDK `ModelBillingTokenPrices`, the
+/// long tier's under `longContext`).
+const COPILOT_TIER_PRICES: [&str; 5] = [
+    "inputPrice",
+    "outputPrice",
+    "cacheReadPrice",
+    "cacheWritePrice",
+    "cacheWrite1hPrice",
+];
+
+/// Whether Copilot's model list, the `result` of its `models.list` answer,
+/// prices `model` at its long-context tier as at its default tier: every
+/// entry whose `id` is `model` names an input and an output price at both
+/// tiers, and every price either tier names is the same at the other. The
+/// owner pays per token and takes no tier that bills more; a model the list
+/// does not name, or names no long tier or no price for, is not at par.
+pub fn copilot_long_tier_at_par(list: &serde_json::Value, model: &str) -> bool {
+    let Some(models) = list.get("models").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let mut entries = models
+        .iter()
+        .filter(|entry| entry.get("id").and_then(serde_json::Value::as_str) == Some(model))
+        .peekable();
+    entries.peek().is_some()
+        && entries.all(|entry| {
+            let default = entry.pointer("/billing/tokenPrices");
+            let long = entry.pointer("/billing/tokenPrices/longContext");
+            let price = |tier: Option<&serde_json::Value>, name: &str| {
+                tier.and_then(|t| t.get(name))
+                    .map(serde_json::Value::as_f64)
+            };
+            ["inputPrice", "outputPrice"]
+                .iter()
+                .all(|name| matches!(price(default, name), Some(Some(_))))
+                && COPILOT_TIER_PRICES
+                    .iter()
+                    .all(|name| price(default, name) == price(long, name))
+        })
+}
+
+/// The JSON-RPC request id of the model-list read.
+const COPILOT_LIST_ID: u64 = 1;
+
+/// How long the model-list read may take, start to exit: Copilot CLI 1.0.116
+/// answered in 1 to 3 seconds and exited within a second of its input
+/// closing.
+const COPILOT_LIST_BOUND: Duration = Duration::from_secs(10);
+
+/// Copilot's own model list, the `result` of the `models.list` request its
+/// SDK server answers, read from the Copilot CLI at `executable` with `env`
+/// added to the inherited environment. The server is the one the Copilot SDK
+/// starts (`copilot --headless --stdio --no-auto-update`, its
+/// `CopilotClient.startCLIServer`), framed as JSON-RPC with `Content-Length`
+/// headers, and the list sends no prompt. Its stdin stays open until the
+/// answer stands, since a server whose input ends first answers that its
+/// connection is no longer active. `Err` names why no list stands: the
+/// runner's own cause where the CLI cannot start or gives no answer within
+/// [`COPILOT_LIST_BOUND`], the server's `error.message` where it answers
+/// with an error, or that no framed answer came.
+pub fn copilot_model_list(
+    executable: &Path,
+    env: &[(&str, &OsStr)],
+) -> std::result::Result<serde_json::Value, String> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": COPILOT_LIST_ID,
+        "method": "models.list",
+        "params": {},
+    })
+    .to_string();
+    let framed = format!("Content-Length: {}\r\n\r\n{request}", request.len());
+    let out = host::run_tagged_fed_own_group(
+        "copilot-models",
+        Harness::Copilot.binary(),
+        executable,
+        "models-list",
+        &["--headless", "--stdio", "--no-auto-update"],
+        host::Place { cwd: None, env },
+        framed.as_bytes(),
+        Some(host::Hold {
+            answered: |stdout| copilot_list_reply(stdout).is_some(),
+            limit: COPILOT_LIST_BOUND,
+        }),
+        COPILOT_LIST_BOUND,
+    )
+    .map_err(|e| e.to_string())?;
+    let reply = copilot_list_reply(&out.stdout).ok_or_else(|| {
+        let stderr = host::stderr_text(&out);
+        format!(
+            "no models.list reply: exit={} stderr={}",
+            out.status.code().unwrap_or(-1),
+            stderr.lines().next().unwrap_or("")
+        )
+    })?;
+    if let Some(result) = reply.get("result") {
+        return Ok(result.clone());
+    }
+    let message = reply
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("an error with no message");
+    Err(format!("models.list answered: {message}"))
+}
+
+/// The whole message answering the model-list request among the framed
+/// messages `stdout` holds so far, `None` until one stands whole.
+fn copilot_list_reply(mut stdout: &[u8]) -> Option<serde_json::Value> {
+    const END: &[u8] = b"\r\n\r\n";
+    loop {
+        let head_end = stdout.windows(END.len()).position(|w| w == END)?;
+        let head = std::str::from_utf8(&stdout[..head_end]).ok()?;
+        let length = head.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())?
+        })?;
+        let start = head_end + END.len();
+        let body = stdout.get(start..start.checked_add(length)?)?;
+        let message: serde_json::Value = serde_json::from_slice(body).ok()?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(COPILOT_LIST_ID) {
+            return Some(message);
+        }
+        stdout = &stdout[start + length..];
+    }
+}
+
 /// The bytes the kernel keeps of a command name (`TASK_COMM_LEN` less the
 /// terminator).
 const COMM_LEN: usize = 15;
@@ -721,6 +858,58 @@ mod tests {
             "{refused:?}"
         );
         assert_eq!(host::counts().of("claude", Some("probe")), before + 1);
+    }
+
+    /// One Copilot model list, each entry's billing as Copilot CLI 1.0.116
+    /// lists it for that model, beside entries no answer names today: a
+    /// long tier that is dearer only for cached reads, and one id listed
+    /// twice, once at par and once dearer. Only a model whose every entry
+    /// names the same prices at both tiers is at par.
+    #[test]
+    fn a_copilot_model_is_at_par_only_where_its_list_prices_both_tiers_alike() {
+        let opus = serde_json::json!({
+            "inputPrice": 400, "outputPrice": 2000, "cacheReadPrice": 20,
+            "cacheWritePrice": 500, "cacheWrite1hPrice": 800, "maxPromptTokens": 200000,
+            "batchSize": 1000000,
+            "longContext": {
+                "inputPrice": 400, "outputPrice": 2000, "cacheReadPrice": 20,
+                "cacheWritePrice": 500, "cacheWrite1hPrice": 800, "maxPromptTokens": 1000000}});
+        let gpt = serde_json::json!({
+            "inputPrice": 200, "outputPrice": 1000, "cacheReadPrice": 10,
+            "cacheWritePrice": 250, "maxPromptTokens": 272000, "batchSize": 1000000,
+            "longContext": {
+                "inputPrice": 400, "outputPrice": 1500, "cacheReadPrice": 20,
+                "cacheWritePrice": 500, "maxPromptTokens": 1050000}});
+        let entry = |id: &str, prices: &serde_json::Value| serde_json::json!({"id": id, "billing": {"tokenPrices": prices}});
+        let mut cache_dearer = opus.clone();
+        cache_dearer["longContext"]["cacheReadPrice"] = serde_json::json!(40);
+        let list = serde_json::json!({"models": [
+            {"id": "auto", "name": "Auto", "capabilities": {}},
+            entry("claude-opus-5.5", &opus),
+            entry("gpt-6.2-sol", &gpt),
+            entry("gpt-5.3-codex", &serde_json::json!({
+                "inputPrice": 175, "outputPrice": 1400, "maxPromptTokens": 272000})),
+            entry("cache-dearer", &cache_dearer),
+            entry("twin", &opus),
+            entry("twin", &gpt),
+        ]});
+        let rows = [
+            ("claude-opus-5.5", true),
+            ("gpt-6.2-sol", false),
+            ("gpt-5.3-codex", false),
+            ("auto", false),
+            ("cache-dearer", false),
+            ("twin", false),
+            ("not-listed", false),
+            ("", false),
+        ];
+        for (model, at_par) in rows {
+            assert_eq!(copilot_long_tier_at_par(&list, model), at_par, "{model}");
+        }
+        assert!(!copilot_long_tier_at_par(
+            &serde_json::json!({}),
+            "claude-opus-5.5"
+        ));
     }
 
     /// The harness's own names, and the configured program's basename as the

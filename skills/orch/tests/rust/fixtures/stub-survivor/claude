@@ -6,6 +6,10 @@
 # pane was killed under it does: a receipted survivor. It
 # launches no model and reaches no account; a row that started it ends it by
 # pid.
+# Copilot's model-list read starts this program as its SDK server
+# (`--headless`): it answers at once with no list, so a launch's read
+# never waits out its bound.
+[ "$1" = --headless ] && exit 1
 trap '' HUP
 printf '\xe2\x9d\xaf\xc2\xa0\n'
 printf '  ? for shortcuts\n'

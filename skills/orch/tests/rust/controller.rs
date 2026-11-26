@@ -2220,10 +2220,30 @@ fn a_copilot_controller_start_binds_the_session_it_opened_and_delivers_the_brief
     controller["model"] = json!("claude-opus-5.5");
     let brief = cwd.join("brief.md");
     std::fs::write(&brief, "START HERE\n").unwrap();
-    let binaries = format!(
-        "copilot={}",
-        fixtures().join("stub-confirm/copilot").display()
+    // The seat's Copilot lists the model at one price at both tiers, and
+    // records the words its session starts with.
+    let copilot = dir.path().join("copilot-bin").join("copilot");
+    std::fs::create_dir_all(copilot.parent().unwrap()).unwrap();
+    let argv = dir.path().join("copilot-argv");
+    write_executable(
+        &copilot,
+        format!(
+            r#"#!/bin/bash
+if [ "$1" = --headless ]; then
+  prices='{{"inputPrice":400,"outputPrice":2000}}'
+  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
+  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
+  cat > /dev/null
+  exit 0
+fi
+printf '%s\n' "$@" > '{argv}'
+exec '{stub}' "$@"
+"#,
+            argv = argv.display(),
+            stub = fixtures().join("stub-confirm/copilot").display(),
+        ),
     );
+    let binaries = format!("copilot={}", copilot.display());
     let report = effect_report(&runner.op_fleet_env(
         &json!({
             "op": "start-controller",
@@ -2247,6 +2267,15 @@ fn a_copilot_controller_start_binds_the_session_it_opened_and_delivers_the_brief
         .map(|row| serde_json::from_str::<Value>(row).unwrap()["data"]["content"].clone())
         .collect();
     assert_eq!(turns, vec![json!("START HERE")], "{report}");
+    let words = std::fs::read_to_string(&argv).unwrap();
+    assert!(
+        words
+            .lines()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|w| w == ["--context", "long_context"]),
+        "the successor starts on the long tier: {words}"
+    );
 }
 
 /// Copilot on a seat still loading its managed account policy refuses the
@@ -2309,6 +2338,12 @@ fn a_copilot_start_whose_submit_copilot_refuses_submits_the_held_brief_again() {
                 .map(|row| serde_json::from_str::<Value>(row).unwrap()["data"]["content"].clone())
                 .collect();
             assert_eq!(turns, vec![json!("START HERE")], "{report}");
+            // The fixture gives the model-list read no list: the start
+            // says why its successor runs on Copilot's own tier.
+            assert!(
+                report["intent"]["observation"]["copilot_model_list_unavailable"].is_string(),
+                "{report}"
+            );
         } else {
             let observation = &report["intent"]["observation"];
             assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");

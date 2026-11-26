@@ -199,9 +199,11 @@ fn a_launch_never_confirms_when_its_harness_execs_a_shell_before_capture() {
 
     // The harness stays foreground until the test releases it through the
     // terminal. The shell that replaces it draws Copilot's framed composer.
+    // This stand-in is its own, not a fixture, so it answers the launch's
+    // model-list read (`--headless`) itself, as every Copilot fixture does.
     write_executable(
         &dir.path().join("copilot-bin/copilot"),
-        "#!/bin/bash\nread -r _ || exit 1\nPS1=$'❯\\n──────────' exec bash --noprofile --norc -i\n",
+        "#!/bin/bash\n[ \"$1\" = --headless ] && exit 1\nread -r _ || exit 1\nPS1=$'❯\\n──────────' exec bash --noprofile --norc -i\n",
     );
     let fifo = dir.path().join("capture.fifo");
     mkfifo(&fifo);
@@ -281,6 +283,17 @@ fn a_launch_never_confirms_when_its_harness_execs_a_shell_before_capture() {
     let fleet = runner.fleet();
     assert_eq!(fleet["intents"][0]["outcome"], "unconfirmed", "{fleet}");
     assert_eq!(fleet["lanes"][0]["status"], "preparing", "{fleet}");
+    // The stand-in gave the model-list read no list: the launch says why,
+    // and a reconcile that replaces its observation keeps the cause.
+    assert!(
+        fleet["intents"][0]["observation"]["copilot_model_list_unavailable"].is_string(),
+        "{fleet}"
+    );
+    let again = runner.reconcile_one();
+    assert!(
+        again["intent"]["observation"]["copilot_model_list_unavailable"].is_string(),
+        "{again}"
+    );
 }
 
 /// A harness that exits before its first draw never confirms, whatever the
@@ -10200,6 +10213,31 @@ fn plant_hooks_off(tools: &Path, answer: Value) {
     let _ = std::fs::remove_file(tools.join("kendex.log"));
 }
 
+/// A Copilot stand-in at `path`: started as Copilot's SDK server
+/// (`--headless`) it touches `probed` and lists claude-opus-5.5 at one price
+/// at both tiers, so a launch's model-list read decides the long tier;
+/// started any other way it runs the `stub` fixture's `copilot`.
+fn copilot_at_par(path: &Path, stub: &str, probed: &Path) {
+    write_executable(
+        path,
+        format!(
+            r#"#!/bin/bash
+if [ "$1" = --headless ]; then
+  touch '{probed}'
+  prices='{{"inputPrice":400,"outputPrice":2000}}'
+  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
+  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
+  cat > /dev/null
+  exit 0
+fi
+exec '{stub}' "$@"
+"#,
+            probed = probed.display(),
+            stub = fixtures().join(stub).join("copilot").display(),
+        ),
+    );
+}
+
 /// The three lane-mail hooks registered under `dir`.
 fn plant_copilot_hooks(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
@@ -10228,10 +10266,12 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
     std::fs::create_dir_all(&home).unwrap();
     let account = dir.path().join("copilot-account");
     std::fs::create_dir_all(&account).unwrap();
-    let binaries = format!(
-        "copilot={}",
-        fixtures().join("stub-record").join("copilot").display()
-    );
+    // The lane's Copilot lists its model at one price at both tiers, so a
+    // launch that opens starts on the long tier.
+    let copilot = dir.path().join("copilot-bin").join("copilot");
+    std::fs::create_dir_all(copilot.parent().unwrap()).unwrap();
+    copilot_at_par(&copilot, "stub-record", &dir.path().join("model-list-read"));
+    let binaries = format!("copilot={}", copilot.display());
     let home_word = home.display().to_string();
     let env = [
         ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
@@ -10323,6 +10363,7 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
         plant_hooks_off(&tools, kendex);
         let mut request = launch_request(item, &worktree);
         request["harness"] = json!("copilot");
+        request["model"] = json!("claude-opus-5.5");
         request["account"] = json!(account.display().to_string());
         // No account named: the home is the one the launching environment
         // names in `COPILOT_HOME`.
@@ -10351,8 +10392,20 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
             }
             None => {
                 assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
-                // The harness started in its window: its record stands.
-                launch_record_of(&worktree);
+                // The harness started in its window, on the long tier.
+                let launched = launch_record_of(&worktree);
+                let argv = launched["argv"].as_array().unwrap();
+                assert!(
+                    argv.windows(2)
+                        .any(|w| w == [json!("--context"), json!("long_context")]),
+                    "{item}: {launched}"
+                );
+                assert!(
+                    report["intent"]["observation"]
+                        .get("copilot_model_list_unavailable")
+                        .is_none(),
+                    "{item}: {report}"
+                );
             }
         }
         match &scope {
@@ -10428,12 +10481,19 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
         let report = effect_report(&runner.op_fleet_env(&request, &env));
         assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
         assert_eq!(report["lane"]["allow_all"], allow_all, "{item}: {report}");
+        // The fixture answers the model-list read with no list: the lane
+        // starts on Copilot's own tier and its observation says why.
+        assert!(
+            report["intent"]["observation"]["copilot_model_list_unavailable"].is_string(),
+            "{item}: {report}"
+        );
         let recorded = launch_record_of(&worktree);
         assert_eq!(
             recorded["env"]["COPILOT_ALLOW_ALL"], grant,
             "{item}: the grant on the line: {recorded}"
         );
         let argv = recorded["argv"].as_array().unwrap();
+        assert!(!argv.contains(&json!("--context")), "{item}: {argv:?}");
         assert_eq!(
             argv.contains(&json!("--allow-all")),
             allow_all,
@@ -10451,6 +10511,12 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
         report["lane"].get("allow_all").is_some_and(Value::is_null),
         "a Claude lane records the field with no grant to judge: {}",
         report["lane"]
+    );
+    assert!(
+        report["intent"]["observation"]
+            .get("copilot_model_list_unavailable")
+            .is_none(),
+        "a Claude lane reads no Copilot list: {report}"
     );
 }
 
@@ -10941,11 +11007,10 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
             HostedLaunch::new(&server, dir.path(), record)
         };
         world.runner.verify = Some(1);
-        std::os::unix::fs::symlink(
-            fixtures().join("stub-record").join("copilot"),
-            world.tools.join("copilot"),
-        )
-        .unwrap();
+        // The one `copilot` this machine and the host run: a read would put
+        // the long tier on the line; a hosted launch makes none.
+        let probed = dir.path().join("model-list-read");
+        copilot_at_par(&world.tools.join("copilot"), "stub-record", &probed);
         let home = if shipped {
             world
                 .clone()
@@ -11000,6 +11065,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         }
         let mut request = world.request();
         request["harness"] = json!("copilot");
+        request["model"] = json!("claude-opus-5.5");
         let panes_before = server.panes().len();
         let report = effect_report(&world.runner.op_fleet(&request));
         let calls = world.calls();
@@ -11030,6 +11096,15 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                     Some("copilot"),
                     "{case}: {launched}"
                 );
+                assert!(
+                    !launched["argv"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|word| word == "--context"),
+                    "{case}: a hosted line decides no tier: {launched}"
+                );
+                assert!(!probed.exists(), "{case}: no model list was read");
                 assert!(
                     calls
                         .iter()
