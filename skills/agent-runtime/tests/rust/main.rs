@@ -953,23 +953,33 @@ fn an_unreadable_session_store_binds_nothing_and_names_its_cause() {
     std::fs::write(readable.join("events.jsonl"), "{\"type\":\"x\"}\n").unwrap();
     let dark = home.join("session-state").join("S2");
     std::fs::create_dir_all(&dark).unwrap();
+    // `inspect` asserts on its reply, so the guard gives the mode back
+    // however the reading ends, and the temporary directory stays removable.
+    struct Enterable<'a>(&'a std::path::Path);
+    impl Drop for Enterable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
     std::fs::set_permissions(&dark, std::fs::Permissions::from_mode(0o000)).unwrap();
-    assert!(
-        matches!(
-            std::fs::read_dir(&dark),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
-        ),
-        "the fixture needs a directory this process cannot enter; a root run reads everything"
+    let enterable = Enterable(&dark);
+    let denied = matches!(
+        std::fs::read_dir(&dark),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
     );
     let record_path = dir.path().join("record.json");
     let record = pane.record("copilot", &home, &cwd, Some(serde_json::json!([])));
     let result = inspect(&record_path, &record);
+    drop(enterable);
+    assert!(
+        denied,
+        "the fixture needs a directory this process cannot enter; a root run reads everything"
+    );
     assert!(result["native_session"].is_null(), "{result}");
     assert_eq!(
         result["native_session_unreadable"], "session-store-unreadable",
         "{result}"
     );
-    std::fs::set_permissions(&dark, std::fs::Permissions::from_mode(0o755)).unwrap();
     let result = inspect(&record_path, &record);
     assert_eq!(result["native_session"]["id"], "S1", "{result}");
     assert!(result.get("native_session_unreadable").is_none());
