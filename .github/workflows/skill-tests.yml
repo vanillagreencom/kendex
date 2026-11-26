@@ -215,9 +215,10 @@ jobs:
           fetch-depth: 0
       # Every job the event can run, written as soon as the checkout that
       # carries tools/ci-job-set is in place, so a classification that dies
-      # still runs them. A changes job lost before this step runs no lane,
-      # and CI is red on `changes`. A manual dispatch runs it alone, since
-      # its night is always whole.
+      # still runs them. A changes job lost before this step runs no lane
+      # that needs `changes`, and CI is red on `changes`; Preflight and
+      # Markdown still run. A manual dispatch runs it alone, since its night
+      # is always whole.
       - id: fallback
         run: tools/ci-job-set --fallback
       - name: the classifier, from the default branch

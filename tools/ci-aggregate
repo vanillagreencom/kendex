@@ -16,7 +16,8 @@
 # RESULTS is `toJSON(needs)`. JOBS is the classifier's `jobs` output, the
 # JSON list of the jobs it selected. Each LANES row whose class cell is not
 # `-` is a job CI holds: a listed one must have succeeded, and an unlisted
-# one is authorized to skip. GitHub reads CI's `needs:` before any job runs, so a held job absent
+# one is authorized to skip unless its class cell is `on`, a job every merge
+# group runs. GitHub reads CI's `needs:` before any job runs, so a held job absent
 # from RESULTS exits 1 with `ci-aggregate: needed-result=absent job=<name>`:
 # no output can add the edge, and toJSON(needs) omits a job the needs list
 # does not name even while it runs.
@@ -76,8 +77,8 @@ done
 
 lanes="$("$(dirname "$0")/ci-job-set" --lanes)" ||
   die "lanes-unread" "tools/ci-job-set --lanes printed no table"
-# Every job CI holds.
-held="$(printf '%s\n' "$lanes" | awk -F '|' 'NF == 6 && $3 != "-" { print $1 }')" && [ -n "$held" ] ||
+# `JOB CELL` for every job CI holds.
+held="$(printf '%s\n' "$lanes" | awk -F '|' 'NF == 6 && $3 != "-" { print $1, $3 }')" && [ -n "$held" ] ||
   die "lanes-unread" "tools/ci-job-set --lanes held no job"
 
 if [ -n "$jobs" ]; then
@@ -87,9 +88,9 @@ fi
 
 authorized=""
 declared=""
-while read -r job; do
+while read -r job cell; do
   declared="$declared --skippable $job"
-  [ -n "$jobs" ] || continue
+  [ -n "$jobs" ] && [ "$cell" != on ] || continue
   jq -e --arg job "$job" 'index($job) != null' >/dev/null <<<"$jobs" ||
     authorized="$authorized --skippable $job"
 done <<<"$held"
@@ -111,7 +112,7 @@ accepted="$("$HELPER" --results "$results" --classifier "$classifier" \
   --waiver "$waiver" $authorized)" || exit "$?"
 
 missing="$(jq -r --arg held "$held" '
-  . as $results | $held | split("\n")[] | select(. != "") |
+  . as $results | $held | split("\n")[] | split(" ")[0] | select(. != "") |
   select(. as $job | $results | has($job) | not) |
   "ci-aggregate: needed-result=absent job=\(.)"
 ' <<<"$results")" || exit "$?"

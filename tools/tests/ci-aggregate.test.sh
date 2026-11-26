@@ -967,9 +967,14 @@ check "a job the list names may not skip" 1 "$(aggregate "$AGGREGATE" '["ui-test
 RESULTS="$(results_of ui-tests=skipped bot-instructions=skipped)"
 check "one job left out authorizes no skip of a listed one" 1 \
   "$(aggregate "$AGGREGATE" '["ui-tests"]')"
+# A job whose merge-group cell is `on` runs on every merge group, so no list
+# authorizes its skip.
+RESULTS="$(results_of preflight=skipped)"
+check "a list that leaves out an always-run job authorizes no skip of it" 1 \
+  "$(aggregate "$AGGREGATE" "$(grep -vx preflight <<<"$LISTED" | jq -Rnc '[inputs]')")"
 # shellcheck disable=SC2046 # one JOB=RESULT word per lane
-RESULTS="$(results_of $(sed 's/$/=skipped/' <<<"$LISTED"))"
-check "an empty list authorizes every lane's skip" 0 "$(aggregate "$AGGREGATE" '[]')"
+RESULTS="$(results_of $(printf '%s\n' "$LANE_ROWS" | awk -F '|' '$3 != "-" && $3 != "on" { print $1 "=skipped" }'))"
+check "an empty list authorizes every selected lane's skip" 0 "$(aggregate "$AGGREGATE" '[]')"
 check "a list that is no JSON list of names is refused" "2 jobs-unreadable value={}" \
   "$(aggregate "$AGGREGATE" '{}')"
 
