@@ -1373,11 +1373,21 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             )
         })
     };
-    let working = pending
-        && (pane
-            .as_ref()
+    // An announced wall whose walk is not yet pending, or the transfer that
+    // walk asked, also stays walled until a reading with room or a returned
+    // turn ends it, so a pass settles that transfer first.
+    let announced = !pending
+        && matches!(
+            pass.baseline.get("overseer-walled", &key),
+            Some("announced" | "requested")
+        );
+    let turn = || {
+        pane.as_ref()
             .is_some_and(|pane| pane.state == State::Working)
-            || with_room() == Some(State::Working));
+            || with_room() == Some(State::Working)
+    };
+    let working = pending && turn();
+    let returned = announced && turn();
     let mut verdict = match &reads {
         Some(_) if working => Verdict::Live,
         Some(reads) => judge(
@@ -1455,6 +1465,17 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                 text: format!("pending-wall room={room}"),
             };
         }
+    }
+    if verdict == Verdict::Live
+        && announced
+        && !returned
+        && !marks_now.as_ref().is_some_and(Marks::reads_room)
+    {
+        verdict = Verdict::Walled {
+            source: Source::Account,
+            kind: WallKind::Usage,
+            text: "announced-wall room=false".to_owned(),
+        };
     }
     let held = pending && working;
     let (case, source, passes_needed) = match &verdict {
