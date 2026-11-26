@@ -39,10 +39,14 @@ def damaged($box; $after):
 . as $in
 # A read that would hand a damaged line over, or carry a position past it,
 # stops in front of it: mailbox_line_invalid judges the line, as the writer
-# that marks a killed writer's fragment and every lane-mail reader do.
+# that marks a killed writer's fragment and every lane-mail reader do. Damage
+# at or below the box's consumer's own count, to-lane.cursor or the Jarvis
+# read's to-overseer.seen, was passed before this rule held, so a read from a
+# lower --after steps over it.
 | (if $in.verb == "inbox" then {box: "to-lane", line: damaged($in.lane; $in.seen)}
    elif $in.verb == "drain" then
-     {box: "to-overseer", line: damaged($in.over; if $in.after == "" then 0 else ($in.after | tonumber) end)}
+     {box: "to-overseer",
+      line: damaged($in.over; [if $in.after == "" then 0 else ($in.after | tonumber) end, $in.over_seen] | max)}
    else {line: null} end) as $damaged
 | if $damaged.line != null then {damaged: $damaged} else
 objects(.lane) as $lane | objects(.over) as $over
@@ -290,6 +294,19 @@ def cursor_put(path, count):
             scratch.unlink(missing_ok=True)
 
 
+def read_seen(box):
+    """The count the Jarvis read saved in to-overseer.seen (events --mark-read).
+
+    That read is local, so a hosted or cached read has none. An absent count,
+    or one that is not a count, is 0: it holds no floor, and the read refuses
+    as if no consumer had passed the line."""
+    try:
+        value = (box / "to-overseer.seen").read_bytes().split(b"\n", 1)[0].decode(errors="replace")
+    except FileNotFoundError:
+        return 0
+    return int(value) if value.isascii() and value.isdecimal() else 0
+
+
 def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver, snapshot=None):
     """Read both inherited locked mailboxes and classify them with one jq."""
     cursor = box / "to-lane.cursor"
@@ -320,12 +337,14 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
     over = (read_snapshot(8, box / "to-overseer.jsonl", files) if verb != "inbox" else
             {"raw": [], "numbers": [], "count": 0, "first": ""})
     receipt = receipt_cursor(box, value, seen, absent, lane["count"], files) if reads_cursor else "0"
+    over_seen = read_seen(box) if verb == "drain" and files is None else 0
     if verb == "pending" and directives and receipt == "missed":
         print(f"error\x1fmail-read-failed\x1f{item}\x1fcursor=missed")
         return
     data = {"lane": lane, "over": over, "item": item, "verb": verb, "after": after,
             "receipts": receipts == "1", "to": to, "due": due == "1", "peek": peek == "1",
-            "ack": int(ack) if ack else None, "seen": seen, "receipt": receipt, "directives": directives}
+            "ack": int(ack) if ack else None, "seen": seen, "over_seen": over_seen, "receipt": receipt,
+            "directives": directives}
     result = subprocess.run(["jq", "-c", jq_defs + READ_JQ], input=json.dumps(data).encode(),
                             capture_output=True, check=True,
                             env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ})
@@ -525,7 +544,10 @@ def rewrite(fd, path, dest, name):
     a failure between leaves a row in both places, never in neither."""
     aside = (dest / (name + ".set-aside")).read_bytes()
     if aside:
-        with open(str(path) + ".set-aside", "ab") as stream:
+        # The rows keep mail text, and a hosted provider makes mailbox files
+        # 0600: the sidecar is created no wider, whatever the umask.
+        descriptor = os.open(str(path) + ".set-aside", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(descriptor, "ab") as stream:
             stream.write(aside)
             stream.flush()
             os.fsync(stream.fileno())
