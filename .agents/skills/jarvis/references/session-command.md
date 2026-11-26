@@ -47,6 +47,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session.
   - A `starting` answer means a fact Start waits for, such as the native identity or the session's taking of the Start brief, is still unconfirmed.
   - While a controller is live, status also prints the attach command on stderr.
+  - `--mark-unread` adds the boolean `unread` to the answer. It is true only where status could not make its read, such as a runtime refusal or an unreadable record: the state and reason then name that failure, not the controller. A recorded Start failure reads false. Without the flag the answer keeps its key set.
   - Status starts and stops nothing.
 - `.agents/skills/jarvis/scripts/jarvis-session attach --home HOME` puts the caller's terminal on the live controller's session, under [Attach](home-layout.md#attach).
   - A refusal exits 1, and its line names the cause; `terminal-unresolved` means `xdg-terminal-exec` is not on PATH.

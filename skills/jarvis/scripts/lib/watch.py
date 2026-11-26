@@ -27,6 +27,10 @@ BATCH_KEY = "jarvis-"
 OWNER_WAIT_SECS = 600
 UNANSWERED_EVERY_SECS = 300
 FORWARD_EVERY_SECS = 60
+# A controller is live while its heartbeat is this recent. A restarted
+# controller that exits inside this window of its restart has not outlived
+# it, so that exit fails the restart rather than opening another.
+LIVE_SECS = 300
 # A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
 # invalid value is still a satellite, so a typo never makes a second main.
 Role = namedtuple("Role", "kind dest home")
@@ -1082,7 +1086,7 @@ class Watch:
         print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):
-        """Whether the recorded controller wrote a heartbeat in the last 300 seconds."""
+        """Whether the recorded controller wrote a heartbeat in the last LIVE_SECS."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "live", self.home])
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -1099,7 +1103,7 @@ class Watch:
             at = datetime.datetime.fromisoformat(result.stdout.strip().replace("Z", "+00:00")).timestamp()
             if now is None:
                 now = epoch()
-            return 0 <= now - at < 300
+            return 0 <= now - at < LIVE_SECS
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             return False
 
@@ -1215,7 +1219,7 @@ class Watch:
 
     def exited(self):
         """The home's controller as jarvis-session status answers it, or a Failure."""
-        return self.session("controller-status", "status")
+        return self.session("controller-status", "status", "--mark-unread")
 
     def restart(self, memory):
         """The exited controller started again by MEMORY's route: Start's
@@ -1232,19 +1236,26 @@ class Watch:
         A controller whose process is gone, with no stop asked, reads
         stopped and ended. Its exit is one episode: one resume, one succeed
         where that resume is refused, and one owner notice of the outcome.
-        A restart that runs ends the episode once its notice lands; a
-        failed one ends once a controller runs again."""
+        A restart that runs holds the episode for LIVE_SECS after it ran: an
+        exit read inside that window ends it as failed with one more notice
+        and no restart, so a controller that exits on every resume is not
+        restarted in a loop. A failed one ends once a controller runs again."""
         if isinstance(answer, Failure):
             self.failed_pass("exited", answer.record)
             return None
-        if answer.get("state") in ("blocked", "failed") and not answer.get("harness"):
-            # Status answers a read it could not make so: no recorded
-            # controller names it, and the reading decides nothing.
+        if answer.get("unread"):
+            # Status could not make this read: its state and reason name why,
+            # and say nothing of the controller.
             self.failed_pass("exited", Failure("controller-status", "refusal", answer.get("reason"),
                                                answer.get("detail") or answer.get("reason")).record)
             return None
         self.state.pop("exited_failure", None)
         memory = self.state.get("exited")
+        if memory is not None and memory.get("ran") and memory["noticed"] and now - memory["ran_at"] >= LIVE_SECS:
+            # The restart outlived its window: a later exit is another one.
+            del self.state["exited"]
+            self.save()
+            memory = None
         if not answer.get("harness"):
             # Every recorded controller names its harness: this read names none.
             return None
@@ -1257,16 +1268,23 @@ class Watch:
             self.save()
             return memory
         if memory["noticed"]:
-            if answer.get("state") == "running":
+            if memory.get("ran"):
+                if (answer.get("state"), answer.get("reason")) == ("stopped", "ended"):
+                    memory.update(ran=False, noticed=False, outcome=(
+                        "It started again on " + (answer.get("account") or "its default account")
+                        + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
+                    self.save()
+                    self.tell_exited(memory)
+            elif answer.get("state") == "running":
                 del self.state["exited"]
                 self.save()
             return None
         if memory["outcome"] is not None:
             self.tell_exited(memory)
             return None
-        return self.accept_restart(answer)
+        return self.accept_restart(answer, now)
 
-    def accept_restart(self, answer):
+    def accept_restart(self, answer, now):
         """The restart's answer, or a later reading of it: the episode whose
         succeed starts now where its resume was refused, or None."""
         memory = self.state["exited"]
@@ -1277,7 +1295,7 @@ class Watch:
         if state in ("starting", "handing-over", "stopping"):
             return None
         if state == "running":
-            memory["ran"] = True
+            memory["ran"], memory["ran_at"] = True, now
             memory["outcome"] = ("It started again on " + (answer.get("account") or "its default account")
                                  + " (" + str(reason) + ").")
         else:
@@ -1305,9 +1323,6 @@ class Watch:
             self.failed_pass("exited-notice", failure("exited-notice", error).record)
             return
         memory["noticed"] = True
-        if memory.get("ran"):
-            # A later exit of the controller that runs again is another one.
-            del self.state["exited"]
         self.state.pop("exited-notice_failure", None)
         self.save()
 
@@ -1728,7 +1743,7 @@ class Watch:
         if exited is not None and exited[1].done():
             self.exited_pending = None
             memory = (self.accept_exited(exited[1].result(), now) if exited[0] == "read"
-                      else self.accept_restart(exited[1].result()))
+                      else self.accept_restart(exited[1].result(), now))
             if memory is not None:
                 self.exited_pending = ("restart", passes.submit(self.restart, dict(memory)))
         if self.wall_pending is None and now >= self.next_wall:

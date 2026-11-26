@@ -1389,6 +1389,8 @@ def main():
         if verb == "status":
             # The default answer's key set is the VGS-1439 contract; --main is a separate shape.
             command.add_argument("--main", action="store_true")
+            # The watch loop's read: it adds `unread` to that key set.
+            command.add_argument("--mark-unread", action="store_true")
         elif verb == "forward-drain":
             # The watch-loop's own drain, whose reach status --main reports.
             command.add_argument("--collection", action="store_true")
@@ -1486,6 +1488,9 @@ def main():
                 print(failure.detail, file=sys.stderr)
             return 1
         return 0
+    # A status read that worked answers the record, a recorded Start failure
+    # included; only a read status could not make is unread.
+    unread = False
     try:
         if args.verb == "start":
             answer, code = session.start(args)
@@ -1519,9 +1524,13 @@ def main():
             record = None
         answer = session.answer(record, state=failure.state, reason=failure.reason, detail=failure.detail)
         code = 0 if args.verb == "status" else 1
+        unread = True
     except (OSError, ValueError, subprocess.TimeoutExpired):
         answer = session.answer(state="blocked", reason="record-unreadable")
         code = 0 if args.verb == "status" else 1
+        unread = True
+    if args.verb == "status" and args.mark_unread:
+        answer["unread"] = unread
     if not session.emitted:
         session._emit(answer)
     return code

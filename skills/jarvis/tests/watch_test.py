@@ -2592,9 +2592,9 @@ with open(sys.argv[1], "ab") as out:
                 world.joinpath(verb + ".json").write_text(json.dumps(answer) + "\n")
                 world.joinpath(verb + ".code").write_text(str(code))
 
-        def calls():
+        def calls(status=False):
             path = world / "calls"
-            return [line for line in path.read_text().splitlines() if not line.startswith("status ")] \
+            return [line for line in path.read_text().splitlines() if line.startswith("status ") == status] \
                 if path.exists() else []
         return plant, calls
 
@@ -2614,7 +2614,9 @@ with open(sys.argv[1], "ab") as out:
         # The failure it stops: a controller whose CLI exited writes no rows,
         # so the wall check never reads it, and the loop starts nothing and
         # tells nobody; or a loop that restarts and tells the owner on every
-        # pass, or again after a restart that failed.
+        # pass, or again after a restart that failed, or again each time a
+        # restarted controller exits; or a recorded Start failure reported as
+        # a refused read.
         ended = {"state": "stopped", "reason": "ended", "harness": "claude", "account": "/accounts/a"}
         running = dict(ended, state="running", reason="resumed")
         starting = dict(ended, state="starting", reason="launching")
@@ -2622,23 +2624,27 @@ with open(sys.argv[1], "ab") as out:
         moved = dict(running, account="/accounts/b", reason="new-requested")
         spent = dict(ended, state="failed", reason="handover-failed", detail="No account is left to take over.")
         resume = "start --home {home} --harness claude --account /accounts/a --mode resume --origin manual --keep-brief"
-        unread = {"state": "blocked", "reason": "record-unreadable", "harness": None, "account": None}
+        unread = {"state": "blocked", "reason": "record-unreadable", "harness": None, "account": None, "unread": True}
+        first_start_failed = dict(signed_out, harness=None, account=None, unread=False,
+                                  detail="Sign in to the chosen account and retry Start.")
         succeed = "succeed --home {home} --exited"
         # Each row: Start's and succeed's answers with their exits (None: no
         # answer), its world, then one step per watch pass: the status it
         # reads, the session calls it adds, the words of each owner notice it
         # adds, and the root-unreachable events it adds. The world names how
-        # many notices lane-mail refuses first and the steps whose wall read
-        # binds a live controller.
+        # many notices lane-mail refuses first, the steps whose wall read
+        # binds a live controller, and a step's time where it is not 30
+        # seconds a step.
         for name, start, succession, world, steps in (
-                ("resumed", (running, 0), (None, 1), {},
+                # An exit past the 300 seconds after the restart ran is another one.
+                ("resumed", (running, 0), (None, 1), dict(at={2: 330}),
                  [(ended, [resume], [["/accounts/a", "claude", "started again", "resumed"]], 0), (running, [], [], 0),
-                  # An exit after the episode ended is another one.
                   (ended, [resume], [["/accounts/a", "resumed"]], 0)]),
-                # A restarted controller that exits before any reading of it
-                # running exits again.
+                # An exit inside those 300 seconds fails the restart: one
+                # notice, and no restart, then or later.
                 ("exits again", (running, 0), (None, 1), {},
-                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (ended, [resume], [["/accounts/a", "resumed"]], 0)]),
+                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (running, [], [], 0),
+                  (ended, [], [["/accounts/a", "exited again", "not started again"]], 0), (ended, [], [], 0)]),
                 # Once the restarted controller runs, the wall read binds it.
                 ("in flight", (starting, 0), (None, 1), dict(bound={1, 2, 3}),
                  [(ended, [resume], [], 0), (starting, [], [], 0), (running, [], [["/accounts/a", "resumed"]], 0),
@@ -2661,7 +2667,11 @@ with open(sys.argv[1], "ab") as out:
                 ("stopped on purpose", (running, 0), (moved, 0), {},
                  [(dict(ended, reason="stopped"), [], [], 0), (dict(ended, state="off", reason="app-off"), [], [], 0)]),
                 ("never started", (running, 0), (moved, 0), {},
-                 [(dict(ended, reason="never-started", harness=None, account=None), [], [], 0)])):
+                 [(dict(ended, reason="never-started", harness=None, account=None), [], [], 0)]),
+                # A first Start that failed before any controller launched is
+                # a status read that worked.
+                ("first start failed", (running, 0), (moved, 0), {},
+                 [(first_start_failed, [], [], 0), (first_start_failed, [], [], 0)])):
             with self.subTest(row=name):
                 # Each row's own home: the mailbox refuses an owner notice
                 # whose text it delivered within the last 24 hours.
@@ -2690,8 +2700,10 @@ with open(sys.argv[1], "ab") as out:
                                 gone = json.loads(self.root.joinpath("status.json").read_text())
                                 gone["result"]["live"] = False
                                 self.root.joinpath("status.json").write_text(json.dumps(gone))
-                            self.exited_passes(watch, 30 * index)
+                            self.exited_passes(watch, world.get("at", {}).get(index, 30 * index))
                             made += [call.format(home=self.home) for call in added]
+                            self.assertEqual(set(calls(status=True)), {"status --home {} --mark-unread".format(self.home)})
+                            self.assertEqual("exited_failure" in watch.state, bool(status.get("unread")), watch.state)
                             told += named
                             alerts += alerted
                             self.assertEqual(calls(), made)

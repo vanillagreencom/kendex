@@ -1424,6 +1424,23 @@ print(json.dumps(session.terminal(status)))
                 code = main()
         return validate(output.getvalue(), code, "status"), errors.getvalue()
 
+    def test_status_marks_only_a_read_it_could_not_make_unread(self):
+        # A recorded Start failure and a refused read both answer blocked or
+        # failed with no harness; the watch loop reports only the refused read.
+        self.record.parent.mkdir(parents=True)
+        for name, record, unread in (
+                ("recorded failure", {"v": 1, "home": str(self.home), "harness": None, "account": None, "origin": "boot",
+                                      "generation": 0, "terminal": None, "state": "failed", "reason": "launch-failed",
+                                      "detail": "fixture launch failed", "boot": "boot-1", "app_off": False}, False),
+                ("unreadable record", {"v": 3, "home": str(self.home), "origin": "manual"}, True)):
+            with self.subTest(row=name):
+                self.record.write_text(json.dumps(record))
+                result = subprocess.run([str(SCRIPT), "status", "--home", str(self.home), "--mark-unread"],
+                                        env=self.env, capture_output=True, text=True, timeout=120)
+                answer = json.loads(result.stdout)
+                self.assertIs(answer.pop("unread"), unread, answer)
+                validate(json.dumps(answer), result.returncode, "status")
+
     def test_status_without_setup_or_record(self):
         self.assertFalse(self.record.exists())
         answer, stderr = self.status_with_runtime(
