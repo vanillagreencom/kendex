@@ -51,13 +51,20 @@ variables="$(jq -c '.variables' <<<"$payload")"
 printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 users="$(cat "${FAKE_USERS:?}")"
 
+# Linear answers only the fields a query selects, so a user carries a fixture
+# key only where the query names it as a word: a selection the code drops
+# reads as absent here too.
+selected='def selected: with_entries(select(.key as $k | $q | test("\\b" + $k + "\\b")));'
+
 # users_page FILTER — the users connection holding the users FILTER selects.
 users_page() {
-  jq -cj --argjson v "$variables" "{data: {users: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.[] | select($1)]}}}" <<<"$users"
+  jq -cj --argjson v "$variables" --arg q "$query" "$selected"' {data: {users: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.[] | select('"$1"') | selected]}}}' <<<"$users"
   printf '%s' '___HTTP_CODE___200'
 }
 
 issue='{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":{"name":"Dana Doe","email":"dana@example.com"},"delegate":{"name":"Codex","email":"codex@apps.example"},"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"key":"CC","name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
+# The delegate answers only a query that selects it.
+[[ "$query" == *"delegate {"* ]] || issue="$(jq -c 'del(.delegate)' <<<"$issue")"
 
 case "$query" in
 *"users(filter: {id:"*) users_page '.id == $v.id' ;;
@@ -65,7 +72,7 @@ case "$query" in
 *"users(filter: {name: {containsIgnoreCase:"*) users_page '(.name | ascii_downcase) | contains($v.name | ascii_downcase)' ;;
 *"query ListUsers("*) users_page 'true' ;;
 *"viewer {"*)
-  jq -cj --arg id "${FAKE_VIEWER:?}" '{data: {viewer: (.[] | select(.id == $id))}}' <<<"$users"
+  jq -cj --arg id "${FAKE_VIEWER:?}" --arg q "$query" "$selected"' {data: {viewer: (.[] | select(.id == $id) | selected)}}' <<<"$users"
   printf '%s' '___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)

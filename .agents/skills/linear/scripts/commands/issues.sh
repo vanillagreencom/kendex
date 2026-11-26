@@ -115,7 +115,9 @@ Bulk Get:
 Bulk Update:
   issues.sh bulk-update <id1> <id2> ... [update-options]
   issues.sh bulk-update --stdin [update-options]
-  (Shared update options apply to all issues; --attach-uploaded is update-only)
+  (Shared update options apply to all issues; --attach-uploaded, --delegate,
+  --clear-delegate, --clear-assignee, --description-file and --format are
+  update-only)
 
 Create Options:
   --title <text>        Issue title (required)
@@ -3327,8 +3329,8 @@ activate_issue() {
             user_id=$(jq -r '.id' <<<"$user") || return 1
             assignee_state="set"
             assignee_line="assignee-set assignee=$(jq -r '.name' <<<"$user")"
-            # The id, not the address: the update then sends it without a
-            # second lookup of the same person.
+            # The id, not the address: the update resolves and judges the
+            # person by id, with no second email search.
             update_args+=(--assignee "$user_id")
         fi
     fi
