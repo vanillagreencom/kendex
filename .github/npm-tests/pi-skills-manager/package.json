@@ -6,5 +6,10 @@
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
     "@earendil-works/pi-tui": "0.84.1"
+  },
+  "overrides": {
+    "glob": "14.0.2",
+    "minimatch": "11.0.1",
+    "undici": "8.12.2"
   }
 }
