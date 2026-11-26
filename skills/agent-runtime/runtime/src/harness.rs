@@ -127,10 +127,17 @@ impl Harness {
             Harness::Copilot => HomeWrites::Folders(&["session-state"]),
             // Codex opens its state databases at the home's top level as it
             // starts, and refuses to start where it cannot. It only reads
-            // its hook registration and scripts, its instructions and its
-            // command rules. `plugins/` and `skills/` stay writable: Codex
-            // writes its plugin cache and install staging and stages
-            // `skills/.system` while it runs. A skill planted there instructs
+            // its hook registration and scripts and its instructions. It
+            // writes its command rules only when a person answers an
+            // approval prompt with a save option, appending to
+            // `rules/default.rules`; a rule saved there allows or blocks
+            // commands and hosts in the operator's next session, so the
+            // folder stays read-only. Codex warns on the refused save and
+            // the session goes on (codex-rs `exec_policy.rs`
+            // `default_policy_path`, rust-v0.172.0). `plugins/` and
+            // `skills/` stay writable: Codex writes its plugin cache and
+            // install staging and stages `skills/.system` while it runs. A
+            // skill planted there instructs
             // the next session whether or not an `AGENTS.md` stands, so an
             // absent one is left unmade; a planted plugin runs only where
             // the read-only `config.toml` enables it.

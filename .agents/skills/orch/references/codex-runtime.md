@@ -77,6 +77,24 @@ Where an execpolicy rule refuses top-level `git rebase`, no user authorization o
 
 On Linux a local Codex lane runs inside agent-runtime's `bwrap` wrapper, except on a seat whose links lead outside its grants (`linked-seat`); on any other host it runs unconfined ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
 
+A confined lane's `$CODEX_HOME/rules/` is read-only (agent-runtime `harness.rs` `Harness::home_writes`). An approval answer that saves a rule makes Codex append to `rules/default.rules`, and the read-only folder refuses that save. The warning and its result depend on the prompt.
+
+A command prompt answered with "Yes, and don't ask again for commands that start with …" shows `Failed to apply execpolicy amendment: failed to update rules file <CODEX_HOME>/rules/default.rules: ...`:
+
+- The approved command runs once and the session keeps working.
+- Codex keeps no rule, so the next matching command asks again.
+- Do not retry the command and do not report a blocker for the warning.
+- Answer the next prompt with "Yes, proceed". A command prompt offers no session option, so each matching command asks again.
+
+A host prompt answered with "Yes, and allow this host in the future" shows `Failed to apply network policy amendment: ...`:
+
+- With Codex's shared network proxy running, Codex allows the host for the rest of the session.
+- With no shared network proxy, Codex denies the request.
+- Read the request's result before going on.
+- Rerun a denied request, and answer its host prompt with "Yes, and allow this host for this conversation", which saves nothing.
+
+A host prompt answered with "No, and block this host in the future" shows the same network warning, and Codex blocks the host for the rest of the session.
+
 ## Standing watch
 
 Codex starts no turn for output that arrives after a turn ended, from a detached process or a running exec session (agent-runtime `harness.rs` `starts_turn_on_output`). So a Codex overseer holds the oversee watch ([watch-delivery.md](watch-delivery.md)) inside its turn with the unified exec tools:

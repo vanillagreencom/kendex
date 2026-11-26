@@ -45,6 +45,26 @@ The script lands at `<root>/hooks/<name>.sh`; the registration goes into `hooks.
 
 Agent scoping: none. Only `agents = "all"` custom hooks are enforced; scoped ones render as advisory prose in the agent files.
 
+## Command rules
+
+Codex reads command rules from `<root>/rules/*.rules` and the project's `.codex/rules/*.rules`. kendex neither scans nor writes them.
+
+Codex writes one file there itself, `<root>/rules/default.rules` ([codex-rs `exec_policy.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/exec_policy.rs), `default_policy_path`). It appends a rule when a person answers an approval prompt with one of these:
+
+- "Yes, and don't ask again for commands that start with …", on a command prompt: an `allow` prefix rule.
+- "Yes, and allow this host in the future", on a host prompt: an allow network rule.
+- "No, and block this host in the future", where a host prompt offers it: a deny network rule.
+
+A confined agent-runtime lane binds `rules/` read-only, so the save fails. The session keeps working, and what it keeps depends on the answer.
+
+A refused command-prefix save shows a warning that starts `Failed to apply execpolicy amendment: failed to update rules file <root>/rules/default.rules`. The approved command runs once. Codex keeps no rule, so the next matching command asks again ([codex-rs `session/handlers.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/session/handlers.rs), `resolve_exec_approval`).
+
+A refused host-rule save shows a warning that starts `Failed to apply network policy amendment:`. Its result depends on the answer and on Codex's shared network proxy ([codex-rs `exec_policy.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/exec_policy.rs), `apply_network_rule_and_persist`; [`tools/network_approval.rs`](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/core/src/tools/network_approval.rs)):
+
+- An allow answer with the shared network proxy running allows the host for the rest of the session.
+- An allow answer with no shared network proxy denies the request.
+- A block answer blocks the host for the rest of the session.
+
 ## Commands stored as skills
 
 A declared command becomes a one-file skill tree: a generated `SKILL.md` carrying the command's prose, the loader frontmatter and the generated-file banner, recorded in the lock as an emitted skill artifact (`crates/core/src/engine/desired_command.rs`, `crates/core/src/render/command.rs`). Names resolve in one pass over every declared command in name order: a real skill keeps its name, a clashing command takes `<name>__command`, then `<name>__cmd`, each with a warning naming what to type, and when all three are taken nothing is written. At project scope the tree lands in `.agents/skills`, which Pi reads too; that the command appears in Pi's skill list is emitted as a warning.
