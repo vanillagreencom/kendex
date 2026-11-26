@@ -14,13 +14,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # An event the workflow does not classify on is refused, with the parity
 # call or without: a manual dispatch runs the nightly jobs whole with no
 # selection, and a selection asked for one would stand lanes down on no
-# diff. The main push and the schedule take the proof routes below.
+# diff. The rows ask over no diff, so no reach runs before the refusal.
+# The main push and the schedule take the proof routes below.
 # ARGUMENT|EVENT|EXPECTED
 if [ "${1-}" != --inventory-proof ] && [ "${1-}" != --checkout-reads ]; then
 refused_rows=0
 refused_row() { # ARGUMENT EVENT EXPECTED
   check "event ${2:-unset}, called with ${1:-no argument}" "$3" \
-    "$(SELECT_ARG="$1" SELECT_EVENT="$2" selection micro false skills/orch/SKILL.md)"
+    "$(SELECT_ARG="$1" SELECT_EVENT="$2" selection micro false '')"
 }
 while IFS='|' read -r arg event expected; do
   refused_rows=$((refused_rows + 1))
@@ -32,27 +33,24 @@ done <<ROWS
 ROWS
 [ "$refused_rows" -eq 3 ] || { echo "the refused-event table read $refused_rows rows" >&2; exit 1; }
 # The macOS legs run wherever a shard and a platform lane run, on the pull
-# request as in the merge group.
-# EVENT|PATHS|LEGS
+# request as in the merge group: the --event-parity call derives both and
+# refuses where they differ, as the parity rows below prove.
+# PATHS|LEGS
 leg_rows=0
-leg_row() { # EVENT PATHS EXPECTED
-  check "the $1 legs over '$2'" "$3" \
-    "$(SELECT_EVENT="$1" selection micro false "$(printf '%s\n' $2)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+leg_row() { # PATHS EXPECTED
+  check "the legs over '$1' on both events" "$2" \
+    "$(SELECT_ARG=--event-parity selection micro false "$(printf '%s\n' $1)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 }
-while IFS='|' read -r event paths expected; do
+while IFS='|' read -r paths expected; do
   leg_rows=$((leg_rows + 1))
-  row_spawn leg_row "$event" "$paths" "$expected"
+  row_spawn leg_row "$paths" "$expected"
 done <<ROWS
-pull_request|skills/orch/scripts/resolve-base-branch|$BOTH
-merge_group|skills/orch/scripts/resolve-base-branch|$BOTH
-pull_request|skills/orch/SKILL.md|$LINUX
-merge_group|skills/orch/SKILL.md|$LINUX
-pull_request|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
-merge_group|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
-pull_request|crates/core/src/lib.rs|$BOTH
-merge_group|crates/core/src/lib.rs|$BOTH
+skills/orch/scripts/resolve-base-branch|$BOTH
+skills/orch/SKILL.md|$LINUX
+.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
+crates/core/src/lib.rs|$BOTH
 ROWS
-[ "$leg_rows" -eq 8 ] || { echo "the legs table read $leg_rows rows" >&2; exit 1; }
+[ "$leg_rows" -eq 4 ] || { echo "the legs table read $leg_rows rows" >&2; exit 1; }
 # Event parity: a copy that plants the macOS legs on the merge group alone is
 # refused by the --event-parity call on either event. A call without the flag
 # derives its one event alone, so the same copy answers it.
@@ -148,7 +146,6 @@ written_row() {
     "$(jq -c . "$TMP/written.json" 2>/dev/null || echo unwritten)"
 }
 row_spawn written_row
-rows_join
 fi
 
 # THE PUSH ROUTE: a main push owes, on each runner, the suites and Rust
@@ -273,8 +270,8 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 }
 # One world per GitHub state: runs.json, and per run jobs-<run>.json,
 # artifacts-<run>.json and the artifact's zip.
-push_world() { # NAME
-  local dir="$TMP/push/$1" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
+push_world() { # NAME [WORLD] — the NAME state, in the world named WORLD, NAME unless given
+  local dir="$TMP/push/${2:-$1}" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
   local second=$((PUSH_RUN + 1))
   mkdir -p "$dir"
   jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$runs" >"$dir/runs.json"
@@ -343,52 +340,65 @@ field() { # NAME — the value of the NAME= line on stdin
 in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEMBER
   field "$1" <"$TMP/push-out$ROW_TAG" | jq --arg m "$2" 'index($m) != null'
 }
-main_checkout_rows() {
-  local synthetic_head="$PUSH_AFTER" range_base="$PUSH_BEFORE" path expected skipped got
-  local reader=crates/core/src/author/scaffold.rs template=docs/checkout-mit-template.txt
-  git -C "$PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
+# Rows run side by side, so a row that commits to the push checkout commits
+# to its own: a clone of it at PUSH_BEFORE, removed when the row ends.
+own_push_repo() {
+  [ -n "$ROW_TAG" ] || { echo "own_push_repo runs inside a row alone" >&2; exit 1; }
+  OWN_PUSH_REPO="$TMP/push-repo$ROW_TAG"
+  git clone -q --shared -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
+    "$PUSH_REPO" "$OWN_PUSH_REPO"
+  trap 'rm -rf -- "${OWN_PUSH_REPO:?}"' EXIT
+  git -C "$OWN_PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
+  PUSH_REPO=$OWN_PUSH_REPO
+}
+push_commit() { # MESSAGE PATH... — PUSH_AFTER names the commit of PATH...
+  git -C "$PUSH_REPO" add -A -- "${@:2}"
+  git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm "$1"
+  PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+}
+CHECKOUT_TEMPLATE=docs/checkout-mit-template.txt
+main_checkout_row() { # PATH EXPECTED SKIPPED
+  local reader=crates/core/src/author/scaffold.rs got
+  own_push_repo
   # The changed include lives outside crates/ so the workspace build row
   # cannot select the checkout shards when the include is lost.
-  git -C "$PUSH_REPO" mv crates/core/src/author/assets/mit.txt "$template"
-  awk -v template="$template" '
+  git -C "$PUSH_REPO" mv crates/core/src/author/assets/mit.txt "$CHECKOUT_TEMPLATE"
+  awk -v template="$CHECKOUT_TEMPLATE" '
     /^const MIT_TEXT: / { changes += sub(/"assets\/mit\.txt"/, "\"../../../../" template "\"") }
     { print }
     END { exit changes != 1 }
-  ' "$PUSH_REPO/$reader" >"$TMP/scaffold.rs"
-  cp "$TMP/scaffold.rs" "$PUSH_REPO/$reader"
-  git -C "$PUSH_REPO" add -- "$reader"
-  git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'place production include outside crates'
-  PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+  ' "$PUSH_REPO/$reader" >"$TMP/scaffold.rs$ROW_TAG"
+  cp "$TMP/scaffold.rs$ROW_TAG" "$PUSH_REPO/$reader"
+  push_commit 'place production include outside crates' "$reader"
+  PUSH_BEFORE=$PUSH_AFTER
+  printf '\n' >>"$PUSH_REPO/$1"
+  push_commit input "$1"
+  PUSH_SHA="$PUSH_AFTER"
+  push_world no-run "no-run$ROW_TAG"
+  got="$(push_select "no-run$ROW_TAG")"
+  if [[ $got != exit=* ]]; then
+    got="$(field shards <"$TMP/push-out$ROW_TAG" | jq -c '
+      [.[] | select(. == "refresh" or . == "orch-rest" or . == "rest" or . == "jarvis")]')"
+  fi
+  check "main push without merge proof selects checkout build shards for $1" "$2" "$got"
+  check "main push skipped checkout suites for $1" "$3" \
+    "$(field skipped_suites <"$TMP/push-out$ROW_TAG" | checkout_suites_skipped)"
+  check "main push keeps the unrelated node shard off for $1" false "$(in_list shards node)"
+}
+main_checkout_rows() {
+  local path expected skipped
   while IFS='|' read -r path expected skipped; do
-    git -C "$PUSH_REPO" reset -q --hard "$PUSH_BEFORE"
-    printf '\n' >>"$PUSH_REPO/$path"
-    git -C "$PUSH_REPO" add -- "$path"
-    git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm input
-    PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-    PUSH_SHA="$PUSH_AFTER"
-    push_world no-run
-    got="$(push_select no-run)"
-    if [[ $got != exit=* ]]; then
-      got="$(field shards <"$TMP/push-out" | jq -c '
-        [.[] | select(. == "refresh" or . == "orch-rest" or . == "rest" or . == "jarvis")]')"
-    fi
-    check "main push without merge proof selects checkout build shards for $path" "$expected" "$got"
-    check "main push skipped checkout suites for $path" "$skipped" \
-      "$(field skipped_suites <"$TMP/push-out" | checkout_suites_skipped)"
-    check "main push keeps the unrelated node shard off for $path" false "$(in_list shards node)"
+    row_spawn main_checkout_row "$path" "$expected" "$skipped"
   done <<ROWS
 ui/src/index.css|[]|4
 skills/bot-instructions/tests/fixtures/canonical.toml|[]|4
-$template|["refresh","orch-rest","rest","jarvis"]|0
+$CHECKOUT_TEMPLATE|["refresh","orch-rest","rest","jarvis"]|0
 ROWS
-  git -C "$PUSH_REPO" reset -q --hard "$synthetic_head"
-  PUSH_BEFORE="$range_base"
-  PUSH_AFTER="$synthetic_head"
-  PUSH_SHA="$PUSH_AFTER"
 }
 case "${1-}" in
   --checkout-reads)
     main_checkout_rows
+    rows_join
     printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
     [ "$FAIL" -eq 0 ]
     exit ;;
@@ -423,12 +433,12 @@ N_ORCH_REST="$(cd "$ROOT" && grep '^skills/orch/tests/' <<<"$UNIVERSE" | RUNNER_
 WHOLE="shards=$ROSTER queue_macos_shards=$QUEUE_ALL rust_targets=$EVERY_TARGET skips=0/0"
 UNREAD="main-proof=unread warned=yes"
 NO_RUN="main-proof=none warned=yes"
-push_world kept-subset
 index_row() {
   local index_group index_push
+  push_world kept-subset "kept-subset$ROW_TAG"
   index_group="$(GIT_INDEX_FILE="$TMP/unavailable-index" SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group \
     selection small false kendex.toml)"
-  index_push="$(GIT_INDEX_FILE="$TMP/unavailable-index" push_select kept-subset)"
+  index_push="$(GIT_INDEX_FILE="$TMP/unavailable-index" push_select "kept-subset$ROW_TAG")"
   case "$index_push" in exit=*) cat "$TMP/push-err$ROW_TAG" >&2 ;; esac
   check "a missing Git index keeps Node and prevents same-head subtraction" "true|$WHOLE $UNREAD" \
     "$(field shards <<<"$(tr ' ' '\n' <<<"$index_group")" | jq 'index("node") != null')|$index_push"
@@ -448,8 +458,6 @@ M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
 check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
 check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
 check "push route: all-proved publishes no runtime build main has" '[]' "$(field runtime_publish <"$TMP/push-out")"
-# The table rewrites the kept-subset world the index row reads.
-rows_join
 # WORLD|EXPECTED. A suite counts only where no selection left it out and
 # every same-head leg that runs it on its runner succeeded; a target only
 # where every selection listed it and the orch-rest Linux leg succeeded; any
@@ -486,18 +494,18 @@ jobs-missing|$WHOLE $UNREAD
 jobs-partial|$WHOLE $UNREAD
 ROWS
 [ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
-# The probes read the worlds the table wrote.
-rows_join
 # The probes: a red Linux leg owes its suites on Linux alone, and a group
 # that left a suite out proves its every other suite.
 red_leg_row() {
-  push_select red-leg >/dev/null
+  push_world red-leg "red-leg$ROW_TAG"
+  push_select "red-leg$ROW_TAG" >/dev/null
   check "push route: a red Linux leg owes its suite on Linux" false "$(in_list skipped_suites "$P_TOOLS")"
   check "push route: and its macOS leg still proves it" true "$(in_list skipped_suites_macos "$P_TOOLS")"
   check "push route: the red leg's other package owes its suites" false "$(in_list skipped_suites "$P_JARVIS")"
 }
 kept_subset_row() {
-  push_select kept-subset >/dev/null
+  push_world kept-subset "kept-subset$ROW_TAG"
+  push_select "kept-subset$ROW_TAG" >/dev/null
   check "push route: the suite the group left out is owed" false "$(in_list skipped_suites "$P_TOOLS")"
   check "push route: the group's kept suites are proved" true "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
 }
@@ -511,7 +519,8 @@ macos_leg() { # SUITE...
   printf '%s' "$kept" | paste -sd ' ' -
 }
 replacement_row() {
-  push_select replacement-split >/dev/null
+  push_world replacement-split "replacement-split$ROW_TAG"
+  push_select "replacement-split$ROW_TAG" >/dev/null
   check "push route: an owed original keeps the replacement its group proved" "$P_NATIVE" \
     "$(macos_leg "$P_MERGE" "$P_NATIVE" "$P_VIEW")"
 }
@@ -712,31 +721,33 @@ awk '{ n += gsub(/select\(\.head_sha == \$sha and \.run_id == \$id\)/, "select(.
   { echo "the job head check is no longer one select in $JOB_SET" >&2; exit 1; }
 chmod +x "$TMP/trusting/tools/ci-job-set"
 trusting_row() {
-  case "$(push_select foreign-head-job "$TMP/trusting/tools/ci-job-set")" in
+  push_world foreign-head-job "foreign-head-job$ROW_TAG"
+  case "$(push_select "foreign-head-job$ROW_TAG" "$TMP/trusting/tools/ci-job-set")" in
     *"queue_macos_shards=[] "*) ok "control: a selector skipping the job head check proves the foreign head's mailbox leg" ;;
     *) bad "control: the head-check mutant did not prove the foreign head's leg" ;;
   esac
 }
 row_spawn trusting_row
-# The rows read the checkout the rows below move.
-rows_join
 
+# The rows below read this no-run world; the table's own may still be written.
+push_world no-run tail
 # Path selection precedes proof subtraction, including a narrowed whole leg.
-PUSH_BASE="$PUSH_BEFORE"
+reach_row() { # PATH REQUIRED FORBIDDEN BUILD DEDICATED
+  local got
+  own_push_repo
+  mkdir -p "$PUSH_REPO/$(dirname "$1")"
+  printf '\nchanged\n' >>"$PUSH_REPO/$1"
+  push_commit path "$1"
+  push_select tail >/dev/null
+  check "main build reach: $1" "cache_compile=$4" "$(grep '^cache_compile=' "$TMP/push-out$ROW_TAG")"
+  got="$(sed -n 's/^shards=//p' "$TMP/push-out$ROW_TAG")"
+  if jq -e --arg req "$2" --arg forbid "$3" '(($req == "" or index($req) != null) and ($forbid == "" or index($forbid) == null))' <<<"$got" >/dev/null; then
+    ok "main path reach: $1"
+  else bad "main path reach: $1 ($got)"; fi
+  check "main dedicated reach: $1" "$5" "$(sed -n 's/^main_suites=//p' "$TMP/push-out$ROW_TAG" | jq -c '[.[].suite]')"
+}
 while IFS='|' read -r path required forbidden build dedicated; do
-  git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
-  mkdir -p "$PUSH_REPO/$(dirname "$path")"
-  printf '\nchanged\n' >>"$PUSH_REPO/$path"
-  git -C "$PUSH_REPO" add -A
-  git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm path
-  PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-  push_select no-run >/dev/null
-  check "main build reach: $path" "cache_compile=$build" "$(grep '^cache_compile=' "$TMP/push-out")"
-  got="$(sed -n 's/^shards=//p' "$TMP/push-out")"
-  if jq -e --arg req "$required" --arg forbid "$forbidden" '(($req == "" or index($req) != null) and ($forbid == "" or index($forbid) == null))' <<<"$got" >/dev/null; then
-    ok "main path reach: $path"
-  else bad "main path reach: $path ($got)"; fi
-  check "main dedicated reach: $path" "$dedicated" "$(sed -n 's/^main_suites=//p' "$TMP/push-out" | jq -c '[.[].suite]')"
+  row_spawn reach_row "$path" "$required" "$forbidden" "$build" "$dedicated"
 done <<'ROWS'
 .kendex-lock.json||rest|false|[]
 crates/core/src/lib.rs|rest|node|true|["adopt-refresh.test"]
@@ -746,71 +757,81 @@ saved_after="$PUSH_AFTER"
 PUSH_AFTER=0000000000000000000000000000000000000000
 check "unread push range refuses selection" exit=2 "$(push_select all-proved)"
 PUSH_AFTER="$saved_after"
+# Copies of the selector and of the guard it asks, each with one edit.
+control_copy() { # NAME
+  mkdir -p "$TMP/$1/tools"
+  cp -R "$ROOT/tools/lib" "$TMP/$1/tools/lib"
+  cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" \
+    "$ROOT/tools/guard" "$JOB_SET" "$TMP/$1/tools/"
+}
 # Must-fail: retain matched path logic but force every shard selected on main.
-mkdir -p "$TMP/main-control/tools"
-cp -R "$ROOT/tools/lib" "$TMP/main-control/tools/lib"
-cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/main-control/tools/"
-cp "$ROOT/tools/guard" "$TMP/main-control/tools/"
+control_copy main-control
 awk -v roster="$ROSTER" '/^  main_linux=\$SHELL_SHARDS$/ { print; print "  main_linux=" sprintf("%c", 39) roster sprintf("%c", 39); n++; next } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
-chmod +x "$TMP/main-control/tools/ci-job-set"
-git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
-printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
-git -C "$PUSH_REPO" add -A
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm lock
-PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-push_select no-run >/dev/null
-check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-out")"
-push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
-if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
-cp "$JOB_SET" "$TMP/main-control/tools/ci-job-set"
-sed '/^    if \[ "\$f" = \.kendex-lock\.json \]; then$/,/^    fi$/d' "$ROOT/tools/guard" >"$TMP/main-control/tools/guard"
-! cmp -s "$ROOT/tools/guard" "$TMP/main-control/tools/guard" || exit 1
-push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
-check 'control: install record reach runs suites that construct their own records' true "$(in_list shards node)"
-cp "$ROOT/tools/guard" "$TMP/main-control/tools/guard"
+control_copy guard-control
+sed '/^    if \[ "\$f" = \.kendex-lock\.json \]; then$/,/^    fi$/d' "$ROOT/tools/guard" >"$TMP/guard-control/tools/guard"
+! cmp -s "$ROOT/tools/guard" "$TMP/guard-control/tools/guard" || exit 1
+lock_row() {
+  own_push_repo
+  printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+  push_commit lock .kendex-lock.json
+  push_select tail >/dev/null
+  check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-out$ROW_TAG")"
+  push_select tail "$TMP/main-control/tools/ci-job-set" >/dev/null
+  if grep -qxF 'shards=[]' "$TMP/push-out$ROW_TAG"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
+}
+guard_control_row() {
+  own_push_repo
+  printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+  push_commit lock .kendex-lock.json
+  push_select tail "$TMP/guard-control/tools/ci-job-set" >/dev/null
+  check 'control: install record reach runs suites that construct their own records' true "$(in_list shards node)"
+}
+row_spawn lock_row
+row_spawn guard_control_row
 
 # A pending first push can be replaced by a lock-only second push. The
 # successful baseline still precedes both, so the first input remains owed.
-git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
-printf 'fixture\n' >>"$PUSH_REPO/.bun-version"
-git -C "$PUSH_REPO" add .bun-version
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending
-PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
-git -C "$PUSH_REPO" add .kendex-lock.json
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest
-PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-push_select no-run >/dev/null
-check 'coalesced unproved push retains the replaced heads node work' true "$(in_list shards node)"
+control_copy event-control
 awk '{ n += sub(/git diff --name-only --no-renames "\$previous"/, "git diff --name-only --no-renames \"$PUSH_BEFORE\"") } { print } END { exit n != 1 }' \
-  "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
-push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
-check 'control: event before alone loses the replaced heads node work' false "$(in_list shards node)"
-git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
-printf '\n// input\n' >>"$PUSH_REPO/skills/agent-runtime/runtime/src/lib.rs"
-git -C "$PUSH_REPO" add skills/agent-runtime/runtime/src/lib.rs
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending-runtime
-PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
-git -C "$PUSH_REPO" add .kendex-lock.json
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest-runtime
-PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-push_select no-run >/dev/null
-check 'coalesced unproved runtime retains the dependent orch targets' true "$(field rust_targets <"$TMP/push-out" | jq 'any(.[]; startswith("orch/"))')"
-push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
-check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out")"
-cp "$TMP/push/no-run/push-runs.json" "$TMP/successful-push.json"
-for history in absent unread nonancestor; do
-  case "$history" in
-    absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/no-run/push-runs.json" ;;
-    unread) printf 'unread\n' >"$TMP/push/no-run/push-runs.json" ;;
-    nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/successful-push.json" >"$TMP/push/no-run/push-runs.json" ;;
-  esac
-  push_select no-run >/dev/null
-  check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out")"
-  check "unproved coalesced range $history retains every runtime" "$EVERY_TARGET" "$(field rust_targets <"$TMP/push-out")"
-done
-cp "$TMP/successful-push.json" "$TMP/push/no-run/push-runs.json"
+  "$JOB_SET" >"$TMP/event-control/tools/ci-job-set"
+coalesce() { # PATH TEXT — a push of TEXT onto PATH, then a lock-only push after it
+  own_push_repo
+  printf '%s' "$2" >>"$PUSH_REPO/$1"
+  push_commit pending "$1"
+  PUSH_BEFORE=$PUSH_AFTER
+  printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+  push_commit newest .kendex-lock.json
+}
+coalesced_node_row() {
+  coalesce .bun-version $'fixture\n'
+  push_select tail >/dev/null
+  check 'coalesced unproved push retains the replaced heads node work' true "$(in_list shards node)"
+  push_select tail "$TMP/event-control/tools/ci-job-set" >/dev/null
+  check 'control: event before alone loses the replaced heads node work' false "$(in_list shards node)"
+}
+coalesced_runtime_row() {
+  local history world="tail$ROW_TAG"
+  coalesce skills/agent-runtime/runtime/src/lib.rs $'\n// input\n'
+  push_select tail >/dev/null
+  check 'coalesced unproved runtime retains the dependent orch targets' true "$(field rust_targets <"$TMP/push-out$ROW_TAG" | jq 'any(.[]; startswith("orch/"))')"
+  push_select tail "$TMP/event-control/tools/ci-job-set" >/dev/null
+  check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out$ROW_TAG")"
+  cp -R "$TMP/push/tail" "$TMP/push/$world"
+  for history in absent unread nonancestor; do
+    case "$history" in
+      absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/$world/push-runs.json" ;;
+      unread) printf 'unread\n' >"$TMP/push/$world/push-runs.json" ;;
+      nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/push/tail/push-runs.json" >"$TMP/push/$world/push-runs.json" ;;
+    esac
+    push_select "$world" >/dev/null
+    check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out$ROW_TAG")"
+    check "unproved coalesced range $history retains every runtime" "$EVERY_TARGET" "$(field rust_targets <"$TMP/push-out$ROW_TAG")"
+  done
+}
+row_spawn coalesced_node_row
+row_spawn coalesced_runtime_row
+# The night rows below rewrite the no-run world a table row reads.
+rows_join
 
 # Only the latest successful scheduled main run can stand a night down.
 # A history with competing heads must reject an older matching success.
