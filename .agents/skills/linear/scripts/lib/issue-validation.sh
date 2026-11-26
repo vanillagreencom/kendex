@@ -308,11 +308,15 @@ require_issue_reach() {
 # so the probe above and the arm it runs sit in one install: orch's default
 # resolves change-scope under the cwd's project, which a home-scope install or
 # a cwd outside the package's checkout does not hold, and a checkout's own
-# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. The reader needs
-# no Linear credential, so none reaches it or what it runs.
+# CHANGE_SCOPE_PATHS_CLI would run that checkout's program. Both siblings are
+# found from this package's physical directory: a harness alias of it is a
+# symlink into the shared skills tree, and a logical `cd` collapses `..`
+# before following it, landing in the alias directory, which need not alias
+# orch. The reader needs no Linear credential, so none reaches it or what it
+# runs.
 require_issue_launch_read() {
 	local skills reader
-	skills="$(cd "${BASH_SOURCE[0]%/*}/../../.." && pwd)"
+	skills="$(cd -P "${BASH_SOURCE[0]%/*}/../../.." && pwd)"
 	reader="$skills/orch/scripts/orch-runtime"
 	local lower body="" out line cause="" rc=0
 	[[ -x "$reader" ]] || return 0

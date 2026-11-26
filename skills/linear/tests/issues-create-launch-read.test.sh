@@ -64,6 +64,10 @@ install() {
 LAUNCH="$TMP_ROOT/launch"
 project "$LAUNCH"
 install "$LAUNCH/.agents/skills"
+# A Claude alias of this package alone, as an install lays one out when orch
+# is installed for another harness only.
+mkdir -p "$LAUNCH/.claude/skills"
+ln -s ../../.agents/skills/linear "$LAUNCH/.claude/skills/linear"
 
 # A home-scope install, and a checkout that holds no package filing from it.
 HOME_SKILLS="$TMP_ROOT/home/.agents/skills"
@@ -90,12 +94,18 @@ printf '#!/usr/bin/env bash\necho "orch-runtime: setup-required key=k run=setup"
   >"$UNBUILT/.agents/skills/orch/scripts/orch-runtime"
 chmod +x "$UNBUILT/.agents/skills/orch/scripts/orch-runtime"
 
-# A reader that records which Linear credential reached it.
+# A reader that records which Linear credentials reached it, one line each.
+CREDENTIALS=(LINEAR_API_KEY LINEAR_API_KEY_OVERRIDE LINEAR_APP_TOKEN LINEAR_CLIENT_ID LINEAR_CLIENT_SECRET)
 WITNESS="$TMP_ROOT/witness"
 project "$WITNESS"
 mkdir -p "$WITNESS/.agents/skills/orch/scripts"
-printf '#!/usr/bin/env bash\nprintf %%s "${LINEAR_API_KEY-unset}" >"%s"\nexit 0\n' "$WITNESS/credential" \
-  >"$WITNESS/.agents/skills/orch/scripts/orch-runtime"
+{
+  printf '#!/usr/bin/env bash\n{\n'
+  for key in "${CREDENTIALS[@]}"; do
+    printf '  printf "%s=%%s\\n" "${%s-unset}"\n' "$key" "$key"
+  done
+  printf '} >"%s"\nexit 0\n' "$WITNESS/credential"
+} >"$WITNESS/.agents/skills/orch/scripts/orch-runtime"
 chmod +x "$WITNESS/.agents/skills/orch/scripts/orch-runtime"
 
 # The parent environment wins over project files, so every key either
@@ -174,8 +184,17 @@ run_create "$PLANTED" "$TMP_ROOT/body.md" "$HOME_SKILLS"
 assert_eq "a checkout naming its own change-scope creates the template form" "$RC" 0
 assert_eq "a checkout's own change-scope never runs in the create" "$([ -e "$PLANTED/ran" ] && echo ran || echo not-run)" not-run
 
+body "$TMP_ROOT/body.md" '**Expected delta**: 20 test lines' "$TEMPLATE_LOCATION"
+run_create "$LAUNCH" "$TMP_ROOT/body.md" "$LAUNCH/.claude/skills"
+assert_eq "a create through a Claude alias with no orch alias is refused before any API call" "$(api_calls)" 0
+assert_contains "a create through a Claude alias is refused on the shared orch's invalid-delta" "$ERR" "orch-runtime: tier cause=invalid-delta"
+
 echo "=== the reader gets no Linear credential ==="
 body "$TMP_ROOT/body.md" "$TEMPLATE_DELTA" "$TEMPLATE_LOCATION"
-run_create "$WITNESS" "$TMP_ROOT/body.md"
+LINEAR_API_KEY_OVERRIDE=test-override LINEAR_APP_TOKEN=test-app-token \
+  LINEAR_CLIENT_ID=test-client-id LINEAR_CLIENT_SECRET=test-client-secret \
+  run_create "$WITNESS" "$TMP_ROOT/body.md"
 assert_eq "a reader's create proceeds" "$RC" 0
-assert_eq "the reader runs without the Linear credential" "$(cat "$WITNESS/credential")" unset
+for key in "${CREDENTIALS[@]}"; do
+  assert "the reader runs without $key" grep -qFx "$key=unset" "$WITNESS/credential"
+done
