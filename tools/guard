@@ -1939,25 +1939,41 @@ scan_load() { # DIR
       }
       return out
     }
-    function scan_names(reader, text, kind, rest, name) {
+    # mawk and BWK awk copy the whole left operand of each concatenation, so a
+    # string grown one piece at a time costs the square of its length there.
+    # The names of a file wait in counted arrays and print at the end of its
+    # scan.
+    function add_name(kind, reader, name) {
+      if (name_seen[kind, reader, name]++) return
+      if (kind == "N") file_names[++file_name_count] = name
+      else file_sourced[++file_sourced_count] = name
+    }
+    function print_names(kind, reader, names, count, i) {
+      if (!count) return
+      printf "%s\t%s\t%s", kind, reader, names[1]
+      for (i = 2; i <= count; i++) printf " %s", names[i]
+      printf "\n"
+    }
+    # The kept lines LO to HI of READER, each after a newline, joined by halves
+    # so each line is copied about log2(HI - LO) times in any awk.
+    function join_lines(reader, lo, hi, mid) {
+      if (lo == hi) return "\n" reader_lines[reader, lo]
+      mid = int((lo + hi) / 2)
+      return join_lines(reader, lo, mid) join_lines(reader, mid + 1, hi)
+    }
+    function scan_names(reader, text, kind, rest) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
-        name = substr(rest, RSTART, RLENGTH)
-        if (!name_seen[kind, reader, name]++) {
-          if (kind == "N") file_names = file_names " " name
-          else file_sourced = file_sourced " " name
-        }
+        add_name(kind, reader, substr(rest, RSTART, RLENGTH))
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
     # A runtime or a Rust target runs a program by a quoted name, as
     # `sibling("pr-order")` does: the name inside the quotes counts as one.
-    function scan_quoted(reader, text, rest, name) {
+    function scan_quoted(reader, text, rest) {
       rest = text
       while (match(rest, /"[[:alnum:]._-]*[[:alnum:]_-]"/)) {
-        name = "/" substr(rest, RSTART + 1, RLENGTH - 2)
-        if (!name_seen["N", reader, name]++)
-          file_names = file_names " " name
+        add_name("N", reader, "/" substr(rest, RSTART + 1, RLENGTH - 2))
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
@@ -1981,16 +1997,13 @@ scan_load() { # DIR
         dotted = "/" substr(name, 1, RLENGTH)
         name = dotted
         sub(/\..*/, "", name)
-        name = name ".py"
-        if (!name_seen["N", reader, name]++)
-          file_names = file_names " " name
-        if (dotted ~ /\./ && !name_seen["N", reader, dotted]++)
-          file_names = file_names " " dotted
+        add_name("N", reader, name ".py")
+        if (dotted ~ /\./) add_name("N", reader, dotted)
       }
     }
-    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources, joined) {
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources) {
       path = scan_paths[reader]; role = scan_roles[reader]
-      file_names = file_sourced = ""
+      file_name_count = file_sourced_count = 0
       while ((status = (getline text < path)) > 0) {
         if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
@@ -2036,13 +2049,10 @@ scan_load() { # DIR
       for (i = 1; i <= assignments; i++)
         if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
       for (i = 1; i <= count; i++)
-        if (keep[i]) {
-          reader_lines[reader, ++reader_counts[reader]] = code[i]
-          joined = joined "\n" code[i]
-        }
-      if (reader in reader_counts) reader_texts[reader] = joined
-      if (file_names != "") print "N\t" reader "\t" substr(file_names, 2)
-      if (file_sourced != "") print "S\t" reader "\t" substr(file_sourced, 2)
+        if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
+      if (reader in reader_counts) reader_texts[reader] = join_lines(reader, 1, reader_counts[reader])
+      print_names("N", reader, file_names, file_name_count)
+      print_names("S", reader, file_sourced, file_sourced_count)
       return 1
     }
     $1 == "F" {
