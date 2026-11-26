@@ -131,15 +131,23 @@ impl Store {
         self.ok(&["op", "--fleet", "--request-json", &request.to_string()])
     }
 
-    /// A tracker stand-in answering `issues bulk-get ID --format=safe`:
-    /// KEN-T sits in Triage, every other item in Todo.
+    /// A tracker stand-in answering `graphql --query DOC --variables JSON`
+    /// for one issue, `syncedWith` only where the document selects it, as
+    /// Linear answers: KEN-T sits in Triage linked to no GitHub issue, KEN-M
+    /// is a GitHub-synced mirror in Triage, every other item is in Todo.
     fn tracker(&self) -> String {
         let path = self.dir.path().join("linear.sh");
         support::write_executable(
             &path,
             r#"#!/bin/sh
-case "$3" in KEN-T) t=triage ;; *) t=unstarted ;; esac
-printf '[{"id":"%s","state_type":"%s"}]\n' "$3" "$t"
+[ "$1" = graphql ] || exit 1
+case "$5" in
+  *'"KEN-T"'*) t=triage s='[{"metadata":{}}]' ;;
+  *'"KEN-M"'*) t=triage s='[{"metadata":{"owner":"Reporter","repo":"Project","number":42}}]' ;;
+  *) t=unstarted s=null ;;
+esac
+case "$3" in *syncedWith*) synced=",\"syncedWith\":$s" ;; *) synced= ;; esac
+printf '{"issue":{"state":{"type":"%s"}%s}}\n' "$t" "$synced"
 "#,
         );
         path.display().to_string()
@@ -1121,7 +1129,8 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
 /// A kept verdict for an item still in Triage would acknowledge it while
 /// the watch's triage line and launch selection both skip it, so it refuses
 /// naming the item, and so does an unreadable state; a canceled verdict for
-/// that item and a kept one outside Triage record.
+/// that item, a kept one outside Triage and a kept GitHub-synced mirror in
+/// Triage, which § Outside contributions leaves there, record.
 #[test]
 fn a_kept_verdict_records_only_once_the_item_left_triage() {
     let store = Store::new();
@@ -1146,7 +1155,11 @@ fn a_kept_verdict_records_only_once_the_item_left_triage() {
         assert!(line.contains("issue=KEN-T"), "{line}");
         assert_eq!(fs::read_to_string(store.fleet_path()).unwrap(), before);
     }
-    for (issue, verdict) in [("KEN-T", "canceled"), ("KEN-4137", "kept")] {
+    for (issue, verdict) in [
+        ("KEN-T", "canceled"),
+        ("KEN-4137", "kept"),
+        ("KEN-M", "kept"),
+    ] {
         store.ok_env(
             &["op", "--fleet", "--request-json", &request(issue, verdict)],
             &[("OVERSEE_WATCH_TRACKER", &tracker)],
@@ -1157,9 +1170,15 @@ fn a_kept_verdict_records_only_once_the_item_left_triage() {
         (
             &triaged[0]["issue"],
             &triaged[0]["verdict"],
-            &triaged[1]["issue"]
+            &triaged[1]["issue"],
+            &triaged[2]["issue"]
         ),
-        (&json!("KEN-T"), &json!("canceled"), &json!("KEN-4137"))
+        (
+            &json!("KEN-T"),
+            &json!("canceled"),
+            &json!("KEN-4137"),
+            &json!("KEN-M")
+        )
     );
 }
 

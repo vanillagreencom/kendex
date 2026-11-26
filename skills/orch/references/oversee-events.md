@@ -909,7 +909,7 @@ A refused `write`:
    - For a canceled verdict, cancel the item.
    - Leave the verdict unrecorded if a required read or update fails, a required state is unreadable, or neither destination type is available for a kept item in `triage`.
    - After the required routing succeeds, record the verdict. Write `{"issue":"[ID]","verdict":"[kept|canceled]","reason":"[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool, and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"triage","file":"tmp/triage-verdict-[ID].json"}'`.
-   - The write reads the item's live state for a kept verdict. It refuses `triage-kept-in-triage` while the state type is still `triage`, and `triage-state-unreadable` where it cannot read it. Route the item, then record again.
+   - The write reads the item's live state for a kept verdict. It refuses `triage-kept-in-triage` while the state type is still `triage`, unless the item is a GitHub-synced mirror, which [§ Outside contributions](#outside-contributions) leaves there. It refuses `triage-state-unreadable` where it cannot read the item. Route the item, then record again.
 
 ### `outside-contribution`
 

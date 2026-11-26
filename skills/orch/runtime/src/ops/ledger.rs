@@ -115,16 +115,62 @@ pub(crate) fn triage_row(row: &Value) -> Result<()> {
     }
 }
 
-/// The tracker's row for one item, from `issues bulk-get ID --format=safe`.
+/// The item's state type and GitHub sync links, in one tracker read: the
+/// same `syncedWith` selection `oversee-events.md` § Outside contributions
+/// reads a mirror by.
+const ITEM_READ: &str = "query Item($id: String!) { issue(id: $id) { state { type } \
+     syncedWith { metadata { ... on ExternalEntityInfoGithubMetadata { owner repo number } } } } }";
+
+#[derive(Deserialize)]
+struct ItemRead {
+    issue: ItemState,
+}
+
 #[derive(Deserialize)]
 struct ItemState {
-    state_type: String,
+    state: StateType,
+    #[serde(rename = "syncedWith", default)]
+    synced_with: Option<Vec<SyncLink>>,
+}
+
+#[derive(Deserialize)]
+struct StateType {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+/// A link to another integration answers empty metadata.
+#[derive(Deserialize)]
+struct SyncLink {
+    #[serde(default)]
+    metadata: Option<GithubLink>,
+}
+
+#[derive(Deserialize)]
+struct GithubLink {
+    owner: Option<String>,
+    repo: Option<String>,
+    number: Option<u64>,
+}
+
+impl ItemState {
+    /// A GitHub link names its owner, repository and number, the linear
+    /// package's rule for a synced issue (`require_unsynced_description`).
+    fn github_synced(&self) -> bool {
+        self.synced_with.iter().flatten().any(|link| {
+            link.metadata
+                .as_ref()
+                .is_some_and(|m| m.owner.is_some() && m.repo.is_some() && m.number.is_some())
+        })
+    }
 }
 
 /// A kept verdict for an item still in Triage acknowledges it while the
 /// watch's triage line and launch selection both skip it, so nothing
-/// starts the work: refuse it until the pass moves the item. An
-/// unreadable state refuses too, since the verdict would hide the item.
+/// starts the work: refuse it until the pass moves the item. A GitHub-synced
+/// mirror records kept in Triage, since § Outside contributions leaves it
+/// untouched there. An unreadable state refuses too, since the verdict would
+/// hide the item.
 #[allow(
     clippy::disallowed_methods,
     reason = "the triage verdict's one tracker read of the item's live state, before the record write"
@@ -137,25 +183,23 @@ pub(crate) fn kept_out_of_triage(settings: &Settings, file: &Path) -> Result<()>
     }
     let issue = row["issue"].as_str().unwrap_or_default();
     let unreadable = || refused("triage-state-unreadable", &[("issue", issue)]);
+    let variables = json!({ "id": issue }).to_string();
     let out = host::run_tagged(
         "triage-verdict",
         "linear",
         &settings.reads.tracker_cli,
         "item-state",
-        &["issues", "bulk-get", issue, "--format=safe"],
+        &["graphql", "--query", ITEM_READ, "--variables", &variables],
         TRACKER_TIMEOUT,
     )
     .map_err(|_| unreadable())?;
     if !out.status.success() {
         return Err(unreadable());
     }
-    let [item]: [ItemState; 1] = serde_json::from_slice::<Vec<ItemState>>(&out.stdout)
-        .ok()
-        .and_then(|rows| rows.try_into().ok())
-        .ok_or_else(unreadable)?;
-    match item.state_type.as_str() {
-        "triage" => Err(refused("triage-kept-in-triage", &[("issue", issue)])),
-        "" => Err(unreadable()),
+    let ItemRead { issue: item } = serde_json::from_slice(&out.stdout).map_err(|_| unreadable())?;
+    match (item.state.kind.as_str(), item.github_synced()) {
+        ("", _) => Err(unreadable()),
+        ("triage", false) => Err(refused("triage-kept-in-triage", &[("issue", issue)])),
         _ => Ok(()),
     }
 }
