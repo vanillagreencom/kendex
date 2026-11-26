@@ -3411,7 +3411,8 @@ mod dev_artifacts {
     /// A fold inside the round leaves no commit where the round's work
     /// began: a protected file the fold carries and the round did not
     /// authorize stays unattributed, through the item record and through the
-    /// worktree's map, while the fold is HEAD and after one more commit.
+    /// worktree's map, while the fold is HEAD and after one more commit. A
+    /// round that authorized it still checks valid over the same fold.
     #[test]
     fn a_folded_round_leaves_an_unauthorized_protected_addition_unattributed() {
         let w = World::new();
@@ -3419,6 +3420,11 @@ mod dev_artifacts {
         w.commit("first.txt");
         let round_base = w.head();
         w.stamp("r1");
+        result(&w.call(
+            &["round", "stamp"],
+            "adds",
+            &["--item", "1", "repair", "app CLI", "--adds", "tools/new"],
+        ));
         w.upstream("up.txt");
         w.commit("tools/new");
         let fixed = w.head();
@@ -3441,16 +3447,19 @@ mod dev_artifacts {
                 w.commit(path);
             }
             w.plant_receipt("r1", &w.failing_receipt("r1", "fix"));
+            w.plant_receipt("adds", &w.failing_receipt("adds", "fix"));
             let mut doc = unmapped.clone();
             doc["rebase_map"] = json!({ round_base.as_str(): fold, fixed.as_str(): fold });
             fs::write(w.item(), doc.to_string()).unwrap();
             assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+            assert_eq!(w.check("adds")["reason"], "valid");
             fs::write(w.item(), unmapped.to_string()).unwrap();
             let hop = format!(
                 "rebase-hop:\nrebase-map: {round_base} {fold}\nrebase-map: {fixed} {fold}\n"
             );
             fs::write(&map, hop).unwrap();
             assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+            assert_eq!(w.check("adds")["reason"], "valid");
             fs::remove_file(&map).unwrap();
         }
     }
