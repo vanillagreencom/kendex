@@ -5,6 +5,10 @@
 //! then the hop the push itself wrote. The modes are the branch push, the
 //! review checkpoint, the push-base delivery's preparation and publication,
 //! the live-round question alone, and the post-push record of a restack run.
+//! A mode that publishes refuses `push-read-only` from a worktree whose git
+//! directory holds the read-only record a hosted `read_only` launch puts
+//! there. On its host this refusal is the lane's only hold, and it binds
+//! `record-push` alone: a direct `git push` passes it.
 //!
 //! The push's answer is read three-valued: a push that never started pushed
 //! nothing; one that answered has its status; one whose answer was lost
@@ -104,6 +108,18 @@ impl RecordPush {
             RecordPush::Publish { .. } => "publish",
             RecordPush::CheckLiveRound { .. } => "check-live-round",
             RecordPush::RecordRestackValidation { .. } => "record-restack-validation",
+        }
+    }
+
+    /// Whether the mode can move the item's branch or the base on the
+    /// remote.
+    fn publishes(&self) -> bool {
+        match self {
+            RecordPush::Branch { .. }
+            | RecordPush::Checkpoint { .. }
+            | RecordPush::Prepare { .. }
+            | RecordPush::Publish { .. } => true,
+            RecordPush::CheckLiveRound { .. } | RecordPush::RecordRestackValidation { .. } => false,
         }
     }
 }
@@ -238,8 +254,8 @@ fn head(worktree: &Path) -> Result<String> {
 }
 
 /// The worktree the request names, resolved: a directory git reads as a
-/// checkout.
-fn resolve(worktree: &Path) -> Result<PathBuf> {
+/// checkout, and its own git directory.
+fn resolve(worktree: &Path) -> Result<(PathBuf, PathBuf)> {
     let resolved = fs::canonicalize(worktree)
         .ok()
         .filter(|p| fs::metadata(p).is_ok_and(|m| m.is_dir()))
@@ -249,7 +265,7 @@ fn resolve(worktree: &Path) -> Result<PathBuf> {
                 &[("path", &worktree.display().to_string())],
             )
         })?;
-    git(
+    let git_dir = git(
         &resolved,
         "absolute-git-dir",
         &["rev-parse", "--absolute-git-dir"],
@@ -260,7 +276,30 @@ fn resolve(worktree: &Path) -> Result<PathBuf> {
             &[("path", &resolved.display().to_string()), ("cause", &cause)],
         )
     })?;
-    Ok(resolved)
+    Ok((resolved, PathBuf::from(git_dir)))
+}
+
+/// Refuse a publishing push from a worktree a `read_only` launch put its
+/// record in. Absent, or empty as a hosted writing launch puts it, holds
+/// nothing; a plain file holding bytes, or an entry of any other kind,
+/// refuses; one that cannot be read refuses by its cause, since an unread
+/// record proves no writing lane.
+fn not_read_only(item: &str, git_dir: &Path) -> Result<()> {
+    let record = crate::marker::read_only_path(git_dir);
+    let held = match fs::symlink_metadata(&record) {
+        Ok(meta) => !meta.is_file() || meta.len() > 0,
+        Err(e) if e.kind() == ErrorKind::NotFound => false,
+        Err(e) => {
+            return Err(agent_runtime::Error::io("read-only-record-read", &record, e).into());
+        }
+    };
+    if held {
+        return Err(refuse(
+            "push-read-only",
+            &[("issue", item), ("record", &record.display().to_string())],
+        ));
+    }
+    Ok(())
 }
 
 /// A record resolved for other arguments would have another item's commits
@@ -1202,7 +1241,10 @@ pub fn run(
     if !valid_item(&item) {
         return Err(refuse("invalid-issue", &[("issue", &item)]));
     }
-    let worktree = resolve(r.worktree())?;
+    let (worktree, git_dir) = resolve(r.worktree())?;
+    if r.publishes() {
+        not_read_only(&item, &git_dir)?;
+    }
     let mut reply = Pushed {
         mode: r.word(),
         exit: 0,

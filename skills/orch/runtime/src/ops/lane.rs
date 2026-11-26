@@ -116,12 +116,14 @@ pub struct LaunchLane {
     /// name it included.
     #[serde(default)]
     pub desktop: bool,
-    /// The lane writes no repository file: its confinement binds the
-    /// checkout read-only bar its `tmp` scratch, so its admission holds no
-    /// path. Read only where the launch is judged, a first launch or one
-    /// over a `done` record, and recorded as `read_only`; a relaunch takes
-    /// the record's and ignores this one. Only a launch this machine
-    /// confines can hold it; any other refuses `read-only-unconfined`.
+    /// The lane ships no repository change, so its admission holds no path
+    /// and reads no launch blocker of its item. On this machine its
+    /// confinement binds the checkout read-only bar its `tmp` scratch; on
+    /// an ssh host only `record-push` refuses its push, and a direct `git
+    /// push` passes. Read only where the launch is judged, a first launch or
+    /// one over a `done` record, and recorded as `read_only`; a relaunch
+    /// takes the record's and ignores this one. A cloud session, or a local
+    /// harness this machine cannot confine, refuses `read-only-unconfined`.
     #[serde(default)]
     pub read_only: bool,
     /// The opening instruction, read by the harness at its start. Not a
@@ -215,6 +217,22 @@ impl LaunchLane {
                 ),
             },
         )
+    }
+
+    /// Why nothing holds a read-only launch to shipping no repository
+    /// change, `None` where something does: a cloud session runs no orch
+    /// runtime that could refuse its push, an ssh-hosted lane's
+    /// `record-push` refuses its publishing modes, an advisory hold a
+    /// direct `git push` passes, and a local one is held by this machine's
+    /// confinement.
+    fn read_only_unheld_cause(&self) -> Result<Option<String>> {
+        if self.kind() == CLOUD_KIND {
+            return Ok(Some("cloud".to_owned()));
+        }
+        match self.host() {
+            Some(_) => Ok(None),
+            None => self.unconfined_cause(),
+        }
     }
 
     /// The host kind the record carries: the request's word, else the one
@@ -1423,16 +1441,17 @@ pub(super) fn launch_lane(
         // a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
-    // A read-only lane holds no path, which stands only where this
-    // machine's confinement binds its checkout read-only: a launch it
-    // cannot confine would write under an empty touched set. It is decided
-    // where the launch is judged: a relaunch, unjudged, keeps the record's,
-    // so a writing record never turns read-only over the set it holds.
+    // A read-only lane holds no path, which stands only where something
+    // holds it to shipping no change, on an ssh host `record-push` alone: a
+    // launch nothing holds would ship one under an empty touched set. It is
+    // decided where the launch is judged: a relaunch, unjudged, keeps the
+    // record's, so a writing record never turns read-only over the set it
+    // holds.
     let read_only = match relaunch {
         Some(index) => lanes[index].read_only,
         None => r.read_only,
     };
-    if read_only && let Some(cause) = r.unconfined_cause()? {
+    if read_only && let Some(cause) = r.read_only_unheld_cause()? {
         return Err(Error::from(agent_runtime::Error::refused(
             "read-only-unconfined",
             &[

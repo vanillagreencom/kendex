@@ -179,7 +179,7 @@ A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `out
 - `orch-runtime validate start` writes the run's `proof` and `job` on its entry before the launch.
 - `orch-runtime validate start` first closes each open entry of the round whose `job` reads gone, as `reconcile-round` closes it, and sends its end notice. That close is its own write, so it stands when the start then refuses.
 - An open entry whose `job` still runs refuses the start `run-live`, and one whose `job` cannot be read refuses it `validate-unreadable`; both stay open. A named entry that has ended refuses it `run-ended`.
-- A start of a named entry refused before it writes the entry's `proof` and `job`, other than `run-live`, writes the refusal's key as `refused` on the open entry, which stays open. The next start that writes `proof` and `job` removes it.
+- A start refused before it writes the entry's `proof` and `job`, other than `run-live`, writes the refusal's key as `refused` on the open entry it was to start (the named entry, or the round's open admission when the start names none), which stays open. The next start that writes `proof` and `job` removes it.
 - `validate stop --item [ISSUE_ID] --run-dir [RUN_DIR]` writes `stop: {at}` before it ends the job.
 - `accept-result {round_id, outcome, run_dir?, end?, authorization?, summary_file?, attachments?}` closes the round's own entry, or with `run_dir` the run's `validate` entry.
 - `accept-result`'s `outcome` is required: `pass`, `fail`, `no-verdict`, `lost`, `stopped`, `no-change`, `handed-over` or `pass-excused`.
@@ -352,7 +352,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `touched`, `in_scope`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
 | `obligation` | `{repo, item, parent_repo, parent_item}`, the item's original lineage. |
 | `tier`, `tier_inputs` | The tier the first launch's brief states, and `{estimate, delta, paths}`. |
-| `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` where the lane's confinement binds its checkout read-only. |
+| `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` on a lane that changes no repository file. |
 | `parked`, `park_owed`, `sandbox` | `parked`, `{head, repo, at, pr?, until_pr?, until_repo?}`, is a hosted lane's park after its sandbox stop. |
 | `pending_pr`, `pauses`, `capacity_wait`, `walled` | `pending_pr`, `{pr, repo, head, until_pr?, until_repo?}`; the paused spans; `capacity_wait`, `{at}`; `walled`, `{at}`. |
 | `wake` | `{pid, start}` of a detached print-mode turn beside the lane's pane. |

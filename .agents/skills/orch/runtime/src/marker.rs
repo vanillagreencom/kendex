@@ -2,11 +2,12 @@
 //! checkout's common git directory (`lane-mail/<item in lower case>`,
 //! holding the lane's root), the lane's own mailbox directory under its
 //! root (`tmp/lane-mail/<item>`), the refresh record in the worktree's git
-//! directory (`lane-refresh`) and the launch-fields record beside the marker
-//! (`lane-launch/<item in lower case>.json`). This module owns their
-//! spellings and the containment over them, so a hosted launch composing a
-//! path for the provider and a local launch writing one land the record
-//! where the hook reads it.
+//! directory (`lane-refresh`), the read-only record beside it
+//! (`lane-read-only`), which `record-push` alone reads, and the
+//! launch-fields record beside the marker (`lane-launch/<item in lower
+//! case>.json`). This module owns their spellings and the containment over
+//! them, so a hosted launch composing a path for the provider and a local
+//! launch writing one land the record where its reader reads it.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -50,6 +51,10 @@ pub fn launch_path(common: &Path, item: &str) -> PathBuf {
 
 pub fn refresh_path(git_dir: &Path) -> PathBuf {
     git_dir.join("lane-refresh")
+}
+
+pub fn read_only_path(git_dir: &Path) -> PathBuf {
+    git_dir.join("lane-read-only")
 }
 
 pub fn mailbox_path(root: &Path, item: &str) -> PathBuf {

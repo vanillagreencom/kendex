@@ -708,10 +708,11 @@ pub struct Lane {
     pub viewer: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<Reservation>,
-    /// The lane's confinement binds its checkout read-only: no tracked file
-    /// and no git folder, only the checkout's `tmp` scratch. A relaunch
-    /// keeps the record's, set or not, whatever its request names; a launch
-    /// over a `done` record takes its request's.
+    /// The lane ships no repository change: on this machine its confinement
+    /// binds its checkout read-only bar the checkout's `tmp` scratch, and on
+    /// an ssh host only `record-push` refuses its push. A relaunch keeps the
+    /// record's, set or not, whatever its request names; a launch over a
+    /// `done` record takes its request's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
     /// The touched set the admission judged: the union

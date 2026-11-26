@@ -81,7 +81,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 
 - `obligation-conflict`: report the contradiction to root (§ Obligation lineage). Never rewrite the binding.
 - `lane-live`, `harness-live`, `harness-unreadable`: end the lane first (§ Recovery relaunch). A launch never starts a second session beside one.
-- `launch-blocked`, `launch-blocked-unread`, `overseer-unjudged`, `cap-unreadable`: never launch around it.
+- `launch-blocked`, `launch-blocked-unread`, `overseer-unjudged`, `cap-unreadable`: never launch around it. A lane whose brief changes no repository file launches `read_only` beside its item's launch blockers ([§ A read-only launch](#a-read-only-launch)).
 - `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
@@ -91,7 +91,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
   - A hosted lane that holds a shared path always refuses, naming the held path as `file`. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
   - A head that changes a shared path refuses with `item`, `file`, `holder` and `route`.
   - Any other refusal adds `branch`, `unknown` where the head itself was unread, and `cause`. `worktree-unproved` is a head that changes none of the launch's paths. A cloud session's head is never read.
-- `read-only-unconfined`: this machine cannot confine the lane, as `cause` names. Launch it here on a harness the confinement holds. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
+- `read-only-unconfined`: nothing can hold the lane to changing no file, as `cause` names: a cloud session (`cloud`), or a harness this machine cannot confine. Launch it here on a harness the confinement holds, or on an ssh host. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
 - `join-confined`: the holder's confinement bars the join. For a shared-file tie, retry once the holder stops. For a launch-blocker tie, retry a standalone launch once Linear clears the launch blockers. Retry the join if the holder becomes eligible under [§ A joined launch](#a-joined-launch). For `confinement-unproved`, wait for the holder's launch to report its confinement before retrying the join.
 - `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
 - `tier-narrower`: brief the judged cycle.
@@ -109,11 +109,18 @@ A first launch can join a live lane of the same repository before that lane's re
 
 ### A read-only launch
 
-A request naming `read_only: true` launches a lane whose confinement binds its checkout and its common git folder read-only, the checkout's `tmp` alone writable. Name it for a lane whose brief changes no repository file, such as a plan or a tracker-comment lane.
+A request naming `read_only: true` launches a lane that ships no repository change. Name it for a lane whose brief changes no repository file, such as a plan or a tracker-comment lane.
 
+- On this machine, its confinement binds its checkout and its common git folder read-only, the checkout's `tmp` alone writable.
+- On an ssh host, the launch puts a read-only record (`lane-read-only`) holding the worktree path in the worktree's git directory, and `record-push` refuses `push-read-only` from that worktree in every mode that pushes.
+  - A writing launch on that host puts the record empty, which holds nothing.
+  - A put that fails or never answers refuses the launch before the harness starts.
+  - The hold is advisory: it stops neither a direct `git push` nor the `record-push` of a consumer whose committed orch render reads no record.
+- A cloud session refuses `read-only-unconfined`.
+- Its first launch is not judged on its item's launch blockers, or a container ancestor's: it starts beside them. The item's writing launch still waits for them.
 - Its first launch judges an empty touched set: it meets no holder, and its record holds no path.
 - The tier is still judged over the paths a writing lane's touched set would hold ([lane-launch.md § Shared files](lane-launch.md#shared-files)).
-- A read-only lane takes no join on either side. A launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`. A read-only launch with any launch blocker refuses `launch-blocked`, whatever lane carries it.
+- A read-only lane takes no join on either side. A launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`. A read-only launch opens its own lane beside a lane carrying its blockers.
 - `read_only` is decided where the launch is judged. A relaunch keeps the record's `read_only` and touched set whatever it names (§ Recovery relaunch): one naming `read_only: true` over a writing record launches a writing lane. A launch over a `done` record is judged, and takes its request's.
 
 ### After the lane is recorded `preparing`
