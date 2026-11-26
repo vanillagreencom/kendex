@@ -29,7 +29,10 @@
 //! for a passed lane wall (`usage-limit|<identity>|<reset>`), or a failed
 //! turn (`<cause>|<key>`) on a reachable session. The identity is the lane's
 //! name or [`OVERSEER_TARGET`]. The wake types the resume sentence before the inbox
-//! line once per row value: the mark keeps the value typed. A wall's resume
+//! line once per row value: the mark keeps the value typed. The overseer's
+//! failed turn is asked as `<cause>|<key>|pass:<epoch>`, the pass's own
+//! second, so its row changes every pass and the wake resumes it once per
+//! pass while the failure stands. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room and for any standing halt to lift, then is typed past its usage banner (`deliver
 //! --account-room`).
@@ -107,6 +110,17 @@ use agent_runtime::effects::overseer_socket;
 pub const UNREAD_KIND: &str = "unread";
 /// The baseline row kind the lane and controller duties ask a resume with.
 pub const RESUME_KIND: &str = "resume";
+/// The resume row's cause for a session at a usage wall: typed past the
+/// banner once its account reads room.
+pub const WALL_CAUSE: &str = "usage-limit";
+
+/// The cause of the resume row `row` where its key opens with the session
+/// key `session` (`<cause>|<session>|…`), the one reading of whose session
+/// a row asks for.
+pub(super) fn resume_cause<'r>(row: &'r str, session: &str) -> Option<&'r str> {
+    let (cause, key) = row.split_once('|')?;
+    key.strip_prefix(session)?.starts_with('|').then_some(cause)
+}
 
 /// Whether a turn that ended on `cause` can spend a continuation: a
 /// provider stop as agent-runtime names it, from a row word or a
@@ -119,7 +133,7 @@ pub(super) fn can_continue(harness: Harness, cause: &str, reading: bool) -> bool
 /// turn ends the chain. An existing wall resume does not spend it.
 pub(super) fn continued(row: Option<&str>) -> bool {
     row.and_then(|r| r.split_once('|'))
-        .is_some_and(|(cause, _)| cause != "usage-limit")
+        .is_some_and(|(cause, _)| cause != WALL_CAUSE)
 }
 
 /// The watch's wake record, beside the fleet state: it shares the runner's
@@ -194,10 +208,10 @@ impl Resume {
     fn of(lane: &str, row: &str) -> Option<Resume> {
         let (cause, _) = row.split_once('|')?;
         let ended = match cause {
-            "usage-limit" => "its account's usage limit, which has since reset",
+            WALL_CAUSE => "its account's usage limit, which has since reset",
             "told" => return None,
             "length" => "the output limit",
-            "api-error" => "an API error",
+            stop::API_ERROR => "an API error",
             cause
                 if Harness::ALL
                     .iter()
@@ -212,7 +226,7 @@ impl Resume {
             row: row.to_owned(),
             cause: cause.to_owned(),
             ended,
-            wall: cause == "usage-limit",
+            wall: cause == WALL_CAUSE,
             reading_has_result: false,
         })
     }
@@ -788,12 +802,8 @@ impl Wake {
                 let Some(target) = overseer_target(overseer, &socket) else {
                     continue;
                 };
-                let key_prefix = format!("{} {}|", target.server, target.pane);
-                if resume.wall
-                    || !row
-                        .split_once('|')
-                        .is_some_and(|(_, key)| key.starts_with(&key_prefix))
-                {
+                let session = format!("{} {}", target.server, target.pane);
+                if resume.wall || resume_cause(&row, &session).is_none() {
                     continue;
                 }
                 if let Some(mark) = record

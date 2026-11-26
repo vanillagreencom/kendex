@@ -1,20 +1,27 @@
 //! The owner's alert through the overseer mailbox: a watch duty's one way
 //! to tell the owner of an overseer condition nobody in the session can act
-//! on. Three duties take it: the overseer duty for a context gap that stands
-//! and for an overseer whose session has ended (`watch::overseer`), the
+//! on. Three duties take it: the overseer duty for a context gap that stands,
+//! for an overseer whose session has ended, for an ended sign-in it moves
+//! the overseer off and for a succession that found no successor
+//! (`watch::overseer`), the
 //! wake duty for an idle overseer holding the owner's unread mail that no
 //! wake reached (`watch::wake`), and the GitHub duty for a sign-in the
 //! credential ladder cannot renew (`watch::github`).
 //!
-//! The turn is the same for each: the condition is said on the log on the
-//! pass that reads it, [`Word::Told`]; the owner is alerted on the next
-//! pass, and the mark advanced to [`Word::Alerted`] only once the owner
-//! holds the words, so an alert the owner did not get is sent again on the
-//! pass after; nothing is sent while that condition stands; a changed
-//! condition starts the turn again. Each duty keeps the mark in the record
-//! it owns for the condition: the overseer and GitHub duties in a baseline
-//! row of their own per condition, the wake duty in the wake record its
-//! mark already stands in.
+//! The overseer's context gap and death, the wake's mail and GitHub's
+//! sign-in take one turn: the condition is said on the log on the pass that
+//! reads it, [`Word::Told`]; the owner is alerted on the next pass, and the
+//! mark advanced to [`Word::Alerted`] only once the owner holds the words,
+//! so an alert the owner did not get is sent again on the pass after;
+//! nothing is sent while that condition stands; a changed condition starts
+//! the turn again. Each duty keeps the mark in the record it owns for the
+//! condition: the overseer and GitHub duties in a baseline row of their own
+//! per condition, the wake duty in the wake record its mark already stands
+//! in.
+//!
+//! The overseer's ended sign-in and no-successor notices carry no such
+//! mark: each is sent on the pass that reads it, once per episode, and owed
+//! in a baseline row of its own until the mailbox takes the words.
 
 use std::time::Duration;
 

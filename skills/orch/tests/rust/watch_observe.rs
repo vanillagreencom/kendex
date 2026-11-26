@@ -150,6 +150,17 @@ fn lane_rows(path: &Path) -> Reading<rows::Row> {
     rows::last_row(path)
 }
 
+/// The session record reader of a row that plants none: no Codex or
+/// Copilot record stands.
+fn no_session_record(
+    _: Harness,
+    _: &Path,
+    _: &Path,
+    _: &str,
+) -> Reading<Option<agent_runtime::session::Failure>> {
+    Reading::Gone
+}
+
 /// The lane record of `item` whose window is `name`, launched in `pane` on
 /// `server`, holding `identity` where the launch recorded one. Its status
 /// file is written under the mail root, so the lane has started.
@@ -350,6 +361,7 @@ macro_rules! lane_driver {
                 capture: &capture,
                 start_epoch: &observe::start_epoch,
                 rows: &lane_rows,
+                session_failure: &no_session_record,
                 status_file: &status_file,
                 windows: &windows_read,
                 receipts: &lanes::receipts_in,
@@ -2345,6 +2357,9 @@ struct OverseerDriver<'a> {
     alert: &'a dyn Fn(&str, &str) -> Result<(), String>,
     /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION`, on unless a row turns it off.
     succession: Succession,
+    /// The refusal every transfer asked is answered with, where a row
+    /// plants one; each is recorded all the same.
+    refusal: Option<&'a str>,
 }
 
 impl OverseerDriver<'_> {
@@ -2352,7 +2367,10 @@ impl OverseerDriver<'_> {
         let transfer = |request: RequestTransfer| {
             let mut asked = self.transfers.borrow_mut();
             asked.push(request);
-            Ok(format!("request-transfer:overseer:{}", asked.len()))
+            match self.refusal {
+                Some(refusal) => Err(refusal.to_owned()),
+                None => Ok(format!("request-transfer:overseer:{}", asked.len())),
+            }
         };
         let produced = overseer::observe(
             &overseer::Pass {
@@ -2516,6 +2534,7 @@ macro_rules! overseer_driver {
                 capture: &capture,
                 start_epoch: &observe::start_epoch,
                 rows: &lane_rows,
+                session_failure: &no_session_record,
                 status_file: &status_file,
                 windows: &windows_read,
                 receipts: &lanes::receipts_in,
@@ -2537,6 +2556,7 @@ macro_rules! overseer_driver {
             context_record: None,
             alert: &no_alert,
             succession: Succession::On,
+            refusal: None,
         };
     };
 }
@@ -2568,10 +2588,44 @@ fn window_of(server: &Server, pane: &str) -> String {
     fields.pane.window
 }
 
+/// The overseer walk choosing the Codex account `.codex`.
+fn walk_codex(_: &WalkRequest) -> orch_runtime::error::Result<Walked> {
+    Ok(Walked {
+        answer: WalkAnswer::Lane(Box::new(Chosen {
+            entry: "codex:standard:high".to_owned(),
+            harness: Harness::Codex,
+            host: None,
+            model: String::new(),
+            class: Some("standard".to_owned()),
+            effort: "high".to_owned(),
+            pick_model: String::new(),
+            account: Some("/home/me/.codex".to_owned()),
+            record: None,
+            warning: None,
+            launch: None,
+            kept: false,
+            kept_unmeasured: false,
+        })),
+        walk: "codex:standard:high".to_owned(),
+        entries: 1,
+        skipped: Vec::new(),
+        walled: 0,
+        unmeasured: 0,
+        unread: Vec::new(),
+        deprecated: Vec::new(),
+    })
+}
+
+/// A controller its provider stopped is resumed on its own account once
+/// per pass, a fresh resume row each pass, for the 30 minutes the stop's
+/// action holds; past them the walk leaving its provider is asked and the
+/// overseer moved to the entry it chose, with no resume beside the move.
+/// Its first returned turn ends the episode and its rows.
 #[test]
-fn an_idle_claude_controller_continues_after_server_error_but_not_a_usage_wall() {
-    if !isolated_row("an_idle_claude_controller_continues_after_server_error_but_not_a_usage_wall")
-    {
+fn a_provider_stopped_controller_is_resumed_each_pass_then_moved_to_another_provider() {
+    if !isolated_row(
+        "a_provider_stopped_controller_is_resumed_each_pass_then_moved_to_another_provider",
+    ) {
         return;
     }
     let temp = tempfile::tempdir().unwrap();
@@ -2587,45 +2641,793 @@ fn an_idle_claude_controller_continues_after_server_error_but_not_a_usage_wall()
     record["harness_start"] = json!(identity.start);
     fleet.set_overseer(record);
     let state = fleet.read();
-    overseer_driver!(server, fleet, reached, no_walk, readers, transfers, driver);
-    driver.succession = Succession::Off;
-    let provider = r#"{"harness":"claude","event":"StopFailure","error":"server_error"}"#;
-    std::fs::write(&file, format!("{provider}\n")).unwrap();
-    driver.pass(&state);
-    let first = driver
-        .baseline
-        .get("resume", "overseer")
-        .unwrap()
-        .to_owned();
-    assert!(first.starts_with("server_error|"));
-    driver.pass(&state);
-    assert_eq!(
-        driver.baseline.get("resume", "overseer"),
-        Some(first.as_str())
-    );
-    std::fs::write(&file, format!("{provider}\n{provider}\n")).unwrap();
-    assert!(
-        event_lines(&driver.pass(&state))
-            .contains(&"EVENT idle-after-return overseer cause=server_error".to_owned())
-    );
-    assert!(
-        driver
-            .baseline
-            .get("resume", "overseer")
-            .unwrap()
-            .starts_with("told|")
-    );
+    let walks: RefCell<Vec<WalkRequest>> = RefCell::new(Vec::new());
+    let walk = |request: &WalkRequest| {
+        walks.borrow_mut().push(request.clone());
+        walk_codex(request)
+    };
+    overseer_driver!(server, fleet, below, walk, readers, transfers, driver);
+    let key = format!("{} {pane}", server.pid);
     std::fs::write(
         &file,
-        r#"{"harness":"claude","event":"StopFailure","error":"rate_limit"}"#,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n",
     )
     .unwrap();
+    // Eight passes 240 seconds apart: the last at 1680 seconds, inside 30
+    // minutes.
+    let mut resumes = Vec::new();
+    for _ in 0..8 {
+        driver.pass(&state);
+        resumes.push(
+            driver
+                .baseline
+                .get("resume", "overseer")
+                .expect("each pass asks a resume")
+                .to_owned(),
+        );
+    }
+    let prefix = format!("server_error|{key}|");
+    assert!(
+        resumes.iter().all(|r| r.starts_with(&prefix)),
+        "{resumes:?}"
+    );
+    let mut distinct = resumes.clone();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 8, "a fresh resume each pass: {resumes:?}");
+    assert!(walks.borrow().is_empty(), "no walk inside the patience");
+    assert!(transfers.borrow().is_empty());
+    driver.pass(&state);
+    {
+        let asked = walks.borrow();
+        assert_eq!(asked.len(), 1);
+        assert!(
+            asked[0].caller.is_none(),
+            "the caller's own entry is not walked"
+        );
+        let preference = asked[0].preference.as_deref().unwrap_or_default();
+        assert!(!preference.is_empty(), "the setting's other entries walk");
+        assert!(
+            !preference.split(',').any(|e| e.starts_with("claude:")),
+            "{preference}"
+        );
+        let moved = transfers.borrow();
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].cause, TransferCause::Walled);
+        assert_eq!(
+            moved[0].exclude_account.as_deref(),
+            Some("/home/me/.eclaude")
+        );
+        assert_eq!(moved[0].successor.harness.as_deref(), Some("codex"));
+        assert_eq!(
+            moved[0].successor.account.as_deref(),
+            Some("/home/me/.codex")
+        );
+    }
+    assert_eq!(
+        driver.baseline.get("resume", "overseer"),
+        Some(resumes[7].as_str()),
+        "no resume beside the move"
+    );
+    std::fs::write(&file, "{\"harness\":\"claude\",\"event\":\"Stop\"}\n").unwrap();
     driver.pass(&state);
     assert_eq!(driver.baseline.get("resume", "overseer"), None);
-    assert!(matches!(
-        driver.slot.read().unwrap().verdict,
-        Verdict::Walled { .. }
-    ));
+    assert_eq!(driver.baseline.get("overseer-provider-stop", &key), None);
+}
+
+/// The Claude overseer whose rows end on a `server_error` StopFailure, at
+/// an idle prompt in its own pane: its pane key.
+fn provider_stopped_overseer(dir: &Path, server: &Server, fleet: &Fleet) -> String {
+    let (pane, identity) = redrawing(server, dir, "overseer", "claude", "❯\u{a0}\n");
+    await_drawn(server, &pane, "❯");
+    let file = dir.join("session-rows.jsonl");
+    std::fs::write(
+        &file,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n",
+    )
+    .unwrap();
+    let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+    record["session_rows"] = json!(file);
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    fleet.set_overseer(record);
+    format!("{} {pane}", server.pid)
+}
+
+/// The row `kind` holds for `key`, as an earlier pass would have left it.
+fn plant(baseline: &mut Baseline, kind: &str, key: &str, value: String) {
+    baseline.apply(Change::Set {
+        kind: kind.to_owned(),
+        identity: key.to_owned(),
+        value,
+    });
+}
+
+/// A provider stop that moves the overseer nowhere is resumed on every
+/// pass with a fresh row: past the patience under succession off, past it
+/// where the move the walk chose is refused, and where its episode went
+/// stale, a failure read after a whole patience with none read opening a
+/// new episode inside its own patience however long ago the old one began.
+#[test]
+fn a_provider_stopped_controller_that_moves_nowhere_is_resumed_each_pass() {
+    if !isolated_row("a_provider_stopped_controller_that_moves_nowhere_is_resumed_each_pass") {
+        return;
+    }
+    let now: u64 = 1_800_000_000;
+    let past_patience = format!("{}|{}", now - 1900, now - 240);
+    // case, the succession setting, the transfer's refusal, the episode
+    // planted, the walks and transfers asked over two passes
+    let cases: [(&str, Succession, Option<&str>, String, usize); 3] = [
+        (
+            "succession off",
+            Succession::Off,
+            None,
+            past_patience.clone(),
+            0,
+        ),
+        (
+            "move refused",
+            Succession::On,
+            Some("succession-off"),
+            past_patience,
+            2,
+        ),
+        (
+            "episode stale",
+            Succession::On,
+            None,
+            format!("{}|{}", now - 7200, now - 3600),
+            0,
+        ),
+    ];
+    for (case, succession, refusal, episode, asked) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let key = provider_stopped_overseer(&dir, &server, &fleet);
+        let state = fleet.read();
+        let walks = Cell::new(0);
+        let walk = |request: &WalkRequest| {
+            walks.set(walks.get() + 1);
+            walk_codex(request)
+        };
+        overseer_driver!(server, fleet, below, walk, readers, transfers, driver);
+        driver.succession = succession;
+        driver.refusal = refusal;
+        plant(
+            &mut driver.baseline,
+            "overseer-provider-stop",
+            &key,
+            episode,
+        );
+        for _ in 0..2 {
+            let at = driver.now;
+            let produced = driver.pass(&state);
+            let resume = driver
+                .baseline
+                .get("resume", "overseer")
+                .unwrap_or_default();
+            assert!(
+                resume.starts_with(&format!("server_error|{key}|"))
+                    && resume.ends_with(&format!("|pass:{at}")),
+                "{case}: {resume}"
+            );
+            assert_eq!(
+                produced.failed.is_some(),
+                refusal.is_some(),
+                "{case}: {:?}",
+                produced.failed
+            );
+        }
+        assert_eq!(walks.get(), asked, "{case}");
+        assert_eq!(transfers.borrow().len(), asked, "{case}");
+    }
+}
+
+/// A provider move whose transfer failed is settled as every walked
+/// succession is: asked again where it left its successor's account
+/// unproved, the next walk holding that account out, else asked no more and
+/// the owner told once; the session is resumed on each pass it does not
+/// move.
+#[test]
+fn a_provider_move_that_failed_is_asked_again_only_where_it_left_its_account_unproved() {
+    if !isolated_row(
+        "a_provider_move_that_failed_is_asked_again_only_where_it_left_its_account_unproved",
+    ) {
+        return;
+    }
+    let now: u64 = 1_800_000_000;
+    // case, the record's unproved stamp, the move row after the settling
+    // pass, the notices, the walks and transfers of the pass after
+    type Row<'a> = (&'a str, Option<u64>, &'a str, &'a [&'a str], usize);
+    let cases: [Row; 2] = [
+        (
+            "nothing unproved",
+            None,
+            "reported",
+            &["overseer-no-successor.txt"],
+            0,
+        ),
+        (
+            "unproved after the attempt",
+            Some(now - 30),
+            "announced",
+            &[],
+            1,
+        ),
+    ];
+    for (case, stamp, after, notices, moved) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let key = provider_stopped_overseer(&dir, &server, &fleet);
+        let mut doc = fleet.runner.fleet();
+        if let Some(at) = stamp {
+            doc["controller"]["unproved"] = json!([
+                {"account": "/home/me/.codex", "note": "successor-not-ready", "at": clock::iso_utc(at)}
+            ]);
+        }
+        doc["intents"] = json!([{
+            "id": "request-transfer:overseer:1", "op": "request-transfer", "target": "overseer",
+            "created_at": clock::iso_utc(now - 60), "outcome": "failed",
+            "observation": {"note": "successor-not-ready"}
+        }]);
+        fleet.runner.write_fleet(&doc);
+        let state = fleet.read();
+        let walks: RefCell<Vec<WalkRequest>> = RefCell::new(Vec::new());
+        let walk = |request: &WalkRequest| {
+            walks.borrow_mut().push(request.clone());
+            walk_codex(request)
+        };
+        let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let noting = |file: &str, _: &str| {
+            told.borrow_mut().push(file.to_owned());
+            Ok(())
+        };
+        overseer_driver!(server, fleet, below, walk, readers, transfers, driver);
+        driver.alert = &noting;
+        for (kind, value) in [
+            (
+                "overseer-provider-stop",
+                format!("{}|{}", now - 1900, now - 240),
+            ),
+            ("overseer-provider-move", "requested".to_owned()),
+            (
+                "overseer-transfer",
+                "1:request-transfer:overseer:1".to_owned(),
+            ),
+        ] {
+            plant(&mut driver.baseline, kind, &key, value);
+        }
+        driver.pass(&state);
+        assert_eq!(
+            driver.baseline.get("overseer-provider-move", &key),
+            Some(after),
+            "{case}"
+        );
+        let resume = driver
+            .baseline
+            .get("resume", "overseer")
+            .unwrap_or_default();
+        assert!(
+            resume.ends_with(&format!("|pass:{now}")),
+            "{case}: {resume}"
+        );
+        assert!(walks.borrow().is_empty(), "{case}");
+        let at = driver.now;
+        driver.pass(&state);
+        assert_eq!(walks.borrow().len(), moved, "{case}");
+        assert_eq!(transfers.borrow().len(), moved, "{case}");
+        if moved == 0 {
+            let resume = driver
+                .baseline
+                .get("resume", "overseer")
+                .unwrap_or_default();
+            assert!(resume.ends_with(&format!("|pass:{at}")), "{case}: {resume}");
+        } else {
+            assert!(
+                walks.borrow()[0]
+                    .exclude
+                    .iter()
+                    .any(|account| account == "/home/me/.codex"),
+                "{case}: the unproved account is held out"
+            );
+        }
+        assert_eq!(*told.borrow(), notices, "{case}");
+    }
+}
+
+/// Codex's capacity refusal on the overseer's pane is a provider stop: each
+/// pass asks a fresh `api-error` resume.
+#[test]
+fn a_codex_controller_at_capacity_is_resumed_each_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let codex = named_sleep(dir.path(), "codex");
+    let fixture = fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("fixtures/oversee-watch/codex-model-capacity.txt");
+    let line = format!("cat {}; exec {} 600", fixture.display(), codex.display());
+    let pane = server.open_window("overseer", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "codex");
+    await_drawn(&server, &pane, "at capacity");
+    let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), dir.path());
+    record["harness"] = json!("codex");
+    record["account"] = json!("/home/me/.codex");
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    let prefix = format!("api-error|{} {pane}|", server.pid);
+    let mut resumes = Vec::new();
+    for _ in 0..2 {
+        driver.pass(&state);
+        resumes.push(driver.baseline.get("resume", "overseer").map(str::to_owned));
+    }
+    assert!(
+        resumes
+            .iter()
+            .all(|r| r.as_deref().is_some_and(|r| r.starts_with(&prefix))),
+        "{resumes:?}"
+    );
+    assert_ne!(resumes[0], resumes[1], "a fresh resume each pass");
+    assert!(transfers.borrow().is_empty());
+}
+
+/// A Copilot overseer's failed turn is read from its own session record,
+/// its screen an ordinary prompt and its account reading room up to a
+/// monthly reset: the 429 rate limit walls it whatever the account reads,
+/// so its succession is asked on the next run with the spent account left
+/// out, and where no successor has room the owner is told, since a record
+/// wall's own words name no reset and the account's is no window it
+/// measures; a provider failure (`copilot-safety.jsonl`, recorded by
+/// agent-runtime) resumes it each pass with no walk.
+#[test]
+fn a_copilot_controller_s_failed_turn_in_its_own_record_is_judged_by_its_kind() {
+    let rate_limit = agent_runtime::session::Failure {
+        error: Some("rate_limit".to_owned()),
+        status: Some(429),
+        message: "Sorry, you have been rate-limited.".to_owned(),
+        at: Some(1_799_999_000),
+    };
+    let flagged = agent_runtime::session::Failure {
+        error: Some("query".to_owned()),
+        status: Some(400),
+        message: "400 Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt.".to_owned(),
+        at: Some(1_799_999_000),
+    };
+    let walk_none = |_: &WalkRequest| {
+        Ok(Walked {
+            answer: WalkAnswer::None,
+            walk: "copilot:standard:high".to_owned(),
+            entries: 1,
+            skipped: Vec::new(),
+            walled: 1,
+            unmeasured: 0,
+            unread: Vec::new(),
+            deprecated: Vec::new(),
+        })
+    };
+    let monthly = |_: &Caller, _: Option<&str>| {
+        let mut m = marks(MarkKey::Below, "", "", Succession::On, "/home/me/.copilot");
+        m.resets = clock::iso_utc(1_802_000_000);
+        Ok(m)
+    };
+    type Walk<'a> = &'a dyn Fn(&WalkRequest) -> orch_runtime::error::Result<Walked>;
+    // case, the record's failure, the walk, the walled row after two
+    // passes, the transfers, whether each pass resumes, the notices
+    type Row<'a> = (
+        &'a str,
+        &'a agent_runtime::session::Failure,
+        Walk<'a>,
+        Option<&'a str>,
+        usize,
+        bool,
+        &'a [&'a str],
+    );
+    let cases: [Row; 3] = [
+        (
+            "rate limit",
+            &rate_limit,
+            &walk_b,
+            Some("requested"),
+            1,
+            false,
+            &[],
+        ),
+        (
+            "rate limit, no successor",
+            &rate_limit,
+            &walk_none,
+            Some("reported"),
+            0,
+            false,
+            &["overseer-no-successor.txt"],
+        ),
+        ("provider failure", &flagged, &no_walk, None, 0, true, &[]),
+    ];
+    for (case, failure, walk, walled, asked, resumed, notices) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let copilot = named_sleep(dir.path(), "copilot");
+        // Copilot's framed composer at rest: an ordinary prompt.
+        let screen = dir.path().join("copilot-screen.txt");
+        let rule = "─".repeat(40);
+        std::fs::write(&screen, format!("{rule}\n❯ \n{rule}\n")).unwrap();
+        let pane = server.open_window(
+            "overseer",
+            dir.path(),
+            &format!(
+                "bash -c \"cat {}; exec {} 600\"",
+                screen.display(),
+                copilot.display()
+            ),
+        );
+        let identity = await_named(&server, &pane, "copilot");
+        await_drawn(&server, &pane, "❯");
+        let mut record = overseer_at(&server, &pane, &window_of(&server, &pane), dir.path());
+        record["harness"] = json!("copilot");
+        record["account"] = json!("/home/me/.copilot");
+        record["session_id"] = json!("s1");
+        record["harness_pid"] = json!(identity.pid.to_string());
+        record["harness_start"] = json!(identity.start);
+        fleet.set_overseer(record);
+        let state = fleet.read();
+        let cwd = dir.path().to_path_buf();
+        let recorded = |harness: Harness, home: &Path, at: &Path, id: &str| {
+            assert_eq!(
+                (harness, home, at, id),
+                (
+                    Harness::Copilot,
+                    Path::new("/home/me/.copilot"),
+                    cwd.as_path(),
+                    "s1"
+                )
+            );
+            Reading::Live(Some(failure.clone()))
+        };
+        let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let noting = |file: &str, _: &str| {
+            told.borrow_mut().push(file.to_owned());
+            Ok(())
+        };
+        overseer_driver!(server, fleet, monthly, walk, readers, transfers, driver);
+        driver.readers.session_failure = &recorded;
+        driver.alert = &noting;
+        let key = format!("{} {pane}", server.pid);
+        for _ in 0..2 {
+            let at = driver.now;
+            driver.pass(&state);
+            let resume = driver.baseline.get("resume", "overseer");
+            assert_eq!(
+                resume.is_some_and(|r| r.starts_with(&format!("api-error|{key}|"))
+                    && r.ends_with(&format!("|pass:{at}"))),
+                resumed,
+                "{case}: {resume:?}"
+            );
+            if !resumed {
+                assert_eq!(resume, None, "{case}");
+            }
+        }
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            walled,
+            "{case}"
+        );
+        let asked_for = transfers.borrow();
+        assert_eq!(asked_for.len(), asked, "{case}");
+        if let Some(asked) = asked_for.first() {
+            assert_eq!(asked.cause, TransferCause::Walled, "{case}");
+            assert_eq!(
+                asked.exclude_account.as_deref(),
+                Some("/home/me/.copilot"),
+                "{case}"
+            );
+        }
+        assert_eq!(*told.borrow(), notices, "{case}");
+    }
+}
+
+/// An ended sign-in on the overseer's account starts its succession at
+/// once and tells the owner once which account to sign in again.
+#[test]
+fn an_auth_walled_controller_moves_at_once_and_tells_the_owner_its_account_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+    std::fs::write(
+        dir.path().join("session-rows.jsonl"),
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"authentication_failed\",\"message\":\"Invalid API key\"}\n",
+    )
+    .unwrap();
+    let state = fleet.read();
+    let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+    let noting = |file: &str, text: &str| {
+        told.borrow_mut().push((file.to_owned(), text.to_owned()));
+        Ok(())
+    };
+    overseer_driver!(server, fleet, reached, walk_b, readers, transfers, driver);
+    driver.alert = &noting;
+    let first = driver.pass(&state);
+    assert!(
+        event_lines(&first)[0].starts_with(&format!("EVENT overseer-walled {pane} ")),
+        "{:?}",
+        lines(&first)
+    );
+    for _ in 0..3 {
+        driver.pass(&state);
+    }
+    assert_eq!(transfers.borrow().len(), 1);
+    assert_eq!(transfers.borrow()[0].cause, TransferCause::Walled);
+    let told = told.borrow();
+    assert_eq!(
+        told.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>(),
+        ["overseer-auth-wall.txt"]
+    );
+    assert!(told[0].1.contains("/home/me/.eclaude"), "{}", told[0].1);
+}
+
+/// A walled overseer the walk finds no successor for tells the owner once
+/// with its cause, an account that names a reset included: no reset is
+/// waited for and no resume asked. A send that failed is sent again on the
+/// next pass until the owner holds it. Nothing is asked in any case.
+#[test]
+fn a_walled_controller_with_no_successor_tells_the_owner_once() {
+    let now: u64 = 1_800_000_000;
+    let reset = now + 3600;
+    let resets_at = |_: &Caller, _: Option<&str>| {
+        let mut m = marks(
+            MarkKey::Reached(MarkKind::Headroom),
+            "0",
+            "5",
+            Succession::On,
+            "/home/me/.eclaude",
+        );
+        m.resets = clock::iso_utc(reset);
+        Ok(m)
+    };
+    type Judge<'a> = &'a dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
+    let notice = "overseer-no-successor.txt";
+    // case, the account judgement, the owner's sends that fail first, the
+    // notices sent
+    let cases: [(&str, Judge, usize, &[&str]); 3] = [
+        ("its account names a reset", &resets_at, 0, &[notice]),
+        ("no reset", &reached, 0, &[notice]),
+        (
+            "no reset, its first send failed",
+            &reached,
+            1,
+            &[notice, notice],
+        ),
+    ];
+    for (case, judge, failures, notices) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+        let state = fleet.read();
+        let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let noting = |file: &str, _: &str| {
+            let mut told = told.borrow_mut();
+            told.push(file.to_owned());
+            if told.len() <= failures {
+                return Err("channel=owner mailbox-busy".to_owned());
+            }
+            Ok(())
+        };
+        overseer_driver!(server, fleet, judge, walk_none, readers, transfers, driver);
+        driver.alert = &noting;
+        let key = format!("{} {pane}", server.pid);
+        for _ in 0..4 {
+            driver.pass(&state);
+        }
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("reported"),
+            "{case}"
+        );
+        assert!(transfers.borrow().is_empty(), "{case}");
+        assert_eq!(driver.baseline.get("resume", "overseer"), None, "{case}");
+        assert_eq!(*told.borrow(), notices, "{case}");
+    }
+}
+
+/// The overseer walk choosing none, every entry walled.
+fn walk_none(_: &WalkRequest) -> orch_runtime::error::Result<Walked> {
+    Ok(Walked {
+        answer: WalkAnswer::None,
+        walk: "claude:opus:high".to_owned(),
+        entries: 1,
+        skipped: Vec::new(),
+        walled: 1,
+        unmeasured: 0,
+        unread: Vec::new(),
+        deprecated: Vec::new(),
+    })
+}
+
+/// A notice still owed for a pane the controller has left, as a move that
+/// replaced the pane leaves it, is sent on the next pass and goes once the
+/// owner holds it; the rows of that pane go with it.
+#[test]
+fn a_notice_owed_for_a_pane_the_controller_left_is_sent_then_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    live_overseer(dir.path(), &server, &fleet);
+    let state = fleet.read();
+    let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+    let noting = |file: &str, text: &str| {
+        told.borrow_mut().push((file.to_owned(), text.to_owned()));
+        Ok(())
+    };
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    driver.alert = &noting;
+    let left = "1 %999";
+    let owed = format!("{left}|auth|1799999000");
+    let text = "overseer-auth-wall: sign in again on account /home/me/.eclaude.\n";
+    plant(
+        &mut driver.baseline,
+        "overseer-notice-owed",
+        &owed,
+        text.to_owned(),
+    );
+    plant(
+        &mut driver.baseline,
+        "overseer-walled",
+        left,
+        "requested".to_owned(),
+    );
+    driver.pass(&state);
+    assert_eq!(
+        *told.borrow(),
+        [("overseer-auth-wall.txt".to_owned(), text.to_owned())]
+    );
+    assert_eq!(driver.baseline.get("overseer-notice-owed", &owed), None);
+    assert_eq!(driver.baseline.get("overseer-walled", left), None);
+    driver.pass(&state);
+    assert_eq!(told.borrow().len(), 1, "sent once");
+}
+
+/// A notice the mailbox did not take stays owed whatever its episode does
+/// on the controller's own pane: an ended sign-in's notice that failed, the
+/// session then read live, is sent on each pass until the mailbox takes it,
+/// and once only after.
+#[test]
+fn a_notice_owed_on_the_controllers_own_pane_outlives_its_episode_until_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+    let rows = dir.path().join("session-rows.jsonl");
+    std::fs::write(
+        &rows,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"authentication_failed\",\"message\":\"Invalid API key\"}\n",
+    )
+    .unwrap();
+    let state = fleet.read();
+    let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let noting = |file: &str, _: &str| {
+        let mut told = told.borrow_mut();
+        told.push(file.to_owned());
+        if told.len() <= 2 {
+            return Err("channel=owner mailbox-busy".to_owned());
+        }
+        Ok(())
+    };
+    overseer_driver!(server, fleet, below, walk_b, readers, transfers, driver);
+    driver.alert = &noting;
+    driver.pass(&state);
+    driver.pass(&state);
+    assert_eq!(transfers.borrow().len(), 1);
+    assert_eq!(*told.borrow(), ["overseer-auth-wall.txt"]);
+    std::fs::write(&rows, "{\"harness\":\"claude\",\"event\":\"Stop\"}\n").unwrap();
+    for _ in 0..3 {
+        let live = driver.pass(&state);
+        assert!(
+            !lines(&live)
+                .iter()
+                .any(|line| line.starts_with(&format!("EVENT overseer-walled {pane}"))),
+            "{:?}",
+            lines(&live)
+        );
+    }
+    assert_eq!(*told.borrow(), ["overseer-auth-wall.txt"; 3]);
+}
+
+/// A walled succession's failed transfer is asked again only where it left
+/// its successor's account unproved, so the next walk holds it out; a
+/// failure that left none would choose the same successor, so it is
+/// reported and the owner told once. A notice of another kind still owed
+/// on the same pane stays owed beside it until the mailbox takes it.
+#[test]
+fn a_walled_transfer_that_failed_is_asked_again_only_where_it_left_its_account_unproved() {
+    let now: u64 = 1_800_000_000;
+    let auth = "overseer-auth-wall.txt";
+    let none = "overseer-no-successor.txt";
+    // case, the record's unproved stamp, whether an ended sign-in's notice
+    // the mailbox refuses once is owed on the pane, the passes, the row
+    // after, the notices
+    type Row<'a> = (&'a str, Option<u64>, bool, usize, &'a str, &'a [&'a str]);
+    let cases: [Row; 3] = [
+        ("unproved", Some(now - 30), false, 1, "announced", &[]),
+        ("nothing unproved", None, false, 1, "reported", &[none]),
+        (
+            "nothing unproved, a sign-in notice owed",
+            None,
+            true,
+            2,
+            "reported",
+            &[auth, none, auth],
+        ),
+    ];
+    for (case, stamp, owed, passes, after, notices) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+        let mut doc = fleet.runner.fleet();
+        if let Some(at) = stamp {
+            doc["controller"]["unproved"] = json!([
+                {"account": "/home/me/.bclaude", "note": "successor-not-ready", "at": clock::iso_utc(at)}
+            ]);
+        }
+        doc["intents"] = json!([{
+            "id": "request-transfer:overseer:1", "op": "request-transfer", "target": "overseer",
+            "created_at": clock::iso_utc(now - 60), "outcome": "failed",
+            "observation": {"note": "successor-not-ready"}
+        }]);
+        fleet.runner.write_fleet(&doc);
+        let state = fleet.read();
+        let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let noting = |file: &str, _: &str| {
+            let mut told = told.borrow_mut();
+            told.push(file.to_owned());
+            if owed && told.len() == 1 {
+                return Err("channel=owner mailbox-busy".to_owned());
+            }
+            Ok(())
+        };
+        overseer_driver!(server, fleet, reached, no_walk, readers, transfers, driver);
+        driver.alert = &noting;
+        let key = format!("{} {pane}", server.pid);
+        for (kind, value) in [
+            ("overseer-walled", "requested"),
+            ("overseer-transfer", "1:request-transfer:overseer:1"),
+        ] {
+            driver.baseline.apply(Change::Set {
+                kind: kind.to_owned(),
+                identity: key.clone(),
+                value: value.to_owned(),
+            });
+        }
+        if owed {
+            plant(
+                &mut driver.baseline,
+                "overseer-notice-owed",
+                &format!("{key}|auth|{}", now - 600),
+                "overseer-auth-wall: sign in again on account /home/me/.eclaude.\n".to_owned(),
+            );
+        }
+        for _ in 0..passes {
+            driver.pass(&state);
+        }
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some(after),
+            "{case}"
+        );
+        assert_eq!(*told.borrow(), notices, "{case}");
+        assert!(transfers.borrow().is_empty(), "{case}");
+    }
 }
 
 /// A pane holding nothing but shells under a record naming its harness is
@@ -7720,7 +8522,9 @@ fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line
     assert_eq!(successor.extra_args, vec!["--verbose".to_owned()]);
 }
 
-/// The walk answering `none` marks the row reported with no request made;
+/// The walk answering `none` marks the row reported with no request made
+/// (what the owner is told is
+/// `a_walled_controller_with_no_successor_waits_for_its_reset_or_tells_the_owner_once`'s);
 /// the walk choosing an entry of another harness opens that harness under
 /// the full bypass with none of the caller's words.
 #[test]
@@ -7766,9 +8570,11 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
             deprecated: Vec::new(),
         })
     };
+    let accept = |_: &str, _: &str| Ok(());
     overseer_driver!(
         server, fleet, reached, walk_none, readers, transfers, driver
     );
+    driver.alert = &accept;
     let key = format!("{} {pane}", server.pid);
     driver.pass(&state);
     driver.pass(&state);
@@ -7844,61 +8650,100 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
     assert!(successor.extra_args.is_empty());
 }
 
-/// A walled overseer's hand-over that finds no successor names, on the
-/// line the watch prints at that pass, each provider whose entries the walk
-/// passed over and why: from the walk's `host-unread` rows where it judged
-/// another entry and found no room, from its refusal where it judged none.
-/// The row stays `reported`, so the line is said once.
+/// A walled overseer's succession decides nothing on evidence it could not
+/// read: a walk that chose none past a provider it could not read, its
+/// line naming each such provider and why, one that chose none past an
+/// entry its judge could not answer, the line naming the entry and the
+/// answer, and a walk refused, its refusal as the line. Each is the
+/// pass's failure with its cause, the row stays announced and nobody is
+/// told; the next pass judges again and carries out what it then finds.
 #[test]
-fn a_walled_controller_with_no_successor_names_each_unread_host_and_its_cause() {
+fn a_walled_succession_on_unread_evidence_decides_nothing_and_is_judged_again() {
     let busy = "host-busy count=4 cap=4 verb=accounts item=- step=accounts";
     let failed = "host-accounts-unreadable host=vm2 exit=1 down";
     let skip = |entry: &str, host: &str, cause: &str| json!({"entry": entry, "reason": "host-unread", "lane": null, "host": host, "cause": cause});
-    let judged_none = Walked {
-        answer: WalkAnswer::None,
-        walk: "claude@vm:opus:high,codex@vm:gpt:high,claude@vm2:opus:high,claude:opus:high"
-            .to_owned(),
-        entries: 4,
-        skipped: vec![
-            skip("claude@vm:opus:high", "vm", busy),
-            skip("codex@vm:gpt:high", "vm", busy),
-            skip("claude@vm2:opus:high", "vm2", failed),
-            json!({"entry": "claude:opus:high", "reason": "walled", "lane": null}),
-        ],
-        walled: 1,
-        unmeasured: 0,
-        unread: vec![
-            "claude@vm:opus:high".to_owned(),
-            "codex@vm:gpt:high".to_owned(),
-            "claude@vm2:opus:high".to_owned(),
-        ],
-        deprecated: Vec::new(),
+    let judged_none = |_: &WalkRequest| -> orch_runtime::error::Result<Walked> {
+        Ok(Walked {
+            answer: WalkAnswer::None,
+            walk: "claude@vm:opus:high,codex@vm:gpt:high,claude@vm2:opus:high,claude:opus:high"
+                .to_owned(),
+            entries: 4,
+            skipped: vec![
+                skip("claude@vm:opus:high", "vm", busy),
+                skip("codex@vm:gpt:high", "vm", busy),
+                skip("claude@vm2:opus:high", "vm2", failed),
+                json!({"entry": "claude:opus:high", "reason": "walled", "lane": null}),
+            ],
+            walled: 1,
+            unmeasured: 0,
+            unread: vec![
+                "claude@vm:opus:high".to_owned(),
+                "codex@vm:gpt:high".to_owned(),
+                "claude@vm2:opus:high".to_owned(),
+            ],
+            deprecated: Vec::new(),
+        })
     };
-    let cases: [(&str, orch_runtime::error::Result<Walked>, String); 2] = [
+    let entry_unread = |_: &WalkRequest| -> orch_runtime::error::Result<Walked> {
+        Ok(Walked {
+            answer: WalkAnswer::None,
+            walk: "codex:gpt:high,claude:opus:high".to_owned(),
+            entries: 2,
+            skipped: vec![
+                json!({"entry": "codex:gpt:high", "reason": "no-record", "lane": null}),
+                json!({"entry": "claude:opus:high", "reason": "walled", "lane": null}),
+            ],
+            walled: 1,
+            unmeasured: 0,
+            unread: vec!["codex:gpt:high".to_owned()],
+            deprecated: Vec::new(),
+        })
+    };
+    let refused = |_: &WalkRequest| -> orch_runtime::error::Result<Walked> {
+        Err(agent_runtime::Error::refused(
+            "account-unjudged",
+            &[("step", "host"), ("host", "vm2"), ("cause", failed)],
+        )
+        .into())
+    };
+    type Answer<'a> = &'a dyn Fn(&WalkRequest) -> orch_runtime::error::Result<Walked>;
+    // case, the two walks' answers, the line of the unread pass
+    let cases: [(&str, [Answer; 2], String); 3] = [
         (
-            "judged and no room",
-            Ok(judged_none),
+            "an entry unread",
+            [&entry_unread, &walk_b],
+            "account-unjudged step=entry entry=codex:gpt:high reason=no-record".to_owned(),
+        ),
+        (
+            "a provider unread",
+            [&judged_none, &walk_b],
             format!("account-unjudged step=host host=vm cause={busy} host=vm2 cause={failed}"),
         ),
         (
-            "none judged",
-            Err(agent_runtime::Error::refused(
-                "account-unjudged",
-                &[("step", "host"), ("host", "vm2"), ("cause", failed)],
-            )
-            .into()),
+            "walk refused",
+            [&refused, &walk_b],
             format!("account-unjudged step=host host=vm2 cause={failed}"),
         ),
     ];
-    for (case, answer, line) in cases {
+    for (case, answers, line) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
         let (pane, window) = walled_overseer(dir.path(), &server, &fleet);
         let state = fleet.read();
-        let answer = RefCell::new(Some(answer));
-        let walk = |_: &WalkRequest| answer.borrow_mut().take().expect("one walk per wall");
+        let walked = Cell::new(0);
+        let walk = |request: &WalkRequest| {
+            let at = walked.get();
+            walked.set(at + 1);
+            answers.get(at).expect("one walk per judgement")(request)
+        };
+        let told: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let noting = |file: &str, _: &str| {
+            told.borrow_mut().push(file.to_owned());
+            Ok(())
+        };
         overseer_driver!(server, fleet, reached, walk, readers, transfers, driver);
+        driver.alert = &noting;
         let key = format!("{} {pane}", server.pid);
         let first = driver.pass(&state);
         assert!(
@@ -7906,19 +8751,108 @@ fn a_walled_controller_with_no_successor_names_each_unread_host_and_its_cause() 
             "{case}: {:?}",
             lines(&first)
         );
-        let handed_over = driver.pass(&state);
-        assert_eq!(lines(&handed_over), vec![line], "{case}");
+        let unread = driver.pass(&state);
+        assert_eq!(lines(&unread), [line], "{case}");
+        assert!(
+            unread
+                .failed
+                .as_deref()
+                .is_some_and(|f| f.starts_with("successor-unread cause=")),
+            "{case}: {:?}",
+            unread.failed
+        );
+        assert_eq!(
+            driver.baseline.get("overseer-walled", &key),
+            Some("announced"),
+            "{case}"
+        );
+        assert!(transfers.borrow().is_empty(), "{case}");
+        assert!(told.borrow().is_empty(), "{case}");
+        driver.pass(&state);
+        assert_eq!(transfers.borrow().len(), 1, "{case}");
+        assert!(told.borrow().is_empty(), "{case}");
+    }
+}
+
+/// A walk left unread decides no successor and is walked again on each
+/// pass, the row announced and nobody told; once a whole patience passed
+/// since the walled case was announced the owner is told once, the unread
+/// line the notice's cause. A case announced with no instant kept starts
+/// its patience on the pass that reads it.
+#[test]
+fn an_unread_walk_is_walked_again_and_tells_the_owner_once_past_its_patience() {
+    let unread_line = "account-unjudged step=host host=vm2 cause=host-accounts-unreadable";
+    let unread = |_: &WalkRequest| -> orch_runtime::error::Result<Walked> {
+        Ok(Walked {
+            answer: WalkAnswer::None,
+            walk: "claude@vm2:opus:high,claude:opus:high".to_owned(),
+            entries: 2,
+            skipped: vec![
+                json!({"entry": "claude@vm2:opus:high", "reason": "host-unread", "lane": null, "host": "vm2", "cause": "host-accounts-unreadable"}),
+                json!({"entry": "claude:opus:high", "reason": "walled", "lane": null}),
+            ],
+            walled: 1,
+            unmeasured: 0,
+            unread: vec!["claude@vm2:opus:high".to_owned()],
+            deprecated: Vec::new(),
+        })
+    };
+    // case, whether the walled row is planted announced with no instant
+    for (case, planted) in [("announced", false), ("announced, no instant kept", true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, _) = walled_overseer(dir.path(), &server, &fleet);
+        let state = fleet.read();
+        let told: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+        let noting = |file: &str, text: &str| {
+            told.borrow_mut().push((file.to_owned(), text.to_owned()));
+            Ok(())
+        };
+        overseer_driver!(server, fleet, reached, unread, readers, transfers, driver);
+        driver.alert = &noting;
+        let key = format!("{} {pane}", server.pid);
+        if planted {
+            plant(
+                &mut driver.baseline,
+                "overseer-walled",
+                &key,
+                "announced".to_owned(),
+            );
+        }
+        let announced = driver.now;
+        driver.pass(&state);
+        for at in [announced + 60, announced + 1799] {
+            driver.now = at;
+            let within = driver.pass(&state);
+            assert!(
+                within
+                    .failed
+                    .as_deref()
+                    .is_some_and(|f| f.starts_with("successor-unread cause=")),
+                "{case}: {:?}",
+                within.failed
+            );
+            assert_eq!(
+                driver.baseline.get("overseer-walled", &key),
+                Some("announced"),
+                "{case}"
+            );
+            assert!(told.borrow().is_empty(), "{case}");
+        }
+        driver.now = announced + 1800;
+        driver.pass(&state);
+        driver.pass(&state);
         assert_eq!(
             driver.baseline.get("overseer-walled", &key),
             Some("reported"),
             "{case}"
         );
-        assert!(
-            transfers.borrow().is_empty(),
-            "{case}: nothing is asked for"
-        );
-        let after = driver.pass(&state);
-        assert!(lines(&after).is_empty(), "{case}: {:?}", lines(&after));
+        let told = told.borrow();
+        assert_eq!(told.len(), 1, "{case}");
+        assert_eq!(told[0].0, "overseer-no-successor.txt", "{case}");
+        assert!(told[0].1.contains(unread_line), "{case}: {}", told[0].1);
+        assert!(transfers.borrow().is_empty(), "{case}");
     }
 }
 

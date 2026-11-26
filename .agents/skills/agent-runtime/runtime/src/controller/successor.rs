@@ -98,15 +98,93 @@ fn walk_request(
     let mut entry = caller.walk_entry(harness);
     entry.keep = state == Some(AccountState::HasRoom)
         && matches!(mark, MarkKind::Context | MarkKind::Memory);
-    let (exclude, preference) = match mark {
-        MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
-        MarkKind::Context => (
+    Ok(match mark {
+        MarkKind::Headroom | MarkKind::Rate => recovery_walk(caller, harness, Leaving::Account),
+        MarkKind::Context => departing(
+            caller,
+            harness,
+            Some(entry),
             Vec::new(),
             (!choosing.controller.preference_set).then(String::new),
         ),
-        MarkKind::Memory => (Vec::new(), None),
-    };
-    Ok(WalkRequest {
+        MarkKind::Memory => departing(caller, harness, Some(entry), Vec::new(), None),
+    })
+}
+
+/// What a succession leaves behind: the stopped session's account, at a
+/// wall or an account mark, or its provider, which a provider that stopped
+/// answering for its whole patience (`stop::PROVIDER_PATIENCE`) leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Leaving<'a> {
+    Account,
+    /// The walk over `preference`, the setting's text, less every entry
+    /// on the caller's provider.
+    Provider {
+        preference: &'a str,
+    },
+}
+
+/// The walk a succession that leaves `leaving` takes for `caller` on
+/// `harness`. Leaving the account, the account is left out of every pick
+/// and the caller's own entry is walked last, never kept. Leaving the
+/// provider, every entry on the caller's provider ([`provider`]) and the
+/// caller's own entry are left out, since another account of the same
+/// provider changes nothing; a preference the grammar refuses is walked as
+/// written, so the walk refuses it by its own rule. Either walk takes one
+/// account nothing measured where none has room.
+pub fn recovery_walk(caller: &Caller, harness: Harness, leaving: Leaving) -> WalkRequest {
+    match leaving {
+        Leaving::Account => departing(
+            caller,
+            harness,
+            Some(caller.walk_entry(harness)),
+            caller.account.iter().cloned().collect(),
+            None,
+        ),
+        Leaving::Provider { preference } => {
+            let own = provider(harness, caller.model.as_deref().unwrap_or_default());
+            let kept = match Preference::parse(preference, Scope::Overseer) {
+                Ok(parsed) => parsed
+                    .entries
+                    .iter()
+                    .filter(|entry| provider(entry.harness, &entry.model) != own)
+                    .map(|entry| entry.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                Err(_) => preference.to_owned(),
+            };
+            departing(caller, harness, None, Vec::new(), Some(kept))
+        }
+    }
+}
+
+/// The company whose service a session on `harness` running `model` sends
+/// its turns to, which every account and harness on that service shares: a
+/// Pi model's `provider/` word names it, a `pi-claude/` model running on a
+/// Claude seat, an `openai-codex/` one on the ChatGPT Codex service Codex
+/// itself spends, and a `github-copilot/` one on the Copilot pool
+/// (`Harness::billed`, `Harness::pool`).
+fn provider(harness: Harness, model: &str) -> &str {
+    match (harness, model.split_once('/')) {
+        (Harness::Claude, _) | (Harness::Pi, Some(("pi-claude" | "anthropic", _))) => "anthropic",
+        (Harness::Codex, _) | (Harness::Pi, Some(("openai" | "openai-codex", _))) => "openai",
+        (Harness::Copilot, _) | (Harness::Pi, Some(("github-copilot", _))) => "github",
+        (Harness::Pi, Some((service, _))) => service,
+        (Harness::Pi, None) => "pi",
+    }
+}
+
+/// An overseer succession's walk: the caller's source posture, the
+/// `entry` walked last, the accounts `exclude` names left out, over
+/// `preference` in place of the setting's.
+fn departing(
+    caller: &Caller,
+    harness: Harness,
+    entry: Option<crate::accounts::walk::Caller>,
+    exclude: Vec<String>,
+    preference: Option<String>,
+) -> WalkRequest {
+    WalkRequest {
         scope: Scope::Overseer,
         preference,
         lane: None,
@@ -114,9 +192,9 @@ fn walk_request(
         max_pct: None,
         min_headroom_pct: None,
         source: Some(source(caller, harness)),
-        caller: Some(entry),
+        caller: entry,
         keep_unmeasured: true,
-    })
+    }
 }
 
 /// The walk and the pick the choice judges on, its opener's: the walk over
@@ -539,6 +617,96 @@ mod tests {
             assert_eq!(entry.keep, keep, "{case}");
             assert!(request.keep_unmeasured, "{case}");
             assert_eq!(request.exclude, exclude, "{case}");
+        }
+    }
+
+    /// A provider stop's walk leaves out every entry on the caller's
+    /// provider, whichever harness carries it, and the caller's own entry;
+    /// an account's walk leaves out the account and walks the caller last.
+    #[test]
+    fn a_recovery_walk_leaves_the_callers_account_or_every_entry_on_its_provider() {
+        let preference = "claude:standard:high,pi:pi-claude/opus:high,pi:anthropic/claude-x:high,codex:standard:high,pi:openai/gpt-5:high,copilot:standard:high,pi:github-copilot/gpt-5:high,pi:google/gemini:high";
+        let caller = |harness, account: &str, model: &str| Caller {
+            harness: Some(harness),
+            account: Some(account.to_owned()),
+            model: Some(model.to_owned()),
+            ..Caller::default()
+        };
+        // case, the caller, the walk left, the preference walked, the
+        // accounts excluded, the caller's entry walked
+        type Row<'a> = (
+            &'a str,
+            Caller,
+            Leaving<'a>,
+            Option<&'a str>,
+            &'a [&'a str],
+            bool,
+        );
+        let rows: [Row; 5] = [
+            (
+                "claude account",
+                caller(Harness::Claude, "/a/a1", "opus"),
+                Leaving::Account,
+                None,
+                &["/a/a1"],
+                true,
+            ),
+            (
+                "claude provider",
+                caller(Harness::Claude, "/a/a1", "opus"),
+                Leaving::Provider { preference },
+                Some(
+                    "codex:standard:high,pi:openai/gpt-5:high,copilot:standard:high,pi:github-copilot/gpt-5:high,pi:google/gemini:high",
+                ),
+                &[],
+                false,
+            ),
+            (
+                "pi copilot provider",
+                caller(Harness::Pi, "/p/root", "github-copilot/gpt-5"),
+                Leaving::Provider { preference },
+                Some(
+                    "claude:standard:high,pi:pi-claude/opus:high,pi:anthropic/claude-x:high,codex:standard:high,pi:openai/gpt-5:high,pi:google/gemini:high",
+                ),
+                &[],
+                false,
+            ),
+            // Pi's `openai-codex/` model is the ChatGPT Codex service Codex
+            // spends (harness.rs's real-example row names
+            // `openai-codex/gpt-5.5`).
+            (
+                "codex provider",
+                caller(Harness::Codex, "/c/c1", ""),
+                Leaving::Provider {
+                    preference: "codex:standard:high,pi:openai-codex/gpt-5.5:high,copilot:standard:high",
+                },
+                Some("copilot:standard:high"),
+                &[],
+                false,
+            ),
+            (
+                "refused preference",
+                caller(Harness::Codex, "/c/c1", ""),
+                Leaving::Provider {
+                    preference: "codex",
+                },
+                Some("codex"),
+                &[],
+                false,
+            ),
+        ];
+        for (case, caller, leaving, walked, exclude, entry) in rows {
+            let harness = caller.harness.unwrap();
+            let request = recovery_walk(&caller, harness, leaving);
+            assert_eq!(request.preference.as_deref(), walked, "{case}");
+            assert_eq!(request.exclude, exclude, "{case}");
+            assert_eq!(
+                request.caller.as_ref().map(|c| (c.harness, c.keep)),
+                entry.then_some((harness, false)),
+                "{case}"
+            );
+            assert!(request.keep_unmeasured, "{case}");
+            assert_eq!(request.scope, Scope::Overseer, "{case}");
         }
     }
 }
