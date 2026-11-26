@@ -1274,8 +1274,10 @@ pub(super) fn merged_keys(
 /// after the floor, by head branch and by mention; a key not in the
 /// item's row is a `merged` line, the row then holds every key and merge epoch; a parked
 /// item's dependency is read by number and its state change is the
-/// parked-merged or parked-closed line. A fleet with a Linear team
-/// defers the merged line while the tracker's verdict is unknown.
+/// parked-merged or parked-closed line. The parked-merged line repeats
+/// on every pass while the lane stays parked, since the overseer may be
+/// unable to act on it until a tracker hold clears. A fleet with a
+/// Linear team defers it while the tracker's verdict is unknown.
 fn merged(
     gh: &Gh,
     inputs: &Inputs,
@@ -1305,8 +1307,10 @@ fn merged(
         };
     let mut parked_items = BTreeSet::new();
     for entry in &items {
+        // A close or a relaunch ends the park and with it the report.
+        let repeat_parked = entry.parked;
         // An observed merge does not establish that a park was released.
-        let repeat_parked = entry.parked && inputs.settings.linear_team.is_none();
+        let allow_unread = entry.parked && inputs.settings.linear_team.is_none();
         let mut deferred = false;
         if let Some((repo, until)) = &entry.until {
             parked_items.insert(entry.item.clone());
@@ -1342,7 +1346,7 @@ fn merged(
                         deferred = !parked_merged(
                             entry,
                             &format!("{repo}#{until}"),
-                            repeat_parked,
+                            allow_unread,
                             produced,
                         );
                     }
@@ -1391,7 +1395,7 @@ fn merged(
             && keys.iter().any(|key| key == parked_key)
             && (repeat_parked || !prior.contains(&parked_key))
         {
-            parked_merged(entry, parked_key, repeat_parked, produced);
+            parked_merged(entry, parked_key, allow_unread, produced);
         }
         inventory.merged.insert(entry.item.clone(), keys);
         produced.changes.push(Change::Set {

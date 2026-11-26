@@ -975,11 +975,9 @@ fn the_owed_inventory_matches_the_released_recorded_lines() {
     );
 }
 
-#[test]
-fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
-    if !isolated_row("parked_merges_fall_back_to_github_only_without_a_linear_team") {
-        return;
-    }
+/// A queue park (KEN-1, its own #7) and a dependency park (KEN-2, until
+/// #8) whose pull requests merged, beside a running lane that waits on #8.
+fn parked_merge_world() -> World {
     let mut world = World::new();
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
         "lanes": [
@@ -1004,7 +1002,33 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
         "repos/owner/repo/pulls/8",
         json!({"body": pull(8, "dependency")}),
     );
-    let both = [("KEN-1", "7", "owner/repo"), ("KEN-2", "8", "owner/repo")];
+    world
+}
+
+/// The parked-merged events a pass produced, as `(item, pr, repo)`.
+fn parked_merged(produced: &Produced) -> Vec<(&str, &str, &str)> {
+    produced
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::ParkedMerged { item, pr, repo } => {
+                Some((item.as_str(), pr.as_str(), repo.as_str()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+const BOTH_PARKED: [(&str, &str, &str); 2] =
+    [("KEN-1", "7", "owner/repo"), ("KEN-2", "8", "owner/repo")];
+
+#[test]
+fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
+    if !isolated_row("parked_merges_fall_back_to_github_only_without_a_linear_team") {
+        return;
+    }
+    let world = parked_merge_world();
+    let both = BOTH_PARKED;
     for (team, verdict, expected) in [
         (Some("kendex"), None, &[][..]),
         (None, None, &both[..]),
@@ -1026,18 +1050,9 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
             ("standing", SINCE_EPOCH + 1240),
         ] {
             let produced = pass_as(Duty::GitHub, &mut body, &mut baseline, &clock, wall).unwrap();
-            let parked: Vec<_> = produced
-                .events
-                .iter()
-                .filter_map(|event| match event {
-                    Event::ParkedMerged { item, pr, repo } => {
-                        Some((item.as_str(), pr.as_str(), repo.as_str()))
-                    }
-                    _ => None,
-                })
-                .collect();
             assert_eq!(
-                parked, expected,
+                parked_merged(&produced),
+                expected,
                 "pass={pass} team={team:?} verdict={verdict:?}"
             );
             if pass == "standing" {
@@ -1049,6 +1064,60 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
                 );
             }
         }
+    }
+}
+
+/// On a fleet with a Linear team, the tracker's open verdict for a parked
+/// item still labelled `blocked` lets the merge report print, and the
+/// report is still printed on the GitHub pass after the label clears,
+/// so the overseer can resume the lane then.
+#[test]
+fn a_parked_merge_is_still_reported_after_the_blocked_label_clears() {
+    if !isolated_row("a_parked_merge_is_still_reported_after_the_blocked_label_clears") {
+        return;
+    }
+    let mut world = parked_merge_world();
+    let open = |labels: &[&str]| -> Vec<Value> {
+        ["KEN-1", "KEN-2"]
+            .iter()
+            .map(|id| {
+                let mut row = item(
+                    id,
+                    "2026-08-16T00:00:00Z",
+                    "In Progress",
+                    "started",
+                    json!(2),
+                    &[],
+                );
+                row["labels"] = json!(labels);
+                row
+            })
+            .collect()
+    };
+    world.linear("statuses list", statuses());
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-1", "state": {"type": "started"}, "children": {"nodes": []}},
+            {"identifier": "KEN-2", "state": {"type": "started"}, "children": {"nodes": []}}
+        ]}}}),
+    );
+    let ctx = world.context(world.settings(&[]), None);
+    let shared = ctx.shared.clone();
+    let mut tracker_body = tracker::body(ctx);
+    let mut github_body =
+        github::body(world.github_context(world.settings(&[]), None, &["owner/repo"], shared));
+    let clock = FakeClock::new();
+    let mut baseline = Baseline::default();
+    for (labels, wall) in [
+        (&["blocked"][..], SINCE_EPOCH + 1000),
+        (&[][..], SINCE_EPOCH + 1240),
+    ] {
+        world.linear("issues list", json!({"body": open(labels)}));
+        pass(&mut tracker_body, &mut baseline, &clock, wall).unwrap();
+        let produced =
+            pass_as(Duty::GitHub, &mut github_body, &mut baseline, &clock, wall).unwrap();
+        assert_eq!(parked_merged(&produced), BOTH_PARKED, "labels={labels:?}");
     }
 }
 
