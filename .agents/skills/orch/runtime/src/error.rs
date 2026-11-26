@@ -343,6 +343,28 @@ pub enum Error {
     /// No item records an admitted run under the directory.
     #[error("no admitted validation run names {run_dir}")]
     RunUnadmitted { run_dir: String },
+    /// The admitted run's stage closed with no start record in its
+    /// directory: the start that was to run it was refused after its
+    /// admission, or the round closed the admission unstarted. A wait that
+    /// follows the run by its id ends here, since no verdict will come.
+    /// `cause` is the close's word; `detail`, the launcher's or the run
+    /// files' own text, stays out of the fields.
+    #[error(
+        "the run {run_dir} closed {outcome} before it started{}",
+        .detail.as_deref().map(|d| format!(": {d}")).unwrap_or_default()
+    )]
+    RunEndedUnstarted {
+        run_dir: String,
+        outcome: &'static str,
+        cause: Option<&'static str>,
+        detail: Option<String>,
+    },
+    /// The admitted run's last start was refused before it recorded the run,
+    /// and no start has recorded it since. A wait that follows the run by
+    /// its id ends here with that refusal's key; the admission stays open
+    /// for the next start under the same id.
+    #[error("the start of the run {run_dir} was refused {cause} before it recorded the run")]
+    StartRefused { run_dir: String, cause: String },
     /// The stage names a run the runtime never started: no job on it.
     #[error("the run {run_dir} was never started by the runtime")]
     RunUnstarted { run_dir: String },
@@ -358,7 +380,7 @@ pub enum Error {
     /// written; the stage is closed `stopped` with the cause.
     #[error("the run {run_dir} could not be started: {cause}")]
     ValidateLaunchFailed { run_dir: String, cause: String },
-    /// A read the start needs before it records anything failed: the
+    /// A read the start needs before it records the run failed: the
     /// worktree's HEAD, its snapshot, a scratch directory.
     #[error("the validation start could not read its {read}: {cause}")]
     ValidateUnreadable { read: &'static str, cause: String },
@@ -542,6 +564,8 @@ impl Error {
             Error::RunLive { .. } => "run-live",
             Error::RunEnded { .. } => "run-ended",
             Error::RunUnadmitted { .. } => "run-unadmitted",
+            Error::RunEndedUnstarted { .. } => "run-ended-unstarted",
+            Error::StartRefused { .. } => "start-refused",
             Error::RunUnstarted { .. } => "run-unstarted",
             Error::RunClosed { .. } => "run-closed",
             Error::ValidateStopFailed { .. } => "stop-failed",
@@ -826,6 +850,25 @@ impl Error {
             Error::RunUnadmitted { run_dir }
             | Error::RunUnstarted { run_dir }
             | Error::ValidateLaunchFailed { run_dir, .. } => vec![pair("run_dir", run_dir.clone())],
+            Error::RunEndedUnstarted {
+                run_dir,
+                outcome,
+                cause,
+                ..
+            } => {
+                let mut fields = vec![
+                    pair("run_dir", run_dir.clone()),
+                    pair("outcome", (*outcome).to_owned()),
+                ];
+                fields.extend(cause.map(|c| pair("cause", c.to_owned())));
+                fields
+            }
+            Error::StartRefused { run_dir, cause } => {
+                vec![
+                    pair("run_dir", run_dir.clone()),
+                    pair("cause", cause.clone()),
+                ]
+            }
             Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
                 vec![pair("run_dir", run_dir.clone())]
             }

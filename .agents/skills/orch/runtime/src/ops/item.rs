@@ -438,8 +438,9 @@ pub enum RunCause {
     /// The run's own sentinel named the word.
     Sentinel,
     /// The admitted directory was never created: the start was refused or
-    /// never attempted. The runner records no refusal cause anywhere the
-    /// runtime can read, so this is the cause it can state.
+    /// never attempted. A refusal the runtime's own start returned stands
+    /// as the stage's `refused`; another runner's is nowhere the runtime
+    /// can read.
     RunDirAbsent,
     /// The recorded child is gone and left no sentinel.
     ProcessGone,
@@ -452,6 +453,20 @@ pub enum RunCause {
     UnitEnded,
     /// The launcher's record says the launch ended with nothing started.
     LaunchFailed,
+}
+
+impl RunCause {
+    /// The word as the reconcile's reply and the stage hold it.
+    pub fn word(self) -> &'static str {
+        match self {
+            RunCause::Sentinel => "sentinel",
+            RunCause::RunDirAbsent => "run-dir-absent",
+            RunCause::ProcessGone => "process-gone",
+            RunCause::PidUnrecorded => "pid-unrecorded",
+            RunCause::UnitEnded => "unit-ended",
+            RunCause::LaunchFailed => "launch-failed",
+        }
+    }
 }
 
 /// A run of the round the continuation reads instead of starting a new one:
@@ -1462,7 +1477,13 @@ fn settle_stage(
             (outcome, env.now_secs, cause, None)
         }
     };
-    close_stage(path, doc, index, stage, end, outcome, env)?;
+    if close_stage(path, doc, index, stage, end, outcome, env)?.closed_now {
+        // The cause stands on the stage for a wait that follows the run by
+        // its id after this reply is gone.
+        let rows = record::array_mut(path, doc, "stages")?;
+        let row = record::element_mut(path, rows, index, "stages")?;
+        record::set(row, "cause", cause.word());
+    }
     // A runtime-started run's close owes its lane the end notice, written
     // in the same transition; the next owed walk sends it, which
     // `reconcile-round` and the validation start each run right after their

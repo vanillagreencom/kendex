@@ -492,7 +492,8 @@ fn apply_interleaved(
             | validate::Validate::Launch(_)
             | validate::Validate::End(_)
             | validate::Validate::Mark(_)
-            | validate::Validate::Stop(_) => true,
+            | validate::Validate::Stop(_)
+            | validate::Validate::Refuse(_) => true,
         },
     };
     let commit = || {

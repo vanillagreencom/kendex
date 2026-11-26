@@ -130,6 +130,7 @@ mod tests {
     fn free_text_stays_out_of_the_fields() {
         let request_cause = "missing field `item` at line 1 column 30";
         let shape_cause = "unknown variant `closing`, expected one of five";
+        let launch_cause = "class.log: No space left on device (os error 28)";
         let rows = [
             (
                 Error::Request {
@@ -146,6 +147,15 @@ mod tests {
                     cause: shape_cause.into(),
                 }),
                 shape_cause,
+            ),
+            (
+                Error::RunEndedUnstarted {
+                    run_dir: "/w/tmp/dev-validate-1".into(),
+                    outcome: "stopped",
+                    cause: Some("launch-failed"),
+                    detail: Some(launch_cause.into()),
+                },
+                launch_cause,
             ),
         ];
         for (error, cause) in &rows {

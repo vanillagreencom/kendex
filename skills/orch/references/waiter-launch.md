@@ -44,6 +44,12 @@ A lane launched with `--owner` ends its turn after the launch. When the waiter e
 
 A session with no owner holds the wait inside its turn with the bounded foreground poll of [reviewer mutation-stability.md § 3. Await completion](../../reviewer/workflows/mutation-stability.md#3-await-completion), run again while it exits 124. On Codex it takes the `exec_command` and `write_stdin` calls of [codex-runtime.md § Validation wait](codex-runtime.md#validation-wait).
 
+A session with no owner that waits on a validation run another seat starts launches no waiter for it.
+
+- It holds the run with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, from before the run's directory exists to its `state=done` or `state=lost` line or a refusal.
+- It runs that command in its harness's one wait call, which [long-running-validation.md § A run another seat starts](../../dev/workflows/long-running-validation.md#a-run-another-seat-starts) names per harness.
+- It runs the same command again as that section states, and never polls the run directory between calls.
+
 A missing or empty `wait.exit` means the waiter has no recorded exit: keep waiting. Never read that state as a verdict or start a duplicate waiter. Once it is nonempty, read it and the log:
 
 ```bash

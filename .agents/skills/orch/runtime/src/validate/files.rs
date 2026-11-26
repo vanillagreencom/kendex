@@ -591,6 +591,83 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
     Ok((format!("{warnings}{line}"), exit))
 }
 
+/// Follow an admitted run another seat starts, from before its directory
+/// exists, for `budget` seconds in all: queued while its `start` record is
+/// absent, read every `poll` seconds, then followed as [`wait`] follows it.
+/// A budget that ends before the start prints `state=queued` and exits 3.
+/// A run no stage in `state_dir` admitted refuses `run-unadmitted`, one
+/// whose stage closed with no start record refuses `run-ended-unstarted`
+/// with the stage's word and cause, as no verdict will come, and one whose
+/// stage holds the key of a start refused before it recorded the run
+/// refuses `start-refused` with that key.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "validation waits read the injected clock and never start work"
+)]
+pub fn wait_queued(
+    state_dir: &Path,
+    run_dir: &Path,
+    budget: u64,
+    poll: u64,
+    clock: &dyn Clock,
+) -> Result<(String, i32)> {
+    let started = || match fs::symlink_metadata(run_dir.join("start")) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(unreadable("start", e)),
+    };
+    let follow = |call: std::time::Instant| {
+        wait(
+            run_dir,
+            call.saturating_duration_since(clock.now()).as_secs(),
+            clock,
+        )
+    };
+    let begun = clock.now();
+    let call = begun + Duration::from_secs(budget);
+    loop {
+        if started()? {
+            return follow(call);
+        }
+        let (_, stage) = super::admitted_stage(state_dir, &run_dir.display().to_string())?;
+        if stage.end.is_some() {
+            // The start writes the record before it records the launch that
+            // can close the stage, so a record that stands after the close
+            // landed between the two reads.
+            if started()? {
+                return follow(call);
+            }
+            return Err(Error::RunEndedUnstarted {
+                run_dir: run_dir.display().to_string(),
+                outcome: stage.outcome.map_or("none", StageOutcome::word),
+                cause: stage.cause.map(crate::ops::RunCause::word),
+                detail: stage.job.and_then(|job| job.cause),
+            });
+        }
+        // A start clears the key when it records the run, before it writes
+        // the `start` record, so a key read after an absent record stood
+        // with no start.
+        if let Some(cause) = stage.refused {
+            return Err(Error::StartRefused {
+                run_dir: run_dir.display().to_string(),
+                cause,
+            });
+        }
+        let now = clock.now();
+        if now >= call {
+            return Ok((
+                format!(
+                    "state=queued waited-secs={} run-dir={}",
+                    now.duration_since(begun).as_secs(),
+                    run_dir.display()
+                ),
+                3,
+            ));
+        }
+        clock.sleep(Duration::from_secs(poll).min(call.saturating_duration_since(now)));
+    }
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"

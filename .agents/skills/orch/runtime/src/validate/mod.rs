@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::ops::validate::{
-    RecordEnd, RecordLaunch, RecordStart, SettleRound, Validate, Validated,
+    RecordEnd, RecordLaunch, RecordRefusal, RecordStart, SettleRound, Validate, Validated,
 };
 use crate::ops::{self, Report, Request, RunState};
 use crate::settings::Settings;
@@ -45,6 +45,12 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(600);
 const RUN_DIR_PREFIX: &str = "dev-validate-";
 /// The run inventory the lane facts and the report read.
 const RUN_INDEX: &str = "validation-runs";
+
+/// The directory of run `id` in `worktree`: the start that runs it and a
+/// wait that follows it from before it starts read the one path.
+pub fn run_dir_of(worktree: &Path, id: &str) -> PathBuf {
+    worktree.join("tmp").join(format!("{RUN_DIR_PREFIX}{id}"))
+}
 
 /// What the caller asks for.
 #[derive(Debug, Clone)]
@@ -127,6 +133,13 @@ pub(crate) fn text_cmd(settings: &crate::settings::ValidateSettings) -> Option<S
 /// the directory are read for a validate stage naming it. The forwards,
 /// the start's and the stop's, name the directory alone.
 pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
+    let (item, stage) = admitted_stage(state_dir, run_dir)?;
+    Ok((item, stage.round_id.unwrap_or_default()))
+}
+
+/// The item and the validate stage that admitted the run under `run_dir`,
+/// or `run-unadmitted` where no stage names it.
+pub(crate) fn admitted_stage(state_dir: &Path, run_dir: &str) -> Result<(String, Stage)> {
     // A state directory that does not stand holds no item, so nothing
     // admitted the run; any other failed read is no answer.
     let entries = match fs::read_dir(state::items_dir(state_dir)) {
@@ -163,10 +176,10 @@ pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String
         };
         let stages = snapshot.view::<ItemState>(&path)?.stages;
         if let Some(stage) = stages
-            .iter()
+            .into_iter()
             .find(|s| s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(run_dir))
         {
-            return Ok((item.to_owned(), stage.round_id.clone().unwrap_or_default()));
+            return Ok((item.to_owned(), stage));
         }
     }
     Err(Error::RunUnadmitted {
@@ -1492,10 +1505,13 @@ fn write_run_dir(
     }
     write("paths", &paths)?;
     write("cmd", &resolved.proof.cmd)?;
+    // A wait on a queued run reads the run as started once `start` exists,
+    // so the record lands whole by a rename, never seen half written.
     write(
-        "start",
+        ".start",
         &start_record(worktree, &resolved.proof, start, memory),
     )?;
+    fs::rename(run_dir.join(".start"), run_dir.join("start")).map_err(|e| format!("start: {e}"))?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let dirs = files::run_dirs(worktree)?;
         let mut names: Vec<_> = dirs
@@ -1637,7 +1653,7 @@ pub(crate) fn memory_bound(settings: &crate::settings::ValidateSettings) -> Resu
 /// The bound from the room read and the consumer's value: the value where
 /// one is set, which narrows the room and is the run's need, else the room.
 /// A need over the room, the value or the [`MEMORY_FLOOR`], refuses the
-/// start `memory-short need=<bytes> room=<bytes>` before anything is
+/// start `memory-short need=<bytes> room=<bytes>` before the run is
 /// recorded or launched: a run the host cannot hold is refused, never
 /// widened past the host.
 fn bound_of(
@@ -1798,11 +1814,10 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
     }
 }
 
-/// Start a validation run: read, record, launch.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "validation admission serializes the host check, stage record and launch under the worktree lock"
-)]
+/// Start a validation run: read, record, launch. A start of a named run
+/// refused before it records the run, other than `run-live`, leaves the
+/// refusal's key on the run's admitted stage, which stays open for the next
+/// start under the same id.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1818,6 +1833,46 @@ pub fn start(
             });
         }
     };
+    let path = state::item_path(&settings.state_dir, &item);
+    let recorded = std::cell::Cell::new(false);
+    let reply = start_admitted(settings, req, env, locking, item, round.clone(), &recorded);
+    // A `run-live` refusal ends no wait on the run: its seat waits for the
+    // live run and starts again under the same id, so the run stays queued.
+    if let (Err(error), Some(run_dir), false) = (&reply, &req.run_dir, recorded.get())
+        && !matches!(error, Error::RunLive { .. })
+    {
+        // The refusal is the caller's answer whatever this write does: one
+        // that fails leaves the stage as it stood, which a wait reads as
+        // queued, never as a verdict.
+        let _ = apply(
+            &path,
+            Validate::Refuse(RecordRefusal {
+                round_id: round,
+                run_dir: run_dir.clone(),
+                cause: error.key().to_owned(),
+            }),
+            env,
+            locking,
+        );
+    }
+    reply
+}
+
+/// The start of an admitted run; `recorded` turns true once the run's stage
+/// holds its record.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "validation admission serializes the host check, stage record and launch under the worktree lock"
+)]
+fn start_admitted(
+    settings: &Settings,
+    req: &StartRequest,
+    env: &Env,
+    locking: Locking,
+    item: String,
+    round: String,
+    recorded: &std::cell::Cell<bool>,
+) -> Result<StartReply> {
     let path = state::item_path(&settings.state_dir, &item);
     let snapshot = load(&path)?.ok_or_else(|| {
         Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
@@ -1922,6 +1977,7 @@ pub fn start(
         let Validated::Start(started) = started else {
             unreachable!("a start reports its start")
         };
+        recorded.set(true);
         let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
         let run_dir_path = PathBuf::from(&run_dir);
         let launched = match write_run_dir(

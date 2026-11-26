@@ -55,3 +55,20 @@ Every harness row below plans without a spawned harness child, a harness process
   - A harness that cuts the call off kills only the parent, and the warden then reaps the child before its verdict: the run ends as `state=lost`, a failed validation.
   - The `--wait --run-dir` resume above holds only on a host without such a warden.
   - An `--attached` run is held to its start's memory bound by its executor, `memory-held=reader bound=<bytes>` in its log.
+
+## A run another seat starts
+
+When another seat starts the admitted run, such as the overseer for a confined lane, the round runs no start. It follows the run with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --worktree [WORKTREE_PATH] --run-id [RUN_ID]`.
+
+- The call reads the run as queued until the run's start record stands, then follows it as the `--wait --run-dir` poll does, under one budget.
+- A budget that ends before the start prints `state=queued` and exits 3.
+- An id no round admitted is refused `run-unadmitted`.
+- An admission that closed with no start record, such as one whose start was refused after it, is refused `run-ended-unstarted` with the admission's outcome and cause.
+- A start the other seat ran that was refused before it recorded the run, such as `memory-short`, is refused `start-refused` with that start's key as its cause. The admission stays open, so that seat can start again under the same id.
+- Each refusal exits 2 and routes as a refused start does.
+- Each harness holds the call as its row above holds the start:
+  - Claude Code runs the bare command in the foreground under the maximum command timeout.
+  - Codex takes the Follow step of [codex-runtime.md § Validation wait](../../orch/references/codex-runtime.md#validation-wait).
+  - Pi spawns it through `bg_task` with `notifyOnExit: true`.
+- Run the same command again when a call ends with no `state=done`, `state=lost` or refusal line: an exit 3 with `state=queued` or `state=running`, or a call cut off, moved to the background or ended with no verdict. Never poll the run directory between calls.
+- Read the verdict as the Claude Code row reads it.

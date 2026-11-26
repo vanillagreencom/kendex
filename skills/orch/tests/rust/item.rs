@@ -5629,18 +5629,30 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_an_unreadable_one_op
             .unwrap()
     };
     assert_eq!((stage(&garbled).end, stage(&garbled).outcome), (None, None));
-    let expected = [
-        (&pidded, StageOutcome::Lost, NOW_SECS + 100),
-        (&refused, StageOutcome::Stopped, NOW_SECS + 100),
-        (&failing, StageOutcome::Fail, NOW_SECS + 60),
-        (&bounded, StageOutcome::NoVerdict, NOW_SECS + 70),
-        (&passing, StageOutcome::Pass, NOW_SECS + 80),
-        (&unlaunched, StageOutcome::Lost, NOW_SECS + 100),
-        (&skewed, StageOutcome::Fail, NOW_SECS + 100),
-    ];
-    for (dir, outcome, end) in expected {
+    assert_eq!(stage(&garbled).cause, None);
+    // Each close the reconcile makes keeps its cause on the stage, for a
+    // wait that follows the run by its id after the reply is gone.
+    let expected = {
+        use RunCause::{PidUnrecorded, RunDirAbsent, Sentinel};
+        use StageOutcome::{Fail, Lost, NoVerdict, Pass, Stopped};
+        let t = NOW_SECS;
+        [
+            (&pidded, Lost, t + 100, PidUnrecorded),
+            (&refused, Stopped, t + 100, RunDirAbsent),
+            (&failing, Fail, t + 60, Sentinel),
+            (&bounded, NoVerdict, t + 70, Sentinel),
+            (&passing, Pass, t + 80, Sentinel),
+            (&unlaunched, Lost, t + 100, PidUnrecorded),
+            (&skewed, Fail, t + 100, Sentinel),
+        ]
+    };
+    for (dir, outcome, end, cause) in expected {
         let s = stage(dir);
-        assert_eq!((s.outcome, s.end), (Some(outcome), Some(end)), "{dir}");
+        assert_eq!(
+            (s.outcome, s.end, s.cause),
+            (Some(outcome), Some(end), Some(cause)),
+            "{dir}"
+        );
         assert!(
             s.start <= NOW_SECS + 8,
             "{dir}: the admission's start stands"
@@ -5652,7 +5664,9 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_an_unreadable_one_op
         let expected: &[&str] = if open {
             &["kind", "round_id", "start", "end", "run_dir"]
         } else {
-            &["kind", "round_id", "start", "end", "run_dir", "outcome"]
+            &[
+                "kind", "round_id", "start", "end", "run_dir", "outcome", "cause",
+            ]
         };
         assert_eq!(keys(row), expected, "{}", row["run_dir"]);
     }
