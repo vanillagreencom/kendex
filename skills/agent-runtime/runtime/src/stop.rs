@@ -207,11 +207,21 @@ impl Session {
             Session::Jarvis => Owner::Channel,
         }
     }
+
+    /// Who is told of an unused limit reset: pressing one is Jarvis's step
+    /// in the account's browser, so a worker's and an overseer's notice go
+    /// to Jarvis, and Jarvis's own to the owner's channel.
+    pub fn reset_owner(self) -> Owner {
+        match self {
+            Session::Worker | Session::Overseer => Owner::Jarvis,
+            Session::Jarvis => Owner::Channel,
+        }
+    }
 }
 
 /// What the account walk found for a stop, as the caller read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ground {
+pub struct Ground<'a> {
     /// The stopped session's own account has room.
     pub own_room: bool,
     /// Another entry in the walk has room: on another provider for a
@@ -219,9 +229,14 @@ pub struct Ground {
     pub room: bool,
     /// No entry has room, and the soonest reset among them is known.
     pub reset: bool,
+    /// The accounts whose row lists an unused limit reset
+    /// ([`crate::accounts::AccountRow::limit_resets`]) that, pressed, would
+    /// give the session room: for an ended sign-in, accounts other than its
+    /// own.
+    pub resets: &'a [String],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
 pub enum Action {
     /// Resume the session on its own account.
@@ -235,6 +250,9 @@ pub enum Action {
     WaitForReset,
     /// Nothing can recover the session: tell its owner once.
     Notify { to: Owner },
+    /// No entry has room, but these accounts hold an unused limit reset:
+    /// tell whoever presses one, then judge the stop again.
+    NotifyReset { to: Owner, accounts: Vec<String> },
 }
 
 /// How long a provider that is not answering is resumed on its own account
@@ -244,19 +262,32 @@ pub const PROVIDER_PATIENCE: Duration = Duration::from_secs(30 * 60);
 
 /// The action for a stop of `kind` first read `age` ago on a `session`,
 /// over the walk's `ground`. A session stops for good, and its owner is
-/// told, only when no entry in the walk has room and, for a limit or an
-/// exited harness, none has a known reset. An ended sign-in never waits for
-/// a reset. A provider stop never ends so: its own account still has room.
+/// told, only when no entry in the walk has room, none lists an unused
+/// limit reset and, for a limit or an exited harness, none has a known
+/// reset. An unused reset is named before the session waits or stops. An
+/// ended sign-in never waits for a reset. A provider stop never ends so:
+/// its own account still has room.
 pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Action {
+    let press_or = |otherwise: Action| {
+        if ground.resets.is_empty() {
+            otherwise
+        } else {
+            Action::NotifyReset {
+                to: session.reset_owner(),
+                accounts: ground.resets.to_vec(),
+            }
+        }
+    };
+    let stop = Action::Notify {
+        to: session.owner(),
+    };
     let move_or_wait = |tell: Option<Owner>| {
         if ground.room {
             Action::MoveAccount { tell }
         } else if ground.reset {
-            Action::WaitForReset
+            press_or(Action::WaitForReset)
         } else {
-            Action::Notify {
-                to: session.owner(),
-            }
+            press_or(stop.clone())
         }
     };
     match kind {
@@ -265,9 +296,7 @@ pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Ac
         Kind::Auth if ground.room => Action::MoveAccount {
             tell: Some(session.owner()),
         },
-        Kind::Auth => Action::Notify {
-            to: session.owner(),
-        },
+        Kind::Auth => press_or(stop.clone()),
         Kind::Provider if age < PROVIDER_PATIENCE || !ground.room => Action::Resume,
         Kind::Provider => Action::MoveProvider,
         Kind::Exited if ground.own_room => Action::Resume,
@@ -283,10 +312,20 @@ mod tests {
     #[test]
     fn each_kind_age_and_ground_takes_one_action() {
         const MINUTE: Duration = Duration::from_secs(60);
+        let held = ["1codex".to_owned()];
         let ground = |own_room, room, reset| Ground {
             own_room,
             room,
             reset,
+            resets: &[],
+        };
+        let holding = |reset| Ground {
+            resets: &held,
+            ..ground(false, false, reset)
+        };
+        let press = |to| Action::NotifyReset {
+            to,
+            accounts: held.to_vec(),
         };
         let rows = [
             // A provider not answering is resumed for its first 30 minutes.
@@ -351,6 +390,29 @@ mod tests {
                 Session::Jarvis,
                 ground(true, false, false),
                 Action::Resume,
+            ),
+            // An unused reset is named before a wait, before a stop, and
+            // before a stop for an ended sign-in.
+            (
+                Kind::Usage,
+                MINUTE,
+                Session::Worker,
+                holding(true),
+                press(Owner::Jarvis),
+            ),
+            (
+                Kind::Exited,
+                MINUTE,
+                Session::Jarvis,
+                holding(false),
+                press(Owner::Channel),
+            ),
+            (
+                Kind::Auth,
+                MINUTE,
+                Session::Overseer,
+                holding(false),
+                press(Owner::Jarvis),
             ),
         ];
         for (kind, age, session, ground, want) in rows {
