@@ -537,6 +537,11 @@ pub fn last_failure(harness: Harness, file: &Path) -> Reading<Option<Failure>> {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        // A subagent's turn is not the lead's: its failure is no stop of the
+        // session, and its prompt opens no lead turn.
+        if !lead_row(harness, &row) {
+            continue;
+        }
         if let Some(end) = turn_end(harness, &row) {
             last = end;
         }

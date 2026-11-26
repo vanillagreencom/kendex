@@ -216,6 +216,29 @@ fn a_codex_failure_with_an_unlisted_or_data_carrying_word_is_a_provider_stop() {
     );
 }
 
+/// A Copilot subagent's rows carry its `agentId`. Its prompt opens no lead
+/// turn and its failure is no stop of the session, so the lead's failure
+/// stands under the one and no stop is read from the other.
+#[test]
+fn a_copilot_subagent_s_rows_neither_set_nor_clear_the_lead_s_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("events.jsonl");
+    let lead = std::fs::read_to_string(fixture("copilot-rate-limit.jsonl")).unwrap();
+    let prompt = r#"{"type":"user.message","data":{"content":"Look."},"agentId":"sub-1","id":"m2","timestamp":"2026-11-26T01:21:16.000Z"}"#;
+    let failure = r#"{"type":"session.error","data":{"errorType":"query","message":"500","statusCode":500},"agentId":"sub-1","id":"e2","timestamp":"2026-11-26T01:21:17.000Z"}"#;
+    std::fs::write(&file, format!("{lead}{prompt}\n")).unwrap();
+    let Reading::Live(Some(stands)) = session::last_failure(Harness::Copilot, &file) else {
+        panic!("the lead's failure is cleared");
+    };
+    assert_eq!(stands.error.as_deref(), Some("rate_limit"));
+    let quiet = r#"{"type":"user.message","data":{"content":"Go on."},"id":"m3","timestamp":"2026-11-26T01:22:00.000Z"}"#;
+    std::fs::write(&file, format!("{lead}{quiet}\n{failure}\n")).unwrap();
+    assert_eq!(
+        session::last_failure(Harness::Copilot, &file),
+        Reading::Live(None)
+    );
+}
+
 /// A Codex or Copilot record whose last turn ran after the failure holds no
 /// stop: the turn that opened after it is the session's state.
 #[test]
