@@ -1399,7 +1399,7 @@ esac
              'watch.event("forward-unreachable", cause=collection["cause"])',
              'watch.event("forward-unreachable", cause=collection["cause"], detail=detail or "")'),
             # The loop prints every collection, or none.
-            ("test_collection_reports_its_own_reach", "lib/watch.py", 'if outcome != self.collection:', 'if True:'),
+            ("test_collection_reports_its_own_reach", "lib/watch.py", 'if outcome != self.outcomes.get(name):', 'if True:'),
             ("test_failed_collection_reports_once", "lib/watch.py", 'self.collected(result)\n', 'pass\n'))
         for name, relative, old, new in rows:
             if getattr(getattr(Forward, name), "__unittest_skip__", False):
