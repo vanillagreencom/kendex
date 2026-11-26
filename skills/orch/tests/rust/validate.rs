@@ -4893,7 +4893,8 @@ fn a_stale_group_start_never_signals_the_process_that_reused_its_number() {
 
 /// A command group outlives its executor and the stage a reconcile closed,
 /// and holds the host until a worktree stop ends it. That stop ended live
-/// work, so the run's readers read it `stopped`, not `lost`.
+/// work, so `--record` reads the run `verdict=no-verdict` and `--wait` reads
+/// it `state=done stopped`, not `lost`.
 #[test]
 fn a_command_group_still_holds_the_host_after_its_executor_dies() {
     let w = World::new();
