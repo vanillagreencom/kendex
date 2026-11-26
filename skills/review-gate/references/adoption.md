@@ -160,14 +160,14 @@ The verify outcomes:
 The landing app is one GitHub App that serves this push alone.
 
 - In the vanillagreen organization it is `vanillagreen-kendex-land`, app id 5726115. The organization owns it.
-- It holds Contents read and write and Metadata read, and no other permission.
+- It holds Contents read and write, Workflows read and write and Metadata read, and no other permission.
 - It is installed on the consumer repositories.
 - Never make the lanes app, or any other app that opens, arms or merges pull requests, the landing app: its ruleset bypass would then cover the pull requests that app handles.
 
 The landing token:
 
 - The pair is `KENDEX_LAND_APP_ID` / `KENDEX_LAND_APP_PRIVATE_KEY`, placed under the [caller adoption contract](#caller-adoption-contract).
-- The shared workflow mints the landing token from that pair for the consumer repository alone, with Contents write alone.
+- The shared workflow mints the landing token from that pair for the consumer repository alone, with Contents write and Workflows write alone.
 - `refresh-consumer.sh` uses that token for one `git push` of the run's commit to the default branch. Every other call in the run uses the repository token.
 - No script opens, arms or merges a pull request with the landing token.
 - Contents write is also the permission GitHub's [merge endpoint](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-contents) requires, so the token's permissions do not prevent a merge. Add no second use of the token.
@@ -204,7 +204,7 @@ GitHub's rulesets judge the landing push, and the run reads no ruleset first. A 
 - Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request. There a deferral on a busy merge queue only delays that pull request.
 - In the vanillagreen organization the landing app passes the rulesets: on 2026-11-24 GitHub took a landing push in vgshell, whose run 45449034468 printed `refresh-state=landed pr=none class=render`.
 
-The landing token holds no Workflows permission, which GitHub requires of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). GitHub therefore refuses a landing push whose commit changes the adopted caller `.github/workflows/kendex-refresh.yml`. That update keeps the rolling pull request and its review.
+The landing token holds Workflows write because GitHub requires it of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). A render that rewrites the adopted caller `.github/workflows/kendex-refresh.yml` therefore lands like any other render. An installation keeps its old permissions until its owner accepts the new ones ([Modifying a GitHub App registration](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration#changing-the-permissions-of-a-github-app)). Where the landing app or its installation lacks Workflows write, the mint fails, the run prints `refresh-land=unavailable value=token`, and every update keeps the rolling pull request.
 
 A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record. A run that deferred on a busy merge queue prints its line ahead of `refresh-state=deferred reason=queued`.
 
@@ -231,7 +231,7 @@ A run that committed a new head and kept the pull request route prints one landi
 - On `value=lock-read`, stderr holds the md-refs lock reader's `refresh-lock:` line and its cause.
 - On `value=sources-read`, stderr holds what kendex printed, then `refresh-sources=unread value=PROJECT`, then the cause.
 - On `value=queued`, the run does not push because a push to that branch makes GitHub rebuild each running merge group. It defers the render with no pull request. Nothing starts another run for it, so the render waits for the next daily or release-dispatched run that meets an empty queue.
-- On `refresh-land=refused`, `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset and workflow-file paragraphs above name the refusals this route expects.
+- On `refresh-land=refused`, `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset paragraph above names the refusal this route expects.
 - On `refresh-error=land-check`, the run prints the answer to stderr, exits 1 and publishes no head.
 
 The source reader also sets the `sources` step output of a `refresh-state=current` run to `covered`, `uncovered` or `unread`, with the same stderr lines on `unread`. The shared workflow saves the current record only on `covered`.
