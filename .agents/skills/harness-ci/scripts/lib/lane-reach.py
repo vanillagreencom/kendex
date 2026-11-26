@@ -558,13 +558,17 @@ class Evidence:
             scope = Path(manifest).parent.as_posix()
             reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
             # A target's source can sit outside the package tree, and the scan
-            # takes each Rust file beside it as a source of the target.
+            # takes each Rust file beside it as a source of the target. A path
+            # the change adds there can resolve a module of the target, but has
+            # no base bytes to scan.
             sources = set()
             for target in entry["targets"]:
                 source = self.relative(target["src_path"])
                 sources.add(source)
+                beside = Path(source).parent.as_posix()
                 sources.update(path for path in self.files if path.endswith(".rs") and
-                               under(path, Path(source).parent.as_posix()))
+                               under(path, beside))
+                reads.update(path for path in self.changed if under(path, beside))
             reads.update(sources)
             package_sources[manifest] = sources
             named = [dependency["path"] for dependency in entry["dependencies"]]
@@ -573,20 +577,29 @@ class Evidence:
             external = external or len(dependencies) != len(named)
             pending.extend(dependencies)
 
-        # Pass 2 judges what pass 1 read.
-        for workspace_file in sorted(workspaces):
-            config = tomllib.loads(self.blob(workspace_file))
-            require_shape(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
-        for path in manifests:
-            self.blob(path)
-        require_shape(not external, "cargo-external-dependency")
+        # Pass 2 scans every source before it raises the first shape refusal
+        # it met, since only a scan finds an include edge and a refusal must
+        # not drop an edge a later scan records. A read that fails ends only
+        # the scan that needed it.
+        refusals = []
+
+        def judge(condition, cause):
+            if not condition:
+                refusals.append(cause)
+
+        def attempt(operation, *args):
+            try:
+                return operation(*args)
+            except ShapeUnreadable as error:
+                refusals.append(str(error))
+                return None
+
         # Other evidence also lands in reads, so reads cannot mark a scan.
         scanned_sources = set()
         for manifest, target_sources in package_sources.items():
             scope = Path(manifest).parent.as_posix()
             for target in manifests[manifest]["targets"]:
-                require_shape(not ({"custom-build", "proc-macro"} & set(target["kind"])),
-                              "cargo-opaque-target")
+                judge(not ({"custom-build", "proc-macro"} & set(target["kind"])), "cargo-opaque-target")
             sources = target_sources.copy()
             while sources:
                 source = sources.pop()
@@ -594,23 +607,38 @@ class Evidence:
                     continue
                 scanned_sources.add(source)
                 reads.add(source)
-                rust = self.blob(source)
+                rust = attempt(self.blob, source)
+                if rust is None:
+                    continue
                 # Literal includes and #[path] modules can leave the package tree.
                 includes = r'\b(?:(include(?:_str|_bytes)?)\s*!\s*\(\s*|path\s*=\s*)"([^"\\]+)"'
                 for macro, target in re.findall(includes, rust):
-                    edge, passed = self.resolve(Path(source).parent.as_posix(), target)
+                    resolved = attempt(self.resolve, Path(source).parent.as_posix(), target)
+                    if resolved is None:
+                        continue
+                    edge, passed = resolved
                     reads.update({edge} | passed)
                     if macro in {"", "include"}:
-                        require_shape(under(edge, scope), "cargo-external-module")
-                        require_shape(edge in target_sources, "cargo-opaque-source")
-                    self.blob(edge)
+                        judge(under(edge, scope), "cargo-external-module")
+                        judge(edge in target_sources, "cargo-opaque-source")
+                    # A Rust edge's own scan reads its bytes.
                     if edge.endswith(".rs"):
                         sources.add(edge)
-                require_shape(not re.search(
+                    else:
+                        attempt(self.blob, edge)
+                judge(not re.search(
                     r"\b(?:include(?:_str|_bytes)?\s*!|path\s*=|(?:env|option_env)\s*!)"
                     r"|\b(?:fs|process|File|Path|PathBuf|Command|extern|unsafe)\b",
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
+        if refusals:
+            raise ShapeUnreadable(refusals[0])
+        for workspace_file in sorted(workspaces):
+            config = tomllib.loads(self.blob(workspace_file))
+            require_shape(not ({"patch", "replace"} & config.keys()), "cargo-source-overrides")
+        for path in manifests:
+            self.blob(path)
+        require_shape(not external, "cargo-external-dependency")
         covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
