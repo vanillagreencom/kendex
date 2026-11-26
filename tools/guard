@@ -1922,7 +1922,7 @@ scan_load() { # DIR
       SCAN_RELS+=("$rel")
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
-      doc_readers "$rel" "$key" || return 2
+      doc_readers "$1" "$rel" "$key" || return 2
       scan_parts+=("Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl")
     done
   done <<<"$tree_rows"
@@ -2157,7 +2157,10 @@ scan_load() { # DIR
 #     root does; prose spelling it so counts too, the safe side;
 #   - its directory, as a glob, a find or a path built on it does: for a doc
 #     below a directory of the tree, that directory's `/<dir>` with nothing
-#     of a longer name after it; for a doc at the tree's root, a skill-root
+#     of a longer name after it, or a quoted path ending in `/<dir>` whose
+#     segment before it is `.`, `..`, the tree's own name or a skill-root
+#     variable, since another package's or a fixture's folder of the same
+#     name is spelled so too; for a doc at the tree's root, a skill-root
 #     variable, one whose name holds SKILL, followed by a slash and no name,
 #     as `"$SKILL_DIR"/*.md` or `"$SKILL_DIR/$doc"`;
 #   - or a skill-root variable or a path ending in /skills among the start
@@ -2176,14 +2179,14 @@ scan_load() { # DIR
 # whole word, and a change to comments alone has no reader here. A suite
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
-doc_readers() { # REL [KEY]
-  local rel="$1" dir external=0 source_rel source_tree fixed
+doc_readers() { # TREE REL [KEY]
+  local tree="$1" rel="$2" dir external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
-  if [ -n "${2-}" ]; then
+  if [ -n "${3-}" ]; then
     # A key the regex spells literally is also its needle.
     fixed=-
-    [[ $2 =~ ^[[:alnum:]_]+$ ]] && fixed=$2
-    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - - "$fixed")
+    [[ $3 =~ ^[[:alnum:]_]+$ ]] && fixed=$3
+    reader_patterns=(- "(^|[^[:alnum:]_])$3([^[:alnum:]_]|\$)" - - "$fixed")
     return 0
   fi
   if [ "$rel:$settings_scope" = ../kendex.settings.toml:inert ]; then
@@ -2195,7 +2198,7 @@ doc_readers() { # REL [KEY]
   case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
   case "$rel" in
     */*)
-      dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
+      dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"']((\\\$|[./])[^\"']*/)?(\\.\\.?|$skill_root|${tree##*/})/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
       ;;
     *) dir='\$\{?[A-Z_]*SKILL[A-Z_]*\}?"?/[^[:alnum:]._-]' ;;
   esac
