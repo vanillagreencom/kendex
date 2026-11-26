@@ -331,11 +331,11 @@ When the fleet's last item completes:
 
 ### `parked-merged`
 
-`EVENT parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a parked item waited on merged, and the item has work left. A dependency park waits on `parked.until_pr`, a queue park on `parked.pr`. On a fleet with a Linear team, the watch reports the merge once. On a fleet with no Linear team, the watch repeats the report while the record reads parked.
+`EVENT parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a parked item waited on merged, and the item has work left. A dependency park waits on `parked.until_pr`, a queue park on `parked.pr`. The watch repeats the report on every pass while the record reads parked, until the lane closes or relaunches. On a fleet with a Linear team, the first report waits for the tracker's open verdict.
 
 Read the item's live tracker state before any relaunch or close, including when `parked-merged` arrives before a `tracker=unread` line on a fleet with no Linear team, and follow [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) to decide whether to close the lane or continue below.
 
-While the `blocked` label holds the item, keep the lane parked. Check the saved pull request once the hold clears under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes).
+While the `blocked` label holds the item, keep the lane parked. Once the label clears, act on the next `parked-merged` line.
 
 1. Relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The relaunch starts the harness fresh on the kept disk, and the item's handoff record carries its context.
 2. A dependency park: the lane rebases and continues the held step. Record no cycle for the dependency's merge.
