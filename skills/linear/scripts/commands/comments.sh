@@ -56,6 +56,8 @@ Owner Requests:
                         request mentioning that user's canonical profile URL.
                         A successful complete read defines current view
                         membership; failed reads publish no partial result.
+                        closed_items names each item whose state type is
+                        closed.
 
 Create Options:
   --body <text>         Comment body (required unless --body-file or --attach is set)
@@ -310,15 +312,19 @@ owner_requests() {
         issues(filter: $filter, first: $first, includeArchived: $includeArchived, after: $after) {
           pageInfo { hasNextPage endCursor }
           nodes {
-            id identifier
+            id identifier state { type }
             comments { pageInfo { hasNextPage endCursor } nodes { '"$comment_fields"' } }
           }
         }
       }' "$variables" issues) || return 1
-    jq -cs "$COMMENT_SAFE_JQ$OWNER_RULING_JQ"'
+    # An item in a closed state type, by the one table that names them, has
+    # settled every question on it.
+    jq -cs "$COMMENT_SAFE_JQ$OWNER_RULING_JQ$STATE_TYPE_CLOSED_JQ"'
       .[0] as $owner | .[1] as $workspace |
       (.[2].issues.nodes | map(.comments |= (.nodes | map(comment_safe)))) as $items |
       {workspace: $workspace.urlKey, owner: $owner.id,
+       closed_items: [$items[] | if (.state.type | type) == "string" then . else error("item-state-unavailable") end
+          | select(.state.type | state_type_closed) | .id],
        discussions: ($items | map({key: .id, value: (.comments | map({id, parent_id, user_id,
           ruling: owner_ruling,
           opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
@@ -431,9 +437,14 @@ create_comment() {
     fi
 
     local comment_issue_id="$issue_id"
-    # An unresolved issue would strand uploaded files without a comment.
+    # An unresolved issue would strand uploaded files without a comment. A
+    # ruling writes to, and reads back against, the item's own id: a moved
+    # item's comment never names the former identifier a caller kept, and
+    # issue(id:) resolves that identifier (linear_issue_refs_read).
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
+    fi
+    if [ ${#attach_paths[@]} -gt 0 ] || [[ "$owner_ruling" -eq 1 ]]; then
         local issue_result
         issue_result=$(graphql_query 'query GetIssue($id: String!) { issue(id: $id) { id } }' \
             "$(jq -cn --arg id "$issue_id" '{id: $id}')") || return 1

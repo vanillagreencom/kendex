@@ -119,6 +119,8 @@ trap 'rm -f -- "${note:?}"' EXIT
 cat >"$note"
 (cd -- "$root" && exec "$BASH" "$mail" send --item overseer --root "$root" --file "$note" "$@")
 """
+# The tracker questions still open. An item in a closed state has settled
+# every question on it, as an exact mailbox close settles one.
 TRACKER_QUESTIONS = r"""set -euo pipefail
 . "$1"
 exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
@@ -127,6 +129,7 @@ exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
       $tracker.requests | group_by(.issueUuid)[] | . as $requests | .[0].issueUuid as $issue
       | ($tracker.discussions[$issue] | INDEX(.id)) as $rows
       | (INDEX($requests[]; .comment.id)) as $questions
+      | ($issue | IN($tracker.closed_items[])) as $item_closed
       | (reduce ($rows[] | .id as $id
                  | if $replies | has($id) then select([$issue, .parent_id] == $replies[$id]) | .parent_id
                    elif .ruling then .parent_id
@@ -135,8 +138,8 @@ exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
                  | select(. != null)) as $id
            ({}; .[$id] = true)) as $answers
       | $requests[] | .comment.id as $id
-      | select(.comment | owner_question_settled($answers[$id]; ($closed | has($id)) and
-          ($closed[$id] == null or $closed[$id] == $issue); $replaced[$issue][$id]) | not)
+      | select(.comment | owner_question_settled($answers[$id]; $item_closed or (($closed | has($id)) and
+          ($closed[$id] == null or $closed[$id] == $issue)); $replaced[$issue][$id]) | not)
     ]}'
 """
 # lane-mail's refusals of an answer to an ask closed, or compacted after closing.

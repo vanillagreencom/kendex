@@ -1830,12 +1830,13 @@ fn mark_closed_owner_asks(
                 .and(ask.identity.as_ref())
                 .map(|identity| identity.uuid.as_str())
                 .filter(|id| !id.is_empty());
+            // A ruling under its question takes the identity reserved for
+            // it, so a retry after an unconfirmed write reads that ruling
+            // back. The writer resolves a ref with no stored UUID, a moved
+            // item's former identifier included, to the item's own id.
             let mut args = vec!["comments", "create", uuid.unwrap_or(issue), "--body", &body];
             if let Some(parent) = parent {
-                args.extend(["--parent", parent]);
-            }
-            if uuid.is_some() {
-                args.push("--owner-ruling");
+                args.extend(["--parent", parent, "--owner-ruling"]);
             }
             marks.ruling = Some(quota!(settle_mark(
                 linear.call("owner-ruling", &args),
