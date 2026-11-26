@@ -394,7 +394,13 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               An id naming no ask is `ask-unknown`; send --re requires an owner ask.
               --default on a reserved ask is `ask-reserved`, and on an ask
               line carrying no recommendation, which `ask` never writes,
-              `recommend-missing`
+              `recommend-missing`. A close by text or with neither option
+              of an owner ask carrying an item adds the `eyes` reaction to
+              each owner comment owner-answers would deliver to the ask then
+              and has not, read before the close and marked once it lands.
+              A failure prints owner-answers' unmarked line, without
+              comment= where no comment was read: cause=mail-unread,
+              comments-unread, comments-format, quota or ref-form
   reserve --item overseer --id MSGID
               makes a standing owner ask reserved under its own id, as
               --reserved makes one at ask time: a private reservation record
@@ -1393,6 +1399,37 @@ owner_answer_seen() { # ISSUE COMMENT_ID
   printf 'owner-answers: unmarked issue=%s comment=%s cause=%s\n' "$1" "$2" "$cause" >&2
 }
 
+# The delivery rule usage() states: each owner comment reaches the ask of the
+# open question its thread ends at, or, at the top level, the ask of the
+# item's latest open question before it, and no ask otherwise. COMMENTS is a
+# `comments bulk-list` read, ASKS the open owner asks `pending` prints; one
+# JSON row per delivery, on stdout. A malformed read returns nonzero.
+owner_answer_rows() { # COMMENTS ASKS
+  jq -se 'length == 1 and (.[0] | type == "object" and
+      all(.[]; type == "array" and all(.[]; type == "object" and
+        all(.id, .body, .user_email, .created_at; type == "string"))))' "$1" >/dev/null || return 1
+  jq -cn --slurpfile comments "$1" --arg email "$OWNER_TRACKER_EMAIL" \
+    --slurpfile asks "$2" "$OWNER_QUESTION_JQ"'
+      def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
+      $comments[0] as $items
+      | [$items | to_entries[] | .key as $issue | .value[] | {issue: $issue, row: .}] as $all
+      # Each open question placed at its comment: by its exact id wherever
+      # it stands, or, on a record with no comment id, by the ask= line on
+      # its item.
+      | [$asks | owner_questions[] | . as $q
+          | (first($all[] | select(if $q.comment != null then .row.id == $q.comment
+              else .issue == $q.issue and (.row.body | split("\n") | index("ask=" + $q.ask)) != null end)) // null) as $at
+          | select($at != null) | $q + {id: $at.row.id, issue: $at.issue, at: $at.row.created_at}] as $open
+      | $items | to_entries[] | .key as $issue | (.value | sort_by(.created_at)) as $rows
+      | ([$open[] | select(.issue == $issue)] | INDEX(.id)) as $on_item
+      | ($rows | INDEX(.id)) as $by_id
+      | $rows[] | select(owned) | . as $row | select(all($open[]; .id != $row.id))
+      | (if (.parent_id // "") == "" then [$open[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
+         else owner_question_parent($by_id; $on_item; true) as $id
+         | if $id == null then null else $on_item[$id] end end) as $q | select($q != null)
+      | {ask: $q.ask, issue: $issue, comment: $row, replaced: $q.replaced, under: (($row.parent_id // "") != "")}'
+}
+
 owner_answers() {
   OWNER_TRACKER_READ=disabled
   OWNER_TRACKER_QUOTA=0
@@ -1540,35 +1577,7 @@ owner_answers() {
       echo 'KEN-3624-unread cause=comments' >&2; return 0
     fi
   fi
-  if ! jq -se 'length == 1 and (.[0] | type == "object" and
-      all(.[]; type == "array" and all(.[]; type == "object" and
-        all(.id, .body, .user_email, .created_at; type == "string"))))' \
-      "$WORK_DIR/tracker-comments" >/dev/null 2>"$WORK_DIR/tracker.err"; then
-    echo 'KEN-3624-unread cause=comments-format' >&2; return 0
-  fi
-  # The delivery rule usage() states: each owner comment reaches the ask of
-  # the open question its thread ends at, or, at the top level, the ask of
-  # the item's latest open question before it, and no ask otherwise.
-  if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
-    --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_QUESTION_JQ"'
-      def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
-      $comments[0] as $items
-      | [$items | to_entries[] | .key as $issue | .value[] | {issue: $issue, row: .}] as $all
-      # Each open question placed at its comment: by its exact id wherever
-      # it stands, or, on a record with no comment id, by the ask= line on
-      # its item.
-      | [$asks | owner_questions[] | . as $q
-          | (first($all[] | select(if $q.comment != null then .row.id == $q.comment
-              else .issue == $q.issue and (.row.body | split("\n") | index("ask=" + $q.ask)) != null end)) // null) as $at
-          | select($at != null) | $q + {id: $at.row.id, issue: $at.issue, at: $at.row.created_at}] as $open
-      | $items | to_entries[] | .key as $issue | (.value | sort_by(.created_at)) as $rows
-      | ([$open[] | select(.issue == $issue)] | INDEX(.id)) as $on_item
-      | ($rows | INDEX(.id)) as $by_id
-      | $rows[] | select(owned) | . as $row | select(all($open[]; .id != $row.id))
-      | (if (.parent_id // "") == "" then [$open[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
-         else owner_question_parent($by_id; $on_item; true) as $id
-         | if $id == null then null else $on_item[$id] end end) as $q | select($q != null)
-      | {ask: $q.ask, issue: $issue, comment: $row, replaced: $q.replaced, under: (($row.parent_id // "") != "")}' \
+  if ! owner_answer_rows "$WORK_DIR/tracker-comments" "$WORK_DIR/tracker-asks" \
     >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=comments-format' >&2; return 0
   fi
@@ -1596,10 +1605,12 @@ owner_answers() {
   OWNER_TRACKER_READ=read
 }
 
-if [ "$VERB" = owner-answers ]; then
+# A resolve marks through the tracker owner-answers reads, so an answer is
+# marked by one tracker whichever route closed its ask.
+if [ "$VERB" = owner-answers ] || [ "$VERB" = resolve ]; then
   TRACKER="$SCRIPT_DIR/../../linear/scripts/linear.sh"
   TRACKER="${OVERSEE_WATCH_TRACKER:-$TRACKER}"
-  if [ ! -x "$TRACKER" ]; then
+  if [ "$VERB" = owner-answers ] && [ ! -x "$TRACKER" ]; then
     printf 'owner-answers: tracker=absent\n'
     exit 0
   fi
@@ -2662,6 +2673,61 @@ lm_resolved() { # ASK_ID BY ANSWER_ID
   printf 'lane-mail: resolved id=%s by=%s answer=%s\n' "$1" "$2" "$3"
 }
 
+# An owner ask closed on an answer given elsewhere, relayed or typed, leaves
+# unmarked the owner's comments on its item that no pass delivered: a pass
+# reads only open questions, so none reads them once the ask closes. Before
+# the close, read the comments a pass would deliver to the ask now, less
+# those a delivery already marked, into WORK_DIR/close-answers as `<item>
+# <comment>` lines; owner_close_seen marks each once the close lands. The
+# mark is advisory: a read that fails names each item it leaves unmarked and
+# never holds the close.
+owner_close_answers() { # ASK_ID ITEM
+  local refs ref cause ids=()
+  owner_tracker_settings "$SCRIPT_DIR" || return 0
+  if ! "$SCRIPT_DIR/lane-mail" pending --item overseer --root "$ROOT" --to owner >"$WORK_DIR/close-asks" 2>/dev/null ||
+    ! refs="$(jq -rs --arg ask "$1" "$OWNER_QUESTION_JQ"'
+        [owner_questions[] | select(.ask == $ask) | .item | objects | .ref | strings] | unique[]
+        | if test("\\A[A-Za-z0-9]+-[0-9]+\\z") then . else "skip " + . end' "$WORK_DIR/close-asks")"; then
+    printf 'owner-answers: unmarked issue=%s cause=mail-unread\n' "$2" >&2
+    return 0
+  fi
+  # `comments bulk-list` takes identifiers alone, as owner_answers reads it.
+  while IFS= read -r ref; do
+    case "$ref" in
+      '') ;;
+      skip\ *) printf 'owner-answers: unmarked issue=%s cause=ref-form\n' "${ref#skip }" >&2 ;;
+      *) ids+=("$ref") ;;
+    esac
+  done <<<"$refs"
+  [[ ${#ids[@]} -gt 0 ]] || return 0
+  cause=""
+  if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe </dev/null >"$WORK_DIR/close-comments" 2>"$WORK_DIR/close.err"; then
+    cause=comments-unread
+    [[ -z "$(tracker_quota_receipt "$WORK_DIR/close.err")" ]] || cause=quota
+  elif ! owner_answer_rows "$WORK_DIR/close-comments" "$WORK_DIR/close-asks" >"$WORK_DIR/close-rows" 2>/dev/null; then
+    cause=comments-format
+  fi
+  if [[ -n "$cause" ]]; then
+    for ref in "${ids[@]}"; do printf 'owner-answers: unmarked issue=%s cause=%s\n' "$ref" "$cause" >&2; done
+    return 0
+  fi
+  # A comment a pass delivered carries the delivery id that pass gave it.
+  lm_fetch "$TO_LANE" "$WORK_DIR/close-lane.raw"
+  lm_terminated "$WORK_DIR/close-lane.raw" "$WORK_DIR/close-lane.jsonl"
+  if ! lm_objects "$WORK_DIR/close-lane.jsonl" >"$WORK_DIR/close-lane.objects" ||
+    ! jq -r --arg ask "$1" --slurpfile lane "$WORK_DIR/close-lane.objects" '
+      select(.ask == $ask) | select(("linear:" + .comment.id) as $key | all($lane[]; .delivery_id != $key))
+      | "\(.issue) \(.comment.id)"' "$WORK_DIR/close-rows" >"$WORK_DIR/close-answers"; then
+    : >"$WORK_DIR/close-answers"
+    printf 'owner-answers: unmarked issue=%s cause=mail-unread\n' "$2" >&2
+  fi
+}
+
+owner_close_seen() {
+  local issue id
+  while read -r issue id; do owner_answer_seen "$issue" "$id"; done <"$WORK_DIR/close-answers"
+}
+
 # An owner ask's deadline: --wait as given, else ORCH_ASK_WAIT_MINUTES from
 # the kendex settings ladder, else 120. Read only for an owner ask, whose
 # deadline the owner-channel ask help gives its meaning, and the ladder is
@@ -3423,12 +3489,17 @@ case "$VERB" in
     fi
     ANSWER_LINE=""
     [ "$BY" = explicit ] || ANSWER_LINE="$(lm_envelope answer "$MSGID")"
+    # A close at the deadline is no answer anyone read, so it marks nothing.
+    : >"$WORK_DIR/close-answers" || refuse write-failed "$BOX"
+    ASK_ISSUE="$(jq -r '.issue // empty' <<<"$ASK_JSON")" || refuse file-unreadable "$TO_OVERSEER"
+    [ "$BY" = default ] || [ -z "$ASK_ISSUE" ] || owner_close_answers "$MSGID" "$ASK_ISSUE"
     : >"$WORK_DIR/close.txt" || refuse write-failed "$BOX"
     FILE="$WORK_DIR/close.txt"
     LINE="$(lm_envelope resolution "$MSGID")"
     CLOSE_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
     if lm_append_local "$TO_LANE" "$LINE" lm_guard_close; then
       lm_resolved "$MSGID" "$BY" "$CLOSE_ID"
+      owner_close_seen
     else
       [ ! -e "$WORK_DIR/reserved.earlier" ] || refuse ask-reserved "$MSGID"
       read -r EARLIER_ID EARLIER_BY EARLIER_KEY <"$WORK_DIR/resolved.earlier" ||

@@ -73,7 +73,9 @@ case "$1:$2" in
         else cat "$FIXTURE/repair"; fi ;;
       *) exit 1 ;;
     esac ;;
-  comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n' ;;
+  comments:create)
+    if [[ -e "$FIXTURE/question-id" ]]; then jq -cn --rawfile id "$FIXTURE/question-id" '{success:true,data:{comment:{id:($id | rtrimstr("\\n"))}}}'
+    else printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n'; fi ;;
   comments:react)
     if [[ -e "$FIXTURE/react-fails" ]]; then cat "$FIXTURE/react-fails" >&2; exit 1; fi
     printf '{"success":true,"data":{"reaction":{"emoji":"eyes"}}}\\n' ;;
@@ -188,6 +190,40 @@ esac
     explicit = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--root', str(worktree), '--peek').stdout.splitlines() if line.startswith('{')]
     assert [row['text'] for row in explicit] == ['explicit'], explicit
     assert [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')] == rows
+    # An ask closed on an answer given elsewhere, before any pass, marks the
+    # owner's comment then: no later pass reads a closed ask's comments. A
+    # deadline close marks nothing, and a comment a pass delivered keeps the
+    # one mark it has.
+    answer = root / 'relayed'
+    answer.write_text('ship\n')
+    for issue, close, pass_first, react_fails, marked, stderr in [
+            ('KEN-9', ['--text', str(answer)], False, False, True, ''),
+            ('KEN-10', [], False, False, True, ''),
+            ('KEN-11', ['--default'], False, False, False, ''),
+            ('KEN-12', ['--text', str(answer)], True, False, False, ''),
+            ('KEN-13', ['--text', str(answer)], False, True, True,
+             'owner-answers: unmarked issue=KEN-13 comment=relay-KEN-13 cause=reaction-failed\n')]:
+        (root / 'question-id').write_text(f'question-{issue}\n')
+        message.write_text(f'Ship {issue}?\n')
+        asked = call('ask', '--item', 'overseer', '--to', 'owner', '--issue', issue, '--do', 'Ship change',
+                     '--options', 'ship,hold', '--recommend', 'ship', '--effect', 'none', '--wait', '5', '--file', str(message))
+        ask = asked.stdout.strip().split('=', 1)[1]
+        comment = f'relay-{issue}'
+        (root / 'comments').write_text(json.dumps({issue: [
+            dict(id=f'question-{issue}', body='Question', user_email='bot@example.test', created_at='2026-01-05T00:00:00Z'),
+            dict(id=comment, body='ship', user_email='owner@example.test', created_at='2026-01-06T00:00:00Z')]}))
+        if pass_first:
+            call('owner-answers', '--item', 'overseer')
+        if react_fails:
+            (root / 'react-fails').write_text('{"error":"Entity not found: Comment"}\n')
+        before = len((root / 'calls').read_text().splitlines())
+        closed = call('resolve', '--item', 'overseer', '--id', ask, *close)
+        (root / 'react-fails').unlink(missing_ok=True)
+        assert closed.stderr == stderr, (issue, closed)
+        later = call('owner-answers', '--item', 'overseer')
+        assert later.stdout.splitlines()[-1] == 'owner-answers: read=read', (issue, later)
+        reacts = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('comments react ')]
+        assert reacts == ([f'comments react {comment} --emoji eyes'] if marked else []), (issue, reacts)
     print('PASS owner answer delivery, filtering, deduplication, repair, absent tracker and quota refusal')
 PY
 pass 'owner answer delivery, filtering, repair and quota contract'
