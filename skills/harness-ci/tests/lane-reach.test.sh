@@ -851,7 +851,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
-    workflow-env|workflow-env-sourced|workflow-env-claimed) base="$workflow_env_base" ;;
+    workflow-env|workflow-env-sourced|workflow-env-config|workflow-env-claimed) base="$workflow_env_base" ;;
     workflow-env-*|workflow-defaults) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
@@ -1071,6 +1071,7 @@ deleted-workdir|check-cwd/only.txt|true||false|false
 shell-parent-hop|tools/cache/only.txt|true||false|false
 workflow-env|tools/input.sh|true||false|false||||||||false
 workflow-env-sourced|tools/env-lib.sh|true||true|true||||||||true
+workflow-env-config|ci/settings.toml|true||true|true||||||||true
 workflow-env-claimed|orphan.settings|false||false|false||||||||true
 workflow-env-step|tools/input.sh|true||false|false||||||||true
 workflow-env-mapped|tools/input.sh|true||false|false||||||||false
