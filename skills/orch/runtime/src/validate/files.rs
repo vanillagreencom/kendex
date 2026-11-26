@@ -16,6 +16,16 @@ pub fn unreadable(read: &'static str, cause: impl ToString) -> Error {
     }
 }
 
+/// The refusal of a read whose cause is one word the caller holds, kept on
+/// the keyed line as `field=value`.
+pub fn unread_value(read: &'static str, field: &'static str, value: impl ToString) -> Error {
+    Error::ValidateValue {
+        read,
+        field,
+        value: value.to_string(),
+    }
+}
+
 pub fn fields(path: &Path) -> Result<BTreeMap<String, String>> {
     let text = fs::read_to_string(path)
         .map_err(|e| unreadable("record", format!("{}: {e}", path.display())))?;
@@ -281,13 +291,13 @@ impl RunFile {
         let seconds = timing
             .get("seconds")
             .and_then(|v| v.parse::<u64>().ok())
-            .ok_or_else(|| unreadable("timing-unreadable", "seconds"))?;
+            .ok_or_else(|| unread_value("timing-unreadable", "cause", "seconds"))?;
         let time = |key: &'static str| {
             timing
                 .get(key)
                 .filter(|v| agent_runtime::clock::epoch_secs(v).is_some())
                 .cloned()
-                .ok_or_else(|| unreadable("timing-unreadable", key))
+                .ok_or_else(|| unread_value("timing-unreadable", "cause", key))
         };
         Ok(Some(Timing {
             seconds,
@@ -597,9 +607,11 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
 /// A budget that ends before the start prints `state=queued` and exits 3.
 /// A run no stage in `state_dir` admitted refuses `run-unadmitted`, one
 /// whose stage closed with no start record refuses `run-ended-unstarted`
-/// with the stage's word and cause, as no verdict will come, and one whose
-/// stage holds the key of a start refused before it recorded the run
-/// refuses `start-refused` with that key.
+/// with the stage's word, as no verdict will come, and one whose open stage
+/// holds the key of a start refused before it recorded the run refuses
+/// `start-refused` with that key. The closed stage's cause is the refusal
+/// that kept the run from starting: the key a refused start left, else the
+/// key its refused launch's cause leads with, else the close's word.
 #[allow(
     clippy::disallowed_methods,
     reason = "validation waits read the injected clock and never start work"
@@ -637,11 +649,19 @@ pub fn wait_queued(
             if started()? {
                 return follow(call);
             }
+            let detail = stage.job.and_then(|job| job.cause);
+            let cause = match (stage.refused, stage.cause, &detail) {
+                (Some(refused), _, _) => Some(refused),
+                (None, Some(crate::ops::RunCause::LaunchFailed), Some(launch)) => {
+                    Some(crate::error::launch_refusal_key(launch).to_owned())
+                }
+                (None, cause, _) => cause.map(|c| c.word().to_owned()),
+            };
             return Err(Error::RunEndedUnstarted {
                 run_dir: run_dir.display().to_string(),
                 outcome: stage.outcome.map_or("none", StageOutcome::word),
-                cause: stage.cause.map(crate::ops::RunCause::word),
-                detail: stage.job.and_then(|job| job.cause),
+                cause,
+                detail,
             });
         }
         // A start clears the key when it records the run, before it writes
@@ -683,7 +703,7 @@ fn wait_state(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String,
         .parse::<u64>()
         .ok()
         .filter(|n| *n > 0)
-        .ok_or_else(|| unreadable("no-run", "poll-secs"))?;
+        .ok_or_else(|| unread_value("no-run", "cause", "poll-secs"))?;
     let call = clock.now() + Duration::from_secs(budget);
     loop {
         let run = RunFile::read(run_dir)?;

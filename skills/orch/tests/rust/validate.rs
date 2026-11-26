@@ -237,6 +237,15 @@ fn ok(out: &Output) -> Value {
     );
     reply(out)["result"].clone()
 }
+/// The entry's keyed line: the last on stderr, below the refusal's text.
+fn keyed(out: &Output) -> String {
+    stderr(out)
+        .trim_end()
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .to_owned()
+}
 fn refusal(out: &Output) -> String {
     assert_eq!(out.status.code(), Some(1), "{}", stderr(out));
     reply(out)["refusal"]["key"].as_str().unwrap().into()
@@ -1112,7 +1121,7 @@ fn record_reads_the_last_valid_selection_candidate_and_refuses_unreadable_eviden
     let refused = w.entry(&["--record", "--run-dir", &dir], &[]);
     assert_eq!(refused.status.code(), Some(2));
     assert!(
-        stderr(&refused).starts_with("validate: record-unreadable"),
+        keyed(&refused).starts_with("validate: validate-unreadable read=record-unreadable"),
         "{}",
         stderr(&refused)
     );
@@ -1374,47 +1383,63 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
     };
     let no_second = waited("no-second", "validate-mode=full\npoll-secs=1\n");
     let no_poll = waited("no-poll", "validate-mode=full\nstart=1\n");
-    for (args, want) in [
-        (vec!["--wait", "--stop"], "mode-conflict"),
+    // An I/O cause is the reader's own words: the system's, read here.
+    let absent = fs::canonicalize("/absent-u8z2p").unwrap_err().to_string();
+    for (args, want, cause) in [
+        (
+            vec!["--wait", "--stop"],
+            "validate-unreadable read=mode-conflict",
+            None,
+        ),
         (
             vec!["--wait", "--run-dir", &empty, "--attached"],
-            "option-unused cause=start options",
+            "validate-unreadable read=option-unused",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &empty, "--fresh"],
-            "option-unused cause=start options",
+            "validate-unreadable read=option-unused",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &empty, "--reproduce"],
-            "option-unused cause=start options",
+            "validate-unreadable read=option-unused",
+            None,
         ),
         (
             vec!["--worktree", &wt, "--restack"],
-            "option-unused cause=--restack",
+            "validate-unreadable read=option-unused cause=--restack",
+            None,
         ),
         (
             vec!["--stop", "--worktree", &wt, "--run-dir", &empty],
-            "option-unused cause=--run-dir",
+            "validate-unreadable read=option-unused cause=--run-dir",
+            None,
         ),
         (
             vec!["--worktree", &wt, "--attached", "--budget", "5"],
-            "option-unused cause=--budget",
+            "validate-unreadable read=option-unused cause=--budget",
+            None,
         ),
         (
             vec!["--stop", "--worktree", &wt, "--poll", "1"],
-            "option-unused cause=--poll",
+            "validate-unreadable read=option-unused cause=--poll",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &empty, "--poll", "1"],
-            "option-unused cause=--poll",
+            "validate-unreadable read=option-unused cause=--poll",
+            None,
         ),
         (
             vec!["--stop", "--worktree", &wt, "--validate-mode", "range"],
-            "option-unused cause=--validate-mode",
+            "validate-unreadable read=option-unused cause=--validate-mode",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &empty, "--validate-mode", "range"],
-            "option-unused cause=--validate-mode",
+            "validate-unreadable read=option-unused cause=--validate-mode",
+            None,
         ),
         (
             vec![
@@ -1424,23 +1449,43 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
                 "--validate-mode",
                 "range",
             ],
-            "option-unused cause=--validate-mode",
+            "validate-unreadable read=option-unused cause=--validate-mode",
+            None,
         ),
         (
             vec!["--stop", "--worktree", &wt, "--base", "HEAD"],
-            "option-unused cause=--base",
+            "validate-unreadable read=option-unused cause=--base",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &empty, "--base", "HEAD"],
-            "option-unused cause=--base",
+            "validate-unreadable read=option-unused cause=--base",
+            None,
         ),
-        (vec!["--stop"], "required cause=--worktree"),
-        (vec![], "required cause=--worktree"),
-        (vec!["--resolve-mode"], "required cause=--worktree"),
-        (vec!["--wait"], "required cause=--run-dir"),
+        (
+            vec!["--stop"],
+            "validate-unreadable read=required cause=--worktree",
+            None,
+        ),
+        (
+            vec![],
+            "validate-unreadable read=required cause=--worktree",
+            None,
+        ),
+        (
+            vec!["--resolve-mode"],
+            "validate-unreadable read=required cause=--worktree",
+            None,
+        ),
+        (
+            vec!["--wait"],
+            "validate-unreadable read=required cause=--run-dir",
+            None,
+        ),
         (
             vec!["--wait", "--run-id", "20300101T000000Z-queued"],
-            "required cause=--worktree",
+            "validate-unreadable read=required cause=--worktree",
+            None,
         ),
         (
             vec![
@@ -1452,19 +1497,23 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
                 "--run-dir",
                 &empty,
             ],
-            "option-unused cause=--run-dir",
+            "validate-unreadable read=option-unused cause=--run-dir",
+            None,
         ),
         (
             vec!["--stop", "--worktree", "/absent-u8z2p"],
-            "not-directory",
+            "validate-unreadable read=not-directory",
+            Some(absent.as_str()),
         ),
         (
             vec!["--restack-check", "--worktree", &wt],
-            "required cause=--base",
+            "validate-unreadable read=required cause=--base",
+            None,
         ),
         (
             vec!["--restack-check", "--base", "HEAD"],
-            "required cause=--worktree",
+            "validate-unreadable read=required cause=--worktree",
+            None,
         ),
         (
             vec![
@@ -1474,11 +1523,13 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
                 "--base",
                 "HEAD",
             ],
-            "not-directory",
+            "validate-unreadable read=not-directory",
+            None,
         ),
         (
             vec!["--worktree", &wt, "--validate-mode", "fast"],
-            "invalid-mode cause=fast",
+            "validate-unreadable read=invalid-mode",
+            None,
         ),
         (
             vec![
@@ -1490,41 +1541,55 @@ fn a_full_start_ignores_a_base_and_refuses_unused_options() {
                 "no-such-ref",
             ],
             "invalid-base base=no-such-ref",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &no_second, "--budget", "1"],
-            "no-run",
+            "validate-unreadable read=no-run",
+            None,
         ),
         (
             vec!["--wait", "--run-dir", &no_poll, "--budget", "1"],
-            "no-run cause=poll-secs",
+            "validate-unreadable read=no-run cause=poll-secs",
+            None,
         ),
         (
             vec!["--last-pass", "--worktree", &wt, "--fresh"],
-            "option-unused cause=start options",
+            "validate-unreadable read=option-unused",
+            None,
         ),
-        (vec!["--record", "--run-dir", &untimed], "timing-unreadable"),
+        (
+            vec!["--record", "--run-dir", &untimed],
+            "validate-unreadable read=timing-unreadable",
+            None,
+        ),
         (
             vec!["--record", "--run-dir", &unstarted],
-            "timing-unreadable cause=started-at",
+            "validate-unreadable read=timing-unreadable cause=started-at",
+            None,
         ),
         (
             vec!["--record", "--run-dir", &unsecond],
-            "timing-unreadable cause=seconds",
+            "validate-unreadable read=timing-unreadable cause=seconds",
+            None,
         ),
     ] {
         let out = w.entry(&args, &[]);
-        let first = stderr(&out).lines().next().unwrap_or_default().to_owned();
-        assert_eq!(out.status.code(), Some(2), "{args:?}: {first}");
-        assert!(
-            first.starts_with(&format!("validate: {want}")),
-            "{args:?}: {first}"
-        );
+        let line = keyed(&out);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {line}");
+        // The whole line parses as `field=value` pairs after its key.
+        assert_eq!(line, format!("validate: {want}"), "{args:?}");
+        // A cause the line leaves out is the refusal's text above it.
+        if let Some(cause) = cause {
+            let text = stderr(&out);
+            let above = text.trim_end().strip_suffix(&line).unwrap_or_default();
+            assert!(above.contains(cause), "{args:?}: {text}");
+        }
     }
     let empty_cmd = w.local(&["--fresh"], &[("DEV_VALIDATE_CMD", "")]);
     assert_eq!(empty_cmd.status.code(), Some(2));
     assert!(
-        stderr(&empty_cmd).starts_with("validate: empty-validate-cmd setting=DEV_VALIDATE_CMD"),
+        keyed(&empty_cmd).starts_with("validate: empty-validate-cmd setting=DEV_VALIDATE_CMD"),
         "{}",
         stderr(&empty_cmd)
     );
@@ -2089,9 +2154,12 @@ fn wait_budgets_and_launch_grace_use_the_injected_clock_and_do_not_start_work() 
 /// its verdict line alone; one that never starts ends at the budget with
 /// its own `state=queued` line; one that starts late is followed only for
 /// what is left of the budget; one whose admission closes with no start
-/// record ends with the admission's cause; one whose start is refused
-/// `run-live` stays queued for the start that follows; an id no round
-/// admitted is refused.
+/// record ends with the key of the refusal that kept it from starting, else
+/// the close's word; one whose start is refused before it records the run,
+/// by id or by round, ends with that refusal's key; one whose start is
+/// refused `run-live` stays queued for the start that follows, as does one
+/// whose refusal could not be written, which its start names; an id no
+/// round admitted is refused.
 #[test]
 fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budget() {
     use std::sync::{Arc, mpsc};
@@ -2102,6 +2170,9 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
         Late,
         Refused,
         RefusedUnrecorded,
+        RefusedByRound,
+        RefusalUnwritable,
+        RefusedReconciled,
         RunLive,
         Reconciled,
         Unadmitted,
@@ -2112,11 +2183,20 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
         (Seat::Late, Ok(("running", 3))),
         (
             Seat::Refused,
-            Err(("run-ended-unstarted", Some("launch-failed"))),
+            Err(("run-ended-unstarted", Some("run-exists"))),
         ),
         (
             Seat::RefusedUnrecorded,
             Err(("start-refused", Some("memory-short"))),
+        ),
+        (
+            Seat::RefusedByRound,
+            Err(("start-refused", Some("memory-short"))),
+        ),
+        (Seat::RefusalUnwritable, Ok(("queued", 3))),
+        (
+            Seat::RefusedReconciled,
+            Err(("run-ended-unstarted", Some("memory-short"))),
         ),
         (Seat::RunLive, Ok(("queued", 3))),
         (
@@ -2211,11 +2291,9 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                 fs::create_dir(&dir).unwrap();
                 let out = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
                 assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-                assert!(
-                    stderr(&out).starts_with("validate: launch-failed"),
-                    "{}",
-                    stderr(&out)
-                );
+                let line = keyed(&out);
+                assert!(line.starts_with("validate: launch-failed "), "{line}");
+                assert_eq!(field(&line, "cause"), "run-exists", "{line}");
                 clock.release(Duration::from_secs(30));
             }
             Seat::RefusedUnrecorded => {
@@ -2227,10 +2305,82 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                 );
                 assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
                 assert!(
-                    stderr(&out).starts_with("validate: memory-short"),
+                    keyed(&out).starts_with("validate: memory-short"),
                     "{}",
                     stderr(&out)
                 );
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::RefusedByRound => {
+                // The seat starts the round's run by item and round, naming
+                // no run directory, and is refused before it records it.
+                let out = w.start(&[], &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")]);
+                assert_eq!(refusal(&out), "memory-short", "{}", stderr(&out));
+                // An item with no record holds no stage to write a refusal
+                // on, so its start answers its own refusal.
+                let out = w.run(
+                    &[
+                        "validate", "start", "--item", "KEN-0", "--round", ROUND, "--poll", "1",
+                    ],
+                    &[],
+                );
+                assert_eq!(refusal(&out), "record-missing", "{}", stderr(&out));
+                // An item whose record cannot be read refuses the write of
+                // the start's refusal for the cause that refusal names, so
+                // its start answers that refusal as itself.
+                let unreadable = support::item_record(&w.state, "KEN-0");
+                fs::write(&unreadable, "{").unwrap();
+                let out = w.run(
+                    &[
+                        "validate", "start", "--item", "KEN-0", "--round", ROUND, "--poll", "1",
+                    ],
+                    &[],
+                );
+                fs::remove_file(&unreadable).unwrap();
+                assert_eq!(refusal(&out), "json-invalid", "{}", stderr(&out));
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::RefusalUnwritable => {
+                // The seat's start is refused before it records the run, and
+                // the item's record refuses the write of that refusal.
+                let folder = w.item.parent().unwrap().to_owned();
+                let mode = |m| {
+                    fs::set_permissions(
+                        &folder,
+                        <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(m),
+                    )
+                    .unwrap()
+                };
+                mode(0o555);
+                let short = w.entry(
+                    &["--worktree", &wt, "--run-id", &id],
+                    &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")],
+                );
+                // With room for the run, the start fails at its own record
+                // write, which fails the refusal's write the same way.
+                let unwritten = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
+                mode(0o755);
+                for (out, refused) in [(short, "memory-short"), (unwritten, "io-failed")] {
+                    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                    let line = keyed(&out);
+                    let line = line.as_str();
+                    assert!(line.starts_with("validate: refusal-unrecorded "), "{line}");
+                    assert_eq!(field(line, "refused"), refused, "{line}");
+                    assert_eq!(field(line, "run_dir"), dir.display().to_string());
+                    assert_eq!(field(line, "cause"), "io-failed", "{line}");
+                }
+                clock.pass(Duration::from_secs(30));
+                clock.release(Duration::from_secs(30));
+            }
+            Seat::RefusedReconciled => {
+                // The seat's refused start leaves its key on the admission,
+                // which the round's reconcile then closes unstarted.
+                let out = w.entry(
+                    &["--worktree", &wt, "--run-id", &id],
+                    &[("ORCH_VALIDATE_MEMORY_MAX", "1023T")],
+                );
+                assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+                ok(&w.op(&json!({"op":"reconcile-round","round_id":ROUND}), &[]));
                 clock.release(Duration::from_secs(30));
             }
             Seat::RunLive => {
@@ -2252,7 +2402,7 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                 let out = w.entry(&["--worktree", &wt, "--run-id", &id], &[]);
                 assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
                 assert!(
-                    stderr(&out).starts_with("validate: run-live"),
+                    keyed(&out).starts_with("validate: run-live"),
                     "{}",
                     stderr(&out)
                 );
@@ -2298,8 +2448,8 @@ fn a_queued_wait_holds_one_call_from_before_the_start_to_the_verdict_or_its_budg
                     &[],
                 );
                 assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-                let line = stderr(&out);
-                let line = line.lines().next().unwrap_or_default();
+                let line = keyed(&out);
+                let line = line.as_str();
                 assert_eq!(
                     line.strip_prefix("validate: ")
                         .and_then(|l| l.split(' ').next()),
@@ -2803,8 +2953,9 @@ fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_grou
         &[("PATH", path.as_str())],
     );
     assert_eq!(out.status.code(), Some(2), "{}", text(&out));
-    assert!(
-        stderr(&out).contains("validate: missing-command cause=commands=perl"),
+    assert_eq!(
+        keyed(&out),
+        "validate: validate-unreadable read=missing-command commands=perl",
         "{}",
         stderr(&out)
     );
@@ -2815,12 +2966,10 @@ fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_grou
         &[("PATH", bare.as_str())],
     );
     assert_eq!(out.status.code(), Some(2), "{}", text(&out));
-    // The cause is the launcher's own: setsid could not be run.
-    assert!(
-        stderr(&out).starts_with("validate: launch-failed cause=launch-failed cause="),
-        "{}",
-        stderr(&out)
-    );
+    // The cause is the launcher's own key: setsid could not be run.
+    let line = keyed(&out);
+    assert!(line.starts_with("validate: launch-failed "), "{line}");
+    assert_eq!(field(&line, "cause"), "launch-failed", "{line}");
 }
 
 #[test]
@@ -3049,6 +3198,14 @@ fn an_unread_unit_start_remains_owed_and_a_confirmed_failed_unit_closes_stopped(
             .unwrap();
         assert_eq!(stage["end"].is_null(), open);
         if open {
+            // The refusal's fields name the run alone, so its keyed line
+            // parses; the job's handle, the launcher's free text, is its text.
+            let refused = &reply(&out)["refusal"];
+            assert_eq!(refused["fields"], json!([["run_dir", stage["run_dir"]]]));
+            let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
+            let unit = launches.lines().next().unwrap();
+            let text = refused["text"].as_str().unwrap();
+            assert!(text.contains(unit), "{text}");
             assert_eq!(refusal(&w.start(&[], &extra)), "run-live");
         } else {
             assert_eq!(stage["outcome"], "stopped");
@@ -3429,10 +3586,7 @@ fn a_base_a_restack_left_unreachable_and_pruned_is_refused_by_name_and_runs_noth
         text(&out),
         stderr(&out)
     );
-    assert_eq!(
-        stderr(&out).trim(),
-        format!("validate: invalid-base base={base}")
-    );
+    assert_eq!(keyed(&out), format!("validate: invalid-base base={base}"));
     let runs = fs::read_dir(w.worktree.join("tmp"))
         .unwrap()
         .flatten()

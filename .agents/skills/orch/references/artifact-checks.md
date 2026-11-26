@@ -43,7 +43,7 @@ Read when a workflow writes, checks or recovers a round's completion artifact, o
 
 ## Validation entry answers
 
-`orch-runtime validate entry` prints each refusal as one `validate: KEY cause=CAUSE` line on stderr, which names the key and its cause. A refusal exits 2; a refused `--stop` or restack check exits 1.
+`orch-runtime validate entry` prints each refusal on stderr as its text, then a last `validate: KEY field=value ...` line, which a reader keys on. A cause of more than one word appears only in the text. A refusal exits 2; a refused `--stop` or restack check exits 1.
 
 `--record` reports two fallbacks from the `start` record:
 

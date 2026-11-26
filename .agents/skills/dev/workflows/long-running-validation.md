@@ -63,8 +63,9 @@ When another seat starts the admitted run, such as the overseer for a confined l
 - The call reads the run as queued until the run's start record stands, then follows it as the `--wait --run-dir` poll does, under one budget.
 - A budget that ends before the start prints `state=queued` and exits 3.
 - An id no round admitted is refused `run-unadmitted`.
-- An admission that closed with no start record, such as one whose start was refused after it, is refused `run-ended-unstarted` with the admission's outcome and cause.
+- An admission that closed with no start record, such as one whose start was refused after it, is refused `run-ended-unstarted` with the admission's outcome. Its cause is the key of the refusal that kept the run from starting, such as `run-exists` or `memory-short`, where one stood, else the close's word.
 - A start the other seat ran that was refused before it recorded the run, such as `memory-short`, is refused `start-refused` with that start's key as its cause. The admission stays open, so that seat can start again under the same id.
+- A start the other seat ran that answers `refusal-unrecorded` left no refusal on the run's record, so the call still ends `state=queued`. That seat relays the refusal to its lane or closes the admission.
 - Each refusal exits 2 and routes as a refused start does.
 - Each harness holds the call as its row above holds the start:
   - Claude Code runs the bare command in the foreground under the maximum command timeout.

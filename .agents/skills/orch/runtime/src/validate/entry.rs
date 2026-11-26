@@ -18,7 +18,7 @@ const VALIDATE: &str = "validate";
 #[command(
     long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues or before it started: it prints state=running with the run directory, which --wait --run-dir follows on, or, for a run not yet started, state=queued, which the next paragraph routes.
 
---wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on. An id no round admitted refuses run-unadmitted; a run whose admission closed with no start record, such as a start refused after the admission, refuses run-ended-unstarted with the admission's outcome and cause; and a run whose last start was refused before it recorded the run refuses start-refused with that start's key as its cause, the admission staying open for the next start under the same id.
+--wait --worktree W --run-id ID follows an admitted run another seat starts, from before its run directory exists. While the run's start record is absent the run is queued; once it stands, the call follows the run as --wait --run-dir does, under the one budget. A budget that ends before the start prints state=queued waited-secs=N run-dir=DIR and exits 3, and the same call follows the run on. An id no round admitted refuses run-unadmitted; a run whose admission closed with no start record, such as a start refused after the admission, refuses run-ended-unstarted with the admission's outcome and, as its cause, the key of the refusal that kept the run from starting where one stood, else the close's word; and a run whose last start was refused before it recorded the run refuses start-refused with that start's key as its cause, the admission staying open for the next start under the same id.
 
 A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
@@ -168,14 +168,14 @@ fn arguments(args: &Args) -> Result<()> {
             || args.restack
             || (args.run_id.is_some() && !queued))
     {
-        Some("start options")
+        return Err(files::unreadable("option-unused", "start options"));
     } else if !start && !args.resolve_mode && !args.restack_check && args.base.is_some() {
         Some("--base")
     } else {
         None
     };
     if let Some(option) = unused {
-        return Err(files::unreadable("option-unused", option));
+        return Err(files::unread_value("option-unused", "cause", option));
     }
     if let Some(id) = &args.run_id {
         let bytes = id.as_bytes();
@@ -208,17 +208,15 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
             answer.exit
         }
         Err(Failure { error, exit }) => {
-            let diagnostic = match &*error {
-                Error::ValidateUnreadable { read, cause } => {
-                    format!("{VALIDATE}: {read} cause={cause}")
-                }
-                _ => crate::protocol::diagnostic_line(&error).replacen(
-                    "orch-runtime:",
-                    &format!("{VALIDATE}:"),
-                    1,
-                ),
-            };
-            let _ = writeln!(std::io::stderr(), "{diagnostic}");
+            let diagnostic = crate::protocol::diagnostic_line(&error).replacen(
+                "orch-runtime:",
+                &format!("{VALIDATE}:"),
+                1,
+            );
+            // The text carries a cause's own words and comes first, so the
+            // keyed line ends stderr: `lane-host-ssh` records the last line
+            // of a report whose lines open with none of the prefixes it keys.
+            let _ = writeln!(std::io::stderr(), "{error}\n{diagnostic}");
             exit
         }
     }
@@ -272,14 +270,14 @@ fn entry(
     let dir = || {
         args.run_dir
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--run-dir"))
+            .ok_or_else(|| files::unread_value("required", "cause", "--run-dir"))
     };
     if args.child {
         let dir = dir()?;
         let start = files::fields(&dir.join("start"))?;
         let worktree = start
             .get("worktree")
-            .ok_or_else(|| files::unreadable("no-run", "worktree"))?;
+            .ok_or_else(|| files::unread_value("no-run", "cause", "worktree"))?;
         let settings = resolve_at(Path::new(worktree), flags)?;
         run::execute(dir, &SystemClock, &super::group_leader(&settings))?;
         return Ok(TextReply::new(String::new(), 0));
@@ -291,7 +289,7 @@ fn entry(
         let worktree = args
             .worktree
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--worktree"))?;
+            .ok_or_else(|| files::unread_value("required", "cause", "--worktree"))?;
         let worktree =
             fs::canonicalize(worktree).map_err(|e| files::unreadable("not-directory", e))?;
         if !worktree.is_dir() {
@@ -330,7 +328,7 @@ fn entry(
         let base = args
             .base
             .as_deref()
-            .ok_or_else(|| files::unreadable("required", "--base"))?;
+            .ok_or_else(|| files::unread_value("required", "cause", "--base"))?;
         let (text, exit) =
             crate::ops::proof::restack(&worktree, base, env).map_err(unanswered_refusal)?;
         return Ok(TextReply::new(text, exit));
@@ -367,10 +365,10 @@ fn entry(
         );
     }
     if args.reproduce && mode == ValidateMode::Ci {
-        return Err(files::unreadable("reproduce-ci", "ci").into());
+        return Err(files::unread_value("reproduce-ci", "cause", "ci").into());
     }
     if args.restack && mode != ValidateMode::Ci {
-        return Err(files::unreadable("option-unused", "--restack").into());
+        return Err(files::unread_value("option-unused", "cause", "--restack").into());
     }
     let base = if mode == ValidateMode::Full {
         if args.base.is_some() {
@@ -464,18 +462,7 @@ fn entry(
                     },
                     &SystemClock,
                 );
-                match launch.answer() {
-                    agent_runtime::effects::job::Launch::Started { .. } => {}
-                    agent_runtime::effects::job::Launch::Refused { cause } => {
-                        return Err(files::unreadable("launch-failed", cause));
-                    }
-                    agent_runtime::effects::job::Launch::Unanswered { cause } => {
-                        return Err(files::unreadable(
-                            "launch-unanswered",
-                            format!("run-dir={} {cause}", run_dir.display()),
-                        ));
-                    }
-                }
+                super::launch_refusal(run_dir.display().to_string(), launch.answer())?;
             }
             if req.foreground {
                 fs::write(
@@ -484,7 +471,7 @@ fn entry(
                         "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
                         env.owner
                             .as_ref()
-                            .ok_or_else(|| files::unreadable("owner", "absent"))?
+                            .ok_or_else(|| files::unread_value("owner", "cause", "absent"))?
                             .pid,
                         env.owner.as_ref().unwrap().start,
                     ),
