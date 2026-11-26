@@ -9129,14 +9129,16 @@ fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_its_viewer_window_untyp
     let host = world.host();
     let verbs = world.verbs();
     assert_eq!(
-        verbs[verbs.len() - 4..],
+        verbs[verbs.len() - 6..],
         [
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json".to_owned(),
+            format!("put --item KEN-H {HOST_GIT_DIR}/lane-refresh"),
+            format!("put --item KEN-H {HOST_GIT_DIR}/lane-read-only"),
             "status --item KEN-H --harness claude".to_owned(),
             "capture --item KEN-H".to_owned(),
             "viewer-prefix --item KEN-H".to_owned(),
         ],
-        "the launch record verified, the harness read through the provider, then its viewer asked: {verbs:?}"
+        "the launch record verified and the lane's records stated, the harness read through the provider, then its viewer asked: {verbs:?}"
     );
     assert_eq!(
         verbs[1],
