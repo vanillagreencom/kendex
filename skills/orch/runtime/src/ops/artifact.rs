@@ -1897,7 +1897,11 @@ fn select_receipt(settings: &Settings, id: &Identity) -> Result<(PathBuf, Option
     // names none.
     let mut runs = Vec::new();
     for (index, s) in rows.iter().enumerate() {
-        let Some(dir) = s.run_dir.as_deref().filter(|_| s.kind == StageKind::Validate) else {
+        let Some(dir) = s
+            .run_dir
+            .as_deref()
+            .filter(|_| s.kind == StageKind::Validate)
+        else {
             continue;
         };
         if s.round_id.as_deref() == Some(&id.round_id) {

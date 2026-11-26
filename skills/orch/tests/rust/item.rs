@@ -3230,10 +3230,16 @@ mod dev_artifacts {
         /// `refs/remotes/origin/main`.
         fn with_origin(&self) {
             let origin = self.root.join("origin.git");
-            git(&self.root, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+            git(
+                &self.root,
+                &["init", "-q", "--bare", origin.to_str().unwrap()],
+            );
             git(&origin, &["config", "gc.auto", "0"]);
             git(&origin, &["config", "maintenance.auto", "false"]);
-            git(&self.wt, &["remote", "add", "origin", origin.to_str().unwrap()]);
+            git(
+                &self.wt,
+                &["remote", "add", "origin", origin.to_str().unwrap()],
+            );
             git(&self.wt, &["push", "-q", "origin", "main"]);
         }
         /// The base moves on origin: a commit on `main`, pushed.
@@ -3326,7 +3332,10 @@ mod dev_artifacts {
         git(&w.wt, &["update-ref", "-d", "refs/remotes/origin/main"]);
         assert_eq!(git(&w.wt, &["merge-base", &head, "main"]), merge_base);
         refused(&w.range_write("r1", &run), "run-off-round");
-        git(&w.wt, &["update-ref", "refs/remotes/origin/main", &tracking]);
+        git(
+            &w.wt,
+            &["update-ref", "refs/remotes/origin/main", &tracking],
+        );
         assert!(!w.receipt_path("r1").exists());
 
         let written = result(&w.range_write("r1", &run));
