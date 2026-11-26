@@ -32,10 +32,12 @@
 //! line once per row value: the mark keeps the value typed. The overseer's
 //! failed turn is asked as `<cause>|<key>|pass:<epoch>`, the pass's own
 //! second, so its row changes every pass and the wake resumes it once per
-//! pass while the failure stands. A wall's resume
+//! pass while the failure stands. A lane wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room and for any standing halt to lift, then is typed past its usage banner (`deliver
-//! --account-room`).
+//! --account-room`). The overseer's wall is asked as
+//! `usage-limit|<key>|<reset>|wall:<epoch>` once the controller duty reads
+//! its account with room, and is typed past its banner the same way.
 //!
 //! Hosted: a running lane whose host's line reads `launch=ssh`,
 //! `pane=local`, `status=verb` runs its harness on that host under the ssh
@@ -802,8 +804,10 @@ impl Wake {
                 let Some(target) = overseer_target(overseer, &socket) else {
                     continue;
                 };
+                // The controller duty asks a wall's resume only on a reading
+                // of its account with room, so no account is read again here.
                 let session = format!("{} {}", target.server, target.pane);
-                if resume.wall || resume_cause(&row, &session).is_none() {
+                if resume_cause(&row, &session).is_none() {
                     continue;
                 }
                 if let Some(mark) = record

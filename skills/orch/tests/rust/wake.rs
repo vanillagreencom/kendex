@@ -1225,15 +1225,35 @@ fn an_api_error_resume_is_typed_once_with_no_account_reading_and_a_refused_one_i
 /// A provider stop's resume, by each word agent-runtime names a provider
 /// stop: Claude Code's `server_error` for an overload, a broken stream or a
 /// dropped connection, and `refusal`, the rows reader's word for its safety
-/// refusal.
+/// refusal. A pending wall's resume at its reset, asked once its account
+/// read room, is typed past the usage banner the pane still stands at.
 #[test]
 fn a_controller_provider_resume_is_delivered_once_to_its_own_pane() {
-    for cause in ["server_error", "refusal"] {
+    for cause in ["server_error", "refusal", wake::WALL_CAUSE] {
         let fleet = Fleet::new();
-        let pane = fleet.open("overseer", "claude", "controller", &[]);
+        let wall = fleet.root.join("wall.txt");
+        std::fs::write(
+            &wall,
+            "⏺ Working through the queue.\n  ⎿ \u{a0}You've hit your weekly limit · resets Oct 4, 2025, 6pm (UTC)\n",
+        )
+        .unwrap();
+        let wall = wall.display().to_string();
+        let env: &[(&str, &str)] = if cause == wake::WALL_CAUSE {
+            &[("STUB_TURNS_WALL", &wall)]
+        } else {
+            &[]
+        };
+        let pane = fleet.open("overseer", "claude", "controller", env);
         fleet.server.await_composer(&pane.id);
         fleet.set_overseer(fleet.overseer("claude", &pane));
-        let row = format!("{cause}|{} {}|Some(1)|12", fleet.server.pid, pane.id);
+        let row = if cause == wake::WALL_CAUSE {
+            format!(
+                "{cause}|{} {}|1759600800|wall:1759597200",
+                fleet.server.pid, pane.id
+            )
+        } else {
+            format!("{cause}|{} {}|Some(1)|12", fleet.server.pid, pane.id)
+        };
         let baseline = resume_row(OVERSEER_TARGET, &row);
         let clock = FakeClock::new();
         let mut body = fleet.body();
