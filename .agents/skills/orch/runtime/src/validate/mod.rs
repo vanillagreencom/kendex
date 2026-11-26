@@ -1414,12 +1414,15 @@ fn quiet_clock_unavailable() -> Option<&'static str> {
 }
 
 /// The run's `start` record, line for line in the form the executor reads.
+/// A host run records its host's kind and its item, the facts its stop
+/// reads; never the provider's path, which the stop resolves from its own
+/// settings.
 fn start_record(
     worktree: &Path,
     proof: &Proof,
     start: u64,
     memory: &MemoryBound,
-    host: Option<&str>,
+    host: Option<HostRun<'_>>,
 ) -> String {
     let mut text = String::new();
     let mut line = |l: String| {
@@ -1474,10 +1477,19 @@ fn start_record(
     if !proof.tree.is_empty() {
         line(format!("tree={}", proof.tree));
     }
-    if let Some(host) = host {
-        line(format!("host={host}"));
+    if let Some(HostRun { kind, item }) = host {
+        line(format!("host={kind}"));
+        line(format!("item={item}"));
     }
     text
+}
+
+/// What a host run's start records of its host: the kind its capability
+/// line declares, and the item that admitted it.
+#[derive(Clone, Copy)]
+pub(super) struct HostRun<'a> {
+    pub(super) kind: &'a str,
+    pub(super) item: &'a str,
 }
 
 /// Write the run directory the executor reads: refused `run-exists` where
@@ -1495,7 +1507,7 @@ fn write_run_dir(
     start: u64,
     locking: Locking,
     memory: &MemoryBound,
-    host: Option<&str>,
+    host: Option<HostRun<'_>>,
 ) -> std::result::Result<(), String> {
     let unwritable =
         |name: &str, e: &dyn std::fmt::Display| format!("run-dir-unwritable file={name} cause={e}");
@@ -1856,8 +1868,8 @@ pub fn start(
     start_on(settings, req, None, env, locking)
 }
 
-/// [`start`] with the run's executor on `host`, the provider path a
-/// `--host` start names, or in this process tree's caller where none.
+/// [`start`] with the run's executor on `host`, the provider `--host`
+/// resolved from its settings, or in this process tree's caller where none.
 pub fn start_on(
     settings: &Settings,
     req: &StartRequest,
@@ -2028,9 +2040,9 @@ fn start_admitted(
         }
         // A host runs the lane's commit, so the worktree must stand at it,
         // and the host must declare that it runs a unit.
-        if let Some(host) = host {
-            run::host_ready(&worktree, host)?;
-        }
+        let kind = host
+            .map(|host| run::host_ready(&worktree, host))
+            .transpose()?;
         let scratch = Scratch::new(env)?;
         let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;
         let run_dir_given = req.run_dir.clone().or_else(|| {
@@ -2069,7 +2081,7 @@ fn start_admitted(
             start_secs,
             locking,
             &memory,
-            host,
+            kind.map(|kind| HostRun { kind, item: &item }),
         ) {
             Err(cause) => Launch::Refused { cause },
             Ok(()) => match &resolved.ran_nothing {

@@ -32,7 +32,7 @@ A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_C
 
 A live or unreadable start obligation refuses a second run. A started run whose job is gone closes at the next start as the round's reconcile closes it, and its end notice is sent, before that start judges its own admission, so the close stands whatever the start answers; a start under the gone run's own admission then refuses run-ended. --stop ends only the recorded unit or command identities. A command exit 3 records no-verdict; a command's own 124 or 137 is a failure.
 
---host HOST runs an admitted --run-id's executor on a second host at the lane's commit, through the provider HOST names (a path, as ORCH_LANE_HOST names one). The start is the admitted start: it resolves the proof here, records it on the admitted stage and writes the run directory, with host=HOST in its start record, which --record prints. A worktree that holds anything its HEAD lacks, the commit the host runs (a change to a tracked file, or an untracked file the project does not ignore), refuses host-tree-uncommitted; a host whose capability line does not declare validate=verb refuses host-validate-undeclared, and an unreadable line host-capabilities-unreadable. The executor then asks the provider's validate verb, one long-pool call per step of the unit, waiting --poll seconds (default 30) outside any slot after a call that read the run running, found its tree's runtime still building or found the pool full, and hands the host's log, warning, timing and sentinel back into the run directory; the stage then closes and the end notice is sent as for a local run. The call holds the caller's process tree for the run's length, as --foreground does, and takes no --budget, --foreground, --fresh, --reproduce or --restack. A host the executor cannot read ends the run no-verdict with validate-host: host-call-failed in its log; a host run that ended with no sentinel fails with validate-host: host-run-lost. A stop of a host run, --stop with its worktree included, asks the provider's validate --stop whether or not its caller still runs, and refuses stop-failed with host-stop-failed until the host answers stopped."
+--host runs an admitted --run-id's executor on a second host at the lane's commit, through the provider ORCH_VALIDATE_HOST names (a path, as ORCH_LANE_HOST names one). With ORCH_VALIDATE_HOST unset, host runs are off: a --host start takes the local route a start without it takes, and no host step runs. The start is the admitted start: it resolves the proof here, records it on the admitted stage and writes the run directory, with host=KIND, the kind the host's capability line declares, and item=ITEM in its start record; --record prints the host. A worktree that holds anything its HEAD lacks, the commit the host runs (a change to a tracked file, or an untracked file the project does not ignore), refuses host-tree-uncommitted; a host whose capability line does not declare validate=verb refuses host-validate-undeclared, and an unreadable line host-capabilities-unreadable. The executor then asks the provider's validate verb, one long-pool call per step of the unit, waiting --poll seconds (default 30) outside any slot after a call that read the run running, found its tree's runtime still building or found the pool full, and hands the host's log, warning, timing and sentinel back into the run directory; the stage then closes and the end notice is sent as for a local run. The call holds the caller's process tree for the run's length, as --foreground does, and takes no --budget, --foreground, --fresh, --reproduce or --restack. A host the executor cannot read ends the run no-verdict with validate-host: host-call-failed in its log; a host run that ended with no sentinel fails with validate-host: host-run-lost. A stop of a host run (validate stop by its run directory, closed stage included, or --stop with its worktree, which a lane close and a round recovery run) asks the provider the stopping process's ORCH_VALIDATE_HOST names for validate --stop, whether or not the run's caller still runs, and refuses stop-failed with host-stop-failed until the host answers stopped. --stop --release-host first releases each ended host run of the worktree whose host still does not answer: host-released released=operator with that cause, which its log also names; a run with no sentinel keeps the refusal."
 )]
 pub struct Args {
     #[arg(long)]
@@ -74,7 +74,9 @@ pub struct Args {
     #[arg(long, hide = true)]
     pub restack_check: bool,
     #[arg(long)]
-    pub host: Option<String>,
+    pub host: bool,
+    #[arg(long)]
+    pub release_host: bool,
     #[arg(long, hide = true)]
     pub host_child: bool,
 }
@@ -184,7 +186,14 @@ fn arguments(args: &Args) -> Result<()> {
     if let Some(option) = unused {
         return Err(files::unread_value("option-unused", "cause", option));
     }
-    if args.host.is_some() {
+    if args.release_host && !args.stop {
+        return Err(files::unread_value(
+            "option-unused",
+            "cause",
+            "--release-host",
+        ));
+    }
+    if args.host {
         // A host run is an admitted start held in the caller's process
         // tree, run fresh on the host's own executor.
         let unused = [
@@ -374,9 +383,12 @@ fn entry(
     }
     let settings = resolve_at(&worktree, flags)?;
     if args.stop {
-        // A host run's stop asks its provider, whose call takes its pool's
-        // slot only once the dispatch is installed.
+        // A host run's stop asks the provider these settings name, whose
+        // call takes its pool's slot only once the dispatch is installed.
         crate::provider::install(settings.dispatch.clone());
+        if args.release_host {
+            run::release_ended_hosts(&worktree).map_err(unanswered_refusal)?;
+        }
         let reach = crate::effects::fleet_mailbox(&settings);
         let run::WorktreeStop { units, groups } =
             run::stop_worktree(&settings, &reach, &worktree, None, env, locking)
@@ -437,16 +449,23 @@ fn entry(
     req.caller = if args.restack { "restack" } else { "dev" }.into();
     if let Some(id) = &args.run_id {
         req.run_dir = Some(super::run_dir_of(&worktree, id).display().to_string());
-        if args.host.is_some() {
+        // Host runs are off unless the settings name their provider: a
+        // `--host` start then takes the local route, and no host step runs.
+        let host = settings
+            .dispatch
+            .validate_host()
+            .filter(|_| args.host)
+            .map(str::to_owned);
+        if host.is_some() {
             // The entry loads its own settings, apart from the binary's
             // other verbs: a provider call takes its pool's slot only once
             // they are installed.
             crate::provider::install(settings.dispatch.clone());
         }
-        let started = super::start_on(&settings, &req, args.host.as_deref(), env, locking)?;
+        let started = super::start_on(&settings, &req, host.as_deref(), env, locking)?;
         write_started(&started.started_line, started.mode, req.restack)?;
         let reach = crate::effects::fleet_mailbox(&settings);
-        match &args.host {
+        match &host {
             Some(host) if started.launched => {
                 run::run_on(
                     &settings,

@@ -1314,11 +1314,11 @@ fn host_refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
 
 /// Whether `host` can run a unit of `worktree`: the worktree holds nothing
 /// its HEAD lacks, the commit the host runs, and the host's capability line
-/// declares `validate=verb`. An untracked file the project does not ignore
-/// counts, since the start's proof takes it into the tree it records while
-/// the host never sees it. A caller never reads an exit status as the
-/// verb's absence.
-pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<()> {
+/// declares `validate=verb`; the answer is the kind that line declares. An
+/// untracked file the project does not ignore counts, since the start's
+/// proof takes it into the tree it records while the host never sees it. A
+/// caller never reads an exit status as the verb's absence.
+pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<&'static str> {
     let mut log = String::new();
     let status = super::git(
         worktree,
@@ -1335,7 +1335,7 @@ pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<()> {
     }
     match crate::provider::capabilities(host, super::READ_TIMEOUT, HOST_TAG) {
         Ok(line) => match line.validate {
-            crate::watch::hosted::UnitKind::Verb => Ok(()),
+            crate::watch::hosted::UnitKind::Verb => Ok(line.kind),
             crate::watch::hosted::UnitKind::None => {
                 Err(host_refused("host-validate-undeclared", &[("host", host)]))
             }
@@ -1373,13 +1373,23 @@ fn host_wait(run_dir: &Path, poll: Duration, clock: &dyn Clock) {
 }
 
 /// The run file that records the host holds nothing of the run: written
-/// once the provider answered `stopped`, or handed the run back with its
-/// unit removed. A host run without it may still hold its host, so each
-/// stop asks the host again (`stop_files`), whatever its holder reads.
+/// once the provider answered `stopped` (`released=stopped`), handed the run
+/// back with its unit removed (`released=handed-back`), or an operator
+/// released an ended run the host would not answer for
+/// (`released=operator`, with the cause). A host run without it may still
+/// hold its host, so each stop asks the host again (`stop_files`), whatever
+/// its holder reads.
 const HOST_RELEASED: &str = "host-released";
 
 fn host_released(run_dir: &Path) -> bool {
     fs::symlink_metadata(run_dir.join(HOST_RELEASED)).is_ok()
+}
+
+/// Whether the run under `run_dir` is a host run its host may still hold.
+fn host_owed(run_dir: &Path) -> bool {
+    super::files::fields(&run_dir.join("start"))
+        .is_ok_and(|start| start.get("host").is_some_and(|h| !h.is_empty()))
+        && !host_released(run_dir)
 }
 
 /// The run's id, the admitted name its start gave `run_dir`.
@@ -1393,33 +1403,50 @@ fn host_run_id(run_dir: &Path) -> &str {
 
 /// The host stop of a run whose host may still hold it: none where the
 /// run is released, else [`host_stop`].
-fn release_host(run_dir: &Path, item: Option<&str>) -> std::result::Result<(), String> {
+fn release_host(run_dir: &Path) -> std::result::Result<(), String> {
     if host_released(run_dir) {
         return Ok(());
     }
-    host_stop(run_dir, item)
+    host_stop(run_dir)
 }
 
-/// The one host stop of a run: the provider its start record names asked
-/// `validate --stop` for `item` and the run's id, which ends the unit's run
-/// and removes the unit. Only its `stopped` answer for this item and run is
-/// a stop, recorded as `host-released`; anything else is the cause it
-/// returns, leading `host-stop-failed`. The executor asks it at its own
-/// end even on a released run, since a call it had in flight when another
-/// stop was confirmed may have prepared the unit again.
+/// The one host stop of a run: the provider this process's settings name
+/// for host runs (`ORCH_VALIDATE_HOST`), never a path the lane-writable run
+/// folder holds, asked `validate --stop` for the item and run id the run's
+/// start recorded, which ends the unit's run and removes the unit. Only its
+/// `stopped` answer for this item and run is a stop, recorded as
+/// `host-released`; anything else is the cause it returns, leading
+/// `host-stop-failed` and ending with the operator's way out. The executor
+/// asks it at its own end even on a released run, since a call it had in
+/// flight when another stop was confirmed may have prepared the unit again.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the host stop's one provider call, by the host the run's start record names"
+    reason = "the host stop's one provider call, by the host this process's settings name"
 )]
-fn host_stop(run_dir: &Path, item: Option<&str>) -> std::result::Result<(), String> {
-    let failed = |cause: &str| format!("host-stop-failed {cause}");
-    let start = super::files::fields(&run_dir.join("start")).map_err(|e| failed(&e.to_string()))?;
-    let host = start.get("host").map(String::as_str).unwrap_or("");
-    let item = item.ok_or_else(|| failed("item=unknown"))?;
+fn host_stop(run_dir: &Path) -> std::result::Result<(), String> {
+    let start = super::files::fields(&run_dir.join("start"));
+    let field = |key: &str| {
+        start
+            .as_ref()
+            .ok()
+            .and_then(|start| start.get(key).cloned())
+            .unwrap_or_default()
+    };
+    let failed = |cause: &str| {
+        format!(
+            "host-stop-failed {cause} fix=end the run on the host, or once this run has ended release it with validate entry --stop --release-host --worktree {}",
+            field("worktree")
+        )
+    };
+    let start = start.as_ref().map_err(|e| failed(&e.to_string()))?;
+    let kind = start.get("host").map(String::as_str).unwrap_or("");
+    let item = start.get("item").map(String::as_str).unwrap_or("");
+    let host = crate::provider::installed_validate_host()
+        .ok_or_else(|| failed(&format!("host={kind} provider=unconfigured")))?;
     let id = host_run_id(run_dir);
     let stop = ["validate", "--item", item, "--run-id", id, "--stop"];
-    let out = crate::provider::call(host, &stop, None, HOST_CALL_BOUND, HOST_TAG)
-        .map_err(|failure| failed(&format!("host={host} {failure}")))?;
+    let out = crate::provider::call(&host, &stop, None, HOST_CALL_BOUND, HOST_TAG)
+        .map_err(|failure| failed(&format!("host={kind} {failure}")))?;
     let (item_word, id_word) = (format!("item={item}"), format!("run-id={id}"));
     let stopped = String::from_utf8_lossy(&out.stdout).lines().any(|line| {
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -1428,15 +1455,48 @@ fn host_stop(run_dir: &Path, item: Option<&str>) -> std::result::Result<(), Stri
             && words.contains(&id_word.as_str())
     });
     if out.status.success() && stopped {
-        return atomic(run_dir, HOST_RELEASED, "stopped\n").map_err(|e| failed(&e.to_string()));
+        return atomic(run_dir, HOST_RELEASED, "released=stopped\n")
+            .map_err(|e| failed(&e.to_string()));
     }
     Err(failed(&format!(
-        "host={host} exit={} {}",
+        "host={kind} exit={} {}",
         out.status
             .code()
             .map_or("signal".to_owned(), |c| c.to_string()),
         crate::provider::cause_line(&String::from_utf8_lossy(&out.stderr))
     )))
+}
+
+/// The operator's release of the ended host runs in `worktree` whose host
+/// would not answer a stop: each is asked once more, and one still
+/// unanswered is released `released=operator` with that cause, also in its
+/// log. A run with no sentinel is left to the stop, which refuses while its
+/// host does not answer.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the operator's release writes its record and log line into each ended host run"
+)]
+pub fn release_ended_hosts(worktree: &Path) -> Result<usize> {
+    let mut released = 0;
+    for run in super::files::runs(worktree)? {
+        if run.sentinel.is_none() || !host_owed(&run.dir) {
+            continue;
+        }
+        if let Err(cause) = host_stop(&run.dir) {
+            let cause = cause.split(" fix=").next().unwrap_or(&cause).to_owned();
+            append_log(
+                &run.dir,
+                &format!("validate-host: host-released released=operator {cause}"),
+            )?;
+            atomic(
+                &run.dir,
+                HOST_RELEASED,
+                &format!("released=operator cause={cause}\n"),
+            )?;
+            released += 1;
+        }
+    }
+    Ok(released)
 }
 
 /// The provider's notice of a unit it handed back and could not remove.
@@ -1496,7 +1556,7 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
         &into,
     ];
     let end = |status: i32, why: &str| {
-        let released = match host_stop(run_dir, Some(item)) {
+        let released = match host_stop(run_dir) {
             Ok(()) => String::new(),
             Err(cause) => format!(" {cause}"),
         };
@@ -1602,10 +1662,10 @@ pub fn execute_on_host(run_dir: &Path, host: &str, item: &str, clock: &dyn Clock
     // could not remove, and a hand-back may name a unit it kept: either is
     // a host stop still owed.
     let released = if fetched && kept.is_none() {
-        atomic(run_dir, HOST_RELEASED, "handed-back\n")?;
+        atomic(run_dir, HOST_RELEASED, "released=handed-back\n")?;
         Ok(())
     } else {
-        host_stop(run_dir, Some(item))
+        host_stop(run_dir)
     };
     if let Err(cause) = released {
         let note = match kept {
@@ -1816,8 +1876,8 @@ pub enum JobState {
     clippy::disallowed_methods,
     reason = "the stop's one ask of the job launcher to end the run's job by its recorded identity, after the stop was recorded on the stage"
 )]
-fn end_job(item: &str, run_dir: &str) -> Result<JobEnded> {
-    stop_files(Path::new(run_dir), true, Some(item)).map(|answer| {
+fn end_job(run_dir: &str) -> Result<JobEnded> {
+    stop_files(Path::new(run_dir), true).map(|answer| {
         if answer.is_some() {
             JobEnded::Signalled
         } else {
@@ -1859,14 +1919,14 @@ pub fn stop_worktree(
     // A host run its host may still hold stays owed after its sentinel.
     for run in super::files::runs(worktree)?
         .into_iter()
-        .filter(|r| r.sentinel.is_none() || (!r.get("host").is_empty() && !host_released(&r.dir)))
+        .filter(|r| r.sentinel.is_none() || host_owed(&r.dir))
     {
         let rd = run.dir.display().to_string();
         match item_of_run_dir(&settings.state_dir, &rd) {
             Ok((item, _)) if Some(item.as_str()) == keep => {
                 let (stages, index) = stage_of(&state::item_path(&settings.state_dir, &item), &rd)?;
                 if stages[index].end.is_some() || stages[index].job.is_none() {
-                    count(stop_files(&run.dir, false, Some(&item))?);
+                    count(stop_files(&run.dir, false)?);
                 }
             }
             Ok((item, _)) => match stop(settings, reach, Some(&item), &rd, env, locking) {
@@ -1897,10 +1957,10 @@ pub fn stop_worktree(
                         count(Some(&reply.runner));
                     }
                 }
-                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir, false, Some(&item))?),
+                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir, false)?),
                 Err(error) => return Err(error),
             },
-            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir, false, None)?),
+            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir, false)?),
             Err(error) => return Err(error),
         }
     }
@@ -1918,18 +1978,14 @@ pub fn stop_worktree(
 /// finds, and otherwise only where the command group, or a runner that is
 /// not attached, does not read gone. A run whose work reads gone at a stop
 /// no stage records keeps the word its own ending reads. A host run's
-/// command runs on its host: the host stop (`release_host`) for `item` is
-/// asked whatever the run's holder reads, and a stop it does not confirm
-/// refuses `stop-failed`.
+/// command runs on its host: the host stop (`release_host`) is asked
+/// whatever the run's holder reads, and a stop it does not confirm refuses
+/// `stop-failed`.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
 )]
-pub(crate) fn stop_files(
-    run_dir: &Path,
-    staged: bool,
-    item: Option<&str>,
-) -> Result<Option<&'static str>> {
+pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static str>> {
     let mut marked = false;
     let mut mark = |live: bool| -> Result<()> {
         if live && !marked {
@@ -1965,7 +2021,7 @@ pub(crate) fn stop_files(
                 let ended = fs::symlink_metadata(run_dir.join("exit")).is_ok();
                 mark(!ended)?;
                 let asked = !host_released(run_dir);
-                release_host(run_dir, item).map_err(|cause| Error::ValidateStopFailed {
+                release_host(run_dir).map_err(|cause| Error::ValidateStopFailed {
                     run_dir: run_dir.display().to_string(),
                     cause,
                 })?;
@@ -2083,8 +2139,10 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
 /// job by its group), so the reconcile closes the stage `stopped` with the
 /// notice owed and the walk sends it, whatever sentinel the executor wrote
 /// first; a job that closed the stage itself before it was ended read the
-/// same word, the first closer winning. `item` names the record; with none,
-/// the run directory finds it. The walk sends through `reach`.
+/// same word, the first closer winning. A closed stage of a host run its
+/// host may still hold keeps its verdict, and the host stop runs before
+/// the `run-closed` refusal. `item` names the record; with none, the run
+/// directory finds it. The walk sends through `reach`.
 pub fn stop(
     settings: &Settings,
     reach: &Reach,
@@ -2100,7 +2158,7 @@ pub fn stop(
     let path = state::item_path(&settings.state_dir, &item);
     let (stages, index) = stage_of(&path, run_dir)?;
     let round_id = stages[index].round_id.clone().unwrap_or_default();
-    let stopped = apply(
+    let stopped = match apply(
         &path,
         Validate::Stop(RecordStop {
             round_id: round_id.clone(),
@@ -2108,7 +2166,15 @@ pub fn stop(
         }),
         env,
         locking,
-    )?;
+    ) {
+        // A closed stage keeps its verdict, but a host its run may still
+        // hold is stopped all the same before the refusal.
+        Err(closed @ Error::RunClosed { .. }) if host_owed(Path::new(run_dir)) => {
+            stop_files(Path::new(run_dir), false)?;
+            return Err(closed);
+        }
+        answer => answer?,
+    };
     let Validated::Stop(stopped) = stopped else {
         unreachable!("a stop reports its stop")
     };
@@ -2116,7 +2182,7 @@ pub fn stop(
     let Some(job) = stages[index].job.clone() else {
         unreachable!("the stop stands on a started run")
     };
-    let ended = end_job(&item, run_dir)?;
+    let ended = end_job(run_dir)?;
     let job_state = if job.runner.as_deref() == Some("attached") {
         JobState::Live
     } else {

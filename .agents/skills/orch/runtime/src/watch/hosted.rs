@@ -150,6 +150,8 @@ pub enum PaneKind {
 /// (`schemas/lane-host.md` § Host kinds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
+    /// The host's kind (`kind=`), the word a host run's start records.
+    pub kind: &'static str,
     pub files: Files,
     pub status: Status,
     pub pane: PaneKind,
@@ -276,6 +278,12 @@ impl Capabilities {
         }
         let of = |key: &str| given.get(key).copied().unwrap_or("");
         Ok(Capabilities {
+            kind: CAPABILITY_SETS[0]
+                .1
+                .iter()
+                .find(|kind| **kind == of("kind"))
+                .copied()
+                .unwrap_or(""),
             files: match of("files") {
                 "local" => Files::Local,
                 "verb" => Files::Verb,
@@ -2878,6 +2886,7 @@ mod tests {
         assert_eq!(
             Capabilities::parse(&format!("{SSH}\n")),
             Ok(Capabilities {
+                kind: "ssh",
                 files: Files::Verb,
                 status: Status::Verb,
                 pane: PaneKind::Local,

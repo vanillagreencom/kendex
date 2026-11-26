@@ -6710,6 +6710,18 @@ struct HostLane {
     dir: String,
 }
 
+/// The provider's SSH line again reachable once dropped.
+struct Reachable {
+    ssh: PathBuf,
+    reachable: PathBuf,
+}
+
+impl Drop for Reachable {
+    fn drop(&mut self) {
+        let _ = fs::rename(&self.reachable, &self.ssh);
+    }
+}
+
 /// A host command that outlasts the first read of its run.
 const HOST_COMMAND: &str = "sleep 2 && echo 'validate: lanes=unit selection=all'";
 /// A host command that outlasts the rows that act during it.
@@ -6721,7 +6733,10 @@ impl HostLane {
     }
 
     /// The lane with `settings` appended to its committed settings and
-    /// `render` given the lane's worktree before the lane commit.
+    /// `render` given the lane's worktree before the lane commit. Host runs
+    /// are on only for a command whose environment names the provider
+    /// (`spawn`, `stop`), as the suite's commands read no settings file's
+    /// keys.
     fn with(command: &'static str, settings: &str, render: impl Fn(&Path)) -> HostLane {
         let w = World::new();
         let base = w.head();
@@ -6750,11 +6765,9 @@ impl HostLane {
                 "refs/remotes/origin/main",
             ],
         );
-        if !settings.is_empty() {
-            let path = w.worktree.join("kendex.settings.toml");
-            let text = fs::read_to_string(&path).unwrap();
-            fs::write(&path, format!("{text}{settings}")).unwrap();
-        }
+        let path = w.worktree.join("kendex.settings.toml");
+        let text = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{text}{settings}")).unwrap();
         render(&w.worktree);
         git(
             &w.worktree,
@@ -6780,8 +6793,9 @@ impl HostLane {
         self.dir = admitted["report"]["run_dir"].as_str().unwrap().to_owned();
     }
 
-    /// The host run's caller, each call after a run read running `poll`
-    /// seconds apart, `extra` in its environment.
+    /// The host run's caller, `host` the provider its environment names for
+    /// host runs, each call after a run read running `poll` seconds apart,
+    /// `extra` in its environment.
     fn spawn(&self, host: &str, poll: &str, extra: &[(&str, &str)]) -> std::process::Child {
         let wt = self.w.worktree.display().to_string();
         let mut command = support::isolated();
@@ -6796,7 +6810,6 @@ impl HostLane {
                 "--run-id",
                 &self.id,
                 "--host",
-                host,
                 "--poll",
                 poll,
             ])
@@ -6807,6 +6820,7 @@ impl HostLane {
             command.env(k, v);
         }
         command.env("DEV_VALIDATE_CMD", self.command);
+        command.env("ORCH_VALIDATE_HOST", host);
         for (k, v) in extra {
             command.env(k, v);
         }
@@ -6855,6 +6869,37 @@ impl HostLane {
             .join(&self.id)
     }
 
+    /// `validate entry ARGS` with host runs on, the provider in its
+    /// environment.
+    fn stop(&self, args: &[&str]) -> Output {
+        self.w
+            .entry(args, &[("ORCH_VALIDATE_HOST", &self.host.provider())])
+    }
+
+    /// A live host run whose caller is then gone: its unit and the host's
+    /// run stand, and nothing here holds it.
+    fn abandon(&self) {
+        let holder = Owned(self.spawn(&self.host.provider(), "1", &[]));
+        until(|| self.host_run().join("runner").exists());
+        drop(holder);
+    }
+
+    /// Make the provider's SSH calls whose line holds `text` fail as an
+    /// unreachable host until the returned guard is dropped.
+    fn unreachable_for(&self, text: &str) -> Reachable {
+        let ssh = self.host.tools.join("ssh");
+        let reachable = self.host.tools.join("ssh.reachable");
+        fs::rename(&ssh, &reachable).unwrap();
+        support::write_executable(
+            &ssh,
+            format!(
+                "#!/bin/bash\ncase \"$*\" in *'{text}'*) exit 255 ;; esac\nexec '{}' \"$@\"\n",
+                reachable.display()
+            ),
+        );
+        Reachable { ssh, reachable }
+    }
+
     /// Make the host's recursive removal of a unit fail while the returned
     /// marker stands, as a unit the host cannot remove.
     fn hold_units(&self) -> PathBuf {
@@ -6881,7 +6926,7 @@ impl HostLane {
     /// The run passed as a local admitted run does: its stage holds the
     /// proof and closes pass with its notice sent, `read-proof` reads its
     /// tree complete for the round, the run index lists it, its record
-    /// names the host and the lane's commit, the host's process records
+    /// names the host's kind and the lane's commit, the host's process records
     /// stay behind and the host's unit is removed.
     fn assert_returned(&self, out: &Output) {
         assert_eq!(
@@ -6911,7 +6956,7 @@ impl HostLane {
         assert!(index.lines().any(|line| line == name), "{index}");
         let record = read_record(&self.w, &self.dir);
         assert_eq!(field(&record, "verdict"), "pass", "{record}");
-        assert_eq!(field(&record, "host"), self.host.provider(), "{record}");
+        assert_eq!(field(&record, "host"), "ssh", "{record}");
         assert_eq!(field(&record, "head"), self.w.head(), "{record}");
         assert_eq!(field(&record, "tree"), tree, "{record}");
         assert_eq!(field(&record, "lanes"), "unit", "{record}");
@@ -7049,7 +7094,7 @@ fn a_host_launch_refused_ends_the_run_no_verdict_and_never_a_last_pass() {
     );
     assert!(lane.unit().exists(), "the host kept the refused unit");
     fs::remove_file(&held).unwrap();
-    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     assert!(!lane.unit().exists(), "the next stop removed the kept unit");
 }
@@ -7075,7 +7120,7 @@ fn a_unit_the_host_kept_after_its_hand_back_is_logged_and_removed_by_the_next_st
     );
     assert!(lane.unit().exists(), "the host kept the unit");
     fs::remove_file(&held).unwrap();
-    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     assert!(!lane.unit().exists(), "the next stop removed the kept unit");
     assert_eq!(field(&read_record(&lane.w, &lane.dir), "verdict"), "pass");
@@ -7110,7 +7155,7 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
     let wt = lane.w.worktree.display().to_string();
     let mut holder = Owned(lane.spawn(&lane.host.provider(), "1", &[]));
     until(|| fs::symlink_metadata(key.with_extension("lock")).is_ok());
-    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     assert_eq!(holder.0.wait().unwrap().code(), Some(1));
     until(|| !lane.unit().exists());
@@ -7270,12 +7315,14 @@ fn a_host_start_that_cannot_run_refuses_by_key_on_the_admitted_stage() {
             "read=option-unused cause=--budget",
         ),
     ] {
-        let mut args = vec!["--worktree", wt.as_str(), "--host", broker.as_str()];
+        let mut args = vec!["--worktree", wt.as_str(), "--host"];
         args.extend(extra.iter().copied());
         if key.starts_with("read=option-unused") {
             args.extend(["--run-id", lane.id.as_str()]);
         }
-        let out = lane.w.entry(&args, &[]);
+        let out = lane
+            .w
+            .entry(&args, &[("ORCH_VALIDATE_HOST", broker.as_str())]);
         assert_eq!(out.status.code(), Some(2), "{case}: {}", stderr(&out));
         assert_eq!(
             keyed(&out),
@@ -7297,7 +7344,7 @@ fn a_worktree_stop_ends_a_live_host_run_on_its_host() {
     let wt = lane.w.worktree.display().to_string();
     let mut holder = Owned(lane.spawn(&lane.host.provider(), "40", &[]));
     until(|| lane.host_run().join("runner").exists());
-    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
     let stage = lane.w.stage(&lane.dir);
     assert!(!stage["end"].is_null(), "{stage}");
@@ -7315,11 +7362,10 @@ fn a_worktree_stop_ends_a_live_host_run_on_its_host() {
 /// A host run is held by its caller, as a foreground run is: while the
 /// caller follows it, the round's reconcile keeps its stage open and a wait
 /// by its id reads it running; once the caller is gone, the wait reads it
-/// lost, never queued. A stop of its worktree then asks the host to end the
-/// run the gone caller left: one the host does not answer refuses and
-/// leaves the run live there, and the next ends it and removes its unit. On
-/// a host with a user manager each run's copy launches in a unit of its own
-/// run, so two runs never share one.
+/// lost, never queued. The round's next host start then stops the run the
+/// gone caller left and removes its unit, so it never holds the host beside
+/// the new run. On a host with a user manager each run's copy launches in a
+/// unit of its own run, so two runs never share one.
 #[test]
 fn a_host_run_is_held_by_its_caller_through_a_reconcile_and_read_lost_without_it() {
     let mut lane = HostLane::new(LONG_COMMAND);
@@ -7378,34 +7424,11 @@ fn a_host_run_is_held_by_its_caller_through_a_reconcile_and_read_lost_without_it
     assert_eq!(field(line, "validate"), "FAILING", "{line}");
     let orphan = lane.unit();
     assert!(orphan.exists(), "the gone caller left its unit");
-    let ssh = lane.host.tools.join("ssh");
-    let reachable = lane.host.tools.join("ssh.reachable");
-    fs::rename(&ssh, &reachable).unwrap();
-    support::write_executable(&ssh, "#!/bin/sh\nexit 255\n");
-    let refused = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_ne!(refused.status.code(), Some(0), "{}", text(&refused));
-    assert!(
-        keyed(&refused).starts_with("validate: stop-failed")
-            && stderr(&refused).contains("host-stop-failed"),
-        "{}",
-        stderr(&refused)
-    );
-    assert!(orphan.exists(), "an unanswered stop removes nothing");
-    assert!(
-        !lane.host_run().join("exit").exists(),
-        "the host's run is live"
-    );
-    fs::rename(&reachable, &ssh).unwrap();
-    let stop = lane.w.entry(&["--stop", "--worktree", &wt], &[]);
-    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
-    assert!(
-        !orphan.exists(),
-        "the host's run is stopped and its unit removed"
-    );
     let first = lane.id.clone();
     lane.command = HOST_COMMAND;
     lane.admit(json!({"op":"record-validation-admission","round_id":ROUND,"attempt":"next"}));
     lane.assert_returned(&lane.run(&lane.host.provider()));
+    assert!(!orphan.exists(), "the next host start removed the orphan");
     let launches = fs::read_to_string(manager.join("launches")).unwrap();
     let units: Vec<&str> = launches.lines().collect();
     assert_eq!(units.len(), 2, "{launches}");
@@ -7414,6 +7437,182 @@ fn a_host_run_is_held_by_its_caller_through_a_reconcile_and_read_lost_without_it
     let stops = fs::read_to_string(manager.join("stops")).unwrap_or_default();
     assert!(
         stops.lines().any(|unit| unit == units[0]),
-        "the gone caller's run is stopped on its host: {stops}"
+        "the orphan's run is stopped on its host: {stops}"
     );
+}
+
+/// A stop of the worktree asks the host to end the run a gone caller left:
+/// one the host does not answer refuses and leaves the run live there, and
+/// the next ends it and removes its unit.
+#[test]
+fn a_worktree_stop_the_host_does_not_answer_refuses_and_the_next_ends_the_run() {
+    let lane = HostLane::new(LONG_COMMAND);
+    let wt = lane.w.worktree.display().to_string();
+    lane.abandon();
+    let down = lane.unreachable_for("");
+    let refused = lane.stop(&["--stop", "--worktree", &wt]);
+    assert_ne!(refused.status.code(), Some(0), "{}", text(&refused));
+    assert!(
+        keyed(&refused).starts_with("validate: stop-failed")
+            && stderr(&refused).contains("host-stop-failed"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(lane.unit().exists(), "an unanswered stop removes nothing");
+    assert!(
+        !lane.host_run().join("exit").exists(),
+        "the host's run is live"
+    );
+    drop(down);
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    assert!(
+        !lane.unit().exists(),
+        "the host's run is stopped and its unit removed"
+    );
+}
+
+/// A stop of a host run by its run directory, after the round's reconcile
+/// closed its stage, still ends the host's run and removes its unit, and
+/// the stage keeps its verdict.
+#[test]
+fn a_direct_stop_of_a_closed_host_run_ends_it_on_its_host() {
+    let lane = HostLane::new(LONG_COMMAND);
+    lane.abandon();
+    ok(&lane
+        .w
+        .op(&json!({"op":"reconcile-round","round_id":ROUND}), &[]));
+    let closed = lane.w.stage(&lane.dir);
+    assert!(!closed["end"].is_null(), "{closed}");
+    let stop = lane.w.run(
+        &["validate", "stop", "--run-dir", &lane.dir],
+        &[("ORCH_VALIDATE_HOST", &lane.host.provider())],
+    );
+    assert!(stderr(&stop).contains("run-closed"), "{}", stderr(&stop));
+    assert!(
+        !lane.unit().exists(),
+        "the host's run is stopped and its unit removed"
+    );
+    assert_eq!(lane.w.stage(&lane.dir)["outcome"], closed["outcome"]);
+}
+
+/// A host run whose item's records retention archived is still stopped on
+/// its host: its start record names the item.
+#[test]
+fn a_host_run_whose_item_was_archived_is_stopped_on_its_host() {
+    let lane = HostLane::new(LONG_COMMAND);
+    let wt = lane.w.worktree.display().to_string();
+    lane.abandon();
+    let items = lane.w.state.join("items");
+    fs::rename(items.join(ITEM_ID), lane.w.root.join("archived")).unwrap();
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    assert!(
+        !lane.unit().exists(),
+        "the host's run is stopped and its unit removed"
+    );
+}
+
+/// A stop runs the provider its own settings name for host runs, never one
+/// the lane-writable run folder names, by an absolute or a relative path.
+#[test]
+fn a_stop_runs_no_provider_the_run_folder_names() {
+    let mut lane = HostLane::new(LONG_COMMAND);
+    let wt = lane.w.worktree.display().to_string();
+    let ran = lane.w.root.join("planted-ran");
+    let planted = format!("#!/bin/sh\n: > '{}'\nexit 1\n", ran.display());
+    let absolute = lane.w.root.join("planted");
+    support::write_executable(&absolute, &planted);
+    support::write_executable(&lane.w.worktree.join("tmp/planted"), &planted);
+    for named in [absolute.display().to_string(), "tmp/planted".to_owned()] {
+        lane.abandon();
+        let start = Path::new(&lane.dir).join("start");
+        let record = fs::read_to_string(&start).unwrap();
+        let rewritten: String = record
+            .lines()
+            .map(|line| {
+                if line.starts_with("host=") {
+                    format!("host={named}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect();
+        fs::write(&start, rewritten).unwrap();
+        let stop = lane.stop(&["--stop", "--worktree", &wt]);
+        assert!(
+            !ran.exists(),
+            "{named}: the stop ran the run folder's provider"
+        );
+        assert_eq!(stop.status.code(), Some(0), "{named}: {}", stderr(&stop));
+        assert!(!lane.unit().exists(), "{named}: the host's run is stopped");
+        lane.admit(json!({"op":"record-validation-admission","round_id":ROUND,"attempt":"next"}));
+    }
+}
+
+/// An ended host run whose host would not answer its stop holds every stop
+/// of its worktree, as a lane close and a round recovery run it, until an
+/// operator releases it: the release records the cause in the run's log,
+/// and the next stop passes.
+#[test]
+fn an_ended_host_run_the_host_will_not_stop_is_released_by_the_operator() {
+    let lane = HostLane::with(
+        HOST_COMMAND,
+        "ORCH_VALIDATE_MEMORY_MAX = \"1023T\"\n",
+        |_| {},
+    );
+    let wt = lane.w.worktree.display().to_string();
+    let lane_env = [("ORCH_VALIDATE_MEMORY_MAX", "2G")];
+    let _down = lane.unreachable_for("stop_unit \"$1\" \"$2\"");
+    let out = lane.run_with(&lane.host.provider(), &lane_env);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(run_file(&lane.dir, "log").contains("host-stop-failed"));
+    let held = lane.stop(&["--stop", "--worktree", &wt]);
+    assert_ne!(held.status.code(), Some(0), "{}", text(&held));
+    assert!(
+        keyed(&held).starts_with("validate: stop-failed")
+            && stderr(&held).contains("--release-host"),
+        "{}",
+        stderr(&held)
+    );
+    let released = lane.stop(&["--stop", "--release-host", "--worktree", &wt]);
+    assert_eq!(released.status.code(), Some(0), "{}", stderr(&released));
+    assert!(
+        run_file(&lane.dir, "log").lines().any(|line| line
+            .starts_with("validate-host: host-released released=operator")
+            && line.contains("host-stop-failed")),
+        "{}",
+        run_file(&lane.dir, "log")
+    );
+    let stop = lane.stop(&["--stop", "--worktree", &wt]);
+    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+}
+
+/// With host runs off, the default, a `--host` start takes the local route:
+/// the run passes here, and no host step runs.
+#[test]
+fn a_host_start_with_host_runs_off_runs_here_and_asks_no_host() {
+    let lane = HostLane::new(HOST_COMMAND);
+    let wt = lane.w.worktree.display().to_string();
+    let out = lane.w.entry(
+        &[
+            "--worktree",
+            &wt,
+            "--run-id",
+            &lane.id,
+            "--host",
+            "--poll",
+            "1",
+        ],
+        &[("DEV_VALIDATE_CMD", lane.command)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        field(text(&out).lines().last().unwrap(), "validate"),
+        "pass"
+    );
+    let record = read_record(&lane.w, &lane.dir);
+    assert_eq!(field(&record, "host"), "", "{record}");
+    assert!(lane.host.calls().is_empty(), "{:?}", lane.host.calls());
+    assert!(!lane.unit().exists());
 }

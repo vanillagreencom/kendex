@@ -6,6 +6,8 @@ Read when writing a lane host provider, or when a step reads what `orch-runtime`
 
 `ORCH_LANE_HOST` names the host for every lane launch, watch pass and close: empty or unset for `local` tmux windows on this machine, `claude-cloud` for Claude Code cloud sessions, or a provider's executable path, read from the working directory and never looked up on `PATH`.
 
+`ORCH_VALIDATE_HOST` names, in the same forms, the host a `validate entry --host` run goes to. Unset, host runs are off.
+
 A program outside the runtime calls a host through `orch-runtime host`:
 
 ```bash
@@ -169,7 +171,7 @@ Each verb, its arguments, and its answer:
   - Optional, asked only of a `pane=verb` host.
   - One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session.
   - Exit `2`: no viewer.
-- `validate --item ID --run-id RUN --commit SHA --source DIR --run-dir RUNDIR --into STAGE`, asked only of a `validate=verb` host.
+- `validate --item ID --run-id RUN --commit SHA --source DIR --run-dir RUNDIR --into STAGE`, asked only of a `validate=verb` host that `ORCH_VALIDATE_HOST` names.
   - Runs the run the lane's start wrote at `RUNDIR` on the host, at `SHA`, the HEAD of the lane's worktree `DIR`. The lane's start resolved its proof and holds its stage; the host runs only its executor.
   - Each call takes one step of the unit: it prepares the unit, launches the host's copy of the run, or reads the run's state. It waits for no run inside the call.
   - Exit `3` with `state=preparing` on stdout is a unit still preparing: `step=tree` and `step=runtime` moved it a step, and `step=building` is a build still running. Exit `3` with `state=running` is a run still going. The caller asks again with the same arguments, at once after a step that moved the unit and after its poll otherwise.
@@ -181,7 +183,9 @@ Each verb, its arguments, and its answer:
   - Ends the unit's run on the host and removes the unit, then exits `0` with `stopped item=ID run-id=RUN` on stdout, also where the host holds no unit.
   - A unit whose tree a runtime build still reads is removed once that build ends, since a build that loses its sources records its key failed; its run is stopped all the same.
   - The executor asks it at each end of the run it did not take from a clean hand-back: a recorded stop, a host that answered no call for the start's quiet time, a refused launch, a folder an earlier call staged, or a unit a hand-back kept.
-  - A stop of the run, or of its worktree, asks it whatever holds the run, until the host has answered `stopped` once. Any other answer refuses the stop `stop-failed`.
+  - A stop of the run, or of its worktree, asks it whatever holds the run, until the host has answered `stopped` once. Any other answer refuses the stop `stop-failed`. A lane close and a round recovery wait on that answer.
+  - The stop asks the provider the stopping process's `ORCH_VALIDATE_HOST` names, and the item and run id the run's start recorded. The run folder names only the host's kind.
+  - Once the run has ended, `validate entry --stop --release-host --worktree DIR` releases it without the host's answer: `host-released released=operator` with the last cause, which the run's log also names. A run that has not ended keeps the refusal.
 - `accounts`, no arguments.
   - Optional.
   - One line per account the provider holds a credential for, in § Accounts rows.
