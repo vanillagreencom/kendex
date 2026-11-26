@@ -463,8 +463,9 @@ enum Verb {
     },
     /// The cycle a work item runs at, through change-scope's launch arm:
     /// one stdout line `tier=CLASS brief=VERB cause=CAUSE[ DETAIL]
-    /// estimate=N|- delta=N|- paths=N` at exit 0, else one keyed stderr line
-    /// at exit 1 for a body to refile or 2 for an environment failure.
+    /// estimate=N|- delta=N|- paths=N` at exit 0, none under `--filing`,
+    /// else one keyed stderr line at exit 1 for a body to refile or 2 for an
+    /// environment failure.
     Tier(ops::tier::Args),
     /// A worktree's publication order and pull request, read with the
     /// worktree's settings.

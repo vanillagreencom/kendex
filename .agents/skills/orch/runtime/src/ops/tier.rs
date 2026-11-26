@@ -6,9 +6,10 @@
 //! This module owns what orch adds: a body with no Location line refused, the
 //! paths judged as the admission's one touched-set function reads them over
 //! the body and the brief the launch will be given, the count of those paths
-//! and the range's changed paths, the cycle each class opens, and the line a
-//! launch brief carries. A class the arm could not measure answers standard
-//! with the arm's cause: standard is the widest cycle and grants nothing.
+//! and the range's changed paths, the cycle each class opens, the line a
+//! launch brief carries, and the read of a body before it is filed. A class
+//! the arm could not measure answers standard with the arm's cause: standard
+//! is the widest cycle and grants nothing.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -287,31 +288,54 @@ pub struct Args {
     /// The judged checkout.
     #[arg(long, default_value = ".")]
     repo: PathBuf,
+    /// Read only the body, as an item about to be filed: exit 0 with no
+    /// stdout line where the launch reads its Location and Expected delta,
+    /// else exit 1 with `cause=location-unread` for a Location line naming
+    /// no path, or `cause=invalid-delta` and the arm's warning for a delta
+    /// it reads as no delta. A body with no Location line passes.
+    #[arg(
+        long,
+        requires = "body",
+        conflicts_with_all = ["production", "brief", "floor", "base"]
+    )]
+    filing: bool,
 }
 
-/// The verb run: the line on stdout and the arm's notes on stderr at exit
-/// 0, else the keyed refusal and the notes on stderr at the refusal's exit.
+/// The verb run: the line on stdout, none under `--filing`, and the arm's
+/// notes on stderr at exit 0, else the keyed refusal and the notes on stderr
+/// at the refusal's exit.
 pub fn run(scope_paths_cli: &Path, args: &Args) -> i32 {
     use std::io::Write;
-    let request = Request {
-        production: args.production,
-        body: args.body.clone(),
-        brief: args.brief.clone(),
-        floor: args.floor.clone(),
-        range: args
-            .base
-            .clone()
-            .zip(args.head.clone())
-            .map(|(base, head)| ScopeRange { base, head }),
-        repo: args.repo.clone(),
+    let answered = match (&args.body, args.filing) {
+        (Some(body), true) => {
+            filing(scope_paths_cli, body).map(|classified| (None, classified.notes))
+        }
+        _ => {
+            let request = Request {
+                production: args.production,
+                body: args.body.clone(),
+                brief: args.brief.clone(),
+                floor: args.floor.clone(),
+                range: args
+                    .base
+                    .clone()
+                    .zip(args.head.clone())
+                    .map(|(base, head)| ScopeRange { base, head }),
+                repo: args.repo.clone(),
+            };
+            tier(scope_paths_cli, &request)
+                .map(|answer| (Some(answer.line()), answer.classified.notes))
+        }
     };
     let mut err = std::io::stderr().lock();
-    match tier(scope_paths_cli, &request) {
-        Ok(answer) => {
-            for note in &answer.classified.notes {
+    match answered {
+        Ok((line, notes)) => {
+            for note in &notes {
                 let _ = writeln!(err, "{note}");
             }
-            let _ = writeln!(std::io::stdout().lock(), "{}", answer.line());
+            if let Some(line) = line {
+                let _ = writeln!(std::io::stdout().lock(), "{line}");
+            }
             0
         }
         Err(refused) => {
@@ -374,6 +398,39 @@ fn read(path: &Path, cause: &str) -> Result<String, Refused> {
             2,
         )
     })
+}
+
+/// The line change-scope's launch arm prints, per its header, for an
+/// Expected delta it reads as no delta.
+fn invalid_delta(note: &str) -> bool {
+    let mut words = note.split(' ');
+    words.next() == Some("launch-warning:") && words.next() == Some("cause=invalid-delta")
+}
+
+/// The `tier --filing` read: what the launch's read of `body` refuses or
+/// drops, answered before the item is filed. A Location line naming no path
+/// refuses `location-unread`, as [`tier`] does, and an Expected delta the
+/// arm reads as no delta refuses `invalid-delta`, with the arm's warning,
+/// which names the accepted form, as its note. A body with no Location line
+/// passes: a container or a research item is filed before any path is
+/// placed, and [`tier`]'s `no-location` refusal routes one that launches.
+fn filing(scope_paths_cli: &Path, body: &Path) -> Result<Classified, Refused> {
+    let text = read(body, "body-unreadable")?;
+    let unread = |cause: &str| Refused::new(cause, &[], 1);
+    admission::touched(Some(&text), None, &[], &[]).map_err(|_| unread("location-unread"))?;
+    let classified = classify(
+        &arm_cli(scope_paths_cli),
+        &ArmInput {
+            body: Some(body),
+            ..ArmInput::default()
+        },
+    )?;
+    if classified.notes.iter().any(|note| invalid_delta(note)) {
+        let mut refused = unread("invalid-delta");
+        refused.notes = classified.notes;
+        return Err(refused);
+    }
+    Ok(classified)
 }
 
 /// The `tier` verb: a body with no Location line, or one whose Location

@@ -257,7 +257,8 @@ issue_marked_value() {
 }
 
 # require_issue_reach DESCRIPTION PRIORITY REVIEW_BORN — 0 to proceed, 1 + a
-# JSON error on stderr for the caller to return on.
+# JSON error on stderr for the caller to return on. The body's launch read,
+# require_issue_launch_read, runs under the same setting.
 #
 # The symptom check is bound to REVIEW_BORN ("1" from `--review-born`). A
 # review finding files as priority 2 only with a reported symptom; priority 2
@@ -289,7 +290,52 @@ require_issue_reach() {
 		return 1
 	fi
 
+	require_issue_launch_read "$description" || return 1
 	return 0
+}
+
+# require_issue_launch_read DESCRIPTION — 0 to proceed, 1 + a JSON error on
+# stderr. The body's Location and Expected delta lines are read as an orch
+# lane's launch reads them, through `orch-runtime tier --filing`, the owner of
+# both grammars, so a body the launch refuses or reads as no delta is refused
+# while its filer is still here. With no orch beside this package there is no
+# reader to ask and this package keeps no copy, so the check is skipped. A
+# body holding neither header word skips the call, since neither reader can
+# find a header in it. A reader that reaches no verdict refuses: skipping it
+# would file the body unread.
+require_issue_launch_read() {
+	local reader="${BASH_SOURCE[0]%/*}/../../../orch/scripts/orch-runtime"
+	local lower body="" out line cause="" rc=0
+	[[ -x "$reader" ]] || return 0
+	lower="${1,,}"
+	[[ "$lower" == *location* || "$lower" == *delta* ]] || return 0
+
+	if ! body=$(mktemp 2>/dev/null) || ! printf '%s\n' "$1" >"$body"; then
+		[[ -z "$body" ]] || rm -f -- "$body"
+		jq -cn '{error: "Refusing to create an issue: no scratch file could hold its body for the launch read of its Location and Expected delta."}' >&2
+		return 1
+	fi
+	out=$("$reader" tier --filing --body "$body" 2>&1 >/dev/null) || rc=$?
+	rm -f -- "$body"
+	[[ "$rc" -ne 0 ]] || return 0
+
+	# The reader's keyed refusal line, `orch-runtime tier --help`'s contract.
+	while IFS= read -r line; do
+		[[ "$line" =~ ^orch-runtime:\ tier\ cause=([a-z-]+)(\ |$) ]] && cause="${BASH_REMATCH[1]}"
+	done <<<"$out"
+	[[ "$rc" -eq 1 ]] || cause=""
+	case "$cause" in
+		location-unread)
+			jq -cn --arg read "$out" '{error: ("Refusing to create an issue whose \"**Location**:\" line names no path on that line. The launch reads each path in backticks on the Location line itself, as project-management templates/issue-description-template.md writes it: **Location**: `path/one` `path/two`. Launch read: " + $read)}' >&2
+			;;
+		invalid-delta)
+			jq -cn --arg read "$out" '{error: ("Refusing to create an issue whose \"**Expected delta**:\" line the launch reads as no delta. Write it in the accepted form the launch read names, or drop the line. Launch read: " + $read)}' >&2
+			;;
+		*)
+			jq -cn --arg read "$out" --arg rc "$rc" '{error: ("Refusing to create an issue: the launch read of its Location and Expected delta (orch-runtime tier --filing) reached no verdict, exit " + $rc + ". Fix what it names and retry. Launch read: " + $read)}' >&2
+			;;
+	esac
+	return 1
 }
 
 # The supersession half of the filing bar: the record the comparison that
