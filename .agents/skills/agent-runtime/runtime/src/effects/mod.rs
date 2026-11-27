@@ -481,6 +481,27 @@ impl<'a> Operation<'a> {
         crate::launch::build_local(intent)
     }
 
+    /// The tier a Copilot launch of `model` starts on, from the model list
+    /// `client` (run as `program` with `words`) relays from the machine the
+    /// session signs in on, such as `ssh` to a lane's host running
+    /// [`crate::launch::copilot_server`]'s line
+    /// ([`crate::harness::copilot_model_list`],
+    /// [`crate::launch::ContextTier::of_copilot_list`]). The read starts the
+    /// client, so a caller of the engine reaches it through the operation,
+    /// before any window opens.
+    pub fn copilot_tier_through(
+        &self,
+        program: &'static str,
+        client: &Path,
+        words: &[&str],
+        model: &str,
+    ) -> crate::launch::ContextTier {
+        crate::launch::ContextTier::of_copilot_list(
+            crate::harness::copilot_model_list(program, client, words, &[]),
+            model,
+        )
+    }
+
     /// Whether the record says this intent signalled anything, on this run or
     /// an earlier one.
     pub fn signalled(&self) -> bool {

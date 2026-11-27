@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::harness::{COPILOT_SERVER_WORDS, Harness, copilot_model_list};
+use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use agent_runtime::launch::{
     COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, ContextTier, LaunchCommand,
@@ -1339,15 +1339,18 @@ fn hosted_launch(
         PaneKind::Local => Client::Window,
         PaneKind::Verb => Client::Detached,
     };
-    let command = match hosted_command(
-        run.settings,
-        r,
-        harness,
-        &created,
-        &brief,
-        client,
-        claude_launch_consent,
-    ) {
+    let command = match SshClient::of(run.settings).and_then(|ssh| {
+        let intent = hosted_intent(&operation, run.settings, r, harness, &created, &ssh)?;
+        hosted_command(
+            r,
+            &created,
+            &intent,
+            &brief,
+            client,
+            claude_launch_consent,
+            &ssh,
+        )
+    }) {
         Ok(command) => command,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
@@ -1488,30 +1491,57 @@ enum Client {
     Detached,
 }
 
-/// The ssh client's command: `ssh -t|-T -o BatchMode=yes -o
-/// ConnectTimeout=SECS -- TARGET LINE`, `-t` for the one typed line of
-/// the fleet window, `-T` for the detached run, where LINE is the
-/// provider's prefix followed by the harness line the builder spells for
-/// the worktree on the host, quoted as one word. Nobody answers a host-key,
-/// password or passphrase prompt in a fleet window, so the client refuses
-/// one instead of asking, and a dial that does not connect within the
-/// launch's own bound ends: either way the pane closes with the client and
-/// the launch fails `pane-gone` rather than waiting out the bound on a
-/// prompt. The brief travels inline, since the file is on this machine;
-/// the harness is the host's own program by name; no account variable
-/// reaches the host, whose prefix carries the credential it placed. A Pi
-/// lane on the Copilot pool runs the session-environment step first, in
-/// the same login shell. A Copilot lane naming a model starts on the tier
-/// its host's own model list decides ([`hosted_copilot_tier`]).
-fn hosted_command(
+/// The ssh client a hosted launch runs, by the path this process finds it
+/// at: the pane's shell runs it, and its search path is the fleet server's,
+/// not this one's. Its words are `ssh -t|-T -o BatchMode=yes -o
+/// ConnectTimeout=SECS -- TARGET LINE`. Nobody answers a host-key, password
+/// or passphrase prompt in a fleet window, so the client refuses one instead
+/// of asking, and a dial that does not connect within the launch's own bound
+/// ends: either way the pane closes with the client and the launch fails
+/// `pane-gone` rather than waiting out the bound on a prompt.
+struct SshClient {
+    program: String,
+    connect: String,
+}
+
+impl SshClient {
+    fn of(settings: &Settings) -> Result<SshClient> {
+        Ok(SshClient {
+            program: crate::ready::on_path("ssh")
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "ssh".to_owned()),
+            connect: format!("ConnectTimeout={}", settings.engine.verify.get()?.as_secs()),
+        })
+    }
+
+    /// The client's words that run `line` on `target`, under `terminal`
+    /// (`-t` or `-T`).
+    fn words(&self, terminal: &str, target: &str, line: String) -> Vec<String> {
+        vec![
+            terminal.to_owned(),
+            "-o".to_owned(),
+            "BatchMode=yes".to_owned(),
+            "-o".to_owned(),
+            self.connect.clone(),
+            "--".to_owned(),
+            target.to_owned(),
+            line,
+        ]
+    }
+}
+
+/// The session's intent on the host, built for the worktree at
+/// `created.path` with the lane's words, the harness the host's own program
+/// by name. A Copilot lane naming a model starts on the tier its host's own
+/// model list decides ([`hosted_copilot_tier`]).
+fn hosted_intent(
+    operation: &Operation,
     settings: &Settings,
     r: &LaunchLane,
     harness: Harness,
     created: &hosted::Created,
-    brief: &str,
-    client: Client,
-    claude_launch_consent: bool,
-) -> Result<LaunchCommand> {
+    ssh: &SshClient,
+) -> Result<LaunchIntent> {
     let remote_cwd = PathBuf::from(&created.path);
     let permission = r.permission_words();
     let (mut intent, _) = build_launch(
@@ -1538,21 +1568,34 @@ fn hosted_command(
     )?;
     intent.program = None;
     lane_words(&mut intent, &remote_cwd);
-    // The client by the path this process finds it at: the pane's shell
-    // runs it, and its search path is the fleet server's, not this one's.
-    let program = crate::ready::on_path("ssh")
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "ssh".to_owned());
-    let connect = format!("ConnectTimeout={}", settings.engine.verify.get()?.as_secs());
     if let (Harness::Copilot, Some(model)) = (harness, r.model.as_deref())
         && !model.is_empty()
     {
-        intent.context_tier = hosted_copilot_tier(&program, &connect, created, &intent, model)?;
+        intent.context_tier = hosted_copilot_tier(operation, ssh, created, &intent, model)?;
     }
+    Ok(intent)
+}
+
+/// The ssh client's command for the session `intent` starts on the host,
+/// `-t` for the one typed line of the fleet window, `-T` for the detached
+/// run, where LINE is the provider's prefix followed by the harness line the
+/// builder spells, quoted as one word. The brief travels inline, since the
+/// file is on this machine; no account variable reaches the host, whose
+/// prefix carries the credential it placed. A Pi lane on the Copilot pool
+/// runs the session-environment step first, in the same login shell.
+fn hosted_command(
+    r: &LaunchLane,
+    created: &hosted::Created,
+    intent: &LaunchIntent,
+    brief: &str,
+    client: Client,
+    claude_launch_consent: bool,
+    ssh: &SshClient,
+) -> Result<LaunchCommand> {
     let mut remote = if claude_launch_consent {
-        agent_runtime::launch::build_with_hosted_claude_consent(&intent)?
+        agent_runtime::launch::build_with_hosted_claude_consent(intent)?
     } else {
-        agent_runtime::launch::build(&intent)?
+        agent_runtime::launch::build(intent)?
     };
     if let Some(index) = remote.brief_arg {
         remote.args[index] = brief.to_owned();
@@ -1560,7 +1603,9 @@ fn hosted_command(
         remote.brief_path = None;
     }
     let mut shell_line = remote.shell_line();
-    if harness == Harness::Pi && Harness::Pi.pool(r.model.as_deref().unwrap_or("")) == "copilot" {
+    if intent.harness == Harness::Pi
+        && Harness::Pi.pool(r.model.as_deref().unwrap_or("")) == "copilot"
+    {
         shell_line = format!("{} && {shell_line}", PI_SESSION_ENV_STEP.trim_end());
     }
     let line = format!("{} {}", created.prefix, shell_quote(&shell_line));
@@ -1569,17 +1614,8 @@ fn hosted_command(
         Client::Detached => "-T",
     };
     Ok(LaunchCommand {
-        program,
-        args: vec![
-            terminal.to_owned(),
-            "-o".to_owned(),
-            "BatchMode=yes".to_owned(),
-            "-o".to_owned(),
-            connect,
-            "--".to_owned(),
-            created.target.clone(),
-            line,
-        ],
+        program: ssh.program.clone(),
+        args: ssh.words(terminal, &created.target, line),
         env: Default::default(),
         env_remove: Vec::new(),
         env_files: Default::default(),
@@ -1594,45 +1630,43 @@ fn hosted_command(
 /// The tier a hosted Copilot lane on `model` starts on, from its host's own
 /// model list: the session signs in on the host, under the host's Copilot
 /// home and CLI, so this machine's list would price it from another account.
-/// The server is the one the session's own line would start, in its worktree
-/// and environment, run on `created.target` over `ssh -T` under the
-/// provider's `read-prefix`, never its `remote-prefix`, whose process group
-/// the provider records as the lane's. A provider that names no read prefix
-/// gets no read, and the cause.
+/// The read goes through the operation ([`Operation::copilot_tier_through`]),
+/// over the words [`hosted_model_list_words`] gives. A provider that names
+/// no read prefix gets no read, and the cause.
 fn hosted_copilot_tier(
-    ssh: &str,
-    connect: &str,
+    operation: &Operation,
+    ssh: &SshClient,
     created: &hosted::Created,
     intent: &LaunchIntent,
     model: &str,
 ) -> Result<ContextTier> {
-    let Some(read_prefix) = created.read_prefix.as_deref() else {
+    let Some(words) = hosted_model_list_words(ssh, created, intent)? else {
         return Ok(ContextTier::Unread(
             "host-create-field-absent field=read-prefix".to_owned(),
         ));
     };
-    let mut server = agent_runtime::launch::build(intent)?;
-    server.args = COPILOT_SERVER_WORDS.map(str::to_owned).to_vec();
-    server.brief_arg = None;
-    server.brief_path = None;
-    server.confinement = None;
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    Ok(operation.copilot_tier_through("ssh", Path::new(&ssh.program), &words, model))
+}
+
+/// The ssh client's words that read the host's Copilot model list for the
+/// session `intent` starts there: the server its own line would start
+/// ([`agent_runtime::launch::copilot_server`]), in its worktree and
+/// environment, run on `created.target` with `-T` under the provider's
+/// `read-prefix`, never its `remote-prefix`, whose process group the
+/// provider records as the lane's. `None` where the provider names no read
+/// prefix.
+fn hosted_model_list_words(
+    ssh: &SshClient,
+    created: &hosted::Created,
+    intent: &LaunchIntent,
+) -> Result<Option<Vec<String>>> {
+    let Some(read_prefix) = created.read_prefix.as_deref() else {
+        return Ok(None);
+    };
+    let server = agent_runtime::launch::copilot_server(intent)?;
     let line = format!("{read_prefix} {}", shell_quote(&server.shell_line()));
-    let read = copilot_model_list(
-        "ssh",
-        Path::new(ssh),
-        &[
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            connect,
-            "--",
-            &created.target,
-            &line,
-        ],
-        &[],
-    );
-    Ok(ContextTier::of_copilot_list(read, model))
+    Ok(Some(ssh.words("-T", &created.target, line)))
 }
 
 /// The pace of a detached launch's confirming reads, each a provider call
@@ -3224,14 +3258,18 @@ mod tests {
         ));
     }
 
-    /// A hosted Copilot lane's tier is its host's own model list, read over
-    /// `ssh` under the provider's read prefix and never through a `copilot`
-    /// this machine starts: a model the host prices the same at both tiers
-    /// takes the long tier, a dearer one none, and a provider naming no read
-    /// prefix gets no read and the cause. The lane's own prefix ends any
-    /// line run under it, so a read made there answers nothing.
+    /// A hosted Copilot lane's model list is its host's own, read over `ssh`
+    /// under the provider's read prefix and never through a `copilot` this
+    /// machine starts; a provider naming no read prefix gets no read. The
+    /// lane's own prefix ends any line run under it, so a read made there
+    /// answers nothing.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row runs the words through the reader the operation's `copilot_tier_through` runs, since no operation opens here"
+    )]
     #[test]
-    fn a_hosted_copilot_tier_is_read_from_the_host_list_over_ssh_and_never_from_a_local_copilot() {
+    fn a_hosted_copilot_model_list_is_read_over_ssh_under_the_read_prefix_and_never_by_a_local_copilot()
+     {
         let dir = tempfile::tempdir().unwrap();
         let ssh = dir.path().join("ssh");
         crate::write_executable(
@@ -3239,24 +3277,19 @@ mod tests {
             "#!/bin/bash\nPATH=\"${0%/*}/host:$PATH\" exec bash -c \"${@: -1}\"\n",
         );
         std::fs::create_dir(dir.path().join("host")).unwrap();
-        let prices = |input: u32| format!(r#"{{"inputPrice":{input},"outputPrice":2000}}"#);
-        let list = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"result":{{"models":[{{"id":"claude-opus-5.5","billing":{{"tokenPrices":{{"inputPrice":400,"outputPrice":2000,"longContext":{}}}}}}},{{"id":"gpt-6","billing":{{"tokenPrices":{{"inputPrice":400,"outputPrice":2000,"longContext":{}}}}}}}]}}}}"#,
-            prices(400),
-            prices(800),
-        );
+        let list = r#"{"models":[{"id":"claude-opus-5.5"}]}"#;
         crate::write_executable(
             &dir.path().join("host").join("copilot"),
             format!(
-                "#!/bin/bash\n[ \"$*\" = '--headless --stdio --no-auto-update' ] || exit 64\nbody='{list}'\nprintf 'Content-Length: %s\\r\\n\\r\\n%s' \"${{#body}}\" \"$body\"\ncat > /dev/null\n"
+                "#!/bin/bash\n[ \"$*\" = '--headless --stdio --no-auto-update' ] || exit 64\nbody='{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{list}}}'\nprintf 'Content-Length: %s\\r\\n\\r\\n%s' \"${{#body}}\" \"$body\"\ncat > /dev/null\n"
             ),
         );
-        let intent = |model: &str| LaunchIntent {
+        let intent = LaunchIntent {
             harness: Harness::Copilot,
             home: None,
             account: None,
             cwd: dir.path().to_path_buf(),
-            model: Some(model.to_owned()),
+            model: Some("claude-opus-5.5".to_owned()),
             effort: None,
             agent: None,
             permission: Permission::Native,
@@ -3274,18 +3307,12 @@ mod tests {
             claude_sign_in: None,
             context_tier: Default::default(),
         };
-        #[derive(Debug, PartialEq)]
-        enum Want {
-            Long,
-            Native,
-            Unread,
-        }
-        let rows = [
-            ("claude-opus-5.5", Some("exec bash -c"), Want::Long, 1),
-            ("gpt-6", Some("exec bash -c"), Want::Native, 1),
-            ("claude-opus-5.5", None, Want::Unread, 0),
-        ];
-        for (model, read_prefix, want, reads) in rows {
+        let client = SshClient {
+            program: ssh.display().to_string(),
+            connect: "ConnectTimeout=5".to_owned(),
+        };
+        let want: Value = serde_json::from_str(list).unwrap();
+        for (read_prefix, read) in [(Some("exec bash -c"), Some(&want)), (None, None)] {
             let created = hosted::Created {
                 target: "lane.example".to_owned(),
                 path: dir.path().display().to_string(),
@@ -3298,31 +3325,24 @@ mod tests {
                 notices: Default::default(),
             };
             let before = host::counts();
-            let tier = hosted_copilot_tier(
-                &ssh.display().to_string(),
-                "ConnectTimeout=5",
-                &created,
-                &intent(model),
-                model,
-            )
-            .unwrap();
+            let got = hosted_model_list_words(&client, &created, &intent)
+                .unwrap()
+                .map(|words| {
+                    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+                    agent_runtime::harness::copilot_model_list("ssh", &ssh, &words, &[])
+                });
             let after = host::counts();
-            let got = match tier {
-                ContextTier::Long => Want::Long,
-                ContextTier::Native => Want::Native,
-                ContextTier::Unread(_) => Want::Unread,
-            };
-            assert_eq!(got, want, "{model} {read_prefix:?}");
+            assert_eq!(
+                got.as_ref().map(|r| r.as_ref().ok()),
+                read.map(Some),
+                "{read_prefix:?}"
+            );
             let started = |program: &str| {
                 after.of(program, Some("copilot-models"))
                     - before.of(program, Some("copilot-models"))
             };
-            assert_eq!(started("ssh"), reads, "{model} {read_prefix:?}");
-            assert_eq!(
-                started("copilot"),
-                0,
-                "{model} {read_prefix:?}: no local copilot"
-            );
+            assert_eq!(started("ssh"), u64::from(read.is_some()), "{read_prefix:?}");
+            assert_eq!(started("copilot"), 0, "{read_prefix:?}: no local copilot");
         }
     }
 }

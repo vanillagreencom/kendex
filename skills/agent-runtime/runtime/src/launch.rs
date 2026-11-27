@@ -179,7 +179,7 @@ impl ContextTier {
     /// prices the model the same at both tiers ([`copilot_long_tier_at_par`]),
     /// [`ContextTier::Unread`] with the cause where no list was read, else
     /// [`ContextTier::Native`].
-    pub fn of_copilot_list(
+    pub(crate) fn of_copilot_list(
         read: std::result::Result<serde_json::Value, String>,
         model: &str,
     ) -> ContextTier {
@@ -352,7 +352,8 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
 /// once, on this final intent, then spelled. Every step that starts a
 /// session on this machine builds through here, so none starts a Copilot
 /// session without the decision; a hosted launch decides its tier from its
-/// host's list and calls [`build`], as a preview build does. A model list
+/// host's list ([`crate::effects::Operation::copilot_tier_through`]) and
+/// calls [`build`], as a preview build does. A model list
 /// that cannot be read leaves the tier native and names its cause on the
 /// command (`copilot_model_list_unavailable`), which the caller records.
 pub fn build_local(intent: &mut LaunchIntent) -> Result<LaunchCommand> {
@@ -630,17 +631,35 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
     })
 }
 
+/// The command that starts Copilot's SDK server for `intent`'s session, the
+/// server [`copilot_model_list`] reads: the program, directory and
+/// environment the session's own command gets, with
+/// [`COPILOT_SERVER_WORDS`] in place of its words, and no brief or
+/// confinement wrapper, since the server runs no prompt. A hosted
+/// launch runs its [`LaunchCommand::shell_line`] on the lane's host. Refuses
+/// what the build refuses.
+pub fn copilot_server(intent: &LaunchIntent) -> Result<LaunchCommand> {
+    let mut native = intent.clone();
+    native.context_tier = ContextTier::Native;
+    let mut server = build(&native)?;
+    server.args = COPILOT_SERVER_WORDS.map(str::to_owned).to_vec();
+    server.brief_arg = None;
+    server.brief_path = None;
+    server.confinement = None;
+    Ok(server)
+}
+
 /// The tier a local Copilot launch of `intent` starts on, decided by
-/// [`build_local`] before its build. Copilot's
-/// own model list is read through the command `intent` spells, so the read
-/// runs the program the session runs under the environment it gets: each
-/// name the command clears set empty, which Copilot CLI 1.0.116 reads as
-/// unset (`COPILOT_GITHUB_TOKEN` among them), then each name it sets. A
-/// local launch therefore reads the list of the account its session signs
-/// in as on this machine; a hosted launch's session signs in on its host,
-/// which reads its own list. The tier is [`ContextTier::of_copilot_list`];
-/// a launch on another harness or naming no model takes
-/// [`ContextTier::Native`] with no read. Refuses what the build refuses.
+/// [`build_local`] before its build. Copilot's own model list is read from
+/// [`copilot_server`], so the read runs the program the session runs under
+/// the environment it gets: each name the command clears set empty, which
+/// Copilot CLI 1.0.116 reads as unset (`COPILOT_GITHUB_TOKEN` among them),
+/// then each name it sets. A local launch therefore reads the list of the
+/// account its session signs in as on this machine; a hosted launch's tier
+/// comes from its host's list, which orch's `hosted_copilot_tier` reads over
+/// ssh. The tier is [`ContextTier::of_copilot_list`]; a launch on another
+/// harness or naming no model takes [`ContextTier::Native`] with no read.
+/// Refuses what the build refuses.
 fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
     let model = match (intent.harness, intent.model.as_deref()) {
         (Harness::Copilot, Some(model)) if !model.is_empty() => model,
@@ -648,9 +667,7 @@ fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
             return Ok(ContextTier::Native);
         }
     };
-    let mut native = intent.clone();
-    native.context_tier = ContextTier::Native;
-    let command = build(&native)?;
+    let command = copilot_server(intent)?;
     let env: Vec<(&str, &OsStr)> = command
         .env_remove
         .iter()
@@ -666,7 +683,7 @@ fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
         copilot_model_list(
             Harness::Copilot.binary(),
             Path::new(&command.program),
-            &COPILOT_SERVER_WORDS,
+            &command.args.iter().map(String::as_str).collect::<Vec<_>>(),
             &env,
         ),
         model,

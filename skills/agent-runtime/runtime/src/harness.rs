@@ -409,7 +409,8 @@ impl Harness {
             ],
             // The context tier is no setting every launch carries: the
             // builder adds `COPILOT_LONG_TIER` to a launch whose step decided
-            // the long tier (`launch::copilot_context_tier`).
+            // the long tier from the model list of the machine its session
+            // signs in on (`launch::ContextTier::of_copilot_list`).
             Harness::Copilot => vec![
                 "--autopilot",
                 "--max-autopilot-continues",
@@ -724,7 +725,7 @@ const COPILOT_LIST_BOUND: Duration = Duration::from_secs(10);
 
 /// The words that start the server Copilot's SDK starts
 /// (`CopilotClient.startCLIServer`), which answers [`copilot_model_list`].
-pub const COPILOT_SERVER_WORDS: [&str; 3] = ["--headless", "--stdio", "--no-auto-update"];
+pub(crate) const COPILOT_SERVER_WORDS: [&str; 3] = ["--headless", "--stdio", "--no-auto-update"];
 
 /// Copilot's own model list, the `result` of the `models.list` request its
 /// SDK server answers, read from `executable` started with `args` and `env`

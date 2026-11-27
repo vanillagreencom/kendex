@@ -256,11 +256,21 @@ After `create`, and after `wait` for an accepted create, the launch reads and wr
 - Copilot:
   - Under the Copilot home (`copilot-home=`, else `.copilot`): the context reader extension `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json`; then the lane-mail hooks registered in the worktree or the home.
   - A confined provider must supply an in-root `copilot-home` for these checks.
-  - A launch naming a model reads the host's Copilot model list: `ssh -T` to `TARGET` runs `READ_PREFIX 'LINE'`, where `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment. The lane starts with `--context long_context` only where that list prices the model the same at both tiers.
-  - A create with no `read-prefix`, or a read that fails, starts the lane with no `--context`, on the host's own `contextTier`, and records the cause on the launch as `copilot_model_list_unavailable`.
 - Codex: none. Every Codex command the launch builds carries `--dangerously-bypass-hook-trust`.
 
-The launch then verifies the launch record (§ Launch record) and builds the command:
+The launch then verifies the launch record (§ Launch record).
+
+A Copilot launch naming a model next reads the host's Copilot model list, through its own ssh exec rather than `cat`:
+
+```text
+ssh -T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'READ_PREFIX LINE'
+```
+
+- `READ_PREFIX` is `read-prefix`, and `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment.
+- The lane starts with `--context long_context` only where that list prices the model the same at both tiers.
+- A create with no `read-prefix`, or a read that fails, starts the lane with no `--context`, on the host's own `contextTier`, and records the cause on the launch as `copilot_model_list_unavailable`.
+
+The launch then builds the command:
 
 ```text
 ssh -t|-T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'PREFIX LINE'
