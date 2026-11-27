@@ -1558,7 +1558,7 @@ fn a_gh_failure_or_a_malformed_member_refuses_a_join_holders_unreadable_with_not
 /// holds the item's brief after the widened set as its `Admitted paths:`
 /// line, which a repeated launch delivers once. The
 /// holder's recorded `micro` tier is judged over the widened set: a
-/// candidate whose brief names an instruction file needs `small` and is
+/// candidate whose brief names a workflow file needs `standard` and is
 /// refused `join-tier-narrower`. Once the holder's session holds a review
 /// stage, ended with a fix round open after it, the next candidate is
 /// refused `launch-overlap`.
@@ -1617,7 +1617,11 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
     assert_eq!(inbox(&root, "KEN-H").len(), 1, "a repeated join lands once");
 
     fleet.item("KEN-T", "`src/a.sh`", 0, &[]);
-    std::fs::write(&brief, "Change `src/a.sh` and `skills/x/SKILL.md`.\n").unwrap();
+    std::fs::write(
+        &brief,
+        "Change `src/a.sh` and `.github/workflows/ci.yml`.\n",
+    )
+    .unwrap();
     let mut wider = launch("KEN-T", &fleet.checkout("t", None));
     wider["brief_file"] = json!(brief.display().to_string());
     let before = fleet.fleet();
@@ -1629,7 +1633,7 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
             ("item", "KEN-T"),
             ("holder", "KEN-H"),
             ("tier", "micro"),
-            ("needs", "small")
+            ("needs", "standard")
         ])
     );
     assert_eq!(fleet.fleet(), before, "a refused join writes nothing");
@@ -1831,7 +1835,7 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
 /// holder and is recorded `read_only` with an empty touched set, which its
 /// relaunch keeps, while a launch over its `done` record naming none
 /// records a writing lane. The tier still classifies the Location paths: a
-/// read-only brief requesting `micro` over an instruction file is refused
+/// read-only brief requesting `micro` over a workflow file is refused
 /// `tier-narrower`. A read-only lane nothing holds to changing no file, on
 /// a Copilot harness here or in a cloud session, is refused
 /// `read-only-unconfined`. Each refusal writes nothing.
@@ -1843,7 +1847,7 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
     hosted["host"] = json!("/w/provider");
     hosted["kind"] = json!("ssh");
     fleet.write_lanes(vec![hosted]);
-    fleet.item("KEN-P", "`src/r.sh`, `skills/x/SKILL.md`", 0, &[]);
+    fleet.item("KEN-P", "`src/r.sh`, `.github/workflows/ci.yml`", 0, &[]);
     let checkout = fleet.checkout("p", None);
     let before = fleet.fleet();
     let read_only = |fields: Value| {
@@ -1887,7 +1891,7 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
     )));
     assert_eq!(key, "tier-narrower", "{fields:?}");
     assert!(
-        fields.contains(&("judged".to_owned(), "small".to_owned())),
+        fields.contains(&("judged".to_owned(), "standard".to_owned())),
         "{fields:?}"
     );
     assert_eq!(fleet.fleet(), before, "nothing written");
@@ -1925,7 +1929,10 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
     let lane = fleet.lane("KEN-P");
     assert_eq!(
         (&lane["read_only"], &lane["touched"]),
-        (&Value::Null, &json!(["skills/x/SKILL.md", "src/r.sh"])),
+        (
+            &Value::Null,
+            &json!([".github/workflows/ci.yml", "src/r.sh"])
+        ),
         "{lane}"
     );
 }
