@@ -717,11 +717,7 @@ Post a summary comment when the run made fixes or created issues:
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
 ```
 
-A Linear item also gets it on the issue. The PR body's `Closes` or `Refs` line names a GitHub item:
-
-```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
-```
+The tracker item gets no copy.
 
 Output: [skill-rules.md § Lane Output](../references/skill-rules.md#lane-output).
 
