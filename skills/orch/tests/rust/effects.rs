@@ -10564,18 +10564,9 @@ fn copilot_at_par(path: &Path, stub: &str, probed: &Path) {
         path,
         format!(
             r#"#!/bin/bash
-if [ "$1" = --headless ]; then
-  printf '%s\n%s\n' "$HOME" "${{COPILOT_HOME-}}" > '{probed}'
-  prices='{{"inputPrice":400,"outputPrice":2000}}'
-  dearer='{{"inputPrice":800,"outputPrice":4000}}'
-  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}},{{\"id\":\"gpt-6\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$dearer}}}}}}]}}}}"
-  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
-  cat > /dev/null
-  exit 0
-fi
-exec '{stub}' "$@"
+{model_list}exec '{stub}' "$@"
 "#,
-            probed = probed.display(),
+            model_list = copilot_at_par_model_list(Some(probed)),
             stub = fixtures().join(stub).join("copilot").display(),
         ),
     );

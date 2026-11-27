@@ -33,6 +33,31 @@ pub use account_planters::*;
 mod isolation;
 pub use isolation::*;
 
+pub fn copilot_at_par_model_list(probed: Option<&Path>) -> String {
+    let probe = probed
+        .map(|path| {
+            format!(
+                "  printf '%s\\n%s\\n' \"$HOME\" \"${{COPILOT_HOME-}}\" > '{}'\n",
+                path.display()
+            )
+        })
+        .unwrap_or_default();
+    let body = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"models":["#,
+        r#"{"id":"claude-opus-5.5","billing":{"tokenPrices":{"inputPrice":400,"outputPrice":2000,"longContext":{"inputPrice":400,"outputPrice":2000}}}},"#,
+        r#"{"id":"gpt-6","billing":{"tokenPrices":{"inputPrice":400,"outputPrice":2000,"longContext":{"inputPrice":800,"outputPrice":4000}}}}]}}"#,
+    );
+    format!(
+        r#"if [ "$1" = --headless ]; then
+{probe}  body='{body}'
+  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
+  cat > /dev/null
+  exit 0
+fi
+"#
+    )
+}
+
 /// An item's record under the state directory `dir`, at the place
 /// orch-runtime reads and writes it, its folder made so a row can plant
 /// the file there.
