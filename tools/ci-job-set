@@ -61,7 +61,8 @@
 # Environment:
 #   CHANGE_CLASS   render|trivial|micro|small|standard
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
-#                  for the same diff
+#                  for the same diff; true runs only the jobs a reader of a
+#                  changed path keeps, as select_row states
 #   CHANGED_PATHS  the changed paths, one per line
 #   CHANGE_BASE    the commit CHANGED_PATHS were measured from, where read;
 #                  only a path edited in place since it can be skill text
@@ -1330,9 +1331,10 @@ reads() {
     }
     $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
-    function select_target(r) {
-      selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
+    function target_key(r) {
+      return crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])
     }
+    function select_target(r) { selected[target_key(r)] = 1 }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
       for (p = 1; p <= n; p++) {
@@ -1368,7 +1370,10 @@ reads() {
           if (kind[r] == "package-include" && (crate[r] in windows_packages || "*" in windows_packages)) windows = 1
           if (kind[r] == "checkout-include") checkout = 1
           if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1
-          if (kind[r] == "target") select_target(r)
+          # A target whose checkout read is unresolved names no path it
+          # reads, so it runs for every path; select_row keeps it apart.
+          if (kind[r] == "target" && read[r] == ".") unresolved[target_key(r)] = 1
+          else if (kind[r] == "target") select_target(r)
           if (read[r] != "." && (kind[r] != "build" || path !~ ENVIRON["PROSE"])) mapped = 1
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
@@ -1382,6 +1387,7 @@ reads() {
       printf "linux-full=%d\nworkflow-lint=%d\nworkflow-smoke=%d\n", linux_full, lint, smoke
       printf "unplaced=%d\nsuites-unplaced=%d\n", unplaced, suites_unplaced
       for (test in selected) print "target " test
+      for (test in unresolved) if (!(test in selected)) print "unresolved-target " test
       for (path in skill_text) print "skill-text\t" path
     }
   ' <<<"$rows"
@@ -1491,6 +1497,9 @@ REACH_SUITES=""
 REACH_TARGETS='[]'
 REACH_PLACED=""
 REACH_EXCLUDED=""
+# True where the reach was read whole and only a path no reader places
+# withdrew it: a docs-set selection keeps it (select_row).
+REACH_UNPLACED=false
 CARGO_READ=false
 read_lines=""
 SUITE_INPUTS_READ=false
@@ -1598,7 +1607,10 @@ read_selection() {
     done <<<"$read_lines"
     read_lines=$rest
     skill_text "$text"
-    if [[ $read_lines == *suites-unplaced=1* ]]; then REACH_READ=false; fi
+    if [[ $read_lines == *suites-unplaced=1* ]]; then
+      REACH_UNPLACED=$REACH_READ
+      REACH_READ=false
+    fi
   else
     printf 'ci-job-set: cargo-inputs=unread coverage=full\n' >&2
     read_lines=""
@@ -1685,8 +1697,13 @@ kept_replacements() { # KEPT
 # A reach's `shards=` value, the JSON list in roster order, then its
 # `skipped_suites=` value: every universe suite outside the kept set, save
 # those a shard selected whole runs. The two lists are separated by a blank.
-select_shards() { # BUILD(true|false)
-  local build="$1" path list="" shard kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
+# DOCS is select_row's docs verdict.
+select_shards() { # BUILD(true|false) DOCS(true|false)
+  local build="$1" docs="$2" path list="" shard kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
+  local everything="$ALL_SHARDS"
+  # The rest of .github/ selects every shard for its workflow inputs; its
+  # Markdown is no suite's input the reach misses.
+  [ "$docs" = false ] || everything="$LANE_SOURCES|$RUNNERS"
   want=" "
   if [ "$LINEAR_CONTROLS_NEEDED" = true ]; then
     kept="$kept
@@ -1703,10 +1720,17 @@ $LINEAR_CONTROLS_SUITE"
         kept="$kept
 tools/tests/harness-smoke.test.sh" ;;
     esac
-    case "$path" in skills/* | hooks/* | tools/* | refresh/*) whole="$whole guards-scans" ;; esac
+    # The scans judge shell sources and the mode bit of each file
+    # tools/exec-bits lists, `skills/*/scripts/*` among them; a docs-set
+    # path is a shell source nowhere and listed only there.
+    if [ "$docs" = false ]; then
+      case "$path" in skills/* | hooks/* | tools/* | refresh/*) whole="$whole guards-scans" ;; esac
+    else
+      case "$path" in skills/*/scripts/*) whole="$whole guards-scans" ;; esac
+    fi
   done <<<"$paths"
   [ "$build" = false ] || whole="$whole $CHECKOUT_KENDEX_SHARDS"
-  if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
+  if [ "$REACH_READ" = false ] || any "$everything"; then
     whole=" $SHARDS"
   fi
   replacements="$(kept_replacements "$kept")" || return 1
@@ -1764,13 +1788,13 @@ $replacements"
   printf '[%s] [%s]' "${list#,}" "${skipped#,}"
 }
 
-choose_shards() { # CHECKOUT — set SHELL_SHARDS, SHELL_SKIPPED and SHELL_FULL
+choose_shards() { # CHECKOUT DOCS — set SHELL_SHARDS, SHELL_SKIPPED and SHELL_FULL
   local row status=0
   SHELL_FULL=true
   SHELL_SHARDS="[\"${SHARDS// /\",\"}\"]"
   SHELL_SKIPPED='[]'
   if [ "$REACH_READ" = true ]; then
-    row="$(select_shards "$1")" || status=$?
+    row="$(select_shards "$1" "$2")" || status=$?
     case "$status" in
       0) SHELL_FULL=false; SHELL_SHARDS="${row%% *}"; SHELL_SKIPPED="${row#* }"; return 0 ;;
       1) ;;
@@ -1795,6 +1819,15 @@ macos_shard() { # SHARDS
 # from `paths`, which it sets, and the shard projection starts empty each
 # time. The reach it projects, and SKILL_TEXT, are read once, before any
 # selection.
+#
+# DOCS true, every path in harness-only's docs set, runs a job only where a
+# reader of a changed path keeps it: a suite the reach names, a Rust target,
+# include or catalog render lint that reads the path or a directory over it,
+# a lane source, or a file the guards scans list. The rules that run a job
+# for a tree or for a path no reader names stand down: the catalog job and
+# the UI tree, the guards scans' tree rule, the rest of .github/, a target
+# whose checkout read is unresolved and the unplaced-path fallback. A reader
+# that could not be read still runs its whole roster.
 select_row() { # CLASS DOCS PATHS EVENT
   local class="$1" docs="$2" event="$4" platform=false uitree=false build=false
   local shards skipped macos=false catalog=false smoke=false linux=false rust matrix="" each known=false
@@ -1823,12 +1856,16 @@ select_row() { # CLASS DOCS PATHS EVENT
   fi
   catalog_input && catalog=true
   any "$UI_INPUTS" && uitree=true
+  if [ "$docs" = true ]; then
+    catalog=false uitree=false
+    [ "$REACH_UNPLACED" = false ] || REACH_READ=true
+  fi
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *workflow-smoke=1*) smoke=true ;; esac
   case "$read_lines" in *included=1* | *build=1* | *workflow-lint=1*) build=true ;; esac
   case "$read_lines" in *checkout=1* | *build=1*) checkout=true ;; esac
   case "$read_lines" in *windows=1* | *build=1*) windows=true ;; esac
-  choose_shards "$checkout" || exit 2
+  choose_shards "$checkout" "$docs" || exit 2
   shards=$SHELL_SHARDS
   skipped=$SHELL_SKIPPED
   any_outside "$PROSE" && macos_shard "$shards" && macos=true
@@ -1859,15 +1896,18 @@ select_row() { # CLASS DOCS PATHS EVENT
     linux=true
     platform=true
   else
-    matrix="$(jq -Rcs '
-      split("\n") | map(select(startswith("target ")) | split(" ")[1:]) | group_by(.[0])
+    matrix="$(jq -Rcs --arg docs "$docs" '
+      split("\n")
+      | map(select(startswith("target ") or ($docs == "false" and startswith("unresolved-target ")))
+        | split(" ")[1:])
+      | group_by(.[0])
       | {include: map(sort | {crate: .[0][0], targets: map(.[1:]) | flatten})}
     ' <<<"$read_lines")" || die cargo-matrix-unread "jq could not group workspace targets"
     if [ "$matrix" != '{"include":[]}' ]; then
       linux=true
       any_outside "$PROSE" && platform=true
     fi
-    if [[ $read_lines == *unplaced=1* || $read_lines == *linux-full=1* ]]; then
+    if [[ $docs == false && $read_lines == *unplaced=1* || $read_lines == *linux-full=1* ]]; then
       linux=true
       matrix=""
     fi
@@ -1938,7 +1978,7 @@ if [ "${EVENT:-}" = push ]; then
   else
     printf 'ci-job-set: main-range=unread coverage=full cause=%s\n' "${RANGE_CAUSE:-push-diff-unread}" >&2
   fi
-  choose_shards "$main_checkout"
+  choose_shards "$main_checkout" false
   main_linux=$SHELL_SHARDS
   main_skipped=$SHELL_SKIPPED
   main_targets=$FULL_RUNTIME_TARGETS
