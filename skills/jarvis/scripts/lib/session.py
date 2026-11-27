@@ -685,12 +685,14 @@ class Session:
             self.initialized_fleet()
             pending, reason = self.choose(args, recorded, resume_only)
             if pending.get("account") and (reason == "resumed" or args.account is not None):
-                # No walk judged this account. A window opened on one with no
-                # room closes at once; refused before the start intent, the
-                # record still reads the controller ended, so the watch loop
-                # hands it to an account with room. A judge that cannot
-                # answer leaves Start as it was before it judged.
-                room = self.room(pending["harness"], pending["account"], pending.get("model"))
+                # No walk judged this account. A window opened on a spent one
+                # closes at once; refused before the start intent, the record
+                # still reads the controller ended, so the watch loop hands it
+                # to an account with room. The bound is 100 percent: below it
+                # the account still runs, past the selection bound too. A
+                # judge that cannot answer leaves Start as it was before it
+                # judged.
+                room = self.room(pending["harness"], pending["account"], pending.get("model"), max_pct=100)
                 if room is None:
                     print("jarvis-session: account-judge=unavailable account=" + pending["account"], file=sys.stderr)
                 elif room.get("answer") == "walled":
@@ -911,14 +913,17 @@ class Session:
             raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
         return choice
 
-    def room(self, harness, account, model=None):
-        """The controller's own judgement of ACCOUNT for HARNESS and MODEL:
+    def room(self, harness, account, model=None, max_pct=None):
+        """The controller's own judgement of ACCOUNT for HARNESS and MODEL,
+        under the bound MAX_PCT where given, else the selection bound:
         `accounts pick --for-controller`'s reply, or None where the judge
         refused to answer, its diagnostic on stderr."""
         pick = ["accounts", "pick", "--harness", harness, "--account", account, "--record", self.fleet(),
                 "--for-controller"]
         if model:
             pick.extend(("--native-model", model))
+        if max_pct is not None:
+            pick.extend(("--max-pct", str(max_pct)))
         room, code, _, errors = self.runtime(*pick)
         if code:
             sys.stderr.write(errors)

@@ -1000,23 +1000,27 @@ print(json.dumps(session.terminal(status)))
         # The failure it stops: a Start on the spent account an ended
         # controller ran on opens a window that closes at once and leaves a
         # start failure, so the watch loop never hands Jarvis to an account
-        # with room.
+        # with room. An account past the selection bound but not spent still
+        # runs the start, as it did before Start judged it.
         roomy = self.plant_account("claude-b", 20)
         self.call("start", mode="new")
         self.wait(reason="new-no-record")
         os.kill(self.started()[-1]["pid"], signal.SIGKILL)
         self.wait("stopped", "ended", seconds=30)
-        self.measure(self.account, 100)
         identity = self.marked()[2]
-        for mode, account, walled in (("resume", self.account, True), ("new", self.account, True),
-                                      ("new", roomy, False)):
-            with self.subTest(mode=mode, account=account.name):
+        # Each row's account reads USED percent of its week; OPENED is the
+        # reason the start runs under, None for a refusal.
+        for mode, account, used, opened in (("resume", self.account, 100, None), ("new", self.account, 100, None),
+                                            ("resume", self.account, 96, "resumed"),
+                                            ("new", roomy, 20, "new-selection-changed")):
+            with self.subTest(mode=mode, account=account.name, used=used):
+                self.measure(account, used)
                 windows, launched = self.windows(), len(self.started())
                 answer, code = self.call("start", mode=mode, account=account)
-                if not walled:
-                    self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
-                    after = self.wait(reason="new-selection-changed")
-                    self.assertEqual((after["account"], len(self.started())), (str(roomy), launched + 1))
+                if opened:
+                    self.assertIn((answer["state"], code), (("starting", 0), ("running", 0)), self.stderr)
+                    after = self.wait(reason=opened)
+                    self.assertEqual((after["account"], len(self.started())), (str(account), launched + 1))
                     continue
                 self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "account-walled", 1),
                                  self.stderr)

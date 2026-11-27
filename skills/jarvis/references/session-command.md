@@ -23,8 +23,8 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`.
   - Use the Jarvis package installed in HOME.
   - Supply the account directory for the selected app.
-  - Start refuses `account-walled` when the accounts judge reads no room on the account it would open: the recorded account a resume keeps, or the account `--account` names. The detail names that account.
-  - Start makes that refusal before it records the start, so status keeps its reading and Start records no failure.
+  - Start refuses `account-walled` when the accounts judge reads a spent account where Start would open: the recorded account a resume keeps, or the account `--account` names. A spent account has used 100 percent of a window, or its plan has ended. The detail names that account.
+  - Start makes that refusal before it records the start, so Start records no failure. Where no controller runs, status keeps its reading.
 - Append `--model MODEL --effort LEVEL`, both or neither, to launch a stated model.
   - `MODEL` accepts the model class or native model spelling the task command takes.
   - The session records the pair as its choice.
