@@ -2532,6 +2532,16 @@ fn a_cached_claude_grant_read_distinguishes_failure_from_no_program() {
     ] {
         let mut world = World::new(&[]);
         world.plant_listing(&[measured("aclaude", 20, 10)]);
+        let missing = listed_row(&world, "aclaude");
+        assert_eq!(missing["status"], json!("ok"), "{missing}");
+        assert_eq!(missing["weekly_pct"], json!(20), "{missing}");
+        assert_eq!(missing["limit_resets"], Value::Null, "{missing}");
+        assert_eq!(
+            missing["detail"],
+            json!("no cached grant response for this login"),
+            "{missing}"
+        );
+        assert!(world.curl_log().is_empty());
         std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
         let token = "token-aclaude";
         world.plant_answer(
@@ -2551,6 +2561,20 @@ fn a_cached_claude_grant_read_distinguishes_failure_from_no_program() {
             assert_eq!(row["weekly_pct"], json!(20), "{row}");
             assert_eq!(row["limit_resets"], Value::Null, "{row}");
             assert_eq!(row["detail"], json!(cause), "{row}");
+        }
+        if status == Some("429 300") {
+            let path = world.grant_path("aclaude");
+            let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            record["refusal"]["expires_at"] = json!(now());
+            std::fs::write(&path, record.to_string()).unwrap();
+            let expired = listed_row(&world, "aclaude");
+            assert_eq!(expired["status"], json!("ok"), "{expired}");
+            assert_eq!(expired["weekly_pct"], json!(20), "{expired}");
+            assert_eq!(expired["limit_resets"], Value::Null, "{expired}");
+            assert!(
+                expired["detail"].as_str().unwrap().contains("HTTP 429"),
+                "{expired}"
+            );
         }
         assert_eq!(
             world.curl_log(),
@@ -2629,6 +2653,15 @@ fn a_claude_usage_refusal_keeps_only_current_login_figures_and_fresh_grants() {
             !replace_login && fresh_grant,
             "{refused}"
         );
+        if !replace_login && !fresh_grant {
+            assert!(
+                refused["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("cached grant response is stale"),
+                "{refused}"
+            );
+        }
         if replace_login {
             let mut record: Value =
                 serde_json::from_slice(&std::fs::read(&usage_path).unwrap()).unwrap();
@@ -4401,6 +4434,96 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
         ],
         "a login this listing renewed is the same account: its record is served"
     );
+}
+
+#[test]
+fn a_claude_renewal_carries_only_grants_and_refusals_owned_by_the_login() {
+    for (refused, replaced) in [(false, false), (true, false), (false, true), (true, true)] {
+        let world = expired_claude_world();
+        let credential = credential_file(&world, "claude", "aclaude");
+        write_claude_login(&world, (now() + 3600) * 1000, Some("refresh-aclaude"), None);
+        let before = std::fs::metadata(&credential).unwrap().modified().unwrap();
+        world.plant_answer(
+            "token-aclaude",
+            "usage",
+            &claude_body(json!(10), json!(20), &[]),
+            None,
+        );
+        world.plant_answer(
+            "token-aclaude",
+            "usage-grants",
+            &fable_grant_body(),
+            refused.then_some("429 300"),
+        );
+        let initial = listed_row(&world, "aclaude");
+        assert_eq!(initial["limit_resets"].is_array(), !refused, "{initial}");
+        let grant_path = world.grant_path("aclaude");
+        let usage_path = world.record_path("claude", "aclaude");
+        let grant_before = std::fs::read(&grant_path).unwrap();
+        if refused || replaced {
+            let mut usage: Value =
+                serde_json::from_slice(&std::fs::read(&usage_path).unwrap()).unwrap();
+            usage["fetched_at"] = json!(now() - 3600);
+            std::fs::write(&usage_path, usage.to_string()).unwrap();
+        }
+
+        let expired =
+            write_claude_login(&world, (now() - 3600) * 1000, Some("refresh-aclaude"), None);
+        if replaced {
+            let mut login: Value = serde_json::from_str(&expired).unwrap();
+            login["claudeAiOauth"]["accessToken"] = json!("replacement-token");
+            std::fs::write(&credential, login.to_string()).unwrap();
+            for path in [&grant_path, &usage_path] {
+                std::fs::File::open(path)
+                    .unwrap()
+                    .set_times(
+                        std::fs::FileTimes::new()
+                            .set_modified(before - std::time::Duration::from_secs(1)),
+                    )
+                    .unwrap();
+            }
+        } else {
+            // Expiry is a change to the clock, not a login replacement.
+            std::fs::File::open(&credential)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(before))
+                .unwrap();
+        }
+        plant_renewal(&world, None);
+        let renewed = listed_row(&world, "aclaude");
+        let cached = listed_row(&world, "aclaude");
+        for row in [&renewed, &cached] {
+            assert_eq!(row["status"], json!("ok"), "{row}");
+            assert_eq!(row["weekly_pct"], json!(20), "{row}");
+            assert_eq!(
+                row["limit_resets"].is_array(),
+                !refused && !replaced,
+                "{row}"
+            );
+            if refused && !replaced {
+                assert!(
+                    row["detail"].as_str().unwrap().contains("HTTP 429"),
+                    "{row}"
+                );
+            } else {
+                assert_eq!(row["detail"], Value::Null, "{row}");
+            }
+        }
+        let mut expected = vec![
+            "usage token-aclaude",
+            "usage-grants token-aclaude",
+            "token refresh-aclaude",
+        ];
+        if refused || replaced {
+            expected.push("usage renewed-token");
+        }
+        if replaced {
+            expected.push("usage-grants renewed-token");
+        } else {
+            assert_eq!(std::fs::read(&grant_path).unwrap(), grant_before);
+        }
+        assert_eq!(world.curl_log(), expected);
+    }
 }
 
 #[test]

@@ -15,6 +15,7 @@
 //! the others measured.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde_json::{Map, Value, json};
 
@@ -566,7 +567,11 @@ pub fn credential(harness: Harness, dir: &str) -> Credential {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Credential::Missing(path),
         Err(_) => return Credential::Invalid(path),
     };
-    let Ok(file) = serde_json::from_str::<Value>(&text) else {
+    parse_credential(harness, path, &text)
+}
+
+fn parse_credential(harness: Harness, path: String, text: &str) -> Credential {
+    let Ok(file) = serde_json::from_str::<Value>(text) else {
         return Credential::Invalid(path);
     };
     if !file.is_object() {
@@ -607,6 +612,30 @@ pub fn credential(harness: Harness, dir: &str) -> Credential {
         refresh_expires_ms,
         plan,
         account_id,
+    }
+}
+
+/// The modification time of the Claude credential that contains `token`.
+/// Read both from the same file so a replacement at the path cannot lend
+/// its modification time to a different token.
+pub(super) fn claude_credential_time(dir: &str, token: &str) -> Option<SystemTime> {
+    use std::io::Read;
+
+    let path = credential_path(Harness::Claude, dir);
+    let mut file = std::fs::File::open(&path).ok()?;
+    let modified = file.metadata().ok()?.modified().ok()?;
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    match parse_credential(Harness::Claude, path, &text) {
+        Credential::Token { token: read, .. }
+            if read == token && file.metadata().ok()?.modified().ok()? == modified =>
+        {
+            Some(modified)
+        }
+        Credential::Token { .. }
+        | Credential::Missing(_)
+        | Credential::Invalid(_)
+        | Credential::NoToken { .. } => None,
     }
 }
 

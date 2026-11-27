@@ -515,7 +515,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
                     return row(ctx, reading);
                 }
                 if usage::expired(expires_ms, ctx.now) {
-                    match renewed_token(ctx, harness, dir) {
+                    match renewed_token(ctx, harness, dir, &token) {
                         Ok(token) => {
                             renewed = true;
                             (token, account_id, plan)
@@ -710,7 +710,12 @@ impl LoginUnread {
 /// window, so no caller on the host posts the refused grant again; one
 /// this machine raised on its own posted nothing, and nothing stops the
 /// next listing from posting.
-fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, Box<Reading>> {
+fn renewed_token(
+    ctx: &mut Ctx,
+    harness: Harness,
+    dir: &str,
+    prior_token: &str,
+) -> Result<String, Box<Reading>> {
     let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
     if !credential_newer(harness, dir, &path)
         && let Some(record) = cache::read(&path, harness.name(), dir)
@@ -721,8 +726,25 @@ fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, B
         reading.refused_endpoint = Some("token");
         return Err(Box::new(reading));
     }
+    let retained = (harness == Harness::Claude)
+        .then(|| usage::claude_credential_time(dir, prior_token))
+        .flatten()
+        .map(|modified| cache::before_claude_renewal(&ctx.usage_dir, dir, modified));
     let refused = match renewal::renew(ctx.accounts, harness, dir, ctx.now) {
-        Ok(token) => return Ok(token),
+        Ok(token) => {
+            if let Some(retained) = retained
+                && let Some(modified) = usage::claude_credential_time(dir, &token)
+            {
+                for file in retained.into_iter().flatten() {
+                    if let Err(cause) = cache::carry_renewed_record(file, modified) {
+                        ctx.notes.push(format!(
+                            "usage-cache-renewal-unrecorded account={dir} cause={cause}"
+                        ));
+                    }
+                }
+            }
+            return Ok(token);
+        }
         Err(refused) => refused,
     };
     let detail = format!(
@@ -997,17 +1019,20 @@ fn claude_grants(
         return Err(refusal.detail);
     }
     let Some((url, token)) = refresh else {
-        return Ok(record
+        let record = record.ok_or_else(|| "no cached grant response for this login".to_owned())?;
+        if let Some(refusal) = record
+            .refusal
             .as_ref()
-            .and_then(|record| {
-                match cache::figure(record, harness, Some(ctx.serve_max_age), ctx.now) {
-                    FigureRead::Served(figure) => {
-                        Some(usage::claude_limit_resets(&figure.usage, ctx.now))
-                    }
-                    FigureRead::Miss | FigureRead::Reset(_) => None,
-                }
-            })
-            .unwrap_or_default());
+            .filter(|r| r.endpoint == CLAUDE_GRANTS_ENDPOINT)
+        {
+            return Err(format!("last grant read: {}", refusal.detail));
+        }
+        return match cache::figure(&record, harness, Some(ctx.serve_max_age), ctx.now) {
+            FigureRead::Served(figure) => Ok(usage::claude_limit_resets(&figure.usage, ctx.now)),
+            FigureRead::Miss | FigureRead::Reset(_) => {
+                Err("cached grant response is stale".to_owned())
+            }
+        };
     };
     let (grants, written) = match grant_answer(url, token, ctx.now) {
         Ok(body) => (
