@@ -238,6 +238,47 @@ pub struct StartController {
     /// out, the caller holds the watch's start and the effect launches none.
     #[serde(default)]
     pub watch: Option<Vec<String>>,
+    /// The in-process caller's step before the controller's window opens:
+    /// run once, by a newly persisted start's effect, after its predecessor
+    /// is judged absent and before anything is built or opened. A
+    /// reconciled start and one that ends before that judgment never run
+    /// it. A request file never carries it.
+    #[serde(skip)]
+    pub pre_launch: PreLaunch,
+}
+
+/// A start's pre-launch step ([`StartController::pre_launch`]), or none.
+/// It is no part of the request's identity: equality ignores it, as serde
+/// does.
+#[derive(Clone, Default)]
+pub struct PreLaunch(Option<std::sync::Arc<dyn Fn() + Send + Sync>>);
+
+impl PreLaunch {
+    pub fn new(step: impl Fn() + Send + Sync + 'static) -> PreLaunch {
+        PreLaunch(Some(std::sync::Arc::new(step)))
+    }
+
+    /// The step run, where there is one.
+    pub(crate) fn run(&self) {
+        if let Some(step) = &self.0 {
+            step();
+        }
+    }
+}
+
+impl std::fmt::Debug for PreLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self.0 {
+            Some(_) => "PreLaunch(step)",
+            None => "PreLaunch(none)",
+        })
+    }
+}
+
+impl PartialEq for PreLaunch {
+    fn eq(&self, _: &PreLaunch) -> bool {
+        true
+    }
 }
 
 /// A start recorded, its controller pending until the launch confirms.
@@ -1438,6 +1479,7 @@ mod tests {
                 "watch".to_owned(),
                 "run".to_owned(),
             ]),
+            pre_launch: PreLaunch::default(),
         }))
     }
 

@@ -8782,20 +8782,38 @@ enum Checkout {
     Dirty,
     /// Behind, under a controller whose identity reads live: nothing syncs.
     Live,
+    /// Behind, under a record with no identity and no exit whose server
+    /// the socket no longer answers as: the start cannot prove it gone.
+    Unproven,
+    /// Behind again after a first resume whose watch never launched: the
+    /// retry reconciles that start, its runner still standing.
+    Reconciled,
+    /// Behind, under an open stop: the start's transition refuses.
+    IntentOpen,
 }
 
 /// A resume brings its checkout to the landed base through the real
-/// `sync-base` before its start runs, read by the harness itself as it
-/// starts: a clean checkout one commit behind its origin starts at the
-/// origin's head; one with a tracked change still starts, left where it
-/// stood, its line led by the sync's refusal key at the exit apart from a
-/// refusal's, a failed start's and an unconfirmed one's; one under a
-/// controller that still runs never moves, and the start refuses it
-/// `overseer-live`.
+/// `sync-base` once its start judges the predecessor gone, before the start
+/// runs, read by the harness itself as it starts: a clean checkout one
+/// commit behind its origin starts at the origin's head; one with a tracked
+/// change still starts, left where it stood, its line led by the sync's
+/// refusal key at the exit apart from a refusal's, a failed start's and an
+/// unconfirmed one's. A checkout the start does not reach the follow for
+/// never moves: under a controller that still runs, refused
+/// `overseer-live`; under one it cannot prove gone, refused
+/// `predecessor-unproven`; on a retry that reconciles a standing start
+/// whose runner still runs; and under an open stop, refused `intent-open`.
 #[test]
-fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused_follow() {
+fn resume_controller_follows_the_base_once_its_start_judges_the_predecessor_gone() {
     let id = "4d2f6b3c-5e7a-4b8c-9d1e-2f3a4b5c6d7e";
-    for checkout in [Checkout::Behind, Checkout::Dirty, Checkout::Live] {
+    for checkout in [
+        Checkout::Behind,
+        Checkout::Dirty,
+        Checkout::Live,
+        Checkout::Unproven,
+        Checkout::Reconciled,
+        Checkout::IntentOpen,
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut runner = suite_runner(&server, "stub-resume");
@@ -8814,12 +8832,26 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         gone["generation"] = json!(4);
         gone["session_id"] = json!(id);
         gone["exit"] = json!({"run": {"generation": 4}});
-        if checkout == Checkout::Live {
-            gone["harness_pid"] = json!(controller.pid().to_string());
-            gone["harness_start"] = json!(controller.start());
+        match checkout {
+            Checkout::Live => {
+                gone["harness_pid"] = json!(controller.pid().to_string());
+                gone["harness_start"] = json!(controller.start());
+            }
+            // Server `1` never answers on the live socket: replaced.
+            Checkout::Unproven => {
+                gone.as_object_mut().unwrap().remove("exit");
+            }
+            Checkout::Behind | Checkout::Dirty | Checkout::Reconciled | Checkout::IntentOpen => {}
         }
         let mut fleet = runner.fleet();
         fleet["controller"] = gone;
+        if checkout == Checkout::IntentOpen {
+            fleet["intents"] = json!([{
+                "id": "stop-controller:overseer:4:1-1", "op": "stop-controller",
+                "target": "overseer:4", "created_at": "2026-01-29T15:20:00Z",
+                "outcome": "not-started",
+            }]);
+        }
         runner.write_fleet(&fleet);
         let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
         std::fs::write(
@@ -8904,6 +8936,40 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         let mut env: Vec<(&str, &str)> =
             env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         env.push(("AGENT_RUNTIME_HARNESS_BINARIES", &binaries));
+        // The first resume follows and opens its runner, then holds
+        // `watch-launch-failed`: the fake manager's bus is unreachable, and
+        // the watch stderr its `setsid` fallback opens is a directory. The
+        // runner is kept for the reconcile, and the checkout is put back
+        // behind before the retry.
+        let runner_pane = (checkout == Checkout::Reconciled).then(|| {
+            std::fs::write(project.join("bin/unreachable"), "").unwrap();
+            std::fs::create_dir(project.join("oversee-watch.err")).unwrap();
+            let out = runner.run_env(&["resume-controller", "--fleet"], &env);
+            let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            assert_eq!(
+                out.status.code(),
+                Some(75),
+                "first resume: {line} {}",
+                stderr(&out)
+            );
+            assert!(
+                line.starts_with("controller-resume-unconfirmed "),
+                "first resume: {line}"
+            );
+            let intent = runner.fleet()["intents"][0].clone();
+            assert_eq!(
+                intent["observation"]["note"], "watch-launch-failed",
+                "{intent}"
+            );
+            assert_eq!(git(&project, &["rev-parse", "HEAD"]), landed, "{line}");
+            git(&project, &["reset", "-q", "--hard", &behind]);
+            std::fs::remove_file(project.join(".git/started-head")).unwrap();
+            let fleet = runner.fleet();
+            fleet["controller"]["pending"]["runner"]["pane"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| panic!("the runner stands: {fleet}"))
+        });
         let out = runner.run_env(&["resume-controller", "--fleet"], &env);
         let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         let started = out.status.code() == Some(0) || out.status.code() == Some(4);
@@ -8949,6 +9015,7 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
                     (Some(3), "controller-resume-failed"),
                     "{context}"
                 );
+                assert!(line.contains(" base=sync-base-not-run "), "{context}");
                 assert!(line.contains(" note=overseer-live "), "{context}");
                 assert_eq!(started_head, None, "nothing started: {context}");
                 assert_eq!(
@@ -8956,6 +9023,44 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
                     "a running controller's checkout never moves: {context}"
                 );
                 assert!(live(controller.pid()), "{context}");
+            }
+            Checkout::Unproven => {
+                assert_eq!(
+                    (out.status.code(), lead),
+                    (Some(3), "controller-resume-failed"),
+                    "{context}"
+                );
+                assert!(line.contains(" base=sync-base-not-run "), "{context}");
+                assert!(line.contains(" note=predecessor-unproven "), "{context}");
+                assert_eq!(started_head, None, "nothing started: {context}");
+                assert_eq!(
+                    head, behind,
+                    "an unproven controller's checkout never moves: {context}"
+                );
+            }
+            Checkout::Reconciled => {
+                assert!(
+                    line.split_whitespace()
+                        .any(|word| word == "sync-base-not-run" || word == "base=sync-base-not-run"),
+                    "{context}"
+                );
+                assert_eq!(started_head, None, "nothing started again: {context}");
+                assert_eq!(
+                    head, behind,
+                    "a standing runner's checkout never moves: {context}"
+                );
+                let pane = runner_pane.expect("the first resume left a runner");
+                assert!(
+                    server.panes().contains(&pane),
+                    "the runner still stands: {pane} {:?} {context}",
+                    server.panes()
+                );
+            }
+            Checkout::IntentOpen => {
+                assert_eq!(out.status.code(), Some(1), "{context}");
+                assert_eq!(refusal_key(&out), "intent-open", "{context}");
+                assert_eq!(started_head, None, "nothing started: {context}");
+                assert_eq!(head, behind, "a refused start moves nothing: {context}");
             }
         }
     }
