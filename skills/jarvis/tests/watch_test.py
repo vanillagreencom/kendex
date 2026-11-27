@@ -2996,12 +2996,45 @@ with open(sys.argv[1], "ab") as out:
                     self.session_record(harness, account, filled)
                 log = self.session_command(None, 1)
                 self.wall_passes(self.watch(), 1000)
-                self.wall_passes(self.watch(), 1030)
+                if harness == "claude":
+                    self.controller("s1", str(account), {"event": "Stop"})
+                    self.wall_passes(self.watch(), 1030)
+                    self.controller("s1", str(account), row)
+                self.wall_passes(self.watch(), 1060)
                 self.assertFalse(log.exists())
                 notices = self.owner_notices()
                 self.assertEqual(len(notices), 1, notices)
                 for word in ("s1", "4242 %3", str(account), "context window is full"):
                     self.assertIn(word, notices[0])
+
+    def test_an_unsent_wedge_notice_and_wall_recovery_survive_each_other(self):
+        row = {"event": "StopFailure", "error": "invalid_request", "message": "Prompt is too long"}
+        wedged = dict(session="wedged", account="/accounts/a", row=row)
+        auth = dict(session="wall", pane="%4", account="/accounts/b",
+                    row={"event": "StopFailure", "error": "authentication_failed"})
+        for first, second in ((wedged, auth), (auth, wedged)):
+            with self.subTest(first=first["session"]), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-wedge-notice-" + first["session"])
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-wedge-notice-" + first["session"]))
+                self.intercept_mail('if [ "$1" = notice ]; then echo "lane-mail: write-failed=overseer" >&2; exit 1; fi')
+                try:
+                    log = self.session_command({"state": "running", "account": "/accounts/c"}, 0)
+                    for at, controller in ((1000, first), (1030, second)):
+                        self.controller(**controller)
+                        self.wall_passes(self.watch(), at)
+                    self.assertEqual(log.read_text().splitlines() if log.exists() else [],
+                                     [f"succeed --home {self.home} --account-walled"])
+                    self.assertEqual(self.owner_notices(), [])
+                finally:
+                    shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+                self.controller("replacement", "/accounts/c", {"event": "Stop"}, pane="%5")
+                self.wall_passes(self.watch(), 1060)
+                self.wall_passes(self.watch(), 1090)
+                notices = self.owner_notices()
+                self.assertEqual(len(notices), 2, notices)
+                self.assertTrue(any("context window is full" in text for text in notices), notices)
+                self.assertTrue(any("signed out" in text for text in notices), notices)
 
     def test_a_codex_or_copilot_wall_starts_its_succession_and_tells_the_owner_once(self):
         # The failure it stops: a Codex or Copilot Jarvis session at its

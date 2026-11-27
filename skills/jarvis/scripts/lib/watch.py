@@ -1260,16 +1260,13 @@ class Watch:
         for it. A wall is one episode of one controller, its session in its
         pane: a resumed session is another controller, and the episode ends
         once the controller in control reads unwalled, so a refused succession
-        whose predecessor recovers in place is told of again when next walled.
-        A wedged controller uses the same notice flow without a succession."""
+        whose predecessor recovers in place is told of again when next walled."""
         if isinstance(reading, Failure):
             self.failed_pass("wall", reading.record)
             return None
         self.state.pop("wall_failure", None)
         memory = self.state.get("wall")
         session, pane, account, kind, rows = reading or (None, None, None, None, {})
-        if rows.get("verdict") == "wedged":
-            kind = "wedged"
         if (memory is not None and "row_at" not in memory and memory["kind"] == kind == "usage"
                 and session == memory["session"] and pane == memory["pane"]
                 and (rows.get("at") is None or rows["at"] <= memory["at"])):
@@ -1306,19 +1303,40 @@ class Watch:
         if memory is not None and memory["noticed"] and reading is not None and kind is None:
             del self.state["wall"]
             memory = None
-        if kind is None or memory is not None and (not memory["noticed"] or (
-                kind == memory["kind"] != "usage" and (session, pane) == (memory["session"], memory["pane"]))):
+        if kind is None or memory is not None and ((session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
+                                                   or not memory["noticed"]):
             self.save()
             return None
         memory = {"session": session, "pane": pane, "account": account, "kind": kind, "at": now,
-                  "outcome": "The context window is full." if kind == "wedged" else None, "noticed": False}
+                  "outcome": None, "noticed": False}
         if kind == "usage":
             memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"))
         self.state["wall"] = memory
         self.save()
-        if kind in ("usage", "wedged"):
+        if kind == "usage":
             self.notify(memory, now)
-        return None if kind == "wedged" else kind
+        return kind
+
+    def accept_wedged(self, reading, now):
+        if reading is None or isinstance(reading, Failure):
+            return
+        session, pane, account, _, rows = reading
+        controller = [session, pane]
+        previous = self.state.get("wedged")
+        # A live reading can be an open turn in the same full session.
+        if controller == previous:
+            return
+        if rows.get("verdict") != "wedged":
+            if previous is not None:
+                del self.state["wedged"]
+                self.save()
+            return
+        self.state["wedged"] = controller
+        # Persist the notice with its identity so mailbox failure cannot hold a wall's recovery.
+        account = account or "its default account"
+        text = (f"Jarvis session {session} in pane {pane} on {account} cannot continue "
+                f"(read at {wall_time(now)}). The context window is full.")
+        self.owner_notice(text, "wedged-notice", now, defer=True)
 
     def session(self, operation, verb, *args):
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
@@ -1553,19 +1571,20 @@ class Watch:
         self.state.pop("owner-quiet_failure", None)
         return not answer
 
-    def owner_notice(self, text, operation, now, ref=None, replaces=None):
+    def owner_notice(self, text, operation, now, ref=None, replaces=None, *, defer=False):
         """The receipt id of the owner notice TEXT in REF's thread: lane-mail's,
         or a held one while the owner's quiet hours cover NOW or an earlier
         notice is still held. The episode counts a held notice as sent, so
         holding it holds no recovery; release sends it after the hours. TEXT
-        takes the place of the held notice REPLACES while it is still held."""
+        takes the place of the held notice REPLACES while it is still held.
+        DEFER saves a notice before attempting any mailbox send."""
         held = self.state.get("held_notices", [])
         superseded = next((entry for entry in held if entry["id"] == replaces), None)
         if superseded is not None:
             superseded["text"] = text
             self.save()
             return superseded["id"]
-        if not held and self.waking(now):
+        if not held and not defer and self.waking(now):
             return self.send_notice(text, operation, ref)
         entry = next((entry for entry in held if entry["id"] == ref), None)
         if entry is not None:
@@ -1691,8 +1710,6 @@ class Watch:
             window = memory["window"] or "usage"
             reset = "resets at " + wall_time(memory["reset"]) if memory["reset"] is not None else "reset time unknown"
             text = session + f" hit its {window} limit on {account} (read at {at}, {reset})."
-        elif memory["kind"] == "wedged":
-            text = session + f" in pane {memory['pane']} on {account} cannot continue (read at {at}). " + memory["outcome"]
         else:
             text = legacy_wall_notice(memory)
         try:
@@ -2030,6 +2047,7 @@ class Watch:
                 self.accept_provider(wall[1].result(), wall[2])
             else:
                 reading = wall[1].result()
+                self.accept_wedged(reading, now)
                 # A wall read that binds no live controller, or an exit's
                 # episode still open, reads the recorded one's status. A
                 # wall read whose status read was refused, or found no
