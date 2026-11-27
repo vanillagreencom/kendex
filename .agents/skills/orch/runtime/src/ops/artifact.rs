@@ -2781,16 +2781,10 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
                 .collect();
         }
     }
-    // A run a stop ended before its sentinel reads `no-verdict` with no
-    // timing, which no receipt of that word carries.
+    // A verdict's receipt cites a run, which `write` alone judges; a round
+    // that left none has nothing to cite.
     let run = recovery_run(settings, &r.id)?;
-    if !validate.starts_with("FAILING:")
-        && run.as_ref().is_none_or(|(_, r)| {
-            (r.verdict != validate
-                && !(r.mode == "ci" && r.verdict == "pending" && validate == "pass"))
-                || !timing_holds(&validate, &r.time)
-        })
-    {
+    if !validate.starts_with("FAILING:") && run.is_none() {
         return redelegate(settings, r, "validate-unproven", env);
     }
     if let Some(rule) =
@@ -2833,6 +2827,13 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
     };
     let artifact = match write(settings, &receipt) {
         Ok(answer) => PathBuf::from(answer.text),
+        // The writer's refusals that the cited run does not back the
+        // receipt: a replacement round validates the commit again.
+        Err(Error::Artifact {
+            key:
+                "validate-disagrees" | "timing-unreadable" | "ci-contents-mismatch" | "run-off-round",
+            ..
+        }) => return redelegate(settings, r, "validate-unproven", env),
         Err(Error::Artifact {
             key: "labels-undeclared" | "mac-run-missing",
             ..

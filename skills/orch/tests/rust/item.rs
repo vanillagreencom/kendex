@@ -2595,6 +2595,63 @@ mod dev_artifacts {
     }
 
     #[test]
+    fn recovery_replaces_a_round_whose_cited_run_the_writer_refuses() {
+        // The round's own validate stage names each run, so recovery cites
+        // it to the writer instead of passing it over on the tree scan.
+        let cite = |w: &World, run: &Path| {
+            let mut doc = w.doc();
+            doc["stages"].as_array_mut().unwrap().push(json!({"kind":"validate","round_id":"r1","start":5,"end":6,"outcome":"pass","run_dir":run}));
+            fs::write(w.item(), doc.to_string()).unwrap();
+        };
+        // A ci pass compared the tree before the commit its report names.
+        let ci = World::new();
+        let run = ci.finished_run("ci", "full");
+        fs::write(
+            run.join("start"),
+            fs::read_to_string(run.join("start"))
+                .unwrap()
+                .replace("validate-mode=full", "validate-mode=ci"),
+        )
+        .unwrap();
+        ci.record_start(&run, &format!("tree={}", ci.tree()));
+        ci.commit("p.txt");
+        cite(&ci, &run);
+        let implement = format!(
+            "Branch: work\nCommit: {}\nQA: none\nValidate: pass",
+            ci.head()
+        );
+        // A fix round's run validated its base, not the commit it reports.
+        let fix = World::new();
+        fix.stamp("r1");
+        let run = fix.finished_run("base", "full");
+        fix.record_start(&run, &format!("tree={}", fix.tree()));
+        fix.commit("p.txt");
+        cite(&fix, &run);
+        let repair = format!(
+            "| 1 | Applied | parser fixed |\nCommits: {}\nValidate: pass",
+            fix.head()
+        );
+        for (w, report) in [(ci, implement), (fix, repair)] {
+            let file = w.transcript("r1", &report, "claude");
+            let out = w.call(
+                &["round", "recover"],
+                "r1",
+                &["--transcript", file.to_str().unwrap()],
+            );
+            let answer = result(&out);
+            assert_eq!(out.status.code(), Some(3), "{report}");
+            assert_eq!(
+                (answer["state"].clone(), answer["reason"].clone()),
+                (json!("redelegate"), json!("validate-unproven")),
+                "{report}"
+            );
+            assert_ne!(answer["round_id"], "r1");
+            assert_eq!(w.doc()["dev_round_id"], answer["round_id"]);
+            assert!(!w.receipt_path("r1").exists());
+        }
+    }
+
+    #[test]
     fn receipt_optional_fields_keep_unread_information_and_filter_wrong_shapes() {
         let w = World::new();
         w.stamp("r1");
