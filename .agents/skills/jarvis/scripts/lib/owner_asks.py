@@ -570,7 +570,10 @@ class OwnerAsks:
             shown, until = self.shown(state["deltas"].get(key, {}), now)
             row.update(state=shown, snoozedUntil=until,
                        actions={action: {"allowed": True, "reason": ""} for action in ("reply", "done", "later")})
-        revision = digest([state["homeId"], source, state["sequence"], rows])
+        # The revision digests what the rows show, not the raw read: a source
+        # change no row shows, such as a comment that asks nothing, leaves
+        # every walk in progress reading on.
+        revision = digest([state["homeId"], state["sequence"], rows])
         for row in rows.values():
             row["revision"] = revision
         return rows, routes, revision, now
