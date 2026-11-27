@@ -272,7 +272,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               [--replaces MSGID]
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
-              Linear assignment, label, opening action line and comment.
+              Linear assignment, label, opening action line and comment. On
+              an item Linear's GitHub sync links, whose description the
+              Linear package refuses to write, it adds no action line.
               Before anything is appended, Linear's `issues bulk-get` reads
               the tracker identity, the current identifier and UUID, of ITEM
               and of each open owner ask's item, and the ask records ITEM's as
@@ -629,8 +631,10 @@ tracker_pending (true on the immutable ask while its tracker outcome is missing)
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
 question is confirmed), tracker_label (the confirmed label used for close
 when settings change or cannot be read), tracker_comment (the posted
-question comment's tracker id, which owner replies follow), tracker_cause (the
-failed operation of an unposted tracker question),
+question comment's tracker id, which owner replies follow),
+tracker_action_line (false on a posted ask whose item took no opening action
+line, since Linear's GitHub sync links it; absent where the line was written),
+tracker_cause (the failed operation of an unposted tracker question),
 by (`text` or `default` on an owner answer; `explicit`, `text` or
 `default` on a close), and sender (`owner` or `jarvis` on an owner answer
 whose sending command passed --sender; absent otherwise). kind is ask,
@@ -1526,12 +1530,13 @@ owner_answers() {
   # recorded before asks carried one is matched by its item ref as written.
   # A displayed action line stays, another mailbox's included: the watch
   # closing that ask removes the line its question marks, and a later read
-  # here then writes this ask's.
+  # here then writes this ask's. The latest ask posted with no line, its
+  # item's GitHub sync refusing a description write, takes no repair.
   jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
     def owner_item($item): if (.identity.uuid | type) == "string" then .identity.uuid == $item.uuid else .issue == $item.id end;
     .[] | . as $item
     | ([$asks[] | select(.tracker_posted == true and owner_item($item) and (.do // "") != "")] | last) as $ask
-    | select($ask != null)
+    | select($ask != null and $ask.tracker_action_line != false)
     | {id, ask: $ask.id, description: (if ((.description // "") | test("^\\*\\*[^*\\r\\n]+, what you do:\\*\\* "))
         then null
         elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do; $ask.tracker_comment))
@@ -3369,9 +3374,11 @@ case "$VERB" in
         owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_CAUSE"
       fi
       if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
-        POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" --arg comment "$OWNER_TRACKER_COMMENT" '{id: (.id + "-tracker"),
+        POSTED_LINE="$(jq -c --arg label "$OWNER_TRACKER_LABEL" --arg comment "$OWNER_TRACKER_COMMENT" \
+          --arg lined "$OWNER_TRACKER_LINED" '{id: (.id + "-tracker"),
           kind: "tracker-posted", at, from, re: .id, issue, tracker_label: $label}
-          + (if $comment == "" then {} else {tracker_comment: $comment} end) + {text: ""}' <<<"$LINE")" ||
+          + (if $comment == "" then {} else {tracker_comment: $comment} end)
+          + (if $lined == "0" then {tracker_action_line: false} else {} end) + {text: ""}' <<<"$LINE")" ||
           refuse write-failed "$TO_OVERSEER"
       else
         POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" '{id: (.id + "-tracker"), kind: "tracker-failed", at, from,

@@ -56,6 +56,12 @@ if [[ -e "$FIXTURE/quota" ]]; then
   cat "$FIXTURE/quota" >&2
   exit 1
 fi
+# The Linear package's refusal of a description write to a GitHub-synced item
+# (skills/linear issues.sh require_unsynced_description).
+if [[ "$1:$2" == issues:update && -e "$FIXTURE/synced-$3" && " $* " == *" --description "* ]]; then
+  printf 'linear: refused=synced-description issue=%s github=acme/app#7 override=--synced-description\\n' "$3" >&2
+  exit 1
+fi
 case "$1:$2" in
   users:list) printf '[{"id":"owner","name":"Owner","email":"owner@example.test","display_name":"owner"}]\\n' ;;
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\\n' ;;
@@ -250,6 +256,27 @@ esac
         assert later.stdout.splitlines()[-1] == 'owner-answers: read=read', (issue, later)
         reacts = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('comments react ')]
         assert reacts == ([f'comments react {comment} --emoji eyes'] if marked else []), (issue, reacts)
+    # An ask on a GitHub-synced item posts with no action line, and no pass
+    # writes one there: the item refuses every description write.
+    (root / 'synced-KEN-16').touch()
+    (root / 'question-id').write_text('question-KEN-16\n')
+    message.write_text('Ship KEN-16?\n')
+    asked = call('ask', '--item', 'overseer', '--to', 'owner', '--issue', 'KEN-16', '--do', 'Ship change',
+                 '--options', 'ship,hold', '--recommend', 'ship', '--effect', 'none', '--wait', '5', '--file', str(message))
+    ask = asked.stdout.strip().split('=', 1)[1]
+    synced = [row for row in (json.loads(line) for line in call('pending', '--item', 'overseer', '--to', 'owner').stdout.splitlines()
+                              if line.startswith('{')) if row['id'] == ask]
+    assert [(row['tracker_posted'], row.get('tracker_action_line')) for row in synced] == [(True, False)], (asked, synced)
+    (root / 'items').write_text(json.dumps([dict(id=issue, uuid=f'uuid-{issue}', description='Body', assignee='Owner')
+                                            for issue in ('KEN-7', 'KEN-16')]))
+    (root / 'comments').write_text(json.dumps({'KEN-7': [comments[0]], 'KEN-16': [
+        dict(id='question-KEN-16', body='Question', user_email='bot@example.test', created_at='2026-01-07T00:00:00Z')]}))
+    before = len((root / 'calls').read_text().splitlines())
+    result = call('owner-answers', '--item', 'overseer')
+    writes = [line for line in (root / 'calls').read_text().splitlines()[before:] if line.startswith('issues update KEN-16 ')]
+    receipts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+    assert writes == [] and [r for r in receipts if r['kind'] == 'line' and r['issue'] == 'KEN-16'] == [], (writes, result)
+    assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
     print('PASS owner answer delivery, filtering, deduplication, repair, absent tracker and quota refusal')
 PY
 pass 'owner answer delivery, filtering, repair and quota contract'

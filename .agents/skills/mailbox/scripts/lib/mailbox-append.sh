@@ -244,6 +244,7 @@ def owner_tracker_record($outcomes):
     | if $record != null then del(.tracker_pending) else . end
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
     | if $record.tracker_comment != null then .tracker_comment = $record.tracker_comment else . end
+    | if $record.tracker_action_line == false then .tracker_action_line = false else . end
     | if $record.kind == "tracker-failed" then .tracker_cause = $record.cause else . end
   else . end
   | if .kind == "ask" and .to == "owner" then
@@ -356,10 +357,11 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue question
-  local rollback_label_args=()
+  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue question comment_file form
+  local rollback_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
+  OWNER_TRACKER_LINED=1
   OWNER_TRACKER_CAUSE=prepare
   issue="$(jq -r '.issue' <<<"$envelope")" || return 1
   ask_id="$(jq -er '.id | strings | select(length > 0)' <<<"$envelope")" || return 1
@@ -391,24 +393,39 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     (.description // "") | owner_action_line($owner.name; $ask.do; $question) + "."' <<<"$current")" || return 1
   description="${description%.}"
   # The comment is a message to a person. Ids stay in the mailbox: the watch
-  # finds this comment by the id the tracker-posted record keeps.
-  jq -r --arg workspace "$workspace" --argjson owner "$owner" --arg asker "$asker" '
+  # finds this comment by the id the tracker-posted record keeps. The form
+  # for an item that takes no action line carries the action itself, since
+  # that line is where the owner otherwise reads it.
+  for form in lined unlined; do
+    jq -r --arg workspace "$workspace" --argjson owner "$owner" --arg asker "$asker" --arg form "$form" '
     "https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",
-    .text, "", ("Options: " + (.options | join(", "))),
+    .text, "", (if $form == "unlined" then "What you do: " + .do, "" else empty end),
+    ("Options: " + (.options | join(", "))),
     (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
       else "Recommendation: " + .recommend + ". At " + .deadline + " it stands unless you answer." end),
     (if .draft then "Draft: " + (.draft | tojson) else empty end),
     "", "Reply to this comment: ok, yes or done to approve; anything else is a change request.",
     "", "Requested by " + $asker' \
-    <<<"$envelope" >"$work/tracker-comment" || return 1
-  "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
-  }
+      <<<"$envelope" >"$work/tracker-comment-$form" || return 1
+  done
+  comment_file="$work/tracker-comment-lined"
+  # The Linear package refuses, before any write, a description write to an
+  # item Linear's GitHub sync links (issues.sh require_unsynced_description),
+  # so there the label goes alone and the item carries no action line.
+  if ! "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err"; then
+    if grep -q '^linear: refused=synced-description ' "$work/tracker.err" &&
+       "$tracker" issues update "$issue" --labels "$labels" >"$work/tracker.out" 2>"$work/tracker.err"; then
+      OWNER_TRACKER_LINED=0
+      comment_file="$work/tracker-comment-unlined"
+    else
+      OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0
+    fi
+  fi
   OWNER_TRACKER_CAUSE=comment
   comment_error="$work/tracker-comment.err"
   comment_id=""
   # No attribution line, so the comment opens with the owner's mention.
-  if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
+  if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$comment_file" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
     if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
       # The ask is posted only once the saved comment shows the mention that
       # tells the owner it is there.
@@ -438,27 +455,33 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
       owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
     fi
   fi
+  [[ "$OWNER_TRACKER_LINED" -eq 1 || "$added_label" == true ]] || return 0
   latest="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker-rollback.err")" || {
     owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
   }
-  # Restore only while the fresh read still contains this ask's exact write.
-  owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
-    <<<"$latest" 2>"$work/tracker-rollback.err")" || {
-    owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
-  }
-  [[ "$owns_description" == true ]] || {
-    owner_tracker_unwritten "$issue" rollback-unowned; return 0;
-  }
-  original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
-  original_description="${original_description%.}"
+  if [[ "$OWNER_TRACKER_LINED" -eq 1 ]]; then
+    # Restore only while the fresh read still contains this ask's exact write.
+    owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
+      <<<"$latest" 2>"$work/tracker-rollback.err")" || {
+      owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
+    }
+    [[ "$owns_description" == true ]] || {
+      owner_tracker_unwritten "$issue" rollback-unowned; return 0;
+    }
+    original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
+    rollback_args=(--description "${original_description%.}")
+  fi
   if [[ "$added_label" == true ]]; then
     rollback_labels="$(owner_tracker_labels "$latest" REMOVE 2>"$work/tracker-rollback.err")" || {
       owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
     }
-    rollback_label_args=(--clear-labels)
-    [[ -z "$rollback_labels" ]] || rollback_label_args=(--labels "$rollback_labels")
+    if [[ -z "$rollback_labels" ]]; then
+      rollback_args+=(--clear-labels)
+    else
+      rollback_args+=(--labels "$rollback_labels")
+    fi
   fi
-  "$tracker" issues update "$issue" --description "$original_description" ${rollback_label_args[@]+"${rollback_label_args[@]}"} \
+  "$tracker" issues update "$issue" "${rollback_args[@]}" \
     >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
     owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
   return 0

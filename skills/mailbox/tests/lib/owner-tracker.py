@@ -35,8 +35,19 @@ if [[ "$1:$2" == users:list ]]; then
   printf 'reached\n' > "$TRACKER_CASE/reached"
   read -r release < "$TRACKER_CASE/release"
 fi
+if [[ "$1:$2" == issues:update ]]; then
+  # One call per record separator, one argument per unit separator: the
+  # description argument holds newlines.
+  { printf '%s\037' "$@"; printf '\036'; } >> "$TRACKER_CASE/updates"
+  # The Linear package's refusal of a description write to a GitHub-synced
+  # item (skills/linear issues.sh require_unsynced_description).
+  if [[ "$TRACKER_ROW" == synced* && " $* " == *" --description "* ]]; then
+    printf 'linear: refused=synced-description issue=%s github=acme/app#7 override=--synced-description\n' "$3" >&2
+    exit 1
+  fi
+fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*|question-id:comments:owner-questions:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*|synced-comment:comments:create:*|question-id:comments:owner-questions:*) exit 1 ;;
 esac
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
@@ -50,7 +61,11 @@ case "$1:$2" in
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
   comments:owner-questions) printf '"question-id"\n' ;;
-  comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
+  comments:create)
+    # The saved comment's body: the file the last argument names.
+    for body; do :; done
+    cp -- "$body" "$TRACKER_CASE/comment"
+    printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\n' "$3" "$3" ;;
   *) exit 1 ;;
@@ -60,8 +75,15 @@ esac
 
 def run(source, scratch, bash):
     facts = {"pending": True, "terminal": True, "projection": True, "outcome": True, "delivery": True, "bound": True}
+    # A synced item takes its label alone, and a failed comment then restores
+    # only the label: each synced row's update calls after the refused one.
+    labelled = ["issues", "update", "KEN-7", "--labels", "owner-gated,skills"]
+    # The action and its closing evidence, which no other part of the ask states.
+    action = "Merge the release branch and reply with the tag URL"
+    synced_updates = {"synced": [labelled], "synced-comment": [labelled, [*labelled[:4], "skills"]]}
     os.environ["SLACK_ORCH_DIR"] = str(REPO / "skills/orch")
-    for row in ("posted", "owner-read", "workspace-read", "question-id", "assign", "labels-read", "label", "comment", "prepare", "missing"):
+    for row in ("posted", "synced", "synced-comment", "owner-read", "workspace-read", "question-id", "assign",
+                "labels-read", "label", "comment", "prepare", "missing"):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -99,7 +121,7 @@ else exec '{shutil.which("date")}' "$@"; fi
             ready_fd = os.open(reached, os.O_RDWR)
             release_fd = os.open(release, os.O_RDWR)
             writer = subprocess.Popen([*mail, "ask", "--item", "overseer", "--to", "owner",
-                "--issue", "KEN-7", "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
+                "--issue", "KEN-7", "--do", action, "--wait", "5", "--options", "approve,hold",
                 "--recommend", "approve", "--effect", "none", "--file", str(message)], cwd=root, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -194,13 +216,20 @@ else exec '{shutil.which("date")}' "$@"; fi
                 if writer.returncode:
                     raise RuntimeError(f"writer exit={writer.returncode}: {err}")
                 after = [json.loads(line) for line in box.read_text().splitlines()]
-                posted = row == "posted"
+                posted = row in ("posted", "synced")
+                cause = "comment" if row == "synced-comment" else row
                 outcome = after[-1]
                 facts["terminal"] &= (len(after) == 3 and after[0] == ask
                     and outcome["kind"] == ("tracker-posted" if posted else "tracker-failed")
                     and outcome.get("re") == ask["id"] and outcome.get("issue") == "KEN-7"
-                    and (outcome.get("tracker_label") == "owner-gated" if posted else outcome.get("cause") == row)
+                    and (outcome.get("tracker_label") == "owner-gated" if posted else outcome.get("cause") == cause)
                     and out.strip() == "id=" + ask["id"])
+                if row in synced_updates:
+                    updates = [call.split("\x1f")[:-1] for call in (root / "updates").read_text().split("\x1e")[:-1]]
+                    facts["terminal"] &= (updates[0] == [*labelled[:3], "--assignee", "person"]
+                        and updates[1][:6] == [*labelled, "--description"]
+                        and updates[2:] == synced_updates[row] and "cause=rollback" not in err
+                        and (row != "synced" or action in (root / "comment").read_text()))
                 for verb, args in (("events", ()), ("pending", ()), ("drain", ("--after", "0"))):
                     rows = read(verb, *args)
                     expected_rows = {ask["id"]: "ask"} if verb == "pending" else public
@@ -211,8 +240,9 @@ else exec '{shutil.which("date")}' "$@"; fi
                         and envelopes[0]["tracker_posted"] is posted and "tracker_pending" not in envelopes[0])
                     # The ask row names the failed operation, or the posted comment replies follow.
                     facts["outcome"] &= (len(envelopes) == 1
-                        and envelopes[0].get("tracker_cause") == (None if posted else row)
-                        and envelopes[0].get("tracker_comment") == ("question-id" if posted else None))
+                        and envelopes[0].get("tracker_cause") == (None if posted else cause)
+                        and envelopes[0].get("tracker_comment") == ("question-id" if posted else None)
+                        and envelopes[0].get("tracker_action_line") == (False if row == "synced" else None))
                 events = [e for e in read("events") if e["kind"] == "ask"]
                 facts["projection"] &= len(events) == 1 and events[0]["line"] == 1 and events[0]["count"] == 3
                 cursor_rows = read("drain", "--after", "1")
