@@ -18,15 +18,18 @@
 //! Copilot CLI's is inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
 //! repeat each user turn; this reader leaves those out of the bytes. A
-//! failed call's result counts to its source, and a read of it stands only
-//! where the result's text holds the line that read's output begins with
-//! ([`printed`]): a Bash command that exits nonzero still returns what it
-//! printed on Claude Code and Pi, so a read before the part that failed
-//! may stand, and one the shell never ran does not. A read whose output
-//! begins with no line of its own (a `cat`, `sed` or `nl` read, a `head`
-//! or `tail` of one file, a read tool's or a skill's) never stands in a
-//! failed call, nor do reads that share a line the result holds fewer
-//! times than they do; a read that stands has unclear figures.
+//! failed call's result counts to its source, and a shell read of it
+//! stands unless the result shows it printed nothing ([`stood`]): a Bash
+//! command that exits nonzero still returns what it printed on Claude Code
+//! and Pi, so a read before the part that failed may stand, and one the
+//! shell never ran does not. A read is dropped where its program's own
+//! error line names its operand, where the result shows the shell skipped
+//! its command ([`skipped`]), and, for a `jarvis-section` read, where the
+//! result holds its heading line fewer times than the call has reads of
+//! that heading. Where the result cannot show whether a command before an
+//! `&&` or `||` failed, the read after it stands. A read tool's or a
+//! skill's read never stands in a failed call; a read that stands has
+//! unclear figures.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -355,26 +358,32 @@ impl Walk {
                 failed,
             } => {
                 let share = tokens.map_or(Share::Pending, Share::Own);
-                let (turn, Rules { mut reads, more }) = match self.calls.get(&call) {
+                let (turn, mut rules) = match self.calls.get(&call) {
                     Some(named) => (named.turn.clone(), named.rules.clone()),
                     None => (self.turn.clone(), Rules::default()),
                 };
                 // A result that names what it loaded is that skill's read,
                 // whether or not the record kept its call.
                 if let Some(name) = loaded {
-                    reads.retain(|read| !matches!(read, Read::Skill { .. }));
-                    reads.push(Read::Skill { name: Some(name) });
+                    rules
+                        .reads
+                        .retain(|rule| !matches!(rule.read, Read::Skill { .. }));
+                    rules.reads.push(Rule {
+                        read: Read::Skill { name: Some(name) },
+                        by: None,
+                    });
                 }
-                let source = if reads.is_empty() {
+                let source = if rules.reads.is_empty() {
                     Source::ToolResults
                 } else {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
-                let shared = reads.len() > 1 || more || failed.is_some();
-                if let Some(text) = failed {
-                    reads = stood(reads, &text);
-                }
+                let shared = rules.reads.len() > 1 || rules.more || failed.is_some();
+                let reads = match failed {
+                    Some(text) => stood(rules, &text),
+                    None => rules.reads.into_iter().map(|rule| rule.read).collect(),
+                };
                 for read in reads {
                     self.sections.push(Section {
                         item,
@@ -571,61 +580,148 @@ fn item_tokens(share: Share) -> Figure {
     }
 }
 
-/// The reads of a failed call that the result's `text` shows ran: each
-/// whose [`Marker`] it holds on at least as many lines as the call has
-/// reads with that marker, since a line the result holds once cannot tell
-/// two such reads apart.
-fn stood(reads: Vec<Read>, text: &str) -> Vec<Read> {
-    let markers: Vec<Option<Marker>> = reads.iter().map(marker).collect();
-    let stands: Vec<bool> = markers
-        .iter()
-        .map(|own| {
-            own.is_some_and(|own| {
-                let sharing = markers.iter().filter(|other| **other == Some(own)).count();
-                printed(own, text) >= sharing
-            })
+/// The reads of a failed call that its result's `text` does not show
+/// printed nothing. A shell read is dropped where its command's own error
+/// line names its operand, or where the shell skipped that command
+/// ([`skipped`]). A `jarvis-section` read is also dropped where its
+/// command failed, and stands only where `text` holds its heading line on
+/// at least as many lines as the call has standing reads of that heading,
+/// since a line the result holds once cannot tell two such reads apart, and
+/// a child heading another read printed is no line of its own.
+fn stood(rules: Rules, text: &str) -> Vec<Read> {
+    let skipped = skipped(&rules.commands, text);
+    let shown: Vec<Rule> = rules
+        .reads
+        .into_iter()
+        .filter(|rule| {
+            let Some(by) = rule.by else {
+                return false;
+            };
+            let command = &rules.commands[by];
+            !skipped[by]
+                && match &rule.read {
+                    Read::File { file } => !command.complains(file, text),
+                    Read::Section { .. } => command.status(text) != Status::Failed,
+                    Read::Skill { .. } | Read::Unreadable => false,
+                }
         })
         .collect();
-    reads
+    let headings: Vec<Option<&str>> = shown
+        .iter()
+        .map(|rule| match &rule.read {
+            Read::Section { heading, .. } => Some(heading.as_str()),
+            Read::File { .. } | Read::Skill { .. } | Read::Unreadable => None,
+        })
+        .collect();
+    let stands: Vec<bool> = headings
+        .iter()
+        .map(|own| match own {
+            Some(own) => {
+                let sharing = headings
+                    .iter()
+                    .filter(|other| *other == &Some(*own))
+                    .count();
+                printed(own, text) >= sharing
+            }
+            None => true,
+        })
+        .collect();
+    shown
         .into_iter()
         .zip(stands)
-        .filter_map(|(read, stands)| stands.then_some(read))
+        .filter_map(|(rule, stands)| stands.then_some(rule.read))
         .collect()
 }
 
-/// The line a read's output begins with, where it has one of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Marker<'a> {
-    /// `jarvis-section` prints the section from its ATX heading line on
-    /// (skills/jarvis/scripts/jarvis-section, its heading rule in the
-    /// jarvis lib's `sections.py`).
-    Heading(&'a str),
-    /// `head` and `tail` of several files print `==> FILE <==` before each
-    /// file they open, and only those (GNU coreutils 9.4, measured; a
-    /// printer that writes no such header leaves the read unshown).
-    Header(&'a str),
-}
-
-fn marker(read: &Read) -> Option<Marker<'_>> {
-    match read {
-        Read::Section { heading, .. } => Some(Marker::Heading(heading)),
-        Read::File { file } => Some(Marker::Header(file)),
-        Read::Skill { .. } | Read::Unreadable => None,
-    }
-}
-
-/// The lines of `text` that begin a read's output by `marker`.
-fn printed(marker: Marker, text: &str) -> usize {
+/// The lines of `text` that are the ATX heading `heading`, which
+/// `jarvis-section` prints its section from (skills/jarvis/scripts/
+/// jarvis-section, its heading rule in the jarvis lib's `sections.py`).
+fn printed(heading: &str, text: &str) -> usize {
     text.lines()
-        .filter(|line| match marker {
-            Marker::Heading(heading) => heading_title(line) == Some(heading),
-            Marker::Header(file) => {
-                line.strip_prefix("==> ")
-                    .and_then(|l| l.strip_suffix(" <=="))
-                    == Some(file)
-            }
-        })
+        .filter(|line| heading_title(line) == Some(heading))
         .count()
+}
+
+/// The status a command ends with where it runs, as its result shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Status {
+    Ok,
+    Failed,
+    Unknown,
+}
+
+/// The pipelines of a failed call, in order: the commands each spans, how
+/// it joins the one before, and the status of its last command, which is
+/// the pipeline's.
+struct Pipeline {
+    join: Join,
+    commands: std::ops::Range<usize>,
+    status: Status,
+}
+
+/// Whether the shell skipped each of `commands`, as far as the failed
+/// call's result `text` shows. A pipeline after `&&` runs only where the
+/// one before ended `Ok`, and one after `||` only where it ended `Failed`;
+/// a skipped pipeline leaves that status as it was. The call's status is
+/// the status of the last pipeline its last list ran, so a pipeline of
+/// that list that would end `Ok`, with nothing after it run, did not run
+/// either. A command that `set -e` or `exit` stops is not seen.
+fn skipped(commands: &[Command], text: &str) -> Vec<bool> {
+    let mut pipelines: Vec<Pipeline> = Vec::new();
+    for (i, command) in commands.iter().enumerate() {
+        let status = command.status(text);
+        match (command.join, pipelines.last_mut()) {
+            (Join::Pipe, Some(last)) => {
+                last.commands.end = i + 1;
+                last.status = status;
+            }
+            (join, _) => pipelines.push(Pipeline {
+                join,
+                commands: i..i + 1,
+                status,
+            }),
+        }
+    }
+    // Some(true) where the pipeline ran, Some(false) where the shell
+    // skipped it, None where the result cannot tell.
+    let mut ran: Vec<Option<bool>> = Vec::with_capacity(pipelines.len());
+    let (mut so_far, mut last_list) = (Status::Unknown, 0);
+    for (i, pipeline) in pipelines.iter().enumerate() {
+        let runs = match (pipeline.join, so_far) {
+            // A call that opens with `|` joins nothing before it.
+            (Join::List | Join::Pipe, _) => {
+                last_list = i;
+                Some(true)
+            }
+            (Join::And, Status::Ok) | (Join::Or, Status::Failed) => Some(true),
+            (Join::And, Status::Failed) | (Join::Or, Status::Ok) => Some(false),
+            (Join::And | Join::Or, Status::Unknown) => None,
+        };
+        so_far = match runs {
+            Some(true) => pipeline.status,
+            Some(false) => so_far,
+            None => Status::Unknown,
+        };
+        ran.push(runs);
+    }
+    for (runs, pipeline) in ran[last_list..]
+        .iter_mut()
+        .zip(&pipelines[last_list..])
+        .rev()
+    {
+        match (*runs, pipeline.status) {
+            (Some(false), _) => {}
+            (None, Status::Ok) => *runs = Some(false),
+            (Some(true), _) | (None, Status::Failed | Status::Unknown) => break,
+        }
+    }
+    let mut skipped = vec![false; commands.len()];
+    for (pipeline, runs) in pipelines.iter().zip(ran) {
+        if runs == Some(false) {
+            skipped[pipeline.commands.clone()].fill(true);
+        }
+    }
+    skipped
 }
 
 /// The title of an ATX heading line, as `sections.py` reads one: up to
@@ -668,12 +764,152 @@ static SECTION: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// What a call reads as rules, and whether its result may also hold the
-/// output of something else the call ran, which no read owns.
+/// What a call reads as rules, whether its result may also hold the output
+/// of something else the call ran, which no read owns, and, for a shell
+/// command, each command it names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Rules {
-    reads: Vec<Read>,
+    reads: Vec<Rule>,
     more: bool,
+    commands: Vec<Command>,
+}
+
+/// One rule read, and the index in [`Rules::commands`] of the shell
+/// command that makes it: `None` for a read tool's or a skill's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Rule {
+    read: Read,
+    by: Option<usize>,
+}
+
+/// The operator before a command of a shell call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Join {
+    /// None, or `;`, `&` or a newline: the command opens a list.
+    List,
+    And,
+    Or,
+    /// `|` or `|&`.
+    Pipe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Command {
+    join: Join,
+    /// `None` for a program whose status its result cannot show.
+    reader: Option<Reader>,
+}
+
+/// A read program: each of its error lines begins with its prefix and
+/// names the operand it failed on, and it prints none where it succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Reader {
+    /// The program word as the call writes it, which GNU coreutils begins
+    /// its error lines with (`/usr/bin/cat: F: ...`, 9.4, measured);
+    /// `jarvis-section` begins each of its own with its name.
+    prefix: String,
+    operands: Vec<String>,
+}
+
+impl Command {
+    fn status(&self, text: &str) -> Status {
+        match &self.reader {
+            None => Status::Unknown,
+            Some(reader) => {
+                if reader.operands.iter().any(|o| self.complains(o, text)) {
+                    Status::Failed
+                } else {
+                    Status::Ok
+                }
+            }
+        }
+    }
+
+    /// Whether `text` holds an error line of this command's own naming
+    /// `operand`: bare or quoted, then a colon or the closing quote. GNU
+    /// coreutils 9.4 writes `cat: F: ...`, `nl: F: ...`, `sed: can't read
+    /// F: ...`, `head: cannot open 'F' for reading: ...` (measured);
+    /// `jarvis-section` writes `jarvis-section: {"file": "F", ...}`.
+    fn complains(&self, operand: &str, text: &str) -> bool {
+        let Some(reader) = &self.reader else {
+            return false;
+        };
+        !operand.is_empty()
+            && text
+                .lines()
+                .filter_map(|line| {
+                    line.strip_prefix(reader.prefix.as_str())?
+                        .strip_prefix(": ")
+                })
+                .any(|rest| {
+                    rest.match_indices(operand).any(|(at, _)| {
+                        let before = rest[..at].chars().next_back();
+                        let after = rest[at + operand.len()..].chars().next();
+                        matches!(before, None | Some(' ' | '\'' | '"'))
+                            && matches!(after, Some(':' | '\'' | '"'))
+                    })
+                })
+    }
+}
+
+/// The segments of a shell command, each with the operator before it. A
+/// newline right after `&&`, `||` or `|` continues the list, as the shell
+/// reads it.
+fn segments(command: &str) -> Vec<(Join, &str)> {
+    let bytes = command.as_bytes();
+    let (mut out, mut join, mut start, mut i) = (Vec::new(), Join::List, 0, 0);
+    while i < bytes.len() {
+        let (next, width) = match (bytes[i], bytes.get(i + 1)) {
+            (b'&', Some(b'&')) => (Join::And, 2),
+            (b'|', Some(b'|')) => (Join::Or, 2),
+            (b'|', Some(b'&')) => (Join::Pipe, 2),
+            (b'|', _) => (Join::Pipe, 1),
+            (b';' | b'&' | b'\n', _) => (Join::List, 1),
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let segment = &command[start..i];
+        if !segment.trim().is_empty() {
+            out.push((join, segment));
+            join = next;
+        } else if bytes[i] != b'\n' {
+            join = next;
+        }
+        i += width;
+        start = i;
+    }
+    if !command[start..].trim().is_empty() {
+        out.push((join, &command[start..]));
+    }
+    out
+}
+
+/// How a `head` or `tail` option word sets the count: its value, or the
+/// next word's.
+enum Count<'a> {
+    Is(&'a str),
+    Next,
+}
+
+/// The count an option word of `head` or `tail` sets: `-n N`, `-nN`, `-c
+/// N`, `-cN`, `--lines[=]N`, `--bytes[=]N`, and the obsolete `-N`.
+fn count(word: &str) -> Option<Count<'_>> {
+    if let Some(long) = word.strip_prefix("--") {
+        return match long.split_once('=') {
+            Some(("lines" | "bytes", value)) => Some(Count::Is(value)),
+            None if matches!(long, "lines" | "bytes") => Some(Count::Next),
+            Some(_) | None => None,
+        };
+    }
+    let short = word.strip_prefix('-')?;
+    match short.bytes().next() {
+        Some(b'n' | b'c') if short.len() > 1 => Some(Count::Is(&short[1..])),
+        Some(b'n' | b'c') => Some(Count::Next),
+        Some(b'0'..=b'9') => Some(Count::Is(short)),
+        Some(_) | None => None,
+    }
 }
 
 /// The one table of what a call reads as rules: a read of a Markdown file,
@@ -684,49 +920,66 @@ struct Rules {
 /// output redirection's target and a heredoc's or here-string's word are
 /// no operand; an input redirection's file is one. A printer whose
 /// standard output goes to a file reads nothing into the result, nor does
-/// a `sed` that edits its files in place; one whose output goes to another
-/// descriptor (`>&2`) still does. A segment that reads no rule, and a
-/// `cat` operand that is not Markdown, is more output; another printer's
-/// other operands are taken for its script or count.
+/// a `sed` that edits its files in place, nor a `head` or `tail` of zero
+/// lines or bytes, which prints at most a file's header (GNU coreutils
+/// 9.4, measured); one whose output goes to another descriptor (`>&2`)
+/// still does. A segment that reads no rule, and a `cat` operand that is
+/// not Markdown, is more output; another printer's other operands are taken
+/// for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
             return Rules {
-                reads: vec![Read::File { file: path.clone() }],
-                more: false,
+                reads: vec![Rule {
+                    read: Read::File { file: path.clone() },
+                    by: None,
+                }],
+                ..Rules::default()
             };
         }
         Action::Skill(name) => {
             return Rules {
-                reads: vec![Read::Skill { name: name.clone() }],
-                more: false,
+                reads: vec![Rule {
+                    read: Read::Skill { name: name.clone() },
+                    by: None,
+                }],
+                ..Rules::default()
             };
         }
         Action::Shell(command) => command.replace(">&", ">").replace("&>", ">"),
         Action::Read(_) | Action::Other => return Rules::default(),
     };
     let mut rules = Rules::default();
-    for segment in command.split([';', '&', '|', '\n']) {
+    for (join, segment) in segments(&command) {
         let mut words = segment.split_whitespace();
         let Some(program) = words.next() else {
             continue;
         };
+        let by = rules.commands.len();
         let before = rules.reads.len();
-        match program.rsplit('/').next().unwrap_or(program) {
+        let reader = match program.rsplit('/').next().unwrap_or(program) {
             "jarvis-section" => {
-                rules
-                    .reads
-                    .push(SECTION.captures(segment).map_or(Read::Unreadable, |found| {
-                        let operand = |first: usize| {
-                            (first..first + 3)
-                                .find_map(|i| found.get(i))
-                                .map_or_else(String::new, |m| m.as_str().to_owned())
-                        };
-                        Read::Section {
-                            file: operand(1),
-                            heading: operand(4),
-                        }
-                    }))
+                let found = SECTION.captures(segment);
+                let read = found.as_ref().map_or(Read::Unreadable, |found| {
+                    let operand = |first: usize| {
+                        (first..first + 3)
+                            .find_map(|i| found.get(i))
+                            .map_or_else(String::new, |m| m.as_str().to_owned())
+                    };
+                    Read::Section {
+                        file: operand(1),
+                        heading: operand(4),
+                    }
+                });
+                let reader = match &read {
+                    Read::Section { file, heading } => Some(Reader {
+                        prefix: "jarvis-section".to_owned(),
+                        operands: vec![file.clone(), heading.clone()],
+                    }),
+                    Read::File { .. } | Read::Skill { .. } | Read::Unreadable => None,
+                };
+                rules.reads.push(Rule { read, by: Some(by) });
+                reader
             }
             name if PRINTERS.contains(&name) => {
                 // A file the printer's standard output goes to, after the
@@ -734,16 +987,28 @@ fn rule_reads(action: &Action) -> Rules {
                 let away = |stdout: bool, target: &str| {
                     stdout && !target.bytes().all(|b| b.is_ascii_digit())
                 };
-                let (mut reads, mut moved) = (Vec::new(), false);
+                let counted = matches!(name, "head" | "tail");
+                let (mut reads, mut operands) = (Vec::new(), Vec::new());
+                let (mut moved, mut zero, mut count_next) = (false, false, false);
                 // Some(stdout) while the next word is a redirection's target.
                 let mut target: Option<bool> = None;
+                let is_zero = |value: &str| !value.is_empty() && value.bytes().all(|b| b == b'0');
                 for word in words.map(|word| word.trim_matches(['\'', '"'])) {
                     if let Some(stdout) = target.take() {
                         moved |= away(stdout, word);
                         continue;
                     }
+                    if std::mem::take(&mut count_next) {
+                        zero = is_zero(word);
+                        continue;
+                    }
                     if word.starts_with('-') {
                         moved |= name == "sed" && sed_in_place(word);
+                        match count(word).filter(|_| counted) {
+                            Some(Count::Is(value)) => zero = is_zero(value),
+                            Some(Count::Next) => count_next = true,
+                            None => {}
+                        }
                         continue;
                     }
                     if let Some((fd, rest)) = word.split_once('>') {
@@ -762,20 +1027,29 @@ fn rule_reads(action: &Action) -> Rules {
                     if word.is_empty() {
                         continue;
                     }
+                    operands.push(word.to_owned());
                     if word.ends_with(".md") {
-                        reads.push(Read::File {
-                            file: word.to_owned(),
+                        reads.push(Rule {
+                            read: Read::File {
+                                file: word.to_owned(),
+                            },
+                            by: Some(by),
                         });
                     } else if name == "cat" {
                         rules.more = true;
                     }
                 }
-                if !moved {
+                if !moved && !zero {
                     rules.reads.extend(reads);
                 }
+                Some(Reader {
+                    prefix: program.to_owned(),
+                    operands,
+                })
             }
-            _ => {}
-        }
+            _ => None,
+        };
+        rules.commands.push(Command { join, reader });
         rules.more |= rules.reads.len() == before;
     }
     rules
@@ -795,18 +1069,27 @@ fn sed_in_place(word: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn section(file: &str, heading: &str) -> Read {
+        Read::Section {
+            file: file.to_owned(),
+            heading: heading.to_owned(),
+        }
+    }
+
+    fn file(file: &str) -> Read {
+        Read::File {
+            file: file.to_owned(),
+        }
+    }
+
+    fn shell(command: &str) -> Action {
+        Action::Shell(command.to_owned())
+    }
+
     /// Each row: the call, what it reads, and whether its result may hold
     /// output no read owns.
     #[test]
     fn a_call_reads_as_rules_by_the_one_table() {
-        let section = |file: &str, heading: &str| Read::Section {
-            file: file.to_owned(),
-            heading: heading.to_owned(),
-        };
-        let file = |file: &str| Read::File {
-            file: file.to_owned(),
-        };
-        let shell = |command: &str| Action::Shell(command.to_owned());
         let rows: Vec<(Action, Vec<Read>, bool)> = vec![
             (
                 Action::Read("a/SKILL.md".to_owned()),
@@ -856,94 +1139,138 @@ mod tests {
             (shell("sed -i 's/a/b/' a.md"), vec![], true),
             (shell("sed -Ei 's/a/b/' a.md"), vec![], true),
             (shell("sed --in-place=.bak 's/a/b/' a.md"), vec![], true),
+            // A count of zero, in each form that names one, and `+0`,
+            // which is the whole file.
+            (shell("head -n 0 a.md b.md"), vec![], true),
+            (shell("tail -c0 a.md"), vec![], true),
+            (shell("head --lines=0 a.md"), vec![], true),
+            (shell("head -0 a.md"), vec![], true),
+            (shell("tail -n +0 a.md"), vec![file("a.md")], false),
         ];
         for (action, reads, more) in rows {
-            assert_eq!(rule_reads(&action), Rules { reads, more }, "{action:?}");
+            let rules = rule_reads(&action);
+            let got: Vec<Read> = rules.reads.into_iter().map(|rule| rule.read).collect();
+            assert_eq!((got, rules.more), (reads, more), "{action:?}");
         }
     }
 
-    /// Each row: a failed call's reads, the text its result sent, and the
-    /// reads that stand. A row naming its command holds what that command
-    /// printed under bash with GNU coreutils 9.4 and the jarvis
-    /// `jarvis-section`.
+    /// Each row: a failed call, the text its result sent, and the reads
+    /// that stand. A row's text is what its command printed under bash with
+    /// GNU coreutils 9.4 and the jarvis `jarvis-section`, except a heading
+    /// row's, which is built.
     #[test]
-    fn a_failed_calls_read_stands_only_where_its_result_holds_the_reads_output() {
-        let section = |file: &str, heading: &str| Read::Section {
-            file: file.to_owned(),
-            heading: heading.to_owned(),
-        };
-        let file = |file: &str| Read::File {
-            file: file.to_owned(),
-        };
-        let rows: Vec<(Vec<Read>, &str, Vec<Read>)> = vec![
-            // ls /nonexistent && jarvis-section persona.md Role
+    fn a_failed_calls_read_stands_unless_its_result_shows_it_printed_nothing() {
+        let rows: Vec<(Action, &str, Vec<Read>)> = vec![
+            // The read before the failed part printed.
             (
-                vec![section("persona.md", "Role")],
+                shell("cat README.md && cat missing.md"),
+                "# Readme\n\nThe readme.\ncat: missing.md: No such file or directory\n",
+                vec![file("README.md")],
+            ),
+            (
+                shell("cat AGENTS.md CLAUDE.md"),
+                "# Rules\n\nThe rules.\ncat: CLAUDE.md: No such file or directory\n",
+                vec![file("AGENTS.md")],
+            ),
+            (
+                shell("sed -n '1,200p' SKILL.md && grep -n nomatch src/lib.rs"),
+                "---\nname: x\n---\n\n# X\n",
+                vec![file("SKILL.md")],
+            ),
+            // head quotes the operand it failed on.
+            (
+                shell("head -5 AGENTS.md CLAUDE.md"),
+                "==> AGENTS.md <==\n# Rules\n\nThe rules.\nhead: cannot open 'CLAUDE.md' for reading: No such file or directory\n",
+                vec![file("AGENTS.md")],
+            ),
+            // `||` runs the right side where the left failed.
+            (
+                shell("cat missing.md || cat AGENTS.md CLAUDE.md"),
+                "cat: missing.md: No such file or directory\n# Rules\n\nThe rules.\ncat: CLAUDE.md: No such file or directory\n",
+                vec![file("AGENTS.md")],
+            ),
+            // A pipeline's status is its last command's: cat failed on
+            // missing.md, grep matched, so `&&` ran b.md's cat.
+            (
+                shell("cat a.md missing.md | grep -c Rule && cat b.md; ls gone"),
+                "cat: missing.md: No such file or directory\n1\n# B\nls: cannot access 'gone': No such file or directory\n",
+                vec![file("a.md"), file("b.md")],
+            ),
+            // The call failed, so a read that would have succeeded last in
+            // it never ran, a newline after `&&` continuing the list.
+            (shell("grep -q nomatch f && cat a.md"), "", vec![]),
+            (shell("grep -q nomatch f && cat a.md | head -3"), "", vec![]),
+            (shell("grep -q nomatch f &&\ncat a.md"), "", vec![]),
+            (
+                shell("ls /nonexistent && jarvis-section persona.md Role"),
                 "ls: cannot access '/nonexistent': No such file or directory\n",
                 vec![],
             ),
-            // jarvis-section persona.md Role; ls missing
+            // A zero count reads nothing; head still prints the header.
             (
-                vec![section("persona.md", "Role")],
+                shell("head -n 0 A.md missing.md"),
+                "==> A.md <==\nhead: cannot open 'missing.md' for reading: No such file or directory\n",
+                vec![],
+            ),
+            // persona.md's child heading is no line of the Role section,
+            // which `&&` skipped once cat failed.
+            (
+                shell("cat persona.md missing.md && jarvis-section persona.md Role; ls gone"),
+                "# Persona\n\n## Role\n\nThe role.\ncat: missing.md: No such file or directory\nls: cannot access 'gone': No such file or directory\n",
+                vec![file("persona.md")],
+            ),
+            // a.md's Role heading is no line of b.md's failed section.
+            (
+                shell("cat a.md; jarvis-section b.md Role"),
+                "# A\n\n## Role\n\nA's role.\njarvis-section: {\"error\": \"read-failed\", \"file\": \"b.md\", \"cause\": \"[Errno 2] No such file or directory: 'b.md'\"}\n",
+                vec![file("a.md")],
+            ),
+            (
+                shell("jarvis-section persona.md Role; ls missing"),
                 "## Role\n\nThe role text.\n\nls: cannot access 'missing': No such file or directory\n",
                 vec![section("persona.md", "Role")],
             ),
+            // Two sections of one heading: where one failed, the line is
+            // the other's; where neither shows it failed, one line is
+            // neither's.
+            (
+                shell("jarvis-section a.md Role; jarvis-section b.md Role"),
+                "## Role\n\nThe role text.\njarvis-section: {\"error\": \"read-failed\", \"file\": \"b.md\", \"cause\": \"[Errno 2] No such file or directory: 'b.md'\"}\n",
+                vec![section("a.md", "Role")],
+            ),
+            (
+                shell("jarvis-section a.md Role && grep -q x f && jarvis-section b.md Role; false"),
+                "## Role\n\nThe role text.\n",
+                vec![],
+            ),
             // A heading written with indent, a tab and a closing run.
             (
-                vec![section("persona.md", "Role")],
+                shell("jarvis-section persona.md Role; false"),
                 "   ##\tRole ##\r\nThe role text.\n",
                 vec![section("persona.md", "Role")],
-            ),
-            // jarvis-section persona.md Gone; false
-            (
-                vec![section("persona.md", "Gone")],
-                "jarvis-section: {\"error\": \"unknown-heading\", \"heading\": \"Gone\", \"candidates\": [{\"heading\": \"Persona\", \"line\": 1}]}\n",
-                vec![],
-            ),
-            // Two sections of one heading, one heading line printed.
-            (
-                vec![section("a.md", "Role"), section("b.md", "Role")],
-                "## Role\n\nThe role text.\njarvis-section: {\"error\": \"read-failed\", \"file\": \"b.md\"}\n",
-                vec![],
             ),
             // A longer title, marks with no space after them and seven
             // marks are no Role heading.
             (
-                vec![section("a.md", "Role")],
+                shell("jarvis-section a.md Role; false"),
                 "## Roles\n#Role\n####### Role\n",
                 vec![],
             ),
-            // cat AGENTS.md CLAUDE.md: no line of AGENTS.md's own.
-            (
-                vec![file("AGENTS.md"), file("CLAUDE.md")],
-                "# Rules\n\nThe rules.\ncat: CLAUDE.md: No such file or directory\n",
-                vec![],
-            ),
-            // head -5 AGENTS.md CLAUDE.md
-            (
-                vec![file("AGENTS.md"), file("CLAUDE.md")],
-                "==> AGENTS.md <==\n# Rules\n\nThe rules.\nhead: cannot open 'CLAUDE.md' for reading: No such file or directory\n",
-                vec![file("AGENTS.md")],
-            ),
-            // head -3 AGENTS.md; ls missing: one file prints no header.
-            (
-                vec![file("AGENTS.md")],
-                "# Rules\n\nThe rules.\nls: cannot access 'missing': No such file or directory\n",
-                vec![],
-            ),
+            (shell("jarvis-section \"$F\" 'One'"), "", vec![]),
             // A failed read tool's result and a failed skill's.
-            (vec![file("/h/gone.md")], "File does not exist.", vec![]),
             (
-                vec![Read::Skill {
-                    name: Some("x".to_owned()),
-                }],
-                "x",
+                Action::Read("/h/gone.md".to_owned()),
+                "File does not exist.",
                 vec![],
             ),
-            (vec![Read::Unreadable], "", vec![]),
+            (Action::Skill(Some("x".to_owned())), "x", vec![]),
         ];
-        for (reads, text, want) in rows {
-            assert_eq!(stood(reads.clone(), text), want, "{reads:?} in {text:?}");
+        for (action, text, want) in rows {
+            assert_eq!(
+                stood(rule_reads(&action), text),
+                want,
+                "{action:?} in {text:?}"
+            );
         }
     }
 }
