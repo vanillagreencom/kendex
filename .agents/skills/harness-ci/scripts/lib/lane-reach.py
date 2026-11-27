@@ -967,29 +967,6 @@ def workflow_env(env):
     return found, script
 
 
-def names_lane_output(document, classifier, lane):
-    # A step condition, an action input or any other value can read the
-    # output, and GitHub matches context property names without case. The
-    # classifier's own mapping of the output defines it and reads nothing.
-    output = f"lane_{lane}"
-    pattern = re.compile(rf"(?<![a-z0-9_-]){re.escape(output)}(?![a-z0-9_-])", re.IGNORECASE)
-    mapping = re.compile(r"\$\{\{ steps\.[A-Za-z0-9_-]+\.outputs\." + re.escape(output) + r" \}\}",
-                         re.IGNORECASE)
-    control = document["jobs"][classifier]
-    outputs = {key: value for key, value in control["outputs"].items()
-               if not (key.lower() == output and mapping.fullmatch(value))}
-    pending = [{**document, "jobs": {**document["jobs"], classifier: {**control, "outputs": outputs}}}]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, dict):
-            pending.extend([*node.keys(), *node.values()])
-        elif isinstance(node, list):
-            pending.extend(node)
-        elif pattern.search(node):
-            return True
-    return False
-
-
 def declared_lanes(work):
     # ci-lanes.sh is the one reader of the lane file. change-class leaves the
     # base copy here, emptied where the base declares no lane.
@@ -1000,6 +977,16 @@ def declared_lanes(work):
     listed = command(["bash", "-c", script, "ci-lanes", str(Path(__file__).with_name("ci-lanes.sh")),
                       str(declaration)], work)
     return listed.decode().splitlines()
+
+
+def claimed_paths(work):
+    # change-class writes one LANE<TAB>PATH record per changed path a lane's
+    # base claim names, each ended by NUL since a path can hold a newline.
+    claimed = defaultdict(set)
+    for record in (work / "lane-claims").read_text().split("\0")[:-1]:
+        lane, path = record.split("\t", 1)
+        claimed[lane].add(path)
+    return claimed
 
 
 def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
@@ -1065,7 +1052,7 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
     return covered
 
 
-def derived(evidence, exceptions, settings, declared):
+def derived(evidence, claimed, settings, declared):
     path, document, classifiers = workflow(evidence)
     jobs = document["jobs"]
     if not classifiers:
@@ -1078,10 +1065,9 @@ def derived(evidence, exceptions, settings, declared):
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
-    # A declared lane that gates no job selects nothing in this workflow,
-    # unless a value the roster does not read names its output.
+    # A declared lane that gates no job, such as one a step condition reads,
+    # runs where its reasoned claims name a changed path.
     ungated = sorted(set(declared) - set(lane_by_job.values()))
-    named = {lane for lane in ungated if names_lane_output(document, classifier, lane)}
     lanes = {*lane_by_job.values(), *ungated}
 
     def keep_prerequisites(outcomes):
@@ -1160,22 +1146,26 @@ def derived(evidence, exceptions, settings, declared):
         }
         return hits, unresolved
 
-    first_reader = {}
-    shared_input = False
-    outcomes = {lane: "unread" if lane in named else "miss" for lane in lanes}
+    # A changed path that several lanes read or claim reaches each of them
+    # through its own hits, so it runs those lanes and no other. A path a
+    # lane's reader could not rule out, where another lane reaches it too,
+    # keeps every lane.
+    reached = defaultdict(set)
+    unread = set()
+    outcomes = dict.fromkeys(lanes, "miss")
     for name, lane in [*lane_by_job.items(), *((None, lane) for lane in ungated)]:
         hits, unresolved = job_reach(name, lane) if name is not None else (set(), set())
-        if lane in exceptions:
-            # The legacy claim pass gives us lane names across the diff.
-            hits = evidence.changed
-        if any(first_reader.setdefault(path, lane) != lane for path in hits | unresolved):
-            # Later jobs can still supply the cause of an unresolved dispatch.
-            shared_input = True
+        # A reasoned claim adds the changed paths it names to what the job reads.
+        hits |= claimed.get(lane, set())
+        for path in hits | unresolved:
+            reached[path].add(lane)
+        unread |= unresolved
         if unresolved:
             outcomes[lane] = "unread"
         elif hits and outcomes[lane] == "miss":
             outcomes[lane] = "hit"
-    return keep_prerequisites(retain_all if shared_input else outcomes)
+    shared_unread = any(len(reached[path]) > 1 for path in unread)
+    return keep_prerequisites(retain_all if shared_unread else outcomes)
 
 
 def trusted_push(authority, head):
@@ -1197,9 +1187,9 @@ def main():
         return 3
     try:
         evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render")
-        exceptions = set((Path(work) / "lane-exceptions").read_text().splitlines())
+        claimed = claimed_paths(Path(work))
         declared = declared_lanes(Path(work))
-        for name, result in sorted(derived(evidence, exceptions, settings.split(), declared).items()):
+        for name, result in sorted(derived(evidence, claimed, settings.split(), declared).items()):
             print(f"{name}\t{result}")
     except (*UNAVAILABLE, ImportError) as error:
         cause = str(error).splitlines()
