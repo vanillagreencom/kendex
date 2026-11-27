@@ -7980,47 +7980,15 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     })));
 }
 
-/// A walled worker whose relaunch adds a path a live lane holds, its
-/// item's Location path where its record holds no set, is not retired by
-/// its wall recovery: the chain's close refuses `launch-overlap` at exit 1,
-/// the walled harness runs on, the lane reads `running` and no close is
-/// recorded. The item is read through the tracker stand-in running the
-/// linear package's real bundle formatter.
+/// A walled worker whose recorded path another live lane took after it was
+/// admitted is not retired by its wall recovery: the chain's close refuses
+/// `launch-overlap` at exit 1, the walled harness runs on, the lane reads
+/// `running` and no close is recorded.
 #[test]
 fn a_wall_relaunch_beside_a_live_holder_of_its_path_closes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut fleet = Fleet::new(&server);
-    let items = dir.path().join("items");
-    std::fs::create_dir_all(&items).unwrap();
-    std::fs::write(
-        items.join("KEN-4.json"),
-        serde_json::to_vec(&json!({"issue": {
-            "id": "uuid-KEN-4", "identifier": "KEN-4", "title": "KEN-4",
-            "description": "Some text.\n**Location**: `src/a.sh`\n",
-            "state": {"name": "In Progress", "type": "started"}, "parent": null,
-            "labels": {"nodes": []}, "children": {"nodes": []},
-            "relations": {"nodes": []}, "inverseRelations": {"nodes": []},
-        }}))
-        .unwrap(),
-    )
-    .unwrap();
-    let formatters =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../linear/scripts/lib/formatters.sh");
-    for (name, value) in [
-        (
-            "OVERSEE_WATCH_TRACKER",
-            fixtures().join("linear-items/linear.sh"),
-        ),
-        ("LINEAR_ITEMS_DIR", items),
-        ("LINEAR_FORMATTERS", formatters),
-        ("LINEAR_FAKE_LOG", dir.path().join("linear.log")),
-    ] {
-        fleet
-            .runner
-            .env
-            .push((name.to_owned(), value.display().to_string()));
-    }
+    let fleet = Fleet::new(&server);
     let checkout = dir.path().join("checkout");
     init_checkout(&fleet, &checkout);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
@@ -8039,7 +8007,7 @@ fn a_wall_relaunch_beside_a_live_holder_of_its_path_closes_nothing() {
     ));
     record["effort"] = json!("high");
     record["account"] = json!(old_account.display().to_string());
-    record["tracker"] = json!("linear");
+    record["touched"] = json!(["src/a.sh"]);
     fleet.set_lanes(vec![record]);
     let state = fleet.read();
     let scripts = dir.path().join("scripts");
@@ -8055,7 +8023,8 @@ fn a_wall_relaunch_beside_a_live_holder_of_its_path_closes_nothing() {
         "{:?}",
         lines(&produced)
     );
-    // The holder holds the path once the relaunch is composed.
+    // The holder takes the path once the relaunch is composed, as another
+    // lane's admission can while the walled lane stands.
     let holder = Owned::sleep();
     let mut lanes = fleet.runner.fleet()["lanes"].as_array().unwrap().clone();
     lanes.push(json!({

@@ -8,7 +8,7 @@
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
-//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, the recorded set of a relaunch whose record was not kept, and the Location paths a set-less relaunch adds, block: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | otherwise kept by a no-landing close ([`retired_open`]), local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
@@ -63,12 +63,8 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission. A record that holds its set now ([`holding`]) adds no path
-//! and meets no holder ([`no_landing_held`]); any other record's set, or,
-//! where the record holds none, its item's Location paths, are the paths it
-//! adds, which meet the holders standing now as a running lane's added path
-//! does
-//! ([`relaunch_held`]). A `github` item of another repository than the checkout's,
+//! admission, and that set meets the holders standing now as a running
+//! lane's added path does ([`relaunch_held`]). A `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
@@ -823,9 +819,6 @@ enum Holding {
     Yields,
 }
 
-/// The one rule of whether a record holds its set: `Live` or `Kept` holds
-/// it, against another lane's launch or added path ([`judge`]), at a
-/// no-landing close's ask and at its relaunch ([`relaunch_held`]).
 fn holding(
     path: &Path,
     lane: &Lane,
@@ -867,15 +860,14 @@ fn holding(
 
 /// Whether a no-landing close keeps the record's set held: the close
 /// retires the attempt and keeps the item's work. The hold starts at the
-/// close's ask ([`no_landing_held`]) and lasts through its outcome, since
-/// the record's status moves only then: an open close holds whatever the
-/// record's charge reads, so the repeat that settles it owes no second
-/// judgement. A failed or superseded close, and
-/// an open full one, hold nothing of their own. Past those, the item's
-/// latest confirmed close holds on that ground while the record reads
-/// `stopped`, so a park ends the hold and a failed relaunch keeps it; a
-/// launch that failed after no close, or after the full close of a `done`
-/// record, also leaves `stopped`, an attempt with no work to keep.
+/// close's ask and lasts through its outcome, since the record's status
+/// moves only then: an open close holds whatever the record's charge reads.
+/// A failed or superseded close, and an open full one, hold nothing of
+/// their own. Past those, the item's latest confirmed close holds on that
+/// ground while the record reads `stopped`, so a park ends the hold and a
+/// failed relaunch keeps it; a launch that failed after no close, or after
+/// the full close of a `done` record, also leaves `stopped`, an attempt
+/// with no work to keep.
 fn retired_open(path: &Path, lane: &Lane, intents: &[Intent]) -> Result<bool> {
     let closes = intents.iter().rev().filter(|i| {
         i.target == lane.item && i.op == EffectOp::CloseResources && i.reconciled.is_none()
@@ -1194,20 +1186,20 @@ pub(super) fn bound(
     bind(path, &a, checkout, reads, host.accounts)
 }
 
-/// A relaunch's holders (the module's binding paragraph): the paths it adds,
-/// met against the lanes that hold paths now, as a running lane's added path
-/// is, never joined. A record that holds its set now ([`holding`]) adds
-/// none: the no-landing close that keeps it ([`retired_open`]) met the
-/// holders with it, or found it held ([`no_landing_held`]), so every lane
-/// that holds one of its paths now co-held it before, and the relaunch is
-/// admitted on its own set. Any other record yielded its set, so another
-/// lane may have taken a path of it since: its set is the paths it adds. A
-/// record no judgement wrote, a surface lane's, holds no set: its item's
-/// Location paths are the paths it adds, read as a first launch reads them,
-/// and refused where the item names no Location path, since a surface
-/// lane's item can keep its paths outside its description. `tracker` and
-/// `repo` are the relaunch's effective ones, the request's else the
-/// record's. A record naming no tracker is judged on no item, as a first
+/// A relaunch's holders (the module's binding paragraph): the record's
+/// touched set and scope, kept from its admission, met against the lanes
+/// that hold paths now, as a running lane's added path is, never joined.
+/// Every record's set meets them, one a no-landing close keeps
+/// ([`retired_open`]) as well: a stopped or parked record that yields lets
+/// another lane be admitted a path it holds, a lane can hold a kept
+/// record's path beside it, and a relaunch into another repository meets
+/// holders its record never met; its relaunch must not run beside a writer
+/// of its path. `tracker` and `repo` are the relaunch's effective ones, the
+/// request's else the record's. A record no judgement wrote, a surface
+/// lane's, holds no set: its item's Location paths are its set, read as a
+/// first launch reads them, and refused where the item names no Location
+/// path, since a surface lane's item can keep its paths outside its
+/// description. A record naming no tracker is judged on no item, as a first
 /// launch naming none is.
 #[allow(
     clippy::too_many_arguments,
@@ -1230,14 +1222,6 @@ pub(super) fn relaunch_held(
     };
     let read;
     let paths = match (&record.touched, tracker) {
-        (Some(_), _)
-            if matches!(
-                holding(path, record, intents, env, host)?,
-                Holding::Live | Holding::Kept
-            ) =>
-        {
-            return Ok(());
-        }
         (Some(paths), _) => paths.as_slice(),
         (None, Some(tracker)) if !record.read_only => {
             let reads = host
@@ -1267,41 +1251,6 @@ pub(super) fn relaunch_held(
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
-}
-
-/// The holder judgement a no-landing close owes at its ask, whatever its
-/// reason: the close keeps `record` holding its set ([`retired_open`]), and
-/// its relaunch then adds no path, so the set meets
-/// the holders standing now, as [`relaunch_held`] judges it, and a refusal
-/// leaves the record as it stood. That judgement meets no holder where the
-/// record holds its set now ([`holding`]): every lane that holds one of its
-/// paths now is a co-holder, so the close meets none. A record holding no
-/// set relaunches on its item's Location paths, which its relaunch adds and
-/// meets itself; they are met here only where the close `relaunches` it, a
-/// recovery reason, so the relaunch it is closed for is not refused after
-/// the close.
-pub(super) fn no_landing_held(
-    path: &Path,
-    lanes: &[Lane],
-    intents: &[Intent],
-    record: &Lane,
-    relaunches: bool,
-    env: &Env,
-    host: &Host,
-) -> Result<()> {
-    if record.touched.is_none() && !relaunches {
-        return Ok(());
-    }
-    relaunch_held(
-        path,
-        lanes,
-        intents,
-        record,
-        record.tracker.as_deref(),
-        record.repo.as_deref(),
-        env,
-        host,
-    )
 }
 
 /// The judgement (the module's table). `lanes` and `intents` are the

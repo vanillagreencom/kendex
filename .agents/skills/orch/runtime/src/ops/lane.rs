@@ -1464,10 +1464,9 @@ pub(super) fn launch_lane(
     // account's room and the cap, so one transition admits, joins or
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
-    // judged when it was admitted, and meets the holders standing now only
-    // with the paths it adds: none for a record a no-landing close kept, its
-    // set for any other record, and its item's Location paths for a record
-    // holding no set.
+    // judged when it was admitted, and meets the holders standing now with
+    // them, since a stopped record may yield its path to another lane, and a
+    // lane may hold a kept record's path beside it.
     let candidate = Admission {
         item: &r.item,
         tracker: r.tracker.as_deref(),
@@ -1835,20 +1834,20 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
-    // A no-landing ground keeps the record's set for its relaunch, and a
-    // recovery ground retires the lane for that relaunch: judged here, by
-    // every caller's close, a set the record did not hold meets the holders
-    // before it is kept, and a relaunch the holders refuse leaves the lane
-    // as it stood instead of stopped with no relaunch. The persisted close
-    // keeps the set held (`admission`'s `retired_open`), so the repeat that
-    // settles it (`Same` above) is judged no second time.
-    if let CloseGround::NoLanding { reason, .. } = &ground {
-        admission::no_landing_held(
+    // A recovery ground retires the lane for the record's own relaunch,
+    // which meets the holders of its paths standing now: judged here, by
+    // every caller's close, a relaunch they refuse leaves the lane as it
+    // stood instead of stopped with no relaunch.
+    if let CloseGround::NoLanding { reason, .. } = &ground
+        && RecoveryReason::read(reason).is_some()
+    {
+        admission::relaunch_held(
             path,
             &lanes,
             &open,
             &lane,
-            RecoveryReason::read(reason).is_some(),
+            lane.tracker.as_deref(),
+            lane.repo.as_deref(),
             env,
             host,
         )?;
