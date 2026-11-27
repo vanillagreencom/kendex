@@ -122,7 +122,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    .agents/skills/orch/scripts/orch-runtime resume-controller --fleet
    ```
 
-   - Once the start's transition stands, it brings the checkout to the landed base through `sync-base`. A sync that refuses leaves the checkout where it stood, and the start still runs. A controller the status reads running keeps its checkout as it stands, and the start refuses it `overseer-live`.
+   - Once the start judges its predecessor gone, it brings the checkout to the landed base through `sync-base`, before the controller's window opens. A sync that refuses leaves the checkout where it stood, and the start still runs. A predecessor that may still run keeps its checkout as it stands, and the start refuses it, `overseer-live` or `predecessor-unproven` (step 8). A start reconciled from an earlier open one moves nothing either.
    - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
    - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
    - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
@@ -130,7 +130,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - Where the checkout did not follow, a resumed controller's line leads `sync-base-[REASON]` in place of `controller-resumed`, at exit 4. A failed or unconfirmed one carries `base=sync-base-[REASON]` after its `intent`. Run `sync-base` (step 5) once the cause is cleared, before the overseer's first decision.
      - `[REASON]` is the word `sync-base`'s own `sync-base: [REASON]` line leads with.
      - These keys come from no such line: `sync-base-timeout` for a fetch past the read bound, `sync-base-unstarted` where the script could not start and `sync-base-exit-[N]` where it printed no reason.
-     - Nor do these, where the sync did not run: `sync-base-controller-live` for a controller the status reads running, the status read's own refusal key after `sync-base-` where it refused, and `sync-base-not-run` for a start that failed before the sync.
+     - Nor does `sync-base-not-run`, for a start that ended before the sync: a refused predecessor, a reconciled start or an earlier failure.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 

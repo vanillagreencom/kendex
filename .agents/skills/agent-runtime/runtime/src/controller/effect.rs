@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use super::transition::{RequestTransfer, StartController, overseer_target};
+use super::transition::{PreLaunch, RequestTransfer, StartController, overseer_target};
 use super::{Overseer, TransferCause};
 use crate::effects::prepare::{
     GATE_REFUSED, Inherited, Kept, LaunchHome, Spec, Unready, accountless_kept, build_launch,
@@ -912,6 +912,7 @@ pub fn transfer_effect(run: &Run, intent_id: &str, r: &RequestTransfer) -> Resul
         Mode::Transfer,
         r.brief_file.as_deref(),
         r.session.as_deref(),
+        &PreLaunch::default(),
     )
 }
 
@@ -922,6 +923,7 @@ pub fn start_effect(run: &Run, intent_id: &str, r: &StartController) -> Result<E
         Mode::Start,
         r.brief_file.as_deref(),
         r.session.as_deref(),
+        &r.pre_launch,
     )
 }
 
@@ -956,6 +958,7 @@ fn succeed(
     mode: Mode,
     brief: Option<&Path>,
     named_session: Option<&str>,
+    pre_launch: &PreLaunch,
 ) -> Result<EffectOutcome> {
     let intent = read_intent(run.engine.path, intent_id)?;
     let mut operation = open(run, &intent)?;
@@ -993,6 +996,10 @@ fn succeed(
             return Ok(failed_before_retirement_cause(operation, note, cause));
         }
     };
+    // Nothing runs that the step could move under: a start's predecessor
+    // is judged absent here, and the runner's runtimes and window, which
+    // the step prepares for, come after it.
+    pre_launch.run();
     let Some(pending) = overseer.pending.clone() else {
         return Ok(failed_before_retirement(operation, "pending-missing"));
     };
