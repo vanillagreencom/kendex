@@ -1007,20 +1007,28 @@ print(json.dumps(session.terminal(status)))
         self.wait(reason="new-no-record")
         os.kill(self.started()[-1]["pid"], signal.SIGKILL)
         self.wait("stopped", "ended", seconds=30)
-        identity = self.marked()[2]
-        # Each row's account reads USED percent of its week; OPENED is the
-        # reason the start runs under, None for a refusal.
-        for mode, account, used, opened in (("resume", self.account, 100, None), ("new", self.account, 100, None),
-                                            ("resume", self.account, 96, "resumed"),
-                                            ("new", roomy, 20, "new-selection-changed")):
-            with self.subTest(mode=mode, account=account.name, used=used):
-                self.measure(account, used)
+        # Each row starts from an ended controller, its accounts reading the
+        # percent of their week USED names. OPENED is the reason the start
+        # runs under, None for a refusal. The roomy row's recorded account is
+        # still spent, so a judge of the recorded account in place of the
+        # stated one refuses it.
+        rows = (("resume", self.account, {self.account: 100}, None),
+                ("new", self.account, {self.account: 100}, None),
+                ("new", roomy, {self.account: 100, roomy: 20}, "new-selection-changed"),
+                ("new", self.account, {self.account: 96}, "new-selection-changed"))
+        for mode, account, used, opened in rows:
+            with self.subTest(mode=mode, account=account.name, used=used[account]):
+                for measured, percent in used.items():
+                    self.measure(measured, percent)
+                identity = self.marked()[2]
                 windows, launched = self.windows(), len(self.started())
                 answer, code = self.call("start", mode=mode, account=account)
                 if opened:
                     self.assertIn((answer["state"], code), (("starting", 0), ("running", 0)), self.stderr)
                     after = self.wait(reason=opened)
                     self.assertEqual((after["account"], len(self.started())), (str(account), launched + 1))
+                    os.kill(self.started()[-1]["pid"], signal.SIGKILL)
+                    self.wait("stopped", "ended", seconds=30)
                     continue
                 self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "account-walled", 1),
                                  self.stderr)
