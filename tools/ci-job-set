@@ -1019,31 +1019,38 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # cannot be inspected by the source reach.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
 # Skill text selects no catalog job. It is Markdown a skill ships beside its
-# SKILL.md, as catalog_reads places it, edited in place since CHANGE_BASE
-# with no link or heading on or beside a changed line. The install changes
-# such a file only to rebase its relative links, and a link it cannot
-# represent is a warning, never an error. Of the released check's passes
-# only links can fail on it; the safety pass scores it and fails nothing.
-# A change to a link or a heading is never skill text, so the links pass
-# keeps its merge-group proof. An added, removed or renamed file changes
-# the layout and keeps the job too, as does a diff that cannot be read.
+# SKILL.md, as catalog_reads places it, edited in place since CHANGE_BASE,
+# whose diff PROSE_EDIT reads as prose. The install changes such a file only
+# to rebase its relative links, and a link it cannot represent is a warning,
+# never an error. Of the released check's passes only links can fail on it;
+# the safety pass scores it and fails nothing. A link or heading edit is not
+# prose, so the links pass keeps its merge-group proof. An added, removed or
+# renamed file changes the layout and keeps the job too, as does a diff that
+# cannot be read.
 SKILL_TEXT=$'\n'
-# Over one file's `git diff -U1`: exit 0 where every hunk is prose. One
-# line per rule; each `doubt` keeps the job. The first two also read the
-# context, where a line can open a wrapped link destination or underline
-# the changed line into a heading.
+# Over one file's `git diff -U1`: exit 0 where the edit is prose. A changed
+# line keeps the job when it holds any Markdown syntax character, one of
+# [ ] ( ) < > # ` ~, or a URL (`http`, or the bare `github.com` the links
+# pass also reads). A changed or context line keeps it when it is only `=`
+# or `-` once leading quote markers, list markers and blanks are off, which
+# can underline a line into a heading. No hunk, or a binary diff, keeps it.
 PROSE_EDIT='
   function doubt() { found = 1; exit }
+  function underline(s) {
+    while (1) {
+      if (s ~ /^[ \t]*[=-]+[ \t]*$/) return 1
+      if (!match(s, /^([ \t]+|>|[-*+]([ \t]|$)|[0-9]+[.)]([ \t]|$))/)) return 0
+      s = substr(s, RLENGTH + 1)
+    }
+  }
   /^@@/ { hunk = 1; next }
   !hunk { if (/^Binary files /) doubt(); next }
   /^\\/ { next }
   { mark = substr($0, 1, 1); line = substr($0, 2) }
-  line ~ /(\(|\]:)[ \t]*$/ { doubt() }
-  line ~ /^[ ]*(=+|-+)[ \t]*$/ { doubt() }
+  underline(line) { doubt() }
   mark == " " { next }
-  index(line, "](") || index(line, "][") || index(line, "]:") { doubt() }
-  tolower(line) ~ /<a[ >]|<h[1-6]|href=|src=|http|github\.com/ { doubt() }
-  line ~ /^[ ]*#/ { doubt() }
+  line ~ /[][()<>#`~]/ { doubt() }
+  tolower(line) ~ /http|github\.com/ { doubt() }
   END { exit found || !hunk }
 '
 skill_text() { # CANDIDATES — catalog_reads' `text` paths, one per line
