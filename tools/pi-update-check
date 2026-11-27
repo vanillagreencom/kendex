@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# pi-update-check: whether npm holds a Pi release newer than the one the
+# pi-update audit last read, and if so, that one GitHub issue asks for the
+# audit. .github/workflows/pi-update-check.yml runs it weekly; Linear's GitHub
+# sync mirrors the issue into the team's tracker.
+#
+# The release the audit last read is `lastTarget` in
+# pi-extensions/pi-update.state.json, the target a pi-update run records under
+# either verdict (.agents/skills/pi-update/workflows/audit-release.md step 6).
+# `lastVersion` is the last release a `roll` cleared, which a `hold` leaves
+# behind the held target. This job asks for no audit of the held release
+# again: the hold clears in the next audit run, which the next Pi release's
+# item asks for, or a manual pi-update run once the pi-hooks fix lands. The
+# newest release is npm's `latest` dist-tag of @earendil-works/pi-coding-agent;
+# Pi releases every package in lockstep, so that one version covers the release.
+#
+# The open audit item is an open issue github-actions[bot] wrote whose title is
+# TITLE_PREFIX and a version above the marker. Any other author's matching
+# title counts for nothing, since anyone can open an issue in a public
+# repository. A matching title at or below the marker is residue of an audit
+# that already ran: it holds nothing, and the `opened` outcome line names it.
+# The audit targets npm's `latest` when it starts, so a release published after
+# that is outside its run; the first check after the marker records that run
+# asks again.
+#
+# Run from a checkout of the repository: gh resolves {owner}/{repo} and the
+# issue's repository from it, or from GH_REPO. Only a GitHub Actions run opens
+# an issue, since only its token writes as AUTHOR; elsewhere the run reads and
+# reports, and refuses where it would open one. The manual route is the
+# workflow's `workflow_dispatch`.
+#
+# Outcome, one line on stdout, appended also to $GITHUB_STEP_SUMMARY when set:
+#   pi-update-check: current marker=<v> latest=<v>         npm holds nothing newer (exit 0)
+#   pi-update-check: open issue=<n> marker=<v> latest=<v>  an audit item is already open (exit 0)
+#   pi-update-check: opened issue=<url> marker=<v> latest=<v> [residue=<n>,...]
+#                                                          this run opened one (exit 0)
+# `marker` is `lastTarget`; `residue` lists the open issues held at or below it.
+#
+# A refusal is one line on stderr, `pi-update-check: <key>=<value>`, exit 2,
+# and opens nothing:
+#   marker=unreadable|invalid  the marker file or its lastTarget
+#   npm=failed|invalid         the npm read, or a latest that is not x.y.z
+#   issues=failed|invalid      the open-issue listing, or an audit title whose
+#                              version is not x.y.z
+#   create=failed              gh refused the new issue
+#   create=outside-actions     the run would open an issue outside GitHub Actions
+set -euo pipefail
+
+PACKAGE=@earendil-works/pi-coding-agent
+TITLE_PREFIX='pi-update: audit the kendex Pi extensions against Pi '
+# GITHUB_TOKEN is an installation token of the GitHub Actions app, so the REST
+# API reports what it creates with this user login (id 41898282, type Bot),
+# a name no account can register.
+AUTHOR='github-actions[bot]'
+# A component of nine digits or fewer keeps the comparison inside shell
+# arithmetic.
+VERSION_RE='^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$'
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MARKER="$ROOT/pi-extensions/pi-update.state.json"
+
+refuse() { # KEY VALUE
+  printf 'pi-update-check: %s=%s\n' "$1" "$2" >&2
+  exit 2
+}
+
+outcome() { # LINE
+  printf '%s\n' "$1"
+  if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+    printf '%s\n' "$1" >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
+
+# Exit 0 when version $1 is newer than version $2; both match VERSION_RE.
+newer() {
+  local a b i
+  [[ $1 =~ $VERSION_RE ]]
+  a=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ $2 =~ $VERSION_RE ]]
+  b=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  for i in 0 1 2; do
+    if ((a[i] != b[i])); then
+      ((a[i] > b[i]))
+      return
+    fi
+  done
+  return 1
+}
+
+if ! marker=$(jq -er '.lastTarget | strings' -- "$MARKER"); then
+  refuse marker unreadable
+fi
+[[ $marker =~ $VERSION_RE ]] || refuse marker invalid
+
+if ! latest=$(npm view "$PACKAGE" dist-tags.latest); then
+  refuse npm failed
+fi
+[[ $latest =~ $VERSION_RE ]] || refuse npm invalid
+
+if ! newer "$latest" "$marker"; then
+  outcome "pi-update-check: current marker=$marker latest=$latest"
+  exit 0
+fi
+
+# Every page, so an open item past the first hundred issues still counts.
+if ! pages=$(gh api --paginate --slurp 'repos/{owner}/{repo}/issues?state=open&per_page=100'); then
+  refuse issues failed
+fi
+# The listing holds pull requests too; only an issue lacks `pull_request`.
+# One `<number> <title version>` line per audit issue, oldest first.
+if ! audits=$(jq -er --arg prefix "$TITLE_PREFIX" --arg author "$AUTHOR" '
+  [.[][] | select(has("pull_request") | not)
+   | select(.user.login == $author and (.title | startswith($prefix)))
+   | [.number, (.title | ltrimstr($prefix))]]
+  | sort_by(.[0]) | map("\(.[0]) \(.[1])") | join("\n")
+' <<<"$pages"); then
+  refuse issues invalid
+fi
+open=""
+residue=""
+while read -r number version; do
+  [[ -n $number ]] || continue
+  [[ $version =~ $VERSION_RE ]] || refuse issues invalid
+  if newer "$version" "$marker"; then
+    open="$number"
+    break
+  fi
+  residue="${residue:+$residue,}$number"
+done <<<"$audits"
+if [[ -n $open ]]; then
+  outcome "pi-update-check: open issue=$open marker=$marker latest=$latest"
+  exit 0
+fi
+
+body="> **Story:** npm has Pi $latest, and the pi-update audit last read Pi $marker. The audit checks every release in between against the kendex Pi extensions, fixes what breaks and records the verdict.
+
+> **Why this matters:** A Pi release that breaks an extension reaches users before anyone checks it.
+
+## Done when
+
+- [ ] The pi-update skill (\`.agents/skills/pi-update/SKILL.md\`) has audited npm's \`latest\` of \`$PACKAGE\`, and \`pi-extensions/pi-update.state.json\` records the run.
+
+## Context
+
+**Location**: \`pi-extensions/\`
+
+The weekly \`pi-update-check\` workflow opened this item. The audit covers releases through npm's \`latest\` at the moment it starts. Until the state file records an audit run through this item's release, the workflow opens no second item. After that, a newer release on npm gets a new item even if this one is still open: a release published after the audit starts is outside its run, and the first check after the state file records the run asks for it. The pi-update skill makes this item priority High (2)."
+
+# gh files the issue under whatever credential it holds, and an issue under a
+# maintainer's account is not AUTHOR's, so every later run would open another.
+# No GitHub setting ties gh to the workflow token, so the script holds it.
+# GitHub sets GITHUB_ACTIONS to `true` in every Actions run
+# (https://docs.github.com/en/actions/reference/workflows-and-actions/variables).
+[[ ${GITHUB_ACTIONS:-} == true ]] || refuse create outside-actions
+if ! url=$(gh issue create --title "$TITLE_PREFIX$latest" --label harness --body "$body"); then
+  refuse create failed
+fi
+outcome "pi-update-check: opened issue=$url marker=$marker latest=$latest${residue:+ residue=$residue}"

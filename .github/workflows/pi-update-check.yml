@@ -1,0 +1,44 @@
+name: pi-update-check
+
+# Once a week, asks for the pi-update audit when npm holds a Pi release newer
+# than the one the audit last covered. tools/pi-update-check holds the rule
+# and the lines it prints; it opens at most one GitHub issue, which Linear's
+# GitHub sync mirrors into the team's tracker, and in a week with nothing new
+# it writes one line to the job summary.
+#
+# A separate workflow: the other scheduled ones are CodeQL's scan, the AUR
+# publisher, whose concurrency group serializes publication, and Skill Tests,
+# whose every job reports into the required `CI` context.
+
+on:
+  schedule:
+    # Mondays at 05:37 UTC.
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two overlapping runs could each find no open item and each open one.
+  group: pi-update-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    permissions:
+      contents: read
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ask for the pi-update audit when Pi has a newer release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: tools/pi-update-check
