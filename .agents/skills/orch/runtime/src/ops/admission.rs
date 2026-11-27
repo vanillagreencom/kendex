@@ -1,7 +1,7 @@
 //! The admission judgement a lane launch runs before the cap, and a
 //! running lane runs for a path it adds: the item's eligibility from its
 //! body, its touched set as the
-//! union of the item's Location paths, the brief's paths, the change-scope
+//! union of the item's Location paths, the brief's edit paths, the change-scope
 //! paths over the range the request names and the paths the request adds,
 //! and every holder of a shared path judged by its lane's liveness through
 //! the occupancy identity reads, never by its status word.
@@ -636,21 +636,52 @@ pub(super) fn is_location_line(line: &str) -> bool {
         .starts_with(':')
 }
 
+enum PathSource {
+    Location,
+    Brief,
+}
+
+/// A brief can name a path for reference. Read the direct instruction
+/// and KEN-5910's reported wording, "holds PATH; ..., do not edit it",
+/// within the prose next to that mention.
+fn do_not_edit(before: &str, after: &str) -> bool {
+    let before = before.to_ascii_lowercase();
+    if before
+        .split_whitespace()
+        .rev()
+        .take(3)
+        .eq(["edit", "not", "do"])
+    {
+        return true;
+    }
+    before.split_whitespace().next_back() == Some("holds")
+        && after
+            .split(['`', '\n', '.', '!', '?'])
+            .next()
+            .and_then(|sentence| sentence.rsplit([';', ',']).next())
+            .is_some_and(|clause| clause.trim().eq_ignore_ascii_case("do not edit it"))
+}
+
 /// The backticked tokens of `text` holding no whitespace, each less a
-/// `:N` or `:N-M` line suffix.
-fn ticks(text: &str) -> Vec<String> {
+/// `:N` or `:N-M` line suffix. In a brief, omit a do-not-edit mention.
+fn ticks(text: &str, source: PathSource) -> Vec<String> {
     let mut found = Vec::new();
     let mut rest = text;
     while let Some(open) = rest.find('`') {
+        let before = &rest[..open];
         let after = &rest[open + 1..];
         let Some(close) = after.find('`') else {
             break;
         };
         let token = &after[..close];
-        if !token.is_empty() && !token.chars().any(char::is_whitespace) {
-            found.push(without_line_suffix(token).to_owned());
-        }
         rest = &after[close + 1..];
+        if token.is_empty()
+            || token.chars().any(char::is_whitespace)
+            || (matches!(source, PathSource::Brief) && do_not_edit(before, rest))
+        {
+            continue;
+        }
+        found.push(without_line_suffix(token).to_owned());
     }
     found
 }
@@ -681,7 +712,7 @@ fn location_paths(body: &str) -> std::result::Result<Vec<String>, &'static str> 
         let line = line.strip_suffix('\r').unwrap_or(line);
         if is_location_line(line) {
             located = true;
-            paths.extend(named_paths(line));
+            paths.extend(named_paths(line, PathSource::Location));
         }
     }
     if located && paths.is_empty() {
@@ -706,8 +737,11 @@ const SKILLS_RENDER: &str = ".agents/skills/";
 /// [`SKILLS_RENDER`] so it meets every render under it: it is then the only
 /// claim on the renders the item writes, such as those a `kendex-local.toml`
 /// instruction or a render-engine change rewrites.
-fn named_paths(text: &str) -> Vec<String> {
-    let mut paths: Vec<String> = ticks(text).into_iter().filter(|t| is_path(t)).collect();
+fn named_paths(text: &str, source: PathSource) -> Vec<String> {
+    let mut paths: Vec<String> = ticks(text, source)
+        .into_iter()
+        .filter(|t| is_path(t))
+        .collect();
     let is_render_root = |p: &str| p.trim_end_matches('/') == SKILLS_RENDER.trim_end_matches('/');
     if paths.iter().any(|p| is_render_root(p)) {
         let mut renders: Vec<String> = paths
@@ -744,7 +778,7 @@ fn is_path(token: &str) -> bool {
     name_chars && extension
 }
 
-/// The touched set: the body's Location paths, the brief's paths, the
+/// The touched set: the body's Location paths, the brief's edit paths, the
 /// range's changed paths and the paths added, `changelog.d/` left out in
 /// either spelling, read in `root`, the checkout it is recorded for
 /// ([`folders`]). The admission judges holders over it and the tier
@@ -762,7 +796,7 @@ pub(super) fn touched(
         touched.extend(location_paths(body)?);
     }
     if let Some(brief) = brief {
-        touched.extend(named_paths(brief));
+        touched.extend(named_paths(brief, PathSource::Brief));
     }
     touched.extend(range.iter().chain(added).cloned());
     touched.retain(|p| !p.is_empty() && !covers(UNCOUNTED_PREFIX, p));
@@ -2507,7 +2541,11 @@ mod tests {
             ),
         ];
         for (text, expected) in rows {
-            assert_eq!(named_paths(text), expected, "{text:?}");
+            assert_eq!(
+                named_paths(text, PathSource::Location),
+                expected,
+                "{text:?}"
+            );
         }
     }
 
@@ -2853,6 +2891,73 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.key(), "touched-unreadable");
         assert_eq!(err.fields()[1].1, "classification");
+    }
+
+    fn judge_brief_against_holder(text: &str) -> Judged {
+        let dir = tempfile::tempdir().unwrap();
+        let brief = dir.path().join("brief.md");
+        std::fs::write(&brief, text).unwrap();
+        let identity = Identity {
+            pid: 11,
+            start: "ticks:1".into(),
+        };
+        let planted = Planted {
+            items: [("KEN-L".to_owned(), body("`src/portal.sh`"))].into(),
+            readings: [(identity.pid, Reading::Live(identity))].into(),
+            ranges: Vec::new(),
+            reads: RefCell::new(Vec::new()),
+        };
+        let mut held = holder(
+            "KEN-H",
+            "running",
+            11,
+            Some(vec!["scripts/sandbox-shots.sh"]),
+        );
+        held.mail_root = Some(dir.path().display().to_string());
+        judge(
+            &dir.path().join("workflow-state-oversee.json"),
+            &[held],
+            &[],
+            &Admission {
+                brief_file: Some(&brief),
+                launch: Launch::First(dir.path()),
+                ..admission("KEN-L", &[])
+            },
+            &env(),
+            &planted.host(&planted.still_runs()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn do_not_edit_brief_paths_leave_the_holder_alone() {
+        // KEN-5910's reported brief and the same direction with the path as its object.
+        for brief in [
+            "KEN-H holds `scripts/sandbox-shots.sh`; ask for screenshot units, do not edit it.",
+            "Do not edit `scripts/sandbox-shots.sh:14`. Do not edit `src/portal.sh`.",
+        ] {
+            let judged = judge_brief_against_holder(brief);
+            assert_eq!(judged.join, None, "{brief}");
+            assert_eq!(judged.touched, ["src/portal.sh"], "{brief}");
+        }
+    }
+
+    #[test]
+    fn edit_brief_paths_still_join_the_holder() {
+        for brief in [
+            "Edit `scripts/sandbox-shots.sh`.",
+            "Edit `scripts/sandbox-shots.sh` for portal coverage. Do not edit `scripts/sandbox-shots.sh` for clock coverage.",
+        ] {
+            let judged = judge_brief_against_holder(brief);
+            assert_eq!(
+                judged.join,
+                Some(Join {
+                    holder: 0,
+                    tie: Tie::File("scripts/sandbox-shots.sh".into()),
+                }),
+                "{brief}"
+            );
+        }
     }
 
     /// A container is refused from its body with nothing
