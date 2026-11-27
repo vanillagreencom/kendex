@@ -49,15 +49,10 @@ Carry this search's rows, actual search terms and proposed dispositions as `prio
 
 ## 3. Hand Off
 
-The research issue's project comes from the project map, read as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)).
+The research issue's project comes from the team's projects, read as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)).
 
-- In a map repository, place it by [project-map.md § Routing](../references/project-map.md#routing) from the topic and domains.
-- A route to none stops the spike before the handoff, creates no issue, and reports § 4's held variant with the `project_needed` fields that section names.
-- Under `map-absent`, take the first started project, which [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as active:
-
-```bash
-.agents/skills/linear/scripts/linear.sh projects list --state started --first
-```
+- Place it by [project-map.md § Routing](../references/project-map.md#routing) from the topic and domains.
+- A `project_needed` route stops the spike before the handoff, creates no issue, and reports § 4's held variant with the `project_needed` fields that section names.
 
 Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.
 
@@ -95,9 +90,9 @@ When § 3 stopped on a `project_needed` route, report this instead:
 
 ### RESEARCH SPIKE HELD
 
-Research: [TOPIC] needs project [NAME] ([KIND], initiative [INITIATIVE]; ends when [ENDS_WHEN] | role [ROLE]) — [REASON]
+Research: [TOPIC] needs project [NAME] ([KIND], initiative [INITIATIVE]; admits [ADMITS][; ends when [ENDS_WHEN]]) — [REASON]
 
 **Domains**: [DOMAIN] — [REASON] (one line each)
 
-**Next**: once the map lists [NAME], run the spike again.
+**Next**: once Linear holds [NAME], run the spike again.
 </output_format>

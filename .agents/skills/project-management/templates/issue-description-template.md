@@ -120,7 +120,7 @@
    - Reference it in Filing record.
    - A description must not contradict an active decision.
 4. Every create passes the validated final `labels[]` from the label preflight.
-5. Under a declared project map, every create passes `--project` with the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included; an item it routes to none is held as `project_needed`.
+5. Every create passes `--project` with the project [project-map.md § Routing](../references/project-map.md#routing) routes the item to from the team's live projects, a child included; an item it routes to `project_needed` is held.
 6. Opening and sections:
    - Write Story and Why this matters for the non-engineer product owner who reads only those two blocks.
    - Keep function, variable, test, fixture and command names, code-site counts and engineering jargon out of Story.

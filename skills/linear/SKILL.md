@@ -120,4 +120,4 @@ An issue write outside `LINEAR_TEAM` refuses before any write with `linear: refu
 - An authored body opens with nonempty quoted `> **Story:**` and `> **Why this matters:**` blocks, and holds its checkboxes under `## Done when`.
 - A label refusal names the undeclared label and the taxonomy file (project-management references/labels.md § Project Taxonomy Contract).
 
-Under a declared project map, `issues create`, `issues update --project` and `issues bulk-update --project` refuse a project off it, and `projects audit` lists what lies outside it: the project-management skill's references/project-map.md § Routing and § Audit.
+`issues create`, `issues update --project` and `issues bulk-update --project` place an issue in any live project of its team that Linear resolves. Each project states what it admits in the `Admits:`, `Kind:` and `Ends when:` lines that open its content, and `projects audit` lists those lines and every item in a project that admits nothing: the project-management skill's references/project-map.md § Admission lines and § Audit.

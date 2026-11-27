@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# `projects audit` against recorded Linear replies: each project map finding
-# the Audit section of project-management references/project-map.md lists,
-# one planted defect per row in a copy of a clean team that yields none, and
-# its refusal of a map project Linear lacks or has twice live. Then the audit
-# pass's team inventory its readers share (`issues list`, as orch's
+# `projects audit` against recorded Linear replies: each finding the Audit
+# section of project-management references/project-map.md lists, one planted
+# defect per row in a copy of a clean team that yields none, each judged from
+# the admission lines that open a Linear project's content, read live. Then the
+# audit pass's team inventory its readers share (`issues list`, as orch's
 # reconciliation and the project-management workflows run it, `labels audit`
 # and `projects audit` given --inventory): each answers what its live read does,
 # the pass lists the team once, and a file a reader cannot use refuses.
@@ -19,27 +19,31 @@ assert_tmpdir TMP_ROOT
 TMP_ROOT=$(cd -- "$TMP_ROOT" && pwd -P)
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
-# The clean team: a deliverable under its initiative and a standing area, both
-# started, with every open kendex item in the deliverable. A completed item, a
-# duplicate item and another team's item, all outside the map, and another
-# team's label named like the area reach a reply only when a filter is dropped. Project rows have
-# the shape of lib/fixtures/recorded/projects-list.json.
+# The clean team: a started deliverable and a standing area, each opening its
+# content with its admission lines (the area's with a blank line and CRLF line
+# ends between them, as an editor may write them), and every open kendex item
+# in the deliverable. A completed project that admits nothing holds the
+# completed and duplicate items; it, another team's project, another team's
+# item and another team's label named like the area reach a finding only when
+# a filter is dropped. Project rows have the shape of
+# lib/fixtures/recorded/projects-list.json, whose `content` is null where a
+# project has none; content lines are as Linear returns a project holding them.
 CLEAN="$TMP_ROOT/clean-team.json"
 cat >"$CLEAN" <<'JSON'
-{"map": {"initiatives": [{"name": "Fixture Initiative", "outcome": "Fixture outcome.", "projects": ["Fixture Deliverable"]}],
-  "projects": [
-   {"name": "Fixture Deliverable", "kind": "deliverable", "initiative": "Fixture Initiative", "ends_when": "Fixture release ships.", "admits": "Fixture work."},
-   {"name": "Fixture Area", "kind": "standing", "role": "area", "admits": "Fixture area work."}]},
- "taxonomy": {"categories": {"surface": {"labels": ["skills"]}, "classification": {"labels": ["bug"]}}},
+{"taxonomy": {"categories": {"surface": {"labels": ["skills"]}, "classification": {"labels": ["bug"]}}},
+ "initiatives": [{"name": "Fixture Initiative"}],
  "projects": [
-  {"id": "proj-deliverable", "name": "Fixture Deliverable", "state": "started", "targetDate": "2026-12-01", "teams": {"nodes": [{"id": "team-kendex"}]}},
-  {"id": "proj-area", "name": "Fixture Area", "state": "started", "targetDate": null, "teams": {"nodes": [{"id": "team-kendex"}]}},
-  {"id": "proj-off-map", "name": "Fixture Off Map", "state": "started", "targetDate": null, "teams": {"nodes": [{"id": "team-kendex"}]}}],
+  {"id": "proj-deliverable", "name": "Fixture Deliverable", "state": "started", "targetDate": "2026-12-01", "teams": {"nodes": [{"id": "team-kendex"}]},
+   "content": "Admits: Fixture work.\nKind: deliverable\nEnds when: Fixture release ships.\n\n## Why\n\nFixture prose."},
+  {"id": "proj-area", "name": "Fixture Area", "state": "started", "targetDate": null, "teams": {"nodes": [{"id": "team-kendex"}]},
+   "content": "Admits: Fixture area work.\r\n\r\nKind: standing\r\n"},
+  {"id": "proj-done", "name": "Fixture Done", "state": "completed", "targetDate": null, "teams": {"nodes": [{"id": "team-kendex"}]}, "content": null},
+  {"id": "proj-elsewhere", "name": "Fixture Elsewhere", "state": "started", "targetDate": null, "teams": {"nodes": [{"id": "team-other"}]}, "content": null}],
  "issues": [
   {"identifier": "KEN-1", "team": "team-kendex", "state": "started", "project": "Fixture Deliverable"},
   {"identifier": "KEN-2", "team": "team-kendex", "state": "unstarted", "project": "Fixture Deliverable"},
-  {"identifier": "KEN-3", "team": "team-kendex", "state": "completed", "project": "Fixture Off Map"},
-  {"identifier": "KEN-5", "team": "team-kendex", "state": "duplicate", "project": "Fixture Off Map"},
+  {"identifier": "KEN-3", "team": "team-kendex", "state": "completed", "project": "Fixture Done"},
+  {"identifier": "KEN-5", "team": "team-kendex", "state": "duplicate", "project": "Fixture Done"},
   {"identifier": "OTHER-1", "team": "team-other", "state": "started", "project": null},
   {"identifier": "KEN-4", "team": "team-kendex", "state": "backlog", "project": "Fixture Deliverable"}],
  "labels": [
@@ -113,12 +117,13 @@ case "$query" in
       | select(.team == null or .team.id == $payload.variables.teamId) | {id: ("label-" + .name), name, team}]}}}' "$DATA" ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-kendex"}]}}}' ;;
-*"ProjectMap"*)
+*"AuditProjects"*)
   jq -cj --argjson payload "$payload" --argjson scoped "$(has 'accessibleTeams: {some: {id: {eq: $teamId}}}')" '
     {data: {projects: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [.projects[]
-      | select(.name | IN($payload.variables.names[]))
       | select(($scoped | not) or any(.teams.nodes[]; .id == $payload.variables.teamId))
-      | {id, name, state, targetDate}]}}}' "$DATA" ;;
+      | {id, name, state, targetDate, content}]}}}' "$DATA" ;;
+*"AuditInitiatives"*)
+  jq -cj '{data: {initiatives: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: .initiatives}}}' "$DATA" ;;
 *"AuditMapIssues"*)
   jq -cj --argjson payload "$payload" \
     --argjson open "$(has 'state: {type: {nin: ["completed", "canceled", "duplicate"]}}')" \
@@ -145,20 +150,14 @@ printf '%s' '___HTTP_CODE___200'
 SH
 chmod +x "$PROJECT/bin/curl"
 
-# render DATA — render DATA's map and taxonomy (a null map renders none).
+# render DATA — render DATA's taxonomy.
 render() {
   local data="$1"
   {
     printf '%s\n' '# Project Management' '<!-- kendex:project-instructions:start -->' \
       '### Project taxonomy' '```json'
     jq -c '.taxonomy' "$data"
-    printf '%s\n' '```'
-    if jq -e '.map != null' "$data" >/dev/null; then
-      printf '%s\n' '### Project map' '```json'
-      jq -c '.map' "$data"
-      printf '%s\n' '```'
-    fi
-    printf '%s\n' '<!-- kendex:project-instructions:end -->'
+    printf '%s\n' '```' '<!-- kendex:project-instructions:end -->'
   } >"$RENDER"
 }
 
@@ -184,26 +183,28 @@ audit() {
   linear "$name" "$data" projects audit
 }
 
+# A live project of the kendex team, by name and content.
+live='def live($name; $content): {id: ("proj-" + $name), name: $name, state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}, content: $content};'
+
 # Each row plants one defect and names the findings it yields, in the
 # audit's order; `^` separates the fields, since a plant is a jq program.
 while IFS='^' read -r name plant findings; do
-  run_status rc audit "$name" "$plant"
+  run_status rc audit "$name" "$live $plant"
   assert_eq "$name: succeeds" "$rc" 0
   assert "$name: yields its findings" jq -e --argjson want "$findings" '.findings == $want' "$TMP_ROOT/$name.out"
-done <<ROWS
-outside-map^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Off Map"}]^[{"kind": "outside-map", "issue": "KEN-9", "project": "Fixture Off Map"}]
+done <<'ROWS'
+unadmitted^.projects += [live("Fixture Bare"; null)] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Bare"}]^[{"kind": "no-admits", "project": "Fixture Bare"}, {"kind": "no-kind", "project": "Fixture Bare"}, {"kind": "unadmitted", "issue": "KEN-9", "project": "Fixture Bare"}]
+other-team-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Elsewhere"}]^[{"kind": "unadmitted", "issue": "KEN-9", "project": "Fixture Elsewhere"}]
+admits-after-prose^.projects += [live("Fixture Prose"; "## Why\nAdmits: Fixture hidden.\nKind: standing")]^[{"kind": "no-admits", "project": "Fixture Prose"}, {"kind": "no-kind", "project": "Fixture Prose"}]
+no-kind^(.projects[] | select(.name == "Fixture Area") | .content) = "Admits: Fixture area work.\nKind: area"^[{"kind": "no-kind", "project": "Fixture Area"}]
 no-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: null}]^[{"kind": "no-project", "issue": "KEN-9"}]
-initiative-holds-issue^.projects += [{id: "proj-initiative", name: "Fixture Initiative", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Initiative"}]^[{"kind": "initiative-holds-issue", "issue": "KEN-9", "initiative": "Fixture Initiative", "project": "Fixture Initiative"}]
-label-like-project^.labels += [{name: "Fixture_Area", team: null}]^[{"kind": "name-collision", "label": "Fixture_Area", "map": {"level": "project", "name": "Fixture Area"}, "declared": false}]
-project-like-label^.map.projects += [{name: "Bug", kind: "standing", role: "concern", admits: "Fixture defects."}] | .projects += [{id: "proj-bug", name: "Bug", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .labels += [{name: "BUG", team: {id: "team-kendex"}}]^[{"kind": "name-collision", "label": "BUG", "map": {"level": "project", "name": "Bug"}, "declared": true}]
-initiative-like-label^.taxonomy.categories.surface.labels += ["fixture initiative"]^[{"kind": "name-collision", "label": "fixture initiative", "map": {"level": "initiative", "name": "Fixture Initiative"}, "declared": true}]
-standing-completed^(.projects[] | select(.name == "Fixture Area") | .state) = "completed"^[{"kind": "standing-closed", "project": "Fixture Area", "state": "completed"}]
-standing-canceled^(.projects[] | select(.name == "Fixture Area") | .state) = "canceled"^[{"kind": "standing-closed", "project": "Fixture Area", "state": "canceled"}]
+initiative-holds-issue^.projects += [live("Fixture Initiative"; "Admits: Fixture.\nKind: standing")] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Initiative"}]^[{"kind": "initiative-holds-issue", "issue": "KEN-9", "initiative": "Fixture Initiative", "project": "Fixture Initiative"}]
+label-like-project^.labels += [{name: "Fixture_Area", team: null}]^[{"kind": "name-collision", "label": "Fixture_Area", "entry": {"level": "project", "name": "Fixture Area"}, "declared": false}]
+project-like-label^.projects += [live("Bug"; "Admits: Fixture defects.\nKind: standing")] | .labels += [{name: "BUG", team: {id: "team-kendex"}}]^[{"kind": "name-collision", "label": "BUG", "entry": {"level": "project", "name": "Bug"}, "declared": true}]
+initiative-like-label^.taxonomy.categories.surface.labels += ["fixture initiative"]^[{"kind": "name-collision", "label": "fixture initiative", "entry": {"level": "initiative", "name": "Fixture Initiative"}, "declared": true}]
 standing-target-date^(.projects[] | select(.name == "Fixture Area") | .targetDate) = "2026-12-01"^[{"kind": "standing-target-date", "project": "Fixture Area", "target_date": "2026-12-01"}]
-deliverable-no-ends-when^del(.map.projects[0].ends_when)^[{"kind": "deliverable-no-ends-when", "project": "Fixture Deliverable"}]
-deliverable-canceled^(.projects[] | select(.name == "Fixture Deliverable") | .state) = "canceled"^[{"kind": "closed-project-item", "issue": "KEN-1", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-2", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-4", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "deliverable-canceled", "project": "Fixture Deliverable"}]
-closed-project-item^.map.projects += [{name: "Fixture Done", kind: "deliverable", ends_when: "Fixture shipped.", admits: "Fixture done work."}] | .projects += [{id: "proj-done", name: "Fixture Done", state: "completed", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Done"}]^[{"kind": "closed-project-item", "issue": "KEN-9", "project": "Fixture Done", "state": "completed"}]
-map-absent^.map = null^[{"kind": "map-absent", "map": "$RENDER"}]
+deliverable-no-ends-when^(.projects[] | select(.name == "Fixture Deliverable") | .content) = "Admits: Fixture work.\nKind: deliverable"^[{"kind": "deliverable-no-ends-when", "project": "Fixture Deliverable"}]
+closed-project-item^(.projects[] | select(.name == "Fixture Deliverable") | .state) = "canceled"^[{"kind": "closed-project-item", "issue": "KEN-1", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-2", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-4", "project": "Fixture Deliverable", "state": "canceled"}]
 ROWS
 
 run_status rc audit clean .
@@ -214,23 +215,11 @@ assert "clean: skips duplicate issues" jq -e 'all(.findings[]; .issue != "KEN-5"
 assert "clean: reads only the team's issues" jq -e 'all(.findings[]; .issue != "OTHER-1")' "$TMP_ROOT/clean.out"
 assert "clean: reads only the team's and workspace labels" \
   jq -e 'all(.findings[]; .label != "fixture-area")' "$TMP_ROOT/clean.out"
-assert "clean: lists each map project's id" \
-  jq -e '[.projects[] | {name, id}] == [{name: "Fixture Deliverable", id: "proj-deliverable"}, {name: "Fixture Area", id: "proj-area"}]' \
+assert "clean: lists each live project's admission lines" \
+  jq -e '.projects == [
+    {name: "Fixture Deliverable", id: "proj-deliverable", state: "started", kind: "deliverable", admits: "Fixture work.", ends_when: "Fixture release ships."},
+    {name: "Fixture Area", id: "proj-area", state: "started", kind: "standing", admits: "Fixture area work.", ends_when: null}]' \
   "$TMP_ROOT/clean.out"
-assert "map-absent: names the render it read" jq -e --arg render "$RENDER" '.map == $render' "$TMP_ROOT/map-absent.out"
-assert_not "map-absent: no request is sent" test -s "$TMP_ROOT/map-absent.jsonl"
-
-# A map project with no Linear project in the team, or with two live ones,
-# leaves the map unjudgeable: the audit refuses, keyed, and prints nothing.
-while IFS='^' read -r name plant key; do
-  run_status rc audit "$name" "$plant"
-  assert_ne "$name: refused" "$rc" 0
-  assert_file_contains "$name: the refusal is keyed" "$TMP_ROOT/$name.err" "$key"
-  assert_not "$name: prints no findings" test -s "$TMP_ROOT/$name.out"
-done <<ROWS
-declared-missing^.projects |= map(select(.name != "Fixture Area"))^linear-projects: declared-missing project=Fixture Area map=$RENDER
-ambiguous^.projects += [.projects[] | select(.name == "Fixture Area") | .id = "proj-area-twin"]^linear-projects: ambiguous project=Fixture Area map=$RENDER
-ROWS
 
 # --- one audit pass's team inventory -----------------------------------------
 # The batch is the heartbeat full audit's team reads (orch
@@ -242,10 +231,9 @@ ROWS
 # issue run's targeted bulk-get and closed-row searches take no inventory and
 # stay out. Its world adds an undeclared label on an
 # open, a completed and a duplicate issue, In Review and Verifying issues, an
-# open item off the map and one in a completed map project.
+# open item in a project that admits nothing and one in a completed project.
 BATCH="$TMP_ROOT/batch.json"
-jq '.map.projects += [{name: "Fixture Done", kind: "deliverable", ends_when: "Fixture shipped.", admits: "Fixture done work."}]
-  | .projects += [{id: "proj-done", name: "Fixture Done", state: "completed", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}}]
+jq '.projects += [{id: "proj-off-map", name: "Fixture Off Map", state: "started", targetDate: null, teams: {nodes: [{id: "team-kendex"}]}, content: null}]
   | (.issues[] | select(.identifier | IN("KEN-1", "KEN-3", "KEN-5"))) += {labels: ["skills", "legacy"]}
   | .issues += [
       {identifier: "KEN-6", team: "team-kendex", state: "started", state_name: "In Review", project: "Fixture Deliverable", labels: ["bug"]},
@@ -322,7 +310,8 @@ assert "inventory: labels audit keeps duplicate-state issues" \
   jq -e '.undeclared == [{label: "legacy", issues: ["KEN-1", "KEN-5"]}]' "$TMP_ROOT/pass-labels-audit.out"
 assert "inventory: projects audit leaves out closed and duplicate issues" \
   jq -e '.findings == [{kind: "closed-project-item", issue: "KEN-9", project: "Fixture Done", state: "completed"},
-    {kind: "outside-map", issue: "KEN-8", project: "Fixture Off Map"}]' "$TMP_ROOT/pass-projects-audit.out"
+    {kind: "no-admits", project: "Fixture Off Map"}, {kind: "no-kind", project: "Fixture Off Map"},
+    {kind: "unadmitted", issue: "KEN-8", project: "Fixture Off Map"}]' "$TMP_ROOT/pass-projects-audit.out"
 
 before=$(request_counts "${live_logs[@]}")
 split=$(request_counts "${split_logs[@]}")

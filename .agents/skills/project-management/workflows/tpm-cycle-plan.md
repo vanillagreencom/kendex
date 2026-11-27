@@ -10,7 +10,7 @@ Analyze the backlog, compute architecture order, and recommend a cycle plan.
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-1. Read the project map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)). A deliverable's `ends_when` is its entry in the `### Project map` block.
+1. Read the team's projects as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)). A deliverable's `ends_when` is its `projects[]` entry's.
 2. `[ACTIVE_PROJECT]`, used everywhere below, is the first `projects[]` entry, in `session-status`'s priority order, that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project. Record its `name`, and its `id` as `[ACTIVE_PROJECT_ID]`.
 3. Extract `cycle.id`, `cycle.name`, the `issues.backlog` / `issues.actionable` / `issues.in_progress` entries whose `project_name` is `[ACTIVE_PROJECT]`, `backlog_projects` (ordered by `sort_order`), and `next_project`. Those three lists feed planning only.
 

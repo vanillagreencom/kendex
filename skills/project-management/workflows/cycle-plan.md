@@ -26,7 +26,7 @@ This workflow mutates project state; every read below is live, so it acts on the
 
 The JSON carries `completed_project`, `next_projects` (by `sort_order`), `recommended`, `blocked_by_active`, and `actions.mark_complete`.
 
-Mark the finished project complete without asking. **Skip** the command when `actions.mark_complete` is null: the project map holds the project open, and the report says it stays started, or `completed_project` is null, as no started project counts as active.
+Mark the finished project complete without asking. **Skip** the command when `actions.mark_complete` is null: its `Ends when:` line holds the project open, and the report says it stays started, or `completed_project` is null, as no started project counts as active.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [mark_complete.project_id] --state completed
@@ -38,7 +38,7 @@ Then present the candidates and ask which to start.
 
 ### PROJECT COMPLETE — [completed_project.name, or `no active project` when null]
 
-**Held open** (map deliverable, `ends_when` not shown to hold): [completed_project.name] stays started — shown only when `completed_project` is set and `actions.mark_complete` is null
+**Held open** (deliverable, `ends_when` not shown to hold): [completed_project.name] stays started — shown only when `completed_project` is set and `actions.mark_complete` is null
 
 **Active project**: [blocked_by_active.name] holds activation — shown only when `blocked_by_active` is set and is not `completed_project`
 

@@ -60,34 +60,6 @@ Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Sha
   }
 }
 ```
-
-### Project map
-
-Every kendex issue lives in one project below; the project-management skill's `references/project-map.md` states what each kind holds and the routing order. A create names one of these projects, or holds the item as `project_needed`.
-
-```json
-{
-  "initiatives": [
-    {"name": "Self-Service App", "outcome": "A user keeps kendex current, signed in and configured from the desktop app alone, with no file edits and no terminal.", "projects": ["Package Settings", "Update Notice & Account"]}
-  ],
-  "projects": [
-    {"name": "Package Settings", "kind": "deliverable", "initiative": "Self-Service App", "ends_when": "A release ships the one documented package settings contract and package settings editing in the Customize UI.", "admits": "Work on the package settings contract: its resolvers, authoring template, template check and Customize UI editing."},
-    {"name": "Update Notice & Account", "kind": "deliverable", "initiative": "Self-Service App", "ends_when": "A signed release ships the update notice on every install channel and the account surfaces this project keeps.", "admits": "Work on the app's update notice, self-update and account surfaces."},
-    {"name": "Windows Support", "kind": "deliverable", "ends_when": "A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.", "admits": "Work whose completion makes kendex install and run on Windows."},
-    {"name": "t3code", "kind": "deliverable", "ends_when": "The orch overseer runs on the T3 Code host with its delivery position, state reader and release contract test.", "admits": "T3 Code overseer runtime work."},
-    {"name": "Herdr engine migration", "kind": "deliverable", "ends_when": "The planned hosts use Herdr for agent sessions and J3 has verified the allowed tmux remainder and the canonical retirement mappings throughout the repository and render inventory.", "admits": "Work that implements the reviewed BRAD-109 build, cutover, retirement or consumer verification in this repository."},
-    {"name": "Review Gate & CI", "kind": "standing", "role": "area", "admits": "CI workflows under .github/, CI setup in .fleet-setup and tools/lane-setup, and the skills and tools that run the review gate, the merge rail, the merge queue and CI validation."},
-    {"name": "Agent Harness Integrations", "kind": "standing", "role": "area", "admits": "pi-extensions/, hooks/ and the per-harness adapters under crates/core/src/harness."},
-    {"name": "CLI & Distribution", "kind": "standing", "role": "area", "admits": "The kendex CLI and engine under crates/ outside crates/app and crates/core/src/harness: manifest, lock, settings, apply, refresh, verify and install."},
-    {"name": "Desktop App", "kind": "standing", "role": "area", "admits": "Work on the app's code and screens under crates/app and ui/ that advances no deliverable."},
-    {"name": "Docs", "kind": "standing", "role": "area", "admits": "The root README.md and AGENTS.md, and docs/; a README or AGENTS.md under another area's path goes to that area."},
-    {"name": "Website", "kind": "standing", "role": "area", "admits": "The kendex website's pages and code in the kendex-web repository."},
-    {"name": "Skills & Agents Library", "kind": "standing", "role": "area", "admits": "Catalog skills and agents under skills/ and agents/ that no other area's rule names."},
-    {"name": "Tech Debt", "kind": "standing", "role": "concern", "admits": "Cleanup of past shortcuts and pre-existing defects no single area owns; an item that also fits Upkeep goes here."},
-    {"name": "Upkeep", "kind": "standing", "role": "concern", "admits": "Recurring maintenance no single area owns: dependency and toolchain updates that span areas, renewals, rotations, refresh adoption and scheduled housekeeping. A change confined to one area's paths goes to that area."}
-  ]
-}
-```
 <!-- kendex:project-instructions:end -->
 
 # Project Management
