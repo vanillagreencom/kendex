@@ -7,16 +7,18 @@
 //! Start is the first user turn, up to the second: its tokens are the
 //! context the turn's last response left, as the harness counted it.
 //!
-//! The four sources are the first user turn (the thread's first delivery),
+//! The five sources are the first user turn (the thread's first delivery),
 //! later user turns, rule reads (a tool call that reads a Markdown file, a
-//! `jarvis-section` section or a skill) and every other tool result.
-//! Harness-added text joins the item before it where the record holds it
-//! apart as [`Entry::Text`] names it, on Claude Code; Copilot CLI's is
-//! inside the turn's own text. Codex records its own
+//! `jarvis-section` section or a skill), every other tool result, and
+//! injected text, which the record holds apart from every item beside it
+//! as [`Entry::Foreign`] names it: a Pi extension's `custom_message`, which
+//! need not belong to the item before it, and a Claude Code Stop hook's
+//! reply. Other harness-added text joins the item before it where the
+//! record holds it apart as [`Entry::Text`] names it, on Claude Code;
+//! Copilot CLI's is inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
-//! repeat each user turn, and Pi an extension's as `custom_message`
-//! entries, which need not belong to the item before them; this reader
-//! leaves both out of the bytes, and a Pi extension's text is no item's.
+//! repeat each user turn; this reader leaves those out of the bytes. A
+//! failed call reads no section: its result counts to its source alone.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -26,11 +28,13 @@
 //! between them added. That growth goes to a source only where everything
 //! between the two responses belongs to it, and to one item or section only
 //! where it is alone there, the call having run nothing else; any other
-//! share is unclear. A gap that also holds text no item owns gives its
-//! growth only to turns; beside a result the share is unclear. The first
-//! response's prompt
-//! also holds the harness's own prompt and tools, which no record names
-//! apart, so the first delivery's tokens are unsupported.
+//! share is unclear. So a gap that holds injected text beside a turn or a
+//! result leaves each share in it unclear. A response whose usage its
+//! writer never counted ([`Response::Uncounted`]) closes no gap: the next
+//! response's growth also holds its output, and every share of that gap is
+//! unclear. The first response's prompt also holds the harness's own
+//! prompt and tools, which no record names apart, so the first delivery's
+//! tokens are unsupported.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -70,13 +74,15 @@ pub enum Source {
     LaterTurns,
     RuleReads,
     ToolResults,
+    InjectedText,
 }
 
-const SOURCES: [Source; 4] = [
+const SOURCES: [Source; 5] = [
     Source::FirstDelivery,
     Source::LaterTurns,
     Source::RuleReads,
     Source::ToolResults,
+    Source::InjectedText,
 ];
 
 /// What one rule read names.
@@ -248,8 +254,8 @@ struct Walk {
     open: Option<Open>,
     /// The items since the open response.
     gap: Vec<usize>,
-    /// Whether the gap also holds text that is no item's.
-    foreign: bool,
+    /// Whether the gap also holds an uncounted response's output.
+    uncounted: bool,
     items: Vec<Item>,
     calls: HashMap<String, Call>,
     sections: Vec<Section>,
@@ -270,7 +276,7 @@ impl Walk {
             },
             open: None,
             gap: Vec::new(),
-            foreign: false,
+            uncounted: false,
             items: Vec::new(),
             calls: HashMap::new(),
             sections: Vec::new(),
@@ -317,7 +323,9 @@ impl Walk {
                     self.push(self.turn_source(), Some(bytes), Share::Pending);
                 }
             },
-            Entry::Foreign => self.foreign = true,
+            Entry::Foreign { bytes } => {
+                self.push(Source::InjectedText, Some(bytes), Share::Pending);
+            }
             Entry::Call { id, action } => {
                 let rules = rule_reads(&action);
                 self.calls.insert(
@@ -333,6 +341,7 @@ impl Walk {
                 bytes,
                 tokens,
                 loaded,
+                failed,
             } => {
                 let share = tokens.map_or(Share::Pending, Share::Own);
                 let (turn, Rules { mut reads, more }) = match self.calls.get(&call) {
@@ -351,6 +360,9 @@ impl Walk {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
+                if failed {
+                    return;
+                }
                 let shared = reads.len() > 1 || more;
                 for read in reads {
                     self.sections.push(Section {
@@ -369,6 +381,13 @@ impl Walk {
         let (id, split, context) = match response {
             Response::Spent(spent) => (spent.id, spent.split, Some(spent.context)),
             Response::Unread => (None, None, None),
+            Response::Uncounted => {
+                if self.turns == 1 {
+                    self.start.tokens = Figure::Unsupported;
+                }
+                self.uncounted = true;
+                return;
+            }
         };
         if self.turns == 1 {
             self.start.tokens =
@@ -391,7 +410,7 @@ impl Walk {
     /// response with `next` closes it.
     fn close(&mut self, next: Option<Split>) {
         let gap = std::mem::take(&mut self.gap);
-        let foreign = std::mem::take(&mut self.foreign);
+        let uncounted = std::mem::take(&mut self.uncounted);
         let pending: Vec<usize> = gap
             .into_iter()
             .filter(|&i| self.items[i].share == Share::Pending)
@@ -415,13 +434,7 @@ impl Walk {
             return;
         };
         let source = self.items[pending[0]].source;
-        let turn = |i: &usize| {
-            matches!(
-                self.items[*i].source,
-                Source::FirstDelivery | Source::LaterTurns
-            )
-        };
-        if foreign && !pending.iter().all(turn) {
+        if uncounted {
             self.settle(&pending, Share::Unclear);
         } else if pending.len() == 1 {
             self.settle(&pending, Share::Whole(growth));
@@ -569,10 +582,11 @@ struct Rules {
 /// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing. An
 /// output redirection's target and a heredoc's or here-string's word are
 /// no operand; an input redirection's file is one. A printer whose
-/// standard output goes to a file reads nothing into the result; one sent
-/// to another descriptor (`>&2`) still does. A segment that reads no rule,
-/// and a `cat` operand that is not Markdown, is more output; another
-/// printer's other operands are taken for its script or count.
+/// standard output goes to a file reads nothing into the result, nor does
+/// a `sed` that edits its files in place; one whose output goes to another
+/// descriptor (`>&2`) still does. A segment that reads no rule, and a
+/// `cat` operand that is not Markdown, is more output; another printer's
+/// other operands are taken for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
@@ -628,6 +642,7 @@ fn rule_reads(action: &Action) -> Rules {
                         continue;
                     }
                     if word.starts_with('-') {
+                        moved |= name == "sed" && sed_in_place(word);
                         continue;
                     }
                     if let Some((fd, rest)) = word.split_once('>') {
@@ -663,6 +678,16 @@ fn rule_reads(action: &Action) -> Rules {
         rules.more |= rules.reads.len() == before;
     }
     rules
+}
+
+/// Whether a `sed` option word edits the files in place, printing none of
+/// them: GNU's `-i[SUFFIX]` and `--in-place[=SUFFIX]`, BSD's `-i` and `-I`,
+/// alone or in a short option cluster (`-Ei`).
+fn sed_in_place(word: &str) -> bool {
+    match word.strip_prefix("--") {
+        Some(long) => long == "in-place" || long.starts_with("in-place="),
+        None => word.contains(['i', 'I']),
+    }
 }
 
 #[cfg(test)]
@@ -726,6 +751,10 @@ mod tests {
                 false,
             ),
             (shell("git log -1 -- notes.md"), vec![], true),
+            (shell("sed -n '1,40p' a.md"), vec![file("a.md")], false),
+            (shell("sed -i 's/a/b/' a.md"), vec![], true),
+            (shell("sed -Ei 's/a/b/' a.md"), vec![], true),
+            (shell("sed --in-place=.bak 's/a/b/' a.md"), vec![], true),
         ];
         for (action, reads, more) in rows {
             assert_eq!(rule_reads(&action), Rules { reads, more }, "{action:?}");
