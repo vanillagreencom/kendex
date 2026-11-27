@@ -1156,9 +1156,12 @@ LANE_RUNNER = "runner"
 # executor's own end and the stop that recorded it ask the host at once:
 # each stop holds the item's lock, beside the item's folder so the sweep of
 # its units never meets it, and a later stop finds the unit gone and answers
-# stopped. Without it one stop removes the tree the other still reads. The
-# lock waits 120 seconds, half the runtime's bound on a host call, so a stop
-# still held refuses with lock-timeout before its caller gives up on it.
+# stopped. Without it one stop removes the tree the other still reads. A
+# unit that is not there is stopped already, so its stop takes no lock and
+# writes nothing, a clone not yet made included. The lock waits 120
+# seconds, half the runtime's bound on a host call, so a stop still held
+# refuses with its own lock-timeout line before its caller gives up on it:
+# util-linux flock times out with no message.
 # The runtime and the detached waiter do not inherit the lock: a process
 # either leaves behind would hold it past this stop.
 STOP_UNIT = '''remove_unit() {
@@ -1173,10 +1176,13 @@ claims_held() {
   return 1
 }
 stop_unit() (
+  test -e "$2" || return 0
   lock="${2%/*}.stop.lock"
-  mkdir -p -- "${lock%/*}"
   exec 9>>"$lock"
-  orch_take_lock 9 "$lock" 120 || return 1
+  if ! orch_take_lock 9 "$lock" 120; then
+    printf 'lane-host-ssh: lock-timeout lock=%s wait-s=120 fix=ask again once the stop of this item that holds the lock ends\n' "$lock" >&2
+    return 1
+  fi
   if test -e "$2/stopping"; then return 0; fi
   launched=
   for runner in "$2"/tree/tmp/*/runner; do
@@ -1583,7 +1589,8 @@ have launched, exiting 1 with validate-start-failed. validate --item ID
 stopped item=ID run-id=RUN, also where the host holds no unit; a unit whose
 tree a runtime build is still reading is removed by a detached waiter once the
 build releases its claim. A stop waits up to 120 seconds for another stop of
-the same item to end, then fails with the lock's lock-timeout as its cause.
+the same item to end, then fails validate-stop-failed with
+cause=lane-host-ssh: lock-timeout.
 validate-stop-failed names a stop that failed.
 validate-arguments refuses a step that names no --commit, --source, --run-dir
 or --into. validate-clone-missing, validate-commit-moved (DIR's
