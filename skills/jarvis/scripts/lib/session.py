@@ -1100,11 +1100,12 @@ class Session:
                 if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
-                    walk = (choice.get("walk_refused") or {}).get("key")
+                    # The walk's key leads the accounts, which the detail's
+                    # bound can cut.
+                    walk = walk_unjudged(choice)
                     raise Refusal("handover-failed", short("No account is left to take over"
-                                                           + (": " + named if named else "")
-                                                           + (", the walk refused " + walk if walk else "")
-                                                           + "." + kept), "failed")
+                                                           + (" (walk " + str(walk[0]) + ")" if walk else "")
+                                                           + (": " + named if named else "") + "." + kept), "failed")
                 # The marks as they stood before this attempt: a failure
                 # retries only where it stamped the account it tried, never on
                 # an older mark, which the walk may have let expire.

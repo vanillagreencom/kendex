@@ -2843,26 +2843,32 @@ with open(sys.argv[1], "ab") as out:
         # decision never ages it past its patience and never moves the
         # session to another provider; or one that keeps it past a returned
         # turn, a new controller or a wall, so a later stop is moved on its
-        # first failure. A failed recovery reports once and is asked again.
-        # A provider stop tells nobody.
+        # first failure. A failed recovery reports once per episode, through
+        # a busy pane, and is asked again. A full context, which a Codex pane
+        # draws as it draws a provider error, is no provider stop. A provider
+        # stop tells nobody.
         episode = lambda since, last: ({"state": "running", "provider_recovery": "resumed",
                                         "episode": {"since": since, "last": last}}, 0)
         failed = {"state": "failed", "reason": "handover-failed", "detail": "The session could not resume."}, 1
         # A resume whose walk could not judge another provider.
         unmoved = ({**episode(100, 130)[0], "provider_walk": "walk-unread"}, 0)
+        busy = {"state": "running", "provider_recovery": "busy"}, 0
         waiting = {"state": "running", "wall_recovery": "waiting"}, 0
         fixtures = REPO / "skills/agent-runtime/tests/rust/fixtures"
         # Screens agent-runtime's judge reads: a turn at work, an idle one
         # that returned, and an idle one the provider stopped, the Codex one
         # as a real pane drew it.
         working = "› Continue your work\n\n• Working (3s • esc to interrupt)\n\n› Ask Codex to do anything\n"
-        screens = {
-            "codex": {"returned": (fixtures / "codex-idle.txt").read_text(),
-                      "drawn": '■ {"detail":"Bad Request"}\n1 background terminal running · /ps to view · /stop to close\n'
-                               "› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · "
-                               "GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view\n"},
-            "copilot": {"returned": (fixtures / "copilot-idle.txt").read_text(),
-                        "drawn": "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n" + "─" * 40 + "\n"}}
+        drawn = {"codex": '■ {"detail":"Bad Request"}\n1 background terminal running · /ps to view · /stop to close\n'
+                          "› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · "
+                          "GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view\n",
+                 "copilot": "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n" + "─" * 40 + "\n"}
+        # A full context's record is drawn on the pane as its error is.
+        screens = {harness: {"returned": (fixtures / (harness + "-idle.txt")).read_text(), "drawn": drawn[harness],
+                             "full": drawn[harness]} for harness in drawn}
+        # The words each record types a full context with, in place of the overload's.
+        full = {"codex": ('"codex_error_info":"server_overloaded"', '"codex_error_info":"context_window_exceeded"'),
+                "copilot": ('"errorType":"query"', '"errorType":"context_limit"')}
         panes = self.root / "panes"
         panes.mkdir()
         self.executable("tmux", '#!/bin/sh\n[ "$1 $2 $3" = "-S /sock capture-pane" ] || exit 9\n'
@@ -2874,7 +2880,11 @@ with open(sys.argv[1], "ab") as out:
                 self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-provider-" + harness))
                 account = self.root / ("accounts-" + harness)
                 account.mkdir()
-                stop = self.recorded_stop(harness + "-overload.jsonl") if harness != "claude" else []
+                stop, filled = [], []
+                if harness != "claude":
+                    stop = self.recorded_stop(harness + "-overload.jsonl")
+                    filled = [line.replace(*full[harness]) for line in stop]
+                    self.assertNotEqual(filled, stop)
                 wall = {"codex": "codex-credits.jsonl", "copilot": "copilot-quota.jsonl"}
 
                 def plant(session, pane, turn):
@@ -2882,13 +2892,15 @@ with open(sys.argv[1], "ab") as out:
                         # A hook row names a provider stop, a returned turn or a
                         # wall; the pane is never read.
                         row = {"usage": {"event": "StopFailure", "error": "rate_limit"},
+                               "full": {"event": "StopFailure", "error": "invalid_request", "message": "Prompt is too long"},
                                "returned": {"event": "Stop"}}.get(turn, {"event": "StopFailure", "error": "server_error"})
                         self.controller(session, str(account), row, pane=pane)
                         return
                     self.controller(session, str(account), {"event": "Stop"}, pane=pane, harness=harness)
                     # A failed turn's record, a wall's, or a new turn opened
                     # after the failed one, which the pane tells apart.
-                    lines = {"failed": stop, "usage": self.recorded_stop(wall[harness])}.get(turn, stop + [stop[0]])
+                    lines = {"failed": stop, "full": filled, "usage": self.recorded_stop(wall[harness])}.get(
+                        turn, stop + [stop[0]])
                     self.session_record(harness, account, lines, session)
                     panes.joinpath(pane).write_text(screens[harness].get(turn, working))
                 watch = self.watch()
@@ -2907,13 +2919,22 @@ with open(sys.argv[1], "ab") as out:
                         ("s1", "%3", "failed", failed, ask("s1", "%3", "100", "100"), 1),
                         ("s1", "%3", "failed", episode(100, 130), ask("s1", "%3", "100", "100"), 1),
                         ("s1", "%3", "failed", unmoved, ask("s1", "%3", "100", "130"), 2),
+                        # A busy pane decides nothing: the same walk refusal is not told again.
+                        ("s1", "%3", "failed", busy, ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "failed", unmoved, ask("s1", "%3", "100", "130"), 2),
                         ("s1", "%3", "returned" if ends else "running", (None, 0), None, 2),
                         ("s1", "%3", "failed", episode(160, 160), ask() if ends else ask("s1", "%3", "100", "130"), 2),
-                        ("s1", "%3", "returned", (None, 0), None, 2),
-                        ("s1", "%3", "drawn", episode(200, 200), ask(), 2),
-                        ("s2", "%4", "failed", episode(230, 230), ask("s2", "%4"), 2),
+                        ("s1", "%3", "failed", failed, ask("s1", "%3", "160", "160"), 3),
+                        # A returned turn ends the episode and its report: the next one's failure is told.
+                        ("s1", "%3", "returned", (None, 0), None, 3),
+                        ("s1", "%3", "failed", failed, ask(), 4),
+                        ("s1", "%3", "drawn", episode(200, 200), ask(), 4),
+                        # A full context asks nothing and ends the episode.
+                        ("s1", "%3", "full", (None, 0), None, 4),
+                        ("s1", "%3", "failed", episode(220, 220), ask(), 4),
+                        ("s2", "%4", "failed", episode(230, 230), ask("s2", "%4"), 4),
                         ("s2", "%4", "usage", waiting, ["succeed", "--home", str(self.home), "--account-walled",
-                                                        "--usage-wall", "s2", "4242 %4"], 2))):
+                                                        "--usage-wall", "s2", "4242 %4"], 4))):
                     plant(session, pane, turn)
                     log = self.session_command(answer, code)
                     self.wall_passes(watch, 1000 + 30 * index)

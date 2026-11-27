@@ -4,7 +4,7 @@
 # skills/jarvis/tests/fixtures/runtime_cache.py,
 # skills/mailbox/scripts/, skills/orch/scripts/, skills/slack/scripts/,
 # skills/orch/runtime/, skills/agent-runtime/scripts/,
-# skills/agent-runtime/tests/rust/fixtures/stops/.
+# skills/agent-runtime/tests/rust/fixtures/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

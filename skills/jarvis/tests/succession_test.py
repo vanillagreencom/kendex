@@ -544,6 +544,8 @@ class ProviderStopDecision(unittest.TestCase):
         walk_refused = {"walk_refused": {"key": "account-unjudged", "fields": [["account", "/accounts/.ccodex"]],
                                          "text": "unjudged"}}
         unread = {"walk": {"unread": ["codex-b", "copilot-a"]}}
+        # A successor whose account path fills the detail's bound once named.
+        long = {"harness": "codex", "account": "/accounts/" + "c" * 200}
         # Each row: the pane's read, the decision's action, what each
         # decision adds to its answer, the successor each one chooses, whose
         # first transfer fails where there are two, the outcome (the recovery
@@ -561,7 +563,11 @@ class ProviderStopDecision(unittest.TestCase):
                 ("move again", idle, "move-provider", [{}, {}], [codex, copilot], ("moved", None), False),
                 # The next decision's walk refused: the refusal names its key.
                 ("move, then walk refused", idle, "move-provider", [{}, walk_refused], [codex, None],
-                 ("failed", "handover-failed", "account-unjudged"), False)):
+                 ("failed", "handover-failed", "account-unjudged"), False),
+                # A walk that chose none past entries it read unread is named
+                # as the resume names it, ahead of the accounts tried.
+                ("move, then walk unread", idle, "move-provider", [{}, unread], [long, None],
+                 ("failed", "handover-failed", "walk-unread"), False)):
             with self.subTest(row=name):
                 calls = {"decisions": [], "lines": 0, "transfers": []}
                 unproved = []
@@ -701,6 +707,7 @@ if __name__ == "__main__":
         session_test.HARNESS = native
         # The session rows SuccessionContract inherits run in their own suite.
         unittest.main(defaultTest=["SuccessionContract." + name for name in vars(SuccessionContract) if name.startswith("test_")]
+                      + ["ProviderStopDecision." + name for name in vars(ProviderStopDecision) if name.startswith("test_")]
                       + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it",
                          "HandOverBound.test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over",
                          "SuiteStop.test_a_suite_stopped_by_term_leaves_no_process_of_its_run"])
