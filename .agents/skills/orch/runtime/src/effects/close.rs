@@ -411,14 +411,12 @@ impl WallRead {
 }
 
 /// The account `lane` spends and its harness, where the wall's account
-/// reading measures it: a record naming its account, on a harness the
-/// accounts judge reads usage for.
+/// reading measures it: a record naming its account and its harness. The
+/// accounts judge reads usage for all four harnesses, Copilot's and Pi's
+/// pools among them.
 pub(crate) fn room_measured(lane: &Lane, harness: Option<Harness>) -> Option<(&str, Harness)> {
     let account = lane.account.as_deref().filter(|a| !a.is_empty())?;
-    match harness? {
-        harness @ (Harness::Claude | Harness::Codex) => Some((account, harness)),
-        Harness::Copilot | Harness::Pi => None,
-    }
+    Some((account, harness?))
 }
 
 /// A walled lane's account read (`agent-runtime accounts pick --account` in process), the one

@@ -27,12 +27,13 @@
 //!
 //! Resume: the lane and controller duties set a row of kind [`RESUME_KIND`]
 //! for a passed lane wall (`usage-limit|<identity>|<reset>`), or a failed
-//! turn (`<cause>|<key>`) on a reachable session. The identity is the lane's
-//! name or [`OVERSEER_TARGET`]. The wake types the resume sentence before the inbox
-//! line once per row value: the mark keeps the value typed. The overseer's
-//! failed turn is asked as `<cause>|<key>|pass:<epoch>`, the pass's own
-//! second, so its row changes every pass and the wake resumes it once per
-//! pass while the failure stands. A lane wall's resume
+//! turn (`<cause>|<key>|pass:<epoch>`) on a reachable session. The identity
+//! is the lane's name or [`OVERSEER_TARGET`]. The wake types the resume
+//! sentence before the inbox line once per row value: the mark keeps the
+//! value typed. A failed turn's row carries the pass's own second, so the
+//! wake resumes it once per pass while the failure stands: the overseer's
+//! on every pass, a worker's on each pass after the wake delivered the last
+//! one. A lane wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room and for any standing halt to lift, then is typed past its usage banner (`deliver
 //! --account-room`). The overseer's wall is asked as
@@ -131,11 +132,11 @@ pub(super) fn can_continue(harness: Harness, cause: &str, reading: bool) -> bool
     stop::of_cause(harness, cause) == Some(Kind::Provider) || (reading && cause == "length")
 }
 
-/// Preserve one continuation through repeated failures until a finished
-/// turn ends the chain. An existing wall resume does not spend it.
-pub(super) fn continued(row: Option<&str>) -> bool {
-    row.and_then(|r| r.split_once('|'))
-        .is_some_and(|(cause, _)| cause != WALL_CAUSE)
+/// Whether the wake resumes a session for a `resume` row's value: a row an
+/// earlier watch wrote under a cause it no longer resumes (`told|<key>`)
+/// asks nothing.
+pub(super) fn asks_resume(row: &str) -> bool {
+    Resume::of("", row).is_some()
 }
 
 /// The watch's wake record, beside the fleet state: it shares the runner's
@@ -205,13 +206,11 @@ struct Resume {
 
 impl Resume {
     /// The resume a row's value asks for; none for a cause the wake does
-    /// not resume (`told|…`, an API error's resume already answered by the
-    /// same end).
+    /// not resume.
     fn of(lane: &str, row: &str) -> Option<Resume> {
         let (cause, _) = row.split_once('|')?;
         let ended = match cause {
             WALL_CAUSE => "its account's usage limit, which has since reset",
-            "told" => return None,
             "length" => "the output limit",
             stop::API_ERROR => "an API error",
             cause
@@ -1468,10 +1467,11 @@ impl Wake {
     /// A read or paste refused before anything was typed, for an API error's
     /// resume: the lanes duty left that end's line to the resume, so the
     /// line is told here instead, once, and the target's mark keeps the
-    /// resume, so it is never typed afterwards. Where none stood, the mark
-    /// stands for no unread state, so a mail wake for the target is still
-    /// new, under [`RESUME_REFUSED`]. Answers whether it told; a wall's
-    /// resume waits for the next pass.
+    /// resume under [`RESUME_REFUSED`], so it is never typed afterwards and
+    /// no delivery an earlier mark recorded reads as this resume's. Where
+    /// none stood, the mark stands for no unread state, so a mail wake for
+    /// the target is still new. Answers whether it told; a wall's resume
+    /// waits for the next pass.
     fn untyped(
         &self,
         target: &Target,
@@ -1486,13 +1486,13 @@ impl Wake {
         };
         let kept = WakeMark {
             resume: Some(resume.row.clone()),
+            outcome: Some(WakeOutcome::Limit {
+                harness: target.harness.name().to_owned(),
+                cause: RESUME_REFUSED.to_owned(),
+            }),
             ..standing.cloned().unwrap_or_else(|| WakeMark {
                 unread: String::new(),
                 turns_before: 0,
-                outcome: Some(WakeOutcome::Limit {
-                    harness: target.harness.name().to_owned(),
-                    cause: RESUME_REFUSED.to_owned(),
-                }),
                 ..mark.clone()
             })
         };

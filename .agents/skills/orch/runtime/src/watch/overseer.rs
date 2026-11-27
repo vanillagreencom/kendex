@@ -62,8 +62,8 @@ use super::owner_alert::{self, Word};
 use super::wake;
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts;
+use agent_runtime::accounts::PickRequest;
 use agent_runtime::accounts::walk::{self, WalkRequest};
-use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
 use agent_runtime::controller::views::{AccountState, Caller, MarkKind, Record, text};
 use agent_runtime::effects::overseer_socket;
@@ -655,9 +655,6 @@ pub struct Judges<'a> {
     pub marks: MarksRead<'a>,
     /// The overseer walk a walled succession chooses its successor by.
     pub walk: WalkRead<'a>,
-    /// The wall route's pick for a lane's model, the spent account
-    /// excluded.
-    pub wall_pick: WallPickRead<'a>,
     /// The wall relaunch, the walled lane's close and its `launch-lane`
     /// (`lanes::Relaunch`), started as a detached job.
     pub relaunch: RelaunchStart<'a>,
@@ -667,41 +664,9 @@ pub struct Judges<'a> {
 
 pub type MarksRead<'a> = &'a dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
 pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> crate::error::Result<walk::Walked>;
-/// The walk's pick for a harness and model, the spent account excluded.
-pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started as a detached job; `Err` the launcher's refusal.
 pub type RelaunchStart<'a> = &'a dyn Fn(&Relaunch) -> Result<(), String>;
 pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<u64>>;
-
-/// The wall route's answer as the lanes pass reads it: the `config_dir`
-/// of the account picked, none where no account qualifies, else unjudged
-/// with the cause. A named-lane answer never reaches a walk; it is
-/// unjudged by name so nothing is relaunched on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Pick {
-    Lane(String),
-    None,
-    Unjudged { cause: String },
-}
-
-pub fn picked_by_judge(answer: PickAnswer) -> Pick {
-    match answer {
-        PickAnswer::Lane(judged) => Pick::Lane(judged.row.config_dir),
-        PickAnswer::None { .. } => Pick::None,
-        PickAnswer::Unjudged { cause } => Pick::Unjudged { cause },
-        PickAnswer::ProviderUnmeasured { .. } => Pick::None,
-        PickAnswer::Walled(_)
-        | PickAnswer::Reserved(_)
-        | PickAnswer::Retired { .. }
-        | PickAnswer::Excluded(_)
-        | PickAnswer::Unmeasured(_)
-        | PickAnswer::CloudRepoUnset(_)
-        | PickAnswer::Unbilled { .. }
-        | PickAnswer::NoRecord => Pick::Unjudged {
-            cause: "named-lane-answer".to_owned(),
-        },
-    }
-}
 
 /// The job name and record of a wall relaunch, beside its log.
 fn relaunch_record(r: &Relaunch) -> (String, PathBuf) {
@@ -3097,21 +3062,28 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 tick.wall,
             )
         };
-        let wall_pick = |_: &Path, harness: Harness, model: &str, spent: &str| {
-            picked_by_judge(accounts::pick_fleet(
+        // The lane walk a worker's recovery lands it by, the lane's own
+        // charge left out, and the record's own relaunch of an exited lane.
+        let lane_walk = |item: &str, request: &WalkRequest| {
+            accounts::walk(
                 &ctx.settings,
                 &ctx.path,
                 &occupancy_host,
-                None,
-                None,
-                &PickRequest {
-                    model: Some(model.to_owned()),
-                    exclude: vec![spent.to_owned()],
-                    for_overseer: false,
-                    ..PickRequest::new(harness)
-                },
+                Some(item),
+                request,
                 tick.wall,
-            ))
+            )
+            .map_err(|e| e.to_string())
+        };
+        let exited = |lane: &crate::state::Lane| {
+            crate::effects::relaunch::composed(
+                &ctx.settings,
+                &ctx.path,
+                &lane.item,
+                &occupancy_host,
+                tick.wall,
+            )
+            .map_err(|e| e.to_string())
         };
         let pane_memory = |pid: u32| {
             agent_runtime::process::oom_kills(Path::new("/proc"), Path::new("/sys/fs/cgroup"), pid)
@@ -3121,7 +3093,6 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             scripts: scripts_dir(&ctx.settings.roots.project),
             marks: &marks,
             walk: &walk,
-            wall_pick: &wall_pick,
             relaunch: &relaunch,
             memory: &pane_memory,
         };
@@ -3187,15 +3158,20 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         });
         if watched {
             let own: Vec<String> = ctx.own_pane.iter().cloned().collect();
-            let wall_pick = |harness: Harness, model: &str, spent: &str| {
-                (judges.wall_pick)(&judges.scripts, harness, model, spent)
-            };
             let mailbox = crate::mailbox::Mailbox::new(reach.mail_program);
             let halted = |lane: &crate::state::Lane| mailbox.lane_halted(lane);
             let route = WallRoute {
                 relaunch: watch.wall_relaunch,
-                pick: &wall_pick,
+                walk: &lane_walk,
+                preference: ctx.settings.lane_preference.as_deref(),
+                host: ctx
+                    .settings
+                    .provider
+                    .get()
+                    .map(|provider| provider.host)
+                    .map_err(|e| e.to_string()),
                 halted: &halted,
+                exited: &exited,
                 start: judges.relaunch,
             };
             let wall_pauses = |request| {

@@ -2601,6 +2601,20 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 
 // --- the finished close -------------------------------------------------------
 
+/// Whether a merged lane's work has left its host, the read the finished
+/// close and the idle line's continuation guard share: [`left_locally`] for
+/// a lane on this machine, [`record_left`] where the provider's verb reads
+/// the lane's files, and `None` on a host with no such read.
+pub fn work_left(lane: &Lane, pass: &Pass, caps: &Capabilities) -> Option<Answer<()>> {
+    if host_of(lane) == "local" {
+        Some(left_locally(pass.state_dir, lane))
+    } else if caps.files == Files::Verb {
+        Some(record_left(pass.scripts, lane))
+    } else {
+        None
+    }
+}
+
 /// The finished close at a lane's
 /// `lane-exited`, `lane-idle` or `lane-left` line: a lane whose item the GitHub duty read
 /// merged and whose work left nothing behind ([`left_locally`] on this
@@ -2636,11 +2650,7 @@ pub fn close_finished(
         return;
     };
     let reason = if matches!(merge, FinishedMerge::Eligible { .. }) {
-        let left = if host_of(lane) == "local" {
-            left_locally(pass.state_dir, lane)
-        } else if caps.files == Files::Verb {
-            record_left(pass.scripts, lane)
-        } else {
+        let Some(left) = work_left(lane, pass, &caps) else {
             return;
         };
         match left {

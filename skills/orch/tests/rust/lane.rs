@@ -4203,6 +4203,71 @@ fn a_stale_wall_over_an_account_with_room_closes_the_lane() {
     }
 }
 
+/// A stale wall on a Copilot lane is weighed as a Claude lane's is: a local
+/// Copilot lane whose pane shows a usage banner naming no reset ahead, its
+/// item ended by its tracker, its account at room on the local listing,
+/// closes, its harness ended.
+#[test]
+fn a_stale_wall_on_a_copilot_lane_over_an_account_with_room_closes_the_lane() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let state = fleet.state_dir().to_path_buf();
+    let server = Server::start(&state, "fleet");
+    let now = epoch_now();
+    let account = state.join("home/.acopilot").display().to_string();
+    let mut row = listing_row(20, now);
+    row["alias"] = json!("acopilot");
+    row["harness"] = json!("copilot");
+    row["config_dir"] = json!(account);
+    row["pool"] = json!("copilot");
+    let env = plant_accounts(&state, &state, None, &[row], now);
+    fleet.env.extend(env);
+    let tracker = state.join("linear.sh");
+    std::os::unix::fs::symlink(fixtures().join("linear-fixture/linear.sh"), &tracker).unwrap();
+    std::fs::write(
+        state.join("linear.json"),
+        json!({"issues bulk-get": {"body": {"issues": {"nodes": [
+            {"identifier": "KEN-W", "state": {"type": "completed"}, "description": "", "children": {"nodes": []}}
+        ]}}}})
+        .to_string(),
+    )
+    .unwrap();
+    fleet.env.extend([
+        (
+            "TMUX".to_owned(),
+            format!("{},0,0", server.socket.display()),
+        ),
+        (
+            "OVERSEE_WATCH_TRACKER".to_owned(),
+            tracker.display().to_string(),
+        ),
+    ]);
+    let copilot = named_sleep(&state, "copilot");
+    let screen = state.join("screen.txt");
+    std::fs::write(
+        &screen,
+        format!(
+            "● Working through the queue.\n{CLOCK_WALL}\n{rule}\n❯ \n{rule}\n",
+            rule = "─".repeat(40)
+        ),
+    )
+    .unwrap();
+    let line = format!("cat {}; exec {} 600", screen.display(), copilot.display());
+    let pane = server.open_window("gh-w", &state, &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "copilot");
+    await_drawn(&server, &pane, "limit");
+    fleet.write_lanes(vec![json!({
+        "item": "KEN-W", "window": "fleet:gh-w", "harness": "copilot", "account": account,
+        "mail_root": state.display().to_string(), "status": "running",
+        "launched_at": "2026-01-29T15:00:00Z", "session_since": "2026-01-29T15:00:00Z",
+        "launch": {"pane": pane, "server": server.pid, "pid": identity.pid, "start": identity.start},
+    })]);
+    let answer = reply(&fleet.op(&json!({"op": "close-lane", "item": "KEN-W"})));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert_eq!(fleet.lane("KEN-W")["status"], "done");
+    assert!(!live(identity.pid), "the harness ended");
+}
+
 /// A hosted lane's wall is weighed against its account read under the
 /// record's host. A Claude lane on the fixture provider whose captured pane
 /// shows a usage banner naming no reset ahead, its item ended by its
