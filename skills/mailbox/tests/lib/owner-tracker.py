@@ -61,7 +61,11 @@ case "$1:$2" in
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
   comments:owner-questions) printf '"question-id"\n' ;;
-  comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
+  comments:create)
+    # The saved comment's body: the file the last argument names.
+    for body; do :; done
+    cp -- "$body" "$TRACKER_CASE/comment"
+    printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\n' "$3" "$3" ;;
   *) exit 1 ;;
@@ -74,6 +78,8 @@ def run(source, scratch, bash):
     # A synced item takes its label alone, and a failed comment then restores
     # only the label: each synced row's update calls after the refused one.
     labelled = ["issues", "update", "KEN-7", "--labels", "owner-gated,skills"]
+    # The action and its closing evidence, which no other part of the ask states.
+    action = "Merge the release branch and reply with the tag URL"
     synced_updates = {"synced": [labelled], "synced-comment": [labelled, [*labelled[:4], "skills"]]}
     os.environ["SLACK_ORCH_DIR"] = str(REPO / "skills/orch")
     for row in ("posted", "synced", "synced-comment", "owner-read", "workspace-read", "question-id", "assign",
@@ -115,7 +121,7 @@ else exec '{shutil.which("date")}' "$@"; fi
             ready_fd = os.open(reached, os.O_RDWR)
             release_fd = os.open(release, os.O_RDWR)
             writer = subprocess.Popen([*mail, "ask", "--item", "overseer", "--to", "owner",
-                "--issue", "KEN-7", "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
+                "--issue", "KEN-7", "--do", action, "--wait", "5", "--options", "approve,hold",
                 "--recommend", "approve", "--effect", "none", "--file", str(message)], cwd=root, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -222,7 +228,8 @@ else exec '{shutil.which("date")}' "$@"; fi
                     updates = [call.split("\x1f")[:-1] for call in (root / "updates").read_text().split("\x1e")[:-1]]
                     facts["terminal"] &= (updates[0] == [*labelled[:3], "--assignee", "person"]
                         and updates[1][:6] == [*labelled, "--description"]
-                        and updates[2:] == synced_updates[row] and "cause=rollback" not in err)
+                        and updates[2:] == synced_updates[row] and "cause=rollback" not in err
+                        and (row != "synced" or action in (root / "comment").read_text()))
                 for verb, args in (("events", ()), ("pending", ()), ("drain", ("--after", "0"))):
                     rows = read(verb, *args)
                     expected_rows = {ask["id"]: "ask"} if verb == "pending" else public
