@@ -90,6 +90,7 @@ async function check(source) {
     ['request network failure', 'acme/widgets', 'owner', 'User', 'network', 1, 1, 0, undefined, 0],
     ['proved quick change', 'acme/widgets', 'owner', 'User', null, 0, 0, 0, 'true', 1],
     ['overseer-authored proved quick change', 'acme/widgets', 'vanillagreen-overseer[bot]', 'Bot', null, 1, 0, 0, 'true', 0],
+    ['lanes-authored proved quick change', 'acme/widgets', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 0, 0, 0, 'true', 1],
     ['proved quick change with null author', 'acme/widgets', null, null, null, 0, 0, 0, 'true', 1],
     ['change not proved quick', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, 'false', 0],
     ['classify step failed', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, '', 0],
