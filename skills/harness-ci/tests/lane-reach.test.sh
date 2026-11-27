@@ -368,6 +368,58 @@ chmod +x "$repo/tools/wrap.sh"
 printf 'true\n' >"$repo/tools/wrap-lib.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a workflow env wrapper sources a helper'
+# Talk's app job at talk a0ba803ae, with its root package files and scripts.
+# The reader refuses it at its first pnpm command, so its claim stands in for
+# what it reads.
+git -C "$repo" checkout -qb fixture-pnpm "$static_base"
+write_workflow web-only >"$repo/.github/workflows/ci.yml"
+edit_workflow '      - uses: actions/checkout@v7\n      - working-directory: web\n        run: ./node_modules/.bin/vitest run\n' \
+  '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version-file: .nvmrc\n      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1\n      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n      - run: pnpm test\n'
+printf '%s\n' '{"private":true,"packageManager":"pnpm@12.3.4","scripts":{"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"},"devDependencies":{"eslint":"^9.0.0","jest":"^30.0.0","typescript":"^5.9.0"}}' >"$repo/package.json"
+printf 'allowBuilds:\n  esbuild: true\noverrides:\n  semver: ^7.6.0\n' >"$repo/pnpm-workspace.yaml"
+printf "lockfileVersion: '9.0'\n" >"$repo/pnpm-lock.yaml"
+printf '24\n' >"$repo/.nvmrc"
+printf 'export default []\n' >"$repo/eslint.config.js"
+printf '{}\n' >"$repo/tsconfig.json"
+mkdir -p "$repo/src"
+printf 'export const app = 42\n' >"$repo/src/app.ts"
+printf '%s\n' 'web src/* eslint.config.js # reason: eslint, tsc and jest read the sources' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm "Talk's pnpm app job"
+pnpm_base="$(git -C "$repo" rev-parse HEAD)"
+# The same setup steps with a shell step in place of its pnpm steps, and no claim.
+git -C "$repo" checkout -qb fixture-pnpm-setup "$pnpm_base"
+edit_workflow '      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n      - run: pnpm test\n' \
+  '      - run: bash ./tools/test.sh\n'
+printf 'true\n' >"$repo/tools/test.sh"
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'setup actions and a shell step'
+pnpm_setup_base="$(git -C "$repo" rev-parse HEAD)"
+# Each variant of that job, as branch fixture-LABEL: its rows edit it in
+# order, and a file a row names that is absent starts empty.
+while IFS='|' read -r variant file old new; do
+  if git -C "$repo" rev-parse -q --verify "refs/heads/fixture-$variant" >/dev/null; then
+    git -C "$repo" checkout -q "fixture-$variant"
+  else
+    git -C "$repo" checkout -qb "fixture-$variant" "$pnpm_setup_base"
+  fi
+  mkdir -p "$(dirname "$repo/$file")"
+  touch "$repo/$file"
+  edit_file "$repo/$file" "$old" "$new"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm "$variant"
+done <<'ROWS'
+pnpm-variant-input|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
+pnpm-variant-volta|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: tools/node.json
+pnpm-variant-volta|tools/node.json||{"volta":{"extends":"../tooling.json"}}\n
+pnpm-variant-newline|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: |\n            .nvmrc\n            .node-version
+pnpm-variant-pnpm|.github/workflows/ci.yml|      - run: bash ./tools/test.sh\n|      - run: bash ./tools/test.sh\n      - run: pnpm test\n
+pnpm-variant-pnpm|package.json|"test":"jest"|"test":"cat ./tools/fixture.txt"
+pnpm-variant-pnpm|tools/fixture.txt||true\n
+pnpm-variant-pnpm|pnpm-workspace.yaml|esbuild: true|prisma: true
+pnpm-variant-pnpm|prisma/schema.prisma||model User {}\n
+ROWS
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
 for shape in event-gate event-gate-unguarded; do
@@ -1240,6 +1292,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-fleet-queue-*) base="$dispatch_fleet_queue_base" ;;
     dispatch-fleet-*) base="$dispatch_fleet_base" ;;
     queued-render-push) base="$queue_base" ;;
+    pnpm-talk-*) base="$pnpm_base" ;;
+    pnpm-setup-*) base="$pnpm_setup_base" ;;
+    pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
   event="${event:-merge_group}"
@@ -1467,6 +1522,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
+    pnpm-talk-*|pnpm-variant-pnpm) refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-variant-input|pnpm-variant-volta|pnpm-variant-newline) refused_jobs='job=web cause=opaque-action' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1622,6 +1679,14 @@ dispatch-fleet-newline|run.sh|||||||false|false|true|derived-reach
 dispatch-fleet-queue-claimed|skills/review-gate/standard.json|||||pull_request||false|false|false|derived-reach
 dispatch-fleet-queue-derived|bin/host.txt|||||pull_request||false|false|false|derived-reach
 dispatch-fleet-queue-unproved|skills/review-gate/scripts/x.txt|||||pull_request||false|true|false|derived-reach
+pnpm-talk-gitignore|.gitignore|||false|
+pnpm-talk-node-version|.nvmrc|||true|
+pnpm-talk-workspace|pnpm-workspace.yaml|||true|
+pnpm-setup-gitignore|.gitignore|||false|
+pnpm-variant-input|.gitignore|||true|
+pnpm-variant-volta|.gitignore|||true|
+pnpm-variant-newline|.gitignore|||true|
+pnpm-variant-pnpm|prisma/schema.prisma|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"

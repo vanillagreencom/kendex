@@ -55,7 +55,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 - `HARNESS_CI_QUEUE_PATHS` is read only with `HARNESS_CI_PER_PUSH_REASON`. Set it empty when the shipped list covers all those inputs. Leaving it unset requires the queue for every change.
 - `HARNESS_CI_QUEUE_SELECTOR` is read only with `HARNESS_CI_PER_PUSH_REASON`. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template).
 
-harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands, and its Exception and legacy declarations paragraph states which lanes run when the reader cannot read a job.
+harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. A job that runs a `pnpm` command is refused, and its lane's reasoned claims, where it has any, stand in for what the job reads. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands, and its Exception and legacy declarations paragraph states which lanes run when the reader cannot read a job.
 
 ### Lane file cut-over
 

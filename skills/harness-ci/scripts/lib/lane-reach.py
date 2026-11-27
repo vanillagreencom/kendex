@@ -95,6 +95,22 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
+# Each setup action's inputs the reader accepts, ONE_PATH where the input names
+# one repository path, PATH_LIST where it names one per line, and the paths the
+# action reads unasked. A uses: step runs from the repository root. The
+# inputs are the action.yml of actions/setup-node v7.1.0, which reads
+# package.json for its package manager cache, and of pnpm/action-setup
+# v6.1.1, whose package_json_file and cache_dependency_path default to
+# package.json and pnpm-lock.yaml.
+ONE_PATH, PATH_LIST = "path", "paths"
+SETUP_ACTIONS = {
+    r"actions/setup-node@[^\s]+": ({"node-version": None, "node-version-file": ONE_PATH, "cache": None,
+                                    "cache-dependency-path": PATH_LIST, "check-latest": None,
+                                    "architecture": None}, ["package.json"]),
+    r"pnpm/action-setup@[^\s]+": ({"version": None, "package_json_file": ONE_PATH, "cache": None,
+                                   "cache_dependency_path": PATH_LIST, "standalone": None},
+                                  ["package.json", "pnpm-lock.yaml"]),
+}
 # A symlink or a submodule: git tracks no entry below either.
 LINK_MODES = {"120000", "160000"}
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
@@ -1008,8 +1024,9 @@ def job_reads(evidence, job, env_words, ordinary, readers):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes"}, "opaque-step")
         if "uses" in step:
-            if not (re.fullmatch(CHECKOUT, step["uses"]) and
-                    set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"}):
+            if not ((re.fullmatch(CHECKOUT, step["uses"]) and
+                     set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"})
+                    or setup_reads(evidence, step, ordinary)):
                 opaque_action = step["uses"]
             continue
         require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
@@ -1055,10 +1072,64 @@ def job_reads(evidence, job, env_words, ordinary, readers):
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())
                 covered.append(evidence.vitest_reads(directory, readers[-1]))
+            elif args[0] == "pnpm":
+                pnpm_reads(evidence, directory, ordinary)
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
     return covered
+
+
+def setup_reads(evidence, step, reads):
+    """Record the paths a setup action reads. False where the step is no
+    setup action the reader accepts."""
+    accepted = [value for pattern, value in SETUP_ACTIONS.items() if re.fullmatch(pattern, step["uses"])]
+    given = step.get("with", {})
+    if not accepted or not isinstance(given, dict) or not set(given) <= accepted[0][0].keys():
+        return False
+    inputs, paths = accepted[0]
+    if not all(isinstance(value, str) and "${{" not in value for value in given.values()):
+        return False
+    # The action trims an input. A one-path input names one file whatever
+    # it holds, so a newline in it is no list.
+    paths = paths + [line.strip() for key, value in given.items() if inputs[key] == PATH_LIST
+                     for line in value.splitlines() if line.strip()]
+    paths += [value.strip() for key, value in given.items() if inputs[key] == ONE_PATH]
+    if not all(literal(path) and not path.startswith("-") for path in paths):
+        return False
+    for path in paths:
+        path, passed = evidence.checkout_path(".", path)
+        reads.update({path} | passed)
+        reads.update(name for name in evidence.changed if under(name, path))
+    version_file = given.get("node-version-file", "").strip()
+    if version_file and evidence.files.get(os.path.normpath(version_file)) in {"100644", "100755"}:
+        try:
+            manifest = json.loads(evidence.blob(os.path.normpath(version_file)))
+        except ValueError:
+            manifest = None
+        # setup-node v7.1.0 src/util.ts follows volta.extends to another
+        # file where the manifest names no Node version itself.
+        volta = manifest.get("volta") if isinstance(manifest, dict) else None
+        if isinstance(volta, dict) and volta.get("extends"):
+            return False
+    return True
+
+
+def pnpm_reads(evidence, directory, ordinary):
+    """Record the package and settings files pnpm reads in the working
+    directory and each ancestor, then refuse the job."""
+    folders = {directory, *(parent.as_posix() for parent in Path(directory).parents)}
+    ordinary.update(name for name in evidence.changed if Path(name).parent.as_posix() in folders and (
+        Path(name).name in {*JS_PACKAGES, "pnpm-workspace.yaml", ".npmrc"}
+        or Path(name).name.startswith(".pnpmfile.")))
+    manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
+    ordinary.add(manifest_path)
+    # Every pnpm command can install: pnpm run and pnpm test install first
+    # where node_modules is stale, as verifyDepsBeforeRun defaults to install
+    # from pnpm 11.0.0 (its CHANGELOG). A dependency's install script can read
+    # any repository file, and pnpm takes the settings that allow one from
+    # sources beyond the repository, such as the environment.
+    raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path} reason=dependency-builds-unproved")
 
 
 def derived(evidence, claimed, settings, declared):
