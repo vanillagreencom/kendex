@@ -675,12 +675,13 @@ fn ticks(text: &str, source: PathSource) -> Vec<String> {
         };
         let token = &after[..close];
         rest = &after[close + 1..];
-        if !token.is_empty()
-            && !token.chars().any(char::is_whitespace)
-            && !(matches!(source, PathSource::Brief) && do_not_edit(before, rest))
+        if token.is_empty()
+            || token.chars().any(char::is_whitespace)
+            || (matches!(source, PathSource::Brief) && do_not_edit(before, rest))
         {
-            found.push(without_line_suffix(token).to_owned());
+            continue;
         }
+        found.push(without_line_suffix(token).to_owned());
     }
     found
 }
