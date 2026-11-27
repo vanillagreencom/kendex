@@ -396,16 +396,36 @@ git -C "$repo" rm -q -- .github/ci-lanes.conf
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a pnpm job whose scripts the reader follows'
 pnpm_followed_base="$(git -C "$repo" rev-parse HEAD)"
-# Each followed-job input the reader refuses, as branch fixture-LABEL.
-while IFS='|' read -r refusal file old new; do
-  git -C "$repo" checkout -qb "fixture-$refusal" "$pnpm_followed_base"
+# Each variant of the followed job, as branch fixture-LABEL: its rows edit
+# it in order, and a file a row names that is absent starts empty.
+while IFS='|' read -r variant file old new; do
+  if git -C "$repo" rev-parse -q --verify "refs/heads/fixture-$variant" >/dev/null; then
+    git -C "$repo" checkout -q "fixture-$variant"
+  else
+    git -C "$repo" checkout -qb "fixture-$variant" "$pnpm_followed_base"
+  fi
+  mkdir -p "$(dirname "$repo/$file")"
+  touch "$repo/$file"
   edit_file "$repo/$file" "$old" "$new"
-  git -C "$repo" commit -qam "$refusal"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm "$variant"
 done <<'ROWS'
-pnpm-refused-patch|pnpm-workspace.yaml|overrides:|patchedDependencies:\n  semver: patches/semver.patch\noverrides:
 pnpm-refused-local|package.json|"eslint":"^9.0.0"|"eslint":"^9.0.0","lib":"file:./lib"
 pnpm-refused-body|package.json|"test":"bash ./tools/test.sh"|"test":"jest"
 pnpm-refused-setup|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
+pnpm-refused-npmrc|.npmrc||node-options=--require ./tools/preload.cjs\n
+pnpm-refused-override|pnpm-workspace.yaml|semver: ^7.6.0|semver: link:./vendor/semver
+pnpm-refused-field|package.json|"private":true|"private":true,"pnpm":{"overrides":{}}
+pnpm-refused-lockfile|pnpm-workspace.yaml|overrides:|lockfileDir: locks\noverrides:
+pnpm-refused-ancestor|.github/workflows/ci.yml|      - run: pnpm install --frozen-lockfile\n      - run: pnpm test\n|      - working-directory: app\n        run: pnpm install --frozen-lockfile\n      - working-directory: app\n        run: pnpm test\n
+pnpm-refused-ancestor|app/package.json||{"private":true,"scripts":{"test":"bash ../tools/test.sh"}}\n
+pnpm-refused-ancestor|package.json|"private":true|"private":true,"pnpm":{"overrides":{}}
+pnpm-refused-volta|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: tools/node.json
+pnpm-refused-volta|tools/node.json||{"volta":{"extends":"../tooling.json"}}\n
+pnpm-refused-newline|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: |\n            .nvmrc\n            .node-version
+pnpm-variant-lines|tools/test.sh|true|source ./tools/helper.sh
+pnpm-variant-lines|tools/helper.sh||true\n
+pnpm-variant-lines|package.json|"test":"bash ./tools/test.sh"|"test":"cat ./tools/fixture.txt\u000abash ./tools/test.sh"
 ROWS
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
@@ -1281,7 +1301,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     queued-render-push) base="$queue_base" ;;
     pnpm-talk-*) base="$pnpm_base" ;;
     pnpm-followed-*) base="$pnpm_followed_base" ;;
-    pnpm-refused-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    pnpm-refused-*|pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
   event="${event:-merge_group}"
@@ -1510,9 +1530,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
     pnpm-talk-*) refused_jobs='job=web cause=opaque-pnpm-command' ;;
-    pnpm-refused-patch|pnpm-refused-local) refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-refused-local|pnpm-refused-npmrc|pnpm-refused-override|pnpm-refused-field|pnpm-refused-lockfile|pnpm-refused-ancestor)
+      refused_jobs='job=web cause=pnpm-config-unread' ;;
     pnpm-refused-body) refused_jobs='job=web cause=unresolved-pnpm-script' ;;
-    pnpm-refused-setup) refused_jobs='job=web cause=opaque-action' ;;
+    pnpm-refused-setup|pnpm-refused-volta|pnpm-refused-newline) refused_jobs='job=web cause=opaque-action' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1675,10 +1696,17 @@ pnpm-followed-gitignore|.gitignore|||false|
 pnpm-followed-script|tools/test.sh|||true|
 pnpm-followed-lifecycle|tools/setup.sh|||true|
 pnpm-followed-pre|tools/fixture.txt|||true|
-pnpm-refused-patch|.gitignore|||true|
 pnpm-refused-local|.gitignore|||true|
 pnpm-refused-body|.gitignore|||true|
 pnpm-refused-setup|.gitignore|||true|
+pnpm-refused-npmrc|.gitignore|||true|
+pnpm-refused-override|.gitignore|||true|
+pnpm-refused-field|.gitignore|||true|
+pnpm-refused-lockfile|.gitignore|||true|
+pnpm-refused-ancestor|.gitignore|||true|
+pnpm-refused-volta|.gitignore|||true|
+pnpm-refused-newline|.gitignore|||true|
+pnpm-variant-lines|tools/helper.sh|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"

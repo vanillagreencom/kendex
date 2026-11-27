@@ -95,18 +95,20 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
-# Each setup action's inputs the reader accepts, True where the input names
-# repository paths, one per line, and the paths it reads unasked. A uses:
-# step runs from the repository root. The inputs are the action.yml of
-# actions/setup-node v7.1.0, which reads package.json for its package
-# manager cache, and of pnpm/action-setup v6.1.1, whose package_json_file
-# and cache_dependency_path default to package.json and pnpm-lock.yaml.
+# Each setup action's inputs the reader accepts, ONE_PATH where the input names
+# one repository path, PATH_LIST where it names one per line, and the paths the
+# action reads unasked. A uses: step runs from the repository root. The
+# inputs are the action.yml of actions/setup-node v7.1.0, which reads
+# package.json for its package manager cache, and of pnpm/action-setup
+# v6.1.1, whose package_json_file and cache_dependency_path default to
+# package.json and pnpm-lock.yaml.
+ONE_PATH, PATH_LIST = "path", "paths"
 SETUP_ACTIONS = {
-    r"actions/setup-node@[^\s]+": ({"node-version": False, "node-version-file": True, "cache": False,
-                                    "cache-dependency-path": True, "check-latest": False,
-                                    "architecture": False}, ["package.json"]),
-    r"pnpm/action-setup@[^\s]+": ({"version": False, "package_json_file": True, "cache": False,
-                                   "cache_dependency_path": True, "standalone": False},
+    r"actions/setup-node@[^\s]+": ({"node-version": None, "node-version-file": ONE_PATH, "cache": None,
+                                    "cache-dependency-path": PATH_LIST, "check-latest": None,
+                                    "architecture": None}, ["package.json"]),
+    r"pnpm/action-setup@[^\s]+": ({"version": None, "package_json_file": ONE_PATH, "cache": None,
+                                   "cache_dependency_path": PATH_LIST, "standalone": None},
                                   ["package.json", "pnpm-lock.yaml"]),
 }
 VITEST_RUNS = (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
@@ -114,9 +116,13 @@ VITEST_RUNS = (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
 # https://pnpm.io/scripts: the scripts pnpm install runs in the project itself.
 PNPM_LIFECYCLE = ("pnpm:devPreinstall", "preinstall", "install", "postinstall",
                   "preprepare", "prepare", "postprepare")
-# pnpm-workspace.yaml settings that name a repository file as code or input:
-# workspace packages, a pnpmfile, a patch, the script shell.
-PNPM_FILE_SETTINGS = {"packages", "pnpmfile", "globalPnpmfile", "patchedDependencies", "scriptShell"}
+# The pnpm-workspace.yaml settings that name no repository file, given
+# values that are no local path. Any other setting can name one, as code or
+# as an input: workspace packages, a pnpmfile, a patch, the script shell, a
+# relocated lockfile, an included settings file.
+PNPM_WORKSPACE_SETTINGS = {"allowBuilds", "onlyBuiltDependencies", "neverBuiltDependencies",
+                           "ignoredBuiltDependencies", "minimumReleaseAge", "overrides", "catalog",
+                           "catalogs"}
 PNPM_DEPENDENCIES = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
 # A symlink or a submodule: git tracks no entry below either.
 LINK_MODES = {"120000", "160000"}
@@ -1099,14 +1105,28 @@ def setup_reads(evidence, step, reads):
     inputs, paths = accepted[0]
     if not all(isinstance(value, str) and "${{" not in value for value in given.values()):
         return False
-    paths = paths + [line.strip() for key, value in given.items() if inputs[key]
+    # The action trims an input. A one-path input names one file whatever
+    # it holds, so a newline in it is no list.
+    paths = paths + [line.strip() for key, value in given.items() if inputs[key] == PATH_LIST
                      for line in value.splitlines() if line.strip()]
+    paths += [value.strip() for key, value in given.items() if inputs[key] == ONE_PATH]
     if not all(literal(path) and not path.startswith("-") for path in paths):
         return False
     for path in paths:
         path, passed = evidence.checkout_path(".", path)
         reads.update({path} | passed)
         reads.update(name for name in evidence.changed if under(name, path))
+    version_file = given.get("node-version-file", "").strip()
+    if version_file and evidence.files.get(os.path.normpath(version_file)) in {"100644", "100755"}:
+        try:
+            manifest = json.loads(evidence.blob(os.path.normpath(version_file)))
+        except ValueError:
+            manifest = None
+        # setup-node v7.1.0 src/util.ts follows volta.extends to another
+        # file where the manifest names no Node version itself.
+        volta = manifest.get("volta") if isinstance(manifest, dict) else None
+        if isinstance(volta, dict) and volta.get("extends"):
+            return False
     return True
 
 
@@ -1135,7 +1155,10 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
 
     ordinary.update(name for name in evidence.changed
                     if Path(name).parent.as_posix() in folders and settings_file(Path(name).name))
-    for path in sorted(evidence.files):
+    manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
+    ordinary.add(manifest_path)
+    scripts = None
+    for path in sorted({*evidence.files, manifest_path}):
         name = Path(path).name
         if Path(path).parent.as_posix() not in folders or not settings_file(name):
             continue
@@ -1144,26 +1167,30 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
         require_shape(name != ".npmrc" and not name.startswith(".pnpmfile."),
                       f"pnpm-config-unread path={path}")
         if name == "pnpm-workspace.yaml":
+            source = evidence.blob(path)
             try:
-                settings = workflow_document(evidence.blob(path)) or {}
+                settings = workflow_document(source) or {}
             except Unreadable as error:
-                raise ShapeUnreadable(f"pnpm-config-unread path={path}") from error
-            require_shape(isinstance(settings, dict) and not PNPM_FILE_SETTINGS & settings.keys()
+                raise ShapeUnreadable(f"pnpm-config-unread path={path} reason={error}") from error
+            require_shape(isinstance(settings, dict) and settings.keys() <= PNPM_WORKSPACE_SETTINGS
                           and not any(isinstance(value, str) and local_spec(value)
                                       for value in setting_values(settings)),
                           f"pnpm-config-unread path={path}")
-    manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
-    ordinary.add(manifest_path)
-    try:
-        manifest = json.loads(evidence.blob(manifest_path))
-    except ValueError as error:
-        raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path}") from error
-    scripts = manifest.get("scripts", {}) if isinstance(manifest, dict) else None
-    # pnpm before 11 reads overrides and patches from the pnpm field.
-    require_shape(isinstance(scripts, dict) and "pnpm" not in manifest and all(
-        isinstance(specs, dict) and not any(isinstance(spec, str) and local_spec(spec) for spec in specs.values())
-        for specs in (manifest.get(field, {}) for field in PNPM_DEPENDENCIES)
-    ), f"pnpm-config-unread path={manifest_path}")
+        elif name == "package.json":
+            source = evidence.blob(path)
+            try:
+                manifest = json.loads(source)
+            except ValueError as error:
+                raise ShapeUnreadable(f"pnpm-config-unread path={path} reason=invalid-json") from error
+            # pnpm before 11 reads overrides and patches from the pnpm field.
+            require_shape(isinstance(manifest, dict) and "pnpm" not in manifest and all(
+                isinstance(specs, dict) and not any(isinstance(spec, str) and local_spec(spec)
+                                                    for spec in specs.values())
+                for specs in (manifest.get(field, {}) for field in PNPM_DEPENDENCIES)
+            ), f"pnpm-config-unread path={path}")
+            if path == manifest_path:
+                scripts = manifest.get("scripts", {})
+    require_shape(isinstance(scripts, dict), f"pnpm-config-unread path={manifest_path}")
     if args == ["install", "--frozen-lockfile"]:
         names = [name for name in PNPM_LIFECYCLE if name in scripts]
     elif args == ["test"] or (len(args) == 2 and args[0] == "run"):
@@ -1183,12 +1210,15 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
         visited.add(invocation)
         try:
             # pnpm runs the body with sh in the package directory, with
-            # node_modules/.bin on PATH.
+            # node_modules/.bin on PATH. A newline separates its commands, as
+            # on a run line.
             body = scripts[name]
             require_shape(isinstance(body, str), "computed-command")
-            command = words(body)
-            require_shape(command and command[0] not in SHELL_KEYWORDS, "computed-command")
-            run_command(evidence, command, directory, ordinary, readers, covered, visited)
+            commands = [found for line in body.splitlines() if (found := words(line))]
+            require_shape(commands and all(found[0] not in SHELL_KEYWORDS for found in commands),
+                          "computed-command")
+            for found in commands:
+                run_command(evidence, found, directory, ordinary, readers, covered, visited)
         except UNAVAILABLE as error:
             raise NamedUnreadable(f"unresolved-pnpm-script script={name} reason={error}",
                                   is_shape(error)) from error
