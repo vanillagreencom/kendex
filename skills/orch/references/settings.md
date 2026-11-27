@@ -228,7 +228,7 @@ The account judge, `orch-runtime lane pick`, reads these through [agent-runtime 
 | `AGENT_RUNTIME_ACCOUNT_ALIASES` | `<discovered name>=<alias>` pairs: the names the roster and the judge use. |
 | `AGENT_RUNTIME_ACCOUNT_EXCLUDE` | Comma-separated account names, never paths. |
 | `AGENT_RUNTIME_ACCOUNT_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs. |
-| `AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane and, for a launch, on the 5-hour window where the reading carries one. |
+| `AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane and, for a launch or a controller's question about its own account, on the 5-hour window where the reading carries one. |
 | `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR` | A live session's hourly spend, in points of five hours' room, where its account measured no rate. `0` turns the charge off. |
 | `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` | The headroom a controller hands off at, on its own account. |
 | `AGENT_RUNTIME_CODEX_CREDIT_FLOOR` | The Codex credit balance above which a walled window still leaves the account pickable. |
@@ -248,7 +248,7 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_ACCOUNT_RETIRE`: the judge picks the account until that UTC day, and measures it after.
 - `AGENT_RUNTIME_ACCOUNT_RETIRE`: a provider row's `plan-ends` replaces the entry for that account.
 - `AGENT_RUNTIME_ACCOUNT_RETIRE`: the judge reads this key at each pick, and the provider's row through the usage cache (`AGENT_RUNTIME_USAGE_TTL`).
-- `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: the judge weighs a launch on the projected room of the binding window and of the 5-hour window where the reading carries one; the smaller decides.
+- `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: the judge weighs a launch on the projected room of every plan window the lane spends and of the 5-hour window where the reading carries one; the least room decides.
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: a launch reads an account it would otherwise read `room` as `unmeasured` where its reading is older than one lane, at the burn its projection charges a window, takes to spend the room that window shows below this bound.
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: the projection charges the window, for each live lane on the account and for the candidate, the burn below until the window's reset.
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: a pick's `--max-pct` replaces this key.

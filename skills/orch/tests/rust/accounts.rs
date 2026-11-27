@@ -1183,8 +1183,8 @@ fn a_providers_codex_row_past_its_week_is_spent_on_a_credit_above_the_floor() {
 /// wall 99 on a seat: the chooser refuses and the named reading names the
 /// provider's wall. A Claude account the provider measured
 /// without the model's window: the local reading's model window decides,
-/// and with none the account is unmeasured for that model; without a model
-/// the provider's reading stands. A provider row that read nothing, an
+/// and with none the provider's shared windows do, the record marked
+/// `scope: unread`; without a model the provider's reading stands. A provider row that read nothing, an
 /// `unreachable` one or a holding with no figure, leaves this machine's
 /// measured reading in place.
 #[test]
@@ -1261,15 +1261,14 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
         ..fable
     });
     assert_eq!(
-        unread["answer"],
-        json!("unmeasured"),
+        (
+            &unread["answer"],
+            &unread["record"]["measured_through"],
+            &unread["record"]["wall"],
+            &unread["record"]["scope"],
+        ),
+        (&json!("lane"), &json!("host"), &json!(20), &json!("unread")),
         "no reading of the model's window on either side: {unread}"
-    );
-    assert_eq!(unread["exit"], json!(5));
-    assert_eq!(unread["record"]["status"], json!("no_usage_data"));
-    assert_eq!(
-        unread["record"]["detail"],
-        json!("no fresh local model window for claude-fable-5-1")
     );
     // A provider row that read nothing leaves this machine's reading.
     let mut unreachable = at(&uclaude, through_host(measured("uclaude", 10, 5)));
@@ -1390,68 +1389,6 @@ fn a_token_signed_home_is_judged_on_the_providers_week_and_an_unlisted_one_is_un
         (&json!("unmeasured"), &json!(5), &json!("no_credentials")),
         "{alone}"
     );
-}
-
-/// A credentialed home whose own read failed is no token-signed home: its
-/// failure is the account's reading of the model's window, not an absence
-/// the provider's shared week fills. Beside a provider row that measured
-/// the week and no Fable window, a local copy refused with HTTP 503 and one
-/// whose usage body held no window are each `unmeasured` for a Fable lane,
-/// exit 5, with the local status and its cause, and the chooser leaves each
-/// out as unmeasured rather than launching onto a window nobody read.
-#[test]
-fn a_failed_local_read_beside_the_providers_shared_week_is_unmeasured_for_the_model() {
-    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
-    world.write_fleet(Vec::new(), None);
-    world.plant_capabilities("fleet-vm", SSH_LINE);
-    let dir = world.dir("fclaude");
-    let fable = claude(Some("claude-fable-5-1"));
-    let failed = [
-        ("unreachable", "usage query refused with HTTP 503"),
-        (
-            "no_usage_data",
-            "authenticated, but the usage response carried no weekly, monthly or model window",
-        ),
-    ];
-    let judged: Vec<Value> = failed
-        .iter()
-        .map(|(status, _)| {
-            let mut local = measured("fclaude", 0, 0);
-            local["status"] = json!(status);
-            local["headroom_pct"] = Value::Null;
-            local["weekly_pct"] = Value::Null;
-            local["session_5h_pct"] = Value::Null;
-            let mut provider = through_host(measured("fclaude", 20, 0));
-            provider["config_dir"] = json!(dir);
-            world.plant_host_listing("fleet-vm", &[local, provider]);
-            let reply = world.pick(&named(&dir, fable.clone()));
-            let chooser = world.pick(&fable);
-            json!([
-                reply["answer"],
-                reply["exit"],
-                reply["record"]["measured_through"],
-                reply["record"]["status"],
-                reply["record"]["detail"],
-                chooser["answer"],
-                left_out(&chooser)
-            ])
-        })
-        .collect();
-    let unmeasured: Vec<Value> = failed
-        .iter()
-        .map(|(status, detail)| {
-            json!([
-                "unmeasured",
-                5,
-                "local",
-                status,
-                detail,
-                "none",
-                [[dir, "unmeasured"]]
-            ])
-        })
-        .collect();
-    assert_eq!(judged, unmeasured);
 }
 
 /// The fixed sample divisor: the session window's observed
@@ -2790,6 +2727,16 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ("wall", json!(wall)),
         ]
     };
+    // A Claude account the provider measured with no window scoped to the
+    // model, judged on its shared windows.
+    let unread = || {
+        vec![
+            ("measured_through", json!("host")),
+            ("verdict", json!("room")),
+            ("wall", json!(10)),
+            ("scope", json!("unread")),
+        ]
+    };
     let none = |walled: u64, unmeasured: u64| {
         vec![("walled", json!(walled)), ("unmeasured", json!(unmeasured))]
     };
@@ -3657,17 +3604,17 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "a Claude launch on a model: neither reading carries the model's window, so the launch is unmeasured",
+            name: "a Claude launch on a model: neither reading carries the model's window, so the provider's shared windows judge it, where the retained pick refused",
             usage: usage_body((0, now() + 1800), (0, now() + 7 * 86_400), &[]),
             provider: Some(claude_row("\tsession-5h-pct=10\tweekly-pct=10")),
             env: vec![],
             asks: vec![
                 ask(
                     flags(&["--harness", "claude", "--native-model", "claude-opus-5"]),
-                    "none",
-                    3,
+                    "lane",
+                    0,
                     Some(3),
-                    none(0, 1),
+                    unread(),
                 ),
                 ask(
                     flags(&[
@@ -3679,17 +3626,10 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                         &claude_dir,
                         "--projected",
                     ]),
-                    "unmeasured",
-                    5,
+                    "lane",
+                    0,
                     Some(5),
-                    vec![
-                        ("measured_through", json!("local")),
-                        ("status", json!("no_usage_data")),
-                        (
-                            "detail",
-                            json!("no fresh local model window for claude-opus-5"),
-                        ),
-                    ],
+                    unread(),
                 ),
             ],
         },

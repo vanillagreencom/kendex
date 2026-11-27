@@ -211,6 +211,10 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
+    /// The provider states Anthropic refuses the account's requests
+    /// (`unified-status=rejected`): walled whatever its figures read
+    /// ([`Reads::of`]).
+    pub rejected: bool,
     /// The unused limit resets the provider states for the account, on
     /// each reading of it ([`Roster::carry_limit_resets`]) and on the
     /// reading a pick takes ([`resolve`]); `None` where it states none.
@@ -345,6 +349,7 @@ impl AccountRow {
             },
             reserved: flag(raw, "reserved"),
             seat: flag(raw, "seat"),
+            rejected: string(raw, "unified_status").as_deref() == Some("rejected"),
             limit_resets: None,
             retire,
             excluded,
@@ -746,16 +751,17 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// read the pool, else this machine's reading stands where it holds a
 /// figure, measured or stated; a
 /// Claude row the provider measured with no window scoped to `model` is
-/// judged on this machine's fresh reading of that window where it has one,
-/// and is unmeasured where it has none (the shared windows are not that
-/// model's wall), except that `admit` (the overseer walk's
-/// [`PickRequest::admit_unread_scope`]) judges it on the provider's shared
-/// windows, its buckets as read, marked `scope: unread`; and a local copy
-/// with no credential file is no reading, so the provider's measured one
-/// stands as an account's one reading does. The provider's words
-/// (`reserved`, `plan-ends`) and its count of unused limit resets stand
-/// whichever reading does, a row with no reading included. An account with one reading keeps it. The roster is
-/// never resolved: it reports both readings.
+/// judged on this machine's reading where it measured the account and holds
+/// any model window, whatever its label, unmarked; and otherwise on the
+/// provider's shared windows, its buckets as read,
+/// marked `scope: unread`, for every pick, a worker's and a controller's
+/// alike: the provider's line states no model window, so a pick that held
+/// out for one would find no Claude account it measures. The provider's words
+/// (`reserved`, `plan-ends`, `unified-status`), its count of unused limit
+/// resets and its 5-hour window, where that window is the fuller and its
+/// reset ahead, stand whichever reading does, a row with no reading
+/// included. An account with one reading keeps it. The roster is never resolved: it reports both
+/// readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
 /// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
@@ -808,21 +814,43 @@ fn resolve(
                         sign(&own),
                         Some(usage::SignIn::StoredLogin | usage::SignIn::TokenFile(_))
                     );
-                let (reserved, plan_ends, limit_resets) = (
+                let (reserved, plan_ends, limit_resets, rejected) = (
                     provider.reserved,
                     provider.plan_ends.clone(),
                     provider.limit_resets,
+                    provider.rejected,
                 );
+                let admission = provider.raw.get("unified_status").cloned();
+                let session = session_window(&provider)
+                    .filter(|w| reset_epoch(w.resets_at.as_deref()).is_some_and(|at| at > now));
                 let mut stands = if signed_in {
-                    prefer(own, provider, billed, model, req.admit_unread_scope)
+                    prefer(own, provider, billed, model)
                 } else {
                     own
                 };
                 stands.reserved |= reserved;
+                stands.rejected |= rejected;
+                if let (Some(word), Value::Object(raw)) = (admission, &mut stands.raw) {
+                    raw.entry("unified_status").or_insert(word);
+                }
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
                 stands.limit_resets = stands.limit_resets.or(limit_resets);
+                // The provider's 5-hour window walls the account until its
+                // reset whichever reading stands, and this machine's reading
+                // of a model window can stand over it (`prefer`).
+                if let Some(window) = session
+                    .filter(|w| number(&stands.raw, SESSION.field).is_none_or(|pct| w.pct > pct))
+                    && let Value::Object(raw) = &mut stands.raw
+                {
+                    raw.insert(SESSION.field.to_owned(), figure(window.pct));
+                    let resets = raw.entry("resets").or_insert_with(|| json!({}));
+                    if !resets.is_object() {
+                        *resets = json!({});
+                    }
+                    resets[SESSION.bucket] = window.resets_at.map_or(Value::Null, Value::from);
+                }
                 out[i] = stands;
             }
             None => out.push(row.clone()),
@@ -848,13 +876,7 @@ fn resolve(
 }
 
 /// The reading of one account's two that stands for a pick.
-fn prefer(
-    own: AccountRow,
-    provider: AccountRow,
-    billed: Harness,
-    model: &str,
-    admit: bool,
-) -> AccountRow {
+fn prefer(own: AccountRow, provider: AccountRow, billed: Harness, model: &str) -> AccountRow {
     let scoped = billed == Harness::Claude && !model.is_empty();
     let unread = provider.harness == Harness::Pi && provider.headroom_pct.is_none()
         || provider.status == "unreachable"
@@ -874,24 +896,18 @@ fn prefer(
     if !unscoped {
         return provider;
     }
-    // The overseer walk's admission: the shared windows the provider
-    // measured judge the account, every bucket as it was read, and the
-    // record says the model's own window went unread.
-    if admit && provider.measured() {
+    // The shared windows the provider measured judge the account, every
+    // bucket as it was read, and the record says the model's own window
+    // went unread.
+    if provider.measured() {
         let mut admitted = provider;
         if let Value::Object(raw) = &mut admitted.raw {
             raw.insert("scope".to_owned(), Value::from("unread"));
         }
         return admitted;
     }
-    // A home with no credential file, one signed in by a token, is no
-    // reading: the provider's measured reading is the account's one, judged
-    // as a provider-only account is.
-    if provider.measured() && own.status == "no_credentials" {
-        return provider;
-    }
-    // This machine's reading carries no fresh window scoped to the model,
-    // or its own read failed: the account is unmeasured for it, with the
+    // This machine's reading holds no measured model window, or its own
+    // read failed: the account is unmeasured for it, with the
     // cause in its status and detail.
     let mut unmeasured = own;
     if unmeasured.measured() {
@@ -1032,11 +1048,9 @@ pub struct PickRequest {
     /// binding bucket is a model it never launches would meet its mark at
     /// once.
     pub binding_floor: bool,
-    /// Admit a Claude account whose shared windows the provider measured
-    /// and whose window scoped to the model nothing read, judged on the
-    /// shared windows with `scope: unread` on its record: the overseer
-    /// walk's question alone, where the account-wall succession covers the
-    /// unread window. Otherwise that account is unmeasured for the model.
+    /// The overseer walk's request to judge a Claude row with no window
+    /// scoped to the model on its shared windows, which every pick now does.
+    /// It has no reader since KEN-5807; KEN-5902 removes it.
     pub admit_unread_scope: bool,
     /// Pi's read of the model's key under the named root, on a model whose
     /// provider nothing bills (`--admit-unbilled`,
@@ -1143,10 +1157,10 @@ pub(crate) const WINDOWS: [Window; 3] = [
 pub(crate) const MODEL: &str = "model";
 
 /// The 5-hour window, which can stop a session hours before any plan
-/// window. No judgement but a launch's reads it: the listing rates no
-/// reading on it, so a roster line and a running session's own question
-/// read the plan windows alone. The usage cache also asks again a figure
-/// past its reset ([`cache::consumed_reset`]).
+/// window. A launch and a controller's question about its own account read
+/// it: the listing rates no reading on it, so a roster line and a running
+/// lane's own question read the plan windows alone. The usage cache also
+/// asks again a figure past its reset ([`cache::consumed_reset`]).
 pub(crate) const SESSION: Window = Window {
     bucket: "session",
     field: "session_5h_pct",
@@ -1312,8 +1326,9 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
     })
 }
 
-/// The projected room of one account on a window that can stop it: the
-/// binding window, or for a launch the 5-hour window, charged `S × burn`, one hour of burn per spender.
+/// The projected room of one account on a window that can stop it: each
+/// plan window it spends and, for a launch, the 5-hour window, charged
+/// `S × burn`, one hour of burn per spender; the least room decides.
 /// `S` is the sessions that will spend it: the fleet's live lanes on the
 /// account and the candidate a launch places beside them, a lane or a
 /// controller. Each is charged one hour, since a reading is retaken within
@@ -1345,10 +1360,12 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
 /// controller whose own account reaches its mark is moved.
 ///
 /// The selection score (`with_lane_selection_score`, `agent-runtime
-/// accounts pick`) is no charge: it is `headroom` weighted by the reset
-/// bonus `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the
-/// headroom, so among accounts with room the sooner reset is tried first
-/// and no reset time buys a launch past the bound.
+/// accounts pick`) is no charge: it is the least, over the projected
+/// windows, of each window's room weighted by its own reset bonus
+/// `1 + 1 / (1 + hours to that window's reset)`. It lies between the
+/// `headroom` and twice it, so among accounts with room the sooner reset is
+/// tried first and no reset time buys a launch past the bound, and it never
+/// rises as any window's usage does.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub headroom: f64,
@@ -1461,8 +1478,9 @@ pub fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
 }
 
 /// What a row's own reading answers before its word and its seat: an ended
-/// plan a full wall, a grant pool its grant's verdict, a Codex balance above
-/// the floor lifting a window wall, else the wall against `max`. The one
+/// plan a full wall, a grant pool its grant's verdict, a provider's stated
+/// refusal ([`AccountRow::rejected`]) a wall, a Codex balance above the
+/// floor lifting a window wall, else the wall against `max`. The one
 /// rule the judge and the listing's verdict read, so a roster line and a
 /// pick cannot disagree about one reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1486,6 +1504,8 @@ impl Reads {
             Reads::PlanEnded
         } else if let Some(grant) = grant {
             Reads::Grant(grant.verdict)
+        } else if row.rejected {
+            Reads::Wall("walled")
         } else if verdict == "walled" && credit_room(row, codex_floor) {
             Reads::Credits
         } else {
@@ -1956,7 +1976,7 @@ fn judge(
     let claims = facts.charges.get(&row.canon).copied().unwrap_or(0);
     // The lanes live at the reading's sample: the charged lanes that began
     // spending on the account at or before it. A reading with no sample
-    // age (a provider's row) is one lane's.
+    // age (a provider's row with no `observed-age`) is one lane's.
     let sampled = match row.usage_age_s {
         None => 1,
         Some(age) => {
@@ -1966,7 +1986,20 @@ fn judge(
             }) as u32
         }
     };
-    let binding = lane_binding(row, req.model.as_deref(), req.binding_floor);
+    // The 5-hour window, where the reading carries one beside a plan
+    // window, can stop a start, and stops a controller's session before its
+    // plan windows do: a launch projects it, and a controller's question
+    // about its own account reads it beside the plan windows, so the mark
+    // moves the controller before that window walls it.
+    let plan = lane_binding(row, req.model.as_deref(), req.binding_floor);
+    let session = (req.launch() || own_question(req))
+        .then(|| session_window(row))
+        .flatten()
+        .filter(|_| plan.is_some());
+    let binding = match (own_question(req), &session) {
+        (true, Some(session)) => plan.and_then(|b| max_binding(vec![b, session.clone()])),
+        (true, None) | (false, _) => plan,
+    };
     let wall = binding.as_ref().map(|b| b.pct);
     let pool = matches!(row.harness, Harness::Copilot | Harness::Pi);
     let overseer_choice = req.for_overseer && req.lane.is_none() && !pool;
@@ -1996,28 +2029,32 @@ fn judge(
     };
     let burn = f64::from(settings.burn_pct_per_hour);
     let project = |b: &Binding| projection(row, b, &spenders, burn);
-    // A start is judged on the windows that can stop it: the binding plan
-    // window, and the 5-hour window beside it where the reading carries
-    // one, the less projected room deciding (the binding at a tie).
-    let session = req
-        .launch()
-        .then(|| session_window(row))
-        .flatten()
-        .filter(|_| binding.is_some());
-    let projection = binding
+    // Each window that can stop the session is projected, the binding,
+    // every plan window the lane spends beside it and the 5-hour window,
+    // and the least projected room decides (the binding at a tie): a window
+    // with less raw room can hold more once each is charged at its own
+    // length's burn.
+    let windows: Vec<Binding> = match &binding {
+        Some(binding) => std::iter::once(binding.clone())
+            .chain(plan_windows(row, req.model.as_deref(), req.binding_floor))
+            .chain(session.clone())
+            .collect(),
+        None => Vec::new(),
+    };
+    let projections: Vec<Projection> = windows.iter().map(project).collect();
+    let projection = projections
         .iter()
-        .chain(session.as_ref())
-        .map(project)
-        .min_by(|a, b| a.headroom.total_cmp(&b.headroom));
+        .min_by(|a, b| a.headroom.total_cmp(&b.headroom))
+        .cloned();
     // A reading older than one lane at a window's burn takes to spend the
     // room it shows on that window below the bound vouches for no room
     // there, on every window that can stop the start: each plan window the
     // lane spends beside the binding, a model window a measured weekly burn
-    // leaves behind included, and the 5-hour window. A provider's row
-    // states no reading time, and the provider protocol serves a
-    // backed-off reading's figures only while that reading is fresh (orch's
-    // lane-host schema, Accounts rows), so it is judged on its figures
-    // alone.
+    // leaves behind included, and the 5-hour window. A provider's row with
+    // no `observed-age` states no reading time, and the provider protocol
+    // serves a backed-off reading's figures only while that reading is
+    // fresh (orch's lane-host schema, Accounts rows), so it is judged on its
+    // figures alone.
     let stale = req
         .launch()
         .then_some(row.usage_age_s)
@@ -2077,13 +2114,22 @@ fn judge(
             .and_then(|c| c.get("balance"))
             .and_then(Value::as_f64)
     } else {
-        projection.as_ref().map(|p| {
-            let hours = binding
-                .as_ref()
-                .and_then(|b| reset_epoch(b.resets_at.as_deref()))
+        let weighted = |p: &Projection| {
+            let hours = reset_epoch(p.window.resets_at.as_deref())
                 .map(|reset| (reset as f64 - now as f64).max(0.0) / 3600.0);
             p.headroom * reset_bonus(hours)
-        })
+        };
+        // Each window's room weighted by its own reset, the least ranking
+        // the account: weighting only the deciding window's room would let
+        // more spending on a window with a sooner reset raise the score as
+        // that window takes over the decision.
+        match &spent {
+            Some(_) => projection.as_ref().map(weighted),
+            None => projections
+                .iter()
+                .map(weighted)
+                .min_by(|a, b| a.total_cmp(b)),
+        }
     };
     let mut row = row.clone();
     row.state_end(today);
@@ -2875,6 +2921,98 @@ mod tests {
             lane_binding(&ended, Some("sonnet"), false).map(|b| (b.bucket, b.pct)),
             Some(("plan".to_owned(), 100.0))
         );
+    }
+
+    /// A launch is judged on its least projected room over every window
+    /// that can stop it, and ranked by the least of each window's room
+    /// weighted by its own reset. Each row: the
+    /// case, the rows, the request, the lanes charged per account, every
+    /// one of them live at the reading, and the account the pick lands on,
+    /// none where nothing qualifies.
+    /// - The weekly window binds at 80 and burns 0.01 points an hour
+    ///   measured; the Opus window at 79 burns the set 5 × 5/168 for each of
+    ///   15 sessions and leaves less room under a bound of 81.
+    /// - Account a's 5-hour window decides its room and resets in half an
+    ///   hour; account b's week decides with more room, a hundred hours to
+    ///   its reset, and outweighs a's week at that same reset.
+    /// - Account p's 5-hour window resets in half an hour, so its smaller
+    ///   room there outweighs account q's, whose 5-hour window resets in
+    ///   nearly five hours; p's week, with less room than q's, ranks it.
+    #[test]
+    fn the_least_projected_room_decides_and_the_least_weighted_room_ranks_the_account() {
+        let now = 1_800_000_000;
+        let at = |hours: f64| clock::iso_utc(now + (hours * 3600.0) as u64);
+        let measured = row(json!({
+            "alias": "m", "harness": "claude", "config_dir": "/h/.m", "measured_through": "local",
+            "status": "ok", "verdict": "room", "headroom_pct": 20, "binding_bucket": "weekly",
+            "binding_resets_at": at(100.0), "weekly_pct": 80, "usage_age_s": 0,
+            "usage_rate_state": "measured", "usage_rate_pct_per_min": 0.01 / 60.0,
+            "resets": {"weekly": at(100.0)},
+            "model_buckets": [{"label": "Opus", "pct": 79, "resets_at": at(100.0)}]
+        }));
+        let host = |dir: &str, weekly: u64, session: u64, session_reset: f64| {
+            row(json!({
+                "alias": dir, "harness": "claude", "config_dir": dir, "measured_through": "host",
+                "status": "ok", "verdict": "room", "headroom_pct": 100 - weekly,
+                "binding_bucket": "weekly", "binding_resets_at": at(100.0), "weekly_pct": weekly,
+                "session_5h_pct": session, "model_buckets": [],
+                "resets": {"weekly": at(100.0), "session": at(session_reset)}
+            }))
+        };
+        let opus = |lane: Option<&str>, max_pct: Option<u32>| PickRequest {
+            model: Some("claude-opus-5-5".to_owned()),
+            lane: lane.map(str::to_owned),
+            projected: lane.is_some(),
+            max_pct,
+            ..PickRequest::new(Harness::Claude)
+        };
+        let cases = [
+            (
+                "a model window under the binding week",
+                vec![measured],
+                opus(Some("/h/.m"), Some(81)),
+                vec![("/h/.m", 14)],
+                None,
+            ),
+            (
+                "a sooner reset on the deciding 5-hour window",
+                vec![host("/h/.a", 50, 60, 0.5), host("/h/.b", 45, 10, 3.0)],
+                opus(None, None),
+                vec![],
+                Some("/h/.b"),
+            ),
+            (
+                "the 5-hour window weighted by its own reset",
+                vec![host("/h/.q", 30, 50, 4.9), host("/h/.p", 40, 55, 0.5)],
+                opus(None, None),
+                vec![],
+                Some("/h/.p"),
+            ),
+        ];
+        let tokens = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+        let mut wrong = Vec::new();
+        for (case, rows, req, charges, want) in cases {
+            let facts = FleetFacts {
+                charges: charges
+                    .iter()
+                    .map(|(dir, n)| (wall::canon(dir), *n))
+                    .collect(),
+                started: charges
+                    .iter()
+                    .map(|(dir, n)| (wall::canon(dir), vec![now - 3600; *n as usize]))
+                    .collect(),
+                ..FleetFacts::default()
+            };
+            let answer = pick(&rows, &req, &facts, &settings(), &tokens, now);
+            let got = match &answer {
+                PickAnswer::Lane(judged) => Some(judged.row.config_dir.as_str()),
+                _ => None,
+            };
+            if got != want {
+                wrong.push(format!("{case}: {}", answer.reply()));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     /// The grammar every stated date is held to.

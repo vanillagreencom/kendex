@@ -12682,7 +12682,6 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
 /// this machine's reading holding none either: the real `successor` verb
 /// chooses it, judged on the shared windows, and names `scope: unread` on
 /// the successor, which the transfer publishes on the controller record.
-/// A lane's pick of the same account stays `unmeasured`.
 #[test]
 fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_the_scope() {
     let dir = tempfile::tempdir().unwrap();
@@ -12731,19 +12730,6 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
         !model.is_empty(),
         "the walk judged a model's window: {answer}"
     );
-    let lane = reply(&runner.run(&[
-        "lane",
-        "pick",
-        "--fleet",
-        "--harness",
-        "claude",
-        "--native-model",
-        model,
-        "--lane",
-        &account,
-    ]));
-    assert_eq!(lane["result"]["answer"], "unmeasured", "{lane}");
-    assert_eq!(lane["result"]["exit"], 5, "{lane}");
     runner.snapshot(&work.join("tmp/handoffs/OVERSEER-HANDOFF.md"));
     runner.transfer_started(&json!({
         "op": "request-transfer",
