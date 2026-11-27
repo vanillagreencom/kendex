@@ -30,7 +30,12 @@
 # and notices sent as markdown_text, an ask's deadline as Slack's date token,
 # a notice and an ask past its cap sent as Markdown continuations, a first
 # start reading Slack from the binding moment and posting nothing from the
-# mailbox's past but open asks, daily compaction retaining aged posts in live
+# mailbox's past but open asks, the start's mailbox floor passing over a
+# notice stamped in its own second and posting one stamped before it but
+# appended after, a damaged line, a refused position read and a timed-out
+# mailbox initialization each holding back no owner message, a live owner
+# message reading no position, a clock start from before positions kept, a
+# reply to a request the first queue pass accepted posted, daily compaction retaining aged posts in live
 # threads and removing inactive ones, aged unposted envelopes skipped,
 # a journal reset re-posting open asks alone,
 # owners re-resolved from the setting, a report whose file matches the pattern
@@ -505,7 +510,7 @@ assert_eq "$RC=$ERR1=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" \
 sk_poll "$GAMMA"
 assert_eq "$RC=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" "0=true" "the next poll succeeds"
 
-# --- a first start: Slack from the binding moment, the mailbox from the clock then ---------------
+# --- a first start: Slack from the binding moment, the mailbox from its committed position -------
 for n in 1 2 3; do sk_inject C777 U001 "history $n" >/dev/null; done
 PRE_PARENT="$(sk_inject C777 U001 'An adopted topic.')"
 PRE_REPLY="$(sk_inject C777 U001 'A reply before binding.' "$PRE_PARENT")"
@@ -515,21 +520,172 @@ mkdir -p "$DELTA/tmp/progress-reports"
 printf '# Old report\n' > "$DELTA/tmp/progress-reports/old.md"
 sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-reports/old.md" --file "$(sk_text n6 'Old report.')" >/dev/null
 sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a --effect none >/dev/null
-# The seed's `ids` are empty, so mail stamped in the seed's own second posts;
-# the past notices are aged out of that second, as mail already there is.
-sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'Old notice.')" 60
-sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'Old report.')" 60
 sk_run -- setup --root "$DELTA" --take C777
 assert_eq "$RC" 0 "a channel with history is adopted"
 sk_poll "$DELTA"
 assert_eq "$(asks C777 'Old notice.')=$(asks C777 'Old report.')=$(asks C777 'Still open?')" "0=0=1" \
   "the mailbox's past notices and report are not posted; its open ask is"
-assert_eq "$(jq -r 'select(.t == "start") | .at' "$(sk_journal "$DELTA")" | wc -l | tr -d ' ')" "1" "the start is journaled"
+assert_eq "$(jq -c 'select(.t == "start") | .position["to-overseer"].count' "$(sk_journal "$DELTA")" | tr '\n' ' ')" "3 " \
+  "the start journals the mailbox's committed position once"
 H4="$(sk_inject C777 U001 'history 4')"
 sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n7 'New notice.')" >/dev/null
 sk_poll "$DELTA"
 assert_eq "$(directives "$DELTA" | tail -n 1)" "C777:$H4 history 4" "the next message is routed"
 assert_eq "$(asks C777 'New notice.')" "1" "a notice written after the start is posted"
+
+# --- the first start's mailbox floor is the committed position, not the clock's second ----------
+# cutoff_poll ROOT EPOCH — one real RootRelay poll, its clock held at EPOCH.
+cutoff_poll() {
+  RC=0
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    python3 - "${SK_BIN%/*}/lib" "$1" "$2" 2>"$SK_TMP/err" <<'PY' || RC=$?
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import RootRelay
+from settings import load, load_presence
+root, now = Path(sys.argv[2]), float(sys.argv[3])
+settings = load()
+RootRelay(root, settings, load_presence(root), Slack(settings.token, settings.api_url), lambda: now).poll("UBOT")
+PY
+  ERR1="$(sed -n '1p' "$SK_TMP/err")"
+}
+CUT="$(sk_new_root cutoff-second)"
+sk_bind "$CUT"
+CUT_CH="$(sk_channel "$CUT")"
+sk_lm "$CUT" notice --item overseer --to owner --file "$(sk_text cut1 'Written in the start second.')" >/dev/null
+CUT_AT="$(jq -r 'select(.text == "Written in the start second.") | .at | fromdateiso8601' "$(sk_box "$CUT")/to-overseer.jsonl")" || exit 1
+cutoff_poll "$CUT" "$CUT_AT"
+assert_eq "$RC=$(asks "$CUT_CH" 'Written in the start second.')" "0=0" \
+  "a notice already in the mailbox, stamped in the start's own second, is not posted"
+LATE="$(sk_new_root cutoff-late)"
+sk_bind "$LATE"
+LATE_CH="$(sk_channel "$LATE")"
+# The relay's clock runs a minute ahead of lane-mail's, so the notice is
+# stamped before the start and appended after it.
+LATE_AT=$(( $(date -u +%s) + 60 ))
+cutoff_poll "$LATE" "$LATE_AT"
+sk_lm "$LATE" notice --item overseer --to owner --file "$(sk_text cut2 'Stamped before the start.')" >/dev/null
+cutoff_poll "$LATE" "$LATE_AT"
+assert_eq "$RC=$(asks "$LATE_CH" 'Stamped before the start.')" "0=1" \
+  "a notice stamped before the start and appended after it is posted"
+
+# --- a first start over a damaged mailbox line still delivers and seeds --------------------------
+DAMAGE="$(sk_new_root cutoff-damage)"
+sk_bind "$DAMAGE"
+DAMAGE_CH="$(sk_channel "$DAMAGE")"
+sk_lm "$DAMAGE" notice --item overseer --to owner --file "$(sk_text cut3 'Before the damage.')" >/dev/null
+printf '{"broken\n' >> "$(sk_box "$DAMAGE")/to-overseer.jsonl"
+DAMAGE_TS="$(sk_inject "$DAMAGE_CH" U001 'Delivered past the damage.')"
+sk_poll "$DAMAGE"
+assert_eq "$(directives "$DAMAGE")|$(jq -c 'select(.t == "start") | .position["to-overseer"].count' "$(sk_journal "$DAMAGE")")" \
+  "$DAMAGE_CH:$DAMAGE_TS Delivered past the damage.|2" \
+  "a damaged line refuses no seed: the owner message lands and the start counts the damaged line"
+
+# --- a refused position read delivers owner messages and leaves the seed to a later poll ---------
+# Each mode refuses the position read while tmp/position-refused stands, and
+# counts each attempt in tmp/position-reads: the store's own read refused, or
+# the mailbox's initialization timing out. A live delivery attempts none.
+while IFS='|' read -r mode reason; do
+  case "$mode" in
+    store)
+      sk_store_mutant "" '    validate_mailbox(box)
+    _, snapshots = stable_snapshots(box, time.monotonic() + timeout)' '    validate_mailbox(box)
+    with open(box.parent.parent / "position-reads", "a") as reads:
+        reads.write("read\n")
+    if (box.parent.parent / "position-refused").exists():
+        raise OSError("position-refused")
+    _, snapshots = stable_snapshots(box, time.monotonic() + timeout)' ;;
+    init)
+      sk_mutant init-timeout mailbox.py '                definitions = subprocess\.run\(' \
+        '                with open(self.root / "tmp/position-reads", "a") as reads:\n                    reads.write("read\\n")\n                if (self.root / "tmp/position-refused").exists():\n                    raise subprocess.TimeoutExpired("mailbox-definitions", 0)\n                definitions = subprocess.run(' ;;
+  esac
+  HELD="$(sk_new_root "cutoff-held-$mode")"
+  sk_bind "$HELD"
+  HELD_CH="$(sk_channel "$HELD")"
+  touch "$HELD/tmp/position-refused"
+  HELD_TS="$(sk_inject "$HELD_CH" U001 "Delivered while unseeded $mode.")"
+  sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text "cut4-$mode" "Before the seed $mode.")" >/dev/null
+  sk_poll "$HELD"
+  case "$ERR" in *"lane-mail-failed=$reason"*) REFUSED=yes ;; *) REFUSED=no ;; esac
+  assert_eq "$RC|$REFUSED|$(directives "$HELD")|$(jq -c 'select(.t == "start")' "$(sk_journal "$HELD")")" \
+    "1|yes|$HELD_CH:$HELD_TS Delivered while unseeded $mode.|" \
+    "$mode: a refused position read fails the poll, delivers the owner message and writes no start"
+  READS="$(wc -l < "$HELD/tmp/position-reads" | tr -d ' ')"
+  LIVE_TS="$(sk_inject "$HELD_CH" U001 "Live while unseeded $mode.")"
+  sk_event "$HELD" "$HELD_CH" "$LIVE_TS"
+  assert_eq "$RC|$(directives "$HELD" | tail -n 1)|$(( $(wc -l < "$HELD/tmp/position-reads") - READS ))" \
+    "0|$HELD_CH:$LIVE_TS Live while unseeded $mode.|0" \
+    "$mode: a live owner message while unseeded lands without a position read"
+  rm -- "${HELD:?}/tmp/position-refused"
+  sk_poll "$HELD"
+  sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text "cut5-$mode" "After the seed $mode.")" >/dev/null
+  sk_poll "$HELD"
+  HELD_BOUND="$(jq -r .bound_at "$HELD/tmp/slack/binding.json")" || exit 1
+  assert_eq "$RC|$(asks "$HELD_CH" "Before the seed $mode.")|$(asks "$HELD_CH" "After the seed $mode.")|$(jq -c 'select(.t == "start") | .position["to-overseer"].count' "$(sk_journal "$HELD")")|$(jq -r --arg bound "$HELD_BOUND" 'select(.t == "seen" and .ts == $bound) | .t' "$(sk_journal "$HELD")" | wc -l | tr -d ' ')" \
+    "0|0|1|1|1" \
+    "$mode: the next poll's seed passes over the mail already there and posts later mail, and the history seed is written once"
+  sk_bin_reset
+done <<'ROWS'
+store|position-refused
+init|timeout=30 command=mailbox-definitions
+ROWS
+
+# --- a journal seeded before positions keeps its clock floor -------------------------------------
+CLOCK="$(sk_new_root cutoff-clock)"
+sk_bind "$CLOCK"
+CLOCK_CH="$(sk_channel "$CLOCK")"
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut6 'Aged before the floor.')" >/dev/null
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut7 'Named in the floor second.')" >/dev/null
+sk_age_envelope "$CLOCK" "$(notice_id "$CLOCK" 'Aged before the floor.')" 60
+CLOCK_ID="$(notice_id "$CLOCK" 'Named in the floor second.')"
+CLOCK_AT="$(jq -r --arg id "$CLOCK_ID" 'select(.id == $id) | .at' "$(sk_box "$CLOCK")/to-overseer.jsonl")" || exit 1
+jq -cn --arg ts "$(jq -r .bound_at "$CLOCK/tmp/slack/binding.json")" --arg at "$CLOCK_AT" --arg id "$CLOCK_ID" \
+  '{t: "seen", ts: $ts}, {t: "start", at: $at, ids: [$id]}' > "$(sk_journal "$CLOCK")" || exit 1
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut8 'Written after the floor.')" >/dev/null
+sk_poll "$CLOCK"
+assert_eq "$RC|$(asks "$CLOCK_CH" 'Aged before the floor.')|$(asks "$CLOCK_CH" 'Named in the floor second.')|$(asks "$CLOCK_CH" 'Written after the floor.')" \
+  "0|0|0|1" \
+  "a clock start from before positions passes over mail before its second and named in it, and posts later mail"
+
+# --- a reply to a queued request accepted before the first poll posts -------------------------------
+# One queue pass drains the request; the overseer's reply lands before the
+# relay's first poll, which a later process runs.
+QSEED="$(sk_new_root cutoff-queue)"
+sk_bind "$QSEED"
+QSEED_CH="$(sk_channel "$QSEED")"
+QSEED_TS="$(sk_inject "$QSEED_CH" U001 'A queued request.')"
+mkdir -p -m 700 "$QSEED/tmp/slack/inbox" || exit 1
+sk_ctl /_test/state | jq --arg c "$QSEED_CH" --arg ts "$QSEED_TS" '.messages[$c][] | select(.ts == $ts) | . + {channel: $c}' \
+  > "$QSEED/tmp/slack/inbox/request.json" || exit 1
+PROBE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" SLACK_INBOUND=queue \
+  SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 - "${SK_BIN%/*}/lib" "$QSEED" 2>"$SK_TMP/err" >/dev/null <<'PY' || PROBE_RC=$?
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import Relay
+from settings import load
+settings = load()
+assert Relay([Path(sys.argv[2])], settings, Slack(settings.token, settings.api_url)).poll_queue()
+PY
+QSEED_BOUND="$(jq -r .bound_at "$QSEED/tmp/slack/binding.json")" || exit 1
+assert_eq "$PROBE_RC|$(jq -r --arg bound "$QSEED_BOUND" 'select(.t == "seen" or .t == "start") | if .t == "seen" then (.ts == $bound | tostring) else .t end' "$(sk_journal "$QSEED")" | tr '\n' ' ')" \
+  "0|true start " \
+  "the first queue pass journals seen at the binding moment before start"
+QSEED_ID="$(jq -r --arg d "$QSEED_CH:$QSEED_TS" 'select(.delivery_id == $d) | .id' "$(sk_box "$QSEED")/to-lane.jsonl")" || exit 1
+sk_lm "$QSEED" notice --item overseer --to owner --ref "$QSEED_ID" --file "$(sk_text cut9 'Reply before the first poll.')" >/dev/null
+sk_poll "$QSEED" SLACK_INBOUND=queue
+assert_eq "$PROBE_RC|$RC|${QSEED_ID:+delivered}|$(asks "$QSEED_CH" 'Reply before the first poll.')" "0|0|delivered|1" \
+  "a reply to a request the first queue pass accepted, written before the first poll, posts"
 
 # --- an external parent missed during disconnect is discovered by catch-up ------
 for mode in production control; do
@@ -655,8 +811,6 @@ ROWS
 
 # --- a journal reset re-posts open asks alone ----------------------------------------------------------
 mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
-# Out of the reset seed's second, as for the first start's past notices.
-sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'New notice.')" 60
 sk_poll "$DELTA"
 assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
 assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"
@@ -1168,7 +1322,7 @@ assert_eq "$RC=$(jq -r '.last_poll_ok' "$ZETA/tmp/slack/status.json")" "0=true" 
 sk_bin_reset
 
 
-sk_mutant start relay.py 'elif before\(state\.start_at, state\.start_ids, at, env_id\):' 'elif False:'
+sk_mutant start relay.py 'elif self\.started_before\(envelope\):' 'elif False:'
 ETA="$(sk_new_root eta)"
 sk_lm "$ETA" notice --item overseer --to owner --file "$(sk_text n9 'Before the start.')" >/dev/null
 sk_bind "$ETA"

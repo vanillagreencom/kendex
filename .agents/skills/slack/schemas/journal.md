@@ -62,7 +62,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `t` | Fields | Meaning |
 |-----|--------|---------|
 | `seen` | `ts` | The channel's history is read past this stamp |
-| `start` | `at`, `ids` | The seed a start whose journal holds no `start` line writes |
+| `start` | `position` | The mailbox seed a start whose journal holds no `start` line writes |
 | `hold` | `at` | `SLACK_JARVIS_SESSION_FILE` turned fresh |
 | `resume` | `from_at`, `at`, `seen`, `skipped`, `asks` | The hold ended |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread`, `generation` | A Slack message delivered to the mailbox |
@@ -86,13 +86,16 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`seen`**
 
 - `compact` keeps the last one.
-- A message event never writes it: a history read does, and so does a start whose journal holds no `start` line, which writes the binding moment.
+- A message event never writes it: a history read does, and so does a start whose journal holds no `seen` line, which writes the binding moment.
 
 **`start`**
 
 - It is written after its `seen`, so connection lines alone never count as seeded.
-- `at` is the second it is written, before the first delivery. `ids` names envelopes stamped in that second; the relay writes it empty.
-- A notice or answer before it, or in that second and named, is never posted; an open ask is.
+- `position` is the mailbox store's committed position when it is written, before the first post: for `to-overseer` and `to-lane`, the `count` of complete lines, compacted rows included, and the `first` id.
+- A notice or answer on a line at or below its box's `count` is never posted. An open ask still posts. Mail appended later posts, whatever second it is stamped in. A replaced box, one that opens with another `first`, is not passed over.
+- While `start` is unwritten, each poll reads the position before its deliveries, and so does the first pass that drains queued owner messages, once. An owner message's own delivery never reads it.
+- The position read validates no envelope. A read that refuses leaves `start` unwritten: owner messages are still delivered, mailbox posts wait, and the first poll whose read succeeds writes it.
+- A journal written before positions holds `at` and `ids` instead. It keeps that clock floor: a notice or answer stamped before `at`, or in that second and named in `ids`, is never posted.
 
 **`hold`**
 
@@ -328,7 +331,7 @@ A notice that answers the `/report` request with `lane-mail notice --ref` reache
 
 ## Reconnects and history
 
-Socket Mode reconnects after a dropped connection. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
+Socket Mode reconnects after a dropped connection. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts after the last line in the mailbox, so it does not replay old posts. Open questions within the history limit still post.
 
 ## Lost responses
 

@@ -72,7 +72,7 @@ while IFS='|' read -r name pattern replacement; do
     >"$SK_TMP/$name-control.log" 2>&1 || PROBE_RC=$?
   sk_assert_red "$PROBE_RC" 0 "$name: removing the reader rule fails the same probe"
 done <<'ROWS'
-cache|previous["stamp"] == before|True
+cache|previous["stamp"] == stamp|True
 safety|if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):|if False:
 stability|if retry or writer() or before != stamp():|if retry or writer():
 deadline|if time.monotonic() >= deadline:|if False:

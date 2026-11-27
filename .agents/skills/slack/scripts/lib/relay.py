@@ -53,11 +53,19 @@ mark on delivery and later polls, so a stop between the delivery and its
 mark leaves the mark to the next poll. Each delivery attempts eyes once,
 without retrying a new refusal later in the same poll.
 
-A start whose journal holds no `start` line seeds both positions before it
-reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
-and the mailbox from the clock then, so notices and answers already there
-are never re-posted. That seed reads no mailbox, so a mailbox read that
-refuses holds posts alone, never an owner's message or the seed. Open asks
+A first start seeds Slack once, from the binding moment, before its first
+delivery, so a channel's earlier history is never delivered. It seeds the
+mailbox before its first mailbox post, from the store's committed position:
+each box's count of complete lines and its first id. A notice or answer on
+a line at or below that count is never posted, and one appended after it
+posts whatever second it is stamped in. A poll reads that position before
+its deliveries, and so does the first pass that drains queued owner
+messages, once; an owner message's own delivery never reads it. The
+position read validates no envelope, so a damaged line defers no seed, and
+a mailbox read that refuses holds posts alone, never an owner's message. A
+position read that refuses all the same leaves the mailbox seed to the
+first poll it succeeds on, and mail appended before that poll is not
+posted. A journal seeded before positions keeps its clock floor. Open asks
 are posted whatever their age inside SLACK_THREAD_DAYS, since they still want
 an answer. A reserved ask, which no default closes, is posted once more in
 its thread, naming the owner, on the first poll past its deadline while it
@@ -127,6 +135,7 @@ from store import (
     READ,
     SEEN,
     Binding,
+    ClockFloor,
     Journal,
     RelayLock,
     LOCK,
@@ -298,12 +307,12 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
     return ids
 
 
-def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
-    """Whether an envelope stamped `at` is at or before the `start` floor."""
-    if not floor_at:
+def clock_before(floor: ClockFloor, envelope: Dict) -> bool:
+    """Whether an envelope is at or before a journal's clock floor."""
+    if not floor.at:
         return False
-    floor = at_epoch(floor_at)
-    return at < floor or at == floor and env_id in floor_ids
+    at, start = at_epoch(str(envelope["at"])), at_epoch(floor.at)
+    return at < start or at == start and str(envelope["id"]) in floor.ids
 
 
 
@@ -497,6 +506,7 @@ class RootRelay:
         self.due: Optional[Set[str]] = set() if settings.inbound == "socket" else None
         self.catch_up_at = 0.0  # Slack's Retry-After, waited across polls
         self.discovered = False
+        self.inbound_seed_tried = False
         # The status record carries the compaction day across restarts; the
         # journal holds deliveries and positions alone.
         record = read_status(path) or {}
@@ -535,32 +545,65 @@ class RootRelay:
             )
             write_binding(self.path, self.binding)
 
-    def seed(self) -> None:
-        """The positions a start with no seeds begins from, journaled so a
-        restart keeps them: Slack's history past the binding moment, and the
-        mailbox past this moment, before any delivery. The clock seeds the
-        mailbox, never a read of it, so a refused read defers no seed while
-        owner messages land. `start` goes last, so a stop between the two
-        lines seeds again. Its `ids` stay empty: an envelope stamped in this
-        second posts, so none written after the seed is passed over."""
-        self.journal.append(t="seen", ts=self.binding.bound_at)
-        self.journal.append(t="start", at=format_at(self.clock()), ids=[])
+    def seed_history(self) -> None:
+        """Slack's history past the binding moment, journaled once, before
+        the first delivery, so a restart keeps it."""
+        if not self.state.history_seeded:
+            self.journal.append(t="seen", ts=self.binding.bound_at)
+
+    def seed_before_inbound(self) -> None:
+        """The first pass that drains queued owner messages tries the mailbox
+        seed before them, once, so a reply to a request it accepts lands past
+        the floor. The history seed goes first, since a written `start` ends
+        every later history seed. A refused try leaves the seed to the next
+        poll."""
+        if not self.state.seeded and not self.inbound_seed_tried:
+            self.inbound_seed_tried = True
+            self.seed_history()
+            self.seed_mailbox()
+
+    def seed_mailbox(self) -> None:
+        """The mailbox past the store's committed position now, journaled
+        before the first post, so a restart keeps it. Mail on a line at or
+        below that position never posts; mail appended after it does,
+        whatever its stamp. The position read validates no envelope, so a
+        damaged line defers no seed. A read that refuses all the same holds
+        posts alone and leaves `start` to the next poll, since owner messages
+        need only `seen`. `start` goes after `seen`, so a stop between the
+        two lines seeds the mailbox again."""
+        try:
+            position = self.mail.position()
+        except Refusal as err:
+            self.post_failed = err
+            return
+        self.journal.append(t="start", position=position)
+
+    def started_before(self, envelope: Dict) -> bool:
+        """Whether the first start's `start` floor passed over an envelope."""
+        start = self.state.start
+        if start is None:
+            return False
+        if isinstance(start, ClockFloor):
+            return clock_before(start, envelope)
+        return self.mail.passed(start, envelope)
 
     # -- inbound: Slack to the mailbox --------------------------------------
 
     def ready(self) -> None:
         """What every delivery needs first: the owners as the setting names
-        them, and the seeds of a start whose journal holds none: a journal
-        of connection lines alone, which a connect writes before the first
-        poll, is not seeded."""
+        them, and the history seed of a start whose journal holds none: a
+        journal of connection lines alone, which a connect writes before the
+        first poll, is not seeded. A delivery reads no mailbox position."""
         self.owners_current()
         if not self.state.seeded:
-            self.seed()
+            self.seed_history()
 
     def poll(self, bot_user: str) -> None:
         self.post_failed = None
         self.prepare_hold()
         self.ready()
+        if not self.state.seeded:
+            self.seed_mailbox()
         self.mark_seen(self.state.delivered)
         for message in list(self.pending_live.values()):
             try:
@@ -922,7 +965,7 @@ class RootRelay:
                 page = dict(original, id="owner-unread:" + original["id"])
                 if (page["id"] in self.state.carried or page["id"] in self.state.unknown
                         or at_epoch(original["at"]) < self.settings.horizon(self.clock())
-                        or before(self.state.start_at, self.state.start_ids, at_epoch(original["at"]), original["id"])):
+                        or self.started_before(original)):
                     continue
                 if original.get("line") is None:
                     self.post_failed = Refusal("lane-mail-failed", f"id={original['id']} field=line unavailable")
@@ -1072,7 +1115,7 @@ class RootRelay:
                           if e.get("ref") in owner_notices and env_id not in state.carried
                           and env_id not in self.skipped and (e["line"] is None or e["line"] > seen)
                           and at_epoch(str(e["at"])) >= horizon
-                          and not before(state.start_at, state.start_ids, at_epoch(str(e["at"])), env_id)}
+                          and not self.started_before(e)}
         pending_files = set(state.pending_files.values())
 
         routed = []
@@ -1126,7 +1169,7 @@ class RootRelay:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
-            elif before(state.start_at, state.start_ids, at, env_id):
+            elif self.started_before(envelope):
                 route = "skip"
             elif reply:
                 route = "reply"
@@ -1646,6 +1689,7 @@ class Relay:
         clean = True
         for root in self.roots:
             try:
+                root.seed_before_inbound()
                 drain(root, self.bot_user)
             except Exception as err:
                 self.root_failed(root, err)

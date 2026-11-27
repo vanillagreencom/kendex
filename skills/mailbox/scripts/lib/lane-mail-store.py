@@ -170,30 +170,19 @@ def receipt_cursor(box, value, seen, absent, count, files=None):
     return str(count) if seen > count else value or "0"
 
 
-def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_receipts=False):
-    """Cache numbered snapshots; read cursor changes without launching lane-mail.
+BOXES = ("to-overseer", "to-lane")
+
+
+def stable_snapshots(box, deadline, cached=lambda stamp: False):
+    """Both boxes' numbered snapshots, each under its shared flock, or the
+    stamp alone with None while `cached` accepts it.
 
     flock writers hold the file inode. Directory-mutex writers on macOS
-    publish their mutex before changing bytes or numbering. A read is usable
-    only with unchanged stamps and no such writer during the snapshot.
-    strict_receipts lets a paging caller refuse a missed receipt instead of
-    using the legacy zero fallback; receipt_cursor owns that judgement.
-
-    The caller hands both boxes over, so a damaged line past the count the
-    box's own consumer keeps, to-lane.cursor or to-overseer.seen, refuses
-    envelope-invalid as `events --box` does. That count moves without a
-    mailbox write, so it is read on every call that holds damage, and only
-    then.
+    publish their mutex before changing bytes or numbering. A snapshot is
+    usable only with unchanged stamps and no such writer during the read.
     """
     import fcntl
-    validate_mailbox(box)
-    # The caller's package supplies jq_defs and installs apart from this
-    # one: a caller from before the damaged-line rule hands no
-    # mailbox_line_invalid over, and jq's compile error would not name it.
-    if "def mailbox_line_invalid:" not in jq_defs:
-        raise StoreRefusal("definition-unavailable", "mailbox_line_invalid")
-    paths = [box / name for name in ("to-overseer.jsonl", "to-lane.jsonl")]
-    deadline = time.monotonic() + timeout
+    paths = [box / f"{name}.jsonl" for name in BOXES]
 
     def stamp():
         result = []
@@ -211,11 +200,8 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
 
     while True:
         before = stamp()
-        # A missing tracker outcome can expire without a writer changing a file.
-        release_at = previous.get("release_at")
-        if (previous and previous["stamp"] == before and not writer()
-                and (release_at is None or time.time() < release_at)):
-            break
+        if cached(before) and not writer():
+            return before, None
         if time.monotonic() >= deadline:
             raise StoreRefusal("lock-failed", box)
         if writer():
@@ -244,6 +230,65 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
         if retry or writer() or before != stamp():
             time.sleep(min(0.1, max(0, deadline - time.monotonic())))
             continue
+        return before, snapshots
+
+
+def committed(box, timeout=30):
+    """Each box's committed position: its `count` of complete logical lines,
+    compacted rows included, and its `first` id: the one its `.numbering`
+    record carries, or else the id on its first line.
+
+    No envelope is validated, so a damaged line that refuses read_events
+    never refuses this read. A writer's unterminated fragment is not committed:
+    its line is past the count once the writer completes it. Slack's relay
+    journals this reading as its first start's mailbox floor.
+    """
+    validate_mailbox(box)
+    _, snapshots = stable_snapshots(box, time.monotonic() + timeout)
+    return {name: {"count": snapshot["count"], "first": snapshot["first"]}
+            for name, snapshot in zip(BOXES, snapshots)}
+
+
+def passed(position, row, previous):
+    """Whether a read_events row was already committed at `position`, a
+    committed() reading: on a line at or below its box's count in the box
+    counted, never a replacement box that opens with another first id.
+    `previous` is the read_events cache the row was read into; the rows
+    carry no first id, since they match `lane-mail events` output. A row
+    whose line is unknown was not passed."""
+    taken = position.get(row.get("box"))
+    line = row.get("line")
+    return (taken is not None and previous.get("firsts", {}).get(row["box"]) == taken["first"]
+            and type(line) is int and line <= taken["count"])
+
+
+def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_receipts=False):
+    """Cache numbered snapshots; read cursor changes without launching lane-mail.
+
+    strict_receipts lets a paging caller refuse a missed receipt instead of
+    using the legacy zero fallback; receipt_cursor owns that judgement.
+
+    The caller hands both boxes over, so a damaged line past the count the
+    box's own consumer keeps, to-lane.cursor or to-overseer.seen, refuses
+    envelope-invalid as `events --box` does. That count moves without a
+    mailbox write, so it is read on every call that holds damage, and only
+    then.
+    """
+    validate_mailbox(box)
+    # The caller's package supplies jq_defs and installs apart from this
+    # one: a caller from before the damaged-line rule hands no
+    # mailbox_line_invalid over, and jq's compile error would not name it.
+    if "def mailbox_line_invalid:" not in jq_defs:
+        raise StoreRefusal("definition-unavailable", "mailbox_line_invalid")
+    deadline = time.monotonic() + timeout
+
+    def cached(stamp):
+        # A missing tracker outcome can expire without a writer changing a file.
+        release_at = previous.get("release_at")
+        return bool(previous) and previous["stamp"] == stamp and (release_at is None or time.time() < release_at)
+
+    before, snapshots = stable_snapshots(box, deadline, cached)
+    if snapshots is not None:
         program = jq_defs + OBJECTS_JQ + r'''
           . as $in | [range(0; 2) as $b | $in[$b] as $box
             | objects($box)[] | .line as $line | .envelope
@@ -266,8 +311,8 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
         previous.update(stamp=before, rows=projected["rows"], release_at=projected["release_at"],
                         answered=set(projected["answered"]),
                         directives=projected["directives"], count=snapshots[1]["count"],
+                        firsts={name: snapshot["first"] for name, snapshot in zip(BOXES, snapshots)},
                         damaged=projected["damaged"])
-        break
     floors = (lambda: read_seen(box), lambda: read_cursor(box)[1])
     for name, lines, floor in zip(("to-overseer", "to-lane"), previous["damaged"], floors):
         seen = floor() if lines else 0

@@ -19,7 +19,7 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Callable, Dict, List, Optional, Set
+from typing import BinaryIO, Callable, Dict, FrozenSet, List, Optional, Set, Union
 
 from refusals import LockRefusal, Refusal
 
@@ -151,16 +151,27 @@ class Thread:
 
 
 
+@dataclass(frozen=True)
+class ClockFloor:
+    """A `start` line written before mailbox positions: the UTC second `at`
+    and the ids stamped in that second that it passed over."""
+
+    at: str
+    ids: FrozenSet[str]
+
+
 @dataclass
 class State:
     """The journal replayed: what was carried, what is bound, where to read."""
 
     seen_ts: str = "0"
-    start_at: str = ""
-    # Whether a `start` line was replayed, the last line of the first
+    # Whether a `seen` line was replayed, the first line of the first
     # start's seeds; connection lines alone leave it False.
-    seeded: bool = False
-    start_ids: Set[str] = field(default_factory=set)
+    history_seeded: bool = False
+    # The `start` line replayed, the last of those seeds: the mailbox
+    # store's committed position, or the clock floor of a journal seeded
+    # before positions. None until it is written.
+    start: Optional[Union[Dict, ClockFloor]] = None
     held: bool = False
     hold_at: str = ""
 
@@ -176,6 +187,10 @@ class State:
     ignored: Dict[str, str] = field(default_factory=dict)
     marks: Dict[str, str] = field(default_factory=dict)
 
+    @property
+    def seeded(self) -> bool:
+        return self.start is not None
+
     def post_thread(self, envelope_id: str) -> Optional[str]:
         """Select an outbound thread without discarding its journal provenance.
         A known-missing thread sends later posts to the channel instead."""
@@ -188,10 +203,12 @@ class State:
         kind = line.get("t")
         if kind == "seen":
             self.seen_ts = str(line["ts"])
+            self.history_seeded = True
         elif kind == "start":
-            self.start_at = str(line["at"])
-            self.start_ids = {str(i) for i in line["ids"]}
-            self.seeded = True
+            # A journal seeded before positions keeps its clock floor: a
+            # position taken now would pass over mail it has not carried yet.
+            self.start = (dict(line["position"]) if "position" in line
+                          else ClockFloor(str(line["at"]), frozenset(str(i) for i in line["ids"])))
         elif kind == "hold":
             self.held = True
             self.hold_at = str(line["at"])

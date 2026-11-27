@@ -385,14 +385,11 @@ sk_rebind_at() {
   jq --arg t "$2" '.bound_at = $t' "$1/tmp/slack/binding.json" > "$SK_TMP/rebind.json" && cp "$SK_TMP/rebind.json" "$1/tmp/slack/binding.json"
 }
 # sk_age_envelope ROOT ID SECONDS — the envelope's `at` in the mailbox moved
-# SECONDS into the past, the fixture's own file edited in place. A journal
-# `start` floor the envelope was past moves back to its new `at`: the seed is
-# the clock at the first poll, so aging an envelope written after that poll
-# would otherwise put it before the seed, which no real envelope can reach.
+# SECONDS into the past, the fixture's own file edited in place.
 sk_age_envelope() {
-  python3 - "$(sk_box "$1")" "$2" "$3" "$(sk_journal "$1")" <<'PY'
+  python3 - "$(sk_box "$1")" "$2" "$3" <<'PY'
 import datetime, json, pathlib, sys
-box, env_id, seconds, journal = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), pathlib.Path(sys.argv[4])
+box, env_id, seconds = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 moved = None
 for name in ("to-overseer.jsonl", "to-lane.jsonl"):
@@ -409,17 +406,6 @@ for name in ("to-overseer.jsonl", "to-lane.jsonl"):
         lines.append(json.dumps(line))
     path.write_text("".join(l + "\n" for l in lines))
 assert moved is not None, f"sk_age_envelope: no envelope {env_id} in {box}"
-if journal.is_file():
-    lines = []
-    for raw in journal.read_text().splitlines():
-        line = json.loads(raw)
-        if line.get("t") == "start" and line["at"]:
-            floor = datetime.datetime.strptime(line["at"], FORMAT)
-            past = moved[0] > floor or moved[0] == floor and env_id not in line["ids"]
-            if past and moved[1] < floor:
-                line["at"] = moved[1].strftime(FORMAT)
-        lines.append(json.dumps(line))
-    journal.write_text("".join(l + "\n" for l in lines))
 PY
 }
 

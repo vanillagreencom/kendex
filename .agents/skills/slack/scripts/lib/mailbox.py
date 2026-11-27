@@ -55,6 +55,7 @@ class LaneMail:
         self.script = root / LANE_MAIL
         self.reported_fields: Set[Tuple[str, str]] = set()
         self.reader = None
+        self.store = None
         self.snapshots: Dict = {}
         self.jq_defs = ""
         self.box: Optional[Path] = None
@@ -68,8 +69,8 @@ class LaneMail:
         except subprocess.TimeoutExpired as err:
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
 
-    def _read_events(self, receipts: bool = False, strict_receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
-        deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
+    def _load(self, deadline: float) -> None:
+        """Load the mailbox store module and resolve this root's mailbox once."""
         if self.reader is None:
             path = MAILBOX_READ_FILES[0]
             spec = importlib.util.spec_from_file_location("lane_mail_store", path)
@@ -88,14 +89,17 @@ class LaneMail:
             # MAILBOX_LINE_JQ, and its read_events calls none; the empty
             # default keeps that pairing reading. It goes once Slack's
             # mailbox dependency can no longer resolve to such a package.
-            definitions = subprocess.run(
-                [shell, "-c", 'set -euo pipefail; . "$1"; . "$2"; '
-                 'mailbox_root="$(mailbox_common_root "$3")"; '
-                 'printf "%s\\0%s" "$mailbox_root" "${MAILBOX_LINE_JQ-}$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
-                 "mailbox-definitions", str(MAILBOX_READ_FILES[1]),
-                 str(MAILBOX_READ_FILES[2]), str(self.root)],
-                capture_output=True, text=True, timeout=max(0, deadline - time.monotonic()),
-            )
+            try:
+                definitions = subprocess.run(
+                    [shell, "-c", 'set -euo pipefail; . "$1"; . "$2"; '
+                     'mailbox_root="$(mailbox_common_root "$3")"; '
+                     'printf "%s\\0%s" "$mailbox_root" "${MAILBOX_LINE_JQ-}$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
+                     "mailbox-definitions", str(MAILBOX_READ_FILES[1]),
+                     str(MAILBOX_READ_FILES[2]), str(self.root)],
+                    capture_output=True, text=True, timeout=max(0, deadline - time.monotonic()),
+                )
+            except subprocess.TimeoutExpired as err:
+                raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command=mailbox-definitions") from err
             if definitions.returncode != 0:
                 raise Refusal("lane-mail-failed", definitions.stderr.strip())
             # Overseer mail belongs to the main checkout; the installed
@@ -103,7 +107,12 @@ class LaneMail:
             # containing newlines without splitting the shared definitions.
             mailbox_root, self.jq_defs = definitions.stdout.split("\0", 1)
             self.box = Path(mailbox_root) / "tmp" / "lane-mail" / "overseer"
+            self.store = module
             self.reader = reader
+
+    def _read_events(self, receipts: bool = False, strict_receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
+        deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
+        self._load(deadline)
         try:
             options = {}
             if strict_receipts:
@@ -230,6 +239,32 @@ class LaneMail:
         _, receipts = self._read_events(receipts=True, strict_receipts=strict)
         assert receipts is not None, "the mailbox store must return requested receipts"
         return receipts
+
+    def _position_rule(self, name: str):
+        # A mailbox package from before committed positions has neither
+        # function; refusing keeps a relay beside it from posting every row
+        # its floor passed over.
+        rule = getattr(self.store, name, None)
+        if not callable(rule):
+            raise Refusal("lane-mail-failed", f"reader={name} capability=position unavailable")
+        return rule
+
+    def position(self) -> Dict:
+        """The mailbox store's committed position of both boxes, read
+        without validating any envelope."""
+        deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
+        self._load(deadline)
+        committed = self._position_rule("committed")
+        try:
+            return committed(self.box, timeout=max(0, deadline - time.monotonic()))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise Refusal("lane-mail-failed", str(error)) from error
+
+    def passed(self, position: Dict, envelope: Dict) -> bool:
+        """The store's judgement of whether an envelope events() returned
+        was committed at `position`."""
+        assert self.store is not None, "an envelope to judge comes from a mailbox read"
+        return bool(self._position_rule("passed")(position, envelope, self.snapshots))
 
     def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats
