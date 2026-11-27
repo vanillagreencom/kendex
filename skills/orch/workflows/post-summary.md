@@ -1,6 +1,6 @@
 # Post Summary Workflow
 
-Post the session summary to the pull request and the tracker. Hand context to the downstream issues that need it.
+Post the session summary in full on the pull request, and one outcome line on the tracker item. Hand context to the downstream issues that need it.
 
 | Command | Behavior |
 |---------|----------|
@@ -39,7 +39,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 1. Write the summary with the harness file-write tool to `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`).
 2. Bind that path as `SUMMARY_FILE`.
-3. With a `pr_number`, post it on the pull request:
+3. With a `pr_number`, post it on the pull request. Bind the `url` the reply prints as `SUMMARY_URL`:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
@@ -47,10 +47,13 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 With no `pr_number`, post no pull-request comment.
 
-**Linear only**, post it on the issue:
+**Linear only**, post on the issue the file bound as `ITEM_FILE`:
+
+- With a `pr_number`, the item gets one outcome line: the summary's opening sentence, then `Summary: [SUMMARY_URL]`. Write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/post-summary-outcome-[ISSUE_ID].md`, and bind that path as `ITEM_FILE`. The full text stays on the pull request.
+- With no `pr_number`, `ITEM_FILE` is `SUMMARY_FILE`, and the item gets the full summary.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
+.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$ITEM_FILE"
 ```
 
 ```markdown
