@@ -8773,16 +8773,29 @@ fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() 
     }
 }
 
+/// The checkout a resume starts from, by what stands before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Checkout {
+    /// One commit behind its origin, with no change: the sync follows.
+    Behind,
+    /// Behind, with a tracked change: the sync refuses `dirty`.
+    Dirty,
+    /// Behind, under a controller whose identity reads live: nothing syncs.
+    Live,
+}
+
 /// A resume brings its checkout to the landed base through the real
-/// `sync-base` before the start: a checkout one commit behind its origin
-/// resumes at the origin's head, and one with a tracked change still
-/// resumes, left where it stood, its line led by the sync's refusal key at
-/// the exit apart from a refusal's, a failed start's and an unconfirmed
-/// one's.
+/// `sync-base` before its start runs, read by the harness itself as it
+/// starts: a clean checkout one commit behind its origin starts at the
+/// origin's head; one with a tracked change still starts, left where it
+/// stood, its line led by the sync's refusal key at the exit apart from a
+/// refusal's, a failed start's and an unconfirmed one's; one under a
+/// controller that still runs never moves, and the start refuses it
+/// `overseer-live`.
 #[test]
 fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused_follow() {
     let id = "4d2f6b3c-5e7a-4b8c-9d1e-2f3a4b5c6d7e";
-    for dirty in [false, true] {
+    for checkout in [Checkout::Behind, Checkout::Dirty, Checkout::Live] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut runner = suite_runner(&server, "stub-resume");
@@ -8792,6 +8805,7 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         let project = runner.state_dir().to_path_buf();
         plant_claude_session(&project, &project, id);
         let state = project.join(agent_runtime::record::FLEET_FILE_NAME);
+        let controller = Owned::sleep();
         let mut gone = pending(&project);
         gone["server"] = json!("1");
         gone["server_start"] = json!(1);
@@ -8800,6 +8814,10 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         gone["generation"] = json!(4);
         gone["session_id"] = json!(id);
         gone["exit"] = json!({"run": {"generation": 4}});
+        if checkout == Checkout::Live {
+            gone["harness_pid"] = json!(controller.pid().to_string());
+            gone["harness_start"] = json!(controller.start());
+        }
         let mut fleet = runner.fleet();
         fleet["controller"] = gone;
         runner.write_fleet(&fleet);
@@ -8849,8 +8867,10 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         };
         git(origin.path(), &["init", "-q", "--bare", "-b", "main"]);
         git(&project, &["symbolic-ref", "HEAD", "refs/heads/main"]);
-        git(&project, &["config", "gc.auto", "0"]);
-        git(&project, &["config", "maintenance.auto", "false"]);
+        for repository in [origin.path(), project.as_path()] {
+            git(repository, &["config", "gc.auto", "0"]);
+            git(repository, &["config", "maintenance.auto", "false"]);
+        }
         std::fs::write(project.join("tracked.txt"), "one\n").unwrap();
         git(&project, &["add", "tracked.txt"]);
         git(&project, &["commit", "-q", "-m", "one"]);
@@ -8862,11 +8882,28 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
         git(&project, &["remote", "add", "origin", &remote]);
         git(&project, &["push", "-q", "origin", "main"]);
         git(&project, &["reset", "-q", "--hard", &behind]);
-        if dirty {
+        if checkout == Checkout::Dirty {
             std::fs::write(project.join("tracked.txt"), "local\n").unwrap();
         }
 
-        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        // The harness records the commit its checkout holds as it starts,
+        // so the row reads the order of the sync and the start, not only
+        // where the checkout ends.
+        let wrap = dir.path().join("wrap");
+        std::fs::create_dir_all(&wrap).unwrap();
+        let harness = wrap.join("claude");
+        write_executable(
+            &harness,
+            format!(
+                "#!/bin/bash\nunset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE\n\
+                 git rev-parse HEAD > .git/started-head\nexec \"{}\" \"$@\"\n",
+                runner.stub.display()
+            ),
+        );
+        let binaries = format!("claude={}", harness.display());
+        let mut env: Vec<(&str, &str)> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        env.push(("AGENT_RUNTIME_HARNESS_BINARIES", &binaries));
         let out = runner.run_env(&["resume-controller", "--fleet"], &env);
         let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         let started = out.status.code() == Some(0) || out.status.code() == Some(4);
@@ -8874,28 +8911,52 @@ fn resume_controller_follows_the_base_before_its_start_and_starts_past_a_refused
             stop_live_watch(&runner, &state);
         }
         let head = git(&project, &["rev-parse", "HEAD"]);
-        let overseer = runner.fleet()["controller"].clone();
-        assert_ne!(
-            overseer["pane"], "%99",
-            "dirty={dirty}: the session started: {line}"
-        );
+        let started_head = std::fs::read_to_string(project.join(".git/started-head"))
+            .ok()
+            .map(|head| head.trim().to_owned());
         let lead = line.split_whitespace().next().unwrap_or("");
-        if dirty {
-            assert_eq!(
-                (out.status.code(), lead),
-                (Some(4), "sync-base-dirty"),
-                "{line} {}",
-                stderr(&out)
-            );
-            assert_eq!(head, behind, "a dirty checkout stays where it stood");
-        } else {
-            assert_eq!(
-                (out.status.code(), lead),
-                (Some(0), "controller-resumed"),
-                "{line} {}",
-                stderr(&out)
-            );
-            assert_eq!(head, landed, "the checkout follows the landed base");
+        let context = format!("{checkout:?}: {line} {}", stderr(&out));
+        match checkout {
+            Checkout::Behind => {
+                assert_eq!(
+                    (out.status.code(), lead),
+                    (Some(0), "controller-resumed"),
+                    "{context}"
+                );
+                assert_eq!(
+                    started_head.as_deref(),
+                    Some(landed.as_str()),
+                    "the start ran on the landed base: {context}"
+                );
+                assert_eq!(head, landed, "{context}");
+            }
+            Checkout::Dirty => {
+                assert_eq!(
+                    (out.status.code(), lead),
+                    (Some(4), "sync-base-dirty"),
+                    "{context}"
+                );
+                assert_eq!(
+                    started_head.as_deref(),
+                    Some(behind.as_str()),
+                    "the start ran where the checkout stood: {context}"
+                );
+                assert_eq!(head, behind, "{context}");
+            }
+            Checkout::Live => {
+                assert_eq!(
+                    (out.status.code(), lead),
+                    (Some(3), "controller-resume-failed"),
+                    "{context}"
+                );
+                assert!(line.contains(" note=overseer-live "), "{context}");
+                assert_eq!(started_head, None, "nothing started: {context}");
+                assert_eq!(
+                    head, behind,
+                    "a running controller's checkout never moves: {context}"
+                );
+                assert!(live(controller.pid()), "{context}");
+            }
         }
     }
 }
