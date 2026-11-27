@@ -722,24 +722,30 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
 /// A stopped record holds nothing, so a running lane is admitted a path it
 /// recorded; the stopped lane's relaunch then meets that holder, as a
 /// running lane's added path does, with its record's set, or its item's
-/// Location paths where the record holds none, and its record's scope and
-/// repository, the request naming none. It is refused `launch-overlap`,
-/// never joined, nothing written: under `ORCH_DELIVERY=push-base` before
-/// the holder's review, and under `pr` with the holder in its review. Under
-/// `push-base` with the holder in its review it is relaunched, the
-/// publication taking the order, over its kept sets.
-/// The recorded set's row plants no item, so its relaunch reads none.
+/// Location paths where the record holds none, and its record's scope, in
+/// the repository the request names, else its record's. It is refused
+/// `launch-overlap`, never joined, nothing written: under
+/// `ORCH_DELIVERY=push-base` before the holder's review, and under `pr`
+/// with the holder in its review. Under `push-base` with the holder in its
+/// review it is relaunched, the publication taking the order, over its kept
+/// sets. Only the Location row plants an item, so the others read none.
 #[test]
 fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
-    let rows: [(&str, Option<&[&str]>, Value); 2] = [
+    let set: &[&str] = &["docs/x.md", "src/a.sh"];
+    // The row, the record's repository, the one the relaunch names, and
+    // the record's set.
+    type Row<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a [&'a str]>);
+    let rows: [Row; 3] = [
+        ("its recorded set", "o/r", None, Some(set)),
+        ("its item's Location paths", "o/r", None, None),
         (
-            "its recorded set",
-            Some(&["docs/x.md", "src/a.sh"]),
-            json!(["docs/x.md", "src/a.sh"]),
+            "a record of another repository relaunched into the holder's",
+            "o/a",
+            Some("o/r"),
+            Some(set),
         ),
-        ("its item's Location paths", None, Value::Null),
     ];
-    for (row, touched, kept) in rows {
+    for (row, record_repo, repo, touched) in rows {
         let fleet = Fleet::new();
         fleet.init_fleet();
         fleet.init_item("KEN-H", "ken-h");
@@ -749,7 +755,7 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
         let harness = Owned::sleep();
         let mut stopped = holder("KEN-R", "stopped", None, touched);
         stopped["in_scope"] = json!(["docs/"]);
-        stopped["repo"] = json!("o/r");
+        stopped["repo"] = json!(record_repo);
         let mut holding = holder("KEN-H", "running", Some(&harness), Some(&["docs/x.md"]));
         holding["repo"] = json!("o/r");
         fleet.write_lanes(vec![stopped, holding]);
@@ -761,12 +767,11 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
             stderr(&out)
         );
         let before = fleet.fleet();
-        let relaunch = |delivery: &str| {
-            fleet.op_with(
-                &launch("KEN-R", fleet.state_dir().as_path()),
-                &[("ORCH_DELIVERY", delivery)],
-            )
-        };
+        let mut request = launch("KEN-R", fleet.state_dir().as_path());
+        if let Some(repo) = repo {
+            request["repo"] = json!(repo);
+        }
+        let relaunch = |delivery: &str| fleet.op_with(&request, &[("ORCH_DELIVERY", delivery)]);
 
         let refused = |delivery: &str, stage: &str| {
             let out = relaunch(delivery);
@@ -794,7 +799,11 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
         let out = relaunch("push-base");
         assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
         let lane = fleet.lane("KEN-R");
-        assert_eq!(lane["touched"], kept, "{row}: the relaunch records no set");
+        assert_eq!(
+            lane["touched"],
+            touched.map_or(Value::Null, |paths| json!(paths)),
+            "{row}: the relaunch records no set"
+        );
         assert_eq!(lane["in_scope"], json!(["docs/"]));
         // No fleet server exists here, so the relaunch fails before any window.
         assert_eq!(lane["status"], "stopped");

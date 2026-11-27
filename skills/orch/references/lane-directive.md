@@ -85,7 +85,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
-- `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
+- `launch-overlap`: launch once that lane stops. A first launch may instead name the file in `in_scope` where the brief adds to it append-only; a relaunch, and the recovery close before it, keep the record's scope (§ Recovery relaunch).
 - `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Launch once that lane stops.
   - A hosted lane that carries the launch's blockers refuses with no branch read, naming them as `blockers`.
   - A hosted lane that holds a shared path always refuses, naming the held path as `file`. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
