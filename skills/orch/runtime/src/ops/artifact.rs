@@ -810,27 +810,30 @@ fn merge_base(settings: &Settings, worktree: &Path, commit: &str) -> Result<Opti
     }
 }
 
-/// Whether the cited row alone proves `tree` as a range pass from
-/// `merge_base`. The merge base needs no record of how the branch was
-/// rewritten, so this binds a completed pass across any rewrite of the
-/// round's base. The reader keeps its admission, its declared command and
-/// a later red's voiding. It reads no chain, and a newer uncited pass at
-/// the tree refuses rather than stands in for the cited run.
+/// Whether the cited run proves the tree from `merge_base` using range
+/// passes. The caller can supply the tree of the changed run's base on the
+/// recorded rebased line, allowing one prior range pass. The proof reader
+/// handles admission and voiding, and the proof must start with the cited run.
 fn merge_base_pass(
     rows: &[Stage],
     request: &proof::ReadProof,
     declared: &proof::Declaration,
     cited: usize,
     merge_base: &str,
+    tree_of: &mut dyn FnMut(&str) -> Option<String>,
 ) -> bool {
     let request = proof::ReadProof {
         base: Some(merge_base.to_owned()),
         ..request.clone()
     };
-    let answer = proof::read(rows, &[], &request, declared, &mut |_| None, &mut |_| None);
+    let answer = proof::read(rows, &[], &request, declared, tree_of, &mut |_| None);
     answer.proof == proof::Verdict::Complete
-        && matches!(answer.rows.as_slice(), [row]
-            if row.index == cited && row.mode == ValidateMode::Range && row.base == merge_base)
+        && answer.rows.first().is_some_and(|row| row.index == cited)
+        && answer.rows.last().is_some_and(|row| row.base == merge_base)
+        && answer.rows.iter().all(|row| {
+            row.mode == ValidateMode::Range
+                && rows[row.index].proof.as_ref().is_some_and(|p| !p.docs_only)
+        })
 }
 
 const OFF_BASE: &str = "the run head does not contain the round base";
@@ -843,9 +846,10 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     let tree = run_tree(&r.id, run)?;
     let carried = carries(settings, &r.id, run, base, &tree)?;
     // A completed range pass of a round whose base the receipt commit no
-    // longer contains may still bind from the merge base
-    // (`merge_base_pass`). Where the commit still holds the round's base, a
-    // range from the merge base can omit a path the round restored to the
+    // longer contains may still bind from the merge base, directly or
+    // through a range proof on the round's recorded rebased line.
+    // Where the commit still holds the round's base, a range from the
+    // merge base can omit a path the round restored to the
     // base branch's content, so only the round's own base proves it. A
     // failure, a no-verdict and a pass left to CI bind only where the
     // round's base carries.
@@ -968,15 +972,38 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
         OFF_BASE.to_owned()
     };
     if range_pass {
-        let merge_base = merge_base(settings, &r.id.worktree, commit)?;
+        let worktree = &r.id.worktree;
+        let merge_base = merge_base(settings, worktree, commit)?;
         let run_base = run_base.filter(|b| !b.is_empty());
-        let docs_only = rows[bound_run].proof.as_ref().is_some_and(|p| p.docs_only);
-        if let Some(merge_base) = &merge_base
-            && run_base.as_ref() == Some(merge_base)
-            && !docs_only
-            && merge_base_pass(&rows, &request, &declared, bound_run, merge_base)
-        {
-            return Ok(tree);
+        if let (Some(merge_base), Some(from)) = (merge_base.as_deref(), run_base.as_deref()) {
+            let chained = if from != merge_base
+                && carried
+                && let Some((mapped, _)) = projected_base(settings, &r.id.issue, worktree, base)?
+            {
+                ancestor(worktree, &mapped, from)?
+                    && ancestor(worktree, from, &run.head)?
+                    && ancestor(worktree, from, commit)?
+            } else {
+                false
+            };
+            if (from == merge_base || chained)
+                && merge_base_pass(
+                    &rows,
+                    &request,
+                    &declared,
+                    bound_run,
+                    merge_base,
+                    &mut |head| {
+                        if chained && head == from {
+                            committed_tree(worktree, head).ok()
+                        } else {
+                            None
+                        }
+                    },
+                )
+            {
+                return Ok(tree);
+            }
         }
         cause.push_str(&format!(
             " run-base={} merge-base={}",
