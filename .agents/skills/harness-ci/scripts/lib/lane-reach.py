@@ -1158,6 +1158,7 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
     manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
     ordinary.add(manifest_path)
     scripts = None
+    workspaces, pins = [], []
     for path in sorted({*evidence.files, manifest_path}):
         name = Path(path).name
         if Path(path).parent.as_posix() not in folders or not settings_file(name):
@@ -1176,6 +1177,7 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
                           and not any(isinstance(value, str) and local_spec(value)
                                       for value in setting_values(settings)),
                           f"pnpm-config-unread path={path}")
+            workspaces.append((path, settings))
         elif name == "package.json":
             source = evidence.blob(path)
             try:
@@ -1190,7 +1192,25 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
             ), f"pnpm-config-unread path={path}")
             if path == manifest_path:
                 scripts = manifest.get("scripts", {})
+            if "packageManager" in manifest:
+                pins.append((path, manifest["packageManager"]))
     require_shape(isinstance(scripts, dict), f"pnpm-config-unread path={manifest_path}")
+    # A dependency's install script reads repository files no reader follows.
+    # Since v10 pnpm runs one only where a setting allows it, and a
+    # neverBuiltDependencies list without onlyBuiltDependencies allows every
+    # other (pnpm.io settings, v10.x). Any pnpm command can install: pnpm run
+    # installs first where node_modules is stale, as verifyDepsBeforeRun
+    # defaults to install in pnpm 12.
+    for path, settings in workspaces:
+        builds = settings.get("allowBuilds", {})
+        require_shape(isinstance(builds, dict) and set(builds.values()) <= {"false", "False", "FALSE"}
+                      and not settings.get("onlyBuiltDependencies")
+                      and not settings.get("neverBuiltDependencies"),
+                      f"pnpm-config-unread path={path} reason=dependency-builds")
+    for path, pin in pins or [(manifest_path, None)]:
+        version = re.fullmatch(r"pnpm@(\d+)\..*", pin) if isinstance(pin, str) else None
+        require_shape(version and int(version[1]) >= 10,
+                      f"pnpm-config-unread path={path} reason=pnpm-version-unpinned")
     if args == ["install", "--frozen-lockfile"]:
         names = [name for name in PNPM_LIFECYCLE if name in scripts]
     elif args == ["test"] or (len(args) == 2 and args[0] == "run"):

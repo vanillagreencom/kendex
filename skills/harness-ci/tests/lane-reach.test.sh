@@ -392,6 +392,8 @@ edit_workflow '      - run: pnpm lint\n      - run: pnpm typecheck\n' ''
 edit_file "$repo/package.json" '"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"' \
   '"postinstall":"bash ./tools/setup.sh","pretest":"cat ./tools/fixture.txt","test":"bash ./tools/test.sh"'
 printf 'true\n' | tee "$repo/tools/setup.sh" "$repo/tools/test.sh" "$repo/tools/fixture.txt" >/dev/null
+# No dependency build is allowed, so no dependency hook can run.
+edit_file "$repo/pnpm-workspace.yaml" 'allowBuilds:\n  esbuild: true\n' ''
 git -C "$repo" rm -q -- .github/ci-lanes.conf
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a pnpm job whose scripts the reader follows'
@@ -415,7 +417,13 @@ pnpm-refused-body|package.json|"test":"bash ./tools/test.sh"|"test":"jest"
 pnpm-refused-setup|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
 pnpm-refused-npmrc|.npmrc||node-options=--require ./tools/preload.cjs\n
 pnpm-refused-override|pnpm-workspace.yaml|semver: ^7.6.0|semver: link:./vendor/semver
-pnpm-refused-field|package.json|"private":true|"private":true,"pnpm":{"overrides":{}}
+pnpm-refused-pnpmfile|.pnpmfile.cjs||module.exports = {}\n
+pnpm-refused-builds|pnpm-workspace.yaml|overrides:|allowBuilds:\n  prisma: true\noverrides:
+pnpm-refused-builds|prisma/schema.prisma||model User {}\n
+pnpm-refused-onlybuilt|pnpm-workspace.yaml|overrides:|onlyBuiltDependencies:\n  - prisma\noverrides:
+pnpm-refused-neverbuilt|pnpm-workspace.yaml|overrides:|neverBuiltDependencies:\n  - fsevents\noverrides:
+pnpm-refused-pnpm9|package.json|"packageManager":"pnpm@12.3.4"|"packageManager":"pnpm@9.15.0"
+pnpm-refused-unpinned|package.json|"packageManager":"pnpm@12.3.4",|
 pnpm-refused-lockfile|pnpm-workspace.yaml|overrides:|lockfileDir: locks\noverrides:
 pnpm-refused-ancestor|.github/workflows/ci.yml|      - run: pnpm install --frozen-lockfile\n      - run: pnpm test\n|      - working-directory: app\n        run: pnpm install --frozen-lockfile\n      - working-directory: app\n        run: pnpm test\n
 pnpm-refused-ancestor|app/package.json||{"private":true,"scripts":{"test":"bash ../tools/test.sh"}}\n
@@ -1160,6 +1168,16 @@ chmod +x "$SANDBOX/bin/kendex"
 mkdir -p "$SANDBOX/failing-cargo"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$SANDBOX/failing-cargo/cargo"
 chmod +x "$SANDBOX/failing-cargo/cargo"
+mkdir -p "$SANDBOX/failing-git"
+real_git="$(command -v git)"
+cat >"$SANDBOX/failing-git/git" <<GIT
+#!/usr/bin/env bash
+case "\${1-} \${2-} \${3-}" in
+  'cat-file blob '*:pnpm-workspace.yaml) exit 128 ;;
+esac
+exec '$real_git' "\$@"
+GIT
+chmod +x "$SANDBOX/failing-git/git"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
 
@@ -1400,6 +1418,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   tools="$SANDBOX/bin"
   # Cargo fails on this run, which says nothing of the job's shape.
   [ "$label" != cargo-tool-failure ] || tools="$SANDBOX/failing-cargo:$tools"
+  # Git fails to read one base blob, which says nothing of the job's shape.
+  [ "$label" != pnpm-followed-git-failure ] || tools="$SANDBOX/failing-git:$tools"
   head="$(git -C "$repo" rev-parse HEAD)"
   cli="$CHANGE_CLASS"
   case "$label" in
@@ -1529,8 +1549,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
-    pnpm-talk-*) refused_jobs='job=web cause=opaque-pnpm-command' ;;
-    pnpm-refused-local|pnpm-refused-npmrc|pnpm-refused-override|pnpm-refused-field|pnpm-refused-lockfile|pnpm-refused-ancestor)
+    pnpm-talk-*) refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-followed-git-failure) refused_jobs='job=web cause=git-exit-128' ;;
+    pnpm-refused-local|pnpm-refused-npmrc|pnpm-refused-pnpmfile|pnpm-refused-override|pnpm-refused-lockfile|\
+      pnpm-refused-ancestor|pnpm-refused-builds|pnpm-refused-onlybuilt|pnpm-refused-neverbuilt|pnpm-refused-pnpm9|\
+      pnpm-refused-unpinned)
       refused_jobs='job=web cause=pnpm-config-unread' ;;
     pnpm-refused-body) refused_jobs='job=web cause=unresolved-pnpm-script' ;;
     pnpm-refused-setup|pnpm-refused-volta|pnpm-refused-newline) refused_jobs='job=web cause=opaque-action' ;;
@@ -1701,7 +1724,13 @@ pnpm-refused-body|.gitignore|||true|
 pnpm-refused-setup|.gitignore|||true|
 pnpm-refused-npmrc|.gitignore|||true|
 pnpm-refused-override|.gitignore|||true|
-pnpm-refused-field|.gitignore|||true|
+pnpm-refused-pnpmfile|.gitignore|||true|
+pnpm-refused-builds|prisma/schema.prisma|||true|
+pnpm-refused-onlybuilt|.gitignore|||true|
+pnpm-refused-neverbuilt|.gitignore|||true|
+pnpm-refused-pnpm9|.gitignore|||true|
+pnpm-refused-unpinned|.gitignore|||true|
+pnpm-followed-git-failure|.gitignore|||true|
 pnpm-refused-lockfile|.gitignore|||true|
 pnpm-refused-ancestor|.gitignore|||true|
 pnpm-refused-volta|.gitignore|||true|
