@@ -3446,6 +3446,71 @@ mod dev_artifacts {
         assert_eq!(receipt["validate"], "pass");
     }
 
+    #[test]
+    fn a_changed_run_binds_to_a_range_pass_on_the_rounds_rebased_line() {
+        let w = World::new();
+        w.with_origin();
+        w.commit("round-base.txt");
+        let round_base = w.head();
+        w.stamp("r1");
+        w.upstream("upstream.txt");
+        git(&w.wt, &["rebase", "-q", "origin/main"]);
+        let mapped_base = w.head();
+        let merge_base = git(&w.wt, &["rev-parse", "origin/main"]);
+        w.commit("restack.txt");
+        let restacked = w.head();
+        // The same committed tree on a sibling makes a usable proof by
+        // tree, but cannot make that sibling part of the round's line.
+        let sibling = git(
+            &w.wt,
+            &["commit-tree", &w.tree(), "-p", &mapped_base, "-m", "side"],
+        );
+        let mut prior = World::ledger_stage(&w.range_run("restack", &merge_base));
+        prior["round_id"] = Value::Null;
+        prior["reason"] = json!("restack");
+        let before = w.doc();
+        let ledger = |mapped: bool, stages: &[&Value]| {
+            let mut doc = before.clone();
+            if mapped {
+                doc["rebase_map"] = json!({round_base.as_str(): mapped_base.as_str()});
+            }
+            doc["stages"]
+                .as_array_mut()
+                .unwrap()
+                .extend(stages.iter().map(|s| (*s).clone()));
+            fs::write(w.item(), doc.to_string()).unwrap();
+        };
+
+        w.commit("fix.txt");
+        let changed = w.range_run("changed", &restacked);
+        let off_line = w.range_run("off-line", &sibling);
+        let newer = w.range_run("newer", &merge_base);
+        w.record_start(&newer, "start=2");
+        let newer = World::ledger_stage(&newer);
+        let mut red = prior.clone();
+        red["run_dir"] = json!(w.wt.join("tmp/dev-validate-red"));
+        red["outcome"] = json!("fail");
+        let mut docs = prior.clone();
+        docs["proof"]["docs_only"] = json!(true);
+        for (mapped, stages, run) in [
+            (false, vec![&prior], &changed),
+            (true, vec![], &changed),
+            (true, vec![&prior, &red], &changed),
+            (true, vec![&docs], &changed),
+            (true, vec![&prior], &off_line),
+            (true, vec![&prior, &newer], &changed),
+        ] {
+            ledger(mapped, &stages);
+            refused(&w.range_write("r1", run), "run-off-round");
+        }
+
+        ledger(true, &[&prior]);
+        let written = result(&w.range_write("r1", &changed));
+        let check = w.check("r1");
+        assert_eq!(check["verdict"], "accept", "{check}");
+        assert_eq!(check["path"], written["path"]);
+    }
+
     /// Base preparation folds the round onto `origin/main`, and the overseer
     /// runs the confined lane's validation from the prepared base: the round
     /// binds that run, and the check accepts its receipt.
