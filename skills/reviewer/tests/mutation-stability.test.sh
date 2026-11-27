@@ -242,6 +242,13 @@ ORPHAN_MS="$ORPHAN_MS_DIR/mutation-stability"
 cp "$MS" "$ORPHAN_MS"
 chmod +x "$ORPHAN_MS"
 
+# A tar that refuses every extraction, so a revision Git reads still fails to
+# copy.
+FAILING_TAR_BIN="$TMP/failing-tar"
+mkdir -p "$FAILING_TAR_BIN"
+printf '#!/bin/sh\necho "tar: stub refusal" >&2\nexit 1\n' > "$FAILING_TAR_BIN/tar"
+chmod +x "$FAILING_TAR_BIN/tar"
+
 echo "=== input and dependency refusal table ==="
 input_rows=0
 while IFS=$'\t' read -r name kind expected_line; do
@@ -253,7 +260,8 @@ while IFS=$'\t' read -r name kind expected_line; do
     arguments) out=$("$MS" 2>&1) || rc=$? ;;
     temp) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
     temp-space) out=$(MUTATION_STABILITY_SETTLE=1 TMPDIR="$TMP/space absent" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
-    archive) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha not-a-sha --test true --build true --mutate true 2>&1) || rc=$? ;;
+    revision) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha not-a-sha --test true --build true --mutate true 2>&1) || rc=$? ;;
+    archive) out=$(MUTATION_STABILITY_SETTLE=1 PATH="$FAILING_TAR_BIN:$PATH" "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
     control-build) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build false --mutate true 2>&1) || rc=$? ;;
     mutate) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'printf "test result: ok. 1 passed; 0 failed; 0 ignored\n"' --build true --mutate 'printf "mutation detail\n" >&2; false' 2>&1) || rc=$? ;;
     group-leader) out=$("$ORPHAN_MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
@@ -267,12 +275,77 @@ unknown option	unknown	error=argument-unknown argument=--unknown
 missing required options	arguments	error=arguments-missing set=worktree-sha-test-build-mutate
 temporary workspace failure	temp	error=temp-create-failed path=$TMP/absent
 temporary workspace path escaping	temp-space	error=temp-create-failed path=$TMP/space\ absent
-archive failure	archive	error=archive-failed sha=not-a-sha
+unreadable revision	revision	error=revision-unreadable sha=not-a-sha
+archive failure	archive	error=archive-failed sha=$SHA_BASE
 control build failure	control-build	error=control-build-failed exit=1
 mutation command failure	mutate	error=mutate-command-failed exit=1
 absent group-leader prefix	group-leader	error=group-leader-missing path=$ORPHAN_MS_DIR/../../github/scripts/lib/group-leader.sh
 ROWS
 assert_table_executed "input refusal" "$input_rows"
+
+# A df on PATH that answers DF_STUB_FREE KiB available in POSIX -P form, or
+# fails when DF_STUB_FREE is "fail". The headroom is the 1 GiB --help states;
+# two copies of the fixture's three files stay far below the 1000 KiB the rows
+# add to it, and two copies of a 2 MiB ignored build output do not.
+DF_STUB_BIN="$TMP/df-stub"
+mkdir -p "$DF_STUB_BIN"
+cat > "$DF_STUB_BIN/df" <<'CASE'
+#!/bin/sh
+[ "$DF_STUB_FREE" != fail ] || { echo "df: stub failure" >&2; exit 1; }
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf 'stub 999999999 0 %s 1%% /\n' "$DF_STUB_FREE"
+CASE
+chmod +x "$DF_STUB_BIN/df"
+BUILD_OUTPUT="$REPO/target"
+printf 'target/\n' >> "$REPO/.git/info/exclude"
+
+# A refusal's need must exceed the free space it names; the figure itself is
+# the implementation's sum, so the row reads only that relation.
+disk_first_line() {
+  local first need free
+  first=$(output_error_line disk-space-short)
+  [ "$first" != absent ] || first=$(output_error_line disk-space-unreadable)
+  case "$first" in
+    "error=disk-space-short kib=need:"*"/free:"*)
+      free=${first##*/free:}
+      need=${first#*need:}
+      need=${need%%/*}
+      if [[ "$need" =~ ^[0-9]+$ && "$free" =~ ^[0-9]+$ ]] && [ "$need" -gt "$free" ]; then
+        printf 'error=disk-space-short free=%s need-exceeds=yes' "$free"
+      else
+        printf 'error=disk-space-short free=%s need-exceeds=no' "$free"
+      fi
+      ;;
+    error=*) printf '%s' "${first%% *}" ;;
+    *) printf 'none' ;;
+  esac
+}
+
+echo "=== disk space table ==="
+disk_rows=0
+while IFS=$'\t' read -r name free build_output expected; do
+  rm -rf -- "${BUILD_OUTPUT:?}"
+  if [ "$build_output" = ignored-2mib ]; then
+    mkdir -p "$BUILD_OUTPUT"
+    dd if=/dev/zero of="$BUILD_OUTPUT/out.bin" bs=1024 count=2048 2>/dev/null
+  fi
+  disk_tmp="$TMP/disk-$disk_rows"
+  mkdir -p "$disk_tmp"
+  rc=0
+  out=$(DF_STUB_FREE="$free" PATH="$DF_STUB_BIN:$PATH" TMPDIR="$disk_tmp" "$MS" --worktree "$REPO" --sha "$SHA_BASE" \
+    --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2 --keep 2>&1) || rc=$?
+  copies=$(find "$disk_tmp" -mindepth 2 -maxdepth 2 -type d \( -name mutant -o -name clean \) | wc -l | tr -d ' ')
+  rm -rf -- "${disk_tmp:?}"
+  assert_row "disk space" "$name" "rc=$rc;first=$(disk_first_line);copies=$copies" "$expected"
+  disk_rows=$((disk_rows + 1))
+done <<'ROWS'
+free space below two copies and headroom	1024	none	rc=2;first=error=disk-space-short free=1024 need-exceeds=yes;copies=0
+free space covers copies and headroom	1049576	none	rc=0;first=none;copies=2
+ignored build output pushes the need past free space	1049576	ignored-2mib	rc=2;first=error=disk-space-short free=1049576 need-exceeds=yes;copies=0
+unreadable free space	fail	none	rc=2;first=error=disk-space-unreadable;copies=0
+ROWS
+assert_table_executed "disk space" "$disk_rows"
+rm -rf -- "${BUILD_OUTPUT:?}"
 
 run_ms "$SHA_BASE" --test 'true' --build 'true' --mutate 'true' --timeout 0
 assert_case "numeric validator rejects zero" \
