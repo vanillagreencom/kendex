@@ -23,6 +23,8 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`.
   - Use the Jarvis package installed in HOME.
   - Supply the account directory for the selected app.
+  - Start refuses `account-walled` when the accounts judge reads a spent account where Start would open: the recorded account a resume keeps, or the account `--account` names. A spent account has used 100 percent of its monthly, weekly or model window, or its plan has ended. The detail names that account.
+  - Start makes that refusal before it records the start, so Start records no failure. Where no controller runs, status keeps its reading.
 - Append `--model MODEL --effort LEVEL`, both or neither, to launch a stated model.
   - `MODEL` accepts the model class or native model spelling the task command takes.
   - The session records the pair as its choice.
@@ -67,7 +69,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
 - A controller whose harness process exited without a Stop, as after a crash or a `/logout`, reads `stopped` with reason `ended`. A recorded controller whose record holds a Start failure reads that failure: `failed` with `launch-failed`, or `blocked` with `sign-in-required`. The [watch loop](control-host-events.md#delivery) starts either again by this route:
   1. Start with `--mode resume --origin manual --keep-brief` on the recorded harness and account.
-  2. If that Start refuses, at once or once its detached start records the refusal, run `jarvis-session succeed --home HOME --exited`. It hands the exited controller over to the next account the walk picks, never the recorded one, and retires nothing live.
+  2. If that Start refuses, at once, as with `account-walled`, or once its detached start records the refusal, run `jarvis-session succeed --home HOME --exited`. It hands the exited controller over to the next account the walk picks, never the recorded one, and retires nothing live.
      - `--exited` refuses `record-unreadable` while the controller runs, while a start is open, and after a Stop. After an app-off Stop it refuses `app-off`. During an open hand-over it answers `handing-over`, as every `succeed` does.
 - After a machine restart, or once a tmux server holding the delegate, an overseer or a lane is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
   - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.

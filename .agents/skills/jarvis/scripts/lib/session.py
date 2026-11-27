@@ -40,7 +40,7 @@ STATE_REASONS = {
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required", "home-not-dedicated"},
+                "trust-required", "home-not-dedicated", "account-walled"},
     "failed": {"launch-failed", "handover-failed"},
 }
 # The seat the controller record keeps through every hand-over: the turn end
@@ -684,6 +684,20 @@ class Session:
                 recorded = (status or {}).get("recorded") or {}
             self.initialized_fleet()
             pending, reason = self.choose(args, recorded, resume_only)
+            if pending.get("account") and (reason == "resumed" or args.account is not None):
+                # No walk judged this account. A window opened on a spent one
+                # closes at once; refused before the start intent, the record
+                # still reads the controller ended, so the watch loop hands it
+                # to an account with room. The bound is 100 percent: below it
+                # the account still runs, past the selection bound too. A
+                # judge that cannot answer leaves Start as it was before it
+                # judged.
+                room = self.room(pending["harness"], pending["account"], pending.get("model"), max_pct=100)
+                if room is None:
+                    print("jarvis-session: account-judge=unavailable account=" + pending["account"], file=sys.stderr)
+                elif room.get("answer") == "walled":
+                    raise Refusal("account-walled", short(pending["account"] + " has no room left."
+                                                          " Start Jarvis on an account with room."))
             problem = setup_problem(pending["harness"], pending.get("account") or self.env["HOME"])
             if problem:
                 raise Refusal("trust-required", problem)
@@ -899,17 +913,29 @@ class Session:
             raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
         return choice
 
+    def room(self, harness, account, model=None, max_pct=None):
+        """The controller's own judgement of ACCOUNT for HARNESS and MODEL,
+        under the bound MAX_PCT where given, else the selection bound:
+        `accounts pick --for-controller`'s reply, or None where the judge
+        refused to answer, its diagnostic on stderr."""
+        pick = ["accounts", "pick", "--harness", harness, "--account", account, "--record", self.fleet(),
+                "--for-controller"]
+        if model:
+            pick.extend(("--native-model", model))
+        if max_pct is not None:
+            pick.extend(("--max-pct", str(max_pct)))
+        room, code, _, errors = self.runtime(*pick)
+        if code:
+            sys.stderr.write(errors)
+            return None
+        return room
+
     def resume_wall(self, recorded, cursor=None):
         if cursor is None:
             if not recorded.get("account"):
                 return {"wall_recovery": "waiting"}
-            pick = ["accounts", "pick", "--harness", recorded["harness"], "--account", recorded["account"],
-                    "--record", self.fleet(), "--for-controller"]
-            if recorded.get("model"):
-                pick.extend(("--native-model", recorded["model"]))
-            room, code, _, errors = self.runtime(*pick)
-            if code:
-                sys.stderr.write(errors)
+            room = self.room(recorded["harness"], recorded["account"], recorded.get("model"))
+            if room is None:
                 raise Refusal("record-unreadable")
             if room.get("exit") != 0:
                 return {"wall_recovery": "waiting"}

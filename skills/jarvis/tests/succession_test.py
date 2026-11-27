@@ -291,6 +291,34 @@ class SuccessionContract(SessionContract):
         self.assertEqual([row["prompt"] for row in prompts if row["id"] == successor["id"]],
                          [START_BRIEF + " Watch the release."])
 
+    def test_an_exited_controller_on_a_walled_account_is_handed_to_an_account_with_room(self):
+        # The failure it stops: the watch loop's resume of a controller that
+        # ended at its account's limit opens on that spent account and fails,
+        # and nothing then moves Jarvis to an account with room.
+        second = self.plant_account("claude-b", 20)
+        brief = self.root / "brief.md"
+        brief.write_text("Watch the release.\n")
+        self.call("start", brief=brief)
+        self.wait(reason="new-no-record")
+        before = self.controller()
+        os.kill(self.started()[-1]["pid"], signal.SIGKILL)
+        self.wait("stopped", "ended", seconds=30)
+        self.measure(self.account, 100)
+        launched = len(self.started())
+        answer, code = self.call("start", keep_brief=True)
+        self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "account-walled", 1), self.stderr)
+        self.assertEqual(len(self.started()), launched)
+        answer, code = self.succeed(exited=True)
+        self.assertEqual((answer["state"], answer["account"], code), ("running", str(second), 0),
+                         self.stderr + self.diagnostics())
+        after = self.handed_over(before)
+        self.assertEqual((after["account"], after.get("seat")), (str(second), "jarvis"))
+        successor = self.started()[-1]
+        self.assertEqual((successor["account"], len(self.started())), (str(second), launched + 1))
+        prompts = [json.loads(line) for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
+        self.assertEqual([row["prompt"] for row in prompts if row["id"] == successor["id"]],
+                         [START_BRIEF + " Watch the release."])
+
     def test_with_no_account_left_the_answer_names_each_unproved_account_and_jarvis_keeps_running(self):
         # Wanted outcome 2's other half, and a walled account's refusal: with
         # no eligible account left the answer names the account and its
