@@ -63,8 +63,9 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission. A kept record's set adds no path and meets no holder; any
-//! other record's set, or, where the record holds none, its item's Location
+//! admission. A kept record's set adds no path and meets no holder, its
+//! no-landing close having met them where the record did not hold the set
+//! ([`no_landing_held`]); any other record's set, or, where the record holds none, its item's Location
 //! paths, are the paths it adds, which meet the holders standing now as a
 //! running lane's added path does ([`relaunch_held`]). A
 //! `github` item of another repository than the checkout's,
@@ -1188,9 +1189,10 @@ pub(super) fn bound(
 /// A relaunch's holders (the module's binding paragraph): the paths it adds,
 /// met against the lanes that hold paths now, as a running lane's added path
 /// is, never joined. A kept record ([`retired_open`]) adds none: it held its
-/// set since its no-landing close ([`Holding::Kept`]), so a lane that holds
-/// one of its paths now co-held it before the record was kept, and the
-/// relaunch is admitted on its own set. Any other record yielded its set
+/// set from its no-landing close on ([`Holding::Kept`]), a close that met
+/// the holders with it where the record did not hold it ([`no_landing_held`]),
+/// so a lane that holds one of its paths now co-held it before the record
+/// was kept, and the relaunch is admitted on its own set. Any other record yielded its set
 /// while it stood, a parked one or one a failed launch stopped, so another
 /// lane may have taken a path of it since: its set is the paths it adds. A
 /// record no judgement wrote, a surface lane's, holds no set: its item's
@@ -1251,6 +1253,48 @@ pub(super) fn relaunch_held(
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
+}
+
+/// The holder judgement a no-landing close owes before it is recorded,
+/// whatever its reason: the close keeps `record` ([`retired_open`]), whose
+/// relaunch then adds no path, so a record holding a set it does not hold
+/// when the close is asked (parked, stopped by a failed launch, or running
+/// with no session read) meets the holders standing now with that set, as
+/// its relaunch would, and a refusal leaves it as it stood. A record that
+/// holds its set, a running lane whose session reads or one already kept,
+/// has held it from its admission on. A record holding no set is never
+/// kept: its relaunch adds its item's Location paths, met here only where
+/// the close `relaunches` it, a recovery reason, so the relaunch it is
+/// closed for is not refused after the close.
+pub(super) fn no_landing_held(
+    path: &Path,
+    lanes: &[Lane],
+    intents: &[Intent],
+    record: &Lane,
+    relaunches: bool,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
+    let judged = match &record.touched {
+        Some(_) => !matches!(
+            holding(path, record, intents, env, host)?,
+            Holding::Live | Holding::Kept
+        ),
+        None => relaunches,
+    };
+    if !judged {
+        return Ok(());
+    }
+    relaunch_held(
+        path,
+        lanes,
+        intents,
+        record,
+        record.tracker.as_deref(),
+        record.repo.as_deref(),
+        env,
+        host,
+    )
 }
 
 /// The judgement (the module's table). `lanes` and `intents` are the

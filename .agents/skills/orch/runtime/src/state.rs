@@ -722,9 +722,11 @@ pub struct Lane {
     /// which writes none of them. A relaunch keeps the record's set, scope,
     /// `read_only`, Ancestor gate and tier. A record a no-landing close
     /// stopped holds the set against other lanes, and its relaunch adds no
-    /// path, so the set meets no holder; any other record's relaunch meets
-    /// the holders standing now with the set, as a running lane's added path
-    /// does. `None` on a record written with no judgement.
+    /// path, so the set meets no holder: that close, of a record not holding
+    /// the set when it is asked, met the holders with it first. Any other
+    /// record's relaunch meets the holders standing now with the set, as a
+    /// running lane's added path does. `None` on a record written with no
+    /// judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
     /// The paths the launch named in scope: a file the brief names as an

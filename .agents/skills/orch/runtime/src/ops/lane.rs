@@ -1835,20 +1835,18 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
-    // A recovery ground retires the lane for the record's own relaunch,
-    // which meets the holders standing now of the paths it adds: judged here, by
-    // every caller's close, a relaunch they refuse leaves the lane as it
-    // stood instead of stopped with no relaunch.
-    if let CloseGround::NoLanding { reason, .. } = &ground
-        && RecoveryReason::read(reason).is_some()
-    {
-        admission::relaunch_held(
+    // A no-landing ground keeps the record's set for its relaunch, and a
+    // recovery ground retires the lane for that relaunch: judged here, by
+    // every caller's close, a set the record did not hold meets the holders
+    // before it is kept, and a relaunch the holders refuse leaves the lane
+    // as it stood instead of stopped with no relaunch.
+    if let CloseGround::NoLanding { reason, .. } = &ground {
+        admission::no_landing_held(
             path,
             &lanes,
             &open,
             &lane,
-            lane.tracker.as_deref(),
-            lane.repo.as_deref(),
+            RecoveryReason::read(reason).is_some(),
             env,
             host,
         )?;
