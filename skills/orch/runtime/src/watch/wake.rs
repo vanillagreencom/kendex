@@ -132,6 +132,13 @@ pub(super) fn can_continue(harness: Harness, cause: &str, reading: bool) -> bool
     stop::of_cause(harness, cause) == Some(Kind::Provider) || (reading && cause == "length")
 }
 
+/// Whether the wake resumes a session for a `resume` row's value: a row an
+/// earlier watch wrote under a cause it no longer resumes (`told|<key>`)
+/// asks nothing.
+pub(super) fn asks_resume(row: &str) -> bool {
+    Resume::of("", row).is_some()
+}
+
 /// The watch's wake record, beside the fleet state: it shares the runner's
 /// own records' stem, which the retention duty never judges.
 pub const WAKE_FILE: &str = "oversee-watch.wake.json";
@@ -1460,10 +1467,11 @@ impl Wake {
     /// A read or paste refused before anything was typed, for an API error's
     /// resume: the lanes duty left that end's line to the resume, so the
     /// line is told here instead, once, and the target's mark keeps the
-    /// resume, so it is never typed afterwards. Where none stood, the mark
-    /// stands for no unread state, so a mail wake for the target is still
-    /// new, under [`RESUME_REFUSED`]. Answers whether it told; a wall's
-    /// resume waits for the next pass.
+    /// resume under [`RESUME_REFUSED`], so it is never typed afterwards and
+    /// no delivery an earlier mark recorded reads as this resume's. Where
+    /// none stood, the mark stands for no unread state, so a mail wake for
+    /// the target is still new. Answers whether it told; a wall's resume
+    /// waits for the next pass.
     fn untyped(
         &self,
         target: &Target,
@@ -1478,13 +1486,13 @@ impl Wake {
         };
         let kept = WakeMark {
             resume: Some(resume.row.clone()),
+            outcome: Some(WakeOutcome::Limit {
+                harness: target.harness.name().to_owned(),
+                cause: RESUME_REFUSED.to_owned(),
+            }),
             ..standing.cloned().unwrap_or_else(|| WakeMark {
                 unread: String::new(),
                 turns_before: 0,
-                outcome: Some(WakeOutcome::Limit {
-                    harness: target.harness.name().to_owned(),
-                    cause: RESUME_REFUSED.to_owned(),
-                }),
                 ..mark.clone()
             })
         };

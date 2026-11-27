@@ -259,8 +259,9 @@ struct LaneDriver<'a> {
     baseline: Baseline,
     now: u64,
     pick: Pick,
-    /// The entry the provider walk chooses; none answers `none`.
-    provider_move: Option<Chosen>,
+    /// The entry the provider walk chooses, none answering `none`; `Err` is
+    /// the walk's refusal.
+    provider_move: Result<Option<Chosen>, String>,
     /// The provider walks the passes asked, in order.
     provider_walks: std::rc::Rc<RefCell<Vec<WalkRequest>>>,
     /// `ORCH_LANE_PREFERENCE` as the route reads it.
@@ -340,10 +341,12 @@ impl LaneDriver<'_> {
         let walk = |_: &str, request: &WalkRequest| -> Result<Walked, String> {
             let Some(caller) = &request.caller else {
                 provider_walks.borrow_mut().push(request.clone());
-                return Ok(walked_with(match &provider_move {
-                    Some(to) => WalkAnswer::Lane(Box::new(to.clone())),
-                    None => WalkAnswer::None,
-                }));
+                return provider_move.clone().map(|to| {
+                    walked_with(match to {
+                        Some(to) => WalkAnswer::Lane(Box::new(to)),
+                        None => WalkAnswer::None,
+                    })
+                });
             };
             let model = caller.model.clone().unwrap_or_default();
             let effort = caller.effort.clone().unwrap_or_default();
@@ -466,7 +469,7 @@ macro_rules! lane_driver {
             baseline: Baseline::default(),
             now: 1_800_000_000,
             pick: Pick::None,
-            provider_move: None,
+            provider_move: Ok(None),
             provider_walks: std::rc::Rc::new(RefCell::new(Vec::new())),
             preference: None,
             halted: |_| Ok(false),
@@ -544,7 +547,7 @@ fn a_recorded_pane_the_server_has_not_is_window_gone_on_every_pass() {
             .baseline
             .rows
             .iter()
-            .all(|r| r.kind == "start-stalled"),
+            .all(|r| r.kind == "start-stalled" || r.kind == "lane-restart"),
         "a gone window leaves no observation row: {:?}",
         driver.baseline.rows
     );
@@ -1500,19 +1503,18 @@ fn init_checkout(fleet: &Fleet, path: &Path) {
             .env("GIT_CONFIG_NOSYSTEM", "1");
         git
     };
-    let out = git()
-        .args([
-            "-c",
-            "gc.auto=0",
-            "-c",
-            "maintenance.auto=false",
-            "init",
-            "-q",
-        ])
-        .arg(path)
-        .output()
-        .unwrap();
+    let out = git().args(["init", "-q"]).arg(path).output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+    // The row removes the checkout, so no background writer may race it.
+    for (key, value) in [("gc.auto", "0"), ("maintenance.auto", "false")] {
+        let out = git()
+            .arg("-C")
+            .arg(path)
+            .args(["config", key, value])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
     fleet_origin(fleet, path);
 }
 
@@ -1877,6 +1879,9 @@ fn a_pane_verb_codex_api_error_capture_asks_one_resume_with_no_line() {
     );
 }
 
+/// A resume the wake refused, after one it delivered, is told once: the
+/// refused row reads no delivery, so no later pass asks a fresh one and
+/// the wake tells nothing more while the screen stands unchanged.
 #[test]
 fn a_refused_api_error_resume_is_told_once_on_an_unchanged_idle_screen() {
     let dir = tempfile::tempdir().unwrap();
@@ -1906,24 +1911,37 @@ fn a_refused_api_error_resume_is_told_once_on_an_unchanged_idle_screen() {
     for _ in 0..2 {
         assert!(event_lines(&driver.pass(&state)).is_empty());
     }
+    let resume = |driver: &LaneDriver<'_>| driver.baseline.get("resume", "gh-9").map(str::to_owned);
+    let delivered = resume(&driver).unwrap();
+    wake_delivered(&fleet, "KEN-9", &delivered, driver.now);
+    // The delivery's stamp keys the idle screen anew, judged over two passes.
+    for _ in 0..2 {
+        assert!(event_lines(&driver.pass(&state)).is_empty());
+    }
+    let asked = resume(&driver).unwrap();
+    assert_ne!(asked, delivered, "a fresh resume after the delivered one");
     plant(json!({"exit": 1}));
     let clock = FakeClock::new();
-    let tick = orch_runtime::watch::Tick {
-        duty: orch_runtime::schedule::Duty::Wake,
-        now: agent_runtime::clock::Clock::now(&clock),
-        wall: driver.now,
-        baseline: &driver.baseline,
-        clock: &clock,
+    let wake = |driver: &LaneDriver<'_>| {
+        let tick = orch_runtime::watch::Tick {
+            duty: orch_runtime::schedule::Duty::Wake,
+            now: agent_runtime::clock::Clock::now(&clock),
+            wall: driver.now,
+            baseline: &driver.baseline,
+            clock: &clock,
+        };
+        orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap()
     };
-    let refused = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
     assert_eq!(
-        event_lines(&refused),
+        event_lines(&wake(&driver)),
         vec!["EVENT idle-after-return gh-9 cause=api-error"]
     );
     plant(ok("running\n"));
     for _ in 0..3 {
         assert_eq!(event_lines(&driver.pass(&state)), Vec::<String>::new());
     }
+    assert_eq!(resume(&driver), Some(asked), "the refused resume stands");
+    assert_eq!(event_lines(&wake(&driver)), Vec::<String>::new());
 }
 
 /// A Codex turn its provider's API ended, on a local lane the wake types
@@ -5048,6 +5066,16 @@ fn switched_root(dir: &Path, release: &Path) -> PathBuf {
         .output()
         .unwrap();
     assert!(init.status.success(), "git init: {}", stderr(&init));
+    // The row removes the root, so no background writer may race it.
+    for (key, value) in [("gc.auto", "0"), ("maintenance.auto", "false")] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["config", key, value])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
     let scripts = root.join(".agents/skills/orch/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     write_executable(
@@ -7748,13 +7776,7 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let init = program("git")
-        .args(["-C", &checkout.display().to_string(), "init", "-q"])
-        .output()
-        .unwrap();
-    assert!(init.status.success(), "{}", stderr(&init));
-    fleet_origin(&fleet, &checkout);
+    init_checkout(&fleet, &checkout);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
     let old_account = dir.path().join("old-account");
     let new_account = dir.path().join("new-account");
@@ -7826,22 +7848,19 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
 }
 
 /// A walled worker whose walk found no room is walked again on each later
-/// pass under the same banner, quietly, and the first pass an account has
-/// room relaunches it there with nobody starting it: the replacement takes
-/// its first turn on the start brief on that account.
+/// pass under the same banner, quietly, before its reset and after it while
+/// its own account still has no room; a refusal a later walk meets is said
+/// once under the wall's line, and the first pass an account has room
+/// relaunches it there with nobody starting it, its own-account resume
+/// gone: the replacement takes its first turn on the start brief on that
+/// account.
 #[test]
 fn a_walled_lane_the_walk_found_no_room_for_relaunches_when_an_account_has_room() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let init = program("git")
-        .args(["-C", &checkout.display().to_string(), "init", "-q"])
-        .output()
-        .unwrap();
-    assert!(init.status.success(), "{}", stderr(&init));
-    fleet_origin(&fleet, &checkout);
+    init_checkout(&fleet, &checkout);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
     let old_account = dir.path().join("old-account");
     let new_account = dir.path().join("new-account");
@@ -7883,10 +7902,33 @@ fn a_walled_lane_the_walk_found_no_room_for_relaunches_when_an_account_has_room(
             "pick none".to_owned()
         ]
     );
-    for _ in 0..2 {
-        let quiet = driver.pass(&state);
-        assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
-    }
+    let quiet = driver.pass(&state);
+    assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    // A later walk is held by a halt: said once while it stands.
+    driver.halted = |_| Ok(true);
+    assert_eq!(
+        lines(&driver.pass(&state)),
+        [
+            format!(
+                "EVENT usage-limit gh-4 {} resets=2027-10-04T18:00:00Z",
+                old_account.display()
+            ),
+            "wall-relaunch-refused lane=gh-4 reason=halted".to_owned()
+        ]
+    );
+    let quiet = driver.pass(&state);
+    assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    driver.halted = |_| Ok(false);
+    // The reset passes with the account still walled.
+    driver.now = BANNER_RESET + 60;
+    let passed = driver.pass(&state);
+    assert!(
+        lines(&passed).contains(&"resume wake".to_owned()),
+        "{:?}",
+        lines(&passed)
+    );
+    let quiet = driver.pass(&state);
+    assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
     assert!(driver.relaunches.borrow().is_empty());
     driver.pick = Pick::Lane(new_account.display().to_string());
     let room = driver.pass(&state);
@@ -7899,6 +7941,7 @@ fn a_walled_lane_the_walk_found_no_room_for_relaunches_when_an_account_has_room(
         )]
     );
     assert_eq!(driver.relaunches.borrow().len(), 1);
+    assert_eq!(driver.baseline.get("resume", "gh-4"), None);
     assert!(lines(&driver.pass(&state)).is_empty());
     assert_eq!(driver.relaunches.borrow().len(), 1, "relaunched once");
     let relaunch = driver.relaunches.borrow()[0].clone();
@@ -8070,156 +8113,285 @@ fn a_copilot_or_pi_lane_resumes_after_its_usage_reset() {
     }
 }
 
-/// A worker its provider stopped is resumed on its own account, once, with
-/// no line, while the stop is younger than the patience; the first pass
-/// past `stop::PROVIDER_PATIENCE` walks the lane preference less the
-/// lane's own provider and relaunches it on the entry the walk chose, its
-/// brief naming the prior session's transcript, under `lane-relaunched`
-/// and the move's note.
+/// A worker its provider stopped is resumed on its own account with no
+/// line while the stop is younger than the patience; the first pass past
+/// `stop::PROVIDER_PATIENCE` walks the lane preference less the lane's own
+/// provider. An entry the walk chose takes the lane, its brief naming the
+/// prior session's transcript, under `lane-relaunched` and the move's
+/// note, for a move to another harness and for a Pi lane's move to
+/// another Pi provider alike, on the host the entry names where it names
+/// one. A move refused, here a record that binds no
+/// session for the brief to name, and a walk that could not judge, are
+/// told once as `idle-after-return` with the refusal under it; the lane is
+/// resumed still and nothing starts.
 #[test]
 fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
-    let server = Server::start(&dir, "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, identity) = redrawing(&server, &dir, "gh-1", "claude", "❯\u{a0}\n");
-    await_drawn(&server, &pane, "❯");
-    let account = dir.join("account");
-    let session = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
-    let transcript =
-        agent_runtime::effects::fixed_file(Harness::Claude, &account, &dir, session).unwrap();
-    std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
-    std::fs::write(
-        &transcript,
-        format!("{{\"type\":\"permission-mode\",\"sessionId\":\"{session}\"}}\n"),
-    )
-    .unwrap();
-    let mut record = relaunchable(lane_record(
-        "KEN-1",
-        "gh-1",
-        "claude",
-        &server,
-        &pane,
-        Some(&identity),
-        &dir,
-    ));
-    record["account"] = json!(account);
-    record["effort"] = json!("high");
-    record["session_id"] = json!(session);
-    fleet.set_lanes(vec![record]);
-    let rows = dir.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
-    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
-    std::fs::write(
-        &rows,
-        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n",
-    )
-    .unwrap();
-    let state = fleet.read();
-    lane_driver!(
-        server,
-        fleet,
-        readers,
-        driver,
-        &[("ORCH_WALL_RELAUNCH", "auto")]
-    );
-    driver.preference = Some("claude:opus:high,codex:gpt-6.2-sol:high".to_owned());
-    driver.provider_move = Some(chosen(
-        Harness::Codex,
-        "gpt-6.2-sol",
-        "high",
-        "/home/me/.acodex",
-    ));
-    let patience = agent_runtime::stop::PROVIDER_PATIENCE.as_secs();
-    let mut first_stop = None;
-    let moved = loop {
-        let at = driver.now;
-        let produced = driver.pass(&state);
-        if !driver.relaunches.borrow().is_empty() {
-            break (at, lines(&produced));
+    enum Then {
+        /// Relaunched on this harness, account and host, the brief naming
+        /// the prior transcript of the lane's harness, after a walk of
+        /// this text.
+        Moved(
+            &'static str,
+            &'static str,
+            Option<&'static str>,
+            &'static str,
+        ),
+        /// Told once with this refusal.
+        Refused(&'static str),
+    }
+    struct Row {
+        case: &'static str,
+        harness: Harness,
+        model: &'static str,
+        preference: &'static str,
+        screen: &'static str,
+        stop: &'static str,
+        session: bool,
+        walk: Result<Option<Chosen>, String>,
+        then: Then,
+    }
+    let claude_stop = r#"{"harness":"claude","event":"StopFailure","error":"server_error"}"#;
+    let pi_stop = r#"{"harness":"pi","event":"Stop","stop_reason":"error","working_agents":0}"#;
+    let codex = chosen(Harness::Codex, "gpt-6.2-sol", "high", "/home/me/.acodex");
+    let rows = [
+        Row {
+            case: "another harness",
+            harness: Harness::Claude,
+            model: "opus",
+            preference: "claude:opus:high,codex:gpt-6.2-sol:high",
+            screen: "❯\u{a0}\n",
+            stop: claude_stop,
+            session: true,
+            walk: Ok(Some(codex.clone())),
+            then: Then::Moved("codex", "/home/me/.acodex", None, "codex:gpt-6.2-sol:high"),
+        },
+        Row {
+            case: "an entry on another host",
+            harness: Harness::Claude,
+            model: "opus",
+            preference: "claude:opus:high,codex@/opt/box:gpt-6.2-sol:high",
+            screen: "❯\u{a0}\n",
+            stop: claude_stop,
+            session: true,
+            walk: Ok(Some(Chosen {
+                host: Some("/opt/box".to_owned()),
+                ..codex.clone()
+            })),
+            then: Then::Moved(
+                "codex",
+                "/home/me/.acodex",
+                Some("/opt/box"),
+                "codex@/opt/box:gpt-6.2-sol:high",
+            ),
+        },
+        Row {
+            case: "another pi provider",
+            harness: Harness::Pi,
+            model: "anthropic/claude-x",
+            preference: "pi:anthropic/claude-x:high,pi:openai/gpt-5:high",
+            screen: "pi drew this\n",
+            stop: pi_stop,
+            session: true,
+            walk: Ok(Some(chosen(
+                Harness::Pi,
+                "openai/gpt-5",
+                "high",
+                "/home/me/.api",
+            ))),
+            then: Then::Moved("pi", "/home/me/.api", None, "pi:openai/gpt-5:high"),
+        },
+        Row {
+            case: "a record binding no session",
+            harness: Harness::Claude,
+            model: "opus",
+            preference: "claude:opus:high,codex:gpt-6.2-sol:high",
+            screen: "❯\u{a0}\n",
+            stop: claude_stop,
+            session: false,
+            walk: Ok(Some(codex.clone())),
+            then: Then::Refused("context-unavailable cause=session-unrecorded"),
+        },
+        Row {
+            case: "a walk that could not judge",
+            harness: Harness::Claude,
+            model: "opus",
+            preference: "claude:opus:high,codex:gpt-6.2-sol:high",
+            screen: "❯\u{a0}\n",
+            stop: claude_stop,
+            session: true,
+            walk: Err("preference-invalid entry=x".to_owned()),
+            then: Then::Refused("walk-unjudged preference-invalid entry=x"),
+        },
+    ];
+    for row in rows {
+        let case = row.case;
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(&server, &dir, "gh-1", row.harness.name(), row.screen);
+        await_drawn(&server, &pane, row.screen.trim_end());
+        let account = dir.join("account");
+        let session = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+        let transcript = match row.harness {
+            Harness::Pi => account
+                .join("sessions")
+                .join(agent_runtime::session::pi_slug(&dir))
+                .join(format!("2026-11-26T00-00-00-000Z_{session}.jsonl")),
+            _ => agent_runtime::effects::fixed_file(row.harness, &account, &dir, session).unwrap(),
+        };
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "{}\n").unwrap();
+        let mut record = relaunchable(lane_record(
+            "KEN-1",
+            "gh-1",
+            row.harness.name(),
+            &server,
+            &pane,
+            Some(&identity),
+            &dir,
+        ));
+        record["model"] = json!(row.model);
+        record["account"] = json!(account);
+        record["effort"] = json!("high");
+        if row.session {
+            record["session_id"] = json!(session);
         }
-        assert!(lines(&produced).is_empty(), "{:?}", lines(&produced));
-        if first_stop.is_none() && driver.baseline.get("resume", "gh-1").is_some() {
-            first_stop = Some(at);
-        }
-        assert!(
-            first_stop.is_none_or(|since| at - since < patience),
-            "no move inside the patience"
+        fleet.set_lanes(vec![record]);
+        let rows_file = dir.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+        std::fs::create_dir_all(rows_file.parent().unwrap()).unwrap();
+        std::fs::write(&rows_file, format!("{}\n", row.stop)).unwrap();
+        let state = fleet.read();
+        lane_driver!(
+            server,
+            fleet,
+            readers,
+            driver,
+            &[("ORCH_WALL_RELAUNCH", "auto")]
         );
-    };
-    let since = first_stop.expect("the stop was resumed inside the patience");
-    let (at, told) = moved;
-    assert!(
-        at - since >= patience,
-        "moved at {} past the stop",
-        at - since
-    );
-    assert_eq!(
-        told,
-        vec![
-            format!(
-                "EVENT lane-relaunched KEN-1 lane=/home/me/.acodex from={}",
-                account.display()
-            ),
-            format!(
-                "log={}",
-                driver.state_dir.join("wall-relaunch-KEN-1.log").display()
-            ),
-            format!(
-                "provider-move cause=server_error since={}",
-                clock::iso_utc(since)
-            ),
-        ]
-    );
-    let walks = driver.provider_walks.borrow();
-    assert_eq!(
-        walks[0].preference.as_deref(),
-        Some("codex:gpt-6.2-sol:high"),
-        "the walk leaves the lane's own provider out"
-    );
-    assert!(walks[0].caller.is_none());
-    let request: Value = serde_json::from_slice(
-        &std::fs::read(driver.state_dir.join("wall-relaunch-KEN-1.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        (
-            &request["harness"],
-            &request["model"],
-            &request["effort"],
-            &request["account"]
-        ),
-        (
-            &json!("codex"),
-            &json!("gpt-6.2-sol"),
-            &json!("high"),
-            &json!("/home/me/.acodex")
-        ),
-        "{request}"
-    );
-    let brief = std::fs::read_to_string(driver.state_dir.join("wall-relaunch-KEN-1.md")).unwrap();
-    assert!(
-        brief.contains(&format!(
-            "Continue KEN-1 from the prior claude transcript at {}; read it first, then resume the orch workflow.",
-            transcript.display()
-        )),
-        "{brief}"
-    );
-    assert_eq!(driver.baseline.get("provider-stop", "gh-1"), None);
+        driver.preference = Some(row.preference.to_owned());
+        driver.provider_move = row.walk.clone();
+        let patience = agent_runtime::stop::PROVIDER_PATIENCE.as_secs();
+        // The move is due within the patience's passes at 240 seconds
+        // each, past the two passes that judge the first stop.
+        let bound = patience / 240 + 3;
+        let mut first_stop = None;
+        let mut said = None;
+        for _ in 0..bound {
+            let at = driver.now;
+            let produced = driver.pass(&state);
+            if first_stop.is_none() && driver.baseline.get("resume", "gh-1").is_some() {
+                first_stop = Some(at);
+            }
+            if !lines(&produced).is_empty() || !driver.relaunches.borrow().is_empty() {
+                said = Some((at, lines(&produced)));
+                break;
+            }
+        }
+        let since = first_stop.expect("the stop was resumed inside the patience");
+        let (at, told) = said.unwrap_or_else(|| {
+            panic!(
+                "{case}: nothing past the patience; resume={:?} provider-stop={:?}",
+                driver.baseline.get("resume", "gh-1"),
+                driver.baseline.get("provider-stop", "gh-1")
+            )
+        });
+        assert!(
+            at - since >= patience,
+            "{case}: said {} seconds past the stop, inside the patience: {told:?}",
+            at - since
+        );
+        let walks = driver.provider_walks.borrow().clone();
+        match row.then {
+            Then::Moved(harness, to, host, walk) => {
+                assert_eq!(
+                    told,
+                    vec![
+                        format!(
+                            "EVENT lane-relaunched KEN-1 lane={to} from={}",
+                            account.display()
+                        ),
+                        format!(
+                            "log={}",
+                            driver.state_dir.join("wall-relaunch-KEN-1.log").display()
+                        ),
+                        format!(
+                            "provider-move cause={} since={}",
+                            if row.harness == Harness::Pi {
+                                "error"
+                            } else {
+                                "server_error"
+                            },
+                            clock::iso_utc(since)
+                        ),
+                    ],
+                    "{case}"
+                );
+                assert_eq!(
+                    walks[0].preference.as_deref(),
+                    Some(walk),
+                    "{case}: the walk leaves the lane's own provider out"
+                );
+                assert!(walks[0].caller.is_none(), "{case}");
+                let request: Value = serde_json::from_slice(
+                    &std::fs::read(driver.state_dir.join("wall-relaunch-KEN-1.json")).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    (
+                        &request["harness"],
+                        &request["account"],
+                        request.get("host").and_then(Value::as_str)
+                    ),
+                    (&json!(harness), &json!(to), host),
+                    "{case}: {request}"
+                );
+                let brief =
+                    std::fs::read_to_string(driver.state_dir.join("wall-relaunch-KEN-1.md"))
+                        .unwrap();
+                assert!(
+                    brief.contains(&format!(
+                        "Continue KEN-1 from the prior {} transcript at {}; read it first, then resume the orch workflow.",
+                        row.harness.name(),
+                        transcript.display()
+                    )),
+                    "{case}: {brief}"
+                );
+                assert_eq!(driver.baseline.get("provider-stop", "gh-1"), None, "{case}");
+            }
+            Then::Refused(reason) => {
+                assert_eq!(
+                    told,
+                    vec![
+                        "EVENT idle-after-return gh-1 cause=server_error".to_owned(),
+                        format!("provider-move-refused lane=gh-1 reason={reason}"),
+                    ],
+                    "{case}"
+                );
+                for _ in 0..2 {
+                    let later = driver.pass(&state);
+                    assert!(
+                        lines(&later).is_empty(),
+                        "{case}: told once: {:?}",
+                        lines(&later)
+                    );
+                }
+                assert!(driver.relaunches.borrow().is_empty(), "{case}");
+                assert!(
+                    driver
+                        .baseline
+                        .get("resume", "gh-1")
+                        .is_some_and(|r| r.starts_with("server_error|")),
+                    "{case}: resumed still: {:?}",
+                    driver.baseline.get("resume", "gh-1")
+                );
+            }
+        }
+    }
 }
 
-/// A local lane whose harness exited under its live window is started
-/// again on the pass that reports it: the record's own relaunch, its close
-/// on the `restart-recovery` ground first, then its launch on the record's
-/// own account, which resumes the session the record binds, under
-/// `lane-relaunched`; the next pass says nothing more.
-#[test]
-fn an_exited_lane_is_relaunched_from_its_record() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
-    let server = Server::start(&dir, "fleet");
-    let fleet = Fleet::new(&server);
-    let pane = server.open_window("gh-2", &dir, "bash --norc --noprofile");
-    // The harness the launch recorded, gone.
+/// The identity of a harness that ran and is gone.
+fn gone_harness() -> Identity {
     let mut harness = std::process::Command::new("sleep")
         .arg("600")
         .spawn()
@@ -8229,18 +8401,36 @@ fn an_exited_lane_is_relaunched_from_its_record() {
     };
     harness.kill().unwrap();
     harness.wait().unwrap();
+    gone
+}
+
+/// A local lane whose harness exited under its live window is started
+/// again on the pass that reports it: the record's own relaunch, its close
+/// on the `restart-recovery` ground first, then its launch on the record's
+/// own account, which resumes the session the record binds, under
+/// `lane-relaunched`; the next pass says nothing more. The assignment is
+/// restarted once: its harness exiting again, on the relaunch's pane, is
+/// said as `second-death` once and starts nothing.
+#[test]
+fn an_exited_lane_is_relaunched_from_its_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let server = Server::start(&dir, "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("gh-2", &dir, "bash --norc --noprofile");
     let mut record = relaunchable(lane_record(
         "KEN-2",
         "gh-2",
         "claude",
         &server,
         &pane,
-        Some(&gone),
+        Some(&gone_harness()),
         &dir,
     ));
     record.as_object_mut().unwrap().remove("account");
     record["session_id"] = json!("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c");
-    fleet.set_lanes(vec![record]);
+    record["launched_at"] = json!(NOW_ISO);
+    fleet.set_lanes(vec![record.clone()]);
     let state = fleet.read();
     lane_driver!(
         server,
@@ -8249,7 +8439,8 @@ fn an_exited_lane_is_relaunched_from_its_record() {
         driver,
         &[("ORCH_WALL_RELAUNCH", "auto")]
     );
-    assert!(event_lines(&driver.pass(&state)).is_empty());
+    let first = driver.pass(&state);
+    assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
     let exited = driver.pass(&state);
     assert_eq!(
         event_lines(&exited),
@@ -8278,6 +8469,115 @@ fn an_exited_lane_is_relaunched_from_its_record() {
     );
     assert!(event_lines(&driver.pass(&state)).is_empty());
     assert_eq!(driver.relaunches.borrow().len(), 1, "relaunched once");
+    // The relaunch's close retired the old window; its own harness, on
+    // its own pane, exits too.
+    let retired = tmux(&server.socket, &["kill-pane", "-t", &pane]);
+    assert!(retired.status.success(), "{}", stderr(&retired));
+    let relaunched = server.open_window("gh-2", &dir, "bash --norc --noprofile");
+    record["launch"] = json!({"pane": relaunched, "server": server.pid});
+    let identity = gone_harness();
+    record["launch"]["pid"] = json!(identity.pid);
+    record["launch"]["start"] = json!(identity.start);
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let first = driver.pass(&state);
+    assert!(lines(&first).is_empty(), "{:?}", lines(&first));
+    let again = driver.pass(&state);
+    assert_eq!(
+        event_lines(&again),
+        vec!["EVENT lane-exited gh-2"],
+        "{:?}",
+        lines(&again)
+    );
+    assert_eq!(
+        lines(&again).last().map(String::as_str),
+        Some("relaunch-refused lane=gh-2 reason=second-death")
+    );
+    assert!(lines(&driver.pass(&state)).is_empty(), "said once");
+    assert_eq!(driver.relaunches.borrow().len(), 1, "no second restart");
+}
+
+/// A launched harness execs in its window's shell (`exec /bin/sh` of the
+/// launch file, which execs the harness), so its exit closes the window:
+/// the pass that reads the window gone restarts the lane from its record,
+/// its process identity proving the harness ended. A standing halt holds
+/// the restart, said once, and each later pass asks it again until the
+/// halt lifts.
+#[test]
+fn a_lane_whose_exit_closed_its_window_is_restarted_once_its_halt_lifts() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let server = Server::start(&dir, "fleet");
+    let fleet = Fleet::new(&server);
+    let harness = named_sleep(&dir, "claude");
+    let launch = dir.join("gh-3.launch");
+    std::fs::write(&launch, format!("exec {} 600\n", harness.display())).unwrap();
+    let pane = server.open_window("gh-3", &dir, &format!("exec /bin/sh {}", launch.display()));
+    let identity = await_named(&server, &pane, "claude");
+    let mut record = relaunchable(lane_record(
+        "KEN-3",
+        "gh-3",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &dir,
+    ));
+    record.as_object_mut().unwrap().remove("account");
+    record["session_id"] = json!("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c");
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let out = std::process::Command::new("kill")
+        .args(["-KILL", &identity.pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while server.panes().contains(&pane) {
+        assert!(std::time::Instant::now() < deadline, "the window stood");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    lane_driver!(
+        server,
+        fleet,
+        readers,
+        driver,
+        &[("ORCH_WALL_RELAUNCH", "auto")]
+    );
+    driver.halted = |_| Ok(true);
+    assert_eq!(
+        lines(&driver.pass(&state)),
+        vec![
+            "EVENT window-gone gh-3",
+            "relaunch-refused lane=gh-3 reason=halted"
+        ]
+    );
+    assert_eq!(lines(&driver.pass(&state)), vec!["EVENT window-gone gh-3"]);
+    assert!(driver.relaunches.borrow().is_empty());
+    driver.halted = |_| Ok(false);
+    let restarted = driver.pass(&state);
+    assert_eq!(
+        event_lines(&restarted),
+        vec![
+            "EVENT window-gone gh-3",
+            "EVENT lane-relaunched KEN-3 lane=- from=-"
+        ],
+        "{:?}",
+        lines(&restarted)
+    );
+    assert_eq!(driver.relaunches.borrow().len(), 1);
+    let launch: Value = serde_json::from_slice(
+        &std::fs::read(driver.state_dir.join("restart-relaunch-KEN-3.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (&launch["op"], &launch["harness"]),
+        (&json!("launch-lane"), &json!("claude")),
+        "{launch}"
+    );
+    // The window the restart opens is no `window-gone` while it opens.
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(driver.relaunches.borrow().len(), 1, "restarted once");
 }
 
 /// The 9claude stop of 6:40 pm PT on 2026-11-25, replayed with the figures
@@ -8416,12 +8716,7 @@ fn an_auth_wall_relaunches_on_another_account() {
         let checkout = dir.path().join("checkout");
         std::fs::create_dir_all(&checkout).unwrap();
         let checkout = checkout.canonicalize().unwrap();
-        let init = program("git")
-            .args(["-C", &checkout.display().to_string(), "init", "-q"])
-            .output()
-            .unwrap();
-        assert!(init.status.success(), "{}", stderr(&init));
-        fleet_origin(&fleet, &checkout);
+        init_checkout(&fleet, &checkout);
 
         let account = dir.path().join("account");
         plant_credential(&account);
@@ -8540,11 +8835,8 @@ fn an_auth_wall_relaunches_on_another_account() {
             .iter()
             .filter(|event| matches!(event, Event::UsageLimit { .. }))
             .collect();
-        let spent_line = if named {
-            format!("{name} {} wall_kind=auth", account.display())
-        } else {
-            format!("{name} wall_kind=auth")
-        };
+        // A record naming no account spent its home's sign-in.
+        let spent_line = format!("{name} {} wall_kind=auth", account.display());
         assert_eq!(
             told,
             vec![&Event::UsageLimit {
@@ -8736,13 +9028,7 @@ fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_accoun
     let mut fleet = Fleet::new(&server);
     fleet.runner.stub = fixtures().join("stub-resume-banner/claude");
     let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let init = program("git")
-        .args(["-C", &checkout.display().to_string(), "init", "-q"])
-        .output()
-        .unwrap();
-    assert!(init.status.success(), "{}", stderr(&init));
-    fleet_origin(&fleet, &checkout);
+    init_checkout(&fleet, &checkout);
     let checkout = checkout.canonicalize().unwrap();
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
     // The seats stand outside `/tmp`, as an operator's do, since the
@@ -8937,13 +9223,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         let mut fleet = Fleet::new(&server);
         fleet.runner.verify = Some(3);
         let checkout = dir.path().join("checkout");
-        std::fs::create_dir_all(&checkout).unwrap();
-        let init = program("git")
-            .args(["-C", &checkout.display().to_string(), "init", "-q"])
-            .output()
-            .unwrap();
-        assert!(init.status.success(), "{}", stderr(&init));
-        fleet_origin(&fleet, &checkout);
+        init_checkout(&fleet, &checkout);
         let checkout = checkout.canonicalize().unwrap();
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
         let old_account = dir.path().join("old-account");
@@ -9089,13 +9369,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         fleet.runner.verify = Some(1);
         fleet.runner.stub = fixtures().join("stub-late/claude");
         let checkout = dir.path().join("checkout");
-        std::fs::create_dir_all(&checkout).unwrap();
-        let init = program("git")
-            .args(["-C", &checkout.display().to_string(), "init", "-q"])
-            .output()
-            .unwrap();
-        assert!(init.status.success(), "{}", stderr(&init));
-        fleet_origin(&fleet, &checkout);
+        init_checkout(&fleet, &checkout);
         let checkout = checkout.canonicalize().unwrap();
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
         let old_account = dir.path().join("old-account");
