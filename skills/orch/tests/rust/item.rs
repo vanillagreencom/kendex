@@ -3490,10 +3490,13 @@ mod dev_artifacts {
         let mut red = prior.clone();
         red["run_dir"] = json!(w.wt.join("tmp/dev-validate-red"));
         red["outcome"] = json!("fail");
+        let mut docs = prior.clone();
+        docs["proof"]["docs_only"] = json!(true);
         for (mapped, stages, run) in [
             (false, vec![&prior], &changed),
             (true, vec![], &changed),
             (true, vec![&prior, &red], &changed),
+            (true, vec![&docs], &changed),
             (true, vec![&prior], &off_line),
             (true, vec![&prior, &newer], &changed),
         ] {
