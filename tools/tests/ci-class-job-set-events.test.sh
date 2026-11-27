@@ -820,11 +820,11 @@ reach_row() { # PATH REQUIRED FORBIDDEN BUILD
 }
 while IFS='|' read -r path required forbidden build; do
   row_spawn reach_row "$path" "$required" "$forbidden" "$build"
-done <<'ROWS'
+done <<ROWS
 .kendex-lock.json||rest|false
 crates/core/src/lib.rs|rest|node|true
 pi-extensions/pi-agents-tmux/index.ts|node|linear|false
-docs/no-reader.md|review-gate||false
+$UNREAD_DOC|review-gate||false
 ROWS
 saved_after="$PUSH_AFTER"
 PUSH_AFTER=0000000000000000000000000000000000000000
