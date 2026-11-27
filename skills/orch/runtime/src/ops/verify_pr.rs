@@ -4,9 +4,8 @@
 //! current head, base and state (`verify::pull_request`); a pull request
 //! that is closed or merged refuses before any verdict read; the head is
 //! then read as `verify-head` reads a pinned head (`verify::run`), judged
-//! over that same pinned evidence with the pull request's event rule
-//! (under a required set, a workflow job's check counts only from a run
-//! GitHub evaluates for a pull request), and a final verdict is recorded
+//! over that same pinned evidence under the pull request's event rule
+//! (`verify::selection`, step 2), and a final verdict is recorded
 //! as `.verification` with `source: verify-pr`. The head is read afresh on every call, so a pull request
 //! whose head moved between two calls is judged on the newer head and the
 //! older record replaced. `pending` and an unreadable read are results the

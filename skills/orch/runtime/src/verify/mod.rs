@@ -35,8 +35,7 @@
 //! names a pull request: [`pull_request`] reads its current head, base and
 //! state through `gh pr view`, by number, and [`run`] then reads that head
 //! as above, recording under its own `source`. Its judgement of the same
-//! pinned evidence differs in one rule: under a required set, a workflow
-//! job's check counts only from a run GitHub evaluates for a pull request
+//! pinned evidence differs in one rule, the pull request's event rule
 //! (`selection`, step 2), so the same head can take another verdict than
 //! `verify-head` gives it. The review
 //! gate's reads (`review`) name the pull request too: its verdict is the
