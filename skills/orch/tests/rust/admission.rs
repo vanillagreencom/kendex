@@ -1248,25 +1248,34 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(fleet.fleet(), before);
 }
 
-/// A folder entry without its `/`: a launch's Location path and a running
-/// lane's added path that name a folder in the lane's checkout record it
-/// with the `/`, so another lane's admit of a file under it meets the live
-/// lane and is refused `launch-overlap`; a path naming nothing there is
-/// recorded as written; a record already holding the folder without its
-/// `/`, or holding no set while its item's Location names the folder,
-/// holds the files under it as that folder.
+/// A folder entry without its `/`, read in the checkout on this machine
+/// that holds the lane's files, a hosted lane's recorded `checkout`: a
+/// launch's Location path and a running lane's added path that name a
+/// folder there record it with the `/`, so another lane's admit of a file
+/// under it meets the live lane and is refused `launch-overlap`; a path
+/// naming nothing there, or a symlink to a folder, is recorded as written.
+/// A record already holding the folder without its `/`, or holding no set
+/// while its item's Location names the folder, holds the files under it as
+/// that folder, and a stopped one's relaunch meets a live holder of a file
+/// under it. An in-scope folder without its `/` covers the files under it.
+/// The tier classifies the spelling the holders meet: a micro brief over a
+/// Location naming the workflows folder is refused `tier-narrower`.
 #[test]
 fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
     let fleet = Fleet::new();
     fleet.init_fleet();
-    let root = fleet.state_dir();
+    // Outside the binary's working directory, so only a read in the lane's
+    // own checkout finds the folder.
+    let root = fleet.checkout("repo", None);
     std::fs::create_dir_all(root.join("src/sub")).unwrap();
+    std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
     std::fs::write(root.join("src/sub/a.rs"), "\n").unwrap();
+    std::os::unix::fs::symlink("sub", root.join("src/link")).unwrap();
     let harness = Owned::sleep();
-    let mail_root = root.display().to_string();
+    let checkout = root.display().to_string();
     let other = json!({
         "item": "KEN-O", "tracker": "linear", "harness": "claude", "status": "running",
-        "mail_root": "/w/o", "touched": ["docs/o.md"],
+        "mail_root": checkout, "touched": ["docs/o.md"],
         "launch": {"pane": "%2", "server": 41020, "pid": 1, "start": "ticks:1"},
     });
     // The holder `lane` live under this test's harness, beside KEN-O.
@@ -1275,6 +1284,15 @@ fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
         lane["launch"] =
             json!({"pane": "%7", "server": 41020, "pid": harness.pid(), "start": harness.start()});
         fleet.write_lanes(vec![lane, other.clone()]);
+    };
+    // A lane on a provider: its root is the host's path, and the checkout
+    // here is the one its launch ran from.
+    let hosted = |mut lane: Value| {
+        lane["host"] = json!("/w/provider");
+        lane["kind"] = json!("ssh");
+        lane["mail_root"] = json!("/w/on-host");
+        lane["checkout"] = json!(checkout);
+        lane
     };
     let refused_under = |holder: &str| {
         let before = fleet.fleet();
@@ -1292,36 +1310,93 @@ fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
         assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
     };
 
-    fleet.item("KEN-F", "`src/sub`, `src/none`", 0, &[]);
+    fleet.item("KEN-W", "`.github/workflows`", 0, &[]);
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(
+        &brief,
+        "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=1\nAnswer on the item.\n",
+    )
+    .unwrap();
+    let mut request = launch("KEN-W", &root);
+    request["brief_file"] = json!(brief.display().to_string());
+    let before = fleet.fleet();
+    let (key, fields) = refusal(&fleet.op(&request));
+    assert_eq!(key, "tier-narrower", "{fields:?}");
+    assert!(
+        fields.contains(&("judged".to_owned(), "standard".to_owned())),
+        "{fields:?}"
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+
+    fleet.item("KEN-F", "`src/sub`, `src/none`, `src/link`", 0, &[]);
     let out = fleet.op(&launch("KEN-F", &root));
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     let lane = fleet.lane("KEN-F");
-    assert_eq!(lane["touched"], json!(["src/none", "src/sub/"]));
+    assert_eq!(lane["touched"], json!(["src/link", "src/none", "src/sub/"]));
     live_beside_other(lane);
     refused_under("KEN-F");
 
-    let mut lane = holder("KEN-A", "running", None, Some(&["docs/x.md"]));
-    lane["mail_root"] = json!(mail_root);
-    live_beside_other(lane);
-    let out = fleet.admit(&json!({"item": "KEN-A", "paths": ["src/sub", "src/gone"]}));
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    assert_eq!(
-        fleet.lane("KEN-A")["touched"],
-        json!(["docs/x.md", "src/gone", "src/sub/"])
-    );
-    refused_under("KEN-A");
+    for (item, on_host) in [("KEN-A", false), ("KEN-HA", true)] {
+        let mut lane = holder(item, "running", None, Some(&["docs/x.md"]));
+        lane["mail_root"] = json!(checkout);
+        if on_host {
+            lane = hosted(lane);
+        }
+        live_beside_other(lane);
+        let out = fleet.admit(&json!({"item": item, "paths": ["src/sub", "src/gone"]}));
+        assert_eq!(reply(&out)["ok"], true, "{item}: {}", stderr(&out));
+        assert_eq!(
+            fleet.lane(item)["touched"],
+            json!(["docs/x.md", "src/gone", "src/sub/"]),
+            "{item}"
+        );
+        refused_under(item);
+    }
 
     let mut lane = holder("KEN-R", "running", None, Some(&["src/sub"]));
-    lane["mail_root"] = json!(mail_root);
+    lane["mail_root"] = json!(checkout);
     live_beside_other(lane);
     refused_under("KEN-R");
+    live_beside_other(hosted(holder(
+        "KEN-HR",
+        "running",
+        None,
+        Some(&["src/sub"]),
+    )));
+    refused_under("KEN-HR");
 
     fleet.item("KEN-S", "`src/sub`", 0, &[]);
     let mut lane = holder("KEN-S", "running", None, None);
-    lane["mail_root"] = json!(mail_root);
+    lane["mail_root"] = json!(checkout);
     live_beside_other(lane);
     refused_under("KEN-S");
+
+    let mut lane = holder("KEN-H", "running", None, Some(&["src/sub/"]));
+    lane["mail_root"] = json!(checkout);
+    live_beside_other(lane);
+    let out = fleet.admit(&json!({
+        "item": "KEN-O", "paths": ["src/sub/a.rs"], "in_scope": ["src/sub"],
+    }));
+    assert_eq!(reply(&out)["ok"], true, "in scope: {}", stderr(&out));
+
+    let mut stopped = holder("KEN-RS", "stopped", None, Some(&["src/sub"]));
+    stopped["mail_root"] = json!(checkout);
+    let mut live = holder("KEN-H", "running", Some(&harness), Some(&["src/sub/a.rs"]));
+    live["mail_root"] = json!(checkout);
+    fleet.write_lanes(vec![stopped, live]);
+    let before = fleet.fleet();
+    let out = fleet.op_with(&launch("KEN-RS", &root), &[("ORCH_DELIVERY", "pr")]);
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "launch-overlap", "relaunch: {}", stderr(&out));
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-RS"),
+            ("file", "src/sub/a.rs"),
+            ("holder", "KEN-H")
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "a refused relaunch writes nothing");
 }
 
 /// A running lane's added path is judged in its own lane's repository, so

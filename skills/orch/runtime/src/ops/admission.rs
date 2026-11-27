@@ -403,10 +403,10 @@ pub(super) enum Launch<'r> {
     First(&'r Path),
     /// A recorded lane's relaunch, bound on its own ([`bound`]): it carries
     /// its own record's work, so it never joins another lane. It names the
-    /// record's checkout.
+    /// record's checkout ([`checkout_of`]).
     Relaunch(Option<&'r Path>),
     /// Paths a running lane adds, bound when it was admitted. It names the
-    /// lane's checkout, else the request's `repo_dir`.
+    /// lane's checkout ([`checkout_of`]), else the request's `repo_dir`.
     Added(Option<&'r Path>),
 }
 
@@ -757,10 +757,11 @@ fn is_path(token: &str) -> bool {
 
 /// The touched set: the body's Location paths, the brief's paths, the
 /// range's changed paths and the paths added, `changelog.d/` left out,
-/// sorted and once each. The admission judges holders over it and the tier
-/// classifies it, so both read one set from the same inputs. A Location line
-/// naming no path is unread (`location`).
+/// read in `root` ([`folders`]). The admission judges holders over it and
+/// the tier classifies it, so both read one set from the same inputs. A
+/// Location line naming no path is unread (`location`).
 pub(super) fn touched(
+    root: Option<&Path>,
     body: Option<&str>,
     brief: Option<&str>,
     range: &[String],
@@ -775,7 +776,8 @@ pub(super) fn touched(
     }
     touched.extend(range.iter().chain(added).cloned());
     touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
-    Ok(touched.into_iter().collect())
+    let touched: Vec<String> = touched.into_iter().collect();
+    Ok(folders(root, &touched))
 }
 
 /// Whether `a` and `b` name one file: equal, or one a directory (`/`) the
@@ -791,13 +793,14 @@ fn covers(scope: &str, file: &str) -> bool {
 
 /// `entries` as an admitted set holds them, sorted and once each: an entry
 /// naming a folder in `root`, the checkout it is admitted in, ends in `/`,
-/// so [`meets`] and [`covers`] read it as that folder. A file, or a path
-/// naming nothing there or whose metadata cannot be read, stays as written,
-/// as an entry did before. A set is read through this where it is judged
-/// and where a record's set is read.
+/// so [`meets`] and [`covers`] read it as that folder. A file, a symlink
+/// (a pull request's files name one at its own path, whatever it points
+/// at), or a path naming nothing there or whose metadata cannot be read,
+/// stays as written, as an entry did before. A set is read through this
+/// where it is judged and where a record's set is read.
 fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
     let is_folder =
-        |root: &Path, e: &str| std::fs::metadata(root.join(e)).is_ok_and(|m| m.is_dir());
+        |root: &Path, e: &str| std::fs::symlink_metadata(root.join(e)).is_ok_and(|m| m.is_dir());
     let folder = |e: &String| match root {
         Some(root) if !e.is_empty() && !e.ends_with('/') && is_folder(root, e) => format!("{e}/"),
         _ => e.clone(),
@@ -806,10 +809,24 @@ fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// A lane record's touched set read in its own checkout ([`folders`]).
+/// The checkout on this machine holding a lane's files, where its folder
+/// entries are read ([`folders`]): a hosted lane's `mail_root` is its
+/// host's path, so its control checkout, the `checkout` its launch
+/// recorded; else its `mail_root`, a cloud lane's included, which is the
+/// item's worktree here. `None` where the record names neither.
+fn checkout_of(lane: &Lane) -> Option<&Path> {
+    match lane.mail_host() {
+        Some(_) => lane.extra.get("checkout").and_then(Value::as_str),
+        None => lane.mail_root.as_deref(),
+    }
+    .map(Path::new)
+}
+
+/// A lane record's touched set read in its own checkout ([`checkout_of`]).
 fn held(lane: &Lane) -> Option<Vec<String>> {
-    let root = lane.mail_root.as_deref().map(Path::new);
-    lane.touched.as_deref().map(|t| folders(root, t))
+    lane.touched
+        .as_deref()
+        .map(|t| folders(checkout_of(lane), t))
 }
 
 /// The paths `a` and `b` share that the scope leaves in, each the longer
@@ -1232,7 +1249,7 @@ pub(super) fn relaunch_held(
         scope_range: None,
         in_scope: record.in_scope.as_deref().unwrap_or_default(),
         paths,
-        launch: Launch::Relaunch(record.mail_root.as_deref().map(Path::new)),
+        launch: Launch::Relaunch(checkout_of(record)),
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
@@ -1309,12 +1326,18 @@ pub(super) fn judge(
         range_paths = (reads.range_paths)(&reads.clis, dir, range)
             .map_err(|c| unreadable("classification", c))?;
     }
-    let classified = touched(body.as_deref(), brief.as_deref(), &range_paths, a.paths)
-        .map_err(|c| unreadable("location", c.into()))?;
+    let classified = touched(
+        a.root(),
+        body.as_deref(),
+        brief.as_deref(),
+        &range_paths,
+        a.paths,
+    )
+    .map_err(|c| unreadable("location", c.into()))?;
     let touched = if a.read_only {
         Vec::new()
     } else {
-        folders(a.root(), &classified)
+        classified.clone()
     };
     let in_scope = folders(a.root(), a.in_scope);
     let mut join = None;
@@ -1370,7 +1393,7 @@ pub(super) fn judge(
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c))?;
                 let location = location_paths(&item.body)
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c.to_owned()))?;
-                read = folders(lane.mail_root.as_deref().map(Path::new), &location);
+                read = folders(checkout_of(lane), &location);
                 &read
             }
         };
@@ -1807,7 +1830,7 @@ pub(super) fn admit_paths(
             paths: &r.paths,
             launch: Launch::Added(
                 position
-                    .and_then(|i| lanes[i].mail_root.as_deref().map(Path::new))
+                    .and_then(|i| checkout_of(&lanes[i]))
                     .or(r.repo_dir.as_deref()),
             ),
             read_only: position.is_some_and(|i| lanes[i].read_only),

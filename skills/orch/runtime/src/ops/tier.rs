@@ -417,7 +417,7 @@ fn invalid_delta(note: &str) -> bool {
 fn filing(scope_paths_cli: &Path, body: &Path) -> Result<Classified, Refused> {
     let text = read(body, "body-unreadable")?;
     let unread = |cause: &str| Refused::new(cause, &[], 1);
-    admission::touched(Some(&text), None, &[], &[]).map_err(|_| unread("location-unread"))?;
+    admission::touched(None, Some(&text), None, &[], &[]).map_err(|_| unread("location-unread"))?;
     let classified = classify(
         &arm_cli(scope_paths_cli),
         &ArmInput {
@@ -455,7 +455,7 @@ pub fn tier(scope_paths_cli: &Path, r: &Request) -> Result<Answer, Refused> {
         .as_deref()
         .map(|path| read(path, "brief-unreadable"))
         .transpose()?;
-    let touched = admission::touched(body.as_deref(), brief.as_deref(), &[], &[])
+    let touched = admission::touched(Some(&r.repo), body.as_deref(), brief.as_deref(), &[], &[])
         .map_err(|_| refile("location-unread"))?;
     let floors: Vec<&str> = r.floor.as_deref().into_iter().collect();
     let classified = classify(
@@ -474,8 +474,14 @@ pub fn tier(scope_paths_cli: &Path, r: &Request) -> Result<Answer, Refused> {
             .map_err(|cause| Refused::new("range-paths-unreadable", &[("detail", &cause)], 2))?,
         None => Vec::new(),
     };
-    let counted = admission::touched(body.as_deref(), brief.as_deref(), &range_paths, &[])
-        .map_err(|_| refile("location-unread"))?;
+    let counted = admission::touched(
+        Some(&r.repo),
+        body.as_deref(),
+        brief.as_deref(),
+        &range_paths,
+        &[],
+    )
+    .map_err(|_| refile("location-unread"))?;
     Ok(Answer {
         classified,
         estimate: r.production,

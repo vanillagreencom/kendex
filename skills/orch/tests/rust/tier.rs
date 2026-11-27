@@ -132,6 +132,13 @@ fn each_input_opens_its_cycle_with_the_line_a_brief_carries() {
         "- **Location**: `.github/workflows/ci.yml`\n**Expected delta**: 4 lines\n",
     );
     let bare_body = w.file("bare-body", "**Location**: `src/a.rs:3-9`\nNo sizing.\n");
+    // A Location path naming a folder in the checkout without its `/` is
+    // classified as that folder, the spelling the launch's holders meet.
+    fs::create_dir_all(w.repo.join(".github/workflows")).unwrap();
+    let folder_body = w.file(
+        "folder-body",
+        "**Location**: `.github/workflows`\n**Expected delta**: 4 lines\n",
+    );
     // Prose spans beside the path, one an option word, are not passed to
     // the arm, whose `--path` would read an option word as no value.
     let prose_body = w.file(
@@ -162,6 +169,10 @@ fn each_input_opens_its_cycle_with_the_line_a_brief_carries() {
         (
             &["--body", workflow_body.to_str().unwrap()],
             "tier=standard brief=start cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/* estimate=- delta=4 paths=1",
+        ),
+        (
+            &["--body", folder_body.to_str().unwrap()],
+            "tier=standard brief=start cause=excluded-path path=.github/workflows/ glob=.github/workflows/* estimate=- delta=4 paths=1",
         ),
         (
             &["--body", bare_body.to_str().unwrap()],
