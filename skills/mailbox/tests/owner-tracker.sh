@@ -58,7 +58,8 @@ close_rows() {
   assert_eq "$(jq '.rollback_unowned' <<<"$CLOSE_FACTS")" true 'rollback preserves a later description and reports lost ownership'
   assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback reports its cause and retains the comment error'
   assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment acknowledgements stay unposted and retain the response'
-  assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
+  assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback takes the owner label off fresh labels and keeps the rest'
+  assert_eq "$(jq '.rollback_pair' <<<"$CLOSE_FACTS")" true 'a failed ask post leaves neither the owner label nor the owner assignee'
   assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
   assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
   assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
@@ -151,7 +152,7 @@ case "${1:-all}" in
 esac
 
 if [[ $# -eq 0 && -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
+  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused settings; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -214,23 +215,18 @@ if [[ $# -eq 0 && -z "${MAILBOX_UNDER_TEST:-}" ]]; then
     elif [[ "$rule" == rollback-owner ]]; then
       phase=close
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        '[[ "$owns_description" == true ]] || {' '[[ "$owns_description" == true ]] || true || {'
+        'elif [[ "$owns_description" != true ]]; then' 'elif false; then'
       assertion='rollback preserves a later description and reports lost ownership'
     elif [[ "$rule" == comment-refused ]]; then
       phase=close
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         "select(.success == true) | .data.comment.id" "select(true) | .data.comment.id"
       assertion='refused comment acknowledgements stay unposted and retain the response'
-    elif [[ "$rule" == settings ]]; then
+    else
       phase=settings
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'refuse item-ask-unconfigured "$ISSUE"' ':'
       assertion='an item ask with label unset refuses by the key it lacks'
-    else
-      phase=close
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'if [[ "$added_label" == true ]]; then' 'if false && [[ "$added_label" == true ]]; then'
-      assertion='rollback removes only the added owner label from fresh labels'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" "$phase" \

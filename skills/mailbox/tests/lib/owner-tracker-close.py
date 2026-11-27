@@ -46,7 +46,8 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         sys.exit(1)
     print(json.dumps({"issue": {
         "description": item["description"],
-        "assignee": {"name": item["assignee"]} if item["assignee"] else None,
+        "assignee": {"id": "owner" if item["assignee"] == "Owner Person" else "someone-else",
+                     "name": item["assignee"]} if item["assignee"] else None,
         "labels": {"pageInfo": {"hasNextPage": False},
                    "nodes": [{"name": label} for label in item["labels"]]}}}))
 elif args[:3] == ["comments", "owner-questions", "--id"]:
@@ -59,6 +60,10 @@ elif args[:3] == ["comments", "owner-questions", "--id"]:
     sys.stdout.write(sent.stdout)
     sys.stderr.write(sent.stderr)
     sys.exit(sent.returncode)
+elif args[:2] == ["comments", "owner-questions"]:
+    # The item's open questions: the ask's question comment while it stands.
+    standing = question_id.exists() and len(comments) > 1
+    print(json.dumps([{"id": question_id.read_text(), "reserved": True, "legacy_asks": []}] if standing else []))
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
@@ -165,7 +170,7 @@ def run(source, scratch, bash):
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True, "mention": True,
-             "comment_delete": True}
+             "comment_delete": True, "rollback_pair": True}
     # One copy of the real linear scripts, with no orch beside it, so its
     # attribution line reads unknown rather than this checkout's session.
     linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
@@ -197,10 +202,11 @@ def run(source, scratch, bash):
             original = "**Outcome, what you do:** Preserve the original purpose\n\n" + body if not posted else body
             later = "A later edit keeps its own purpose.\r\n\r\nKeep these bytes.\n\n"
             (root / "later-description.json").write_text(json.dumps(later))
-            labels = ["owner-gated", "skills"] if row in ("label-failed", "comment-preexisting") else ["skills"]
+            # A preexisting owner label stands with no ask open on the item.
+            labels = ["owner-gated", "skills"] if row == "comment-preexisting" else ["skills"]
             if row == "comment-label-edit":
                 labels.append("removed-later")
-            item = {"description": original, "labels": labels, "assignee": "Owner Person"}
+            item = {"description": original, "labels": labels, "assignee": ""}
             state = root / "item.json"
             state.write_text(json.dumps(item))
             comments_path = root / "comments.json"
@@ -248,7 +254,7 @@ def run(source, scratch, bash):
             if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit",
                        "mention-missing", "mention-other", "mention-unread", "delete-refused"):
                 facts["rollback_owned"] &= original != written and after_ask["description"] == original
-                expected_labels = ["added-later", "skills"] if row == "comment-label-edit" else labels
+                expected_labels = ["added-later", "skills"] if row == "comment-label-edit" else ["skills"]
                 facts["rollback_labels"] &= after_ask["labels"] == expected_labels
                 if row == "comment-refused":
                     response_file = Path(ask.stderr.partition("error-file=")[2].strip())
@@ -285,7 +291,7 @@ def run(source, scratch, bash):
                         and pending["tracker_posted"] is False)
             elif row == "comment-edited":
                 facts["rollback_unowned"] &= (after_ask["description"] == later
-                    and after_ask["labels"] == ["owner-gated", "skills"]
+                    and after_ask["labels"] == ["skills"]
                     and "cause=rollback-unowned" in ask.stderr)
             elif row in ("rollback-read", "rollback-failed"):
                 diagnostics = ask.stderr.splitlines()
@@ -295,9 +301,20 @@ def run(source, scratch, bash):
                         category = line.split("cause=", 1)[1].split(" ", 1)[0]
                         retained[category] = Path(line.split("error-file=", 1)[1]).read_bytes()
                 cause = "rollback-read" if row == "rollback-read" else "rollback-update"
+                # The owner gate's refused rollback is the one notice that the
+                # item still carries the owner label and assignee.
+                gate = "rollback-labels-read" if row == "rollback-read" else "rollback-assign"
                 facts["rollback_notice"] &= (after_ask["description"] == written
                     and retained.get("comment") == b"tracker: refused=comment\n"
-                    and retained.get(cause) == ("tracker: refused=" + cause + "\n").encode())
+                    and retained.get(cause) == ("tracker: refused=" + cause + "\n").encode()
+                    and retained.get(gate) == ("tracker: refused=" + cause + "\n").encode())
+            # A failed post whose rollback the tracker takes leaves the item
+            # with neither the owner label nor the owner assignee, a question
+            # comment it could not delete included.
+            if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit",
+                       "comment-edited", "mention-missing", "mention-other", "mention-unread", "delete-refused"):
+                facts["rollback_pair"] &= ("owner-gated" not in after_ask["labels"]
+                                           and after_ask["assignee"] == "")
             if not posted:
                 facts["unposted"] &= pending["tracker_posted"] is False
                 if row in ("label-failed", "comment-failed"):
@@ -306,7 +323,8 @@ def run(source, scratch, bash):
             else:
                 # The action line names the question the ask posted under.
                 facts["posted"] &= (pending["tracker_posted"] is True and after_ask["description"] == written
-                    and pending["tracker_comment"] == reserved)
+                    and pending["tracker_comment"] == reserved
+                    and after_ask["labels"] == ["owner-gated", "skills"] and after_ask["assignee"] == "Owner Person")
             if row == "label-failed":
                 error_path = ask.stderr.partition("error-file=")[2].strip()
                 error_file = Path(error_path) if error_path else None

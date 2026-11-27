@@ -1028,6 +1028,50 @@ impl Mailbox {
         Ok(OwnerImport { read, receipts })
     }
 
+    /// `owner-gate --item overseer --id ASK` at the main checkout `root`:
+    /// the owner label and assignee taken off the closed `ask`'s item once
+    /// no owner ask stands there, by the mailbox's one rule for them, which
+    /// never adds either. The
+    /// asks are `(open, closed, named)`: the open and closed ones the caller
+    /// judged to be this mailbox's on that item, and the closed ones
+    /// recorded under another item whose comment id can still name a
+    /// question there. The owner account is `(email, label)`. Answers
+    /// whether another mailbox's question stands there. A refusal keeps the
+    /// tracker's stderr, where a quota receipt reads.
+    pub fn owner_gate(
+        &self,
+        root: &Path,
+        tracker: &Path,
+        (email, label): (&str, &str),
+        ask: &str,
+        (open, closed, named): (&[&str], &[&str], &[&str]),
+    ) -> Result<bool, Refusal> {
+        const VERB: &str = "owner-gate";
+        let root_text = root.display().to_string();
+        let mut args = vec!["--item", "overseer", "--root", &root_text, "--id", ask];
+        for id in open {
+            args.extend(["--open-ask", id]);
+        }
+        for id in closed {
+            args.extend(["--closed-ask", id]);
+        }
+        for id in named {
+            args.extend(["--named-ask", id]);
+        }
+        let env = [
+            ("OVERSEE_WATCH_TRACKER", tracker.as_os_str()),
+            ("ORCH_OWNER_EMAIL", std::ffi::OsStr::new(email)),
+            ("ORCH_OWNER_ASK_LABEL", std::ffi::OsStr::new(label)),
+        ];
+        let answer = self.call_in(VERB, &args, &env, Some(root))?;
+        let stdout = answer.ok(VERB)?;
+        match stdout.trim_end() {
+            "owner-gate: held=true" => Ok(true),
+            "owner-gate: held=false" => Ok(false),
+            line => Err(reply(VERB, "owner-gate-held", line)),
+        }
+    }
+
     /// `resolve --item overseer --id ID --default`: close a due ask with its
     /// recommendation. Run from inside the checkout, as every overseer
     /// write is.

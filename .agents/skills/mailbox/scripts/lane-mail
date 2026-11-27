@@ -37,6 +37,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
        lane-mail drain-many --file REQUEST
        lane-mail owner-answers --item ITEM [--root ROOT]
+       lane-mail owner-gate --item overseer --id MSGID [--open-ask ID]... [--closed-ask ID]... [--named-ask ID]... [--root ROOT]
        lane-mail compact --item ITEM [--root ROOT] [--set-aside]
        lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [options]
@@ -70,6 +71,26 @@ the caller's other tracker marks, then `owner-answers: read=STATE` (read,
 unread or disabled). A quota refusal prints its original JSON on stderr and
 the EVENT tracker-quota line on stdout in place of the final read state. The
 caller owns fleet scheduling, quota persistence and every other tracker mark.
+
+owner-gate takes the owner label and the owner assignee off the item of the
+closed owner ask MSGID once no owner ask stands there, by the one rule the
+ask post and its rollback take them by. It never adds either: while an ask
+stands, the item keeps the assignee and labels it has. The asks the caller judged to be
+this mailbox's on that item are --open-ask, each still standing, and
+--closed-ask, each closed; MSGID is closed. --named-ask is a closed ask
+recorded under another item whose question comment id can still name one of
+this item's questions: it names questions, and its label is not taken off.
+The item's question comments are read as `comments owner-questions` reads
+them, every mailbox's: one that no open ask names stands for another
+mailbox's ask until its ruling, unless it is unreserved and a closed or named
+ask names it. The label is ORCH_OWNER_ASK_LABEL, each ask's own where its
+post recorded one, and the owner the ORCH_OWNER_EMAIL account;
+OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only where the
+item differs. It prints `owner-gate: held=<true|false>`, true where
+another mailbox's question stands. A failed step exits 2 with the tracker's
+own stderr, then `lane-mail: owner-gate-unwritten=<item> cause=<step>`
+(owner-read, questions-read, labels-read, prepare, assign, label or
+tracker-absent).
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
 through `orch-runtime host` for a lane on another host.
@@ -863,6 +884,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     host-peer-call) text='The hosted peer operation failed. The cause follows.' ;;
     host-peer-transport) text='The peer transport failed. Its diagnostic follows.' ;;
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
+    owner-gate-unwritten) text='The owner label and assignee of the item named above were not set from its open owner asks: cause= names the step that failed, and the tracker'"'"'s own words come before this line. A write before that step stands. Run the close again once the tracker answers.' ;;
     mail-read-failed) text='The hosted mailbox could not be read, so the read is refused rather than reported as empty.' ;;
     host-busy) text='orch-runtime host refused the call at the per-home bound on provider calls, so the mailbox was neither read nor written and the host was not judged. Run the verb again; the line below is the one the runtime printed.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
@@ -938,7 +960,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | peer-receive | attach-check | owner-answers) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | reserve | replace | compact | peer | peer-receive | attach-check | owner-answers | owner-gate) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -995,6 +1017,9 @@ REPLACES=""
 REPLACES_FIELD='[]'
 IDENTITY_FIELD='null'
 POSTED_LINE=""
+GATE_OPEN=""
+GATE_CLOSED=""
+GATE_NAMED=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -1007,6 +1032,9 @@ while [ "$#" -gt 0 ]; do
     --issue) need_val "$@"; ISSUE="$2"; shift 2 ;;
     --do) [ "$#" -ge 2 ] || refuse owner-action-missing --do; OWNER_DO="$2"; shift 2 ;;
     --replaces) need_val "$@"; REPLACES="$2"; shift 2 ;;
+    --open-ask) need_val "$@"; GATE_OPEN="$GATE_OPEN$2$NL"; shift 2 ;;
+    --closed-ask) need_val "$@"; GATE_CLOSED="$GATE_CLOSED$2$NL"; shift 2 ;;
+    --named-ask) need_val "$@"; GATE_NAMED="$GATE_NAMED$2$NL"; shift 2 ;;
     --file | --text)
       need_val "$@"; FILE_GIVEN="$2"; FILE="$2"
       case "$FILE" in
@@ -1068,6 +1096,15 @@ if [ "$VERB" = compact ] || [ "$VERB" = owner-answers ]; then
   for given in $OPTS_GIVEN; do
     case "$VERB:$given" in *:--item | *:--root | compact:--set-aside) ;; *) refuse option-unknown "$given" ;; esac
   done
+fi
+if [ "$VERB" = owner-gate ]; then
+  for given in $OPTS_GIVEN; do
+    case "$given" in --item | --id | --root | --open-ask | --closed-ask | --named-ask) ;; *) refuse option-unknown "$given" ;; esac
+  done
+elif [ -n "$GATE_OPEN$GATE_CLOSED$GATE_NAMED" ]; then
+  [ -z "$GATE_OPEN" ] || refuse option-unknown --open-ask
+  [ -z "$GATE_CLOSED" ] || refuse option-unknown --closed-ask
+  refuse option-unknown --named-ask
 fi
 if [ "$VERB" = reserve ]; then
   for given in $OPTS_GIVEN; do
@@ -1643,7 +1680,7 @@ owner_answers() {
 
 # A resolve marks through the tracker owner-answers reads, so an answer is
 # marked by one tracker whichever route closed its ask.
-if [ "$VERB" = owner-answers ] || [ "$VERB" = resolve ]; then
+if [ "$VERB" = owner-answers ] || [ "$VERB" = resolve ] || [ "$VERB" = owner-gate ]; then
   TRACKER="$SCRIPT_DIR/../../linear/scripts/linear.sh"
   TRACKER="${OVERSEE_WATCH_TRACKER:-$TRACKER}"
   if [ "$VERB" = owner-answers ] && [ ! -x "$TRACKER" ]; then
@@ -1916,6 +1953,48 @@ if [ "$VERB" = owner-answers ]; then
   LANE_MAIL="$SCRIPT_DIR/lane-mail"
   owner_answers
   [ "$OWNER_TRACKER_QUOTA" -eq 1 ] || printf 'owner-answers: read=%s\n' "$OWNER_TRACKER_READ"
+  exit 0
+fi
+
+# The asking watch's close takes the owner label and assignee from the one
+# rule the ask post and its rollback take them by, owner_tracker_gate; the
+# caller judges which asks are this mailbox's on the item.
+if [ "$VERB" = owner-gate ]; then
+  [ "$ITEM" = overseer ] || refuse overseer-only "$ITEM"
+  [ -n "$MSGID" ] || refuse option-required --id
+  "$SCRIPT_DIR/lane-mail" events --item overseer --root "$ROOT" >"$WORK_DIR/gate-events" 2>"$WORK_DIR/gate.err" ||
+    refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/gate.err")"
+  GATE_ASKS="$(jq -cs --arg id "$MSGID" --arg open "$GATE_OPEN" --arg closed "$GATE_CLOSED" --arg named "$GATE_NAMED" '
+    (map(select(.box == "to-overseer" and .kind == "ask" and .to == "owner")) | INDEX(.id)) as $asks
+    | [{id: $id, state: "closed"}]
+      + [$open | splits("\n") | select(length > 0) | {id: ., state: "open"}]
+      + [$closed | splits("\n") | select(length > 0) | {id: ., state: "closed"}]
+      + [$named | splits("\n") | select(length > 0) | {id: ., state: "named"}]
+    | map(. as $entry | $asks[$entry.id] as $ask
+      | if $ask == null then {id, unknown: true}
+        else {id, state, tracker_comment: $ask.tracker_comment, tracker_label: $ask.tracker_label,
+          issue: $ask.issue, identity: $ask.identity} end)' "$WORK_DIR/gate-events")" ||
+    refuse file-unreadable "$WORK_DIR/gate-events"
+  GATE_UNKNOWN="$(jq -r 'map(select(.unknown == true) | .id) | first // ""' <<<"$GATE_ASKS")" ||
+    refuse file-unreadable "$WORK_DIR/gate-events"
+  [ -z "$GATE_UNKNOWN" ] || refuse ask-unknown "$GATE_UNKNOWN"
+  GATE_ISSUE="$(jq -r '.[0].issue | strings' <<<"$GATE_ASKS")" || refuse file-unreadable "$WORK_DIR/gate-events"
+  [ -n "$GATE_ISSUE" ] || refuse ask-unknown "$MSGID"
+  GATE_REF="$(jq -r '.[0] | .identity.uuid // .issue' <<<"$GATE_ASKS")" || refuse file-unreadable "$WORK_DIR/gate-events"
+  if ! owner_tracker_settings "$SCRIPT_DIR"; then
+    REFUSE_EXTRA="cause=$OWNER_TRACKER_SETTINGS_CAUSE${OWNER_TRACKER_UNSET:+ unset=$OWNER_TRACKER_UNSET}"
+    refuse item-ask-unconfigured "$GATE_ISSUE"
+  fi
+  if [ ! -x "$TRACKER" ]; then
+    REFUSE_EXTRA="cause=tracker-absent"
+    refuse owner-gate-unwritten "$GATE_ISSUE"
+  fi
+  if ! owner_tracker_gate remove "$TRACKER" "$WORK_DIR" "$GATE_ISSUE" "$GATE_REF" "$GATE_ASKS" </dev/null; then
+    cat -- "$WORK_DIR/tracker.err" >&2
+    REFUSE_EXTRA="cause=$OWNER_TRACKER_GATE_CAUSE"
+    refuse owner-gate-unwritten "$GATE_ISSUE"
+  fi
+  printf 'owner-gate: held=%s\n' "$OWNER_TRACKER_HELD"
   exit 0
 fi
 
