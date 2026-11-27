@@ -1306,7 +1306,7 @@ require_rows change-scope-allowlist-table "$allowlist_rows"
 # The quick proof a review request may be skipped on: Markdown at any path,
 # a kendex settings file and a JSON settings file on a pull request prove
 # it; a template under docs/, which the docs set also takes, a nested
-# project's harness registry, Markdown a repository allowlist admits and a
+# project's harness registry or Gemini settings, Markdown a repository allowlist admits and a
 # merge group do not. Each row run against
 # SCRIPT, or the rows LABELS names one per line, as one
 # `LABEL<TAB>WANT<TAB>GOT` line.
@@ -1332,6 +1332,7 @@ Markdown outside docs proves a quick change|trivial|true|notes/plan.md:2|pull_re
 a settings file proves a quick change|trivial|true|kendex.settings.toml:2|pull_request|-
 a JSON settings file proves a quick change|trivial|true|.vscode/settings.json:2|pull_request|-
 a nested project's harness registry proves none|standard|false|sub/.claude/settings.json:2|pull_request|-
+a nested project's Gemini settings proves none|standard|false|sub/.gemini/settings.json:2|pull_request|-
 Markdown a repository allowlist admits proves none|trivial|false|notes/plan.md:2|pull_request|notes/*
 a merge group proves none|trivial|false|docs/guide.md:2|merge_group|-
 QUICK
@@ -1721,8 +1722,14 @@ done
 exec "$real_python3" "\${args[@]}" "\$@"
 WRAPPER
 chmod +x "$no_tomllib_bin/python3"
+# A python3 that fails with no answer, as a pyenv shim with no selected
+# version does.
+failing_python_bin="$SANDBOX/failing-python-bin"
+mkdir -p "$failing_python_bin"
+printf '#!/usr/bin/env bash\nexit 127\n' >"$failing_python_bin/python3"
+chmod +x "$failing_python_bin/python3"
 # label | base | event | edits, `;`-separated | the class line after `class: `
-# | optional `no-tomllib`, which runs the row under that python3
+# | optional `no-tomllib` or `failing`, which runs the row under that python3
 manifest_rows=0
 while IFS='|' read -r label from event edits class python; do
   manifest_rows=$((manifest_rows + 1))
@@ -1730,7 +1737,10 @@ while IFS='|' read -r label from event edits class python; do
   manifest_case "$label" "$from" "${manifest_edits[@]}"
   from_var="manifest_$from"
   python_path=""
-  [ "$python" != no-tomllib ] || python_path="$no_tomllib_bin:"
+  case "$python" in
+    no-tomllib) python_path="$no_tomllib_bin:" ;;
+    failing) python_path="$failing_python_bin:" ;;
+  esac
   err="$(env -u HARNESS_CI_TRIVIAL_PATHS -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
     PATH="$python_path$PATH" \
     "$CHANGE_SCOPE" --repo "$manifest_repo" --event "$event" --base "${!from_var}" \
@@ -1749,6 +1759,7 @@ a sources value spelled as a dotted key|base|merge_group|write kendex.toml~schem
 a sources table moved with its value kept|base|merge_group|write kendex.toml~schema = 8\n\n[sources.cat]\nurl = "https://example.invalid/cat.git"\n\n[install]\nmethod = "copy"|class=trivial measured=true cause=quick-files files=kendex.toml lines=6
 a head manifest TOML cannot read|base|merge_group|lines 2;write kendex-local.toml~schema = = 8|class=standard measured=false cause=manifest-sources-unreadable path=kendex-local.toml detail=manifest-parse-failed
 a manifest under a python3 with no tomllib|base|merge_group|swap kendex.toml~url = "https://example.invalid/cat.git"~url = "https://example.invalid/other.git"|class=standard measured=false cause=manifest-sources-unreadable path=kendex.toml detail=tomllib-absent|no-tomllib
+a manifest under a python3 that fails with no answer|base|merge_group|swap kendex.toml~url = "https://example.invalid/cat.git"~url = "https://example.invalid/other.git"|class=standard measured=false cause=manifest-sources-unreadable path=kendex.toml detail=python3-failed|failing
 an install record beside the manifest|base|merge_group|lines 2;write .kendex-lock.json~{}|class=standard measured=true cause=excluded-path path=.kendex-lock.json glob=.kendex-lock.json
 a push event|base|push|lines 2|class=standard measured=false cause=unsupported-event event=push
 ROWS

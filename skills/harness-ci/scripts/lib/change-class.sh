@@ -59,7 +59,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local reader_missing queue_reader per_push_reader standdown_missing hit
   local reach reach_kind reach_cause unclaimed_unproved
   local derived=false reach_status=0 prereqs=() derived_causes=()
-  local declared_paths="" class_record standard_path
+  local declared_paths=""
   local unread_globs unread_hit queue_globs
   local legacy_warning='::warning title=Legacy lane claims::Use derived workflow lane selection and retain only exceptions with an inline reason.'
   # Older library callers do not write declaration evidence.
@@ -86,13 +86,6 @@ per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
 unread_globs="$(sed -n 's/^unread-paths://p' "${work:?}/class-log" | tail -n 1 | tr ' ' '\n')" ||
   die "cause=unread-record-unreadable" "could not read change-class's unread-paths line"
 unread_hit=""
-# change-class's class record, the last `class:` line of its log. A path the
-# repository's HARNESS_CI_STANDARD_PATHS names keeps its lanes, Markdown
-# included, so the docs-only waiver does not stand it down.
-class_record="$(sed -n 's/^class: //p' "${work:?}/class-log" | tail -n 1)" ||
-  die "cause=class-record-unreadable" "could not read change-class's class line"
-standard_path=false
-case " $class_record " in *" cause=repository-standard-path "*) standard_path=true ;; esac
 # A path the shipped queue list names is a CI input no declaration takes out
 # of the lanes: change-class's queue-only rule reads that list from
 # change-scope beside this package. Unread, the declaration is refused.
@@ -124,7 +117,7 @@ if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
   lanes=true lanes_cause=full-run
 elif [ "$class" = render ] || [ "$class" = trivial ]; then
   lanes=false lanes_cause="$class"
-elif [ "$docs" = docs_only=true ] && [ "$standard_path" = false ]; then
+elif [ "$docs" = docs_only=true ]; then
   lanes=false lanes_cause=docs-only
 else
   lanes=true lanes_cause="$class"

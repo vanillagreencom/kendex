@@ -51,7 +51,7 @@ base_with_settings() { # NAME SETTINGS — prints the base commit
 }
 base_default="$(base_with_settings base-default '')"
 # A repository whose standard paths hold its docs: their class is standard,
-# and the docs-only waiver does not stand the lanes down.
+# and the docs-only waiver still stands the lanes down.
 base_docsstandard="$(base_with_settings base-docsstandard "$(printf '[env]\nHARNESS_CI_STANDARD_PATHS = "docs/*"')")"
 base_optback="$(base_with_settings base-optback "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "no merge queue"\nHARNESS_CI_QUEUE_PATHS = ""')")"
 base_blank="$(base_with_settings base-blank "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "  "\nHARNESS_CI_QUEUE_PATHS = ""')")"
@@ -127,7 +127,7 @@ while IFS='|' read -r name event base_name paths lines declaration default expec
     "$(sed -n '/^change_class=/p' "$SANDBOX/local-output")" "$(cat "$SANDBOX/local-stdout")"
 done <<'ROWS'
 trivial|pull_request|default|docs/guide.md|1|none|yes|false|trivial|true|-
-docs-standard-path|merge_group|docsstandard|docs/guide.md|21|default|yes|true|standard|true|lane_check=false,lane_other=false,lane_mac=false
+docs-only|merge_group|docsstandard|docs/guide.md|21|default|yes|false|docs-only|true|lane_check=false,lane_other=false,lane_mac=false
 pull-request-code|pull_request|default|src/main.sh|21|default|yes|false|queue-only|true|lane_check=false,lane_other=false,lane_mac=false
 pull-request-standard|pull_request|default|src/main.sh|151|default|yes|false|queue-only|true|-
 push-code|push|default|src/main.sh|21|default|yes|false|queue-only|true|-

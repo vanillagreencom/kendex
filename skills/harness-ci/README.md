@@ -40,7 +40,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 
 | Setting | What to configure |
 |---|---|
-| `HARNESS_CI_STANDARD_PATHS` | High-risk paths that always need full checks. |
+| `HARNESS_CI_STANDARD_PATHS` | High-risk paths that keep the `standard` class and full review. A path outside the docs set also keeps its lanes; a change confined to the docs set, such as Markdown, runs none. |
 | `HARNESS_CI_DOCS_PATHS` | Exact Markdown files containing text displayed to users. |
 | `HARNESS_CI_UNREAD_PATHS` | Globs for files no CI job reads, such as `.github/dependabot.yml`. |
 | `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. |

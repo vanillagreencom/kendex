@@ -9,7 +9,8 @@
 # CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, narrow or
 # launch (all phases). An unmatched path leaves both empty.
 # change_class_quick_path PATH returns 0 for a kendex manifest or a JSON
-# settings file, the paths beside Markdown that the cheapest class takes.
+# settings file that no registry or .gemini glob matches at any depth, the
+# paths beside Markdown that the cheapest class takes.
 # The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a

@@ -233,7 +233,7 @@ Every trigger the ruleset requires the context on must appear under `on:`, `merg
 
 Set `HARNESS_CI_STANDARD_PATHS` in the base endpoint's `kendex.settings.toml` or `.kendex/settings.toml` `[env]` table to blank-separated globs for high-risk paths. The second table wins. Before render proof and size classification, a match selects `standard` with `measured=true` and `cause=repository-standard-path path=<p> glob=<g>`. This includes generated files with proved ownership. The globs use the shared exclusion grammar and add to its exclusions. Unset or empty adds none. Caller environment values and edits in the judged head cannot change this setting for their own classification.
 
-A change confined to kendex manifests, JSON settings files and Markdown files answers `trivial` at any size on a pull request or merge group, so every lane stands down. The exceptions, a harness file that registers hooks, permissions or MCP servers, a changed `[sources]` table, a changed `.kendex-lock.json` and a path `HARNESS_CI_STANDARD_PATHS` names, and the file names each kind covers: `change-scope --help`. A kendex manifest change stays queue-only. Name a path in `HARNESS_CI_STANDARD_PATHS` to keep its changes on the full run.
+A change confined to kendex manifests, JSON settings files and Markdown files answers `trivial` at any size on a pull request or merge group, so every lane stands down. The exceptions, a harness file that registers hooks, permissions or MCP servers, a changed `[sources]` table, a changed `.kendex-lock.json` and a path `HARNESS_CI_STANDARD_PATHS` names, and the file names each kind covers: `change-scope --help`. A kendex manifest change stays queue-only. A path `HARNESS_CI_STANDARD_PATHS` names keeps the `standard` class and its full review. One outside the [docs set](#docs-only-mode) also keeps its lanes; a change confined to the docs set, such as Markdown, runs no lanes, since `docs_only=true` stands them down.
 
 The shape has TWO checkouts, and that is the whole point of it. The verdict decides whether a required lane may be skipped, so the script that produces it comes from the default branch, where the pull request's author cannot change it, and the pull request's tree is what `--repo` points at.
 
@@ -353,7 +353,7 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 - **`lanes` is the action's answer to whether the diff runs the lanes.**
   - A proved render opens the gate for derived package readers, unread evidence or a matching legacy claim. See [§ Per-lane verdicts](#per-lane-verdicts).
-  - For non-render classes, it is also `false` on `trivial`, and on `docs_only=true` unless a changed path is one `HARNESS_CI_STANDARD_PATHS` names. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
+  - For non-render classes, it is also `false` on `trivial` or `docs_only=true`, a docs-set path `HARNESS_CI_STANDARD_PATHS` names included. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
   - On `pull_request` and `push`, with `queue-only-default: true`, it is `false` wherever `change-class`'s per-push line names the queue-only default, under [§ Per-lane verdicts](#per-lane-verdicts).
   - On `schedule` and `workflow_dispatch` it is `true`.
   - It is `true` on every other diff.
