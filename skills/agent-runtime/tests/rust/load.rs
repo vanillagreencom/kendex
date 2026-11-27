@@ -50,13 +50,13 @@ const ROWS: &[Row] = &[
                 // msg_4's growth holds the persona.md read and turn p-3
                 // together, so neither the read nor its source owns it.
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
-                // msg_8's, msg_10's and msg_14's growth, each a call's
-                // alone, and msg_12's, shared by the two failed reads of
-                // msg_11.
+                // msg_8's, msg_10's, msg_14's and msg_16's growth, each a
+                // call's alone, and msg_12's, shared by the two failed reads
+                // of msg_11.
                 ("/context/2/source", json!("rule-reads")),
                 (
                     "/context/2/tokens",
-                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28}),
+                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28 + 30}),
                 ),
                 ("/context/2/unattributed", json!(1)),
                 // msg_6's growth, shared by the two results of msg_5.
@@ -80,7 +80,18 @@ const ROWS: &[Row] = &[
                     json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
                 ),
                 ("/sections/4/tokens", json!({"basis": "unclear"})),
-                ("/sections/5", Value::Null),
+                // msg_15's `cat` failed on its second file after printing
+                // its first, so both reads stand, their shares unclear.
+                (
+                    "/sections/5/read",
+                    json!({"kind": "file", "file": "AGENTS.md"}),
+                ),
+                ("/sections/5/tokens", json!({"basis": "unclear"})),
+                (
+                    "/sections/6/read",
+                    json!({"kind": "file", "file": "CLAUDE.md"}),
+                ),
+                ("/sections/7", Value::Null),
                 // The Stop hook's reply, alone before msg_3.
                 ("/context/4/source", json!("injected-text")),
                 (
