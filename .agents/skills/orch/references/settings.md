@@ -312,7 +312,7 @@ The keys' rules, in the table's order:
 | `ORCH_WATCH_LANE_STALL_SECS` | Seconds a cloud lane's head and status may stand before `lane-stalled`. |
 | `ORCH_CLOUD_STALL_MINUTES` | Minutes a stalled cloud lane's directive may stay unanswered before the watch closes the lane. |
 | `ORCH_WATCH_LANE_AGE_SECS` | Seconds past `launched_at` before `lane-long`. |
-| `ORCH_WALL_RELAUNCH` | `auto`: the watch relaunches a walled lane itself. `ask`: the watch leaves every wall to the overseer. |
+| `ORCH_WALL_RELAUNCH` | The watch's recovery of a stopped worker ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)). `auto`: the watch relaunches the lane itself at a usage or sign-in wall, moves it to another provider after 30 minutes of provider stops, and relaunches it when its harness exits. `ask`: the watch leaves each of these to the overseer; it still resumes a provider stop on the lane's own account. |
 | `ORCH_CONNECTED_REPOS` | Further `OWNER/REPO` names the watch's GitHub duty reads beside the fleet's, whitespace-separated. |
 | `ORCH_MAIN_WORKFLOWS` | `OWNER/REPO:FILE` entries whose main-branch runs the watch reads. |
 | `ORCH_EXTERNAL_TRIAGE` | `on` or `off`: whether the GitHub duty reports outside contributions. |
