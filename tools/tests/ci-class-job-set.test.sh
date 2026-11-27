@@ -88,30 +88,26 @@ row_spawn linear_row
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
 # A docs-set change no reader names runs the always-run jobs alone, whatever
-# its class, in a world where each path's job family ran on a docs-blind
-# selection: every shell and macOS shard and the Cargo matrix (no reader),
-# the UI tests (ui/), the catalog job (a catalog input) and every shard
-# again (the rest of .github/). No such path reaches cargo-lint, the Windows
-# lanes or smoke; the jobs line holds them off too. The reach reads a
-# path this suite spells under a directory as one it reads, so the UI row
-# is the fixture world's.
-# WORLD|CLASS|PATHS
+# its class, in a world whose one Rust target resolves every read and where
+# each path's job family ran on a docs-blind selection: every shell and
+# macOS shard and the Cargo matrix (no reader), the UI tests (ui/) and every
+# shard again (the rest of .github/). No such path reaches cargo-lint, the
+# Windows lanes or smoke; the jobs line holds them off too. The catalog
+# job's docs-only rows are ci-class-job-set-catalog's skill text rows.
+# CLASS|PATHS
 ALWAYS_RUN='["bot-instructions","preflight","markdown"]'
-docs_jobs_row() { # WORLD CLASS PATHS
-  local world=$ROOT
-  [ "$1" = real ] || world=$READ_WORLD
+docs_jobs_row() { # CLASS PATHS
   # shellcheck disable=SC2086 # one path per word
-  check "docs-only $2 over '$3' in the $1 world runs the always-run jobs alone" "$ALWAYS_RUN" \
-    "$(SELECT_IN="$world" SELECT_JOBS=true SELECT_EVENT=merge_group selection "$2" true "$(printf '%s\n' $3)" | field jobs)"
+  check "docs-only $1 over '$2' runs the always-run jobs alone" "$ALWAYS_RUN" \
+    "$(SELECT_IN="$READ_WORLD" SELECT_JOBS=true SELECT_EVENT=merge_group selection "$1" true "$(printf '%s\n' $2)" | field jobs)"
 }
-while IFS='|' read -r world class paths; do
-  row_spawn docs_jobs_row "$world" "$class" "$paths"
+while IFS='|' read -r class paths; do
+  row_spawn docs_jobs_row "$class" "$paths"
 done <<ROWS
-real|trivial|AGENTS.md
-real|standard|$UNREAD_DOC CLAUDE.md
-read|micro|ui/README.md
-read|micro|agents/runtime.md
-read|trivial|.github/AGENTS.md
+trivial|AGENTS.md
+standard|$UNREAD_DOC CLAUDE.md
+micro|ui/README.md
+trivial|.github/AGENTS.md
 ROWS
 
 # A docs-set path a reader names keeps that reader's job: the suite whose
@@ -131,8 +127,16 @@ include_row() {
     "$(field cargo_lint <<<"$got") $(field cargo_linux_matrix <<<"$got" |
       jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
 }
+# A target whose checkout read rust-reads cannot resolve runs for every
+# docs-only path: the core lib's render check reads each tracked render.
+render_row() {
+  check "a docs-only tracked render keeps kendex-core --lib" true \
+    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true .agents/skills/code-quality/SKILL.md |
+      field cargo_linux_matrix | jq 'any(.include[]; .crate == "kendex-core" and (.targets | index("--lib")))')"
+}
 row_spawn suite_read_row
 row_spawn include_row
+row_spawn render_row
 
 # The Rust targets are the reach's: a runtime source runs every target of its
 # runtime and of each runtime that path-depends on it, a path a target or the

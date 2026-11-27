@@ -125,6 +125,7 @@ skills/orch/references/close.md|Intro.\n\nSee [doc](\n../a.md\n"Title"\nTail.\n|
 skills/orch/gone.md|Base prose.\n|Base prose.\n
 skills/group/nested/SKILL.md|---\nname: nested\n---\n|---\nname: nested\n---\n
 skills/group/nested/README.md|Base prose.\n|Base prose.\nMore prose.\n
+agents/gone.md|---\nname: gone\n---\nBody.\n|---\nname: gone\n---\nBody.\n
 FILES
 }
 text_files 1
@@ -133,21 +134,28 @@ text_git commit -q -m base
 TEXT_BASE="$(text_git rev-parse HEAD)"
 text_files 2
 printf 'New prose.\n' >"$TEXT_WORLD/skills/orch/references/new.md"
-text_git rm -q skills/orch/gone.md
+text_git rm -q skills/orch/gone.md agents/gone.md
 text_git add -A
 text_git commit -q -m head
 
 # BASE|PATHS|CATALOG, every row micro at the merge group; BASE `base` is
 # TEXT_BASE, `-` unset and `unread` a commit the world does not hold. Smoke
-# stays false throughout: no row reaches its fixture. A ROW argument runs
-# only the rows whose paths hold it.
+# stays false throughout: no row reaches its fixture. A row whose every
+# path is Markdown runs under both docs verdicts, since the docs set leaves
+# the catalog job to skill text. A ROW argument runs only the rows whose
+# paths hold it.
 text_rows() { # SCRIPT [ROW]
-  local base path selected change_base
+  local base path selected change_base docs verdicts
   while IFS='|' read -r base path selected; do
     case "$path" in *"${2-}"*) ;; *) continue ;; esac
     case "$base" in base) change_base=$TEXT_BASE ;; unread) change_base=0123456789abcdef0123456789abcdef01234567 ;; *) change_base="" ;; esac
-    check "skill text: $base $path" "catalog=$selected
-smoke=false" "$(catalog_bits "$(CHANGE_BASE="$change_base" SELECT_IN="$TEXT_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection micro false "$(printf '%s\n' $path)")")"
+    verdicts="false true"
+    # shellcheck disable=SC2086 # one path per word
+    if grep -qv '\.md$' <<<"$(printf '%s\n' $path)"; then verdicts=false; fi
+    for docs in $verdicts; do
+      check "skill text: $base docs_only=$docs $path" "catalog=$selected
+smoke=false" "$(catalog_bits "$(CHANGE_BASE="$change_base" SELECT_IN="$TEXT_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection micro "$docs" "$(printf '%s\n' $path)")")"
+    done
   done <<'ROWS'
 base|skills/orch/README.md|false
 base|skills/orch/references/r.md|false
@@ -171,6 +179,7 @@ base|skills/orch/references/close.md|true
 base|skills/orch/references/destination.md|true
 base|skills/orch/references/new.md|true
 base|skills/orch/gone.md|true
+base|agents/gone.md|true
 base|skills/notes.md|true
 -|skills/orch/README.md|true
 unread|skills/orch/README.md|true
@@ -304,15 +313,21 @@ s/skills\/commit-guards) want_shard guards-commit /skills\/commit-guards) want_s
 ROWS
 
 # A reach that cannot be read runs every shard, every suite and every
-# target: the copy asks a guard that is not there.
+# target, a docs-only change's included: the copy asks a guard that is not
+# there. CLASS|DOCS|PATH
 sed 's|"$TOOLS_DIR/guard" --suite-reach|"$TOOLS_DIR/no-guard" --suite-reach|' "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
 chmod +x "$TMP/rule/tools/ci-job-set"
 if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
   bad "the unread-reach copy changed nothing"
 else
-  got="$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false skills/price-handling/scripts/x)"
-  check "an unread reach runs every shard, suite and target" "$ROSTER [] [\"orch/*\"]" \
-    "$(field shards <<<"$got") $(field skipped_suites <<<"$got") $(field rust_targets <<<"$got")"
+  while IFS='|' read -r class docs path; do
+    got="$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" "$docs" "$path")"
+    check "an unread reach over $class docs_only=$docs $path runs every shard, suite and target" "$ROSTER [] [\"orch/*\"]" \
+      "$(field shards <<<"$got") $(field skipped_suites <<<"$got") $(field rust_targets <<<"$got")"
+  done <<'ROWS'
+micro|false|skills/price-handling/scripts/x
+trivial|true|docs/x/policy.md
+ROWS
 fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
