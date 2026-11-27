@@ -53,7 +53,6 @@ The paths:
   - The § 1 project read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
 - **audit-issues §§ 7.2-7.5.** Not applicable: it executes an artifact tpm-audit produced under its scope.
   - Reads are rooted at an in-scope project or an issue this run mutated.
-  - The § 7 Project targets read, `projects audit`, is scoped to the artifact's `team`, or to `LINEAR_TEAM` where the artifact names none ([project-map.md § Audit](project-map.md#audit)).
 - **audit-issues § 1.2.1, § 3.** **Does not** resolve the scope, and **does not** filter.
   - `session-status` selects projects workspace-wide.
   - The § 3 project read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).

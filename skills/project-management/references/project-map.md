@@ -151,10 +151,7 @@ Examples, against the two projects § Admission lines shows:
 - A filing with Location `docs/legal/terms.md` matches no `admits` sentence. As a single small issue it goes to the nearest standing project, with a `reason` that says so.
 - A research decomposition that files a design of several issues for a new installer channel, which no sentence names, has `project.recommended: null` and a `project_needed[]` row for the project it needs. The creates are held.
 
-The linear CLI checks no project's admission lines. `--project` takes a project UUID as given, or a name, which resolves to the one project of that name in the issue's team that takes issues (every state but `completed` and `canceled`); a name matching none or several refuses. This section is the placement rule, and filing holds it:
-
-- A write passes the chosen project's `id` from `projects[]`.
-- Before a batch's first write, every target is checked against the same `projects[]` read: each names one entry whose `admits` is set. Any other target halts the batch before any write.
+The linear CLI checks no project's admission lines. `--project` takes a project UUID as given, or a name, which resolves to the one project of that name in the issue's team that takes issues (every state but `completed` and `canceled`); a name matching none or several refuses. This section is the placement rule, and filing holds it: a write passes the chosen project's `id` from `projects[]`.
 
 A `project_needed` item is held, not created.
 

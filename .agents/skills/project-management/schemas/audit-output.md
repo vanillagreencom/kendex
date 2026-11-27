@@ -10,14 +10,12 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
   "generated": "ISO timestamp",
   "worktree": "path",
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
-  "team": "string|null",
   "projects_analyzed": [{"id": "uuid", "name": "string", "scope": "summary"}],
   "contracts": [{"id": "[ISSUE_ID]", "target": "...", "creates": [], "consumes": [], "problem": "..."}]
 }
 ```
 
 - `tracker` echoes the resolved execution tracker. `repository` is github-only.
-- `team` is the team tpm-audit § 1.1.1 resolved, its `TEAM`. It is null in github mode and in an artifact another producer writes, where audit-issues § 7 reads `LINEAR_TEAM`.
 - In github mode `projects_analyzed` is empty and every project-placement field is null or omitted.
 
 ## Label Contract
