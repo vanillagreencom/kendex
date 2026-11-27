@@ -18,7 +18,7 @@ Create this run's own directory with `mkdir -p tmp/pi-update && mktemp -d tmp/pi
 ## 2. Audit the range
 
 - **Marker.** In scope is every released version header above `lastVersion` and at or below the target. A target at or below `lastVersion` means nothing to audit: refresh `lastRun` and `lastRunHead`, commit the marker, stop. `lastVersion` and `lastDate` never move backward.
-- **First run** (marker absent): propose a baseline, the newest Pi version named in `git log`, and ask the user to confirm it before any work. Seed the marker there.
+- **First run** (marker absent): propose a baseline, the newest Pi version named in `git log`, and ask the user to confirm it before any work. Seed `lastVersion` and `lastTarget` there.
 - **Sources.** Enumerate every changelog on each run; never trust a stored list:
 
   ```bash
@@ -70,7 +70,7 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 
 1. Land the fixes through a pull request (orch). Stage only intended files.
 2. Test the exact merged commit: extract the `pi-extensions` tree of the full default-branch commit that holds the fixes into a new directory from `mktemp -d <run>/merged.XXXXXX` with `git archive <sha> pi-extensions | tar -x -C <that directory>`. `<copy>` is now `pi-extensions/<package>` inside it. Copy each step 4 check from the newest work copy's test directory into `<copy>`'s, then run step 4 from its install on in `<copy>`: the install, the version proof, the checks and the suite, and no `rsync`. That full SHA is the tested extension commit.
-3. Replace `pi-update.audit.md` with the candidate record ([§ Audit record](../SKILL.md#audit-record)) and update the marker: under `roll`, `lastVersion` and `lastDate` move to the target; under `hold` they stay at the last cleared release. Either way `lastRun` and `lastRunHead` refresh.
+3. Replace `pi-update.audit.md` with the candidate record ([§ Audit record](../SKILL.md#audit-record)) and update the marker: under `roll`, `lastVersion` and `lastDate` move to the target; under `hold` they stay at the last cleared release. Either way `lastRun` and `lastRunHead` refresh, and `lastTarget` moves to the target unless it already names a later release. `lastTarget` is the release the weekly `pi-update-check` job compares with npm's `latest`.
 4. Run `node --test pi-extensions/package-policy.test.mjs` and land the record and marker through a pull request whose subject says `audited through v<version>`.
 5. From the main checkout, run `kendex refresh` and report the Pi packages it updated.
 

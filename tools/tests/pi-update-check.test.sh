@@ -5,8 +5,9 @@
 # script and the marker, and reads its outcome line, the job summary and the
 # issues it asked gh to open.
 #
-# Rows are `label|marker|latest|issues|create|rc|outcome|opened`:
-#   marker   lastVersion in pi-update.state.json, `-` for no marker file
+# Rows are `label|cleared|marker|latest|issues|create|rc|outcome|opened`:
+#   cleared  lastVersion in pi-update.state.json
+#   marker   lastTarget in pi-update.state.json, `-` for no marker file
 #   latest   what npm prints as the latest version, `!` for a failed read
 #   issues   the open-issue listing gh answers, by name below; `!` fails it
 #   create   `ok`, or `!` for gh refusing the new issue
@@ -64,31 +65,36 @@ printf 'https://github.com/fixture/repo/issues/%s\n' "$(wc -l <"$WORLD/created" 
 GH
 chmod +x "$TMP_ROOT/bin/npm" "$TMP_ROOT/bin/gh"
 
+BOT='{"login":"github-actions[bot]","type":"Bot"}'
 issues_json() { # NAME — the listing gh answers, pages as --slurp returns them
   case "$1" in
     none) printf '[[]]' ;;
-    unrelated) printf '[[{"number":5,"title":"pi-hooks: a hook misses a tool result"}]]' ;;
+    unrelated) printf '[[{"number":5,"title":"pi-hooks: a hook misses a tool result","user":%s}]]' "$BOT" ;;
     # A pull request with no matching title, then the open item on page two.
-    page2) printf '[[{"number":6,"title":"pi-qol: one","pull_request":{}}],[{"number":207,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.1"}]]' ;;
+    page2) printf '[[{"number":6,"title":"pi-qol: one","user":%s,"pull_request":{}}],[{"number":207,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.1","user":%s}]]' "$BOT" "$BOT" ;;
+    # Anyone can open an issue with the audit title.
+    outsider) printf '[[{"number":8,"title":"pi-update: audit the kendex Pi extensions against Pi 1.7.0","user":{"login":"someone","type":"User"},"author_association":"NONE"}]]' ;;
+    # The item for the audit that moved the marker to 1.6.0, still open.
+    residue) printf '[[{"number":9,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.0","user":%s}]]' "$BOT" ;;
     *) printf 'pi-update-check.test: no issues fixture %s\n' "$1" >&2; return 1 ;;
   esac
 }
 
 N=0
-world() { # MARKER LATEST ISSUES CREATE — a fresh tree, its path in DIR
+world() { # CLEARED MARKER LATEST ISSUES CREATE — a fresh tree, its path in DIR
   N=$((N + 1))
   DIR="$TMP_ROOT/w$N"
   local dir="$DIR"
   mkdir -p "$dir/tree/tools" "$dir/tree/pi-extensions"
   cp -p -- "$ROOT/tools/pi-update-check" "$dir/tree/tools/pi-update-check"
-  if [[ $1 != - ]]; then
-    printf '{"lastVersion": "%s", "lastDate": "2026-11-20"}\n' "$1" >"$dir/tree/pi-extensions/pi-update.state.json"
+  if [[ $2 != - ]]; then
+    printf '{"lastVersion": "%s", "lastDate": "2026-11-20", "lastTarget": "%s"}\n' "$1" "$2" >"$dir/tree/pi-extensions/pi-update.state.json"
   fi
-  printf '%s\n' "$2" >"$dir/latest"
-  if [[ $3 != '!' ]]; then
-    issues_json "$3" >"$dir/issues.json"
+  printf '%s\n' "$3" >"$dir/latest"
+  if [[ $4 != '!' ]]; then
+    issues_json "$4" >"$dir/issues.json"
   fi
-  if [[ $4 == '!' ]]; then
+  if [[ $5 == '!' ]]; then
     : >"$dir/create-fails"
   fi
 }
@@ -123,22 +129,26 @@ read_outcome() {
 }
 
 ROWS='
-newer release, nothing open|1.6.0|1.6.1|none|ok|0|opened|1
-equal release|1.6.0|1.6.0|none|ok|0|current|0
-older latest|1.6.0|1.5.2|none|ok|0|current|0
-newer by a two-digit minor|1.9.0|1.10.0|none|ok|0|opened|1
-an unrelated issue is open|1.6.0|1.6.1|unrelated|ok|0|opened|1
-the open item is on page two|1.6.0|1.7.0|page2|ok|0|open|0
-no marker file|-|1.6.1|none|ok|2|marker=unreadable|0
-npm read fails|1.6.0|!|none|ok|2|npm=failed|0
-npm latest is a prerelease|1.6.0|1.7.0-rc.1|none|ok|2|npm=invalid|0
-issue listing fails|1.6.0|1.6.1|!|ok|2|issues=failed|0
-gh refuses the issue|1.6.0|1.6.1|none|!|2|create=failed|0
+newer release, nothing open|1.6.0|1.6.0|1.6.1|none|ok|0|opened|1
+equal release|1.6.0|1.6.0|1.6.0|none|ok|0|current|0
+a hold read the latest release|1.5.2|1.6.0|1.6.0|none|ok|0|current|0
+older latest|1.6.0|1.6.0|1.5.2|none|ok|0|current|0
+newer by a two-digit minor|1.9.0|1.9.0|1.10.0|none|ok|0|opened|1
+newer major, older minor|1.6.0|1.6.0|2.0.0|none|ok|0|opened|1
+an unrelated issue is open|1.6.0|1.6.0|1.6.1|unrelated|ok|0|opened|1
+the open item is on page two|1.6.0|1.6.0|1.7.0|page2|ok|0|open|0
+an outside author holds the title|1.6.0|1.6.0|1.6.1|outsider|ok|0|opened|1
+the open item is at the marker|1.6.0|1.6.0|1.6.1|residue|ok|0|opened|1
+no marker file|1.6.0|-|1.6.1|none|ok|2|marker=unreadable|0
+npm read fails|1.6.0|1.6.0|!|none|ok|2|npm=failed|0
+npm latest is a prerelease|1.6.0|1.6.0|1.7.0-rc.1|none|ok|2|npm=invalid|0
+issue listing fails|1.6.0|1.6.0|1.6.1|!|ok|2|issues=failed|0
+gh refuses the issue|1.6.0|1.6.0|1.6.1|none|!|2|create=failed|0
 '
 
-while IFS='|' read -r label marker latest issues create rc outcome opened; do
+while IFS='|' read -r label cleared marker latest issues create rc outcome opened; do
   [[ -n $label ]] || continue
-  world "$marker" "$latest" "$issues" "$create"
+  world "$cleared" "$marker" "$latest" "$issues" "$create"
   run_in "$DIR"
   got="$(read_outcome)"
   want_summary=0
@@ -151,12 +161,12 @@ while IFS='|' read -r label marker latest issues create rc outcome opened; do
 done <<<"$ROWS"
 
 # The issue a run opens is the open item the next run finds: at most one at a
-# time, whatever the title says.
-world 1.6.0 1.6.1 none ok
+# time.
+world 1.6.0 1.6.0 1.6.1 none ok
 run_in "$DIR"
 title="$(cat -- "$DIR/created")"
-world 1.6.0 1.7.0 none ok
-jq -cn --arg title "$title" '[[{number: 301, title: $title}]]' >"$DIR/issues.json"
+world 1.6.0 1.6.0 1.7.0 none ok
+jq -cn --arg title "$title" --argjson user "$BOT" '[[{number: 301, title: $title, user: $user}]]' >"$DIR/issues.json"
 run_in "$DIR"
 if [[ $RC == 0 && $(read_outcome) == open && $OUT == *' issue=301 '* && $OPENED == 0 ]]; then
   ok 'the opened issue holds the next run'
