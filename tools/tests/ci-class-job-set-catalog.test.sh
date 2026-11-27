@@ -85,34 +85,61 @@ else
   ok "must-fail: inputs inverse fails catalog selection"
 fi
 
-# Skill text: a world whose head commit edits each file below in place since
-# its base, adds one skill Markdown file and removes another.
+# Skill text: a world where catalog_reads runs, from the checkout's layout
+# sources and its catalog_render_lint target, whose head commit edits each
+# file below in place since its base, adds one skill Markdown file and
+# removes another. BASE|HEAD per file, `\n` a line break.
 TEXT_WORLD="$TMP/text-world"
 cp -R "$READ_WORLD" "$TEXT_WORLD"
-text_git() { git -C "$TEXT_WORLD" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set "$@"; }
-mkdir -p "$TEXT_WORLD/skills/orch/references" "$TEXT_WORLD/skills/orch/workflows" "$TEXT_WORLD/skills/group/nested"
-for file in skills/orch/SKILL.md skills/orch/README.md skills/orch/references/r.md skills/orch/workflows/w.md \
-  skills/orch/gone.md skills/group/nested/SKILL.md skills/group/nested/README.md skills/notes.md kendex.toml; do
-  printf 'base\n' >"$TEXT_WORLD/$file"
+for file in crates/core/src/source/layout.rs crates/core/src/source/config.rs crates/core/src/engine/ops/add.rs \
+  crates/core/src/source_read.rs crates/core/src/source/plugin_registry.rs crates/cli/tests/catalog_render_lint.rs; do
+  mkdir -p "$TEXT_WORLD/$(dirname "$file")"
+  cp "$ROOT/$file" "$TEXT_WORLD/$file"
 done
+printf '[[test]]\nname = "catalog_render_lint"\npath = "tests/catalog_render_lint.rs"\n' >>"$TEXT_WORLD/crates/cli/Cargo.toml"
+text_git() { git -C "$TEXT_WORLD" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set "$@"; }
+text_files() { # FIELD — 1 the base text, 2 the head text
+  local file base head text
+  while IFS='|' read -r file base head; do
+    [ "$1" = 1 ] && text=$base || text=$head
+    mkdir -p "$TEXT_WORLD/$(dirname "$file")"
+    printf '%b' "$text" >"$TEXT_WORLD/$file"
+  done <<'FILES'
+kendex.toml|schema = 8\n|schema = 8\n# head\n
+skills/notes.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/SKILL.md|---\nname: orch\ndescription: a\nsummary: b\n---\nBody.\n|---\nname: orch\ndescription: c\nsummary: b\n---\nBody.\n
+skills/orch/body/SKILL.md|---\nname: body\n---\n\nBody.\n|---\nname: body\n---\n\nBody.\nMore body.\n
+skills/orch/README.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/references/r.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/workflows/w.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/references/link.md|Prose.\n\nSee [doc](a.md).\n|Prose.\n\nSee [doc](b.md).\n
+skills/orch/references/url.md|Prose.\n\nSee https://example.com/a.\n|Prose.\n\nSee https://example.com/b.\n
+skills/orch/references/heading.md|# Title\n\nBody.\n|# New title\n\nBody.\n
+skills/orch/references/setext.md|Title\n=====\n\nBody.\n|New title\n=====\n\nBody.\n
+skills/orch/references/wrapped.md|Prose.\n\nSee [doc](\n../a.md)\n|Prose.\n\nSee [doc](\n../b.md)\n
+skills/orch/gone.md|Base prose.\n|Base prose.\n
+skills/group/nested/SKILL.md|---\nname: nested\n---\n|---\nname: nested\n---\n
+skills/group/nested/README.md|Base prose.\n|Base prose.\nMore prose.\n
+FILES
+}
+text_files 1
 text_git add -A
 text_git commit -q -m base
 TEXT_BASE="$(text_git rev-parse HEAD)"
-for file in skills/orch/SKILL.md skills/orch/README.md skills/orch/references/r.md skills/orch/workflows/w.md \
-  skills/group/nested/README.md skills/notes.md kendex.toml; do
-  printf 'head\n' >>"$TEXT_WORLD/$file"
-done
-printf 'new\n' >"$TEXT_WORLD/skills/orch/references/new.md"
+text_files 2
+printf 'New prose.\n' >"$TEXT_WORLD/skills/orch/references/new.md"
 text_git rm -q skills/orch/gone.md
 text_git add -A
 text_git commit -q -m head
 
 # BASE|PATHS|CATALOG, every row micro at the merge group; BASE `base` is
 # TEXT_BASE, `-` unset and `unread` a commit the world does not hold. Smoke
-# stays false throughout: no row reaches its fixture.
-text_rows() { # SCRIPT
+# stays false throughout: no row reaches its fixture. A ROW argument runs
+# only the rows whose paths hold it.
+text_rows() { # SCRIPT [ROW]
   local base path selected change_base
   while IFS='|' read -r base path selected; do
+    case "$path" in *"${2-}"*) ;; *) continue ;; esac
     case "$base" in base) change_base=$TEXT_BASE ;; unread) change_base=0123456789abcdef0123456789abcdef01234567 ;; *) change_base="" ;; esac
     check "skill text: $base $path" "catalog=$selected
 smoke=false" "$(catalog_bits "$(CHANGE_BASE="$change_base" SELECT_IN="$TEXT_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection micro false "$(printf '%s\n' $path)")")"
@@ -123,9 +150,15 @@ base|skills/orch/workflows/w.md|false
 base|skills/group/nested/README.md|false
 base|skills/orch/README.md skills/orch/references/r.md|false
 base|skills/orch/SKILL.md|true
+base|skills/orch/body/SKILL.md|true
 base|skills/orch/README.md skills/orch/SKILL.md|true
 base|kendex.toml|true
 base|skills/orch/README.md kendex.toml|true
+base|skills/orch/references/link.md|true
+base|skills/orch/references/url.md|true
+base|skills/orch/references/heading.md|true
+base|skills/orch/references/setext.md|true
+base|skills/orch/references/wrapped.md|true
 base|skills/orch/references/new.md|true
 base|skills/orch/gone.md|true
 base|skills/notes.md|true
@@ -134,10 +167,8 @@ unread|skills/orch/README.md|true
 ROWS
 }
 text_rows "$JOB_SET"
-# Each planted fault leaves at least one row above red: the narrowing gone,
-# SKILL.md counted as skill text, and one skill text path excusing the other
-# catalog inputs of its change.
-while IFS='#' read -r label needle replacement; do
+# Each planted fault turns the rows it names red: LABEL@LINE@REPLACEMENT@ROW.
+while IFS='@' read -r label needle replacement row; do
   [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || { bad "must-fail $label: no single edit site"; continue; }
   NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
   if cmp -s "$JOB_SET" "$catalog_copy"; then
@@ -145,15 +176,20 @@ while IFS='#' read -r label needle replacement; do
     continue
   fi
   chmod +x "$catalog_copy"
-  if (PASS=0 FAIL=0; text_rows "$catalog_copy" >"$TMP/text-control"; [ "$FAIL" -eq 0 ]); then
+  if (PASS=0 FAIL=0; text_rows "$catalog_copy" "$row" >"$TMP/text-control"; [ "$FAIL" -eq 0 ]); then
     bad "must-fail: $label leaves skill text selection green"
   else
     ok "must-fail: $label fails skill text selection"
   fi
 done <<'ROWS'
-narrowing removed#  catalog_input && catalog=true#  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
-SKILL.md as text#    [[ $path =~ $PROSE && $path != */SKILL.md ]] || continue#    [[ $path =~ $PROSE ]] || continue
-text excuses others#    [[ $SKILL_TEXT == *$'\n'"$path"$'\n'* ]] || return 0#    [[ $SKILL_TEXT == *$'\n'?* ]] || return 0
+narrowing removed@  catalog_input && catalog=true@  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true@README.md
+SKILL.md as text@            if shipped and name not in inputs and name in tracked and path.name != marker \@            if shipped and name in tracked \@SKILL.md
+text excuses others@    [[ $SKILL_TEXT == *$'\n'"$path"$'\n'* ]] || return 0@    [[ $SKILL_TEXT == *$'\n'?* ]] || return 0@kendex.toml
+link syntax unread@  index(line, "](") || index(line, "][") || index(line, "]:") { doubt() }@  # link syntax control@link.md
+URL unread@  tolower(line) ~ /<a[ >]|<h[1-6]|href=|src=|http|github\.com/ { doubt() }@  # URL control@url.md
+heading unread@  line ~ /^[ ]*#/ { doubt() }@  # heading control@heading.md
+setext underline unread@  line ~ /^[ ]*(=+|-+)[ \t]*$/ { doubt() }@  # setext control@setext.md
+wrapped destination unread@  line ~ /(\(|\]:)[ \t]*$/ { doubt() }@  # wrapped control@wrapped.md
 ROWS
 
 # The shard selection in a fixture world, where every reader is planted, so
