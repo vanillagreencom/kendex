@@ -750,6 +750,7 @@ Any invariant failing sends you back before the JSON is built.
 
 Build the JSON per [audit-output.md](../schemas/audit-output.md) and set the destination hint to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-team-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, `tmp/audit-single-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` for the mode.
 
+- Set `team` to § 1.1.1's `TEAM`, or null under TRACKER=github.
 - Return the JSON inline.
 - Do not write the artifact yourself.
 

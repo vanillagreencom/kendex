@@ -336,6 +336,13 @@ Apply [publish-artifacts.md](publish-artifacts.md) to each issue this section cr
 - Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published.
 - An authorized single filing (§ 4.1) writes no audit JSON, so its set holds only the inputs supplied with it.
 
+**Project targets (Linear).** Before § 7.0 and before any write:
+
+1. Bind `[TEAM]` to the artifact's `team`, or to `LINEAR_TEAM` where the artifact names none.
+2. Read the team's projects once: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`. A non-zero exit halts with its error output.
+3. Check every target against that read's `projects[]` ([project-map.md § Routing](../references/project-map.md#routing)): each authorized create row's `project.recommended_id` and each `wrong_project` correction's `to_id` names one entry whose `admits` is set. A create row that has a `project_needed[]` row is held instead (§ 7.2).
+4. Any other target halts the whole batch before any write, so a mixed batch is never half applied.
+
 ### 7.0 Label Preflight
 
 Before any mutation that creates an issue or changes labels:
@@ -389,9 +396,7 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 **Project placement (Linear).**
 
-- Before the first create, read the team's projects: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`. A non-zero exit halts with its error output.
-- Each create row's `project.recommended_id` names one `projects[]` entry whose `admits` is set, or the row has a `project_needed[]` row ([project-map.md § Routing](../references/project-map.md#routing)). Any other create row halts the whole batch before any create, so a mixed batch is never half applied.
-- Each create passes `--project` with its row's `project.recommended_id`.
+- Each create passes `--project` with its row's `project.recommended_id`, checked under § 7 Project targets.
 - A `project_needed` row is held, not created, and reported in § 8. It resumes once the project exists in Linear with its admission lines.
 
 **Linear route (TRACKER=linear)**

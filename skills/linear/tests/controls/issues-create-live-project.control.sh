@@ -21,5 +21,5 @@ control_replace scripts/commands/issues.sh 2 \
 # namesake counts.
 control_expect "create-completed-only: refused"
 control_replace scripts/lib/common.sh 1 \
-    "    [[ \"\$use\" != place ]] || open='project_takes_issues'" \
-    '    use=read'
+    "        result=\$(jq -c \"\$LINEAR_PROJECT_OPEN_JQ\"'.projects.nodes |= [.[]? | select(project_takes_issues)]' <<<\"\$result\") || return 1" \
+    '        :'
