@@ -9,9 +9,8 @@
 //! refresh lock turns N callers times M accounts into one request per
 //! account per window.
 
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,37 +180,6 @@ pub fn record_path(usage_dir: &Path, harness: &str, config_dir: &str) -> PathBuf
 /// cache's account key and refresh lock. It contributes no rate samples.
 pub(super) fn grant_path(usage_dir: &Path, harness: &str, config_dir: &str) -> PathBuf {
     record_path(&usage_dir.join("grants"), harness, config_dir)
-}
-
-/// Hold only records that belong to this login before renewal. Retaining
-/// the opened file keeps a concurrent cache replacement out of the carry.
-pub(super) fn before_claude_renewal(
-    usage_dir: &Path,
-    config_dir: &str,
-    credential_time: SystemTime,
-) -> [Option<File>; 2] {
-    let harness = Harness::Claude.name();
-    [
-        record_path(usage_dir, harness, config_dir),
-        grant_path(usage_dir, harness, config_dir),
-    ]
-    .map(|path| {
-        let file = File::open(path).ok()?;
-        if file.metadata().ok()?.modified().ok()? < credential_time {
-            return None;
-        }
-        let record: Record = serde_json::from_reader(&file).ok()?;
-        (record.harness == harness && record.config_dir == config_dir).then_some(file)
-    })
-}
-
-/// Move the login boundary without changing the answer's age or refusal
-/// deadline, which are stored inside the record.
-pub(super) fn carry_renewed_record(file: File, credential_time: SystemTime) -> std::io::Result<()> {
-    if file.metadata()?.modified()? < credential_time {
-        file.set_times(std::fs::FileTimes::new().set_modified(credential_time))?;
-    }
-    Ok(())
 }
 
 /// The record at `path` naming `harness` and `config_dir`, or `None`: no
