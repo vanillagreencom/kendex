@@ -22,6 +22,12 @@ control_replace scripts/lib/common.sh 1 \
     '        | first // ($lines | length)) as $end' \
     '        | ($lines | length)) as $end'
 
+# A repeated line keeps its last value.
+control_expect "repeated-field: keeps each line's first value"
+control_replace scripts/lib/common.sh 1 \
+    '        ({}; if has($field.key) then . else .[$field.key] = $field.value end)' \
+    '        ({}; .[$field.key] = $field.value)'
+
 # Each inventory reader lists the team although given an inventory.
 control_expect "inventory: labels-audit lists no issues"
 control_replace scripts/commands/labels.sh 1 \

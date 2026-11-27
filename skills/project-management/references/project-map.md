@@ -8,11 +8,15 @@ A team's project map is its live projects as Linear holds them. A map project is
 
 A project's admission lines open its content, the long Markdown body `linear.sh projects create` and `projects update` take as `--content`, never its 255-character `description` summary. One line each, before any other text:
 
+Windows Support, a deliverable:
+
 ```text
 Admits: Work whose completion makes kendex install and run on Windows.
 Kind: deliverable
 Ends when: A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.
 ```
+
+Review Gate & CI, a standing area:
 
 ```text
 Admits: Changes to CI workflows, the review gate and the merge rail.
@@ -87,6 +91,8 @@ A standing project owns one of:
 - A concern: cross-cutting work with no single owning area, such as Tech Debt or Upkeep.
   - An item belongs to it only when no single area owns it.
 
+No line names which one: a standing project's `Admits:` sentence states it. An area's sentence names the Location paths it owns, and a concern's says that no single area owns the work. Read a standing project's role from that sentence.
+
 An open item of a project is every issue in it whose state type is not one of the closed types `completed`, `canceled` and `duplicate`: Triage, Verifying, In Review, blocked, research and `agent:human` issues included.
 
 - One read finds them: `issues list --project-id [PROJECT_ID] --max --format=compact`, by the project's recorded Linear id, keeping each row whose `state_type` is not a closed type.
@@ -139,13 +145,16 @@ When no `admits` sentence names the item's work:
 - A single small issue goes to the nearest standing project, the one whose `admits` sentence names the work closest to the item's Location. Its `reason` says that no sentence names the Location and which project is nearest.
 - With no standing project that admits anything, the item is `project_needed`.
 
-Examples, against the § Admission lines projects:
+Examples, against the two projects § Admission lines shows:
 
 - A single filing ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 3) with Location `.github/workflows/ci.yml` returns `project.recommended: "Review Gate & CI"` and a `reason` that quotes the sentence: `Review Gate & CI admits "Changes to CI workflows, the review gate and the merge rail."; .github/workflows/ci.yml is a CI workflow.`
 - A filing with Location `docs/legal/terms.md` matches no `admits` sentence. As a single small issue it goes to the nearest standing project, with a `reason` that says so.
 - A research decomposition that files a design of several issues for a new installer channel, which no sentence names, has `project.recommended: null` and a `project_needed[]` row for the project it needs. The creates are held.
 
-The linear CLI places an issue in any live project Linear resolves in the issue's team, and refuses no write for the project it names. This section is the placement rule, and filing holds it.
+The linear CLI checks no project's admission lines. `--project` takes a project UUID as given, or a name, which resolves to the one project of that name in the issue's team that takes issues (every state but `completed` and `canceled`); a name matching none or several refuses. This section is the placement rule, and filing holds it:
+
+- A write passes the chosen project's `id` from `projects[]`.
+- Before a batch's first write, every target is checked against the same `projects[]` read: each names one entry whose `admits` is set. Any other target halts the batch before any write.
 
 A `project_needed` item is held, not created.
 

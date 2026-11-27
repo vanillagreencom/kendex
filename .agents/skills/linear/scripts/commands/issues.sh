@@ -206,11 +206,12 @@ Create Options:
   declared label Linear does not have, where with no taxonomy it skips that
   label with a warning.
 
-  Project map: where the repository declares one (project-management
-  references/project-map.md), create refuses with no --project, and create,
-  update --project and bulk-update --project refuse, before any write, a
-  project the map does not list and a map project with no single live Linear
-  project in the team.
+  Project: --project takes a project UUID as given, or a name, which resolves
+  to the one project of that name in the issue's team that takes issues
+  (every state but completed and canceled); a name matching none or several
+  refuses. No write checks the project's Admits line: placement is the
+  filing rule in project-management references/project-map.md § Routing,
+  and `projects audit` reports an item a project does not admit.
 
 Update Options:
   --state <name>        New state. Update and bulk-update refuse completed-type
@@ -1310,10 +1311,10 @@ declare -A LINEAR_ISSUE_PROJECT_IDS=()
 ISSUE_PROJECT_ID=""
 
 # Set ISSUE_PROJECT_ID to the Linear id of --project REF for ISSUE, an
-# existing issue of team TEAM_ID, the project resolve_project_id names. A name
-# resolves only in the issue's team, so an issue whose team is unknown refuses
-# one; a UUID needs no team. Call it in the command's own shell, not `$(...)`,
-# so the result is kept.
+# existing issue of team TEAM_ID: the project resolve_project_id places it in.
+# A name resolves only in the issue's team, so an issue whose team is unknown
+# refuses one; a UUID needs no team. Call it in the command's own shell, not
+# `$(...)`, so the result is kept.
 # Usage: issue_project_id REF TEAM_ID ISSUE || return 1
 issue_project_id() {
     local ref="$1" team_id="$2" issue="$3" key="$2:$1" id
@@ -1325,7 +1326,7 @@ issue_project_id() {
         jq -cn --arg issue "$issue" '{code: "ISSUE_TEAM_MISSING", issue: $issue, error: ("Issue team missing: " + $issue)}' >&2
         return 1
     fi
-    id=$(resolve_project_id "$ref" "$team_id") || return 1
+    id=$(resolve_project_id "$ref" "$team_id" place) || return 1
     [ -n "$id" ] || return 1
     LINEAR_ISSUE_PROJECT_IDS[$key]="$id"
     ISSUE_PROJECT_ID="$id"
@@ -1617,7 +1618,7 @@ create_issue() {
     # yield are what the input below carries.
     local project_id=""
     if [ -n "$project" ]; then
-        project_id=$(resolve_project_id "$project" "$team_id") || return 1
+        project_id=$(resolve_project_id "$project" "$team_id" place) || return 1
         if [ -z "$project_id" ]; then
             return 1
         fi

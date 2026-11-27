@@ -1176,9 +1176,9 @@ audit_projects() {
     # A completed or canceled project takes no issue, so only the live ones
     # are listed and judged; an open item left in a closed one is its own
     # finding.
-    jq -s --arg team "$LINEAR_TEAM_TARGET" "$LINEAR_NAME_KEY_JQ$LINEAR_PROJECT_ADMISSION_JQ"'
+    jq -s --arg team "$LINEAR_TEAM_TARGET" "$LINEAR_NAME_KEY_JQ$LINEAR_PROJECT_OPEN_JQ$LINEAR_PROJECT_ADMISSION_JQ"'
         .[0] as $nodes | .[1] as $initiatives | .[2] as $issues | .[3] as $labels | (.[4] // []) as $declared
-        | [$nodes[] | select(.state | IN("completed", "canceled") | not)
+        | [$nodes[] | select(project_takes_issues)
             | {name, id, state, target_date: .targetDate} + (.content | project_admission)] as $projects
         | [$projects[] | select(.admits != null) | .id] as $admitting
         | ([$projects[] | {level: "project", name}] + [$initiatives[] | {level: "initiative", name: .}]) as $entries
@@ -1187,7 +1187,7 @@ audit_projects() {
               else (first($initiatives[] | select((. | name_key) == ($project.name | name_key))) // null) as $initiative
               | if $initiative != null then
                   {kind: "initiative-holds-issue", issue: $issue, initiative: $initiative, project: $project.name}
-                elif $project.state | IN("completed", "canceled") then
+                elif $project | project_takes_issues | not then
                   {kind: "closed-project-item", issue: $issue, project: $project.name, state: $project.state}
                 elif any($admitting[]; . == $project.id) | not then {kind: "unadmitted", issue: $issue, project: $project.name}
                 else empty end

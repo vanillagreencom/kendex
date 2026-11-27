@@ -197,6 +197,7 @@ unadmitted^.projects += [live("Fixture Bare"; null)] | .issues += [{identifier: 
 other-team-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Elsewhere"}]^[{"kind": "unadmitted", "issue": "KEN-9", "project": "Fixture Elsewhere"}]
 admits-after-prose^.projects += [live("Fixture Prose"; "## Why\nAdmits: Fixture hidden.\nKind: standing")]^[{"kind": "no-admits", "project": "Fixture Prose"}, {"kind": "no-kind", "project": "Fixture Prose"}]
 no-kind^(.projects[] | select(.name == "Fixture Area") | .content) = "Admits: Fixture area work.\nKind: area"^[{"kind": "no-kind", "project": "Fixture Area"}]
+repeated-field^(.projects[] | select(.name == "Fixture Area") | .content) = "Admits: Fixture area work.\nKind: standing\nAdmits: Fixture old.\nKind: deliverable"^[]
 no-project^.issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: null}]^[{"kind": "no-project", "issue": "KEN-9"}]
 initiative-holds-issue^.projects += [live("Fixture Initiative"; "Admits: Fixture.\nKind: standing")] | .issues += [{identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Initiative"}]^[{"kind": "initiative-holds-issue", "issue": "KEN-9", "initiative": "Fixture Initiative", "project": "Fixture Initiative"}]
 label-like-project^.labels += [{name: "Fixture_Area", team: null}]^[{"kind": "name-collision", "label": "Fixture_Area", "entry": {"level": "project", "name": "Fixture Area"}, "declared": false}]
@@ -206,6 +207,10 @@ standing-target-date^(.projects[] | select(.name == "Fixture Area") | .targetDat
 deliverable-no-ends-when^(.projects[] | select(.name == "Fixture Deliverable") | .content) = "Admits: Fixture work.\nKind: deliverable"^[{"kind": "deliverable-no-ends-when", "project": "Fixture Deliverable"}]
 closed-project-item^(.projects[] | select(.name == "Fixture Deliverable") | .state) = "canceled"^[{"kind": "closed-project-item", "issue": "KEN-1", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-2", "project": "Fixture Deliverable", "state": "canceled"}, {"kind": "closed-project-item", "issue": "KEN-4", "project": "Fixture Deliverable", "state": "canceled"}]
 ROWS
+
+assert "repeated-field: keeps each line's first value" \
+  jq -e 'first(.projects[] | select(.name == "Fixture Area")) | .admits == "Fixture area work." and .kind == "standing"' \
+  "$TMP_ROOT/repeated-field.out"
 
 run_status rc audit clean .
 assert_eq "clean: succeeds" "$rc" 0

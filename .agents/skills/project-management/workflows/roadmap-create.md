@@ -33,8 +33,9 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 1. Before § 2 writes anything, read the team's projects: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`.
    - A non-zero exit halts with its error output.
-2. When `project_placement.project_name` names a `projects[]` entry, keep its `id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
-3. Otherwise § 3 creates the project.
+2. For `project_placement.recommendation` `existing`, `project_name` names exactly one `projects[]` entry and its `admits` is set. Keep its `id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
+3. For `new`, no `projects[]` entry has that name, and § 3 creates the project.
+4. Any other placement halts before any tracker write, naming the project and why: no entry or several, an `existing` one whose `admits` is null, or a `new` one already listed.
 
 ---
 

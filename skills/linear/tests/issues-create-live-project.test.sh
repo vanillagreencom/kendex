@@ -3,7 +3,8 @@
 # An issue write places its issue in any live project Linear resolves in the
 # issue's team, driven against recorded Linear replies: create, update
 # --project and bulk-update --project into a project no repository file
-# names, and a create with no project. The rendered project-management
+# names, a create with no project, and a name only a completed project holds,
+# which takes no issue. The rendered project-management
 # SKILL.md still carries a `### Project map` block that lists another project,
 # as a consumer's render does until its next kendex refresh, so a write that
 # read that block would refuse every row.
@@ -22,12 +23,16 @@ KENDEX=5c2e9f71-a4b8-4d36-91e0-7f3d6b2c8a15
 NEW=00000000-0000-4000-8000-000000000301
 
 # Linear's projects, in the row shape of lib/fixtures/recorded/projects-list.json:
-# the project created in Linear today, holding its admission lines, and the
-# one the stale render's block lists.
+# the project created in Linear today, holding its admission lines, beside a
+# completed project of the same name, as a team that reuses a finished
+# project's name holds it; the one the stale render's block lists; and a name
+# only a completed project holds.
 PROJECTS="$TMP_ROOT/projects.json"
 cat >"$PROJECTS" <<JSON
 [{"id": "$NEW", "name": "Fixture New", "state": "planned", "content": "Admits: Fixture new work.\nKind: standing", "teams": {"nodes": [{"id": "$KENDEX"}]}},
- {"id": "00000000-0000-4000-8000-000000000302", "name": "Fixture Listed", "state": "started", "content": null, "teams": {"nodes": [{"id": "$KENDEX"}]}}]
+ {"id": "00000000-0000-4000-8000-000000000303", "name": "Fixture New", "state": "completed", "content": null, "teams": {"nodes": [{"id": "$KENDEX"}]}},
+ {"id": "00000000-0000-4000-8000-000000000302", "name": "Fixture Listed", "state": "started", "content": null, "teams": {"nodes": [{"id": "$KENDEX"}]}},
+ {"id": "00000000-0000-4000-8000-000000000304", "name": "Fixture Done", "state": "completed", "content": null, "teams": {"nodes": [{"id": "$KENDEX"}]}}]
 JSON
 
 PROJECT="$TMP_ROOT/project"
@@ -88,3 +93,9 @@ ROWS
 
 assert_eq "bulk-unnamed: every issue is written" "$(grep -c issueUpdate "$TMP_ROOT/bulk-unnamed.jsonl" || :)" 2
 assert_eq "bulk-unnamed: the project resolves once" "$(grep -c GetProject "$TMP_ROOT/bulk-unnamed.jsonl" || :)" 1
+
+# A name only a completed project holds refuses before any write.
+run_status rc run_label_team_request "$PROJECT" create-completed-only "" PROJECTS="$PROJECTS" \
+  create --title T --no-agent-label --project "Fixture Done"
+assert_ne "create-completed-only: refused" "$rc" 0
+assert_not "create-completed-only: no write is sent" grep -q issueCreate "$TMP_ROOT/create-completed-only.jsonl"

@@ -1317,7 +1317,12 @@ linear_guard_create_team() {
 }
 
 # Resolve project name or UUID to UUID
-# Usage: resolve_project_id "Project name" [team-uuid] or resolve_project_id "uuid-here"
+# Usage: resolve_project_id "Project name" [team-uuid [place]] or resolve_project_id "uuid-here"
+#
+# With `place`, the use of an issue write, a name resolves only among the
+# team's projects that take issues (project_takes_issues), the ones
+# `projects audit` lists for filing, so a completed namesake neither wins nor
+# makes the live one ambiguous. A read keeps every non-canceled project.
 #
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
@@ -1325,7 +1330,8 @@ linear_guard_create_team() {
 # issue nobody could find. PROJECT_PICK_JQ (lib/formatters.sh) states the rule
 # that settles it and every other spelling of the lookup.
 resolve_project_id() {
-    local project_ref="$1" team_id="${2:-}"
+    local project_ref="$1" team_id="${2:-}" use="${3:-read}" open='project_is_live'
+    [[ "$use" != place ]] || open='project_takes_issues'
 
     # Check if it's already a UUID
     if [[ "$project_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -1356,7 +1362,7 @@ resolve_project_id() {
     # Choosing the first would assign an issue to an arbitrary project.
     if [[ -n "$team_id" ]]; then
         local candidates candidate_count
-        candidates=$(jq -c "$PROJECT_PICK_JQ"'[.projects.nodes[]? | select(project_is_live)]' <<<"$result") || return 1
+        candidates=$(jq -c "$PROJECT_PICK_JQ$LINEAR_PROJECT_OPEN_JQ"'[.projects.nodes[]? | select('"$open"')]' <<<"$result") || return 1
         candidate_count=$(jq 'length' <<<"$candidates") || return 1
         if [[ "$candidate_count" -gt 1 ]]; then
             jq -c --arg ref "$project_ref" --arg team_id "$team_id" \
@@ -1374,6 +1380,21 @@ resolve_project_id() {
     # canceled-loses-to-live arm ever fires here, and passing $ref anyway is
     # what keeps this spelling the same one every other caller reads.
     local project_id
+    if [[ "$use" == place ]]; then
+        # The team check above leaves at most one project that takes issues.
+        project_id=$(jq -r "$LINEAR_PROJECT_OPEN_JQ"'first(.projects.nodes[]? | select(project_takes_issues) | .id) // ""' <<<"$result") || return 1
+        if [ -n "$project_id" ]; then
+            echo "$project_id"
+            return 0
+        fi
+        jq -c --arg ref "$project_ref" '(.projects.nodes // []) as $named
+            | {error: ("Project not found: " + $ref
+                + (if ($named | length) == 0 then ""
+                   else " (no project of this name takes issues; matches: "
+                       + ($named | map(.id + " (" + (.state // "") + ")") | join(", ")) + ")"
+                   end))}' <<<"$result" >&2
+        return 1
+    fi
     project_id=$(echo "$result" | jq -r --arg ref "$project_ref" \
         "$PROJECT_PICK_JQ"'(.projects.nodes // []) | (live_project_pick($ref) | .id) // ""')
 
@@ -1917,6 +1938,10 @@ linear_require_declared_labels() {
 # every character but a-z and 0-9 dropped. `projects audit`'s name collisions
 # read names through this one definition.
 LINEAR_NAME_KEY_JQ='def name_key: ascii_downcase | gsub("[^a-z0-9]"; "");'
+
+# A project that takes issues: every state but completed and canceled. The
+# audit lists these for filing, and an issue write resolves a name among them.
+LINEAR_PROJECT_OPEN_JQ='def project_takes_issues: (.state // "" | ascii_downcase) | IN("completed", "canceled") | not;'
 
 # A project's content as {admits, kind, ends_when}, each null when absent.
 # The fields are the `Admits:`, `Kind:` and `Ends when:` lines that open the

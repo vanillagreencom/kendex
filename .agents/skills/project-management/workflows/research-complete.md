@@ -201,7 +201,7 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 0. **Place the parent.** **Skip if** `.blocks` holds more than one issue.
    1. Read the team's projects as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, `[TEAM]` being the blocked issue's identifier prefix. § Routing reads each project's `admits` and `ends_when` from its `projects[]` entry.
       - A non-zero exit halts with its error output.
-   2. A finding whose `issue` is the blocked issue puts it in no project or in one that does not admit it. Route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE]"`.
+   2. A finding whose `issue` is the blocked issue puts it in no project or in one that does not admit it. Route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE_ID]"`, the route's `projects[].id`.
    3. When the route is `project_needed`, hold the whole decomposition, the step 7 refactors included:
       - Build no audit input.
       - Leave the blocked issue as it is in § 6.5.

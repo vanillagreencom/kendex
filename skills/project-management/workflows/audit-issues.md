@@ -360,7 +360,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
 | `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
-| `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
+| `wrong_project` | `issues update [ID] --project "[TO_ID]"`, the finding's `to_id`, + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 | `project_needed`, `project_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
 
@@ -389,9 +389,10 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 **Project placement (Linear).**
 
-- Each create passes `--project` with the project its row recommends ([project-map.md § Routing](../references/project-map.md#routing)).
+- Before the first create, read the team's projects: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"`. A non-zero exit halts with its error output.
+- Each create row's `project.recommended_id` names one `projects[]` entry whose `admits` is set, or the row has a `project_needed[]` row ([project-map.md § Routing](../references/project-map.md#routing)). Any other create row halts the whole batch before any create, so a mixed batch is never half applied.
+- Each create passes `--project` with its row's `project.recommended_id`.
 - A `project_needed` row is held, not created, and reported in § 8. It resumes once the project exists in Linear with its admission lines.
-- Before the first create, a create row whose `project.recommended` is null and that has no `project_needed[]` row halts the whole batch, so a mixed batch is never half applied.
 
 **Linear route (TRACKER=linear)**
 
@@ -413,7 +414,7 @@ A Linear create:
 A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT_ID]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
 ```
 
 A `create` whose `review_born` is false is the same command without that flag.
