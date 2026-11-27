@@ -385,10 +385,7 @@ class Evidence:
         elif name.startswith("./") and not operands:
             script, passed = self.resolve(directory, name)
             reads.update({script} | passed)
-            require_shape(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
-                          in [*BASH_SHEBANGS, ["#!/bin/sh"]],
-                          "unsupported-script-interpreter")
-            self.shell_reads(script, directory, reads, visited)
+            self.loaded_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 path, passed = self.resolve(directory, path)
@@ -403,6 +400,14 @@ class Evidence:
             return
         else:
             require_shape(name in {":", "true", "false"} and not operands, "opaque-shell-command")
+
+    def loaded_reads(self, script, directory, reads, visited):
+        # A file a tool executes or loads can read any other file. Only a bash
+        # or sh script has a reader that follows those reads.
+        require_shape(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
+                      in [*BASH_SHEBANGS, ["#!/bin/sh"]],
+                      "unsupported-script-interpreter")
+        self.shell_reads(script, directory, reads, visited)
 
     def resolve(self, directory, path):
         require_shape(literal(path) and not path.startswith("-"), "computed-path")
@@ -953,18 +958,17 @@ def workflow_env(env):
     # Every step inherits the workflow env, and a tool can read a path a value
     # names, so each word is a path input of each step. literal() refuses an
     # absolute or home path, which can name the checkout from outside it. An
-    # option word can join a path to its flag. Non-interactive bash sources the
-    # one file BASH_ENV names before the step, and no other variable.
+    # option word can join a path to its flag. BASH_ENV's value is one path.
     require(isinstance(env, dict) and all(isinstance(value, str) for value in env.values()),
             "opaque-workflow-env")
     script = env.get("BASH_ENV", "")
     require(not script or (literal(script) and not script.startswith("-")),
             f"opaque-workflow-env key=BASH_ENV path={shlex.quote(script)}")
-    found = [word for key, value in env.items() if key != "BASH_ENV"
+    found = [(key, word) for key, value in env.items() if key != "BASH_ENV"
              for word in re.split(r"[\s=:,;]+", value) if word]
     require(all(literal(word) and not (word.startswith("-") and re.search(r"[/.]", word))
-                for word in found), "opaque-workflow-env")
-    return found, script
+                for _, word in found), "opaque-workflow-env")
+    return found + ([("BASH_ENV", script)] if script else [])
 
 
 def declared_lanes(work):
@@ -989,7 +993,7 @@ def claimed_paths(work):
     return claimed
 
 
-def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
+def job_reads(evidence, job, env_words, ordinary, readers):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
@@ -1013,22 +1017,27 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
             directory = evidence.working_directory(directory, ordinary)
-        for word in env_words:
-            path, passed = evidence.checkout_path(directory, word)
-            ordinary.update({path} | passed)
-            ordinary.update(name for name in evidence.changed if under(name, path))
-        if bash_env:
+        for key, word in env_words:
             try:
-                script, passed = evidence.checkout_path(directory, bash_env)
-                ordinary.update({script} | passed)
-                ordinary.update(name for name in evidence.changed if under(name, script))
-                # bash skips a BASH_ENV file that does not exist.
-                if script in evidence.files:
-                    evidence.shell_reads(script, directory, ordinary, visited)
+                path, passed = evidence.checkout_path(directory, word)
+                ordinary.update({path} | passed)
+                ordinary.update(name for name in evidence.changed if under(name, path))
+                # Non-interactive bash sources the BASH_ENV file before the
+                # step whatever its mode, and skips one that does not exist.
+                # A file a value names that a tool executes or loads is read
+                # as code, as on a run: line. Any other file is data.
+                if path in evidence.files and key == "BASH_ENV":
+                    evidence.shell_reads(path, directory, ordinary, visited)
+                elif path in evidence.files and (evidence.files[path] == "100755"
+                                                 or MODULE.search(path)):
+                    evidence.loaded_reads(path, directory, ordinary, visited)
             except UNAVAILABLE as error:
-                named = os.path.normpath(Path(directory) / bash_env)
+                # The refusal stops the job before its run lines, and the
+                # file it could not follow can read any path, so no claim
+                # stands in for what the job reads.
+                named = os.path.normpath(Path(directory) / word)
                 raise NamedUnreadable(
-                    f"opaque-workflow-env key=BASH_ENV path={named} reason={error}", is_shape(error),
+                    f"opaque-workflow-env key={key} path={named} reason={error}", False,
                 ) from error
         for line in step["run"].splitlines():
             args = words(line)
@@ -1061,7 +1070,7 @@ def derived(evidence, claimed, settings, declared):
     if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
     require("defaults" not in document, "opaque-workflow-defaults")
-    env_words, bash_env = workflow_env(document.get("env", {}))
+    env_words = workflow_env(document.get("env", {}))
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
@@ -1124,7 +1133,7 @@ def derived(evidence, claimed, settings, declared):
     def job_reach(name, lane):
         ordinary, readers = set(), []
         try:
-            covered = job_reads(evidence, jobs[name], env_words, bash_env, ordinary, readers)
+            covered = job_reads(evidence, jobs[name], env_words, ordinary, readers)
             unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()

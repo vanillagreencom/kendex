@@ -350,6 +350,24 @@ workflow-env-bash-env-blank|  BASH_ENV: ./tools/env.sh\n|  BASH_ENV: ./tools/env
 workflow-env-option|  RUSTFLAGS: -D warnings\n|  RUSTFLAGS: -C link-arg=-Tlink.x\n
 workflow-defaults|\nenv:\n|\ndefaults:\n  run:\n    working-directory: tools\nenv:\n
 ROWS
+# An env value naming a file a tool loads as code, which reads a sibling.
+git -C "$repo" checkout -qb fixture-workflow-env-preload "$workflow_env_base"
+edit_workflow '  CI_CONFIG: ci/settings.toml\n' \
+  '  CI_CONFIG: ci/settings.toml\n  NODE_OPTIONS: --require ./tools/setup.cjs\n'
+printf "require('./setup-lib.cjs')\n" >"$repo/tools/setup.cjs"
+printf 'module.exports = 42\n' >"$repo/tools/setup-lib.cjs"
+# A claim names another input, so no unclaimed lane keeps the shell lane as its prerequisite.
+printf '%s\n' 'installed installed.settings # reason: the installed check reads the setting' \
+  >>"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a workflow env preload requires a sibling module'
+git -C "$repo" checkout -qb fixture-workflow-env-wrapper "$workflow_env_base"
+edit_workflow '  CI_CONFIG: ci/settings.toml\n' '  CI_CONFIG: ci/settings.toml\n  RUSTC_WRAPPER: ./tools/wrap.sh\n'
+printf '#!/usr/bin/env bash\nsource ./tools/wrap-lib.sh\n' >"$repo/tools/wrap.sh"
+chmod +x "$repo/tools/wrap.sh"
+printf 'true\n' >"$repo/tools/wrap-lib.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a workflow env wrapper sources a helper'
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
 for shape in event-gate event-gate-unguarded; do
@@ -1457,10 +1475,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         "$(sed -n 's/^lane-reach: \(job=[a-z]* cause=[a-z0-9-]*\).*/\1/p' "$SANDBOX/$implementation-log" | sort | paste -sd, -)"
     done
   fi
-  if [ "$label" = workflow-env-unreadable ]; then
+  env_refusal=""
+  case "$label" in
+    workflow-env-unreadable) env_refusal='key=BASH_ENV path=tools/env.sh reason=computed-command' ;;
+    workflow-env-preload) env_refusal='key=NODE_OPTIONS path=tools/setup.cjs reason=unsupported-script-interpreter' ;;
+  esac
+  if [ -n "$env_refusal" ]; then
     for implementation in action local; do
-      assert_eq "$label $implementation diagnostic" \
-        'cause=opaque-workflow-env key=BASH_ENV path=tools/env.sh reason=computed-command' \
+      assert_eq "$label $implementation diagnostic" "cause=opaque-workflow-env $env_refusal" \
         "$(sed -n 's/^lane-reach: job=shell //p' "$SANDBOX/$implementation-log")"
     done
   fi
@@ -1496,7 +1518,9 @@ workflow-env-config|ci/settings.toml|true||false|true||||||||false
 workflow-env-claimed|orphan.settings|false||false|false||||||||true
 workflow-env-step|tools/input.sh|true||false|false||||||||false
 workflow-env-step-claimed|orphan.settings|false||false|false||||||||true
-workflow-env-unreadable|tools/input.sh|true||false|true||||||||false
+workflow-env-unreadable|tools/input.sh|true||true|true||||||||true
+workflow-env-preload|tools/setup-lib.cjs|true||true|true||||||||true
+workflow-env-wrapper|tools/wrap-lib.sh|true||false|true||||||||false
 workflow-env-expression|tools/input.sh||||
 workflow-env-absolute|tools/input.sh||||
 workflow-env-bash-env-absolute|tools/input.sh||||
