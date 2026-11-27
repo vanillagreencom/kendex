@@ -660,7 +660,7 @@ assert_eq "$(landed "$BETA" "C002:$OR2")" "" "control: the obsolete live age gat
 sk_relay_stop
 sk_bin_reset
 
-sk_mutant seeded relay.py 'if not self\.state\.seeded:' 'if not __import__("store").journal_exists(self.path):'
+sk_mutant seeded relay.py '(self\.owners_current\(\)\n        )if not self\.state\.seeded:' '\1if not __import__("store").journal_exists(self.path):'
 NU="$(sk_new_root nu)"
 refused_first "$NU"
 assert_eq "$(texts "$NU")" "before the binding 1 before the binding 2 before the binding 3 " \

@@ -505,7 +505,7 @@ assert_eq "$RC=$ERR1=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" \
 sk_poll "$GAMMA"
 assert_eq "$RC=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" "0=true" "the next poll succeeds"
 
-# --- a first start: Slack from the binding moment, the mailbox from its newest envelope -----------
+# --- a first start: Slack from the binding moment, the mailbox from the clock then ---------------
 for n in 1 2 3; do sk_inject C777 U001 "history $n" >/dev/null; done
 PRE_PARENT="$(sk_inject C777 U001 'An adopted topic.')"
 PRE_REPLY="$(sk_inject C777 U001 'A reply before binding.' "$PRE_PARENT")"
@@ -515,6 +515,10 @@ mkdir -p "$DELTA/tmp/progress-reports"
 printf '# Old report\n' > "$DELTA/tmp/progress-reports/old.md"
 sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-reports/old.md" --file "$(sk_text n6 'Old report.')" >/dev/null
 sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a --effect none >/dev/null
+# The seed's `ids` are empty, so mail stamped in the seed's own second posts;
+# the past notices are aged out of that second, as mail already there is.
+sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'Old notice.')" 60
+sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'Old report.')" 60
 sk_run -- setup --root "$DELTA" --take C777
 assert_eq "$RC" 0 "a channel with history is adopted"
 sk_poll "$DELTA"
@@ -651,6 +655,8 @@ ROWS
 
 # --- a journal reset re-posts open asks alone ----------------------------------------------------------
 mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
+# Out of the reset seed's second, as for the first start's past notices.
+sk_age_envelope "$DELTA" "$(notice_id "$DELTA" 'New notice.')" 60
 sk_poll "$DELTA"
 assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
 assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # LaneMail answer failures, event field validation, a read directive from an
-# older producer, and root-error isolation.
+# older producer, root-error isolation, and owner delivery to a new root whose
+# first poll refuses.
 # Controls keep the malformed producer and remove each reader rule.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -526,5 +527,50 @@ sk_mutant status-isolation relay.py 'except Exception as status_err:' 'except Re
 sk_run -- listen --once --root "$BROKEN" --root "$HEALTHY"
 assert_eq "$RC=$(asks "$(sk_channel "$HEALTHY")" 'Root control.')" "1=0" "control: a failed error-status write prevents the healthy root from posting"
 sk_bin_reset
+
+# A newly bound root whose first poll refuses after it delivers an owner's
+# queued message: a damaged unread line refuses the mailbox read, or a
+# presence path that cannot be read refuses the hold. The message lands and
+# nothing posts. Once the poll is healthy, every notice written after the
+# delivery posts: one with no ref, the reply to the delivered message, and
+# the follow-up to that reply.
+PRESENCE_FILE="$SK_TMP/presence-not-a-directory"
+: > "$PRESENCE_FILE"
+for refusal in damaged presence; do
+  FRESH="$(sk_new_root "first-refused-$refusal")"
+  sk_bind "$FRESH"
+  FRESH_CH="$(sk_channel "$FRESH")"
+  case "$refusal" in
+    damaged)
+      mkdir -p "$(sk_box "$FRESH")"
+      printf 'bad-json\n' > "$(sk_box "$FRESH")/to-overseer.jsonl"
+      REFUSING=SLACK_INBOUND=queue
+      CAUSE="envelope-invalid path=$(sk_box "$FRESH")/to-overseer.jsonl line=1" ;;
+    presence)
+      REFUSING="SLACK_JARVIS_SESSION_FILE=$PRESENCE_FILE/child"
+      CAUSE=jarvis-session-file-unreadable ;;
+  esac
+  python3 - "${SK_BIN%/*}/lib" "$FRESH" "$FRESH_CH" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from inbound import directory, write
+write(directory(Path(sys.argv[2]), "inbox") / "owner.json", {"type": "message", "channel": sys.argv[3],
+      "ts": "1794111600.000001", "user": "U001", "text": "Owner message before the repair."})
+PY
+  sk_poll "$FRESH" SLACK_INBOUND=queue "$REFUSING"
+  assert_eq "$RC=$(landed "$FRESH" "$FRESH_CH:1794111600.000001" 1)=$(sk_state "[(.messages.$FRESH_CH // [])[] | select(.bot_id)] | length")" \
+    "1=Owner message before the repair.=0" "$refusal: a new root delivers an owner message while its first poll refuses, and posts nothing"
+  assert_has "$ERR" "$CAUSE" "$refusal: the refused poll names its cause"
+  FRESH_ID="$(jq -r --arg d "$FRESH_CH:1794111600.000001" 'select(.delivery_id == $d) | .id' "$(sk_box "$FRESH")/to-lane.jsonl")"
+  sk_lm "$FRESH" notice --item overseer --to owner --file "$(sk_text "$refusal-notice" "Notice after the delivery in $refusal.")" >/dev/null
+  sk_lm "$FRESH" notice --item overseer --to owner --ref "$FRESH_ID" --file "$(sk_text "$refusal-reply" "Reply to the delivery in $refusal.")" >/dev/null
+  REPLY_ID="$(jq -rR --arg ref "$FRESH_ID" 'fromjson? | select(.ref == $ref) | .id' "$(sk_box "$FRESH")/to-overseer.jsonl")"
+  sk_lm "$FRESH" notice --item overseer --to owner --ref "$REPLY_ID" --file "$(sk_text "$refusal-follow" "Follow-up to the reply in $refusal.")" >/dev/null
+  [ "$refusal" != damaged ] || sk_lm "$FRESH" compact --item overseer --set-aside >/dev/null 2>&1
+  sk_poll "$FRESH" SLACK_INBOUND=queue
+  assert_eq "$RC=$(asks "$FRESH_CH" "Notice after the delivery in $refusal.")=$(asks "$FRESH_CH" "Reply to the delivery in $refusal.")=$(asks "$FRESH_CH" "Follow-up to the reply in $refusal.")" \
+    "0=1=1=1" "$refusal: once the poll is healthy, each notice written after the delivery posts"
+done
 
 sk_summary

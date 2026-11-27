@@ -91,7 +91,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`start`**
 
 - It is written after its `seen`, so connection lines alone never count as seeded.
-- `at` is the mailbox's newest envelope `at` then, or empty with none. `ids` are the ids of the envelopes stamped in that second.
+- `at` is the second it is written, before the first delivery. `ids` names envelopes stamped in that second; the relay writes it empty.
 - A notice or answer before it, or in that second and named, is never posted; an open ask is.
 
 **`hold`**

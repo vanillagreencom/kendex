@@ -55,12 +55,13 @@ without retrying a new refusal later in the same poll.
 
 A start whose journal holds no `start` line seeds both positions before it
 reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
-and the mailbox from its newest envelope, so notices and answers already
-there are never re-posted. Open asks are posted whatever their age inside
-SLACK_THREAD_DAYS, since they still want an answer. A reserved ask, which no
-default closes, is posted once more in its thread, naming the owner, on the
-first poll past its deadline while it stays open; the journal's `overdue`
-line keeps that post from ever repeating.
+and the mailbox from the clock then, so notices and answers already there
+are never re-posted. That seed reads no mailbox, so a mailbox read that
+refuses holds posts alone, never an owner's message or the seed. Open asks
+are posted whatever their age inside SLACK_THREAD_DAYS, since they still want
+an answer. A reserved ask, which no default closes, is posted once more in
+its thread, naming the owner, on the first poll past its deadline while it
+stays open; the journal's `overdue` line keeps that post from ever repeating.
 
 Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
@@ -295,20 +296,6 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
             raise
         ids[email] = str(answer["user"]["id"])
     return ids
-
-
-def newest(events: List[Dict]) -> Tuple[str, List[str]]:
-    """The mailbox's newest `at` and the ids stamped in that second: `at` is a
-    whole second, so one written later in that second is named apart."""
-    at_newest = ""
-    ids: List[str] = []
-    for envelope in events:
-        at = str(envelope["at"])
-        if at_newest == "" or at_epoch(at) > at_epoch(at_newest):
-            at_newest, ids = at, [str(envelope["id"])]
-        elif at == at_newest:
-            ids.append(str(envelope["id"]))
-    return at_newest, ids
 
 
 def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
@@ -551,11 +538,13 @@ class RootRelay:
     def seed(self) -> None:
         """The positions a start with no seeds begins from, journaled so a
         restart keeps them: Slack's history past the binding moment, and the
-        mailbox past its newest envelope. `start` goes last, so a stop
-        between the two lines seeds again."""
+        mailbox past this moment, before any delivery. The clock seeds the
+        mailbox, never a read of it, so a refused read defers no seed while
+        owner messages land. `start` goes last, so a stop between the two
+        lines seeds again. Its `ids` stay empty: an envelope stamped in this
+        second posts, so none written after the seed is passed over."""
         self.journal.append(t="seen", ts=self.binding.bound_at)
-        at, ids = newest(self.mail.events())
-        self.journal.append(t="start", at=at, ids=ids)
+        self.journal.append(t="start", at=format_at(self.clock()), ids=[])
 
     # -- inbound: Slack to the mailbox --------------------------------------
 

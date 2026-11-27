@@ -2,7 +2,8 @@
 
 The public events and drain commands own the output contract. Their per-poll
 process starts exceed the relay's polling contract, so reads call that same
-mailbox owner's parser and receipt rules inside this process.
+mailbox owner's parser, receipt rules and damaged-line refusal inside this
+process.
 
 The relay keys every owner message it delivers with `--delivery-id
 channel:ts`. Its journal skips a stamp it already carried; for any stamp
@@ -83,10 +84,14 @@ class LaneMail:
             shell = shutil.which("bash")
             if shell is None:
                 raise Refusal("lane-mail-failed", "command-missing=bash")
+            # A mailbox package from before its damaged-line rule defines no
+            # MAILBOX_LINE_JQ, and its read_events calls none; the empty
+            # default keeps that pairing reading. It goes once Slack's
+            # mailbox dependency can no longer resolve to such a package.
             definitions = subprocess.run(
                 [shell, "-c", 'set -euo pipefail; . "$1"; . "$2"; '
                  'mailbox_root="$(mailbox_common_root "$3")"; '
-                 'printf "%s\\0%s" "$mailbox_root" "$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
+                 'printf "%s\\0%s" "$mailbox_root" "${MAILBOX_LINE_JQ-}$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"',
                  "mailbox-definitions", str(MAILBOX_READ_FILES[1]),
                  str(MAILBOX_READ_FILES[2]), str(self.root)],
                 capture_output=True, text=True, timeout=max(0, deadline - time.monotonic()),

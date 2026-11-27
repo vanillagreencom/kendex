@@ -84,6 +84,8 @@ rows = [
     {"id": "posted-a", "kind": "tracker-posted", "re": "ask-a", "issue": "FIXTURE-1", "tracker_label": "owner"},
 ]
 over.write_text("".join(json.dumps(row) + "\n" for row in rows) + "bad-json\n[]\n{\"id\":\"partial\"")
+# The Jarvis read has passed the damaged lines 4 and 5, so both readers step over them.
+(box / "to-overseer.seen").write_text("5\n")
 lane.write_text(json.dumps({"id": "directive-a", "kind": "directive", "at": "2026-10-13T00:00:00Z", "text": "Read me"}) + "\n")
 events = equivalent()
 assert [(row["id"], row["line"], row["count"]) for row in events] == [
@@ -190,6 +192,55 @@ finally:
     mutex.rmdir()
     namespace["time"] = original_time
 
+# A damaged line past its box's consumer count refuses the relay's read, at
+# the line `events --box` refuses at; one at or below it, or a killed
+# writer's marked fragment, reads. A row with no mailbox bytes keeps the
+# previous row's, so the cached snapshot judges the moved count.
+notice = json.dumps(dict(rows[0], id="notice-d")) + "\n"
+directive = json.dumps({"id": "directive-d", "kind": "directive", "at": "2026-10-13T00:00:00Z", "text": "D"}) + "\n"
+for name in ("to-overseer.jsonl.numbering", "to-lane.jsonl.numbering", "to-lane.cursor.lock"):
+    (box / name).unlink(missing_ok=True)
+DAMAGE = [
+    # label, to-overseer bytes, to-lane bytes, to-overseer.seen, to-lane.cursor, refusing box and line
+    ("overseer-unread", notice + "bad-json\n", directive, None, "0", ("to-overseer", 2)),
+    ("overseer-seen-raised", None, None, "2", "0", None),
+    ("overseer-seen", notice + "bad-json\n", directive, "2", "0", None),
+    ("lane-unread", notice, directive + "[]\n", "0", "1", ("to-lane", 2)),
+    ("lane-cursor", notice, directive + "[]\n", "0", "2", None),
+    ("torn-fragment", notice + "{\"id\":\"cut\x1etorn\n", directive, None, "0", None),
+]
+for label, over_bytes, lane_bytes, seen, lane_cursor, refused in DAMAGE:
+    if over_bytes is None:
+        warm = mail.snapshots["stamp"]
+    else:
+        over.write_text(over_bytes)
+        lane.write_text(lane_bytes)
+    seen_path = box / "to-overseer.seen"
+    seen_path.unlink(missing_ok=True)
+    if seen is not None:
+        seen_path.write_text(seen + "\n")
+    cursor.write_text(lane_cursor + "\n")
+    wanted = refused and f"lane-mail: envelope-invalid path={box / (refused[0] + '.jsonl')} line={refused[1]}"
+    for name in ("to-overseer", "to-lane"):
+        cli = subprocess.run([str(mail.script), "events", "--item", "overseer", "--box", name],
+                             cwd=root, capture_output=True, text=True, timeout=30)
+        if refused and refused[0] == name:
+            assert cli.returncode == 2 and cli.stderr.startswith(wanted + "\n"), (label, cli.stderr)
+        else:
+            assert cli.returncode == 0, (label, name, cli.stderr)
+    if refused:
+        try:
+            mail.events()
+        except Exception as error:
+            assert (error.key, error.value) == ("lane-mail-failed", wanted), (label, error)
+        else:
+            raise AssertionError(f"{label}: a damaged unread line must refuse the relay's read")
+    else:
+        assert [row["id"] for row in equivalent()] == ["notice-d", "directive-d"], label
+    if over_bytes is None:
+        assert mail.snapshots["stamp"] == warm, "the raised count must be judged on the cached snapshot"
+(box / "to-overseer.seen").unlink(missing_ok=True)
+
 # The CLI's flock helper leaves ownership on its shell's descriptors. The
 # child inherits this fixture environment unchanged, as the real helper does.
 for fd in (8, 9):
@@ -246,6 +297,33 @@ finally:
         os.close(fd)
     for stream in streams:
         stream.close()
+# A mailbox package from before its damaged-line rule supplies every read
+# definition but MAILBOX_LINE_JQ, and its read_events calls none: Slack still
+# reads beside it.
+import mailbox as slack_mailbox
+import shlex
+older = root / "tmp/older-mailbox"
+older.mkdir(parents=True, exist_ok=True)
+(older / "mailbox-append.sh").write_text(f". {shlex.quote(str(MAILBOX_READ_FILES[1]))}\nunset MAILBOX_LINE_JQ\n")
+(older / "lane-mail-store.py").write_text(
+    "def read_events(box, jq_defs, previous, receipts=False, timeout=30):\n    return [{'defs': jq_defs}], None\n")
+installed = slack_mailbox.MAILBOX_READ_FILES
+slack_mailbox.MAILBOX_READ_FILES = (older / "lane-mail-store.py", older / "mailbox-append.sh", installed[2])
+try:
+    older_rows, _ = LaneMail(root)._read_events()
+finally:
+    slack_mailbox.MAILBOX_READ_FILES = installed
+older_defs = older_rows[0]["defs"]
+assert "def overseer_mail_class" in older_defs and "mailbox_line_invalid" not in older_defs, older_defs[:200]
+# A Slack package from before that rule hands this store those same
+# definitions: the read refuses naming the one it lacks.
+try:
+    mail.reader(box, older_defs, {})
+except ValueError as error:
+    assert (error.key, error.path) == ("definition-unavailable", "mailbox_line_invalid"), error
+else:
+    raise AssertionError("a read handed no mailbox_line_invalid must refuse by name")
+
 if linked:
     assert mail.box == box
     assert not (root / "tmp/lane-mail/overseer").exists(), "reads must not create a second mailbox"

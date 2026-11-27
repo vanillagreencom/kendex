@@ -29,6 +29,15 @@ spec = importlib.util.spec_from_file_location("watch", producer)
 watch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(watch)
 settings = load()
+if mode != "seed":
+    # The seeds a first poll writes on an empty mailbox, with no mailbox
+    # floor: this probe's clock runs past the stamps lane-mail writes, and
+    # compacted-read backdates its original, so a clock seed would pass over
+    # the envelopes under test. The seed mode leaves the relay its own seed.
+    binding = json.loads((root / "tmp/slack/binding.json").read_text())
+    (root / "tmp/slack/journal.jsonl").write_text(
+        json.dumps({"t": "seen", "ts": binding["bound_at"]}) + "\n"
+        + json.dumps({"t": "start", "at": "", "ids": []}) + "\n")
 now = time.time() + 1200
 relay = Relay([root], settings, Slack(settings.token, settings.api_url), lambda: now)
 bound = relay.roots[0]

@@ -30,12 +30,11 @@ def objects($box):
       | owner_tracker_record($private)
       | owner_ask_reserved($private)
       | {line: $box.numbers[$i], envelope: .}];
+def damaged_lines($box):
+  [range(0; $box.raw | length) as $i | select($box.raw[$i] | mailbox_line_invalid) | $box.numbers[$i]];
 '''
 READ_JQ = OBJECTS_JQ + r'''
-def damaged($box; $after):
-  first(range(0; $box.raw | length) as $i
-    | select($box.numbers[$i] > $after and ($box.raw[$i] | mailbox_line_invalid))
-    | $box.numbers[$i]) // null;
+def damaged($box; $after): first(damaged_lines($box)[] | select(. > $after)) // null;
 . as $in
 # A read that would hand a damaged line over, or carry a position past it,
 # stops in front of it: mailbox_line_invalid judges the line, as the writer
@@ -90,10 +89,14 @@ objects(.lane) as $lane | objects(.over) as $over
 
 
 class StoreRefusal(ValueError):
-    def __init__(self, key, path, detail=""):
+    """`line`, a damaged logical line, selects lane-mail's envelope-invalid
+    form: the path follows ` path=` and ` line=N` closes it."""
+
+    def __init__(self, key, path, detail="", line=None):
         self.key, self.path = key, path
         self.detail = detail
-        super().__init__(f"lane-mail: {key}={path}")
+        super().__init__(f"lane-mail: {key}={path}" if line is None
+                         else f"lane-mail: {key} path={path} line={line}")
 
 
 def validate_mailbox(box):
@@ -175,9 +178,20 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
     only with unchanged stamps and no such writer during the snapshot.
     strict_receipts lets a paging caller refuse a missed receipt instead of
     using the legacy zero fallback; receipt_cursor owns that judgement.
+
+    The caller hands both boxes over, so a damaged line past the count the
+    box's own consumer keeps, to-lane.cursor or to-overseer.seen, refuses
+    envelope-invalid as `events --box` does. That count moves without a
+    mailbox write, so it is read on every call that holds damage, and only
+    then.
     """
     import fcntl
     validate_mailbox(box)
+    # The caller's package supplies jq_defs and installs apart from this
+    # one: a caller from before the damaged-line rule hands no
+    # mailbox_line_invalid over, and jq's compile error would not name it.
+    if "def mailbox_line_invalid:" not in jq_defs:
+        raise StoreRefusal("definition-unavailable", "mailbox_line_invalid")
     paths = [box / name for name in ("to-overseer.jsonl", "to-lane.jsonl")]
     deadline = time.monotonic() + timeout
 
@@ -240,7 +254,8 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
              answered: [$rows[] | select(.box == "to-lane" and (.id | type) == "string" and $replies[.id]) | .id],
              release_at: ([$rows[] | select(.tracker_pending == true) | owner_tracker_release_at
                            | select(. > $now)] | min),
-             directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}]}
+             directives: [$rows[] | select(.box == "to-lane" and mailbox_directive_receipt) | {line, id}],
+             damaged: [range(0; 2) as $b | damaged_lines($in[$b])]}
         '''
         result = subprocess.run(["jq", "-c", "--argjson", "now", str(time.time()), program], input=json.dumps(snapshots),
                                 capture_output=True, text=True, check=True,
@@ -250,8 +265,15 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
         previous.clear()
         previous.update(stamp=before, rows=projected["rows"], release_at=projected["release_at"],
                         answered=set(projected["answered"]),
-                        directives=projected["directives"], count=snapshots[1]["count"])
+                        directives=projected["directives"], count=snapshots[1]["count"],
+                        damaged=projected["damaged"])
         break
+    floors = (lambda: read_seen(box), lambda: read_cursor(box)[1])
+    for name, lines, floor in zip(("to-overseer", "to-lane"), previous["damaged"], floors):
+        seen = floor() if lines else 0
+        past = [line for line in lines if line > seen]
+        if past:
+            raise StoreRefusal("envelope-invalid", box / f"{name}.jsonl", line=past[0])
     receipt = None
     if receipts:
         value, seen, absent = read_cursor(box)
