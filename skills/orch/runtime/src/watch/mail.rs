@@ -38,7 +38,8 @@
 //! target and its cause on stderr. No box is ever read as empty. A hosted
 //! box the host did not serve (`mail-read-failed`) is judged by the
 //! provider's list first ([`Unread::listed`]): a sandbox it no longer lists
-//! took its box with it, so that lane is neither read nor refused.
+//! took its box with it, so nothing of that lane is delivered and it is
+//! not refused; it is read again each turn until the overseer's close.
 //!
 //! A provider's `sandbox-stopped` notice from a sender on the owner's
 //! channel, or in a `data` envelope whose `source` is `reap`, in the

@@ -947,9 +947,9 @@ pub fn listed_in(listing: &str, item: &str) -> Option<String> {
     })
 }
 
-/// Why a read of a hosted lane's files did not answer: the one judgement
-/// every reader that would otherwise report the read failed acts on, the
-/// close's box read, the mail drain and the handoff read alike.
+/// Why a read of a hosted lane's files did not answer, judged by
+/// [`Unread::listed`]: the close's ask and box reads, the watch's mail drain
+/// and its handoff read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Unread {
     /// The provider's call pool refused the call at `step` (`mail-read`, or
