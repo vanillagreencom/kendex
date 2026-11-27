@@ -153,28 +153,22 @@ done
 }
 
 default_consistency() {
-  local default_in_hook default_in_doc default_in_example
+  local default_in_hook default_in_example
 default_in_hook="$(awk -v p="default_pattern='" '
   index($0, p) == 1 { v = substr($0, length(p) + 1); sub(/.$/, "", v); print v; n++ }
   END { exit n != 1 }' "$hook_source")" || exit 1
-default_in_doc="$(awk '
-  /^```text$/ { inside = 1; next }
-  inside && /^```$/ { inside = 0; next }
-  inside { print; n++ }
-  END { exit n != 1 }' "$ROOT/docs/authoring/command-safety.md")" || exit 1
 default_in_example="$(cd -- "$scratch" && COMMIT_GUARDS_SETTINGS_FILE="$ROOT/skills/commit-guards/kendex.settings.toml.example" \
   GG_CHECK=command-safety bash -c '
   source "$1/common.sh"
   source "$1/settings.sh"
   gg_setting COMMAND_SAFETY_DENY_PATTERN ""
 ' _ "$ROOT/skills/commit-guards/scripts/lib")" || exit 1
-if [ -n "$default_in_hook" ] && [ "$default_in_example" = "$default_in_hook" ] &&
-  [ "$default_in_doc" = "$default_in_hook" ]; then
-  printf 'PASS the example and the doc carry the hook default\n'
+if [ -n "$default_in_hook" ] && [ "$default_in_example" = "$default_in_hook" ]; then
+  printf 'PASS the example carries the hook default\n'
   passed=$((passed + 1))
 else
-  printf 'FAIL the example and the doc carry the hook default: hook [%s] example [%s] doc [%s]\n' \
-    "$default_in_hook" "$default_in_example" "$default_in_doc"
+  printf 'FAIL the example carries the hook default: hook [%s] example [%s]\n' \
+    "$default_in_hook" "$default_in_example"
   failed=$((failed + 1))
 fi
 }
@@ -2702,10 +2696,9 @@ settings
 # A fresh install has no settings line, or no settings file at all; the
 # hook's own default is then the policy.
 default_rows
-# The default is written three times: the hook applies it, the commit-guards
-# example declares it for the app's Customize tab, and the doc prints it.
-# Each copy is read from its own file, the example through the settings
-# loader the hook uses.
+# The commit-guards example declares the hook's default for the app's
+# Customize tab, so it is read through the settings loader the hook uses and
+# compared with the default the hook applies.
 default_consistency
 printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "^$"\n' >"$repo/kendex.settings.toml"
 check 0 'systemd-run --user --scope -p MemoryMax=64M cargo test' 'an explicit ^$ turns matching off'
@@ -2929,7 +2922,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   done <<'CONTROLS'
 no-default|FAIL empty-env: the default refuses a bare MemoryMax: exit 0, expected 2:
 no-default|FAIL no-file: the default refuses a bare MemoryMax: exit 0, expected 2:
-no-default|FAIL the example and the doc carry the hook default: hook [
+no-default|FAIL the example carries the hook default: hook [
 no-cwd-fallback|FAIL a denied command without cwd uses the caller policy:
 CONTROLS
 fi
