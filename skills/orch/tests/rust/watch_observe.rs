@@ -7386,6 +7386,77 @@ fn a_merged_local_lane_read_idle_or_exited_is_closed_by_the_watch_and_frees_its_
     );
 }
 
+/// A merged local lane whose post-merge work is live, its worktree present
+/// and its state record standing with no close-out stamp, is resumed at a
+/// provider stop like an unmerged one: the close would keep it, so the line
+/// alone would leave it idle with nobody typing.
+#[test]
+fn a_merged_lane_whose_work_is_live_is_resumed_at_a_provider_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let idle = server.open_window(
+        "gh-1",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &idle, "claude");
+    await_drawn(&server, &idle, "❯");
+    let mut one = lane_record(
+        "issue-1",
+        "gh-1",
+        "claude",
+        &server,
+        &idle,
+        Some(&identity),
+        &dir.path().join("worktree-1"),
+    );
+    one["repo"] = json!("o/r");
+    fleet.set_lanes(vec![one]);
+    let state = fleet.read();
+    let rows_file = dir
+        .path()
+        .join("worktree-1/tmp/lane-mail/issue-1/session-rows.jsonl");
+    std::fs::create_dir_all(rows_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n",
+    )
+    .unwrap();
+    lane_driver!(server, fleet, readers, driver);
+    std::fs::write(
+        support::item_record(&driver.state_dir, "issue-1"),
+        "{\"cycles\":0}\n",
+    )
+    .unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "issue-1".into(),
+        value: "o/r#7".into(),
+    });
+    let first = driver.pass(&state);
+    let second = driver.pass(&state);
+    let said: Vec<String> = [event_lines(&first), event_lines(&second)].concat();
+    assert!(
+        driver.baseline.get("resume", "gh-1").is_some(),
+        "the merged lane with live work is resumed: {said:?} {:?}",
+        second.failed
+    );
+    for word in ["EVENT idle-after-return", "EVENT lane-closed"] {
+        assert!(
+            !said.iter().any(|l| l.starts_with(word)),
+            "{word}: {said:?}"
+        );
+    }
+    let record = fleet.read();
+    let record = record.lanes.iter().find(|l| l.item == "issue-1").unwrap();
+    assert_ne!(record.status, state::LaneStatus::Done, "{record:?}");
+}
+
 /// pr-timeline's one GraphQL read of the merged pull request 7, its three
 /// selections of `commits` planted under their arguments.
 fn pull_seven_timeline() -> Value {

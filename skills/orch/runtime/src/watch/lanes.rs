@@ -1640,16 +1640,24 @@ fn observe_one(
                         wake::can_continue(harness, cause, is_reading_lane(&obs.lane.item))
                     })
             });
-            // A lane whose merge landed takes the line and the close below,
-            // never a resume or a move, a merge read after this turn's
-            // continuation was asked included: the rows it clears are its
-            // mark of being told.
-            let merged = !matches!(
-                super::github::finished_merge(pass.baseline, obs.lane),
-                super::github::FinishedMerge::None
-            );
+            // Only a lane whose merge landed and whose work has left its
+            // host ([`hosted::work_left`], the finished close's own read)
+            // takes the line and the close below, never a resume or a move,
+            // a merge read after this turn's continuation was asked
+            // included: the rows it clears are its mark of being told. A
+            // merged lane whose work is live, whose merge is undated or
+            // whose read fails is resumed and moved like an unmerged one.
+            let owed = get(wake::RESUME_KIND).is_some() || get(PROVIDER_ROW).is_some();
+            let left = (continuation.is_some() || owed)
+                && matches!(
+                    super::github::finished_merge(pass.baseline, obs.lane),
+                    super::github::FinishedMerge::Eligible { .. }
+                )
+                && hosts.of(obs.lane).ok().is_some_and(|caps| {
+                    matches!(hosted::work_left(obs.lane, pass, &caps), Some(Answer::Gone))
+                });
             if let Some(cause) = continuation
-                && !merged
+                && !left
                 && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
             {
                 if !reported {
@@ -1659,8 +1667,7 @@ fn observe_one(
                 continue_lane(obs, cause, &key, &wakes, pass, out);
                 return reading;
             }
-            let continued =
-                merged && (get(wake::RESUME_KIND).is_some() || get(PROVIDER_ROW).is_some());
+            let continued = left && owed;
             if reported && !continued {
                 return reading;
             }
