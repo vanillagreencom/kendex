@@ -4026,6 +4026,80 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
     }
 }
 
+/// A required run-level aggregate status keeps every run of its
+/// publisher's workflow, so under `verify-pr` its failure on an older run
+/// is held `expected` behind a newer green run of the workflow while that
+/// run publishes its own, whatever the newer run's event. The recorded
+/// `newer-sibling-active` witness's `CI Required` targets its run and is
+/// published by `pull_request_review_comment` runs. The newer run's `build`
+/// counts for no required context and is reported as a non-required line.
+#[test]
+fn a_required_aggregate_is_held_behind_a_newer_green_run_of_any_event() {
+    for event in ["pull_request_review_comment", "workflow_dispatch"] {
+        let jobs = vec![
+            check_run_in(Some(700), 9, json!("build"), "completed", json!("success")),
+            with(
+                check_run_in(Some(701), 10, json!("build"), "completed", json!("success")),
+                "started_at",
+                json!("2026-01-29T15:21:00Z"),
+            ),
+        ];
+        let executions = vec![
+            with(
+                run(700, HEAD, "completed", json!("failure")),
+                "event",
+                json!("pull_request"),
+            ),
+            with(
+                execution(
+                    701,
+                    1,
+                    "2026-01-29T15:20:00Z",
+                    HEAD,
+                    "completed",
+                    json!("success"),
+                ),
+                "event",
+                json!(event),
+            ),
+        ];
+        let aggregate = with(
+            status("CI Required", "failure"),
+            "target_url",
+            json!(format!("https://github.com/{REPO}/actions/runs/700")),
+        );
+        let mut gh = Github::green();
+        gh.pull(PR, HEAD, BASE, "OPEN")
+            .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
+            .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
+            .answer(&check_runs(HEAD, 1), check_runs_page(2, jobs))
+            .answer(&statuses(HEAD, 1), statuses_page(vec![aggregate]))
+            .answer(&runs(HEAD, 1), runs_page(executions))
+            .answer(
+                &rules(1),
+                json!([status_checks_rule(&["CI Required", "build"])]),
+            );
+        let result = ok_result(&gh.verify_pr(PR, true));
+        assert_eq!(result["status"], "pending", "{event}: {result}");
+        assert_eq!(key(&result), "checks-pending", "{event}: {result}");
+        assert_eq!(
+            checks(&result),
+            vec![
+                row("CI Required", "commit-status", "expected", "pending"),
+                row("build", "check-run", "success", "pass"),
+            ],
+            "{event}: {result}"
+        );
+        assert_eq!(
+            non_required(&result),
+            vec![row("build", "check-run", "success", "pass")],
+            "{event}: {result}"
+        );
+        assert!(gh.state().get("verification").is_none(), "{event}");
+        assert_pull_then_pinned(&gh.log(), PR, HEAD);
+    }
+}
+
 /// GitHub's event rule covers workflow job checks alone, so a required
 /// commit status's failure under `verify-pr` is held while any run of its
 /// publisher's workflow is in flight, whatever that run's event. The

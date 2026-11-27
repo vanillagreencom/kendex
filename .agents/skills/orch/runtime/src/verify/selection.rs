@@ -46,9 +46,9 @@
 //!    job's check (a check run whose suite has a run) that step 7 did not
 //!    bind counts only from a run GitHub evaluates for a pull request
 //!    (`Replacements::PullRequestRuns`): one of another run is set aside
-//!    here, joins no run group and matches no required context, and one
-//!    bearing a required context's name is reported as a non-required
-//!    line, whichever arm step 8 takes. Such a member's failure is held or
+//!    here, joins no run group the pick reads and matches no required
+//!    context, and one bearing a required context's name is reported as a
+//!    non-required line, whichever arm step 8 takes. Such a member's failure is held or
 //!    replaced only by such a run (`judge::correlate`). A commit status
 //!    and a check whose suite has no run keep every run, since GitHub's
 //!    event rule covers workflow job checks alone: a status's publisher
@@ -67,7 +67,10 @@
 //!    later entry of step 1's order wins: the earlier-listed member among
 //!    equal starts); an aggregate (run-level link) whose run ranks below a
 //!    selected run of its source group with no failed job is rewritten
-//!    `expected`, pending, while that newer run publishes its own.
+//!    `expected`, pending, while that newer run publishes its own. A run
+//!    status keeps every run (step 2), so its groups and their pick are
+//!    those of steps 3 and 4 over every job, the set-aside checks included:
+//!    the runs `judge::correlate` reads for it.
 //! 6. Run-less members: deduplicated by name, the latest start winning, the
 //!    later entry of step 1's order on an equal start (the earlier-listed
 //!    member).
@@ -298,6 +301,122 @@ struct RunGroup {
     substantive: bool,
     failed: usize,
     rank: (String, u64),
+}
+
+/// Steps 3 and 4 over one list of entries: each workflow name's run
+/// groups, ranked, and the indices of its selected groups among them, the
+/// bound runs first, then the pick. A group's `jobs` index that list.
+#[derive(Debug)]
+struct Runs<'a> {
+    workflows: BTreeMap<&'a str, Vec<RunGroup>>,
+    selected: BTreeMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> Runs<'a> {
+    fn rank(entries: &[Entry<'a>], bound_ids: &BTreeSet<u64>) -> Self {
+        // 3. Run rank per workflow name.
+        let mut workflows: BTreeMap<&'a str, Vec<RunGroup>> = BTreeMap::new();
+        let mut jobs: BTreeMap<(&'a str, u64), Vec<usize>> = BTreeMap::new();
+        for (i, entry) in entries.iter().enumerate() {
+            if let Place::Job { workflow, run } = entry.place {
+                jobs.entry((workflow, run)).or_default().push(i);
+            }
+        }
+        for ((workflow, run), indices) in jobs {
+            let buckets = || indices.iter().map(|&i| entries[i].bucket);
+            let last_start = indices
+                .iter()
+                .map(|&i| entries[i].started)
+                .max()
+                .unwrap_or_default()
+                .to_owned();
+            workflows.entry(workflow).or_default().push(RunGroup {
+                run,
+                substantive: buckets().any(|b| b != Bucket::Skipping),
+                failed: buckets().filter(|b| *b == Bucket::Fail).count(),
+                // Pending is read here; the rank below depends on it.
+                rank: (
+                    if buckets().any(|b| b == Bucket::Pending) {
+                        String::new()
+                    } else {
+                        last_start
+                    },
+                    run,
+                ),
+                jobs: indices,
+            });
+        }
+        for groups in workflows.values_mut() {
+            // Time ranks only when every run of the group is settled and
+            // dated; otherwise run id alone.
+            if groups.iter().any(|g| g.rank.0.is_empty()) {
+                for g in groups.iter_mut() {
+                    g.rank.0.clear();
+                }
+            }
+        }
+
+        // 4. Selected runs per group: bound runs, then the pick.
+        let mut selected: BTreeMap<&'a str, Vec<usize>> = BTreeMap::new();
+        for (&workflow, groups) in &workflows {
+            let mut chosen: Vec<usize> = (0..groups.len())
+                .filter(|&g| bound_ids.contains(&groups[g].run))
+                .collect();
+            let substantive: Vec<usize> = (0..groups.len())
+                .filter(|&g| groups[g].substantive)
+                .collect();
+            let pool = if substantive.is_empty() {
+                (0..groups.len()).collect()
+            } else {
+                substantive
+            };
+            if let Some(pick) = pool.into_iter().max_by_key(|&g| &groups[g].rank)
+                && !bound_ids.contains(&groups[pick].run)
+            {
+                chosen.push(pick);
+            }
+            selected.insert(workflow, chosen);
+        }
+        Self {
+            workflows,
+            selected,
+        }
+    }
+
+    /// The selected groups of one workflow name, in their order.
+    fn selected_in(&self, workflow: &str) -> impl Iterator<Item = &RunGroup> {
+        let groups = self.workflows.get(workflow).map_or(&[][..], Vec::as_slice);
+        self.selected
+            .get(workflow)
+            .into_iter()
+            .flatten()
+            .map(move |&g| &groups[g])
+    }
+
+    /// Every selected group, by workflow name.
+    fn selected(&self) -> impl Iterator<Item = &RunGroup> {
+        self.workflows
+            .keys()
+            .flat_map(|&workflow| self.selected_in(workflow))
+    }
+
+    /// Step 5's hold of a run-level aggregate of `run`, which is not
+    /// selected: the first selected run of its source group (the workflow
+    /// name `run`'s jobs are grouped under) that ranks above it, when that
+    /// run has no failed job.
+    fn holds(&self, run: u64) -> bool {
+        if self.selected().any(|g| g.run == run) {
+            return false;
+        }
+        self.workflows
+            .iter()
+            .find_map(|(&workflow, groups)| {
+                let status_run = groups.iter().find(|g| g.run == run)?;
+                self.selected_in(workflow)
+                    .find(|g| g.rank > status_run.rank)
+            })
+            .is_some_and(|g| g.failed == 0)
+    }
 }
 
 /// How one required definition binds to the head's runs.
@@ -606,9 +725,9 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
             .is_some_and(RequiredEvidence::names_anything),
         Caller::VerifyHead => false,
     };
-    let mut entries: Vec<Entry<'_>> = Vec::new();
+    let mut every: Vec<Entry<'_>> = Vec::new();
     for context in eliminate_duplicates(evidence) {
-        entries.push(match context {
+        every.push(match context {
             Context::Check(check) => Entry {
                 name: check.name(),
                 source: Source::CheckRun,
@@ -642,91 +761,29 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
             },
         });
     }
-    let (entries, set_aside): (Vec<Entry<'_>>, Vec<Entry<'_>>) = entries
-        .into_iter()
-        .partition(|entry| entry.replacements.admits(entry.event));
+    let admitted = |entry: &Entry<'_>| entry.replacements.admits(entry.event);
     let non_required: Vec<CheckReport> = evidence.required().map_or_else(Vec::new, |req| {
-        set_aside
+        every
             .iter()
+            .filter(|entry| !admitted(entry))
             .filter(|entry| req.contexts().iter().any(|context| context == entry.name))
             .map(|entry| entry.member().report)
             .collect()
     });
+    let entries: Vec<Entry<'_>> = every.iter().filter(|e| admitted(e)).cloned().collect();
 
-    // 3. Run rank per workflow name.
-    let mut workflows: BTreeMap<&str, Vec<RunGroup>> = BTreeMap::new();
-    {
-        let mut jobs: BTreeMap<(&str, u64), Vec<usize>> = BTreeMap::new();
-        for (i, entry) in entries.iter().enumerate() {
-            if let Place::Job { workflow, run } = entry.place {
-                jobs.entry((workflow, run)).or_default().push(i);
-            }
-        }
-        for ((workflow, run), indices) in jobs {
-            let buckets = || indices.iter().map(|&i| entries[i].bucket);
-            let last_start = indices
-                .iter()
-                .map(|&i| entries[i].started)
-                .max()
-                .unwrap_or_default()
-                .to_owned();
-            workflows.entry(workflow).or_default().push(RunGroup {
-                run,
-                substantive: buckets().any(|b| b != Bucket::Skipping),
-                failed: buckets().filter(|b| *b == Bucket::Fail).count(),
-                // Pending is read here; the rank below depends on it.
-                rank: (
-                    if buckets().any(|b| b == Bucket::Pending) {
-                        String::new()
-                    } else {
-                        last_start
-                    },
-                    run,
-                ),
-                jobs: indices,
-            });
-        }
-        for groups in workflows.values_mut() {
-            // Time ranks only when every run of the group is settled and
-            // dated; otherwise run id alone.
-            if groups.iter().any(|g| g.rank.0.is_empty()) {
-                for g in groups.iter_mut() {
-                    g.rank.0.clear();
-                }
-            }
-        }
-    }
-
-    // 4. Selected runs per group: bound runs, then the pick.
-    let mut selected: BTreeMap<&str, Vec<&RunGroup>> = BTreeMap::new();
-    for (workflow, groups) in &workflows {
-        let mut chosen: Vec<&RunGroup> = groups
-            .iter()
-            .filter(|g| bound_ids.contains(&g.run))
-            .collect();
-        let substantive: Vec<&RunGroup> = groups.iter().filter(|g| g.substantive).collect();
-        let pool = if substantive.is_empty() {
-            groups.iter().collect()
-        } else {
-            substantive
-        };
-        if let Some(pick) = pool.iter().max_by_key(|g| &g.rank)
-            && !bound_ids.contains(&pick.run)
-        {
-            chosen.push(pick);
-        }
-        selected.insert(workflow, chosen);
-    }
-    let selected_ids: BTreeSet<u64> = selected.values().flatten().map(|g| g.run).collect();
+    // 3. Run rank per workflow name; 4. selected runs per group.
+    let runs = Runs::rank(&entries, &bound_ids);
+    // A run status keeps every run (step 2): its hold reads the groups of
+    // every job, the set-aside checks included.
+    let every_run = Runs::rank(&every, &bound_ids);
 
     // The scoped list: selected runs' jobs, then run statuses, then
     // run-less members.
-    let mut scoped: Vec<Entry<'_>> = Vec::new();
-    for groups in selected.values() {
-        for group in groups {
-            scoped.extend(group.jobs.iter().map(|&i| entries[i].clone()));
-        }
-    }
+    let mut scoped: Vec<Entry<'_>> = runs
+        .selected()
+        .flat_map(|group| group.jobs.iter().map(|&i| entries[i].clone()))
+        .collect();
 
     // 5. Run statuses: the latest per name by run id, an aggregate behind
     // a newer selected run of its group held `expected`.
@@ -747,28 +804,10 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
             run,
             run_level: true,
         } = entry.place
+            && every_run.holds(run)
         {
-            let source_workflow = entries.iter().find_map(|e| match e.place {
-                Place::Job { workflow, run: r } if r == run => Some(workflow),
-                Place::Job { .. } | Place::RunStatus { .. } | Place::Runless => None,
-            });
-            let status_run = source_workflow.and_then(|workflow| {
-                workflows
-                    .get(workflow)
-                    .and_then(|groups| groups.iter().find(|g| g.run == run))
-                    .map(|g| (workflow, g))
-            });
-            let newer = status_run.and_then(|(workflow, status_run)| {
-                selected.get(workflow).and_then(|groups| {
-                    groups
-                        .iter()
-                        .find(|g| !selected_ids.contains(&run) && g.rank > status_run.rank)
-                })
-            });
-            if newer.is_some_and(|g| g.failed == 0) {
-                entry.state = "expected";
-                entry.bucket = Bucket::Pending;
-            }
+            entry.state = "expected";
+            entry.bucket = Bucket::Pending;
         }
         scoped.push(entry);
     }
