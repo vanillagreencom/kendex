@@ -720,9 +720,10 @@ pub struct Lane {
     /// paths over the named range and the paths a running lane added,
     /// sorted and unique, and empty where a `read_only` launch is judged,
     /// which writes none of them. A relaunch keeps the record's set, scope,
-    /// `read_only`, Ancestor gate and tier, and the set meets the holders
-    /// standing now as a running lane's added path does. `None` on a record
-    /// written with no judgement.
+    /// `read_only`, Ancestor gate and tier, and adds no path to the set, so
+    /// the set meets no holder. A record a no-landing close stopped holds the
+    /// set against other lanes. `None` on a record written with no
+    /// judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
     /// The paths the launch named in scope: a file the brief names as an

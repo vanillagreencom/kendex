@@ -11,8 +11,9 @@
 //! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
-//! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
+//! | otherwise `stopped`, its latest confirmed close a no-landing one ([`retired_open`]), local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
+//! | `reservation`, or no charge: any other stopped, parked or gone holder | yields: nothing is recorded |
+//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) unless kept as above; a first launch reads a running one's branch ([`branch_judged`]) |
 //! | `done` | no holder |
 //!
 //! A holder is a record of the item's repository: a path is relative to
@@ -62,8 +63,10 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission, and that set meets the holders standing now as a running
-//! lane's added path does ([`relaunch_held`]). A `github` item of another repository than the checkout's,
+//! admission. A recorded set adds no path and meets no holder; a record
+//! holding none adds its item's Location paths, which meet the holders
+//! standing now as a running lane's added path does ([`relaunch_held`]). A
+//! `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
@@ -71,6 +74,7 @@
 use agent_runtime::confine::{self, Answer as Confinement};
 use agent_runtime::harness::Harness;
 use agent_runtime::intent::{EffectOp, Intent};
+use agent_runtime::protocol::Outcome;
 use agent_runtime::record::{self, Document};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -84,7 +88,7 @@ use super::occupancy::{self, ChargeReason, Host};
 use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::{Delivery, Settings};
-use crate::state::{self, Carried, Lane, LaneMembers, LaneStatus, StageKind};
+use crate::state::{self, Carried, CloseGround, Lane, LaneMembers, LaneStatus, StageKind};
 use crate::verify::wire::{Nullable, Pull, PullFile};
 use crate::verify::{Answer, Gh};
 use agent_runtime::journal::{Env, intents};
@@ -806,40 +810,80 @@ fn same_repo(lane: &Lane, repo: Option<&str>) -> bool {
     }
 }
 
-/// How a holder stands: live blocks, unknown blocks as unreadable,
-/// anything else yields.
+/// How a holder stands: live blocks and may be joined, kept blocks and is
+/// never joined, unknown blocks as unreadable, anything else yields.
 enum Holding {
     Live,
+    /// A record a no-landing close stopped ([`retired_open`]): no session
+    /// runs, and its item's work stands on its paths.
+    Kept,
     Unknown(String),
     Yields,
 }
 
-fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
-    if lane.host.is_some() {
-        return if lane.status.in_flight() {
+fn holding(
+    path: &Path,
+    lane: &Lane,
+    intents: &[Intent],
+    env: &Env,
+    host: &Host,
+) -> Result<Holding> {
+    let reading = if lane.host.is_some() {
+        if lane.status.in_flight() {
             Holding::Live
         } else {
             Holding::Yields
-        };
+        }
+    } else {
+        let ids = occupancy::read_identities(lane, host);
+        let charge = occupancy::lane_charge(
+            lane,
+            occupancy::launch_open(intents, &lane.item),
+            env.now_secs,
+            &ids,
+        );
+        match charge.map(|c| (c.reason, c.cause)) {
+            Some((
+                ChargeReason::Live
+                | ChargeReason::Wake
+                | ChargeReason::Preparing
+                | ChargeReason::Session,
+                _,
+            )) => Holding::Live,
+            Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
+            Some((ChargeReason::Reservation | ChargeReason::Sandbox, _)) | None => Holding::Yields,
+        }
+    };
+    Ok(match reading {
+        Holding::Yields if retired_open(path, lane, intents)? => Holding::Kept,
+        Holding::Live | Holding::Kept | Holding::Unknown(_) | Holding::Yields => reading,
+    })
+}
+
+/// Whether a `stopped` record was stopped by a no-landing close: the latest
+/// confirmed close of its item in the intent journal is on that ground. Such
+/// a close retires the attempt and keeps the item's work, so a second lane
+/// taking one of its paths would make the overlap its relaunch meets. A
+/// launch that failed also leaves `stopped`, after no close (a first
+/// launch) or after the full close of a `done` record (a next phase): that
+/// attempt has no work to keep. A failed relaunch after a no-landing close
+/// keeps it held.
+fn retired_open(path: &Path, lane: &Lane, intents: &[Intent]) -> Result<bool> {
+    if lane.status != LaneStatus::Stopped {
+        return Ok(false);
     }
-    let ids = occupancy::read_identities(lane, host);
-    let charge = occupancy::lane_charge(
-        lane,
-        occupancy::launch_open(intents, &lane.item),
-        env.now_secs,
-        &ids,
-    );
-    match charge.map(|c| (c.reason, c.cause)) {
-        Some((
-            ChargeReason::Live
-            | ChargeReason::Wake
-            | ChargeReason::Preparing
-            | ChargeReason::Session,
-            _,
-        )) => Holding::Live,
-        Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
-        Some((ChargeReason::Reservation | ChargeReason::Sandbox, _)) | None => Holding::Yields,
-    }
+    let Some(close) = intents.iter().rev().find(|i| {
+        i.target == lane.item
+            && i.op == EffectOp::CloseResources
+            && i.outcome == Outcome::Confirmed
+            && i.reconciled.is_none()
+    }) else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        LaneMembers::of(path, close)?.close,
+        Some(CloseGround::NoLanding { .. })
+    ))
 }
 
 /// The branch the holder's item state records, read beside the fleet
@@ -1140,18 +1184,19 @@ pub(super) fn bound(
     bind(path, &a, checkout, reads, host.accounts)
 }
 
-/// A relaunch's holders (the module's binding paragraph): the record's
-/// touched set and scope, kept from its admission, met against the lanes
-/// that hold paths now, as a running lane's added path is, never joined. A
-/// stopped or parked record yields while it stands, so another lane can be
-/// admitted a path it holds; its relaunch must not take that path back.
+/// A relaunch's holders (the module's binding paragraph): the paths it adds
+/// to its record's touched set, met against the lanes that hold paths now,
+/// as a running lane's added path is, never joined. A record's own set adds
+/// none: its paths were admitted when recorded, and a record stopped with
+/// no landing held them since ([`Holding::Kept`]), so a lane that holds one
+/// now co-held it before the record was kept, and the relaunch is admitted
+/// on its own set. A record no judgement wrote, a surface lane's, holds no
+/// set: its item's Location paths are the paths it adds, read as a first
+/// launch reads them, and refused where the item names no Location path,
+/// since a surface lane's item can keep its paths outside its description.
 /// `tracker` and `repo` are the relaunch's effective ones, the request's
-/// else the record's. A record no judgement wrote, a surface lane's, holds
-/// no set: its item's Location paths are its set, read as a first launch
-/// reads them, and refused where the item names no Location path, since
-/// a surface lane's item can keep its paths outside its description. A
-/// record naming no tracker is judged on no item, as a first launch naming
-/// none is.
+/// else the record's. A record naming no tracker is judged on no item, as a
+/// first launch naming none is.
 #[allow(
     clippy::too_many_arguments,
     reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
@@ -1173,7 +1218,7 @@ pub(super) fn relaunch_held(
     };
     let read;
     let paths = match (&record.touched, tracker) {
-        (Some(paths), _) => paths.as_slice(),
+        (Some(_), _) => return Ok(()),
         (None, Some(tracker)) if !record.read_only => {
             let reads = host
                 .admission
@@ -1296,7 +1341,7 @@ pub(super) fn judge(
             holder: index,
             tie: Tie::Blockers(blockers),
         };
-        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
+        let joins = matches!(holding(path, holder, intents, env, host)?, Holding::Live)
             && before_review(path, holder, a.item, &tied.tie)?;
         if !joins {
             return Err(tied.refusal(a.item, &holder.item));
@@ -1316,9 +1361,11 @@ pub(super) fn judge(
         }
         // A holder that yields holds nothing, so its set is never read: an
         // item that cannot be read refuses only beside a lane holding paths.
-        let live = match holding(lane, intents, env, host) {
+        // `Ok(true)` where a session runs, which a first launch may join.
+        let session = match holding(path, lane, intents, env, host)? {
             Holding::Yields => continue,
-            Holding::Live => Ok(()),
+            Holding::Live => Ok(true),
+            Holding::Kept => Ok(false),
             Holding::Unknown(cause) => Err(cause),
         };
         let read;
@@ -1346,23 +1393,25 @@ pub(super) fn judge(
         let Some(file) = paths.first() else {
             continue;
         };
-        if let Err(cause) = live {
-            return Err(holder_unreadable(&lane.item, "identity", cause));
-        }
+        let session = session.map_err(|cause| holder_unreadable(&lane.item, "identity", cause))?;
         // A first launch joins one live holder before its review, and under
         // direct delivery passes one in its review, the publication taking
         // the order; a relaunch, which never joins, passes one in its review
-        // there too, where its review reads here; the paths a running lane
-        // adds never merge two lanes.
+        // there too, where its review reads here, and so does a first launch
+        // beside a kept holder, which runs no session to join; the paths a
+        // running lane adds never merge two lanes.
         let first = a.checkout().is_some();
         let tie = Tie::File(file.clone());
-        if first && let Some(route) = unreachable(lane) {
+        if first
+            && session
+            && let Some(route) = unreachable(lane)
+        {
             branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
         }
-        let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
+        let joinable = first && session && join.as_ref().is_none_or(|j: &Join| j.holder == index);
         let direct = match a.launch {
-            Launch::First(_) => direct(host)?,
-            Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
+            Launch::First(_) if session => direct(host)?,
+            Launch::First(_) | Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
             Launch::Added => false,
         };
         let before = if joinable || direct {

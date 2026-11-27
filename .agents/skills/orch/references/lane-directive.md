@@ -85,7 +85,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
-- `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
+- `launch-overlap`: launch once that lane ends, or name the file in `in_scope` where the brief adds to it append-only. A lane stopped by a no-landing close holds its files until a close records it `done` (§ Recovery relaunch).
 - `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Launch once that lane stops.
   - A hosted lane that carries the launch's blockers refuses with no branch read, naming them as `blockers`.
   - A hosted lane that holds a shared path always refuses, naming the held path as `file`. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
@@ -294,7 +294,9 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 - A relaunch keeps the record's touched set, scope, [Ancestor gate](skill-rules.md#ancestor-gate) and tier.
-- The set, or the item's Location paths where the record holds none, meets the holders standing now as a running lane's added path does. It is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
+- A record stopped by a `no_landing` close holds its set while it reads `stopped`, so no other lane's launch or `admit-paths` takes one of its paths: each is refused `launch-overlap` naming it as `holder`. A record that reads `done` holds nothing.
+- A relaunch over a recorded set adds no path to it, and is admitted beside a live lane that holds one of its paths.
+- A record with no set adds its item's Location paths. Those paths meet the holders standing now as a running lane's added path does. A held one is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
 ### Watch recovery

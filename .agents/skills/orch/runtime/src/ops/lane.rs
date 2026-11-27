@@ -1464,9 +1464,9 @@ pub(super) fn launch_lane(
     // account's room and the cap, so one transition admits, joins or
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
-    // judged when it was admitted, and meets the holders standing now with
-    // them, since a stopped record held nothing while another lane could
-    // take its path.
+    // judged when it was admitted, and meets the holders standing now only
+    // with the paths it adds: a record holding no set adds its item's
+    // Location paths.
     let candidate = Admission {
         item: &r.item,
         tracker: r.tracker.as_deref(),
@@ -1835,7 +1835,7 @@ pub(super) fn close_owned_resources(
     };
     let ground = close_ground(&lane, r, host)?;
     // A recovery ground retires the lane for the record's own relaunch,
-    // which meets the holders of its paths standing now: judged here, by
+    // which meets the holders standing now of the paths it adds: judged here, by
     // every caller's close, a relaunch they refuse leaves the lane as it
     // stood instead of stopped with no relaunch.
     if let CloseGround::NoLanding { reason, .. } = &ground
