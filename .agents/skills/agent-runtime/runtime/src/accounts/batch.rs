@@ -96,11 +96,14 @@ pub struct Unreadable {
 }
 
 /// The words a provider states of an account, apart from any figure, by
-/// field and by the record's name.
-const PROVIDER_WORDS: [(&str, &str); 3] = [
+/// field and by the record's name. `unified-status` is Anthropic's admission
+/// word (`allowed`, `allowed_warning`, `rejected`: FLT-1713); the judge
+/// reads `rejected` as walled ([`super::AccountRow::rejected`]).
+const PROVIDER_WORDS: [(&str, &str); 4] = [
     ("plan-ends", "plan_ends"),
     ("reserved", "reserved"),
     ("seat", "seat"),
+    ("unified-status", "unified_status"),
 ];
 
 /// A line's `key=value` fields; a field with no `=` holds the empty value.
@@ -114,8 +117,9 @@ fn line_fields(text: &str) -> Map<String, Value> {
 }
 
 /// The line a provider's unreadable line still says: its account, its
-/// harness and its words, no figure. A reservation is a fact of the
-/// account, so a measurement nobody can read never takes it away. None
+/// harness and its words (`plan-ends`, `reserved`, `seat`,
+/// `unified-status`), no figure. A reservation or a refusal is a fact of
+/// the account, so a measurement nobody can read never takes it away. None
 /// where the line names no account, no harness this parser reads, or no
 /// word.
 fn words_line(text: &str) -> Option<Line> {
@@ -312,8 +316,8 @@ pub fn consumed_reset(text: &str, now: u64) -> Option<String> {
 /// Each non-empty line of `text` with its number in the text, as a record
 /// measured `through` under `host_pool`'s kind, or the field that left it
 /// unread: a percentage nobody can parse is never judged as room. The
-/// words `plan-ends`, `reserved` and `seat` are carried as written where
-/// non-empty, an unread line's among them as a row of no reading; the judge
+/// words `plan-ends`, `reserved`, `seat` and `unified-status` are carried
+/// as written where non-empty, an unread line's among them as a row of no reading; the judge
 /// reads them.
 fn rows(
     ctx: &Ctx,
@@ -363,13 +367,6 @@ fn line_row(ctx: &Ctx, read: Line, host_pool: &str, through: &str) -> Value {
         if !value.is_empty() {
             words.insert(name.to_owned(), Value::from(value));
         }
-    }
-    // Anthropic's admission word as the provider carries it beside an `ok`
-    // status (`allowed`, `allowed_warning`, `rejected`: FLT-1713); the judge
-    // reads `rejected` as walled ([`super::AccountRow::rejected`]).
-    let admission = get("unified-status");
-    if !admission.is_empty() {
-        words.insert("unified_status".to_owned(), Value::from(admission));
     }
     let grant = grant || get("detail").starts_with("api-credit-");
     let pool = match harness {
@@ -607,9 +604,18 @@ mod tests {
 
     const NOW: u64 = 1_800_000_000;
 
+    /// How a pick reads a provider's `accounts` answer: [`host_rows`], or
+    /// [`host_words`] for an overseer's pick here over a remote provider.
+    type Parse = fn(&mut Ctx, &str, &str) -> Vec<Value>;
+
     /// A provider's `accounts` answer read under a `plan` host at [`NOW`],
     /// as the pick reads it: the rows, and the notes the listing said.
     fn host(text: &str) -> (Vec<Value>, Vec<String>) {
+        host_through(text, host_rows)
+    }
+
+    /// [`host`] through `parse`.
+    fn host_through(text: &str, parse: Parse) -> (Vec<Value>, Vec<String>) {
         let dir = tempfile::tempdir().unwrap();
         let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
         let state = Judged::of("state", Ok(dir.path().to_path_buf()));
@@ -624,7 +630,7 @@ mod tests {
         let read = accounts.get().unwrap();
         let mut ctx = Ctx::new(&env, &read, NOW).unwrap();
         ctx.serve_max_age = 300;
-        let rows = host_rows(&mut ctx, text, "plan");
+        let rows = parse(&mut ctx, text, "plan");
         (rows, ctx.notes)
     }
 
@@ -748,7 +754,8 @@ mod tests {
     /// question about its own account reads the 5-hour window, a figure
     /// the provider read too long ago vouches for no room, and Anthropic's
     /// refusal and a spent 5-hour window the provider states wall the
-    /// account whichever reading stands. Each row: the
+    /// account whichever reading stands, the refusal also where an
+    /// overseer's pick reads the provider's words alone. Each row: the
     /// case, the provider's lines, this machine's readings beside them, the
     /// request, the lanes charged and the other controllers seated per
     /// account, then the answer and the accounts it may name.
@@ -894,9 +901,27 @@ mod tests {
                 ("walled", &["/h/.7claude"]),
             ),
         ];
+        // Read through the provider's words alone, as an overseer's pick
+        // here reads a remote provider.
+        let words: Vec<Row> = vec![(
+            "Anthropic refusing an overseer's own account this machine reads with room",
+            "account=/h/.8claude\tharness=claude\tunified-status=rejected".to_owned(),
+            vec![local(
+                "/h/.8claude",
+                20,
+                json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+            )],
+            overseer(Some("/h/.8claude"), &[]),
+            (&[], &[]),
+            ("walled", &["/h/.8claude"]),
+        )];
         let mut wrong = Vec::new();
-        for (case, lines, own, req, (charges, others), (answer, named)) in rows {
-            let (read, notes) = host(&lines);
+        let read_as = rows
+            .into_iter()
+            .map(|row| (host_rows as Parse, row))
+            .chain(words.into_iter().map(|row| (host_words as Parse, row)));
+        for (parse, (case, lines, own, req, (charges, others), (answer, named))) in read_as {
+            let (read, notes) = host_through(&lines, parse);
             assert!(notes.is_empty(), "{case}: {notes:?}");
             let mut rows = own;
             rows.extend(
