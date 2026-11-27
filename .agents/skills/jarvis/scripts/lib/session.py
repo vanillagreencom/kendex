@@ -1094,9 +1094,10 @@ class Session:
 
     def resume(self):
         """After a restart, each recorded session through its owner's verb, one
-        at a time: the delegate, then each registered checkout's overseer, then
-        each lane the restart left down. One line each; exit 1 where any
-        refused."""
+        at a time: the delegate, then each lane the restart left down, then
+        each registered checkout's overseer. An overseer resumed first reads
+        its not-yet-relaunched lanes `window-gone` and relaunches them beside
+        this loop. One line each; exit 1 where any refused."""
         refused = 0
 
         def report(kind, refusal, **names):
@@ -1150,17 +1151,19 @@ class Session:
             lanes += [(root, lane["item"]) for lane in state.get("lanes") or []
                       if lane.get("status") == "running"
                       or (lane.get("status") == "stopped" and lane.get("restart_closed"))]
-        for root in overseers:
-            self.deadline = time.monotonic() + RESUME_SECONDS
-            refusal = self.orch_step(root, "resume-controller", "--fleet")
-            report("overseer", None if still_running("overseer", refusal) else refusal, checkout=root)
         for root, item in lanes:
             self.deadline = time.monotonic() + RESUME_SECONDS
-            refusal = self.orch_step(root, "lane", "relaunch", "--fleet", item)
+            refusal, fields = self.orch_step(root, "lane", "relaunch", "--fleet", item)
             # A hosted lane runs on its own host: this machine's restart left it.
             if refusal and refusal[0] == "lane-hosted":
                 continue
-            report("lane", None if still_running("lane", refusal) else refusal, checkout=root, item=item)
+            # A fresh route lost the conversation, so its work may need a look.
+            route = {name: value for name, value in fields if name == "route"}
+            report("lane", None if still_running("lane", refusal) else refusal, checkout=root, item=item, **route)
+        for root in overseers:
+            self.deadline = time.monotonic() + RESUME_SECONDS
+            refusal, _ = self.orch_step(root, "resume-controller", "--fleet")
+            report("overseer", None if still_running("overseer", refusal) else refusal, checkout=root)
         return None, 1 if refused else 0
 
     def resume_delegate(self):
@@ -1214,16 +1217,21 @@ class Session:
         return refusal, None, None
 
     def orch_step(self, root, *words):
-        """orch-runtime WORDS run from ROOT: None at exit 0, else its refusal."""
+        """orch-runtime WORDS run from ROOT as (refusal, fields): at exit 0 no
+        refusal and the NAME=VALUE fields of orch's outcome line, else its
+        refusal and no fields."""
         try:
             result = self.run([str(ORCH_RUNTIME), *words], check=False, env=dict(os.environ), cwd=root)
         except (OSError, subprocess.TimeoutExpired) as failure:
             print("jarvis-session: operation=orch-runtime " + " ".join(words[:2]) + " cause=" + type(failure).__name__,
                   file=sys.stderr)
-            return "unanswered", ()
+            return ("unanswered", ()), ()
         # The session log keeps orch's own lines, its outcome line included.
         sys.stderr.write(result.stdout + result.stderr)
-        return None if result.returncode == 0 else orch_refusal(result)
+        if result.returncode:
+            return orch_refusal(result), ()
+        line = outcome_line(result.stdout)
+        return None, line[1] if line else ()
 
 
 # orch's answer for a session the restart did not end, by kind: a lane's
@@ -1243,19 +1251,27 @@ def orch_refusal(result):
     """A failed orch-runtime call as (key, fields): its reply's refusal, else
     the key that leads its last line, as a close, launch or resume that failed
     or is unconfirmed after the fact prints it, with that line's NAME=VALUE
-    fields, else `answer-unread`. A field's value runs to the next field, since
-    a cause is free text."""
+    fields, else `answer-unread`."""
     try:
         refusal = json.loads(result.stdout.splitlines()[-1])["refusal"]
         return refusal["key"], [tuple(field) for field in refusal.get("fields") or []]
     except (IndexError, KeyError, TypeError, ValueError):
         pass
     for text in (result.stdout, result.stderr):
-        lines = text.strip().splitlines()
-        match = re.match(r"(?:orch-runtime: )?([a-z][a-z0-9-]*)(?: (.*)|$)", lines[-1]) if lines else None
-        if match:
-            return match[1], re.findall(r"([a-z_]+)=(.*?)(?= [a-z_]+=|$)", match[2] or "")
+        line = outcome_line(text)
+        if line:
+            return line
     return "answer-unread", (("exit", result.returncode),)
+
+
+def outcome_line(text):
+    """The key leading TEXT's last line and that line's NAME=VALUE fields, or
+    None. A field's value runs to the next field, since a cause is free text."""
+    lines = text.strip().splitlines()
+    match = re.match(r"(?:orch-runtime: )?([a-z][a-z0-9-]*)(?: (.*)|$)", lines[-1]) if lines else None
+    if not match:
+        return None
+    return match[1], re.findall(r"([a-z_]+)=(.*?)(?= [a-z_]+=|$)", match[2] or "")
 
 
 class Arguments(argparse.ArgumentParser):
