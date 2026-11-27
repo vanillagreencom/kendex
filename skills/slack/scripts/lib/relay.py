@@ -554,9 +554,12 @@ class RootRelay:
     def seed_before_inbound(self) -> None:
         """The first pass that drains queued owner messages tries the mailbox
         seed before them, once, so a reply to a request it accepts lands past
-        the floor. A refused try leaves the seed to the next poll."""
+        the floor. The history seed goes first, since a written `start` ends
+        every later history seed. A refused try leaves the seed to the next
+        poll."""
         if not self.state.seeded and not self.inbound_seed_tried:
             self.inbound_seed_tried = True
+            self.seed_history()
             self.seed_mailbox()
 
     def seed_mailbox(self) -> None:

@@ -677,6 +677,10 @@ from settings import load
 settings = load()
 assert Relay([Path(sys.argv[2])], settings, Slack(settings.token, settings.api_url)).poll_queue()
 PY
+QSEED_BOUND="$(jq -r .bound_at "$QSEED/tmp/slack/binding.json")" || exit 1
+assert_eq "$PROBE_RC|$(jq -r --arg bound "$QSEED_BOUND" 'select(.t == "seen" or .t == "start") | if .t == "seen" then (.ts == $bound | tostring) else .t end' "$(sk_journal "$QSEED")" | tr '\n' ' ')" \
+  "0|true start " \
+  "the first queue pass journals seen at the binding moment before start"
 QSEED_ID="$(jq -r --arg d "$QSEED_CH:$QSEED_TS" 'select(.delivery_id == $d) | .id' "$(sk_box "$QSEED")/to-lane.jsonl")" || exit 1
 sk_lm "$QSEED" notice --item overseer --to owner --ref "$QSEED_ID" --file "$(sk_text cut9 'Reply before the first poll.')" >/dev/null
 sk_poll "$QSEED" SLACK_INBOUND=queue
