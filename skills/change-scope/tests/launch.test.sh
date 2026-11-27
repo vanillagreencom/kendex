@@ -26,10 +26,11 @@ case "$*" in
   --version) echo 'kendex 0.0.0-stub' ;;
   'verify --help') echo '  --scope <SCOPE> --json' ;;
   'verify '*)
-    printf '%s\n' '{"version":1,"checked":3,"failed":0,"rows":[
-{"kind":"skill","name":"x","harness":"claude","state":"ok","positions":[{"path":".agents/skills/x","owns":"tree"}]},
+    tree="${STUB_RENDER_TREE:-.agents/skills/x}"
+    printf '{"version":1,"checked":3,"failed":0,"rows":[
+{"kind":"skill","name":"%s","harness":"claude","state":"ok","positions":[{"path":"%s","owns":"tree"}]},
 {"kind":"record","name":".kendex-lock.json","state":"ok","positions":[{"path":".kendex-lock.json","owns":"file"}]},
-{"kind":"inventory","name":".kendex-generated.json","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}' ;;
+{"kind":"inventory","name":".kendex-generated.json","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}\n' "${tree##*/}" "$tree" ;;
   *) exit 2 ;;
 esac
 STUB
@@ -46,7 +47,8 @@ SMALL_MAX="$(conf_value small_max_production)"
 run_arm() { # ARG...
   local out rc=0 line
   out="$(env -i GIT_CEILING_DIRECTORIES="${CEILING:-$SANDBOX}" PATH="$STUB_BIN:$PATH" HOME="$SANDBOX" \
-    TMPDIR="$SANDBOX" "${ARM_BIN:-$ARM}" launch --repo "$WORK" "$@" 2>"$SANDBOX/arm.err")" || rc=$?
+    TMPDIR="$SANDBOX" STUB_RENDER_TREE="${STUB_RENDER_TREE:-}" \
+    "${ARM_BIN:-$ARM}" launch --repo "$WORK" "$@" 2>"$SANDBOX/arm.err")" || rc=$?
   line="$(sed -n 's/^class: //p' "$SANDBOX/arm.err")"
   if [ "${ARM_RAW:-false}" != true ]; then
     line="$(sed -n 's/^class=[a-z]* measured=[a-z]* delta=[^ ]* \(cause=[a-z-]*\( class=[a-z]*\)\{0,1\}\).*/\1/p' <<<"$line")"
@@ -316,7 +318,7 @@ assert_eq "a range alone takes the classifier's class" "micro cause=branch-class
 # rule, and a path beside the set reads by that path. Every row branches off
 # one base: EDITS is `PATH=CONTENT` pairs joined by `;`, each CONTENT written
 # whole with printf %b, or `PATH+N` for N lines added. A RAW row compares the
-# whole class line.
+# whole class line. A row can name the tree the verifier's skill position owns.
 QUICK="$(new_repo quick)"
 QUICK_RENDER=.agents/skills/project-management/SKILL.md
 quick_map() { # ENTRIES -> a kendex-local.toml holding a multiline project map
@@ -372,8 +374,8 @@ git -C "$QUICK" commit -qm base
 QUICK_BASE="$(git -C "$QUICK" rev-parse HEAD)"
 quick_settings_past_micro="$(awk -v n="$((MICRO_MAX + 1))" 'BEGIN {printf "[env]"; for (i = 1; i <= n; i++) printf "\\nKEY_%d = \"new\"", i}')"
 assert_quick_ranges() {
-  local row edits want raw spec rows=0
-  while IFS='|' read -r row edits want raw; do
+  local row edits want raw render_tree spec rows=0
+  while IFS='|' read -r row edits want raw render_tree; do
     [ -z "${QUICK_ROW:-}" ] || [ "$row" = "$QUICK_ROW" ] || continue
     rows=$((rows + 1))
     git -C "$QUICK" checkout -q -f -B "quick-$row" "$QUICK_BASE"
@@ -383,12 +385,13 @@ assert_quick_ranges() {
     git -C "$QUICK" add -A
     git -C "$QUICK" commit -qm "$row"
     assert_eq "quick range: $row" "$want rc=0" \
-      "$(ARM_RAW="${raw:-false}" run_arm --base "$QUICK_BASE" --head HEAD --repo "$QUICK")"
+      "$(ARM_RAW="${raw:-false}" STUB_RENDER_TREE="$render_tree" \
+        run_arm --base "$QUICK_BASE" --head HEAD --repo "$QUICK")"
   done
   require_rows quick "$rows"
 }
 assert_quick_ranges <<QUICK_ROWS
-skill-instructions-with-render|kendex-local.toml=$(quick_map '- Docs\n- Herdr\n- Upkeep\n');$QUICK_RENDER=$(quick_render '- Docs\n- Herdr\n- Upkeep\n')|micro cause=branch-class class=trivial
+skill-instructions-with-render|kendex-local.toml=$(quick_map '- Docs\n- Herdr\n- Upkeep\n');$QUICK_RENDER=$(quick_render '- Docs\n- Herdr\n- Upkeep\n')|micro cause=branch-class class=trivial|false|${QUICK_RENDER%/*}
 install|kendex.toml=schema = 8\n[install]\nmethod = "symlink"\n[agent-frontmatter.claude.rust]\nmodel = "old"|micro cause=branch-class class=trivial
 agent-frontmatter|kendex.toml=schema = 8\n[install]\nmethod = "copy"\n[agent-frontmatter.claude.rust]\nmodel = "new"|micro cause=branch-class class=trivial
 settings-past-micro|kendex.settings.toml=$quick_settings_past_micro|micro cause=branch-class class=trivial
