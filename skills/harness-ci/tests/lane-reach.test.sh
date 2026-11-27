@@ -498,6 +498,14 @@ git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
 printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" commit -qam 'a Cargo lane the reader can read keeps a reasoned claim'
 claimed_cargo_base="$(git -C "$repo" rev-parse HEAD)"
+# The shell lane claims one changed path while Cargo's reader leaves another
+# changed path unresolved, so the claim must not reach the unresolved one.
+git -C "$repo" checkout -qb fixture-claim-beside-unread "$opted_base"
+printf '%s\n' 'shell cargo/spare/notes.txt # reason: the external runner reads the notes' >>"$repo/.github/ci-lanes.conf"
+printf 'notes\n' >"$repo/cargo/spare/notes.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a shell claim beside a Cargo read the reader leaves unresolved'
+claim_beside_unread_base="$(git -C "$repo" rev-parse HEAD)"
 # A claimed Vitest lane whose read the change itself leaves unproved: a
 # changed package path beside an import no package owns, or a changed name
 # git quotes in the private index.
@@ -1183,6 +1191,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-refused-import) base="$vitest_refused_import_base" ;;
     checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
     cargo-tool-failure) base="$claimed_cargo_base" ;;
+    claim-beside-unread) base="$claim_beside_unread_base" ;;
     vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
     cargo-external-child) base="$cargo_child_base" ;;
@@ -1545,6 +1554,7 @@ vitest-unread|web/spare-é.mjs|false||false|false
 vitest-ancestor-config|vite.config.mjs|false||true|false
 vitest-root-config|lib/new.test.mjs|false||true|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
+claim-beside-unread|cargo/spare/notes.txt web/spare-é.mjs|true|true|false|false
 vitest-external|shared.mjs|true||true|false
 vitest-refused-import|shared.mjs|false||true|false
 queue-prerequisite|shared.mjs|true||true|true|pull_request
