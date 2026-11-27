@@ -299,6 +299,9 @@ derive_lanes() {
   changed="$work/derived-paths"
   git -C "$REPO" diff --no-ext-diff --no-textconv --name-only -z --no-renames \
     "$compared" "$head" -- >"$changed" || return 2
+  # lane-exceptions names each lane a reasoned claim matched, for the reach
+  # kind below. lane-claims gives lane-reach.py the changed path beside it,
+  # NUL-ended since a path can hold a newline.
   (
     if [ -s "$exact" ]; then
       ci_lanes_read "$exact" || exit 2
@@ -308,12 +311,14 @@ derive_lanes() {
     while IFS= read -r -d '' path; do
       index=0
       while [ "$index" -lt "$lane_count" ]; do
-        ! ci_lanes_claims "$index" "$path" ||
-          printf '%s\n' "${lane_names[$index]}" || exit 2
+        ! ci_lanes_claims "$index" "$path" || {
+          printf '%s\n' "${lane_names[$index]}" &&
+            printf '%s\t%s\0' "${lane_names[$index]}" "$path" >&3
+        } || exit 2
         index=$((index + 1))
       done
     done <"$changed"
-  ) >"$work/lane-exceptions" || return 2
+  ) >"$work/lane-exceptions" 3>"$work/lane-claims" || return 2
 
   python3 "$HARNESS_CI_LIB_DIR/lane-reach.py" "$REPO" "$authority" "$compared" "$head" \
     "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" >"$work/lane-reach" || return $?

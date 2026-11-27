@@ -331,10 +331,6 @@ git -C "$repo" checkout -qb fixture-workflow-env-step "$workflow_env_base"
 edit_workflow '      - run: test -f ./README.md\n' \
   "      - run: test -f ./README.md\n      - if: needs.changes.outputs.lane_orphan != 'false'\n        run: cat ./orphan.settings\n"
 git -C "$repo" commit -qam 'a step in an ungated job reads the ungated lane'
-git -C "$repo" checkout -qb fixture-workflow-env-mapped "$workflow_env_base"
-edit_workflow '      lane_installed: ${{ steps.lanes.outputs.lane_installed }}\n' \
-  '      lane_installed: ${{ steps.lanes.outputs.lane_installed }}\n      lane_orphan: ${{ steps.lanes.outputs.lane_orphan }}\n'
-git -C "$repo" commit -qam 'the classifier maps the ungated lane and nothing reads it'
 git -C "$repo" checkout -qb fixture-workflow-env-unreadable "$workflow_env_base"
 # The dispatch would otherwise name the job's own command in the diagnostic.
 edit_workflow '        run: bash ./tools/check.sh\n' \
@@ -386,6 +382,15 @@ printf 'notes\n' >"$repo/ops/notes.txt"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'refused Rust and Vitest jobs with reasoned claims'
 refused_claims_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-refused-shared "$refused_claims_base"
+# Both refused lanes claim one settings file, and the Rust lane also claims a
+# file the proved shell lane reads.
+printf '%s\n' 'cargo context.sh ops/toolchain.env # reason: the toolchain action reads the shared settings' \
+  'web ops/toolchain.env # reason: npm ci reads the toolchain settings' >>"$repo/.github/ci-lanes.conf"
+printf 'toolchain\n' >"$repo/ops/toolchain.env"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'refused lanes claim a shared settings file and a shell input'
+refused_shared_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-refused-unclaimed "$refused_claims_base"
 # The refused Vitest job reads nothing before its refusal, so only the
 # missing claim can select it.
@@ -493,6 +498,14 @@ git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
 printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" commit -qam 'a Cargo lane the reader can read keeps a reasoned claim'
 claimed_cargo_base="$(git -C "$repo" rev-parse HEAD)"
+# The shell lane claims one changed path while Cargo's reader leaves another
+# changed path unresolved, so the claim must not reach the unresolved one.
+git -C "$repo" checkout -qb fixture-claim-beside-unread "$opted_base"
+printf '%s\n' 'shell cargo/spare/notes.txt # reason: the external runner reads the notes' >>"$repo/.github/ci-lanes.conf"
+printf 'notes\n' >"$repo/cargo/spare/notes.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a shell claim beside a Cargo read the reader leaves unresolved'
+claim_beside_unread_base="$(git -C "$repo" rev-parse HEAD)"
 # A claimed Vitest lane whose read the change itself leaves unproved: a
 # changed package path beside an import no package owns, or a changed name
 # git quotes in the private index.
@@ -1158,10 +1171,12 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
     workflow-env|workflow-env-sourced|workflow-env-config|workflow-env-claimed) base="$workflow_env_base" ;;
+    workflow-env-step-claimed) base="$(git -C "$repo" rev-parse fixture-workflow-env-step)" ;;
     workflow-env-*|workflow-defaults|event-gate*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
-    refused-claim-hit|refused-claim-miss|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
+    refused-claim-shared|refused-claim-read) base="$refused_shared_base" ;;
+    refused-claim-*|refused-proved-read|refused-ordinary-read) base="$refused_claims_base" ;;
     refused-unclaimed) base="$refused_unclaimed_base" ;;
     refused-shell-only|refused-vitest-package|refused-build-script|refused-added-target|refused-added-test)
       base="$refused_scope_base" ;;
@@ -1176,6 +1191,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-refused-import) base="$vitest_refused_import_base" ;;
     checkout-path|restored-workdir|symlink-workdir) base="$checkout_path_base" ;;
     cargo-tool-failure) base="$claimed_cargo_base" ;;
+    claim-beside-unread) base="$claim_beside_unread_base" ;;
     vitest-owner-unresolved|vitest-changed-unread) base="$vitest_change_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
     cargo-external-child) base="$cargo_child_base" ;;
@@ -1233,7 +1249,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
-    *) printf '\n' >>"$repo/$path" ;;
+    # A row's PATH field can name several paths, split at blanks.
+    *)
+      read -ra row_paths <<<"$path"
+      for one in "${row_paths[@]}"; do printf '\n' >>"$repo/$one"; done ;;
   esac
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$label"
@@ -1472,11 +1491,11 @@ shell-symlink|other/input.txt|true||false|false
 deleted-workdir|check-cwd/only.txt|true||false|false
 shell-parent-hop|tools/cache/only.txt|true||false|false
 workflow-env|tools/input.sh|true||false|false||||||||false
-workflow-env-sourced|tools/env-lib.sh|true||true|true||||||||true
-workflow-env-config|ci/settings.toml|true||true|true||||||||true
+workflow-env-sourced|tools/env-lib.sh|true||false|true||||||||false
+workflow-env-config|ci/settings.toml|true||false|true||||||||false
 workflow-env-claimed|orphan.settings|false||false|false||||||||true
-workflow-env-step|tools/input.sh|true||false|false||||||||true
-workflow-env-mapped|tools/input.sh|true||false|false||||||||false
+workflow-env-step|tools/input.sh|true||false|false||||||||false
+workflow-env-step-claimed|orphan.settings|false||false|false||||||||true
 workflow-env-unreadable|tools/input.sh|true||false|true||||||||false
 workflow-env-expression|tools/input.sh||||
 workflow-env-absolute|tools/input.sh||||
@@ -1493,13 +1512,17 @@ cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
 cargo-external-child|cargo/spare/src/child.rs|false|true|false|false
 cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-parent-hop|cargo/spare/cache/only.txt|false|true|false|false
-cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
+cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 cargo-registry-dependency|tools/input.sh|true|true|true|true
 cargo-added-target|cargo/primary/tests/added.rs|false|true|false|false
 cargo-tests-link|cargo/primary/tests|false|true|false|false
 refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
+refused-claim-shared|ops/toolchain.env|false|true|true|false
+refused-claim-read|context.sh|true|true|false|false
+refused-claim-pair|cargo/spare/src/lib.rs web/bridge.mjs|false|true|true|false
+refused-claim-and-read|cargo/spare/src/lib.rs tools/input.sh|true|true|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
 refused-proved-read|rust-toolchain.toml|false|true|false|false
 refused-ordinary-read|ops/notes.txt|false|false|true|false
@@ -1531,7 +1554,8 @@ vitest-unread|web/spare-é.mjs|false||false|false
 vitest-ancestor-config|vite.config.mjs|false||true|false
 vitest-root-config|lib/new.test.mjs|false||true|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
-vitest-external|shared.mjs|true||true|true
+claim-beside-unread|cargo/spare/notes.txt web/spare-é.mjs|true|true|false|false
+vitest-external|shared.mjs|true||true|false
 vitest-refused-import|shared.mjs|false||true|false
 queue-prerequisite|shared.mjs|true||true|true|pull_request
 shared-runtime|shared.mjs|true||true|true
@@ -1552,7 +1576,7 @@ reasoned-exception|external.settings|true|true|true|true
 shared-root-config|package.json|true||true|true
 checkout-attributes|.gitattributes|true|true|true|true
 nested-attributes|tools/.gitattributes|true|true|true|true
-dispatch-helper|.agents/skills/math/scripts/lib/md-refs.awk|||||||true|true|true|derived-reach
+dispatch-helper|.agents/skills/math/scripts/lib/md-refs.awk|||||||true|true|false|derived-reach
 dispatch-host-source|bin/markdown.sh|||||||false|true|false|derived-reach
 dispatch-unrelated|bin/other.txt|||||||false|false|true|derived-reach
 dispatch-unmapped|bin/other.txt||||||||||lane-reach-unreadable
