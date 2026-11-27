@@ -89,6 +89,8 @@ async function check(source) {
     ['request refused', 'acme/widgets', 'owner', 'User', 422, 1, 1, 0, undefined, 0],
     ['request network failure', 'acme/widgets', 'owner', 'User', 'network', 1, 1, 0, undefined, 0],
     ['proved quick change', 'acme/widgets', 'owner', 'User', null, 0, 0, 0, 'true', 1],
+    ['overseer-authored proved quick change', 'acme/widgets', 'vanillagreen-overseer[bot]', 'Bot', null, 1, 0, 0, 'true', 0],
+    ['proved quick change with null author', 'acme/widgets', null, null, null, 0, 0, 0, 'true', 1],
     ['change not proved quick', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, 'false', 0],
     ['classify step failed', 'acme/widgets', 'owner', 'User', null, 1, 0, 0, '', 0],
   ];
@@ -99,7 +101,7 @@ async function check(source) {
     const notices = [];
     const infos = [];
     const context = {eventName: 'pull_request', repo: {owner: 'acme', repo: 'widgets'}, payload: {}};
-    context.payload.pull_request = {number: 42, base: {repo: {full_name: 'acme/widgets'}}, head: {ref: 'feature', repo: {full_name: head}}, user: {login, type}};
+    context.payload.pull_request = {number: 42, base: {repo: {full_name: 'acme/widgets'}}, head: {ref: 'feature', repo: {full_name: head}}, user: login === null ? null : {login, type}};
     const github = {rest: {pulls: {requestReviewers: async (args) => {
       calls.push(args);
       if (failure) throw Object.assign(new Error('upstream request failed'), typeof failure === 'number' ? {status: failure} : {});

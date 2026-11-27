@@ -111,6 +111,8 @@ The proved-render branch starts no internal review, GitHub agent review or Copil
 
 ## Fallback approval
 
+For a proved quick change whose pull request the overseer app authors, skip `approve-head` and follow the Copilot approval route in [micro.md § 4](../workflows/micro.md#4-arm-and-wait).
+
 An `awaiting-stale` line means no approval reached the head within the quiet period. A `refresh-ready` line enters here after § Consumer refresh approval reads a completed classifier result that cannot prove render.
 
 - A pending review line takes § While the lane's review is pending first.
