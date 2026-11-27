@@ -80,18 +80,23 @@ const ROWS: &[Row] = &[
                     json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
                 ),
                 ("/sections/4/tokens", json!({"basis": "unclear"})),
-                // msg_15's `cat` failed on its second file after printing
-                // its first, which no line of the result marks as AGENTS.md's,
-                // so neither read stands. msg_17's `ls` failed before its
-                // `jarvis-section` ran, so the result holds no Role heading.
-                // msg_19's `tail` printed AGENTS.md under its header before
-                // failing on notes.txt, whose error the result also holds.
+                // msg_15's `cat` printed AGENTS.md, then failed on
+                // CLAUDE.md, whose error line alone the result holds, so
+                // the AGENTS.md read stands. msg_17's `ls` failed before
+                // its `jarvis-section` ran, so no Role read stands. msg_19's
+                // `tail` printed AGENTS.md before failing on notes.txt.
                 (
                     "/sections/5/read",
                     json!({"kind": "file", "file": "AGENTS.md"}),
                 ),
+                ("/sections/5/call", json!("toolu_9")),
                 ("/sections/5/bytes", json!({"basis": "unclear"})),
-                ("/sections/6", Value::Null),
+                (
+                    "/sections/6/read",
+                    json!({"kind": "file", "file": "AGENTS.md"}),
+                ),
+                ("/sections/6/call", json!("toolu_11")),
+                ("/sections/7", Value::Null),
                 // The Stop hook's reply, alone before msg_3.
                 ("/context/4/source", json!("injected-text")),
                 (
@@ -281,7 +286,8 @@ const ROWS: &[Row] = &[
         start: Some(10131),
         more: || {
             vec![
-                // The failed command printed its section before its `ls`.
+                // The result closes on the shell's exit status, and the
+                // command printed its section before its `ls` failed.
                 (
                     "/sections/0/read",
                     json!({"kind": "section", "file": "persona.md", "heading": "Role"}),

@@ -751,15 +751,54 @@ pub enum Entry {
     /// is not the row's; the tokens the harness counted for it where it
     /// counts them; the name of what it loaded where the harness names
     /// that only on the result (a Copilot skill); and, where the record
-    /// marks the call failed, the text the result sent, each part on its
-    /// own line.
+    /// marks the call failed, how its result shows that.
     Result {
         call: String,
         bytes: Option<u64>,
         tokens: Option<u64>,
         loaded: Option<String>,
-        failed: Option<String>,
+        failed: Option<Failed>,
     },
+}
+
+/// What a failed call's result shows of the failure. A harness marks a
+/// call failed where its shell exited nonzero, and also where the shell
+/// never ran, such as a hook's block or the user's refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failed {
+    /// The result shows the shell ran to its own exit status: the text
+    /// the result sent, each part on its own line. Claude Code 2.1.332
+    /// writes the note of a timeout or an output check that killed the
+    /// shell into the result only where its shell runner keeps the output
+    /// in a file, so a shell it killed with no such file reads as exited.
+    Exited(String),
+    /// The result shows no exit status the shell reached itself.
+    Unshown,
+}
+
+/// The second line of a Claude Code 2.1.332 shell error that shows its
+/// shell was cut short: the interrupt line the error adds where an abort
+/// stopped the shell, and the note the shell runner opens the output with
+/// where its timeout or an output check killed the shell.
+fn claude_cut_short(text: &str) -> bool {
+    text.lines().nth(1).is_some_and(|line| {
+        line == "[Request interrupted by user for tool use]"
+            || line.starts_with("Command timed out after ")
+            || line.starts_with("Command killed: ")
+    })
+}
+
+/// What a failed result's `text` shows: [`Failed::Exited`] where its
+/// `line` is `prefix` and a whole number.
+fn exit_shown(text: String, line: fn(&str) -> Option<&str>, prefix: &str) -> Failed {
+    let exited = line(&text)
+        .and_then(|line| line.strip_prefix(prefix))
+        .is_some_and(|code| !code.is_empty() && code.bytes().all(|b| b.is_ascii_digit()));
+    if exited {
+        Failed::Exited(text)
+    } else {
+        Failed::Unshown
+    }
 }
 
 /// What a tool call does, in the terms its harness's own tools are named.
@@ -807,7 +846,12 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 ///   `Bash` `command` and `Skill` `skill`; a `user` row's `tool_result`
 ///   blocks, by `tool_use_id`, failed where `is_error`, and its text
 ///   blocks; a `user` row of string content marked `isMeta`, as no item's
-///   text.
+///   text. A failed result whose first line is `Exit code N` is a shell's
+///   that ran (2.1.332's shell error text, and a recorded transcript),
+///   except where its second line shows the shell was cut short
+///   ([`claude_cut_short`]); a hook's block (`PreToolUse:Bash hook
+///   error:`, recorded) and a refusal (`The user doesn't want to proceed`,
+///   2.1.332) show no exit status.
 /// - Codex (rust-v0.171.0, `codex-rs/protocol/src/{models,items,protocol}.rs`
 ///   and `core/src/tools/handlers/shell_spec.rs`): a turn's `turn_id`; a
 ///   `function_call` or `custom_tool_call` by `call_id`, the shell being
@@ -821,15 +865,20 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 ///   `command` is `view`) `arguments.path`, and `skill` its skill only on
 ///   the result's `toolTelemetry.restrictedProperties.skillName`; a
 ///   `tool.execution_complete`'s `result.content`, or a failure's
-///   `error.message`, failed where it carries `error`. A skill's result
-///   is not its body: the log records `skillContentLength` 30809 beside
-///   `result_token_count` 27, so the body reaches the context apart from
-///   the result, and the result counts neither its bytes nor its tokens.
+///   `error.message`, failed where it carries `error`, read as showing no
+///   exit status, since the recorded failure's message is blanked. A
+///   skill's result is not its body: the log records `skillContentLength`
+///   30809 beside `result_token_count` 27, so the body reaches the context
+///   apart from the result, and the result counts neither its bytes nor
+///   its tokens.
 /// - Pi (Pi 1.6.0's session format and message type documentation):
 ///   a turn's entry `id`; an assistant message's `toolCall` blocks,
 ///   `read` naming `path` and `bash` `command`; a `toolResult` message's
 ///   text by `toolCallId`, failed where `isError`; a `custom_message`'s
-///   text, as no item's.
+///   text, as no item's. A shell that exited nonzero closes its result
+///   with `Command exited with code N`, and one that timed out or was
+///   aborted with another status line (Pi 1.1.0 and 1.6.1,
+///   `dist/core/tools/bash.js`).
 pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
     fn text(value: Option<&Value>) -> &str {
         value.and_then(Value::as_str).unwrap_or_default()
@@ -884,7 +933,18 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         tokens: None,
                         loaded: None,
                         failed: (block.get("is_error").and_then(Value::as_bool) == Some(true))
-                            .then(|| content_text(block.get("content"), "text")),
+                            .then(|| {
+                                match exit_shown(
+                                    content_text(block.get("content"), "text"),
+                                    |text| text.lines().next(),
+                                    "Exit code ",
+                                ) {
+                                    Failed::Exited(text) if claude_cut_short(&text) => {
+                                        Failed::Unshown
+                                    }
+                                    shown => shown,
+                                }
+                            }),
                     }),
                     ("user", "text") => found.push(Entry::Text {
                         bytes: text(block.get("text")).len() as u64,
@@ -954,7 +1014,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     };
                     let failed = field("error")
                         .is_some_and(|error| !error.is_null())
-                        .then(|| text(sent).to_owned());
+                        .then_some(Failed::Unshown);
                     let loaded = field("toolTelemetry")
                         .and_then(|t| t.get("restrictedProperties"))
                         .and_then(|p| p.get("skillName"))
@@ -1017,8 +1077,15 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     bytes: Some(text_bytes(message.get("content"), "text")),
                     tokens: None,
                     loaded: None,
-                    failed: (message.get("isError").and_then(Value::as_bool) == Some(true))
-                        .then(|| content_text(message.get("content"), "text")),
+                    failed: (message.get("isError").and_then(Value::as_bool) == Some(true)).then(
+                        || {
+                            exit_shown(
+                                content_text(message.get("content"), "text"),
+                                |text| text.lines().next_back(),
+                                "Command exited with code ",
+                            )
+                        },
+                    ),
                 }],
                 _ => Vec::new(),
             }
@@ -1369,6 +1436,94 @@ pub fn new_leads(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each row: a failed result's row and what it shows. The texts are
+    /// recorded: Claude Code's from a transcript, its refusal from
+    /// 2.1.332's text and its cut-short shells from 2.1.332's shell error
+    /// (`Exit code N`, then the interrupt line) and shell runner (the code
+    /// 143 its timeout kills with, and its kill notes), Pi's status lines
+    /// from 1.1.0's `bash.js`.
+    #[test]
+    fn a_failed_result_shows_an_exit_status_only_by_its_harness_line() {
+        let claude = |text: &str| {
+            serde_json::json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t", "is_error": true, "content": text}
+            ]}})
+        };
+        let pi = |text: &str| {
+            serde_json::json!({"type": "message", "message": {"role": "toolResult",
+                "toolCallId": "t", "content": [{"type": "text", "text": text}], "isError": true}})
+        };
+        let exited = |text: &str| Failed::Exited(text.to_owned());
+        let rows = [
+            (
+                Harness::Claude,
+                claude("Exit code 1\n# Rules\ncat: CLAUDE.md: No such file or directory"),
+                exited("Exit code 1\n# Rules\ncat: CLAUDE.md: No such file or directory"),
+            ),
+            (
+                Harness::Claude,
+                claude(
+                    "PreToolUse:Bash hook error: [[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"]: reviewer-read-only: refused=git-write\na reviewer commits and pushes nothing; the orchestrator owns the branch. Report the finding in the review artifact instead.\n",
+                ),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude(
+                    "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+                ),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 143\nCommand timed out after 2m 0s\n# Rules"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 137\n[Request interrupted by user for tool use]\n# Rules"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 137\nCommand killed: output file exceeded 5GB\n# Rules"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Pi,
+                pi(
+                    "# Rules\nls: cannot access 'gone': No such file or directory\n\nCommand exited with code 2",
+                ),
+                exited(
+                    "# Rules\nls: cannot access 'gone': No such file or directory\n\nCommand exited with code 2",
+                ),
+            ),
+            (
+                Harness::Pi,
+                pi("# Rules\n\nCommand timed out after 5 seconds"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Copilot,
+                serde_json::json!({"type": "tool.execution_complete", "data": {"toolCallId": "t",
+                    "error": {"message": "Exit code 1"}}}),
+                Failed::Unshown,
+            ),
+        ];
+        for (harness, row, want) in rows {
+            let failed = entries(harness, &row)
+                .into_iter()
+                .find_map(|entry| match entry {
+                    Entry::Result { failed, .. } => failed,
+                    Entry::Turn { .. }
+                    | Entry::Text { .. }
+                    | Entry::Foreign { .. }
+                    | Entry::Call { .. } => None,
+                });
+            assert_eq!(failed, Some(want), "{harness:?} {row}");
+        }
+    }
 
     #[test]
     fn a_codex_subagent_rollout_is_not_a_lead() {
