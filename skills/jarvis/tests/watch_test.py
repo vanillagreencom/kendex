@@ -2832,6 +2832,69 @@ with open(sys.argv[1], "ab") as out:
                     finally:
                         shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
 
+    def test_controller_notices_wait_for_the_end_of_the_owners_quiet_hours(self):
+        # The failure it stops: a stop read in the owner's quiet hours tells
+        # him at once; or its held notice holds the next stop's recovery; or
+        # the notice after the hours names the morning, not the stop.
+        at = 1795496400  # 2026-11-24 05:00 UTC.
+        morning = at + 2 * 3600  # 07:00 UTC, where hours 0-7 end.
+        walls = {"usage": {"event": "StopFailure", "error": "rate_limit"},
+                 "sign-in": {"event": "StopFailure", "error": "authentication_failed"}}
+        ended = {"state": "stopped", "reason": "ended", "harness": "claude", "account": "/accounts/a",
+                 "controller": {"session_id": "s1", "pane": "%3", "server_start": 1790000000}}
+        running = dict(ended, state="running", reason="resumed")
+        # Every row runs the same passes: the stop, its successor running, a
+        # second stop of that successor, the first pass after the hours and
+        # one more. Each pass names the recoveries started by then, and the
+        # owner's notices sent by then where the hours hold them or not.
+        passes = [(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 330, 2, 0, 2), (morning, 2, 2, 2), (morning + 30, 2, 2, 2)]
+        # Each row: the stop, the quiet hours in UTC, and whether they hold
+        # the stop's pass.
+        for stop, hours, held in (("usage", "0-7", True), ("usage", "8-12", False), ("usage", "", False),
+                                  ("sign-in", "0-7", True), ("sign-in", "8-12", False), ("sign-in", "", False),
+                                  ("exit", "0-7", True), ("exit", "8-12", False), ("exit", "", False)):
+            with self.subTest(stop=stop, hours=hours), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("quiet-" + stop + "-" + (hours or "none"))
+                self.home.joinpath("kendex.settings.toml").write_text(
+                    '[env]\nORCH_REPORT_QUIET_HOURS="' + hours + '"\nORCH_OWNER_TIME_ZONE="UTC"\n')
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + self.home.name))
+                if stop == "exit":
+                    plant, calls = self.exited_session()
+                    plant("start", running)
+                    # A bound controller that is not live leaves the exit to the status read.
+                    self.controller("s1", "/accounts/a", {"event": "Stop"})
+                    gone = json.loads(self.root.joinpath("status.json").read_text())
+                    gone["result"]["live"] = False
+                    self.root.joinpath("status.json").write_text(json.dumps(gone))
+                    plants = [lambda: plant("status", ended), lambda: plant("status", running)] * 2
+                    recoveries = lambda: len([call for call in calls() if call.startswith("start ")])
+                    run, outcome = self.exited_passes, "started again"
+                else:
+                    log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+                    # The walled controller, its successor, the successor walled, and its own successor.
+                    controllers = (("s1", "/accounts/a", True), ("s2", "/accounts/b", False),
+                                   ("s2", "/accounts/b", True), ("s3", "/accounts/c", False))
+                    plants = [lambda now=now, session=session, account=account, walled=walled, row=walls[stop]:
+                              self.controller(session, account, dict(row, at=now) if walled else {"event": "Stop"})
+                              for (now, *_), (session, account, walled) in zip(passes, controllers)]
+                    recoveries = lambda: len(log.read_text().splitlines()) if log.exists() else 0
+                    run, outcome = self.wall_passes, "/accounts/b"
+                watch = self.watch()
+                for index, (now, recovered, quiet_told, told) in enumerate(passes):
+                    if index < len(plants):
+                        plants[index]()
+                    run(watch, now)
+                    self.assertEqual(recoveries(), recovered, now)
+                    # A usage wall's outcome follows in its notice's thread.
+                    rows = self.owner_notice_rows()
+                    threads = [" ".join([root["text"]] + [row["text"] for row in rows if row.get("ref") == root["id"]])
+                               for root in rows if "ref" not in root]
+                    self.assertEqual(len(threads), quiet_told if held else told, (now, threads))
+                for thread, read in zip(threads, (at, at + 330)):
+                    self.assertTrue(any(self.module.wall_time(read + offset) in thread for offset in range(3)), thread)
+                    self.assertIn(outcome, thread)
+
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
         class Submitted:

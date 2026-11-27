@@ -169,7 +169,7 @@ The keys' rules, in the table's order:
 | `ORCH_REPORT_EVERY_MINUTES` | Minutes between timed reports. `0` turns the timer off. |
 | `ORCH_REPORT_EVERY_ISSUES` | Items finished between reports. `0` turns it off. |
 | `ORCH_REPORT_UPCOMING` | Upcoming items a report lists. |
-| `ORCH_REPORT_QUIET_HOURS` | Owner-local hours in which the overseer writes and prints a report with no owner notice. Empty turns quiet hours off. |
+| `ORCH_REPORT_QUIET_HOURS` | Owner-local hours in which the overseer writes and prints a report with no owner notice, and the Jarvis watch holds its controller notices until the hours end. Empty turns quiet hours off. |
 | `ORCH_OWNER_TIME_ZONE` | The zone the quiet hours and report times read in. |
 
 What stays immediate during `ORCH_REPORT_QUIET_HOURS`: [oversee-events.md](oversee-events.md), `report-due`.
