@@ -6158,7 +6158,7 @@ fn report_render_and_write_refuse_without_a_repository() {
     let world = World::new();
     let fleet = world.fleet_path().display().to_string();
     let f = fleet.as_str();
-    let cases: [(&[&str], &str, Value); 11] = [
+    let cases: [(&[&str], &str, Value); 14] = [
         (
             &[
                 "write",
@@ -6228,6 +6228,21 @@ fn report_render_and_write_refuse_without_a_repository() {
             "report-summary",
             json!([["cause", "missing"]]),
         ),
+        (
+            &["quiet"],
+            "report-args",
+            json!([["action", "quiet"], ["cause", "missing-at"]]),
+        ),
+        (
+            &["quiet", "--at", "5", "--state", f],
+            "report-args",
+            json!([["action", "quiet"]]),
+        ),
+        (
+            &["due", "--state", f, "--repo", "owner/repo", "--at", "5"],
+            "report-args",
+            json!([["action", "due"]]),
+        ),
     ];
     for (args, key, fields) in cases {
         let out = isolated()
@@ -6242,6 +6257,40 @@ fn report_render_and_write_refuse_without_a_repository() {
         let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(reply["refusal"]["key"], key, "{args:?} {reply}");
         assert_eq!(reply["refusal"]["fields"], fields, "{args:?} {reply}");
+    }
+}
+
+/// `report quiet` judges the instant `--at` names in the owner's zone,
+/// through the real settings load, never the clock it runs under: the Jarvis
+/// watch asks about its own pass time. One instant is quiet in one zone and
+/// not in another, a later instant in the same zone is not, and an empty
+/// window is never quiet.
+#[test]
+fn report_quiet_answers_for_the_instant_it_names_in_the_owners_zone() {
+    let world = World::new();
+    // 09:00 UTC is 02:00 in Los Angeles (PDT); 15:00 UTC is 08:00 there.
+    for (hours, zone, stamp, want) in [
+        ("0-7", "America/Los_Angeles", "2026-10-01T09:00:00Z", true),
+        ("0-7", "UTC", "2026-10-01T09:00:00Z", false),
+        ("0-7", "America/Los_Angeles", "2026-10-01T15:00:00Z", false),
+        ("", "America/Los_Angeles", "2026-10-01T09:00:00Z", false),
+    ] {
+        let out = isolated()
+            .arg("--state-dir")
+            .arg(world.path())
+            .args(["report", "quiet", "--at", &epoch(stamp).to_string()])
+            .env("HOME", world.path().join("home"))
+            .env(report::QUIET_HOURS_KEY, hours)
+            .env(report::ZONE_KEY, zone)
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(
+            reply["result"],
+            json!({ "quiet": want }),
+            "{hours} {zone} {stamp} {reply}"
+        );
     }
 }
 
