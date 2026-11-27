@@ -349,9 +349,10 @@ fn stands(path: &Path) -> Result<bool> {
 
 /// The active fix round in flight: the record's `dev_round_id` whose round
 /// record stands in the worktree with no receipt of the round beside it,
-/// bare or keyed by its run, and whose stage has not ended. A rebase would
-/// move every commit out from under it. A hand `accept-result` ends the
-/// stage and writes no receipt: no dev agent works the round after it.
+/// bare or keyed by its run, no paths ask, and whose stage has not ended. A
+/// rebase would move every commit out from under it. A hand `accept-result`
+/// ends the stage and writes no receipt, and a round paused on a paths ask
+/// returns with none: no dev agent works the round after either.
 fn live_round(path: &Path, doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
     let round = doc
         .get("dev_round_id")
@@ -364,8 +365,13 @@ fn live_round(path: &Path, doc: &Document, item: &str, worktree: &Path) -> Resul
     if !stands(&tmp.join(format!("dev-round-{item}-{round}.json")))? {
         return Ok(None);
     }
-    if stands(&tmp.join(format!("dev-return-{item}-{round}.json")))? {
-        return Ok(None);
+    for end in [
+        format!("dev-return-{item}-{round}.json"),
+        format!("paths-ask-{item}-{round}.md"),
+    ] {
+        if stands(&tmp.join(end))? {
+            return Ok(None);
+        }
     }
     let keyed = format!("dev-return-{item}-{round}-");
     let receipt = fs::read_dir(&tmp)

@@ -745,8 +745,12 @@ impl Lane {
     /// a round asks for a path outside it before any edit, and the record
     /// stays the one place the set is kept. A read-only lane writes no
     /// path, and a record with no set, or one whose sources named none,
-    /// gives a round no judged path to bound it by: neither has a line.
+    /// gives a round no judged path to bound it by: neither has a line, and
+    /// nor has a lane that opened as one of them ([`UNBOUNDED`]).
     pub fn admitted_line(&self) -> Option<String> {
+        if self.extra.get(UNBOUNDED).and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
         let paths = self.touched.as_ref().filter(|p| !p.is_empty())?;
         let list = Value::from(paths.clone());
         (!self.read_only).then(|| format!("Admitted paths: {list}"))
@@ -920,6 +924,13 @@ pub const PARK_OWED: &str = "park_owed";
 /// ones. A confirmed launch and a confirmed close on any other ground
 /// remove it.
 pub const RESTART_CLOSED: &str = "restart_closed";
+
+/// The lane field `true` where the lane opened with no admitted set and a
+/// widening of its touched set since, a join or an added path, kept it
+/// unbounded: the widened set holds only paths judged for other work,
+/// never its own item's, so it bounds no round. A relaunch keeps it; a
+/// launch over a `done` record, judged afresh, drops it.
+pub const UNBOUNDED: &str = "unbounded";
 
 /// What a close does with its lane's sandbox: ends it (`full`), keeps it
 /// standing (`keep`), or keeps it for the park's stop (`park`). A repeated
