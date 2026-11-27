@@ -10,7 +10,8 @@
 #   marker   lastTarget in pi-update.state.json, `-` for no marker file
 #   latest   what npm prints as the latest version, `!` for a failed read
 #   issues   the open-issue listing gh answers, by name below; `!` fails it
-#   create   `ok`, or `!` for gh refusing the new issue
+#   create   `ok`; `!` for gh refusing the new issue; `local` for a run outside
+#            GitHub Actions
 #   rc       the exit status
 #   outcome  the outcome word on stdout, or a refusal's `key=value` on stderr
 #   opened   how many issues the run asked gh to open
@@ -70,8 +71,9 @@ issues_json() { # NAME — the listing gh answers, pages as --slurp returns them
   case "$1" in
     none) printf '[[]]' ;;
     unrelated) printf '[[{"number":5,"title":"pi-hooks: a hook misses a tool result","user":%s}]]' "$BOT" ;;
-    # A pull request with no matching title, then the open item on page two.
-    page2) printf '[[{"number":6,"title":"pi-qol: one","user":%s,"pull_request":{}}],[{"number":207,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.1","user":%s}]]' "$BOT" "$BOT" ;;
+    # A pull request with no matching title and a residue item at the marker,
+    # then the open item on page two.
+    page2) printf '[[{"number":6,"title":"pi-qol: one","user":%s,"pull_request":{}},{"number":9,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.0","user":%s}],[{"number":207,"title":"pi-update: audit the kendex Pi extensions against Pi 1.6.1","user":%s}]]' "$BOT" "$BOT" "$BOT" ;;
     # Anyone can open an issue with the audit title.
     outsider) printf '[[{"number":8,"title":"pi-update: audit the kendex Pi extensions against Pi 1.7.0","user":{"login":"someone","type":"User"},"author_association":"NONE"}]]' ;;
     # The item for the audit that moved the marker to 1.6.0, still open.
@@ -97,12 +99,15 @@ world() { # CLEARED MARKER LATEST ISSUES CREATE — a fresh tree, its path in DI
   if [[ $5 == '!' ]]; then
     : >"$dir/create-fails"
   fi
+  ACTIONS=true
+  [[ $5 != local ]] || ACTIONS=
 }
 
-# Runs the script in world $1; sets RC, OUT, ERR, SUMMARY_LINES and OPENED.
+# Runs the script in world $1, as a GitHub Actions run unless ACTIONS is empty;
+# sets RC, OUT, ERR, SUMMARY_LINES and OPENED.
 run_in() {
   RC=0
-  (cd -- "$1/tree" && WORLD="$1" GITHUB_STEP_SUMMARY="$1/summary" \
+  (cd -- "$1/tree" && WORLD="$1" GITHUB_STEP_SUMMARY="$1/summary" GITHUB_ACTIONS="$ACTIONS" \
     PATH="$TMP_ROOT/bin:$ROOT/tools/tests/lib/sealed-bin:$PATH" \
     tools/pi-update-check) >"$1/stdout" 2>"$1/stderr" || RC=$?
   OUT="$(cat -- "$1/stdout")"
@@ -144,6 +149,7 @@ npm read fails|1.6.0|1.6.0|!|none|ok|2|npm=failed|0
 npm latest is a prerelease|1.6.0|1.6.0|1.7.0-rc.1|none|ok|2|npm=invalid|0
 issue listing fails|1.6.0|1.6.0|1.6.1|!|ok|2|issues=failed|0
 gh refuses the issue|1.6.0|1.6.0|1.6.1|none|!|2|create=failed|0
+a run outside Actions would open one|1.6.0|1.6.0|1.6.1|none|local|2|create=outside-actions|0
 '
 
 while IFS='|' read -r label cleared marker latest issues create rc outcome opened; do

@@ -8,22 +8,26 @@
 # pi-extensions/pi-update.state.json, the target a pi-update run records under
 # either verdict (.agents/skills/pi-update/workflows/audit-release.md step 6).
 # `lastVersion` is the last release a `roll` cleared, which a `hold` leaves
-# behind the held target; the held release waits on its pi-hooks fix, not on
-# another audit request. The newest release is npm's `latest` dist-tag of
-# @earendil-works/pi-coding-agent; Pi releases every package in lockstep, so
-# that one version covers the release.
+# behind the held target. This job asks for no audit of the held release
+# again: the hold clears in the next audit run, which the next Pi release's
+# item asks for, or a manual pi-update run once the pi-hooks fix lands. The
+# newest release is npm's `latest` dist-tag of @earendil-works/pi-coding-agent;
+# Pi releases every package in lockstep, so that one version covers the release.
 #
 # The open audit item is an open issue github-actions[bot] wrote whose title is
 # TITLE_PREFIX and a version above the marker. Any other author's matching
 # title counts for nothing, since anyone can open an issue in a public
 # repository. A matching title at or below the marker is residue of an audit
-# that already ran: it holds nothing and the outcome line names it. The audit
-# targets npm's `latest` when it starts, so a release published after that is
-# outside its run; the first check after the marker records that run asks
-# again.
+# that already ran: it holds nothing, and the `opened` outcome line names it.
+# The audit targets npm's `latest` when it starts, so a release published after
+# that is outside its run; the first check after the marker records that run
+# asks again.
 #
 # Run from a checkout of the repository: gh resolves {owner}/{repo} and the
-# issue's repository from it, or from GH_REPO.
+# issue's repository from it, or from GH_REPO. Only a GitHub Actions run opens
+# an issue, since only its token writes as AUTHOR; elsewhere the run reads and
+# reports, and refuses where it would open one. The manual route is the
+# workflow's `workflow_dispatch`.
 #
 # Outcome, one line on stdout, appended also to $GITHUB_STEP_SUMMARY when set:
 #   pi-update-check: current marker=<v> latest=<v>         npm holds nothing newer (exit 0)
@@ -39,6 +43,7 @@
 #   issues=failed|invalid      the open-issue listing, or an audit title whose
 #                              version is not x.y.z
 #   create=failed              gh refused the new issue
+#   create=outside-actions     the run would open an issue outside GitHub Actions
 set -euo pipefail
 
 PACKAGE=@earendil-works/pi-coding-agent
@@ -139,8 +144,14 @@ body="> **Story:** npm has Pi $latest, and the pi-update audit last read Pi $mar
 
 **Location**: \`pi-extensions/\`
 
-The weekly \`pi-update-check\` workflow opened this item. The audit covers releases through npm's \`latest\` at the moment it starts. While this item is open the workflow opens no second item; a release published after the audit starts is outside its run, and the first check after the state file records the run asks for it. The pi-update skill makes this item priority High (2)."
+The weekly \`pi-update-check\` workflow opened this item. The audit covers releases through npm's \`latest\` at the moment it starts. Until the state file records an audit run through this item's release, the workflow opens no second item. After that, a newer release on npm gets a new item even if this one is still open: a release published after the audit starts is outside its run, and the first check after the state file records the run asks for it. The pi-update skill makes this item priority High (2)."
 
+# gh files the issue under whatever credential it holds, and an issue under a
+# maintainer's account is not AUTHOR's, so every later run would open another.
+# No GitHub setting ties gh to the workflow token, so the script holds it.
+# GitHub sets GITHUB_ACTIONS to `true` in every Actions run
+# (https://docs.github.com/en/actions/reference/workflows-and-actions/variables).
+[[ ${GITHUB_ACTIONS:-} == true ]] || refuse create outside-actions
 if ! url=$(gh issue create --title "$TITLE_PREFIX$latest" --label harness --body "$body"); then
   refuse create failed
 fi
