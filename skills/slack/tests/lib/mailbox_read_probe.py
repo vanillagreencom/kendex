@@ -241,6 +241,30 @@ for label, over_bytes, lane_bytes, seen, lane_cursor, refused in DAMAGE:
         assert mail.snapshots["stamp"] == warm, "the raised count must be judged on the cached snapshot"
 (box / "to-overseer.seen").unlink(missing_ok=True)
 
+# The committed position counts compacted rows and a damaged line, reads no
+# envelope, and keeps each box's first id. passed() takes no row past its
+# box's count and no row of a replacement box.
+over.write_text(json.dumps(dict(rows[0], id="notice-e")) + "\n" + "bad-json\n")
+Path(str(over) + ".numbering").write_text(json.dumps({"dropped": 2, "first": "notice-first", "lines": [3, 4]}) + "\n")
+lane.write_text(directive)
+cursor.write_text("0\n")
+position = mail.position()
+assert position == {"to-overseer": {"count": 4, "first": "notice-first"},
+                    "to-lane": {"count": 1, "first": "directive-d"}}, position
+try:
+    mail.events()
+except Exception as error:
+    assert error.key == "lane-mail-failed" and "envelope-invalid" in error.value, error
+else:
+    raise AssertionError("the damaged line must refuse the events read the position read passes")
+over.write_text(json.dumps(dict(rows[0], id="notice-e")) + "\n" + json.dumps(dict(rows[0], id="notice-f")) + "\n"
+                + json.dumps(dict(rows[0], id="notice-g")) + "\n")
+assert {row["id"]: mail.passed(position, row) for row in equivalent()} == {
+    "notice-e": True, "notice-f": True, "notice-g": False, "directive-d": True}
+Path(str(over) + ".numbering").unlink()
+over.write_text(json.dumps(dict(rows[0], id="notice-new")) + "\n")
+assert {row["id"]: mail.passed(position, row) for row in equivalent()} == {"notice-new": False, "directive-d": True}
+
 # The CLI's flock helper leaves ownership on its shell's descriptors. The
 # child inherits this fixture environment unchanged, as the real helper does.
 for fd in (8, 9):
@@ -310,7 +334,14 @@ older.mkdir(parents=True, exist_ok=True)
 installed = slack_mailbox.MAILBOX_READ_FILES
 slack_mailbox.MAILBOX_READ_FILES = (older / "lane-mail-store.py", older / "mailbox-append.sh", installed[2])
 try:
-    older_rows, _ = LaneMail(root)._read_events()
+    older_mail = LaneMail(root)
+    older_rows, _ = older_mail._read_events()
+    try:
+        older_mail.position()
+    except Exception as error:
+        assert (error.key, error.value) == ("lane-mail-failed", "reader=committed capability=position unavailable"), error
+    else:
+        raise AssertionError("a store with no committed position must refuse the position read")
 finally:
     slack_mailbox.MAILBOX_READ_FILES = installed
 older_defs = older_rows[0]["defs"]

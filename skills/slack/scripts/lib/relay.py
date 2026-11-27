@@ -55,9 +55,15 @@ without retrying a new refusal later in the same poll.
 
 A start whose journal holds no `start` line seeds both positions before it
 reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
-and the mailbox from the clock then, so notices and answers already there
-are never re-posted. That seed reads no mailbox, so a mailbox read that
-refuses holds posts alone, never an owner's message or the seed. Open asks
+and the mailbox from the store's committed position then, each box's count
+of complete lines and its first id. A notice or answer on a line at or
+below that count is never posted, and one appended after it posts whatever
+second it is stamped in. The position read validates no envelope, so a
+damaged line defers no seed, and a mailbox read that refuses holds posts
+alone, never an owner's message. A position read that refuses all the same
+leaves the mailbox seed to the first poll it succeeds on, and mail appended
+before that poll is not posted. A journal seeded before positions keeps
+its clock floor. Open asks
 are posted whatever their age inside SLACK_THREAD_DAYS, since they still want
 an answer. A reserved ask, which no default closes, is posted once more in
 its thread, naming the owner, on the first poll past its deadline while it
@@ -127,6 +133,7 @@ from store import (
     READ,
     SEEN,
     Binding,
+    ClockFloor,
     Journal,
     RelayLock,
     LOCK,
@@ -298,12 +305,12 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
     return ids
 
 
-def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
-    """Whether an envelope stamped `at` is at or before the `start` floor."""
-    if not floor_at:
+def clock_before(floor: ClockFloor, envelope: Dict) -> bool:
+    """Whether an envelope is at or before a journal's clock floor."""
+    if not floor.at:
         return False
-    floor = at_epoch(floor_at)
-    return at < floor or at == floor and env_id in floor_ids
+    at, start = at_epoch(str(envelope["at"])), at_epoch(floor.at)
+    return at < start or at == start and str(envelope["id"]) in floor.ids
 
 
 
@@ -538,13 +545,30 @@ class RootRelay:
     def seed(self) -> None:
         """The positions a start with no seeds begins from, journaled so a
         restart keeps them: Slack's history past the binding moment, and the
-        mailbox past this moment, before any delivery. The clock seeds the
-        mailbox, never a read of it, so a refused read defers no seed while
-        owner messages land. `start` goes last, so a stop between the two
-        lines seeds again. Its `ids` stay empty: an envelope stamped in this
-        second posts, so none written after the seed is passed over."""
-        self.journal.append(t="seen", ts=self.binding.bound_at)
-        self.journal.append(t="start", at=format_at(self.clock()), ids=[])
+        mailbox past the store's committed position now, before any delivery.
+        Mail on a line at or below that position never posts; mail appended
+        after it does, whatever its stamp. The position read validates no
+        envelope, so a damaged line defers no seed. A read that refuses all
+        the same leaves `start` to a later poll and holds posts alone, since
+        owner messages need only `seen`. `start` goes last, so a stop
+        between the two lines seeds the mailbox again."""
+        if not self.state.history_seeded:
+            self.journal.append(t="seen", ts=self.binding.bound_at)
+        try:
+            position = self.mail.position()
+        except Refusal as err:
+            self.post_failed = err
+            return
+        self.journal.append(t="start", position=position)
+
+    def started_before(self, envelope: Dict) -> bool:
+        """Whether the first start's `start` floor passed over an envelope."""
+        start = self.state.start
+        if start is None:
+            return False
+        if isinstance(start, ClockFloor):
+            return clock_before(start, envelope)
+        return self.mail.passed(start, envelope)
 
     # -- inbound: Slack to the mailbox --------------------------------------
 
@@ -922,7 +946,7 @@ class RootRelay:
                 page = dict(original, id="owner-unread:" + original["id"])
                 if (page["id"] in self.state.carried or page["id"] in self.state.unknown
                         or at_epoch(original["at"]) < self.settings.horizon(self.clock())
-                        or before(self.state.start_at, self.state.start_ids, at_epoch(original["at"]), original["id"])):
+                        or self.started_before(original)):
                     continue
                 if original.get("line") is None:
                     self.post_failed = Refusal("lane-mail-failed", f"id={original['id']} field=line unavailable")
@@ -1072,7 +1096,7 @@ class RootRelay:
                           if e.get("ref") in owner_notices and env_id not in state.carried
                           and env_id not in self.skipped and (e["line"] is None or e["line"] > seen)
                           and at_epoch(str(e["at"])) >= horizon
-                          and not before(state.start_at, state.start_ids, at_epoch(str(e["at"])), env_id)}
+                          and not self.started_before(e)}
         pending_files = set(state.pending_files.values())
 
         routed = []
@@ -1126,7 +1150,7 @@ class RootRelay:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
-            elif before(state.start_at, state.start_ids, at, env_id):
+            elif self.started_before(envelope):
                 route = "skip"
             elif reply:
                 route = "reply"

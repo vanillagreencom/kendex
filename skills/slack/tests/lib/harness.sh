@@ -386,9 +386,9 @@ sk_rebind_at() {
 }
 # sk_age_envelope ROOT ID SECONDS — the envelope's `at` in the mailbox moved
 # SECONDS into the past, the fixture's own file edited in place. A journal
-# `start` floor the envelope was past moves back to its new `at`: the seed is
-# the clock at the first poll, so aging an envelope written after that poll
-# would otherwise put it before the seed, which no real envelope can reach.
+# clock `start` floor, from before mailbox positions, the envelope was past
+# moves back to its new `at`: aging an envelope written after that floor
+# would otherwise put it before the floor, which no real envelope can reach.
 sk_age_envelope() {
   python3 - "$(sk_box "$1")" "$2" "$3" "$(sk_journal "$1")" <<'PY'
 import datetime, json, pathlib, sys
@@ -413,7 +413,7 @@ if journal.is_file():
     lines = []
     for raw in journal.read_text().splitlines():
         line = json.loads(raw)
-        if line.get("t") == "start" and line["at"]:
+        if line.get("t") == "start" and line.get("at"):
             floor = datetime.datetime.strptime(line["at"], FORMAT)
             past = moved[0] > floor or moved[0] == floor and env_id not in line["ids"]
             if past and moved[1] < floor:
