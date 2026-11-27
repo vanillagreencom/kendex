@@ -545,17 +545,21 @@ def notice_receipt(result):
     ) if result.returncode else re.search(r"^lane-mail: sent item=overseer id=(\S+)", result.stdout, re.M)
 
 
-def mailbox_events(bash, root, box, after=0, mark_read=False):
+def mailbox_events(bash, root, box, after=0):
     """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
     operation = "mailbox-events-" + box
     args = [bash, lane_mail(), "events", "--item", "overseer", "--box", box, "--after", str(after)]
-    if mark_read:
-        args.append("--mark-read")
     lines = checked(args, root, operation=operation).split("\n")
     header = mailbox_header(lines[0])
     if not header:
         raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
     return header[0], [json.loads(row) for row in lines[1:] if row]
+
+
+def mailbox_mark(bash, root, count):
+    """Save count, lines of root's to-overseer.jsonl the Jarvis session took in a drained batch, for the Slack relay's hold resume."""
+    checked([bash, lane_mail(), "events", "--item", "overseer", "--box", "to-overseer", "--after", str(count),
+             "--mark-read", "--count", str(count)], root, operation="mailbox-mark")
 
 
 def owner_unread(bash, root, cursor, count, now, reported, events):
@@ -631,11 +635,14 @@ def mailbox_cursor(state, key, mailbox, own_lane):
     return record
 
 
-def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
+def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=None, batches=()):
     """One pass over every root. A local home read adds each owner row it reads to delivered.
 
     A satellite is no fleet contact: it reads its own home alone, as a
     registered home, so its session gets its own mail and owner-unread.
+    marks maps a root to the to-overseer count it saves, recorded as its
+    `seen`. The home's record names as `drained` the latest of batches,
+    the loop's directive ids in send order, that its drain cursor passed.
     """
     state = json.loads(json.dumps(cursor))
     events = []
@@ -665,6 +672,10 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
         try:
             if not isinstance(common, Path):
                 raise common
+            mark = (marks or {}).get(key)
+            if mark is not None and len(boxes) > 1:
+                mailbox_mark(bash, root, mark)
+                next_root["seen"] = mark
             for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
@@ -672,8 +683,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 if size is not None and size == before.get("size"):
                     continue
-                count, envelopes = mailbox_events(bash, root, box, before.get("count", 0),
-                                                  mark_read=box == "to-overseer")
+                count, envelopes = mailbox_events(bash, root, box, before.get("count", 0))
                 next_root[box] = {"count": count, "size": size}
                 for envelope in envelopes:
                     if box == "to-lane":
@@ -711,6 +721,12 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                         next_root["owner_unread"] = owned
                     else:
                         next_root.pop("owner_unread", None)
+                    lines = {row[1]: row[0] for row in listed}
+                    drained = [batch for batch in batches if lines.get(batch, cursor_read + 1) <= cursor_read]
+                    if drained:
+                        next_root["drained"] = drained[-1]
+                    else:
+                        next_root.pop("drained", None)
                 if unread and now - int(unread[0][2]) >= 900:
                     oldest = unread[0][1]
                     if prior.get("unread") != oldest:
@@ -1067,8 +1083,16 @@ class Watch:
             base = self.state.get("log_base", 0)
             logical = [[span[0] + base, span[1] + base, *span[2:]] for span in selected]
             identity = json.dumps([self.state["generation"], logical]).encode()
+            # The to-overseer count each destination's latest pass read: every
+            # event of those passes is in this batch or an earlier one, unless
+            # a retained span still holds one of that root's.
+            waiting = {tuple(span[2]) for span in retained if len(span) > 2}
+            sides = {target.key for target in self.destinations}
+            counts = {side: {root: record["to-overseer"]["count"] for root, record in roots.items()
+                             if "to-overseer" in record and (side, root) not in waiting}
+                      for side, roots in self.cursors.items() if side in sides}
             self.state["pending"] = {"key": BATCH_KEY + hashlib.sha256(identity).hexdigest(),
-                                     "body": body.decode(), "retained": retained, "end": end}
+                                     "body": body.decode(), "retained": retained, "end": end, "counts": counts}
             # Selection is durable before the mailbox append. A retry uses
             # these bytes even if the event log gained complete new blocks.
             self.save()
@@ -1091,6 +1115,8 @@ class Watch:
                 self.next_send = now + FORWARD_EVERY_SECS
             return
         self.outcomes.pop("send", None)
+        if "counts" in pending:
+            self.state["marks"] = [*self.state.get("marks", []), {"id": receipt[0], "counts": pending["counts"]}]
         self.state.update(spans=[self.canonical_span(span) for span in pending["retained"]], pending=None, due=None)
         self.save()
         self.reclaim()
@@ -1539,7 +1565,8 @@ class Watch:
         return command
 
     def remote(self, destination):
-        args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {}))]
+        args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {})),
+                "--marks", json.dumps(self.state.get("owed", {}).get(destination.key, {}))]
         return run(host_args(destination, "bash -s"), data=self.remote_command(args))
 
     def presence(self, side):
@@ -1604,7 +1631,8 @@ class Watch:
         try:
             delivered = []
             if destination.host is None:
-                output = mail_pass(self.bash, self.home, side, self.cursors.get(side, {}), delivered, self.satellite)
+                output = mail_pass(self.bash, self.home, side, self.cursors.get(side, {}), delivered, self.satellite,
+                                   self.state.get("owed", {}).get(side, {}), [mark["id"] for mark in self.state.get("marks", [])])
             else:
                 result = self.remote(destination)
                 if result.returncode:
@@ -1736,7 +1764,31 @@ class Watch:
                     self.save()
                 self.append(output)
                 self.state.pop(side + "_failure", None)
+                self.settle(side)
                 self.save()
+
+    def settle(self, side):
+        """Owe each destination the counts of every batch the home's drain passed; retire each count a pass saved.
+
+        Directives land in send order, so the drain cursor passing one passed
+        every earlier one. The pass threads read marks and owed, so both are
+        replaced, never changed in place.
+        """
+        roots = self.cursors.get(side, {})
+        owed = {target: dict(counts) for target, counts in self.state.get("owed", {}).items()}
+        marks = self.state.get("marks", [])
+        ids = [mark["id"] for mark in marks]
+        drained = roots.get(str(self.home), {}).get("drained") if side == "local" else None
+        if drained in ids:
+            through = ids.index(drained) + 1
+            for mark in marks[:through]:
+                for target, counts in mark["counts"].items():
+                    owed.setdefault(target, {}).update(counts)
+            self.state["marks"] = marks[through:]
+        saved = owed.get(side, {})
+        for root in [root for root, count in saved.items() if roots.get(root, {}).get("seen") == count]:
+            del saved[root]
+        self.state["owed"] = {target: counts for target, counts in owed.items() if counts}
 
     def tick(self, now, outputs):
         self.accept(outputs)
@@ -2007,6 +2059,7 @@ def main():
     parser.add_argument("--home", default=".")
     parser.add_argument("--side", default="local")
     parser.add_argument("--cursor", default="{}")
+    parser.add_argument("--marks", default="{}", help="the to-overseer count each root saves, as the loop owes it")
     parser.add_argument("--presence", action="store_true")
     parser.add_argument("--satellite", action="store_true", help="require satellite settings at service start")
     parser.add_argument("--print", action="store_true", help="render the unit without installing it")
@@ -2026,7 +2079,7 @@ def main():
                 return sys.stdin.readline() == "renew\n"
             print(json.dumps({"kind":"results", "results":presence_roots(permitted)}), flush=True)
         else:
-            print(mail_pass(args.bash, home, args.side, json.loads(args.cursor)), end="")
+            print(mail_pass(args.bash, home, args.side, json.loads(args.cursor), marks=json.loads(args.marks)), end="")
     else:
         settings = config(args.bash, home)
         if (args.mode == "install" or args.satellite) and role(settings).kind != "satellite":

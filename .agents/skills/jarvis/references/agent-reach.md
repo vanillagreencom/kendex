@@ -31,9 +31,10 @@ A read-only mailbox consumer, such as a relay, runs `owner-note --resolve REPO` 
 
 ## Read
 
-1. Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N] --mark-read`. `[N]` is `0` for every envelope, or that repository's previous count.
+1. Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N]`. `[N]` is `0` for every envelope, or that repository's previous count.
 2. Handle each notice through [One voice](#one-voice) and each owner ask through [Answer an ask](#answer-an-ask).
-3. Then save the header's `count` in the handoff's State section for the next read.
+3. Then mark that snapshot read with `[LANE_MAIL] events --item overseer --box to-overseer --after [COUNT] --mark-read --count [COUNT]`, `[COUNT]` being step 1's header `count`. Never mark a count step 1 did not print: a line appended since then stays unread for the Slack relay.
+4. Save `[COUNT]` in the handoff's State section for the next read.
 
 An agent writes a notice only when its workflow or the user directs it. With no envelope, report that the agent has reported nothing. Silence does not show the agent is idle.
 

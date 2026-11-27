@@ -148,7 +148,7 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
 Unsupplied destinations and newly discovered roots start from the beginning, and can replay kept history. On a satellite, initialization admits only `local`.
 
 - The operator binds each unsigned pass to its actual destination, stable alias and home; the footer authenticates none of them.
-- Capturing a public pass marks owner messages consumed for the relay, through `events --mark-read`; that mark proves no human handling and deletes no envelope.
+- Capturing a public pass marks nothing. The loop saves a root's `to-overseer.seen` count for the relay, through `events --mark-read --count`, only once the Jarvis session drains the batch that carried the passes that read it. That mark proves no human handling and deletes no envelope.
 - Kept mail stays readable through `lane-mail events --item overseer --box BOX --after 0` without `--mark-read`, under the mailbox's ordinary retention.
 
 ## Satellite

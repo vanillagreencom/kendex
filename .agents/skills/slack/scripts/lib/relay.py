@@ -86,8 +86,9 @@ Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
 is dropped once the new one is fresh or the replaced one stale. An emptied
 setting ends the hold. When the file goes stale or
-absent the relay resumes. The Jarvis session's watch writes its last mailbox read
-count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
+absent the relay resumes. The Jarvis session's watch writes, as one bare integer
+in tmp/lane-mail/overseer/to-overseer.seen, the mailbox line count its passes
+read once the session has drained the batch that carried them. A resume
 skips notices and asks, including closed asks, on lines at or below that count, with no post and
 no mention, and journals their ids; later ones post, and so does a reply to
 a Slack-origin or forwarded directive at any line. A missing or unreadable
