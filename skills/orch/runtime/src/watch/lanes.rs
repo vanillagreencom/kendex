@@ -4389,7 +4389,14 @@ mod tests {
                 true,
                 None,
             ),
-            ("claude@/opt/box:opus:high", None, None, Some(""), true, None),
+            (
+                "claude@/opt/box:opus:high",
+                None,
+                None,
+                Some(""),
+                true,
+                None,
+            ),
             (
                 "codex:gpt-5:high",
                 Some("/opt/box"),
@@ -4421,7 +4428,11 @@ mod tests {
             assert_eq!(request.preference.as_deref(), wall, "{at}");
             assert_eq!(request.caller.is_some(), caller, "{at}");
             let moved = provider_walk(&lane, Harness::Claude, Some(preference), fleet);
-            assert_eq!(moved.and_then(|r| r.preference).as_deref(), provider, "{at}");
+            assert_eq!(
+                moved.and_then(|r| r.preference).as_deref(),
+                provider,
+                "{at}"
+            );
         }
     }
 
@@ -4666,7 +4677,12 @@ mod tests {
                 &[
                     (BEFORE, Read::Halted, &[HALTED], false),
                     (BEFORE + 240, Read::Halted, &[], false),
-                    (BEFORE + 480, Read::Unread("timeout pid=1"), &[UNREAD], false),
+                    (
+                        BEFORE + 480,
+                        Read::Unread("timeout pid=1"),
+                        &[UNREAD],
+                        false,
+                    ),
                     (BEFORE + 720, Read::Unread("timeout pid=2"), &[], false),
                     (PASSED, Read::Unread("timeout pid=3"), &[], false),
                     (
