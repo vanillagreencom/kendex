@@ -77,24 +77,25 @@ done <<ROWS
 --production $((MICRO_MAX + 1))|small cause=estimate-within-small rc=0|an estimate one past the micro ceiling is small
 --production $SMALL_MAX|small cause=estimate-within-small rc=0|an estimate at the small ceiling is small
 --production $((SMALL_MAX + 1))|standard cause=estimate-past-small rc=0|an estimate one past the small ceiling is standard
---production 1 --path kendex.settings.toml|standard cause=configuration-source rc=0|a settings Location is a configuration source
---production 1 --path kendex.toml|standard cause=configuration-source rc=0|a manifest Location is a configuration source
---production 1 --path kendex-local.toml|standard cause=configuration-source rc=0|a catalog manifest Location is a configuration source
---production 1 --path .kendex/settings.toml|standard cause=configuration-source rc=0|a local settings Location is a configuration source
+--production 1 --path kendex.settings.toml|micro cause=estimate-within-micro rc=0|a settings Location keeps the estimate's class
+--production 1 --path kendex.toml|micro cause=estimate-within-micro rc=0|a manifest Location keeps the estimate's class
+--production 1 --path kendex-local.toml|micro cause=estimate-within-micro rc=0|a catalog manifest Location keeps the estimate's class
+--production 1 --path .kendex/settings.toml|micro cause=estimate-within-micro rc=0|a local settings Location keeps the estimate's class
 --production 1 --path src/main.rs|micro cause=estimate-within-micro rc=0|a plain source Location keeps the estimate's class
 --production 1 --path .github/workflows/build.yml|standard cause=excluded-path rc=0|a workflow Location is standard at any estimate
---production 1 --path src/main.rs --path kendex.settings.toml|standard cause=configuration-source rc=0|each Location is classified, not only the first
+--production 1 --path src/main.rs --path .claude/settings.json|standard cause=configuration-source rc=0|each Location is classified, not only the first
 --production 1 --path .pi/settings.json|standard cause=configuration-source rc=0|a registry Location proves no render
---production 1 --path CLAUDE.md|standard cause=instruction-pointer rc=0|an instruction pointer Location proves no render
+--production 1 --path CLAUDE.md|micro cause=estimate-within-micro rc=0|an instruction pointer Location keeps the estimate's class
 --production 1 --path $PR_MERGE|standard cause=excluded-path rc=0|a merge-gate Location is never micro whatever the estimate
 --production 1 --path skills/orch/runtime/src/validate/entry.rs|standard cause=excluded-path rc=0|a validation entry Location is never micro
 --production 1 --path skills/orch/runtime/src/ops/tier.rs|standard cause=excluded-path rc=0|the cycle's decider is never micro
 --production 1 --path skills/orch/workflows/review-pr.md|micro cause=estimate-within-micro rc=0|a Location off the list leaves the estimate's class
 --production 1 --path hooks/block-bare-cd.sh|standard cause=excluded-path rc=0|a hook body Location is never micro
 --production 1 --path hooks/tests/block-bare-cd.test.sh|micro cause=estimate-within-micro rc=0|a hook suite Location leaves the estimate's class
---production 1 --path skills/x/SKILL.md|small cause=instruction-file rc=0|a SKILL.md Location is never micro
---production 1 --path AGENTS.md|small cause=instruction-file rc=0|a root AGENTS.md Location is never micro
---production $((SMALL_MAX + 1)) --path skills/x/SKILL.md|standard cause=estimate-past-small rc=0|an instruction Location leaves a wider estimate alone
+--production 1 --path skills/x/SKILL.md|micro cause=estimate-within-micro rc=0|a SKILL.md Location keeps the estimate's class
+--production 1 --path AGENTS.md|micro cause=estimate-within-micro rc=0|a root AGENTS.md Location keeps the estimate's class
+--production 1 --path tools/AGENTS.md|micro cause=estimate-within-micro rc=0|Markdown under a whole-tree path line keeps the estimate's class
+--production 1 --path tools/guard|standard cause=excluded-path rc=0|a script under that tree is never micro
 --production $SMALL_MAX --floor small|small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause
 --production 1 --floor small|small cause=floor class=small rc=0|a small floor raises a micro estimate
 --production 1 --floor standard|standard cause=floor class=standard rc=0|a standard floor raises a micro estimate
@@ -267,19 +268,15 @@ LINE
 ARM_BIN="$(mutant no-zero lib/branch-growth.sh "$grammar" "${grammar//(0 test lines|/(}")" \
   control no-zero assert_zero_reads
 
-# The shared rules' controls: the list's one-segment glob needs extglob, the
-# instruction floor, and the pre-render phase of configuration sources.
+# The shared rules' controls: the list's one-segment glob needs extglob, and
+# the pre-render phase of configuration sources.
 assert_path_rules() {
   assert_eq "a hook body Location is never micro" "standard cause=excluded-path rc=0" \
     "$(run_arm --production 1 --path hooks/block-bare-cd.sh)"
-  assert_eq "a SKILL.md Location is never micro" "small cause=instruction-file rc=0" \
-    "$(run_arm --production 1 --path skills/x/SKILL.md)"
-  assert_eq "a settings Location is standard" "standard cause=configuration-source rc=0" \
-    "$(run_arm --production 1 --path kendex.settings.toml)"
+  assert_eq "a Gemini settings Location is standard" "standard cause=configuration-source rc=0" \
+    "$(run_arm --production 1 --path .gemini/settings.json)"
 }
 ARM_BIN="$(mutant no-extglob change-scope 'shopt -s extglob' -)" control no-extglob assert_path_rules
-ARM_BIN="$(mutant no-instruction-floor lib/change-scope.sh '      CHANGE_CLASS_PATH=small' '      CHANGE_CLASS_PATH=""')" \
-  control no-instruction-floor assert_path_rules
 ARM_BIN="$(mutant no-configuration lib/change-scope.sh \
   '  if [ "$2" = before-render ] || [ "$2" = launch ]; then' '  if false; then')" \
   control no-configuration assert_path_rules
@@ -313,157 +310,112 @@ git -C "$RANGE" commit -qm source
 assert_eq "a range alone takes the classifier's class" "micro cause=branch-class class=micro rc=0" \
   "$(run_arm --base "$BASE" --head HEAD --repo "$RANGE")"
 
-SETTINGS_REPO="$(new_repo settings)"
-mkdir -p "$SETTINGS_REPO/.kendex" "$SETTINGS_REPO/.claude" "$SETTINGS_REPO/.gemini"
-for file in kendex.settings.toml .kendex/settings.toml; do
-  printf '[env]\nORDINARY = "old"\n' >"$SETTINGS_REPO/$file"
-done
-for file in kendex.toml kendex-local.toml; do
-  printf 'is_source_catalog = false\nname = "old"\n' >"$SETTINGS_REPO/$file"
-done
-printf 'MODE="old"\n' >"$SETTINGS_REPO/script.sh"
-git -C "$SETTINGS_REPO" add -A
-git -C "$SETTINGS_REPO" commit -qm base
-SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
-# A row's render columns, where set, are the SKILL.md the base inventory
-# lists for the project-management key at each end.
-SETTINGS_RENDER=.agents/skills/project-management/SKILL.md
-assert_settings_ranges() {
-  local row file before after want raw render_before render_after base count ci_class ci_note checker
-  while IFS='|' read -r row file before after want raw render_before render_after; do
-    [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
-    case "$row" in
-      at-ceiling | over-ceiling)
-        count="$MICRO_MAX"
-        [ "$row" != over-ceiling ] || count=$((count + 1))
-        before="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"old\"\n", i}')"
-        after="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"new\"\n", i}')" ;;
-    esac
-    git -C "$SETTINGS_REPO" checkout -q -f -B "$row" "$SETTINGS_BASE"
-    printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
-    git -C "$SETTINGS_REPO" add -- "$file"
-    if [ -n "$render_before" ]; then
-      mkdir -p "$SETTINGS_REPO/${SETTINGS_RENDER%/*}"
-      printf '%b\n' "$render_before" >"$SETTINGS_REPO/$SETTINGS_RENDER"
-      jq --arg path "$SETTINGS_RENDER" '. + [$path]' "$SETTINGS_REPO/.kendex-generated.json" >"$SANDBOX/inventory"
-      cp "$SANDBOX/inventory" "$SETTINGS_REPO/.kendex-generated.json"
-      git -C "$SETTINGS_REPO" add -- "$SETTINGS_RENDER" .kendex-generated.json
-    fi
-    if [ "$file" = kendex-local.toml ]; then
-      printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
-      git -C "$SETTINGS_REPO" add -- kendex.toml
-    fi
-    case "$row" in
-      installed-map | checker-unusable | checker-refuses)
-        checker=.agents/skills/bot-instructions
-        mkdir -p "$SETTINGS_REPO/.agents/skills"
-        cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$SETTINGS_REPO/$checker"
-        if [ "$row" = checker-unusable ]; then
-          chmod -x "$SETTINGS_REPO/$checker/scripts/bot-instructions"
-        fi
-        git -C "$SETTINGS_REPO" add -- "$checker" ;;
-    esac
-    git -C "$SETTINGS_REPO" commit -qm before --allow-empty
-    base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
-    printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
-    [ -z "$render_after" ] || printf '%b\n' "$render_after" >"$SETTINGS_REPO/$SETTINGS_RENDER"
-    case "$row" in
-      mixed | rendered-map-beside-script) printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh" ;;
-      mixed-manifest | mixed-local-manifest)
-        printf '[env]\nORDINARY = "new"\n' >"$SETTINGS_REPO/kendex.settings.toml" ;;
-    esac
-    git -C "$SETTINGS_REPO" add -A
-    git -C "$SETTINGS_REPO" commit -qm "$row"
-    if [ "$row" = standard-path ]; then
-      printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\nORDINARY = "new"\n' >"$SETTINGS_REPO/$file"
-    fi
-    if [ "$row" = map-entry-added ]; then
-      git -C "$SETTINGS_REPO" config --local color.ui always
-    fi
-    assert_eq "settings range: $row" "$want rc=0" \
-      "$(ARM_RAW="${raw:-false}" run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
-    if [ "$row" = map-entry-added ]; then
-      git -C "$SETTINGS_REPO" config --local --unset color.ui
-    fi
-    if [ "$row" = checker-refuses ]; then
-      assert_eq "launch relays the installed checker's findings" reported \
-        "$(if grep -qE '^bot-instructions: findings=[1-9][0-9]*$' "$SANDBOX/arm.err"; then echo reported; fi)"
-    elif [ "$row" = installed-map ]; then
-      ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/manifest-ci.err")"
-      assert_eq "the installed checker keeps the consumer manifest CI floor" "change_class=small" "$ci_class"
-    elif [ "$row" = standalone-consumer ]; then
-      ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/standalone-ci.err")"
-      ci_note="$(sed -n 's/^manifest-admission: admitted=false //p' "$SANDBOX/standalone-ci.err")"
-      assert_eq "standalone consumer CI refuses an absent checker" \
-        "change_class=standard cause=bot-instructions-unread side=base detail=checker-absent" "$ci_class $ci_note"
-    fi
-  done
+# The cheapest class: a range confined to kendex manifests, JSON settings
+# files and Markdown takes the classifier's trivial class at any size and
+# any table, which the arm reads as micro. Each exception keeps its own
+# rule, and a path beside the set reads by that path. Every row branches off
+# one base: EDITS is `PATH=CONTENT` pairs joined by `;`, each CONTENT written
+# whole with printf %b, or `PATH+N` for N lines added. A RAW row compares the
+# whole class line.
+QUICK="$(new_repo quick)"
+QUICK_RENDER=.agents/skills/project-management/SKILL.md
+quick_map() { # ENTRIES -> a kendex-local.toml holding a multiline project map
+  printf "schema = 8\\\\nis_source_catalog = true\\\\n[skill-instructions]\\\\nproject-management = '''\\\\n### Project map\\\\n\\\\n%s'''\\\\n[sources.extra]\\\\nurl = \"%s\"" "$1" "${2:-https://example.invalid/a.git}"
 }
-assert_settings_ranges <<'SETTINGS'
-ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
-uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
-local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
-standalone-consumer|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
-local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
-map-entry-added|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
-map-entry-removed|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|schema = 8\n[skill-instructions]\nall = "Be concise."|micro cause=settings-only
-local-map|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = 'Use the project map.'|schema = 8\n[skill-instructions]\nproject-management = 'Use the updated project map.'|micro cause=settings-only
-beside-basic|kendex.toml|schema = 8\n[agent-additional-instructions]\nall = """\nRead the local rules.""" # end\n[skill-instructions]\nall = "Be concise."|schema = 8\n[agent-additional-instructions]\nall = """\nRead the local rules.""" # end\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
-beside-literal|kendex-local.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = '''\n### React\n[other]\nORDINARY = "old"\n'''\nproject-management = "Use the project map."|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = '''\n### React\n[other]\nORDINARY = "old"\n'''|micro cause=settings-only
-separate-hunks|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = "Use consistent names."|schema = 8\n[skill-instructions]\ncode-quality = "Use consistent names."\nproject-management = "Use the project map."|standard cause=configuration-source
-two-map-lines|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."\ncode-quality = "Use consistent names."|schema = 8\n[skill-instructions]\nall = "Be specific."\ncode-quality = "Use clear names."|standard cause=configuration-source
-installed-map|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Be concise."\nproject-management = "Use the project map."|micro cause=settings-only
-checker-unusable|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Use plain language."|change_class=standard class=standard measured=false delta=- cause=bot-instructions-unread side=base detail=checker-unusable|true
-checker-refuses|kendex.toml|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Be concise."|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Use plain language."|standard cause=bot-instructions-render
-source-catalog-map|kendex.toml|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Be concise."|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Use plain language."|standard cause=source-catalog
-multiline-heading|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React conventions\n'''|micro cause=settings-only
-multiline-assignment|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "old"\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "new"\n'''|micro cause=settings-only
-rendered-map|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Upkeep"}\n]}\n```\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n  {"name": "Upkeep"}\n]}\n```\n'''|micro cause=settings-only||---\nname: project-management\n---\n\n<!-- kendex:project-instructions:start -->\n## Project Instructions\n\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Upkeep"}\n]}\n```\n<!-- kendex:project-instructions:end -->|---\nname: project-management\n---\n\n<!-- kendex:project-instructions:start -->\n## Project Instructions\n\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n  {"name": "Upkeep"}\n]}\n```\n<!-- kendex:project-instructions:end -->
-rendered-map-unrendered|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n]}
-rendered-map-drift|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n  {"name": "Other"},\n]}
-rendered-map-beside-script|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}
-plain-unrendered|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = 'Use the project map.'|schema = 8\n[skill-instructions]\nproject-management = 'Use the updated project map.'|standard cause=configuration-source||Use the project map.|Use the project map.
-sources|kendex-local.toml|schema = 8\n[sources.extra]\nurl = "https://example.invalid/a.git"|schema = 8\n[sources.extra]\nurl = "https://example.invalid/b.git"|standard cause=configuration-source
-multiline-array|kendex.toml|schema = 8\n[install]\nharnesses = [\n  "codex",\n]|schema = 8\n[install]\nharnesses = [\n  "claude",\n]|standard cause=configuration-source
-unplaced-header|kendex.toml|schema = 8\n["skill-instructions"]\nall = "Be concise."|schema = 8\n["skill-instructions"]\nall = "Use plain language."|standard cause=configuration-source
-ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
-size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
-at-ceiling|kendex.settings.toml|||micro cause=settings-only
-over-ceiling|kendex.settings.toml|||standard cause=configuration-source
-catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
-mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
-mixed-manifest|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
-mixed-local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
-claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
-gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
-standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
-SETTINGS
-
-assert_unread_settings_ranges() {
-  local kind partial path head base want
-  git -C "$SETTINGS_REPO" config uploadpack.allowFilter true
-  head="$(git -C "$SETTINGS_REPO" rev-parse ordinary)"
-  base="$(git -C "$SETTINGS_REPO" rev-parse ordinary^)"
-  for kind in declarations endpoint; do
-    partial="$SANDBOX/settings-partial-$kind"
-    git clone -q --no-checkout --filter=blob:none "file://$SETTINGS_REPO" "$partial"
-    git -C "$partial" config gc.auto 0
-    git -C "$partial" config maintenance.auto false
-    for path in .kendex-generated.json kendex.settings.toml .kendex/settings.toml; do
-      git -C "$partial" cat-file blob "$base:$path" >/dev/null
-    done
-    if [ "$kind" = declarations ]; then
-      git -C "$partial" cat-file blob "$head:kendex.settings.toml" >/dev/null
-      want="cause=declarations-unreadable step=manifest"
-    else
-      want="cause=settings-unreadable path=kendex.settings.toml side=head rev=$head"
-    fi
-    git -C "$partial" remote set-url origin "$SANDBOX/unreachable"
-    assert_eq "unreadable settings range: $kind" "change_class=standard class=standard measured=false delta=- $want rc=0" \
-      "$(ARM_RAW=true run_arm --base "$base" --head "$head" --repo "$partial")"
-  done
+quick_render() { # ENTRIES -> the SKILL.md that map renders
+  printf -- '---\\nname: project-management\\n---\\n\\n<!-- kendex:project-instructions:start -->\\n### Project map\\n\\n%s<!-- kendex:project-instructions:end -->' "$1"
 }
-assert_unread_settings_ranges
+quick_write() { # PATH=CONTENT|PATH+N
+  local spec="$1" file
+  case "$spec" in
+    *=*)
+      file="$QUICK/${spec%%=*}"
+      mkdir -p "${file%/*}"
+      printf '%b\n' "${spec#*=}" >"$file" ;;
+    *+*)
+      file="$QUICK/${spec%+*}"
+      mkdir -p "${file%/*}"
+      awk -v n="${spec##*+}" 'BEGIN {for (i = 1; i <= n; i++) print "Added line " i "."}' >>"$file" ;;
+  esac
+}
+QUICK_FILES='kendex.toml=schema = 8\n[install]\nmethod = "copy"\n[agent-frontmatter.claude.rust]\nmodel = "old"
+kendex-local.toml='"$(quick_map '- Docs\n')"'
+kendex.settings.toml=[env]\nORDINARY = "old"
+.kendex/settings.toml=[env]\nORDINARY = "old"
+'"$QUICK_RENDER"'='"$(quick_render '- Docs\n')"'
+.kendex-lock.json={}
+.vscode/settings.json={}
+.claude/settings.json={}
+.codex/hooks.json={}
+.codex/config.toml=model = "old"
+.github/hooks/guard.json={}
+.pi/kendex/hooks.json={}
+.mcp.json={}
+opencode.json={}
+.gemini/settings.json={}
+script.sh=MODE="old"
+AGENTS.md=# Agents
+CLAUDE.md=@AGENTS.md
+SKILL.md=# Root skill
+skills/x/SKILL.md=---\nname: x\n---\n\n# X
+skills/x/AGENTS.md=# X agents
+skills/x/README.md=# x
+skills/x/references/guide.md=# Guide
+skills/x/workflows/run.md=# Run
+skills/orch/workflows/micro.md=# Micro
+tools/AGENTS.md=# Tools'
+while IFS= read -r spec; do quick_write "$spec"; done <<<"$QUICK_FILES"
+jq --arg path "$QUICK_RENDER" '. + [$path]' "$QUICK/.kendex-generated.json" >"$SANDBOX/quick-inventory"
+cp "$SANDBOX/quick-inventory" "$QUICK/.kendex-generated.json"
+git -C "$QUICK" add -A
+git -C "$QUICK" commit -qm base
+QUICK_BASE="$(git -C "$QUICK" rev-parse HEAD)"
+quick_settings_past_micro="$(awk -v n="$((MICRO_MAX + 1))" 'BEGIN {printf "[env]"; for (i = 1; i <= n; i++) printf "\\nKEY_%d = \"new\"", i}')"
+assert_quick_ranges() {
+  local row edits want raw spec rows=0
+  while IFS='|' read -r row edits want raw; do
+    [ -z "${QUICK_ROW:-}" ] || [ "$row" = "$QUICK_ROW" ] || continue
+    rows=$((rows + 1))
+    git -C "$QUICK" checkout -q -f -B "quick-$row" "$QUICK_BASE"
+    while IFS= read -r spec; do
+      [ -z "$spec" ] || quick_write "$spec"
+    done <<<"${edits//;/$'\n'}"
+    git -C "$QUICK" add -A
+    git -C "$QUICK" commit -qm "$row"
+    assert_eq "quick range: $row" "$want rc=0" \
+      "$(ARM_RAW="${raw:-false}" run_arm --base "$QUICK_BASE" --head HEAD --repo "$QUICK")"
+  done
+  require_rows quick "$rows"
+}
+assert_quick_ranges <<QUICK_ROWS
+skill-instructions-with-render|kendex-local.toml=$(quick_map '- Docs\n- Herdr\n- Upkeep\n');$QUICK_RENDER=$(quick_render '- Docs\n- Herdr\n- Upkeep\n')|micro cause=branch-class class=trivial
+install|kendex.toml=schema = 8\n[install]\nmethod = "symlink"\n[agent-frontmatter.claude.rust]\nmodel = "old"|micro cause=branch-class class=trivial
+agent-frontmatter|kendex.toml=schema = 8\n[install]\nmethod = "copy"\n[agent-frontmatter.claude.rust]\nmodel = "new"|micro cause=branch-class class=trivial
+settings-past-micro|kendex.settings.toml=$quick_settings_past_micro|micro cause=branch-class class=trivial
+local-settings|.kendex/settings.toml=[env]\nHARNESS_CI_STANDARD_PATHS = "script.sh"|micro cause=branch-class class=trivial
+sources|kendex-local.toml=$(quick_map '- Docs\n' https://example.invalid/b.git)|change_class=standard class=standard measured=true delta=- cause=branch-class class=standard rule=manifest-sources path=kendex-local.toml|true
+lock|.kendex-lock.json={"version": 1}|standard cause=excluded-path
+json-settings|.vscode/settings.json={"editor.tabSize": 2}|micro cause=branch-class class=trivial
+claude-permissions|.claude/settings.json={"permissions": {"allow": []}}|standard cause=configuration-source
+codex-hooks|.codex/hooks.json={"hooks": {}}|standard cause=configuration-source
+codex-config|.codex/config.toml=model = "new"|standard cause=configuration-source
+copilot-hooks|.github/hooks/guard.json={"hooks": {}}|standard cause=configuration-source
+pi-hooks|.pi/kendex/hooks.json={"hooks": {}}|standard cause=configuration-source
+mcp-servers|.mcp.json={"mcpServers": {"tool": {}}}|standard cause=configuration-source
+opencode-mcp|opencode.json={"mcp": {}}|standard cause=configuration-source
+gemini|.gemini/settings.json={"mcpServers": {}}|standard cause=configuration-source
+skill-reference-200-lines|skills/x/references/guide.md+200|micro cause=branch-class class=trivial
+skill-entry|skills/x/SKILL.md+3|micro cause=branch-class class=trivial
+root-skill|SKILL.md+3|micro cause=branch-class class=trivial
+root-agents|AGENTS.md+3|micro cause=branch-class class=trivial
+nested-agents|skills/x/AGENTS.md+3|micro cause=branch-class class=trivial
+claude-pointer|CLAUDE.md+3|micro cause=branch-class class=trivial
+skill-readme|skills/x/README.md+3|micro cause=branch-class class=trivial
+skill-workflow|skills/x/workflows/run.md+3|micro cause=branch-class class=trivial
+orch-tier-workflow|skills/orch/workflows/micro.md+3|micro cause=branch-class class=trivial
+markdown-under-tools|tools/AGENTS.md+3|micro cause=branch-class class=trivial
+manifest-beside-script|kendex.toml=schema = 8\n[install]\nmethod = "symlink"\n[agent-frontmatter.claude.rust]\nmodel = "old";script.sh=MODE="new"|change_class=micro class=micro measured=true delta=- cause=branch-class class=micro rule=production-within-micro production=2|true
+QUICK_ROWS
 
 # Ranges of a measured size, each a branch off one base. The MEM-460 range
 # changes 7 files under one directory, 3 new and 4 modified, with 506
@@ -527,7 +479,7 @@ SIZED_ROWS
 }
 assert_sized_ranges
 ARM_BIN="$(mutant no-range-class change-scope \
-  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err" "$settings_range"' \
+  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"' \
   '      launch_consider micro branch-class')" \
   control no-range-class assert_sized_ranges
 ARM_BIN="$(mutant narrow-unfloored change-scope '    class=micro' '    true')" \
@@ -590,26 +542,13 @@ ARM_BIN="$(mutant lane-settings lib/change-scope.sh \
 rm -- "$RANGE/kendex.settings.toml"
 
 assert_range_paths() {
-  assert_eq "a changed instruction file in the range selects small" "small cause=instruction-file rc=0" \
+  assert_eq "a changed hook body in the range selects standard by its path rule" "standard cause=excluded-path rc=0" \
     "$(run_arm --production 1 --base "$BASE" --head HEAD --repo "$RANGE")"
-  assert_eq "a SKILL.md metadata.version line alone selects small" "small cause=instruction-file rc=0" \
-    "$(run_arm --production 1 --base "$SKILL_BASE" --head HEAD --repo "$RANGE")"
 }
-printf '# Instructions\n' >"$RANGE/AGENTS.md"
+mkdir -p "$RANGE/hooks"
+printf '#!/bin/sh\n' >"$RANGE/hooks/guard.sh"
 git -C "$RANGE" add -A
-git -C "$RANGE" commit -qm instructions
-skill_version() { # VERSION
-  local file
-  for file in skills/x/SKILL.md .agents/skills/x/SKILL.md; do
-    mkdir -p "$RANGE/${file%/*}"
-    printf -- '---\nname: x\nmetadata:\n  version: "%s"\n---\n\n# X\n' "$1" >"$RANGE/$file"
-  done
-  git -C "$RANGE" add -A
-  git -C "$RANGE" commit -qm "skill $1"
-}
-skill_version 1.0.0
-SKILL_BASE="$(git -C "$RANGE" rev-parse HEAD)"
-skill_version 1.0.1
+git -C "$RANGE" commit -qm hook
 assert_range_paths
 # The range's path rule dropped, its git read kept: the last of the arm's two
 # path-rule calls, which is the range loop's.

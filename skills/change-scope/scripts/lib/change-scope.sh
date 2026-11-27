@@ -6,8 +6,10 @@
 # diff or repository settings.
 #
 # change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
-# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, pointer, narrow or
+# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, narrow or
 # launch (all phases). An unmatched path leaves both empty.
+# change_class_quick_path PATH returns 0 for a kendex manifest or a JSON
+# settings file, the paths beside Markdown that the cheapest class takes.
 # The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
@@ -96,11 +98,21 @@ change_class_list_globs() { # CONF KEYWORD
 change_class_path_load() { # CONF
   CHANGE_CLASS_PATH_CAUSE=narrow-change-list-unreadable
   [ -r "$1" ] || return 1
-  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" &&
-    CHANGE_CLASS_INSTRUCTION="$(change_class_list_globs "$1" instruction)" || return 1
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-floor-missing
-  [ -n "$CHANGE_CLASS_INSTRUCTION" ] || return 1
+  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" || return 1
   CHANGE_CLASS_PATH_CAUSE=""
+}
+
+# A kendex manifest, or a JSON settings file by its name. A harness registry,
+# a [sources] change and the install record keep their own rules, which the
+# callers apply first.
+change_class_quick_path() { # PATH
+  case "$1" in
+    kendex.toml | kendex-local.toml | kendex.settings.toml | .kendex/settings.toml) return 0 ;;
+  esac
+  case "${1##*/}" in
+    settings.json | settings.jsonc | settings.local.json | settings.local.jsonc) return 0 ;;
+  esac
+  return 1
 }
 
 change_class_path() { # PATH PHASE
@@ -115,14 +127,9 @@ change_class_path() { # PATH PHASE
     fi
   fi
   if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    # These files decide the render and classifier inputs. Gemini's shim
-    # owns one key only, not the other settings its harness executes.
-    globs='kendex.toml
-kendex.settings.toml
-kendex-local.toml
-.kendex/settings.toml
-.gemini/settings.json'
-    if change_class_path_match "$1" "$globs"; then
+    # Gemini's shim owns one key only, not the other settings its harness
+    # executes, so no render can own the file.
+    if change_class_path_match "$1" .gemini/settings.json; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
@@ -154,22 +161,13 @@ opencode.jsonc'
       return 0
     fi
   fi
-  if [ "$2" = pointer ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" $'CLAUDE.md\n*/CLAUDE.md'; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="instruction-pointer $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
   if [ "$2" = narrow ] || [ "$2" = launch ]; then
+    # Markdown at any path takes the cheapest class, so a `path` glob that
+    # names a whole tree, such as tools/*, holds none of its Markdown.
+    case "$1" in *.md | *.markdown) return 0 ;; esac
     if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
-      return 0
-    fi
-    if change_class_path_match "$1" "$CHANGE_CLASS_INSTRUCTION"; then
-      CHANGE_CLASS_PATH=small
-      CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
     fi
   fi
 }
@@ -298,8 +296,7 @@ base_file() { # PATH OUT
 # The settings the base endpoint's commit holds, read from the [env] tables
 # of BASE_SETTINGS_FILES, never from the judged tree: a branch cannot choose
 # the ceilings or the roots its own size is scored against, nor the paths
-# that keep it in the queue, and a settings file the branch changes answers
-# standard as a configuration source. That commit is the one --base names,
+# that keep it in the queue. That commit is the one --base names,
 # the pull request's base end or a merge group's base, never the merge base,
 # which the author picks by choosing where to fork. The tables are parsed by
 # kendex-env.sh beside this library, the shared settings reader, in its

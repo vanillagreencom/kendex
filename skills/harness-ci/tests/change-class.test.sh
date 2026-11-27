@@ -85,18 +85,22 @@ a diff past small|runtime/product.ts=200
 a documentation diff|docs/guide.md=2
 an excluded path|.github/workflows/ci.yml=2
 an instruction file|AGENTS.md=3
-a render refused without a verifier|.agents/skills/orch/SKILL.md=4
+a render refused without a verifier|.agents/skills/orch/app.ts=4
 ROWS
 }
 forward_rows "$CHANGE_CLASS"
 
-# The classifier's wiring error is the wrapper's, status and first line.
-case_diff "a diff under a malformed ceiling" docs/guide.md=2
+# The classifier's wiring error is the wrapper's, status and first line. A
+# planted classifier raises one once it has read the paths, as a refusal
+# after the range was read does.
+wiring_wrapper="$(mutant classifier-wiring-error change-scope \
+  'unset HARNESS_CI_STANDARD_PATHS' 'die "cause=planted-wiring-error" "a planted wiring error"')"
+case_diff "a diff the planted classifier refuses" docs/guide.md=2
 status=0
-out="$(PATH="$no_kendex_path" HARNESS_CI_TRIVIAL_MAX_LINES=abc "$CHANGE_CLASS" --event pull_request \
+out="$(PATH="$no_kendex_path" "$wiring_wrapper" --event pull_request \
   --repo "$repo" --base "$base" --head HEAD 2>"$SANDBOX/wiring.err")" || status=$?
 assert_eq "a classifier wiring error keeps its status and line" \
-  "wiring-error: cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES exit 2 stdout=''" \
+  "wiring-error: cause=planted-wiring-error exit 2 stdout=''" \
   "$(grep '^wiring-error: ' "$SANDBOX/wiring.err") exit $status stdout='$out'"
 
 # A wiring error raised after the paths were read still carries the base
@@ -115,21 +119,21 @@ setting_records_on_wiring_error() { # WRAPPER
   settings_base="$(git -C "$repo" rev-parse HEAD)"
   write_lines docs/guide.md 2
   git -C "$repo" add -A
-  git -C "$repo" commit -q -m "a diff under a malformed ceiling, over a blank reason"
-  out="$(PATH="$no_kendex_path" HARNESS_CI_TRIVIAL_MAX_LINES=abc "$wrapper" --event pull_request \
+  git -C "$repo" commit -q -m "a diff the classifier refuses, over a blank reason"
+  out="$(PATH="$no_kendex_path" "$wrapper" --event pull_request \
     --repo "$repo" --base "$settings_base" --head HEAD 2>"$SANDBOX/records.err")" || status=$?
   # The three keyed lines in the order they came out, the annotation cut at
   # its title; the human text after it is not read here.
   assert_eq "a wiring error over a blank per-push reason prints the setting record and its annotation" \
     "setting-refused: setting=HARNESS_CI_PER_PUSH_REASON cause=empty-reason
 ::warning title=per-push opt-back refused
-wiring-error: cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES
+wiring-error: cause=planted-wiring-error
 queue-only lines: 0 exit 2 stdout=''" \
     "$(grep '^setting-refused: \|^::warning title=per-push opt-back refused::\|^wiring-error: ' "$SANDBOX/records.err" |
       sed 's/^\(::warning title=per-push opt-back refused\)::.*/\1/')
 queue-only lines: $(grep -c '^queue-only: ' "$SANDBOX/records.err" || true) exit $status stdout='$out'"
 }
-setting_records_on_wiring_error "$CHANGE_CLASS"
+setting_records_on_wiring_error "$wiring_wrapper"
 
 # The verdict reaches the GitHub output file, with the queue and lane answers.
 case_diff "wiring outputs" docs/guide.md=2

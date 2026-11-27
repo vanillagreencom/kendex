@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Docs-only accepts the explicit documentation set and rejects every other
-# path, and --outside-output lists every path it rejected. Pull-request and
+# Docs-only accepts the documentation set, docs/, changelog.d/ and every
+# Markdown file at any path, and rejects every other path, and
+# --outside-output lists every path it rejected. Pull-request and
 # merge-group events use the shared endpoint rules.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
@@ -33,13 +34,13 @@ changelog-tree|true|changelog.d/added/ci.md
 root-markdown|true|README.md CONTRIBUTING.markdown
 all-doc-families|true|docs/guide.md changelog.d/fixed/ci.md AGENTS.md
 mixed-product|false|docs/guide.md crates/core/src/lib.rs
-skills-source|false|skills/review-gate/SKILL.md
-agents-source|false|agents/generalist.md
+skill-markdown|true|skills/review-gate/SKILL.md skills/review-gate/references/guide.md
+agent-markdown|true|agents/generalist.md
+nested-markdown|true|.github/README.md tools/AGENTS.md
 hooks-source|false|hooks/pre-commit-check.sh
 settings|false|kendex.settings.toml
-nested-markdown|false|.github/README.md
-docs-near-miss|false|documentation/guide.md
-changelog-near-miss|false|changelog.draft/entry.md
+docs-near-miss|false|documentation/guide.txt
+changelog-near-miss|false|changelog.draft/entry.txt
 root-text|false|README.txt
 CASES
 require_rows docs-only-paths "$path_row_count"
@@ -65,50 +66,14 @@ assert_eq "docs mode writes the GitHub output" \
 outside_file="$SANDBOX/outside"
 git -C "$repo" checkout -q -B case "$base"
 git -C "$repo" clean -qfd
-commit_paths "$repo" "outside" README.md crates/core/src/lib.rs docs/guide.md skills/orch/SKILL.md
+commit_paths "$repo" "outside" README.md crates/core/src/lib.rs docs/guide.md skills/orch/SKILL.md skills/orch/run.sh
 "$HARNESS_ONLY" --mode docs --repo "$repo" --event push --base "$base" --head HEAD \
   --outside-output "$outside_file" >/dev/null 2>&1
 assert_eq "docs mode lists every changed path outside the set" \
-  "crates/core/src/lib.rs skills/orch/SKILL.md" "$(tr '\n' ' ' <"$outside_file" | sed 's/ $//')"
+  "crates/core/src/lib.rs skills/orch/run.sh" "$(tr '\n' ' ' <"$outside_file" | sed 's/ $//')"
 "$HARNESS_ONLY" --mode docs --repo "$repo" --event merge_group --base "$base" \
   --head "$head" --outside-output "$outside_file" >/dev/null 2>&1
 assert_eq "docs mode writes an empty outside list where every path is inside" \
   "0" "$(wc -c <"$outside_file" | tr -d ' ')"
-
-# One changed production pattern is the must-fail control. Removing the slash
-# rejection admits skills/*.md through the root-Markdown branch, and this suite
-# must turn red on that mutant.
-if [ -z "${DOCS_ONLY_CONTROL:-}" ]; then
-  [ ! -L "$HARNESS_ONLY" ] || { echo "the classifier control refuses a symlink" >&2; exit 1; }
-  mutant="$SANDBOX/harness-only-mutant"
-  cp -R "$(dirname "$HARNESS_ONLY")/lib" "$SANDBOX/lib"
-  if ! awk '
-    BEGIN { changed = 0 }
-    /^      \*\/\*\) ;;$/ {
-      print "      never/*) ;;"
-      changed += 1
-      next
-    }
-    { print }
-    END { if (changed != 1) exit 2 }
-  ' "$HARNESS_ONLY" >"$mutant"; then
-    echo "could not build the docs-only must-fail control" >&2
-    exit 1
-  fi
-  cmp -s "$HARNESS_ONLY" "$mutant" && {
-    echo "the docs-only must-fail control changed no source" >&2
-    exit 1
-  }
-  chmod +x "$mutant"
-  control_status=0
-  if DOCS_ONLY_CONTROL=1 HARNESS_ONLY_UNDER_TEST="$mutant" \
-    bash "$TEST_DIR/docs-only.test.sh" >"$SANDBOX/control.stdout" \
-    2>"$SANDBOX/control.stderr"; then
-    control_status=0
-  else
-    control_status=$?
-  fi
-  assert_eq "the path-set mutant turns the docs-only suite red" 1 "$control_status"
-fi
 
 report docs-only

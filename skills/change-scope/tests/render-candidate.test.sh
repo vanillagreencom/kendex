@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Endpoint ownership buys prerequisites only. Direct CI waivers keep their
 # ownership-gain refusal, including when an author lists new product content.
+# The docs waiver follows the docs set alone: Markdown at any path is in it,
+# a bot output among them.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -13,7 +15,7 @@ commit_paths "$repo" base .agents/skills/orch/SKILL.md \
   .github/instructions/runtime.instructions.md .github/instructions/project-review.md
 base="$(git -C "$repo" rev-parse HEAD)"
 rows=0
-while IFS='|' read -r label path listed expected extra; do
+while IFS='|' read -r label path listed expected docs extra; do
   rows=$((rows + 1))
   git -C "$repo" checkout -q -B "case-$rows" "$base"
   if [ "$listed" = yes ]; then
@@ -27,18 +29,18 @@ while IFS='|' read -r label path listed expected extra; do
   assert_eq "$label: prerequisites" "render_candidate=$expected" \
     "$(classify --mode render-candidate --repo "$repo" --event pull_request --base "$base")"
   assert_verdict "$label: no direct waiver" false --repo "$repo" --event pull_request --base "$base"
-  assert_docs_verdict "$label: no docs waiver" false --repo "$repo" --event pull_request --base "$base"
+  assert_docs_verdict "$label: docs waiver" "$docs" --repo "$repo" --event pull_request --base "$base"
 done <<'ROWS'
-new render|.agents/skills/orch/added.md|yes|true
-planted product ownership|runtime/new.conf|yes|true
-unclaimed product|runtime/other.conf|no|false
-adopted caller without inventory entry|.github/workflows/kendex-refresh.yml|no|true
-adopted caller and unclaimed workflow|.github/workflows/kendex-refresh.yml|no|false|.github/workflows/other.yml
-bot review doctrine without inventory entry|.github/instructions/code-review.md|no|true
-Copilot instructions without inventory entry|.github/copilot-instructions.md|no|true
-bot path instructions without inventory entry|.github/instructions/runtime.instructions.md|no|true
-configured review path without inventory entry|.github/instructions/project-review.md|no|true
-bot output and unclaimed product|.github/instructions/code-review.md|no|false|runtime/other.conf
+new render|.agents/skills/orch/added.md|yes|true|false
+planted product ownership|runtime/new.conf|yes|true|false
+unclaimed product|runtime/other.conf|no|false|false
+adopted caller without inventory entry|.github/workflows/kendex-refresh.yml|no|true|false
+adopted caller and unclaimed workflow|.github/workflows/kendex-refresh.yml|no|false|false|.github/workflows/other.yml
+bot review doctrine without inventory entry|.github/instructions/code-review.md|no|true|true
+Copilot instructions without inventory entry|.github/copilot-instructions.md|no|true|true
+bot path instructions without inventory entry|.github/instructions/runtime.instructions.md|no|true|true
+configured review path without inventory entry|.github/instructions/project-review.md|no|true|true
+bot output and unclaimed product|.github/instructions/code-review.md|no|false|false|runtime/other.conf
 ROWS
 require_rows candidate "$rows"
 

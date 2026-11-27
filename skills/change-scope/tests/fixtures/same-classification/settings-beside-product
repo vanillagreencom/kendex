@@ -1,6 +1,6 @@
 exit=0
-stdout=change_class=standard
+stdout=change_class=micro
 changed-path: path=kendex.settings.toml
 changed-path: path=runtime/product.ts
 harness-note: cause=not-render-owned path=kendex.settings.toml
-class: class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml
+class: class=micro measured=true cause=production-within-micro production=4

@@ -243,7 +243,7 @@ fn a_range_is_classified_by_its_paths_and_its_production_lines() {
                 ("apps/sidecar/src/signal.ts", 60),
             ],
         ),
-        ("instructions", &[("AGENTS.md", 1)]),
+        ("markdown", &[("AGENTS.md", 1)]),
     ];
     for (branch, files) in ranges {
         git(&w.repo, &["checkout", "-q", "-B", branch, &base]);
@@ -268,9 +268,9 @@ fn a_range_is_classified_by_its_paths_and_its_production_lines() {
         ("mem-460", &[], mem_460),
         ("mem-460", &["--floor", "small"], mem_460),
         (
-            "instructions",
+            "markdown",
             &[],
-            "tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=1",
+            "tier=micro brief=micro cause=branch-class class=trivial rule=documentation-paths lines=1 estimate=- delta=- paths=1",
         ),
         (
             "micro",
@@ -303,7 +303,7 @@ fn a_brief_naming_a_path_past_the_location_widens_the_cycle() {
     );
     let brief = w.file(
         "brief",
-        "Change `src/a.rs` and document it in `skills/x/SKILL.md`; see `changelog.d/x.md`.\n",
+        "Change `src/a.rs` and gate it in `.github/workflows/ci.yml`; see `changelog.d/x.md`.\n",
     );
     let alone = w.tier(&["--body", body.to_str().unwrap()]);
     assert_eq!(
@@ -318,7 +318,7 @@ fn a_brief_naming_a_path_past_the_location_widens_the_cycle() {
     ]);
     assert_eq!(
         answer(&briefed).1,
-        "tier=small brief=small cause=instruction-file path=skills/x/SKILL.md glob=*/SKILL.md estimate=- delta=4 paths=2",
+        "tier=standard brief=start cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/* estimate=- delta=4 paths=2",
         "{}",
         stderr(&briefed)
     );

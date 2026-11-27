@@ -15,6 +15,7 @@
 #
 # The credentials are assembled at run time, so this file holds none a scan
 # of it would find.
+# Inputs: tools/secrets-excludes
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
@@ -290,6 +291,19 @@ put tools/secrets-excludes "fixtures/*\tfake credentials the suite asserts again
 put fixtures/cred.txt "aws = $CRED\n"
 row "a reasoned row in the excludes list passes the path" \
   "rc=0 secrets: summary=violations=0 files=1 scope=staged skipped=0" "$R"
+
+echo "=== a credential in Markdown is refused on the cheapest class's route ==="
+# A range of Markdown alone takes change-scope's cheapest class, which runs
+# none of the lanes; CI's scan of every merge group still judges it, under
+# this repository's own exclusion list as its policy root.
+SELF_POLICY="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)" || exit 2
+repo markdown-range
+put skills/x/references/guide.md "# Guide\n"
+commit
+put skills/x/references/guide.md "# Guide\n\naws = $CRED\n"
+commit added
+row "--against refuses a credential a Markdown-only range adds, under the repository's policy" \
+  "rc=1 secrets: secret=skills/x/references/guide.md:3:aws-access-token" "$R" --against HEAD~1 --policy-root "$SELF_POLICY"
 
 echo "=== --policy-root reads the exclusion policy from that repository, never the judged one ==="
 # CI passes the default branch's checkout, so a pull request that adds a

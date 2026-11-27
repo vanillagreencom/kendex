@@ -39,15 +39,6 @@
 #             The change-class action reads it to tell an unclaimed path
 #             the docs set holds from one it does not. Default: do not
 #             write a file.
-#   --base-inventory-output  harness and render-candidate modes: overwrite
-#             this file with the paths of the .kendex-generated.json the
-#             commit --base names holds, one per line, once the range
-#             base's inventory and that one read and validate; on a pull
-#             request that commit is the base end, never the merge base.
-#             A verdict reached before then, or an inventory at that
-#             commit that is absent or does not validate, writes none.
-#             change-scope reads it for the settings declarations the base
-#             installs. Default: do not write a file.
 #
 #   --declared-output  docs mode: changed paths admitted by the trusted
 #             declaration. Missing where declaration discovery failed.
@@ -100,9 +91,6 @@ outside_output=""
 declared_output=""
 declared=""
 declared_available=true
-base_inventory_output=""
-base_inventory_listed=""
-named_base_rev=""
 changed=""
 outside=""
 base_rev=""
@@ -119,8 +107,9 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
                     [--outside-output FILE] [--declared-output FILE]
 
   --mode    harness (default): accept generated harness files.
-            docs: accept docs/, changelog.d/, root .md or .markdown files,
-            and exact text paths declared in trusted base settings.
+            docs: accept docs/, changelog.d/ and every .md or .markdown
+            file; a path declared in trusted base settings stays declared
+            text.
             render-candidate: permit new head-owned paths and the adopted
             refresh caller and bot-instructions outputs without an inventory
             entry for prerequisites only.
@@ -139,19 +128,16 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
             classifier, one path per line.
   --outside-output  docs mode: overwrite this file with the changed paths
             outside the docs set, one path per line.
-  --base-inventory-output  harness and render-candidate modes: write the
-            paths of the --base commit's inventory, never the merge
-            base's, one per line, once it validates. A verdict reached
-            before then, or an absent or invalid inventory, writes none.
   --declared-output  docs mode: write changed paths admitted by
             HARNESS_CI_DOCS_PATHS, one per line. Missing on an unreadable
             or invalid declaration; consumers must refuse that evidence.
 
-  HARNESS_CI_DOCS_PATHS adds exact repository-relative .md or .markdown
-  files from the --base commit's [env] settings tables only. No globs,
-  instructions, executable files or loaded templates. Unset/blank adds none.
-  Declared text keeps its owning lane checks; use the lanes interface,
-  never a blanket docs_only waiver. See harness-ci's references/wiring.md.
+  HARNESS_CI_DOCS_PATHS names exact repository-relative .md or .markdown
+  files from the --base commit's [env] settings tables only, as declared
+  text. No globs, executable files or loaded templates. Unset/blank names
+  none. Declared text keeps its owning lane checks; use the lanes
+  interface, never a blanket docs_only waiver. See harness-ci's
+  references/wiring.md.
 
 Prints harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
 Exit 2 on a wiring error.
@@ -205,7 +191,6 @@ while [ "$#" -gt 0 ]; do
     --paths-output) need_value "$1" "$#" "${2:-}"; paths_output="$2"; shift 2 ;;
     --outside-output) need_value "$1" "$#" "${2:-}"; outside_output="$2"; shift 2 ;;
     --declared-output) need_value "$1" "$#" "${2:-}"; declared_output="$2"; shift 2 ;;
-    --base-inventory-output) need_value "$1" "$#" "${2:-}"; base_inventory_output="$2"; shift 2 ;;
     --mode)
       need_value "$1" "$#" "${2:-}"
       case "$2" in
@@ -267,8 +252,6 @@ verdict() { # true|false [FIELDS REASON]
   if [ -n "$declared_output" ] && [ "$declared_available" = true ]; then
     write_paths "$declared_output" "$declared" declared-output-write-failed
   fi
-  [ -z "$base_inventory_output" ] || [ -z "$base_inventory_listed" ] ||
-    write_paths "$base_inventory_output" "${base_inventory_listed#$'\n'}" base-inventory-output-write-failed
   if [ -n "$output" ]; then
     if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
@@ -379,13 +362,10 @@ if [ "$classification" = docs ]; then
     done
     set +f
   fi
+  # A declared path is read first, so it keeps its lanes whatever the
+  # built-in set says.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    case "$path" in
-      docs/* | changelog.d/*) continue ;;
-      */*) ;;
-      *.md | *.markdown) continue ;;
-    esac
     if grep -qxF -- "$path" <<<"$docs_paths"; then
       seen=false
       for endpoint in "$base" "$head"; do
@@ -407,6 +387,9 @@ if [ "$classification" = docs ]; then
 }$path"
       continue
     fi
+    case "$path" in
+      docs/* | changelog.d/* | *.md | *.markdown) continue ;;
+    esac
     outside="${outside:+$outside
 }$path"
   done <<<"$changed"
@@ -424,7 +407,6 @@ fi
 # Read the writer's exact output paths at both selected endpoints. A missing
 # inventory runs product checks, including the commit that first installs it.
 if [ "$range_style" = merge_base ]; then
-  named_base_rev="$(git_repo rev-parse --verify --quiet "${base}^{commit}")" || named_base_rev=""
   base="$(git_repo merge-base "$base" "$head")" || verdict false \
     "cause=unreadable-merge-base" "merge base is unreadable"
 else
@@ -432,7 +414,6 @@ else
   base="$(git_repo rev-parse --verify --quiet "${base}^{commit}")" || verdict false \
     "cause=unresolved-endpoint endpoint=$(stable_value "$named_base")" \
     "endpoint '$named_base' does not resolve to a commit"
-  named_base_rev="$base"
 fi
 # Both ends of the range, resolved. Published on every verdict from here on,
 # so a caller reading the same range's committed state takes these revisions
@@ -531,25 +512,6 @@ base_inventory="$(inventory_paths "$base_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
 head_inventory="$(inventory_paths "$head_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
-
-# The inventory of the commit --base names, for change-scope's settings
-# declarations: on a pull request the merge base is the commit the author
-# picked by choosing where to fork, so it never speaks for the base end. An
-# absent or invalid one writes no file, which change-scope refuses.
-# Validated paths hold no newline, so one per line is the whole list. The
-# leading newline marks an empty inventory read, which writes an empty file.
-named_inventory=""
-if [ "$named_base_rev" = "$base" ]; then
-  named_inventory="$base_inventory"
-elif [ -n "$named_base_rev" ] &&
-  named_inventory="$(git_repo show "$named_base_rev:.kendex-generated.json" 2>/dev/null)"; then
-  named_inventory="$(inventory_paths "$named_inventory" 2>/dev/null)" || named_inventory=""
-else
-  named_inventory=""
-fi
-if [ -n "$named_inventory" ] && listed="$(jq -r '.[]' <<<"$named_inventory" 2>/dev/null)"; then
-  base_inventory_listed=$'\n'"$listed"
-fi
 
 # The inventory's own change, for change-scope: `names-only` where every entry
 # the inventory gains names a render mirror this diff adds, ROOT/SOURCE with

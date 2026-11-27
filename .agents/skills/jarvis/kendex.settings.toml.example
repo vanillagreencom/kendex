@@ -35,7 +35,6 @@ JARVIS_FORWARD_CONFIRM = "off"
 # Each home that runs at the same time needs a separate directory.
 JARVIS_LOG_DIR = "~/.local/state/jarvis"
 # A fixed window from the first complete event. Zero sends immediately.
-# ci: unread
 JARVIS_WAKE_SETTLE_SECS = "15"
 # Remind an open voice request every N seconds; zero reminds it once at 10 min.
 JARVIS_VOICE_REMIND_SECS = "0"
@@ -50,7 +49,6 @@ JARVIS_UNATTENDED_HARNESSES = ""
 # greeting and closing line, concise gives the facts only and fun adds light
 # humor. The facts, actions and questions stay the same in every style.
 # values: friendly | concise | fun
-# ci: unread
 JARVIS_STYLE = "concise"
 # Optional existing Slack hold. Set this in each root whose relay is held.
 # Accepts an absolute path, ~/path, or a path relative to that root.

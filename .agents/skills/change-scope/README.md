@@ -9,7 +9,8 @@ The shared change classifier for kendex-managed repositories. It names a change'
 - Reads repository policy from the base commit, not from the change.
 - Counts a branch's production, test and generated lines the same way for every caller.
 - Checks that each changed generated install file matches a fresh generation of it.
-- Keeps an agent instruction change or a removed test at `small` or wider.
+- Gives a change confined to kendex manifests, JSON settings files and Markdown the cheapest class at any size.
+- Keeps a removed test at `small` or wider.
 - Treats anything it cannot prove as `standard`, and says whether it measured the change.
 
 ## Install
@@ -20,7 +21,7 @@ kendex add vanillagreencom/kendex --skill change-scope
 
 ## How it works
 
-The classifier reads the range's changed paths, the settings the base commit holds and the shared path rules. A change to generated files is `render` only when generating them again gives the same files. A documentation-only, few-line or one-folder change gets its class by size. A file that gates a merge, runs as a hook or configures a coding tool keeps full checks. Other packages turn the class into their own decision.
+The classifier reads the range's changed paths, the settings the base commit holds and the shared path rules. A change to generated files is `render` only when generating them again gives the same files. A change to kendex manifests, JSON settings files and Markdown alone is `trivial` at any size. Any other few-line or one-folder change gets its class by size. A file that gates a merge, runs as a hook or registers a coding tool's hooks, permissions or MCP servers keeps full checks, and so does a change to the catalogs a manifest installs from. Other packages turn the class into their own decision.
 
 The contracts and settings are in [SKILL.md](SKILL.md), `change-scope --help` and `harness-only --help`.
 
