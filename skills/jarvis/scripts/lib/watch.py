@@ -1171,7 +1171,7 @@ class Watch:
                 memory["outcome"] = (replaced(account) if session != memory["session"] else
                                      "The watch no longer reads that stop.")
                 self.save()
-            self.notify(memory)
+            self.notify(memory, now)
             if same:
                 return kind if memory["outcome"] is None else None
             if reading is None or not memory["noticed"]:
@@ -1188,7 +1188,7 @@ class Watch:
                 memory["outcome"] = (replaced(reading[2]) if reading[0] != memory["session"] else
                                      "The replacement's outcome was not read; jarvis-session status shows it.")
             if memory["outcome"] is not None:
-                self.notify(memory)
+                self.notify(memory, now)
         if memory is not None and memory["noticed"] and reading is not None and kind is None:
             del self.state["wall"]
             memory = None
@@ -1203,7 +1203,7 @@ class Watch:
         self.state["wall"] = memory
         self.save()
         if kind == "usage":
-            self.notify(memory)
+            self.notify(memory, now)
         return kind
 
     def session(self, operation, verb, *args):
@@ -1276,7 +1276,7 @@ class Watch:
         if memory is not None and (reading == ("stopped", "stopped")
                                    or memory.get("controller") is not None and memory["controller"] != identity):
             if memory["outcome"] is not None and not memory["noticed"]:
-                self.tell_exited(memory)
+                self.tell_exited(memory, now)
                 if not memory["noticed"]:
                     return None
             del self.state["exited"]
@@ -1307,7 +1307,7 @@ class Watch:
                 "It started again on " + (answer.get("account") or "its default account")
                 + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
             self.save()
-            self.tell_exited(memory)
+            self.tell_exited(memory, now)
             return None
         if memory["noticed"]:
             if not memory.get("ran") and reading[0] == "running":
@@ -1315,7 +1315,7 @@ class Watch:
                 self.save()
             return None
         if memory["outcome"] is not None:
-            self.tell_exited(memory)
+            self.tell_exited(memory, now)
             return None
         return self.accept_restart(answer, now)
 
@@ -1342,10 +1342,10 @@ class Watch:
             memory["outcome"] = ("It did not start again: " + "; ".join(memory["refused"])
                                  + (" (" + detail[:200] + ")" if detail else "") + ".")
         self.save()
-        self.tell_exited(memory)
+        self.tell_exited(memory, now)
         return None
 
-    def tell_exited(self, memory):
+    def tell_exited(self, memory, now):
         """The owner's one notice of an exited controller: its harness, its
         account, the time it was read, the Start failure its record held and
         the restart's outcome."""
@@ -1353,9 +1353,8 @@ class Watch:
         text = ("Jarvis on " + (memory["account"] or "its default account") + " (" + memory["harness"]
                 + ") " + down + " (read at " + wall_time(memory["at"]) + "). " + memory["outcome"])
         try:
-            result = self.owner_notice(text, "exited-notice")
-            if not notice_receipt(result):
-                raise child_failure("exited-notice", result)
+            # A failed restart's outcome takes the place of its success notice still held.
+            memory["notice_id"] = self.owner_notice(text, "exited-notice", now, replaces=memory.get("notice_id"))
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             self.failed_pass("exited-notice", failure("exited-notice", error).record)
             return
@@ -1363,7 +1362,79 @@ class Watch:
         self.state.pop("exited-notice_failure", None)
         self.save()
 
-    def owner_notice(self, text, operation, ref=None):
+    def waking(self, now):
+        """Whether NOW is outside the owner's quiet hours, as orch's report
+        policy judges ORCH_REPORT_QUIET_HOURS in ORCH_OWNER_TIME_ZONE. An
+        unread answer reports once and reads False: a notice goes only on a
+        reading that it may, and stays held until one."""
+        try:
+            answer = json.loads(checked([self.bash, orch_runtime(), "report", "quiet", "--at", str(int(now))],
+                                        self.home, operation="owner-quiet"))["result"]["quiet"]
+            if not isinstance(answer, bool):
+                raise ValueError("quiet-unread")
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
+            self.failed_pass("owner-quiet", failure("owner-quiet", error).record)
+            return False
+        self.state.pop("owner-quiet_failure", None)
+        return not answer
+
+    def owner_notice(self, text, operation, now, ref=None, replaces=None):
+        """The receipt id of the owner notice TEXT in REF's thread: lane-mail's,
+        or a held one while the owner's quiet hours cover NOW or an earlier
+        notice is still held. The episode counts a held notice as sent, so
+        holding it holds no recovery; release sends it after the hours. TEXT
+        takes the place of the held notice REPLACES while it is still held."""
+        held = self.state.get("held_notices", [])
+        superseded = next((entry for entry in held if entry["id"] == replaces), None)
+        if superseded is not None:
+            superseded["text"] = text
+            self.save()
+            return superseded["id"]
+        if not held and self.waking(now):
+            return self.send_notice(text, operation, ref)
+        entry = next((entry for entry in held if entry["id"] == ref), None)
+        if entry is not None:
+            # An outcome joins its held stop: the owner reads one notice of what happened.
+            entry["text"] += "\n" + text
+        else:
+            entry = {"id": "held-" + uuid.uuid4().hex, "text": text, "ref": ref, "operation": operation}
+            self.state["held_notices"] = held + [entry]
+        self.save()
+        return entry["id"]
+
+    def release(self, now):
+        """The held owner notices, sent in order once a check reads the quiet
+        hours over. A failed send stays held, and the notices after it wait."""
+        held = self.state.get("held_notices")
+        if not held or not self.waking(now):
+            return
+        while held:
+            entry = held[0]
+            try:
+                receipt = self.send_notice(entry["text"], entry["operation"], entry["ref"])
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                self.failed_pass(entry["operation"], failure(entry["operation"], error).record)
+                return
+            held.pop(0)
+            self.state.pop(entry["operation"] + "_failure", None)
+            wall = self.state.get("wall")
+            if wall is not None and wall.get("notice_id") == entry["id"]:
+                # The wall's outcome follows in the thread of the notice that landed.
+                wall["notice_id"] = receipt
+            self.save()
+
+    def send_notice(self, text, operation, ref=None):
+        """lane-mail's receipt id for the owner notice TEXT in REF's thread,
+        sent with no thread where the mailbox no longer holds REF."""
+        result = self.mail_notice(text, operation, ref)
+        if ref and result.returncode and child_failure(operation, result).record["key"][1:] == ["refusal", "ref-unknown"]:
+            result = self.mail_notice(text, operation)
+        receipt = notice_receipt(result)
+        if not receipt:
+            raise child_failure(operation, result)
+        return receipt[1]
+
+    def mail_notice(self, text, operation, ref=None):
         """lane-mail's answer to the owner notice TEXT, in REF's thread."""
         with tempfile.NamedTemporaryFile(mode="w", dir=self.directory) as payload:
             payload.write(text + "\n")
@@ -1371,7 +1442,7 @@ class Watch:
             return run([self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner", "--file", payload.name,
                         *(["--ref", ref] if ref else [])], self.home, operation=operation)
 
-    def accept_succession(self, answer, requested):
+    def accept_succession(self, answer, requested, now):
         memory = self.state["wall"]
         if "row_at" in memory:
             recovery = answer.get("wall_recovery") if not isinstance(answer, Failure) else None
@@ -1391,7 +1462,7 @@ class Watch:
             if recovery is not None or state == "handing-over":
                 self.save()
                 if recovery == "confirmed":
-                    self.notify(memory)
+                    self.notify(memory, now)
                 return
         if isinstance(answer, Failure):
             memory["outcome"] = "No replacement started: " + answer.record["detail"][:200] + "."
@@ -1403,9 +1474,9 @@ class Watch:
             memory["outcome"] = ("No replacement started (" + str(answer.get("reason")) + ")"
                                  + (": " + str(answer["detail"]) if answer.get("detail") else "."))
         self.save()
-        self.notify(memory)
+        self.notify(memory, now)
 
-    def notify(self, memory):
+    def notify(self, memory, now):
         """The owner's one notice of a wall: its session, its time, its cause, its
         account and the succession's outcome.
 
@@ -1448,20 +1519,12 @@ class Watch:
         else:
             text = legacy_wall_notice(memory)
         try:
-            result = self.owner_notice(text, "wall-notice", ref)
-            if outcome_notice and ref and result.returncode and child_failure("wall-notice", result).record["key"][1:] == [
-                    "refusal", "ref-unknown"]:
-                memory["notice_missing"] = True
-                self.save()
-                result = self.owner_notice(text, "wall-notice")
-            receipt = notice_receipt(result)
-            if not receipt:
-                raise child_failure("wall-notice", result)
+            receipt = self.owner_notice(text, "wall-notice", now, ref)
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             self.failed_pass("wall-notice", failure("wall-notice", error).record)
             return
         if usage and not outcome_notice:
-            memory["notice_id"] = receipt[1]
+            memory["notice_id"] = receipt
         else:
             memory["noticed"] = True
         self.state.pop("wall-notice_failure", None)
@@ -1755,9 +1818,10 @@ class Watch:
         if wall is not None and wall[1].done():
             self.wall_pending = None
             if wall[0] == "succession":
-                self.accept_succession(wall[1].result(), wall[2])
+                self.accept_succession(wall[1].result(), wall[2], now)
             else:
                 reading = wall[1].result()
+                self.release(now)
                 kind = self.accept_wall(reading, now)
                 # A wall read that binds no live controller, or an exit's
                 # episode still open, reads the recorded one's status. A

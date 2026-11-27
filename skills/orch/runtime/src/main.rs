@@ -227,8 +227,16 @@ enum Verb {
         /// (entered a canceled or duplicate status) across every Linear team
         /// in the window, each `unread` when its read fails; no merged
         /// count, since Completed lists the merges GitHub reads.
-        #[arg(value_parser = ["due", "render", "write"])]
+        ///
+        /// `quiet` answers `{"quiet": bool}`: whether the owner's quiet
+        /// hours cover `--at`. The Jarvis watch holds its controller
+        /// notices on it, judging its own pass time rather than this
+        /// process's clock.
+        #[arg(value_parser = ["due", "quiet", "render", "write"])]
         action: String,
+        /// The instant `quiet` judges, in seconds since the epoch.
+        #[arg(long)]
+        at: Option<u64>,
         #[arg(long)]
         state: Option<PathBuf>,
         #[arg(long)]
@@ -1703,6 +1711,36 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Archive { op } => orch_runtime::archive::verb(op, &resolve_settings(&flags)?)?,
         Verb::Report {
             action,
+            at,
+            state,
+            session_start,
+            repo,
+            summary_file,
+            succession,
+            credential_selected: _,
+        } if action == "quiet" => {
+            if state.is_some()
+                || !repo.is_empty()
+                || session_start.is_some()
+                || summary_file.is_some()
+                || succession
+            {
+                return Err(
+                    agent_runtime::Error::refused("report-args", &[("action", &action)]).into(),
+                );
+            }
+            let at = at.ok_or_else(|| {
+                agent_runtime::Error::refused(
+                    "report-args",
+                    &[("action", &action), ("cause", "missing-at")],
+                )
+            })?;
+            let settings = resolve_settings(&flags)?;
+            serde_json::json!({"quiet": watch::report::Policy::of(&settings)?.quiet_at(at)?})
+        }
+        Verb::Report {
+            action,
+            at,
             state,
             session_start,
             repo,
@@ -1710,12 +1748,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             succession,
             credential_selected,
         } => {
-            let invalid = match action.as_str() {
-                "due" => summary_file.is_some() || succession,
-                "render" => summary_file.is_some() || succession || session_start.is_some(),
-                "write" => session_start.is_some(),
-                _ => unreachable!("clap checks report actions"),
-            };
+            let invalid = at.is_some()
+                || match action.as_str() {
+                    "due" => summary_file.is_some() || succession,
+                    "render" => summary_file.is_some() || succession || session_start.is_some(),
+                    "write" => session_start.is_some(),
+                    _ => unreachable!("clap checks report actions; quiet answers above"),
+                };
             if invalid {
                 return Err(
                     agent_runtime::Error::refused("report-args", &[("action", &action)]).into(),

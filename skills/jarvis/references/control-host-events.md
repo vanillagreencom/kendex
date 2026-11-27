@@ -61,7 +61,7 @@ Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-en
 - The verdict reads usage walls on Claude Code and Pi, Claude Code's `billing_error` (spent credit) among them, and auth walls on Claude Code and Pi, a failed Pi turn whose message opens with a 401 among them. A controller on another harness never reads walled, and this check tells nobody about it.
 - It reads the live controller from the fleet record, including a session that has written no context stamp. A quiet session that is not walled starts nothing.
 - For an authentication wall, it runs `jarvis-session succeed --home HOME --account-walled` once per episode. The owner notice follows the attempt and carries its outcome. If the loop ends with the predecessor, the next loop sends the owed notice once a controller is bound.
-- For a usage wall, it sends the owner a notice as soon as it reads that stop. The notice names the session, account, usage window and reset time where the row supplies them.
+- For a usage wall, it sends the owner a notice as soon as it reads that stop, outside quiet hours. The notice names the session, account, usage window and reset time where the row supplies them.
 - On each check of the same usage stop it looks for another account to take over. From the reset onward, if no successor is available, it checks the current account for room and tries to resume in the same pane. If the resume receipt is uncertain, subsequent checks look for the matching turn before they report a resume. The outcome follows in the original notice's thread while that thread is available.
 - A wall ends when the controller reads unwalled or a different controller takes over. A new usage stop in the same pane starts its own episode.
 - When that read binds no live controller, the loop reads `jarvis-session status --home HOME --mark-unread`. A recorded controller that reads `stopped` with reason `ended` has exited: its harness process is gone and no Stop asked for it. A recorded controller whose record holds the failure a Start stored, `failed` with `launch-failed` or `blocked` with `sign-in-required`, is down in the same way.
@@ -72,6 +72,11 @@ Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-en
 - A status read that answers `unread`, such as the runtime's refusal with the wrapper's `setup-required` before its setup has run, reports `root-unreachable` once with the runtime's line and starts nothing. When the wall read's own status read is refused, that check makes no exit status read, so the refusal reports once. Presence reads that refusal as no live session and reports nothing.
 - A recorded Start failure before the first controller launched, such as `sign-in-required`, names no recorded harness. It is a status read that worked: the loop reports nothing for it and starts nothing.
 - An unsent notice reports `root-unreachable` once and is retried each check. A retry the mailbox refuses as a repeat of the same text counts as sent: the owner holds it.
+- Inside the owner's quiet hours, `ORCH_REPORT_QUIET_HOURS` in `ORCH_OWNER_TIME_ZONE`, the loop holds each wall and exit notice. `orch-runtime report quiet --at` judges the hours at the check's time.
+- Recovery does not wait for the hours: the succession or restart starts in the same check, and a held notice counts as sent for its episode, so a later wall or exit starts its own recovery.
+- A usage wall's outcome read while its notice is held joins that notice.
+- The first check after the hours sends the held notices in order. Each names the time its stop was read.
+- An unreadable quiet answer reports `root-unreachable` once, and the notice stays held until a check reads the hours over.
 
 A host change takes effect after a stop and restart.
 
