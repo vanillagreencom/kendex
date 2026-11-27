@@ -4294,10 +4294,6 @@ mod tests {
         value.to_string()
     }
 
-    /// The rows hold the counts on the states
-    /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
-    /// index each case plants): each row's five words, and `None` for the
-    /// shape the count refuses.
     /// A lane's recovery walks stay on its own host: the wall walk keeps the
     /// entries judged there (the entry's `@host`, else `ORCH_LANE_HOST`,
     /// else this machine) and the caller step only where the fleet's host
@@ -4699,6 +4695,10 @@ mod tests {
         assert!(launch_current(&lane, &refusal(3)));
     }
 
+    /// The rows hold the counts on the states
+    /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
+    /// index each case plants): each row's five words, and `None` for the
+    /// shape the count refuses.
     #[test]
     fn the_counts_read_from_each_state() {
         let four = Some(4);
