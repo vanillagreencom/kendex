@@ -1402,12 +1402,37 @@ enum OwnerRead {
 }
 
 /// `owner_action_line` (`mailbox-append.sh`): the owner's first name,
-/// the stored action and the description with any earlier action line
-/// removed; none where the assignee has no word.
-fn owner_action_line(assignee: &str, action: &str, description: &str) -> Option<String> {
+/// the stored action, the mark of the ask's question where it has one and
+/// the description with any earlier action line removed; none where the
+/// assignee has no word.
+fn owner_action_line(
+    assignee: &str,
+    action: &str,
+    question: Option<&str>,
+    description: &str,
+) -> Option<String> {
     let name = assignee.split_whitespace().next()?;
+    let mark = question
+        .filter(|q| !q.is_empty())
+        .map(question_mark)
+        .unwrap_or_default();
     let body = strip_action_line(description);
-    Some(format!("**{name}, what you do:** {action}\n\n{body}"))
+    Some(format!("**{name}, what you do:** {action}{mark}\n\n{body}"))
+}
+
+/// The end of an action line that names its question (`owner_action_line`).
+fn question_mark(question: &str) -> String {
+    format!(" `Owner question: {question}`")
+}
+
+/// The description past an action line of `action` marked with `question`,
+/// under any name, and the blank line after it (`owner_action_body`); none
+/// where the description opens with any other line.
+fn marked_action_body<'a>(description: &'a str, action: &str, question: &str) -> Option<&'a str> {
+    let rest = description[action_line_end(description)?..]
+        .strip_prefix(action)?
+        .strip_prefix(question_mark(question).as_str())?;
+    (rest.is_empty() || rest.starts_with(['\r', '\n'])).then(|| past_blank_line(rest))
 }
 
 /// The byte past the action line's `** ` where the description opens with
@@ -1436,11 +1461,15 @@ fn strip_action_line(description: &str) -> String {
     }) else {
         return description.to_owned();
     };
-    let mut rest = &description[end..];
-    // The rest of the line, then the line's end and one blank line where
-    // both stand (`(\r?\n\r?\n)?`): a lone line end stays.
+    let rest = &description[end..];
+    // The rest of the line, then its end and the blank line after it.
     let line_end = rest.find(['\r', '\n']).unwrap_or(rest.len());
-    rest = &rest[line_end..];
+    past_blank_line(&rest[line_end..]).to_owned()
+}
+
+/// `rest`, from an action line's end, past that end and one blank line where
+/// both stand (`(\r?\n\r?\n)?`): a lone line end stays.
+fn past_blank_line(rest: &str) -> &str {
     let newline = |text: &str| -> Option<usize> {
         if text.starts_with("\r\n") {
             Some(2)
@@ -1450,12 +1479,10 @@ fn strip_action_line(description: &str) -> String {
             None
         }
     };
-    if let Some(first) = newline(rest)
-        && let Some(second) = newline(&rest[first..])
-    {
-        rest = &rest[first + second..];
+    match newline(rest) {
+        Some(first) => newline(&rest[first..]).map_or(rest, |second| &rest[first + second..]),
+        None => rest,
     }
-    rest.to_owned()
 }
 
 fn read_owner_tracker_answers(
@@ -1921,6 +1948,8 @@ fn settle_mark<T>(
 /// the same item was posted under it, the assignee cleared once no open
 /// ask stands there, and its action line removed, or replaced by the
 /// latest open ask's, only where the description still opens with it.
+/// While another mailbox's question awaits a ruling there, the write is the
+/// action line alone and the close stays unmarked.
 fn clear_owner_item(
     linear: &Linear,
     ask: &Envelope,
@@ -1953,10 +1982,46 @@ fn clear_owner_item(
             local.on_item_of(ask) && question.legacy_asks.iter().any(|id| id == local.id())
         }
     };
-    if questions.iter().any(|q| {
+    let held = questions.iter().any(|q| {
         !remaining.iter().any(|a| matches_question(a, q))
             && (q.reserved || !legacy_closes.iter().any(|a| matches_question(a, q)))
-    }) {
+    });
+    let name = item.assignee.map(|a| a.name).unwrap_or_default();
+    let original = item.description.unwrap_or_default();
+    // A line marked with this ask's question is its own under any name. A
+    // line written before the mark is known by its text alone, which another
+    // mailbox's ask can share, so it is taken only with no other question
+    // open on the item.
+    let owned = ask
+        .action
+        .as_deref()
+        .filter(|d| !d.is_empty())
+        .and_then(|action| {
+            ask.tracker_comment
+                .as_deref()
+                .and_then(|question| marked_action_body(&original, action, question))
+                .or_else(|| {
+                    let line = owner_action_line(&name, action, None, "").filter(|_| !held)?;
+                    original.strip_prefix(&line)
+                })
+        });
+    let description = match owned {
+        Some(body) => match remaining.last().and_then(|next| {
+            let action = next.action.as_deref().filter(|d| !d.is_empty())?;
+            owner_action_line(&name, action, next.tracker_comment.as_deref(), "")
+        }) {
+            Some(line) => format!("{line}{body}"),
+            None => body.to_owned(),
+        },
+        None => original.clone(),
+    };
+    if held {
+        if description != original {
+            quota!(linear.call(
+                "owner-ask-close",
+                &["issues", "update", issue, "--description", &description]
+            )?);
+        }
         return Ok(Answered::Value(false));
     }
     let label_of = |a: &Envelope| {
@@ -1974,23 +2039,6 @@ fn clear_owner_item(
         .filter(|l| *l != closing)
         .chain(remaining.iter().copied().map(label_of))
         .collect();
-    let name = item.assignee.map(|a| a.name).unwrap_or_default();
-    let original = item.description.unwrap_or_default();
-    let mut description = original.clone();
-    if let Some(action) = ask.action.as_deref().filter(|d| !d.is_empty())
-        && let Some(prefix) = owner_action_line(&name, action, "")
-        && let Some(body) = description.strip_prefix(&prefix)
-    {
-        description = match remaining
-            .last()
-            .and_then(|next| next.action.as_deref())
-            .filter(|d| !d.is_empty())
-            .and_then(|next| owner_action_line(&name, next, ""))
-        {
-            Some(line) => format!("{line}{body}"),
-            None => body.to_owned(),
-        };
-    }
     let joined = labels.into_iter().collect::<Vec<_>>().join(",");
     let mut args = vec!["issues", "update", issue];
     if joined.is_empty() {
@@ -2378,15 +2426,20 @@ mod tests {
         let action = "Post the message. Copy its link. The link closes this ask.";
         let line = format!("**Maya, what you do:** {action}\n\n{body}");
         assert_eq!(
-            owner_action_line("Maya Owner", action, body),
+            owner_action_line("Maya Owner", action, None, body),
             Some(line.clone())
         );
         assert!(action_line_end(&line).is_some());
         assert!(action_line_end(body).is_none());
         let replaced = format!("**Previous, what you do:** Old action.\n\n{body}");
         assert_eq!(
-            owner_action_line("Maya Owner", action, &replaced),
+            owner_action_line("Maya Owner", action, None, &replaced),
             Some(line.clone())
+        );
+        let marked = format!("**Maya, what you do:** {action} `Owner question: q-1`\n\n{body}");
+        assert_eq!(
+            owner_action_line("Maya Owner", action, Some("q-1"), &line),
+            Some(marked.clone())
         );
         // The blank line after an earlier action line goes with it only as
         // a pair (`(\r?\n\r?\n)?`): a body on the very next line keeps its
@@ -2399,7 +2452,49 @@ mod tests {
             strip_action_line("**Previous, what you do:** Old.\r\n\r\nbody"),
             "body"
         );
-        assert_eq!(owner_action_line("", action, body), None);
+        assert_eq!(owner_action_line("", action, None, body), None);
+    }
+
+    /// A marked action line is the ask's own under any name, its whole
+    /// line only: another question's mark, a longer action or an unmarked
+    /// line is not.
+    #[test]
+    fn a_marked_action_line_is_read_by_its_question_alone() {
+        let body = "Body.\n";
+        let rows: [(&str, Option<&str>); 7] = [
+            (
+                "**Maya, what you do:** Approve. `Owner question: q-1`\n\nBody.\n",
+                Some(body),
+            ),
+            (
+                "**Ann, what you do:** Approve. `Owner question: q-1`\r\n\r\nBody.\n",
+                Some(body),
+            ),
+            (
+                "**Maya, what you do:** Approve. `Owner question: q-1`",
+                Some(""),
+            ),
+            (
+                "**Maya, what you do:** Approve. `Owner question: q-2`\n\nBody.\n",
+                None,
+            ),
+            (
+                "**Maya, what you do:** Approve. Then merge. `Owner question: q-2`\n\nBody.\n",
+                None,
+            ),
+            ("**Maya, what you do:** Approve.\n\nBody.\n", None),
+            (
+                "**Maya, what you do:** Approve. `Owner question: q-1` and more\n\nBody.\n",
+                None,
+            ),
+        ];
+        for (description, expected) in rows {
+            assert_eq!(
+                marked_action_body(description, "Approve.", "q-1"),
+                expected,
+                "{description:?}"
+            );
+        }
     }
 
     /// A tracker stamp with fractional seconds reads as its whole second;

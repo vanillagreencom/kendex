@@ -1524,6 +1524,9 @@ owner_answers() {
     { owner_unread $? issues-format; return 0; }
   # An ask is on a listed item where their tracker identities agree; an ask
   # recorded before asks carried one is matched by its item ref as written.
+  # A displayed action line stays, another mailbox's included: the watch
+  # closing that ask removes the line its question marks, and a later read
+  # here then writes this ask's.
   jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
     def owner_item($item): if (.identity.uuid | type) == "string" then .identity.uuid == $item.uuid else .issue == $item.id end;
     .[] | . as $item
@@ -1531,7 +1534,7 @@ owner_answers() {
     | select($ask != null)
     | {id, ask: $ask.id, description: (if ((.description // "") | test("^\\*\\*[^*\\r\\n]+, what you do:\\*\\* "))
         then null
-        elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do))
+        elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do; $ask.tracker_comment))
         else error("owner-assignee-unavailable") end)}' \
     "$WORK_DIR/tracker-items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err" ||
     { owner_unread $? issues-format; return 0; }

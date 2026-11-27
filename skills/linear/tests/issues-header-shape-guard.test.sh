@@ -253,9 +253,12 @@ assert_opening_refused "a create whose first non-empty line is Reached by:" 3
 echo "=== owner action: the next non-empty line opens the body ==="
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 source "$REPO_ROOT/skills/mailbox/scripts/lib/mailbox-append.sh"
-ACTION_LINE='**Brad, what you do:** Run the check. Comment the result.'
-OWNER_BODY="$(jq -nr --arg body "$OUTCOME" "$OWNER_ACTION_JQ"'
-  $body | owner_action_line("Brad Owner"; "Run the check. Comment the result.")')"
+# The question IDs the mailbox marks each action with (comments owner-questions --id).
+QUESTION=a54c6f77-50d1-4001-8000-000000000001
+NEWER=a54c6f77-50d1-4002-8000-000000000002
+ACTION_LINE="**Brad, what you do:** Run the check. Comment the result. \`Owner question: $QUESTION\`"
+OWNER_BODY="$(jq -nr --arg body "$OUTCOME" --arg question "$QUESTION" "$OWNER_ACTION_JQ"'
+  $body | owner_action_line("Brad Owner"; "Run the check. Comment the result."; $question)')"
 assert_eq "the owner ask builds the accepted description" "$OWNER_BODY" "$(printf '%s\n\n%s' "$ACTION_LINE" "$OUTCOME")"
 run_linear issues update CC-1 --description "$OWNER_BODY"
 assert_advised "an owner action before the outcome" issueUpdate
@@ -278,32 +281,59 @@ for length in 500 501; do
   else assert_advised "a 501-character owner action" issueUpdate "issue-header-length 1 501"; fi
 done
 
-echo "=== owner action: placed on and removed from a stored header-first body ==="
-# owner_ask_over STORED_FILE ACTION — the description the mailbox owner ask
-# writes over the stored body, with a trailing sentinel the caller strips.
+echo "=== owner action: each mailbox write of the marked line ==="
+# owner_ask_over STORED_FILE ACTION QUESTION — the description the mailbox
+# owner ask or repair writes over the stored body, with a trailing sentinel
+# the caller strips.
 owner_ask_over() {
-  jq -nr --rawfile body "$1" --arg action "$2" "$OWNER_ACTION_JQ"'
-    ($body | owner_action_line("Brad Owner"; $action)) + "."'
+  jq -nr --rawfile body "$1" --arg action "$2" --arg question "$3" "$OWNER_ACTION_JQ"'
+    ($body | owner_action_line("Brad Owner"; $action; $question)) + "."'
+}
+# write_over STORED ACTION QUESTION — WRITTEN: the mailbox's description over
+# STORED, or STORED itself where ACTION is empty, as a rollback or the watch's
+# close writes the body back without the line.
+write_over() {
+  printf '%s' "$1" >"$FILED"
+  if [ -z "$2" ]; then WRITTEN="$1"; else WRITTEN="$(owner_ask_over "$FILED" "$2" "$3")"; WRITTEN="${WRITTEN%.}"; fi
 }
 printf '%s\n' '**Source**: x' "$REACH_LINE" '' "$OUTCOME" >"$FILED"
-STORED="$(cat "$FILED"; printf .)"; STORED="${STORED%.}"
-ASK="$(owner_ask_over "$FILED" 'Run the check.')"; ASK="${ASK%.}"
-assert_eq "the owner ask puts its action line over the stored body" "$ASK" "**Brad, what you do:** Run the check."$'\n\n'"$STORED"
-run_linear issues update CC-1 --description "$ASK"
-assert_advised "an owner ask over a stored body opening with **Source**:" issueUpdate
-assert "the owner ask writes its exact description" \
-  jq -s -e --arg desc "$ASK" \
-  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
-printf '%s' "$ASK" >"$FILED"
-REPLACED="$(owner_ask_over "$FILED" 'Read the new check.')"; REPLACED="${REPLACED%.}"
-run_linear issues update CC-1 --description "$REPLACED"
-assert_advised "replacing only the stored legacy owner action" issueUpdate
-run_linear issues update CC-1 --description "$STORED"
-assert_advised "the rollback or close writing the stored body back without the action line" issueUpdate
-assert "the rollback writes the stored body exactly" \
-  jq -s -e --arg desc "$STORED" \
-  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+FILED_FIRST="$(cat "$FILED"; printf .)"; FILED_FIRST="${FILED_FIRST%.}"
+# Each body the guard accepts: the quoted opening, and one filed in the older
+# header-first form, which a stored body keeps.
+for stored_name in quoted header-first; do
+  if [ "$stored_name" = quoted ]; then STORED="$OUTCOME"; else STORED="$FILED_FIRST"; fi
+  write_over "$STORED" 'Run the check.' "$QUESTION"
+  POSTED="$WRITTEN"
+  assert_eq "the owner ask puts its marked line over the $stored_name body" "$POSTED" \
+    "**Brad, what you do:** Run the check. \`Owner question: $QUESTION\`"$'\n\n'"$STORED"
+  write_over "$POSTED" 'Read the new check.' "$NEWER"
+  REPLACED="$WRITTEN"
+  assert_eq "a newer ask replaces the marked line over the $stored_name body" "$REPLACED" \
+    "**Brad, what you do:** Read the new check. \`Owner question: $NEWER\`"$'\n\n'"$STORED"
+  while IFS='|' read -r step from action question; do
+    case "$from" in body) from="$STORED" ;; posted) from="$POSTED" ;; esac
+    write_over "$from" "$action" "$question"
+    run_linear issues update CC-1 --description "$WRITTEN"
+    assert_advised "the $step over the $stored_name body" issueUpdate
+    assert "the $step over the $stored_name body writes its exact description" \
+      jq -s -e --arg desc "$WRITTEN" \
+      'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+  done <<ROWS
+post or repair|body|Run the check.|$QUESTION
+replace|posted|Read the new check.|$NEWER
+ROWS
+  # The rollback and the watch's close write the stored body back.
+  for marked in "$POSTED" "$REPLACED"; do
+    printf '%s' "$marked" >"$FILED"
+    run_linear issues update CC-1 --description "$STORED"
+    assert_advised "the marked line's removal from the $stored_name body" issueUpdate
+    assert "the removal from the $stored_name body writes the stored body exactly" \
+      jq -s -e --arg desc "$STORED" \
+      'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
+  done
+done
 
+STORED="$FILED_FIRST"
 printf '%s' "$STORED" >"$FILED"
 OTHER_SOURCE='**Source**: y'
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n%s' "$ACTION_LINE" "$OTHER_SOURCE" "$OUTCOME")"
@@ -311,7 +341,7 @@ assert_opening_refused "an owner action over a header-first body other than the 
 run_linear issues update CC-1 --description "$(printf '%s\n%s' "$OTHER_SOURCE" "$OUTCOME")"
 assert_opening_refused "a header-first body other than the stored one"
 LONG_ACTION_LINE="$(pad '**Brad, what you do:** ' 501)"
-LONG_ASK="$(owner_ask_over "$FILED" "${LONG_ACTION_LINE#'**Brad, what you do:** '}")"
+LONG_ASK="$(owner_ask_over "$FILED" "${LONG_ACTION_LINE#'**Brad, what you do:** '}" "")"
 LONG_ASK="${LONG_ASK%.}"
 run_linear issues update CC-1 --description "$LONG_ASK"
 assert_advised "a 501-character owner action over the unchanged stored body" issueUpdate "issue-header-length 1 501"

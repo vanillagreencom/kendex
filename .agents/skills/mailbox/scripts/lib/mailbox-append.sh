@@ -309,11 +309,17 @@ def owner_question_settled($answered; $closed; $replaced):
 # One description format serves the ask and the watch's read and close.
 # The Linear file reader trims trailing newlines. Use --description and keep
 # a sentinel during shell capture so the existing body retains those bytes.
+# The question's comment ID ends the action's own line, so a watch closing
+# one ask removes only the line it marked, whatever other mailbox asks on the
+# item. The Linear description guard takes one action line before the quoted
+# opening, so the mark cannot stand on a line of its own.
 OWNER_ACTION_JQ='def owner_action_body:
   sub("^\\*\\*[^*\\r\\n]+, what you do:\\*\\*[^\\r\\n]*(\\r?\\n\\r?\\n)?"; "");
-def owner_action_line($name; $action):
+def owner_action_line($name; $action; $question):
   "**" + ($name | [splits("\\s+") | select(length > 0)] | first)
-  + ", what you do:** " + $action + "\n\n" + owner_action_body;'
+  + ", what you do:** " + $action
+  + (if ($question | type) == "string" and $question != "" then " `Owner question: " + $question + "`" else "" end)
+  + "\n\n" + owner_action_body;'
 
 # The item as the ask reads it: description, assignee name and
 # label names. `linear.sh graphql` refuses a label page left open, which the
@@ -350,7 +356,7 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
 
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue
+  local added_label rollback_labels comment_error comment_id workspace mentioned ask_id comment_issue question
   local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
@@ -369,6 +375,10 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   workspace="$("$tracker" teams keys 2>"$work/tracker.err" | jq -re '.urlKey | select(type == "string" and test("\\S"))')" || {
     OWNER_TRACKER_CAUSE=workspace-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
+  # The ID the question comment posts under, which marks the action line.
+  question="$("$tracker" comments owner-questions --id "$ask_id" 2>"$work/tracker.err" | jq -er 'strings | select(length > 0)')" || {
+    OWNER_TRACKER_CAUSE=question-id; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
+  }
   "$tracker" issues update "$issue" --assignee "$(jq -r '.id' <<<"$owner")" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=assign; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
@@ -377,8 +387,8 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
   added_label="$(jq -r --arg label "$OWNER_TRACKER_LABEL" '.labels | index($label) == null' <<<"$current")" || return 1
-  description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" "$OWNER_ACTION_JQ"'
-    (.description // "") | owner_action_line($owner.name; $ask.do) + "."' <<<"$current")" || return 1
+  description="$(jq -r --argjson owner "$owner" --argjson ask "$envelope" --arg question "$question" "$OWNER_ACTION_JQ"'
+    (.description // "") | owner_action_line($owner.name; $ask.do; $question) + "."' <<<"$current")" || return 1
   description="${description%.}"
   # The comment is a message to a person. Ids stay in the mailbox: the watch
   # finds this comment by the id the tracker-posted record keeps.

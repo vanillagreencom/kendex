@@ -18,6 +18,8 @@ Actions:
   bulk-get   Read comment URLs by comment ID
   owner-requests  Complete owner-mentioned requests in the assigned, labelled view
   owner-questions ISSUE --email EMAIL  Read possible questions awaiting a ruling
+  owner-questions --id ASK  The question comment ID reserved for the ask, as a JSON
+                        string, read offline
   create     Create a new comment
   react COMMENT_ID --emoji NAME  Add your reaction to a comment
   update  Update an existing comment
@@ -336,6 +338,13 @@ owner_requests() {
 
 owner_questions() {
     if [[ "$#" -eq 1 && "$1" == --prefix ]]; then jq -n --arg prefix "$OWNER_QUESTION_PREFIX-" '$prefix'; return; fi
+    # The mailbox marks the item's displayed action with this ID before the
+    # question posts under it.
+    if [[ "$#" -eq 2 && "$1" == --id && -n "$2" ]]; then
+        local question
+        question=$(owner_question_id "$2") || return 1
+        jq -n --arg id "$question" '$id'; return
+    fi
     if [[ "$#" -ne 3 || "$2" != --email || -z "$3" ]]; then
         echo '{"error":"owner-questions requires ISSUE --email EMAIL"}' >&2; return 1
     fi

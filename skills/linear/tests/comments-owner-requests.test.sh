@@ -156,6 +156,9 @@ assert_eq "question creation succeeds with a supplied ID" "$RC" 0
 QUESTION=$(jq -r '.data.comment.id' <<<"$OUT")
 assert_jq "question ID is UUID v4 and creates a top-level comment" "$(tail -1 "$TMP_ROOT/calls")" \
     '.variables.input | (.id | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")) and (has("parentId") | not)'
+# The mailbox marks the displayed action with this ID before the question posts.
+run_comment questions-open owner-questions --id ask-1
+assert_eq "the offline ID is the one the question posts under" "$RC $(jq -r 'strings' <<<"$OUT")" "0 $QUESTION"
 run_comment question-replayed create KEN-1 --owner-question ask-1 --no-attribution --body 'Same question'
 assert_eq "the same ask confirms its first write under the same ID" "$RC $(jq -r '.data.comment.id' <<<"$OUT")" "0 $QUESTION"
 run_comment question-create create KEN-1 --owner-question ask-2 --no-attribution --body 'Same question'
