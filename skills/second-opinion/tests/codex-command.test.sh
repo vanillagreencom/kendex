@@ -183,4 +183,20 @@ chmod +x "$ROW/bin/codex"
 result=$(run review)
 got=$(jq -r --arg rc "${result%% *}" '"\($rc) attempts=\([.attempts[].cause] | join(",")) error=\(.cause | split("\n") | map(select(startswith("ERROR:"))) | tojson)"' "$ROW/out/out.json.failed.json")
 assert_eq "$got" "$LIMIT_WANT" "a codex usage-limit refusal at exit 1 records quota and keeps its ERROR line"
+while IFS='|' read -r row cli_model room_model want_cli want_room; do
+  build "$row" current:none models:my-model bin:codex
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/room-argv"\n' "$ROW" >"$ROW/bin/check-room"
+  chmod +x "$ROW/bin/check-room"
+  W_ENV+=("SECOND_OPINION_MY_MODEL_MODEL=openai/gpt-6.2-sol"
+          "SECOND_OPINION_MY_MODEL_CMD=codex -m $cli_model"
+          "SECOND_OPINION_MY_MODEL_ROOM_CMD=check-room --native-model $room_model")
+  got="$(run review)"
+  assert_eq "${got%% *}" rc=0 "$row delivers a review"
+  assert_eq "$(cat "$ROW/argv-codex")" $'-m\n'"$want_cli" "$row review argv"
+  assert_eq "$(cat "$ROW/room-argv")" $'--native-model\n'"$want_room" "$row room argv"
+done <<'ROWS'
+model-token|{model}|{model}|openai/gpt-6.2-sol|openai/gpt-6.2-sol
+literal-model|legacy-review|legacy-room|legacy-review|legacy-room
+ROWS
+
 finish

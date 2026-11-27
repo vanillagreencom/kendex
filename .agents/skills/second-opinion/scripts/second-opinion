@@ -171,6 +171,8 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              prefixes. Other target
                              names, CLIs and opaque wrappers supply their own
                              backend flags. Keep every configured command read-only.
+                             In custom _CMD and _ROOM_CMD values, {model}
+                             inserts the target's raw _MODEL value.
                              copilot has no stock command here; set
                              SECOND_OPINION_COPILOT_CMD and _MODEL, with
                              _ROOM_CMD and _INLINE_DIFF as described below.
@@ -1210,13 +1212,19 @@ resolve_stock_model() { # HARNESS
   fi
 }
 
+target_command_with_model() {
+  local var
+  var="$(target_var "$1" MODEL)"
+  printf '%s' "${2//\{model\}/"${!var-}"}"
+}
+
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.
 target_cmd() {
   local target="$1" var model
   var="$(target_cmd_var "$target")"
   if [[ -n "${!var:-}" ]]; then
-    printf '%s' "${!var}"
+    target_command_with_model "$target" "${!var}"
     return
   fi
   case "$(harness_model "$target")" in
@@ -1330,7 +1338,7 @@ target_room() {
   var="$(target_var "$t" ROOM_CMD)"
   from="$var"
   if [[ -n "${!var+x}" ]]; then
-    cmd="${!var}"
+    cmd="$(target_command_with_model "$t" "${!var}")"
   elif model=$(stock_copilot_model "$t"); then
     # shellcheck disable=SC2059 # the format is the stock template
     printf -v cmd "$DEFAULT_PI_COPILOT_ROOM_CMD" "$model"
