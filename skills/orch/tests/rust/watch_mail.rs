@@ -1673,14 +1673,16 @@ print(json.dumps([read(r) for r in rows]))' '{log}'"#,
 /// close-out, took its box with it, so the lane is neither read nor
 /// refused and the step does not fail; a sandbox it still lists, or a list
 /// that fails, refuses the lane `mail-read-failed` and fails the step.
+/// Two lanes on the failed host are judged by one `list` of it.
 #[test]
 fn a_failed_hosted_read_is_refused_unless_the_provider_no_longer_lists_the_sandbox() {
-    // Each case's `list` answer, and whether the lane is refused.
+    let items = [ITEM, "KEN-2"];
+    // Each case's `list` answer, and whether the lanes are refused.
     for (case, list, refused) in [
         ("sandbox gone", "exit 0", false),
         (
             "sandbox listed",
-            "printf 'o/r/KEN-1\\trunning\\t1m\\tbox\\n'; exit 0",
+            "printf 'o/r/KEN-1\\trunning\\t1m\\tbox\\no/r/KEN-2\\trunning\\t1m\\tbox\\n'; exit 0",
             true,
         ),
         (
@@ -1700,15 +1702,17 @@ fn a_failed_hosted_read_is_refused_unless_the_provider_no_longer_lists_the_sandb
                 log.display()
             ),
         );
-        let w = world(&hold(), 20);
+        let w = world_of(&hold(), 20, &items);
         let remote = w.root.join("remote");
         std::fs::create_dir_all(&remote).unwrap();
         let state = w.root.join(FLEET_FILE_NAME);
         let mut fleet: Value =
             serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-        fleet["lanes"][0]["host"] = json!(provider.display().to_string());
-        fleet["lanes"][0]["kind"] = json!("ssh");
-        fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
+        for n in 0..items.len() {
+            fleet["lanes"][n]["host"] = json!(provider.display().to_string());
+            fleet["lanes"][n]["kind"] = json!("ssh");
+            fleet["lanes"][n]["mail_root"] = json!(remote.display().to_string());
+        }
         std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
         let clock = FakeClock::new();
         let mut duty = w.duty();
@@ -1723,16 +1727,22 @@ fn a_failed_hosted_read_is_refused_unless_the_provider_no_longer_lists_the_sandb
         let produced = duty.run(&tick).unwrap();
         match (refused, produced.failed.as_deref()) {
             (false, None) => {}
-            (true, Some(failed)) => assert!(
-                failed.starts_with(&format!("  item={ITEM} mail-read-failed ")),
-                "{case}: the lane refused by its own key: {failed}"
-            ),
+            (true, Some(failed)) => {
+                let lines: Vec<&str> = failed.lines().collect();
+                assert_eq!(lines.len(), items.len(), "{case}: {failed}");
+                for (line, item) in lines.iter().zip(items) {
+                    assert!(
+                        line.starts_with(&format!("  item={item} mail-read-failed ")),
+                        "{case}: each lane refused by its own key: {failed}"
+                    );
+                }
+            }
             (_, failed) => panic!("{case}: refused={refused} failed={failed:?}"),
         }
         assert_eq!(
             std::fs::read_to_string(&log).unwrap_or_default(),
             "read-many\nlist\n",
-            "{case}: no file asked for again"
+            "{case}: no file asked for again, and one list for both lanes"
         );
     }
 }

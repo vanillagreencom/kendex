@@ -911,28 +911,40 @@ fn item_unknown(stderr: &str, item: &str) -> bool {
 /// lists after its close answered, and `exited`.
 const TORN_DOWN: [&str; 3] = ["destroying", "destroyed", "exited"];
 
-/// The state of the sandbox the provider's `list` names for `item`: the
-/// second field of a row whose first ends in `/ITEM`, in any case, outside
-/// an `available` row and the [`TORN_DOWN`] states; `None` where no such row
-/// stands, the sandbox gone. `list` is the protocol's one presence read.
-/// `Err` is a list that failed or was refused at the bound ([`BUSY`]).
+/// The state of the sandbox the provider's `list` names for `item`
+/// ([`listed_in`] over one [`listing`]); `None` where no such row stands,
+/// the sandbox gone. `list` is the protocol's one presence read. `Err` is a
+/// list that failed or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
     scripts: &Path,
     host: &str,
     item: &str,
 ) -> std::result::Result<Option<String>, String> {
+    listing(scripts, host).map(|rows| listed_in(&rows, item))
+}
+
+/// The provider's plain `list` reply, read once so a caller judging several
+/// items on one host asks the host once. `Err` as [`lists_item`].
+pub fn listing(scripts: &Path, host: &str) -> std::result::Result<String, String> {
     let out = lane_host(scripts, host, &["list"])?;
     if exit_code(&out) != 0 {
         return Err(cause_of("list", &out));
     }
+    Ok(host::stdout_text(&out))
+}
+
+/// The state a [`listing`] names for `item`: the second field of a row
+/// whose first ends in `/ITEM`, in any case, outside an `available` row and
+/// the [`TORN_DOWN`] states.
+pub fn listed_in(listing: &str, item: &str) -> Option<String> {
     let suffix = format!("/{}", item.to_ascii_lowercase());
-    Ok(host::stdout_text(&out).lines().find_map(|row| {
+    listing.lines().find_map(|row| {
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
         let state = fields.next().unwrap_or("");
         (state != "available" && !TORN_DOWN.contains(&state) && name.ends_with(&suffix))
             .then(|| state.to_owned())
-    }))
+    })
 }
 
 /// Why a read of a hosted lane's files did not answer: the one judgement
