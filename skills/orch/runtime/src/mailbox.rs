@@ -1028,6 +1028,50 @@ impl Mailbox {
         Ok(OwnerImport { read, receipts })
     }
 
+    /// `owner-gate --item overseer --id ASK` at the main checkout `root`:
+    /// the owner label and assignee on the closed `ask`'s item, set by the
+    /// mailbox's one rule for them from the item's open owner asks, `open`
+    /// and `closed` naming the asks the caller judged to be this mailbox's
+    /// on that item. Answers whether another mailbox's question stands
+    /// there. A refusal keeps the tracker's stderr, where a quota receipt
+    /// reads.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the program's inputs as its help names them, each passed once"
+    )]
+    pub fn owner_gate(
+        &self,
+        root: &Path,
+        tracker: &Path,
+        email: &str,
+        label: &str,
+        ask: &str,
+        open: &[&str],
+        closed: &[&str],
+    ) -> Result<bool, Refusal> {
+        const VERB: &str = "owner-gate";
+        let root_text = root.display().to_string();
+        let mut args = vec!["--item", "overseer", "--root", &root_text, "--id", ask];
+        for id in open {
+            args.extend(["--open-ask", id]);
+        }
+        for id in closed {
+            args.extend(["--closed-ask", id]);
+        }
+        let env = [
+            ("OVERSEE_WATCH_TRACKER", tracker.as_os_str()),
+            ("ORCH_OWNER_EMAIL", std::ffi::OsStr::new(email)),
+            ("ORCH_OWNER_ASK_LABEL", std::ffi::OsStr::new(label)),
+        ];
+        let answer = self.call_in(VERB, &args, &env, Some(root))?;
+        let stdout = answer.ok(VERB)?;
+        match stdout.trim_end() {
+            "owner-gate: held=true" => Ok(true),
+            "owner-gate: held=false" => Ok(false),
+            line => Err(reply(VERB, "owner-gate-held", line)),
+        }
+    }
+
     /// `resolve --item overseer --id ID --default`: close a due ask with its
     /// recommendation. Run from inside the checkout, as every overseer
     /// write is.

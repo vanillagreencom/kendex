@@ -47,8 +47,9 @@ if [[ "$1:$2" == issues:update ]]; then
   fi
 fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*|synced-comment:comments:create:*|question-id:comments:owner-questions:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*|synced-comment:comments:create:*) exit 1 ;;
 esac
+[[ "$TRACKER_ROW:$1:$2:${3:-}" != question-id:comments:owner-questions:--id ]] || exit 1
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
   users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test","display_name":"owner"}]\n' ;;
@@ -60,7 +61,8 @@ case "$1:$2" in
     [[ "$3" == "query OwnerTracker("* ]] || exit 1
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
-  comments:owner-questions) printf '"question-id"\n' ;;
+  # The reserved ID an ask posts under; the item's open questions, none.
+  comments:owner-questions) if [[ "${3:-}" == --id ]]; then printf '"question-id"\n'; else printf '[]\n'; fi ;;
   comments:create)
     # The saved comment's body: the file the last argument names.
     for body; do :; done
@@ -75,12 +77,12 @@ esac
 
 def run(source, scratch, bash):
     facts = {"pending": True, "terminal": True, "projection": True, "outcome": True, "delivery": True, "bound": True}
-    # A synced item takes its label alone, and a failed comment then restores
-    # only the label: each synced row's update calls after the refused one.
+    # The owner assignee and label land before the description, which a
+    # synced item refuses; the stub's item never changes, so a failed
+    # comment's rollback finds nothing to take off.
     labelled = ["issues", "update", "KEN-7", "--labels", "owner-gated,skills"]
     # The action and its closing evidence, which no other part of the ask states.
     action = "Merge the release branch and reply with the tag URL"
-    synced_updates = {"synced": [labelled], "synced-comment": [labelled, [*labelled[:4], "skills"]]}
     os.environ["SLACK_ORCH_DIR"] = str(REPO / "skills/orch")
     for row in ("posted", "synced", "synced-comment", "owner-read", "workspace-read", "question-id", "assign",
                 "labels-read", "label", "comment", "prepare", "missing"):
@@ -224,11 +226,11 @@ else exec '{shutil.which("date")}' "$@"; fi
                     and outcome.get("re") == ask["id"] and outcome.get("issue") == "KEN-7"
                     and (outcome.get("tracker_label") == "owner-gated" if posted else outcome.get("cause") == cause)
                     and out.strip() == "id=" + ask["id"])
-                if row in synced_updates:
+                if row in ("synced", "synced-comment"):
                     updates = [call.split("\x1f")[:-1] for call in (root / "updates").read_text().split("\x1e")[:-1]]
                     facts["terminal"] &= (updates[0] == [*labelled[:3], "--assignee", "person"]
-                        and updates[1][:6] == [*labelled, "--description"]
-                        and updates[2:] == synced_updates[row] and "cause=rollback" not in err
+                        and updates[1] == labelled and updates[2][:4] == [*labelled[:3], "--description"]
+                        and updates[3:] == [] and "cause=rollback" not in err
                         and (row != "synced" or action in (root / "comment").read_text()))
                 for verb, args in (("events", ()), ("pending", ()), ("drain", ("--after", "0"))):
                     rows = read(verb, *args)
