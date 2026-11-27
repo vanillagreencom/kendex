@@ -484,9 +484,10 @@ pub fn stopped(
 
 /// The reset of the recorded controller's own account, epoch seconds, as
 /// the judge reads it at the trigger: `None` where nothing measures it or
-/// its reading states no reset. An account the judge could not answer
-/// for, or whose usage read failed, refuses `account-unread`: the reset
-/// such a reading lacks is unread, never one nobody states.
+/// its reading states no reset. An account the judge could not read
+/// ([`AccountState::Unreadable`]) refuses `account-unread` with the
+/// listing's status where it holds one: the reset such a reading lacks is
+/// unread, never one nobody states.
 fn own_reset(
     choosing: &Choosing,
     recorded: &Recorded,
@@ -497,15 +498,19 @@ fn own_reset(
     let read = recorded
         .caller
         .own_account(recorded.harness, pick, trigger, now);
-    let account = recorded.caller.account.as_deref().unwrap_or_default();
-    let unread = |cause: &str| refused("account-unread", &[("account", account), ("cause", cause)]);
-    match (read.state, read.failed.as_deref()) {
-        (AccountState::Unreadable, _) => Err(unread("unreadable")),
-        (AccountState::Unmeasured, Some(status)) => Err(unread(status)),
-        (AccountState::HasRoom | AccountState::AtTrigger, _) => {
+    match read.state {
+        AccountState::HasRoom | AccountState::AtTrigger => {
             Ok(crate::clock::epoch_secs(&read.resets))
         }
-        (AccountState::Unmeasured, None) => Ok(None),
+        AccountState::Unmeasured => Ok(None),
+        AccountState::Unreadable => {
+            let account = recorded.caller.account.as_deref().unwrap_or_default();
+            let mut fields = vec![("account", account)];
+            if !read.status.is_empty() {
+                fields.push(("status", read.status.as_str()));
+            }
+            Err(refused("account-unread", &fields))
+        }
     }
 }
 

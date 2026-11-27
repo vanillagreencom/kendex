@@ -232,10 +232,9 @@ pub struct AccountRead {
     /// The minutes to the wall at the measured rate, counted from the
     /// sample's instant.
     pub projected: Option<u64>,
-    /// Where the judge holds the account's record but could not measure it
-    /// because its usage read failed, that read's status ([`failed_read`]);
-    /// `None` on every other reading.
-    pub failed: Option<String>,
+    /// The listing's status for the account, empty where the judge held
+    /// no record of it.
+    pub status: String,
 }
 
 impl AccountRead {
@@ -295,12 +294,13 @@ fn read_account(
 ) -> AccountRead {
     let record = judged.record();
     let headroom = whole_pct(&record, "wall").map(|wall| 100 - wall);
+    // A room answer with no wall, and an unmeasured one whose usage read
+    // failed, lack a figure nobody read: neither says nothing measures it.
     let state = match (answer, headroom) {
         (AccountState::HasRoom | AccountState::AtTrigger, None) => AccountState::Unreadable,
+        (AccountState::Unmeasured, _) if judged.row.usage_read_failed() => AccountState::Unreadable,
         (state, _) => state,
     };
-    let status = record_text(&record, "status");
-    let failed = (state == AccountState::Unmeasured && failed_read(&status)).then_some(status);
     let projected = (record_text(&record, "usage_rate_state") == "measured")
         .then(|| {
             let age = record.get("usage_age_s")?.as_f64()?;
@@ -318,19 +318,8 @@ fn read_account(
         reserve_only: at_trigger && crate::accounts::credit_room(&judged.row, 0.0),
         rate_state: record_text(&record, "usage_rate_state"),
         projected,
-        failed,
+        status: record_text(&record, "status"),
     }
-}
-
-/// Whether a listing row's `status` is a usage read that failed: the query
-/// could not run or answered a 5xx (`unreachable`), its answer or the
-/// record beside it did not read (`error`), or the endpoint refused it with
-/// a 429 (`rate_limited`) or another code (`refused`) (`listing::fetch`,
-/// `usage::refusal_status`). The figure such a read lacks is unread, where
-/// `no_usage_data`, an absent credential or an ended sign-in say nothing
-/// measures the account.
-fn failed_read(status: &str) -> bool {
-    matches!(status, "unreachable" | "error" | "rate_limited" | "refused")
 }
 
 fn unmeasured_account() -> AccountRead {
@@ -343,7 +332,7 @@ fn unmeasured_account() -> AccountRead {
         reserve_only: false,
         rate_state: String::new(),
         projected: None,
-        failed: None,
+        status: String::new(),
     }
 }
 

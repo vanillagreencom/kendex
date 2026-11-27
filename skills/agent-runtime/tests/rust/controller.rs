@@ -1424,9 +1424,11 @@ fn account(alias: &str, harness: &str, used: u64, resets: Option<u64>, now: u64)
 /// refuses, succession off or a record naming no account resumes it. A
 /// limit or an ended sign-in with room moves it off the stopped account,
 /// the sign-in telling the owner's channel; a limit with no room waits for
-/// its own account's reset, or with none notifies, and decides nothing
-/// where the walk left an entry unread or its own account's usage read
-/// failed. Each answer names the episode start that stands and writes
+/// its own account's reset, or with none or nothing measuring that account
+/// notifies, and decides nothing where the walk left an entry unread or
+/// the judge could not read its own account: a usage or keyring read that
+/// failed, on Claude or Copilot, or an account the judge gave no answer
+/// for. Each answer names the episode start that stands and writes
 /// nothing; an exited harness is refused.
 #[test]
 fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
@@ -1438,16 +1440,31 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
     let other_claude = account("a2", "claude", 20, Some(reset), now);
     let walled_claude = account("a2", "claude", 99, Some(reset), now);
     let codex = |used| account("c1", "codex", used, Some(reset), now);
-    // The own account, its usage query answered with a 5xx.
-    let mut unreachable = own(99);
-    for (key, value) in [
-        ("status", json!("unreachable")),
-        ("verdict", json!("unmeasured")),
-        ("headroom_pct", Value::Null),
-        ("wall", Value::Null),
-    ] {
-        unreachable[key] = value;
-    }
+    // The own account on `harness` read with no figure, under `status`: a
+    // 5xx (`unreachable`), a 429 whose last figure is older than the five
+    // hours a refusal answers from (`rate_limited`), or a fresh answer
+    // carrying no window (`no_usage_data`).
+    let figureless = |harness: &str, status: &str| {
+        let mut row = account("a1", harness, 99, Some(reset), now);
+        let age = if status == "rate_limited" {
+            6 * 3600
+        } else {
+            0
+        };
+        for (key, value) in [
+            ("status", json!(status)),
+            ("verdict", json!("unmeasured")),
+            ("headroom_pct", Value::Null),
+            ("wall", Value::Null),
+            ("weekly_pct", Value::Null),
+            ("session_5h_pct", Value::Null),
+            ("usage_age_s", json!(age)),
+        ] {
+            row[key] = value;
+        }
+        row
+    };
+    let copilot = vec![("harness", json!("copilot")), ("model", json!("gpt-5"))];
     /// What a row answers: the action, the successor's harness and account
     /// (alias), the reset, and the key of the walk's refusal a provider
     /// stop resumes past; or the verb's refusal with one field it names.
@@ -1458,9 +1475,11 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
             reset: Option<u64>,
             walk_refused: Option<&'static str>,
         },
+        /// The verb's refusal and one field it names, if any is
+        /// asserted.
         Refused {
             key: &'static str,
-            field: (&'static str, &'static str),
+            field: Option<(&'static str, &'static str)>,
         },
     }
     let act = |action: Value, moved, reset| Answer::Action {
@@ -1484,6 +1503,9 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
         controller: Vec<(&'static str, Value)>,
         /// Whether a walk may run.
         walks: bool,
+        /// Files written under the root after the accounts are planted,
+        /// each executable under `bin/`.
+        files: Vec<(&'static str, &'static str)>,
         answer: Answer,
     }
     let row = |case, kind, episode, accounts, answer| Row {
@@ -1495,6 +1517,7 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
         account: true,
         controller: Vec::new(),
         walks: true,
+        files: Vec::new(),
         answer,
     };
     let past = Some((31 * MINUTE, MINUTE));
@@ -1623,20 +1646,118 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
                 vec![own(99), walled_claude.clone()],
                 Answer::Refused {
                     key: "walk-unread",
-                    field: ("entries", "pi:github-copilot/gpt-5:high"),
+                    field: Some(("entries", "pi:github-copilot/gpt-5:high")),
                 },
             )
         },
         row(
-            "usage limit, no room, its own usage read failed",
+            "usage limit, no room, its own usage query answered a 5xx",
             "usage",
             None,
-            vec![unreachable, walled_claude.clone(), codex(99)],
+            vec![
+                figureless("claude", "unreachable"),
+                walled_claude.clone(),
+                codex(99),
+            ],
             Answer::Refused {
                 key: "account-unread",
-                field: ("cause", "unreachable"),
+                field: Some(("status", "unreachable")),
             },
         ),
+        row(
+            "usage limit, no room, nothing measures its own account",
+            "usage",
+            None,
+            vec![
+                figureless("claude", "no_usage_data"),
+                walled_claude.clone(),
+                codex(99),
+            ],
+            act(json!({"action": "notify", "to": "channel"}), None, None),
+        ),
+        // The listing cannot read an account below a file, so the judge
+        // gives no answer for it; under succession off no walk reads it
+        // first.
+        Row {
+            env: vec![
+                ("AGENT_RUNTIME_CONTROLLER_PREFERENCE", PREFERENCE),
+                ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off"),
+            ],
+            controller: vec![("account", json!("{root}/home/.a2/.credentials.json/a1"))],
+            walks: false,
+            ..row(
+                "usage limit, no room, the judge gave no answer for its own account",
+                "usage",
+                None,
+                vec![walled_claude.clone(), codex(99)],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: None,
+                },
+            )
+        },
+        Row {
+            controller: copilot.clone(),
+            ..row(
+                "usage limit, no room, its own Copilot usage query answered a 5xx",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "unreachable"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "unreachable")),
+                },
+            )
+        },
+        Row {
+            controller: copilot.clone(),
+            ..row(
+                "usage limit, no room, its own Copilot usage query answered a 429",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "rate_limited"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "rate_limited")),
+                },
+            )
+        },
+        // A keyring login whose search fails, no pool stated for it.
+        Row {
+            controller: copilot.clone(),
+            files: vec![
+                (
+                    "home/.a1/config.json",
+                    r#"{"lastLoggedInUser": {"host": "https://github.com", "login": "probe"}}"#,
+                ),
+                (
+                    "bin/secret-tool",
+                    "#!/bin/sh\necho 'secret-tool: The name is not activatable' >&2\nexit 1\n",
+                ),
+            ],
+            ..row(
+                "usage limit, no room, its own Copilot keyring read failed",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "unreachable"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "error")),
+                },
+            )
+        },
     ];
     for row in rows {
         let case = row.case;
@@ -1664,7 +1785,18 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
             doc["controller"].as_object_mut().unwrap().remove("account");
         }
         for (key, value) in &row.controller {
-            doc["controller"][*key] = value.clone();
+            doc["controller"][*key] = match value.as_str() {
+                Some(text) => json!(text.replace("{root}", &world.root().display().to_string())),
+                None => value.clone(),
+            };
+        }
+        for (path, text) in &row.files {
+            let path = world.root().join(path);
+            if path.starts_with(world.root().join("bin")) {
+                write_executable(&path, text);
+            } else {
+                std::fs::write(&path, text).unwrap();
+            }
         }
         // A recorded bypass crosses to another harness's entry.
         doc["controller"]["permission"] = json!("bypass");
@@ -1748,11 +1880,11 @@ fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
                 let (refused, fields) = refusal(&out);
                 assert_eq!(refused, key, "{case}: {fields}");
                 assert!(
-                    fields
+                    field.is_none_or(|field| fields
                         .as_array()
                         .into_iter()
                         .flatten()
-                        .any(|pair| *pair == json!([field.0, field.1])),
+                        .any(|pair| *pair == json!([field.0, field.1]))),
                     "{case}: {fields}"
                 );
             }
