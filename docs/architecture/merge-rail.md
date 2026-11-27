@@ -35,7 +35,7 @@ A path filter that stops a workflow from starting leaves a required context that
 
 ## The canonical example
 
-The `changes` job of `.github/workflows/skill-tests.yml`: it checks the default branch's classifier out separately, runs it through `.github/actions/change-class`, publishes the class and per-lane verdicts, and every gated job reads its verdict. A new lane reads a verdict from that job and adds its row to `tools/ci-job-set`.
+The `changes` job of `.github/workflows/skill-tests.yml`: it checks the default branch's classifier out separately, runs it through `.github/actions/change-class`, and publishes the `jobs` list that `tools/ci-job-set` builds from its `LANES` table. Each gated job's `if:` reads its own id in that list. A new lane is one `LANES` row, beside its job and its entry in CI's `needs:`. This workflow departs from the dead-classifier term of the [wiring](../../skills/harness-ci/references/wiring.md#shape-1--a-changes-job-feeding-job-level-if): no job's `if:` reads `needs.changes.result`. In its place, the step after the root checkout publishes the event's whole job set, so a failed classification still runs every lane. A changes job lost before that step runs no lane that needs `changes`, and CI is red on `changes`. Preflight and Markdown still run.
 
 ## Revisit when
 

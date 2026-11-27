@@ -100,7 +100,9 @@ checkout_suites_skipped() {
 # unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
 # SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the
 # arguments passed, blank-separated, none unless set; the workflow's changes
-# job passes --event-parity --runtime-publish.
+# job passes --event-parity --runtime-publish. The `cargo_linux_matrix=` and
+# `jobs=` lines are left out unless SELECT_CARGO_MATRIX or SELECT_JOBS is
+# true.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
   local class="$1" docs="$2" paths="$3" out="$TMP/selection$ROW_TAG" err="$TMP/selection-err$ROW_TAG" status=0 arg="${SELECT_ARG:-}"
   : >"$out"
@@ -112,11 +114,10 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
       "$(sed -n 's/^ci-job-set: cause=//p' "$err" | head -1)"
     return 0
   fi
-  if [ "${SELECT_CARGO_MATRIX:-}" = true ]; then
-    cat "$out"
-  else
-    sed '/^cargo_linux_matrix=/d' "$out"
-  fi | tr '\n' ' ' | sed 's/ $//'
+  local drop=""
+  [ "${SELECT_CARGO_MATRIX:-}" = true ] || drop='/^cargo_linux_matrix=/d;'
+  [ "${SELECT_JOBS:-}" = true ] || drop="$drop/^jobs=/d;"
+  sed "$drop" "$out" | tr '\n' ' ' | sed 's/ $//'
 }
 
 # The classifier this checkout ships, run over a fixture repository whose one

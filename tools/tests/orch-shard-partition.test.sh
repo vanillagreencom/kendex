@@ -1087,6 +1087,7 @@ check "must-fail: routing GitHub away from rest selects the wrong shard" \
   '["guards-scans","mailbox"]' "$(github_selection)"
 
 # --- 4c. The nightly macOS matrix's exclusions --------------------------
+# LANES cannot carry these: matrix literals are GitHub's entry points where no selection was read.
 # The selector uses these exclusions for its macOS runner arithmetic.
 # .github/workflows/skill-tests.yml owns execution policy: its nightly
 # macOS job uses the full fallback roster and applies these exclusions.
@@ -1134,6 +1135,7 @@ check "must-fail: a queue fallback naming a Linux-only shard is named" "linear-c
   "$(comm -12 <(queue_fallback_shards "$TMP/queue-linux.yml") <(linux_only_shards "$JOB_SET"))"
 
 # --- 4d. Exactly-once suite coverage on each original shell runner --------
+# LANES cannot carry this: it names jobs and events, not which shard owns a suite.
 # Linux runs every shell suite. The native eligibility owner defines the
 # macOS subset. Actual workflow discovery must cover each eligible file once.
 # The roster jobs are the Linux job and the nightly macOS job; the merge
@@ -1212,16 +1214,20 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
 . "$ROOT/skills/harness-ci/tests/lib/workflow.sh"
 
 event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
-  local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards excluded job_shards step_routes
-  [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
-  # A failed changes job exercises the workflow's full fallback: the
-  # required roster on a merge group, and on a main push the roster a
-  # failed same-head proof read runs. tools/tests/ci-class-job-set-events
-  # holds the proved complement.
-  [[ "$event" != push ]] || result=failure
+  local wf="$1" event="$2" os="$3" major="$4" result=failure ref=refs/heads/main ctx job needs expr running axes shards excluded job_shards step_routes fallback
+  [[ "$event" != merge_group ]] || ref=refs/heads/gh-readonly-queue/main/fixture
+  # A failed changes job exercises the workflow's full fallback, the jobs
+  # its fallback step lists: the required roster on a merge group, on a
+  # main push the roster a failed same-head proof read runs, and a whole
+  # night. tools/tests/ci-class-job-set-events holds the proved complement.
+  # A dispatch writes its fallback alone and succeeds.
+  [[ "$event" != workflow_dispatch ]] || result=success
+  : > "$TMP/event-fallback"
+  EVENT="$event" GITHUB_OUTPUT="$TMP/event-fallback" "$ROOT/tools/ci-job-set" --fallback 2>/dev/null || return
+  fallback="$(cat "$TMP/event-fallback")" || return
   step_routes="$(shared_steps "$wf")" || return
   published_map "$wf" > "$TMP/event-map" || return
-  ctx="$(context_json "$event" "$result" "" "$TMP/event-map" "$ref")" || return
+  ctx="$(context_json "$event" "$result" "" "$TMP/event-map" "$ref" "$fallback")" || return
   job_ifs "$wf" > "$TMP/event-job-ifs" || return
   job_needs "$wf" > "$TMP/event-job-needs" || return
   {

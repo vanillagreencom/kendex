@@ -77,32 +77,48 @@ matrix_expr() { # WORKFLOW KEY [JOB]
   esac
 }
 
-# `NAME SOURCE` for every changes-job output the select step publishes.
+# `NAME<TAB>EXPR` for every output of the changes job, the `${{ }}`
+# stripped.
 published_map() { # WORKFLOW
   awk '
     /^  changes:/ { in_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
     in_job && /^    outputs:/ { in_outputs = 1; next }
     in_outputs && !/^      / { in_outputs = 0 }
-    in_outputs && match($0, /^      [a-z_]+: \$\{\{ steps\.select\.outputs\.[a-z_]+ \}\}$/) {
+    in_outputs && match($0, /^      [a-z_]+: \$\{\{ .* \}\}$/) {
       name = $1; sub(/:$/, "", name)
-      source = $0; sub(/.*steps\.select\.outputs\./, "", source); sub(/ .*/, "", source)
-      print name " " source
+      expr = $0; sub(/^      [a-z_]+: \$\{\{ /, "", expr); sub(/ \}\}$/, "", expr)
+      print name "\t" expr
     }
   ' "$1"
 }
 
-# The changes job publishes its mapped selection only after success. These
-# fixtures model default-branch events, including the normal push-main ref.
-context_json() { # EVENT RESULT SELECTION MAP_FILE [REF]
-  local outputs='{}'
-  if [ "$2" = success ]; then
-    outputs="$(printf '%s\n' $3 | jq -Rn --rawfile map "$4" '
-      ([inputs | select(length > 0) | split("=") | {key: .[0], value: .[1]}] | from_entries) as $chosen
-      | [$map | split("\n")[] | select(length > 0) | split(" ")
-         | select($chosen[.[1]] != null) | {key: .[0], value: $chosen[.[1]]}] | from_entries')" ||
-      { echo "could not build the outputs of '$3'" >&2; exit 1; }
-  fi
+# The context a job condition reads on EVENT with the changes job at RESULT.
+# Its outputs are the workflow's own output expressions, evaluated as GitHub
+# evaluates them after the steps whatever the job's result: over a select
+# step that wrote SELECTION where RESULT is success and failed before writing
+# otherwise, beside a fallback step that wrote FALLBACK. A changes job that
+# never ran, skipped or cancelled, has no outputs. SELECTION and FALLBACK
+# are `key=value` words. These fixtures model default-branch events,
+# including the normal push-main ref.
+context_json() { # EVENT RESULT SELECTION MAP_FILE [REF] [FALLBACK]
+  local outputs='{}' words steps
+  words='[inputs | select(length > 0) | index("=") as $i | {key: .[:$i], value: .[$i + 1:]}] | from_entries'
+  case "$2" in
+    success | failure)
+      steps="$(jq -cn --arg result "$2" \
+        --argjson select "$(printf '%s\n' $3 | jq -Rnc "$words")" \
+        --argjson fallback "$(printf '%s\n' ${6:-} | jq -Rnc "$words")" '
+        {steps: {
+          select: (if $result == "success" then {outcome: "success", outputs: $select}
+                   else {outcome: "failure", outputs: {}} end),
+          fallback: {outcome: "success", outputs: $fallback}}}')" ||
+        { echo "could not build the steps of '$3'" >&2; exit 1; }
+      outputs="$(gh_eval outputs "$steps" <"$4")"
+      jq -e 'type == "object"' >/dev/null 2>&1 <<<"$outputs" ||
+        { echo "could not evaluate the outputs of '$3': $outputs" >&2; exit 1; }
+      ;;
+  esac
   jq -cn --arg event "$1" --arg result "$2" --argjson outputs "$outputs" --arg ref "${5:-refs/heads/main}" \
     '{github: {event_name: $event, ref: $ref}, needs: {changes: {result: $result, outputs: $outputs}}}'
 }

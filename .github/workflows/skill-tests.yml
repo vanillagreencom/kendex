@@ -29,8 +29,9 @@ name: Skill Tests
 # retains its own reporting. A schedule stands down only where its head is
 # the latest successful scheduled head; every selected night and manual
 # dispatch runs the full native night roster.
-# Whatever else does NOT run on every event carries its own `if:` saying
-# why. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
+# Every gated job's `if:` reads its own id in the changes job's `jobs`
+# output; tools/ci-job-set's LANES row for the job says on which events and
+# selections it runs. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
 # groups and main pushes.
 #
 # Every job names its GitHub-hosted runner in `runs-on:`, directly or through
@@ -124,8 +125,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to a line
-  # this job published, and no other job classifies anything: a second reader
+  # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to the
+  # `jobs` list this job published, which tools/ci-job-set derives from its
+  # LANES table, and no other job classifies anything: a second reader
   # could disagree with this one, and the lane it disagreed about would be the
   # one nothing proved. The action is the same one a consumer references as
   # `vanillagreencom/kendex/.github/actions/change-class@main`, so the merge
@@ -139,7 +141,7 @@ jobs:
   # check nothing will report.
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
-  # a manual dispatch runs the nightly jobs whole without this job. A merge
+  # a manual dispatch publishes the fallback step's whole night alone. A merge
   # group also publishes the package runtime builds its head has no
   # published artifact for. On a push
   # to main only the root checkout and the select step run: tools/ci-job-set
@@ -151,7 +153,7 @@ jobs:
   # checkout there is main itself.
   changes:
     name: Classify the diff
-    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -169,26 +171,20 @@ jobs:
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
-      shell_shards: ${{ steps.select.outputs.shell_shards }}
-      shell_os: ${{ steps.select.outputs.shell_os }}
-      ui: ${{ steps.select.outputs.ui }}
-      bot_instructions: ${{ steps.select.outputs.bot_instructions }}
-      cargo_linux: ${{ steps.select.outputs.cargo_linux }}
       cargo_linux_matrix: ${{ steps.select.outputs.cargo_linux_matrix }}
-      cargo_macos: ${{ steps.select.outputs.cargo_macos }}
-      cargo_lint: ${{ steps.select.outputs.cargo_lint }}
-      cargo_windows: ${{ steps.select.outputs.cargo_windows }}
-      cargo_windows_check: ${{ steps.select.outputs.cargo_windows_check }}
-      catalog: ${{ steps.select.outputs.catalog }}
-      smoke: ${{ steps.select.outputs.smoke }}
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
       skipped_suites: ${{ steps.select.outputs.skipped_suites }}
       skipped_suites_macos: ${{ steps.select.outputs.skipped_suites_macos }}
       rust_targets: ${{ steps.select.outputs.rust_targets }}
-      cache_compile: ${{ steps.select.outputs.cache_compile }}
       runtime_publish: ${{ steps.select.outputs.runtime_publish }}
-      nightly: ${{ steps.select.outputs.nightly }}
+      # The jobs every gated job's `if:` reads its own id in: the selection
+      # where it was made, else the event's whole job set the fallback step
+      # wrote first. GitHub evaluates a job's outputs after its steps
+      # whatever their result (actions/runner JobRunner.cs runs
+      # FinalizeJob, which evaluates them, in a finally), so a failed
+      # classification still runs the event's whole set.
+      jobs: ${{ steps.select.outcome == 'success' && steps.select.outputs.jobs || steps.fallback.outputs.jobs }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -217,6 +213,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Every job the event can run, written as soon as the checkout that
+      # carries tools/ci-job-set is in place, so a classification that dies
+      # still runs them. A changes job lost before this step runs no lane
+      # that needs `changes`, and CI is red on `changes`; Preflight and
+      # Markdown still run. A manual dispatch runs it alone, since its night
+      # is always whole.
+      - id: fallback
+        run: tools/ci-job-set --fallback
       - name: the classifier, from the default branch
         if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -296,8 +300,8 @@ jobs:
           base: ${{ env.BASE }}
           head: ${{ env.HEAD }}
       # The class becomes a job set here and nowhere else. Each lane's `if:`
-      # below reads one of these lines rather than re-deriving the selection
-      # from the class and the paths, so there is one place to read what a
+      # below reads its own id in the `jobs` line rather than re-deriving the
+      # selection from the class and the paths, so there is one place to read what a
       # class runs and one place to change it. It runs in the workspace root,
       # the group's tree, whose crates/ tools/rust-reads reads.
       # --event-parity refuses a selection that differs by event, once per
@@ -306,6 +310,7 @@ jobs:
       # push the class inputs are empty and the token reads the merge group's
       # jobs.
       - id: select
+        if: github.event_name != 'workflow_dispatch'
         env:
           RUSTUP_TOOLCHAIN: stable
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
@@ -337,7 +342,7 @@ jobs:
   bot-instructions:
     name: Bot instructions
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.bot_instructions == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'bot-instructions') }}
     runs-on: ubuntu-latest
     # The credential step took 406 s in merge-group run 44718539691, with
     # installation and both ranges. A local replay of both ranges took
@@ -511,7 +516,7 @@ jobs:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     # GitHub rejects an empty matrix; !cancelled() permits the failure fallback.
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'skill-suites-shard') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2014,7 +2019,7 @@ jobs:
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && ((github.event_name == 'schedule' && (needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false')) || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'skill-suites-macos') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2055,7 +2060,7 @@ jobs:
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'skill-suites-macos-queue') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2069,7 +2074,7 @@ jobs:
   ui-tests:
     name: UI (vitest, tsc, biome)
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'ui-tests') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -2164,8 +2169,7 @@ jobs:
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
-    # What selects this lane, and why: tools/ci-job-set, cargo_linux.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'cargo-linux') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON((needs.changes.result == 'success' && needs.changes.outputs.cargo_linux_matrix != 'null' && needs.changes.outputs.cargo_linux_matrix) || '{"crate":["kendex-core","kendex-cli","kendex-app"]}') }}
@@ -2260,8 +2264,7 @@ jobs:
   cargo-macos:
     name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
-    # What selects this lane, and why: tools/ci-job-set, cargo_macos.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_macos == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'cargo-macos') }}
     strategy:
       fail-fast: false
       matrix:
@@ -2490,7 +2493,7 @@ jobs:
   cargo-lint:
     name: Cargo lints (clippy, fmt, doc)
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.cargo_lint == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'cargo-lint') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -2533,8 +2536,7 @@ jobs:
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
     needs: changes
-    # What selects this lane, and why: tools/ci-job-set, cargo_windows_check.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows_check == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'cargo-check-windows') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -2564,7 +2566,7 @@ jobs:
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_windows == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') && (github.event_name != 'push' || needs.changes.result != 'success' || needs.changes.outputs.cache_compile == 'true') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'cargo-tests-windows') }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -2598,7 +2600,7 @@ jobs:
   # The default catalog must pass the released engine's strict validation.
   catalog:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'catalog') }}
     permissions:
       contents: read
     # Each merge-group part renders the catalog and builds both runtimes for
@@ -2644,7 +2646,7 @@ jobs:
   # and does not test these renderer binaries.
   smoke:
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.smoke == 'true') && (github.event_name != 'schedule' || needs.changes.result != 'success' || needs.changes.outputs.nightly != 'false') }}
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'smoke') }}
     name: real-CLI round trip
     permissions:
       contents: read
@@ -2702,6 +2704,8 @@ jobs:
   # from skipping the context that must report that failure.
   ci:
     name: CI
+    # GitHub reads needs before any job runs, so no output can supply them;
+    # tools/ci-aggregate refuses a run whose needs lack a LANES job.
     needs: [changes, bot-instructions, skill-suites-shard, skill-suites-macos-queue, ui-tests, preflight, markdown, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows, catalog, smoke]
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
@@ -2720,28 +2724,7 @@ jobs:
         if: github.event_name == 'merge_group'
         env:
           RESULTS: ${{ toJSON(needs) }}
-          SHELL_SHARDS: ${{ needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]' }}
-          MACOS_QUEUE: ${{ needs.changes.outputs.queue_macos_shards != '[]' }}
-          UI: ${{ needs.changes.outputs.ui }}
-          BOT_INSTRUCTIONS: ${{ needs.changes.outputs.bot_instructions }}
-          CARGO_LINUX: ${{ needs.changes.outputs.cargo_linux }}
-          CARGO_MACOS: ${{ needs.changes.outputs.cargo_macos }}
-          CARGO_LINT: ${{ needs.changes.outputs.cargo_lint }}
-          CARGO_WINDOWS: ${{ needs.changes.outputs.cargo_windows }}
-          CARGO_WINDOWS_CHECK: ${{ needs.changes.outputs.cargo_windows_check }}
-          CATALOG: ${{ needs.changes.outputs.catalog }}
-          SMOKE: ${{ needs.changes.outputs.smoke }}
+          JOBS: ${{ needs.changes.outputs.jobs }}
         run: |
           echo "$RESULTS"
-          tools/ci-aggregate --results "$RESULTS" --classifier changes \
-            --lane "$SHELL_SHARDS:skill-suites-shard" \
-            --lane "$MACOS_QUEUE:skill-suites-macos-queue" \
-            --lane "$UI:ui-tests" \
-            --lane "$BOT_INSTRUCTIONS:bot-instructions" \
-            --lane "$CARGO_LINUX:cargo-linux" \
-            --lane "$CARGO_MACOS:cargo-macos" \
-            --lane "$CARGO_LINT:cargo-lint" \
-            --lane "$CARGO_WINDOWS_CHECK:cargo-check-windows" \
-            --lane "$CARGO_WINDOWS:cargo-tests-windows" \
-            --lane "$CATALOG:catalog" \
-            --lane "$SMOKE:smoke"
+          tools/ci-aggregate --results "$RESULTS" --classifier changes --jobs "$JOBS"

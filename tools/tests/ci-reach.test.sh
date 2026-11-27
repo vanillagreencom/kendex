@@ -34,14 +34,23 @@ ui="UI (vitest, tsc, biome)"
 macos="macOS cargo kendex-core"
 bot="Bot instructions"
 unmapped="Classify the diff"
+mac_rest="Skill suites shard (orch-rest, macos-latest)"
+mac_mail="Skill suites shard (mailbox, macos-latest)"
 
 check "each check answered by its lane or shard, CI by the others" \
-  "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within CI${nl}exit=0" \
-  "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$unmapped${nl}CI")"
+  "within $orch_rest${nl}outside $ui${nl}outside $oversee${nl}within $bot${nl}within $macos${nl}within $mac_rest${nl}outside $mac_mail${nl}within CI${nl}exit=0" \
+  "$(reach micro "$orch_rest$nl$ui$nl$oversee$nl$bot$nl$macos$nl$mac_rest$nl$mac_mail$nl$unmapped${nl}CI")"
 printf '%s\n' .kendex-lock.json >"$TMP/paths"
 check "an install record selects no suite shard" \
   "outside $orch_rest${nl}outside $oversee${nl}outside CI${nl}exit=0" \
   "$(reach micro "$orch_rest$nl$oversee${nl}CI")"
+# Every merge group runs Preflight and Markdown, so a failure of either is
+# within whatever the change selects, and so is CI beside it.
+preflight="Preflight (diff-scoped deterministic checks)"
+markdown="Markdown (shape + references)"
+check "Preflight and Markdown are within every change, and CI beside them" \
+  "within $preflight${nl}within $markdown${nl}outside $oversee${nl}within CI${nl}exit=0" \
+  "$(reach micro "$preflight$nl$markdown$nl$oversee${nl}CI")"
 printf '%s\n' skills/orch/SKILL.md .agents/skills/orch/SKILL.md >"$TMP/paths"
 check "Cargo check names follow their crate in the selected Linux matrix" \
   "within Cargo kendex-core (Linux)${nl}outside Cargo kendex-app (Linux)${nl}exit=0" \

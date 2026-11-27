@@ -8,12 +8,16 @@ tools/tests/ci-aggregate.test.sh. Sourced by path, never installed.
     gh-eval.py jobs CONTEXT_JSON         read JOB<TAB>NEEDS<TAB>EXPR lines on stdin,
                                          NEEDS comma-separated, and print each JOB
                                          whose condition holds
+    gh-eval.py outputs CONTEXT_JSON      read NAME<TAB>EXPR lines on stdin, a job's
+                                         `outputs:`, and print them as one JSON
+                                         object of strings, leaving out each one
+                                         that evaluates empty, as GitHub does
 
 CONTEXT_JSON is the object the expressions read, `github`, `needs`, `steps` or
 any other context, with `needs.<job>.result` set for every job a condition's
 status function reads. The evaluator covers string, number and boolean
 literals, context paths, `!`, `==`, `!=`, `&&`, `||`, parentheses, and the
-functions fromJSON, format, always, cancelled and success. Anything else is a refusal,
+functions fromJSON, format, contains, always, cancelled and success. Anything else is a refusal,
 not a guess: every refusal starts `gh-eval: cause=` and exits 2. `==` compares
 strings without regard to case, `&&` and `||` return an operand, and a path
 that names no value is null, as GitHub evaluates them.
@@ -179,6 +183,15 @@ class Parser:
             return as_string(values)
         if name == "format" and args:
             return format_string(args[0], args[1:])
+        # contains(): an array holds an element equal to the item, a string
+        # the item as a substring, both compared as strings without regard
+        # to case, as GitHub documents the function.
+        if name == "contains" and len(args) == 2:
+            search, item = args
+            needle = as_string(item).lower()
+            if isinstance(search, list):
+                return any(as_string(v).lower() == needle for v in search)
+            return needle in as_string(search).lower()
         if name == "always":
             return True
         if name == "cancelled":
@@ -221,6 +234,14 @@ def main(argv):
             job_needs = [n for n in needs.split(",") if n]
             if truthy(Parser(tokens(expr), ctx, job_needs).whole()):
                 print(job)
+    elif mode == "outputs" and len(argv) == 3:
+        outputs = {}
+        for line in sys.stdin:
+            name, expr = line.rstrip("\n").split("\t", 1)
+            value = as_string(Parser(tokens(expr), ctx).whole())
+            if value:
+                outputs[name] = value
+        print(json.dumps(outputs, separators=(",", ":")))
     else:
         refuse("cause=unknown-mode mode=%s" % mode)
 

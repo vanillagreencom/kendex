@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
@@ -333,22 +335,52 @@ function unrunPackages(workflow) {
 // These workflow conditions use JavaScript-compatible comparisons and Boolean
 // operators. Execute those actual expressions rather than accepting any text
 // that mentions a declared shard. Unknown expression inputs fail the test.
+// contains() and fromJSON() behave as GitHub documents them: an array holds
+// an element, a string a substring, compared without regard to case.
 function enabled(condition, matrix, github, needs) {
 	assert.ok(condition, "an execution has no condition");
 	const expression = condition.replace(/^\$\{\{\s*|\s*\}\}$/g, "");
-	return Boolean(Function("matrix", "github", "needs", "cancelled", `return (${expression});`)(
-		matrix, github, needs, () => false,
+	const contains = (search, item) => {
+		const needle = String(item).toLowerCase();
+		return Array.isArray(search)
+			? search.some((value) => String(value).toLowerCase() === needle)
+			: String(search).toLowerCase().includes(needle);
+	};
+	return Boolean(Function("matrix", "github", "needs", "cancelled", "contains", "fromJSON", `return (${expression});`)(
+		matrix, github, needs, () => false, contains, JSON.parse,
 	));
 }
 
-function packageExecutions(workflow, events = ["merge_group", "push"], changes = { result: "failure", outputs: {} }) {
+// The jobs list a dead classifier publishes on EVENT: the changes job's
+// fallback step, run through tools/ci-job-set itself.
+function fallbackJobs(event) {
+	const scratch = mkdtempSync(join(tmpdir(), "package-policy-"));
+	let out;
+	try {
+		const output = join(scratch, "output");
+		execFileSync(join(root, "..", "tools", "ci-job-set"), ["--fallback"], {
+			env: { ...process.env, EVENT: event, GITHUB_OUTPUT: output },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		out = readFileSync(output, "utf8");
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
+	const line = out.split("\n").find((entry) => entry.startsWith("jobs="));
+	assert.ok(line, `tools/ci-job-set --fallback wrote no jobs line for ${event}`);
+	return line.slice("jobs=".length);
+}
+
+const deadClassifier = (event) => ({ result: "failure", outputs: { jobs: fallbackJobs(event) } });
+
+function packageExecutions(workflow, events = ["merge_group", "push"], changesOf = deadClassifier) {
 	const jobs = workflow.split(/\n(?= {2}[\w-]+:\n)/);
 	const ordinary = jobs.find((job) => job.startsWith("  skill-suites-shard:\n"));
 	assert.ok(ordinary, "the package execution job reader found no route");
 	const ordinarySteps = ciSteps(ordinary);
-	const needs = { changes };
 	const executions = [];
 	for (const event_name of events) {
+		const needs = { changes: changesOf(event_name) };
 		const github = { event_name, ref: "refs/heads/main" };
 		const condition = ordinary.match(/^ {4}if: (.+)$/m)?.[1];
 		for (const shard of shardNames(workflow)) {
@@ -361,8 +393,8 @@ function packageExecutions(workflow, events = ["merge_group", "push"], changes =
 	return executions;
 }
 
-function packageClaims(workflow, event, changes) {
-	return packageExecutions(workflow, [event], changes).flatMap(({ matrix, github, needs, steps }) =>
+function packageClaims(workflow, event, changesOf) {
+	return packageExecutions(workflow, [event], changesOf).flatMap(({ matrix, github, needs, steps }) =>
 		steps.filter((step) => enabled(step.condition, matrix, github, needs) &&
 			step.commands.includes(ciEntryPoint(packages().find(({ dir }) => dir === step.dir)?.pkg ?? {})))
 			.map(({ dir }) => dir)).sort();
@@ -371,13 +403,13 @@ function packageClaims(workflow, event, changes) {
 test("main and the merge group each execute every package once", () => {
 	const workflow = readFileSync(workflowPath, "utf8");
 	const expected = packages().filter(({ pkg }) => ciEntryPoint(pkg)).map(({ dir }) => dir).sort();
-	for (const changes of [
-		{ result: "failure", outputs: {} },
-		{ result: "skipped", outputs: {} },
-		{ result: "success", outputs: { shell_shards: "true", shell_os: '["ubuntu-latest"]' } },
+	// A dead classifier, and a selection that runs the shard job.
+	for (const changesOf of [
+		deadClassifier,
+		() => ({ result: "success", outputs: { jobs: '["skill-suites-shard"]' } }),
 	]) {
-		assert.deepEqual(packageClaims(workflow, "push", changes), expected);
-		assert.deepEqual(packageClaims(workflow, "merge_group", changes), expected);
+		assert.deepEqual(packageClaims(workflow, "push", changesOf), expected);
+		assert.deepEqual(packageClaims(workflow, "merge_group", changesOf), expected);
 	}
 });
 
