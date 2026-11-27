@@ -218,7 +218,7 @@ Two rules, both about a check that never appears.
           --skippable test --skippable build
 ```
 
-Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that a true verdict did not authorize.
+Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that neither a stood-down verdict nor, for an `--only-on` job, a run of another event authorized.
 
 - Run `aggregate-needs` from the default branch on every event, including `pull_request`, `merge_group` and an adopted `push` trigger. A missing default-branch helper fails `CI` with one `::error::` line naming its path.
 - Keep the trusted checkout unconditional. A pull request must not change the helper that judges its own skipped jobs.
@@ -319,7 +319,7 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
 - Publish `change_class` as the job output in place of `harness_only`.
 - Feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`.
 
-`aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
+`aggregate-needs` keeps its rule unchanged: a skipped `--skippable` job is accepted only against the class that authorized it.
 
 ### Through the composite action
 
@@ -388,7 +388,7 @@ The producer reads the event's base workflow. Push derivation needs runner proof
 
 An ordinary lane job that runs on one event only joins a literal event test after the status function: `${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}`. The event test limits the events the job runs on and does not change the verdict the reader derives for the lane. The repository-wide scan gate below takes no extra event test. A gate that drops the `result != 'success'` fallback, or a scan gate with an event test, leaves the roster unreadable with `cause=unsupported-lane-gate`.
 
-On every other event the job skips while its verdict can read `true`, and `aggregate-needs` accepts that skip only where `lanes` or the lane's own verdict reads `false`. The `lanes` bullets in [§ Through the composite action](#through-the-composite-action) say where `lanes` reads `false`. On `schedule` and `workflow_dispatch` every verdict reads `true`, so there the skip always fails `CI`.
+On every other event the job skips while its verdict can read `true`, as it always does on `schedule` and `workflow_dispatch`. Pass `--only-on JOB=EVENT` to `aggregate-needs` beside the job's `--lane`, naming the event its test names. The aggregate reads the run's event from `GITHUB_EVENT_NAME` and accepts the job's skip on every other event. On the named event a skip passes only where `lanes` or the lane's own verdict reads `false`, as for any lane; the `lanes` bullets in [§ Through the composite action](#through-the-composite-action) say where `lanes` reads `false`. A lane job takes one `--only-on`, and a job with no `--lane` takes none. An `--only-on` that names another event than the job's test fails `CI` only on a run of the event it names where `lanes` and the lane's verdict read `true`, and never where the workflow does not run on that event. One left out fails `CI` on each other event where neither `lanes` nor the verdict stands the job down, which is every run on `schedule` and `workflow_dispatch`.
 
 Map the job's `lanes` output directly from the classifier. To narrow it with a Boolean step output, use `${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.classify.outputs.lanes }}`. Use the IDs and output names from your workflow.
 
@@ -547,9 +547,10 @@ check         fixtures/* # reason: the binary reads fixture names at runtime
       if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_check != 'false')) }}
   ```
 
-- **The aggregate authorizes each lane's skip by `lanes` or by that lane's own verdict.**
+- **The aggregate authorizes each lane's skip by `lanes`, by that lane's own verdict or by its one event.**
   - Keep `--waiver` on `lanes == 'false'` and each gated job's `--skippable`.
   - Add `--lane JOB=LANE` per gated job. `aggregate-needs` reads the verdict, the classifier job's `lane_<LANE>` output, out of the `--results` it was handed, and accepts the job's skip where the waiver or that verdict stood it down.
+  - Add `--only-on JOB=EVENT` per job whose gate runs it on one event only, as above.
   - A job takes one `--lane`, and a second is refused; two jobs that read one lane, a Linux and a macOS leg of one suite, each pass `--lane JOB=LANE` naming that lane.
 
 ### What each class needs, and what it costs to leave out
@@ -642,7 +643,7 @@ A render that the refresh run lands on the default branch, under the review-gate
 - **No run cancels another.** The workflow has no `concurrency` group, so a copy adds none. A run cancelled under [GitHub's concurrency rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) ends its `CI` check as cancelled, and that check blocks the pull request though nothing in the change failed, including when one push starts two runs and the later cancels the earlier. A pull request run is only `changes` and `CI`, so cancelling a superseded one saves little. A release or publication workflow keeps its own serialization.
 - **The render prerequisites are Shape 4's.** The template uses harness-ci's `install-latest.sh` from the trusted default branch. The network steps and the render-candidate step permit failure in the classifier job. A missing prerequisite prevents the `render` class. Every other class is judged as usual. The install and mirror steps run only for a render candidate, on `pull_request` too: orch's consumer refresh approval reads the measured render class off the pull request run, and the merge group carries the same proof.
 - **Every job runs on `vars.CI_RUNNER_2V`, falling back to `ubuntu-latest`.** The organization variable names the shared runner; a repository without it runs on GitHub's hosted runner.
-- **CI is Shape 3's aggregate.** It runs under `always()`. Its `guards` checkout supplies the default-branch helper on every event, under [§ Shape 3](#shape-3--merge-queues-where-the-required-context-must-report). `aggregate-needs` accepts a skipped lane only where the classifier succeeded and a verdict stood it down, per [§ Per-lane verdicts](#per-lane-verdicts).
+- **CI is Shape 3's aggregate.** It runs under `always()`. Its `guards` checkout supplies the default-branch helper on every event, under [§ Shape 3](#shape-3--merge-queues-where-the-required-context-must-report). `aggregate-needs` accepts a skipped lane only where the classifier succeeded and a verdict stood it down, or the run's event is not the one an `--only-on` names for the lane, per [§ Per-lane verdicts](#per-lane-verdicts).
 - **The secrets step scans each pull request's commits with default-branch code.**
   - Land commit-guards on the default branch before adopting the template. An adoption pull request that adds both fails the secrets step because the `guards` checkout has no installer or scanner.
   - The `guards` checkout supplies the pinned gitleaks installer and the scanner, including its libraries.

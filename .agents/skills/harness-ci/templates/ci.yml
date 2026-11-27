@@ -179,7 +179,8 @@ jobs:
   # THE REQUIRED CONTEXT. always(): a failed or skipped need would otherwise
   # skip this job, and a skipped required context satisfies the ruleset.
   # aggregate-needs accepts a skipped lane only where the classifier
-  # succeeded and a verdict stood it down.
+  # succeeded and a verdict stood it down, or, for a lane whose gate names one
+  # event and whose `--only-on JOB=EVENT` names it too, on any other event.
   ci:
     name: CI
     needs: [changes, test]

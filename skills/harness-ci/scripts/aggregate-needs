@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# aggregate-needs — accept successful jobs and classifier-authorized skips.
+# aggregate-needs — accept successful jobs and the skips a verdict or the run's
+# event authorized.
 #
 # Usage:
 #   aggregate-needs --results JSON --classifier JOB
 #                   [--waiver true|false --skippable JOB [--skippable JOB...]]
-#                   [--lane JOB=LANE...]
+#                   [--lane JOB=LANE... [--only-on JOB=EVENT...]]
 #
 # RESULTS is the GitHub Actions `toJSON(needs)` object. The classifier job must
-# have succeeded. Every other job must have succeeded, unless one of two
+# have succeeded. Every other job must have succeeded, unless one of three
 # authorizations stood it down:
 #   --skippable JOB  the classifier's one waiver, --waiver, is true;
 #   --lane JOB=LANE  the lane's own verdict, the classifier job's output
 #                    `lane_<LANE>` read out of RESULTS, is false. A verdict
 #                    that is absent, as it is where no lane declaration was
 #                    read, authorizes nothing. A JOB takes one --lane.
+#   --only-on JOB=EVENT  the run's event, GITHUB_EVENT_NAME, is not EVENT,
+#                    the one event the --lane job's gate runs it on. On
+#                    EVENT itself the skip still needs the waiver or the
+#                    verdict. A JOB takes one --only-on.
 # At least one --skippable or --lane is required, and --waiver is required
 # with --skippable.
 #
@@ -22,7 +27,8 @@
 # A rejection prints `rejected classifier=<job>`, with ` waiver=<value>` where
 # --waiver was given, then one `unaccepted job=<job> result=<result>` line per
 # job it did not accept, the classifier included, carrying ` lane=<lane>
-# verdict=<value|absent>` for a --lane job.
+# verdict=<value|absent>` for a --lane job and ` only-on=<event>` after it
+# for an --only-on job.
 set -euo pipefail
 
 results=""
@@ -30,16 +36,18 @@ classifier=""
 waiver=""
 skippable=""
 lanes=""
+only_on=""
 
 usage() {
   cat <<'USAGE'
 Usage: aggregate-needs --results JSON --classifier JOB
                        [--waiver true|false --skippable JOB [--skippable JOB...]]
-                       [--lane JOB=LANE...]
+                       [--lane JOB=LANE... [--only-on JOB=EVENT...]]
 
-Accepts successful jobs and classifier-authorized skips from toJSON(needs):
+Accepts successful jobs and authorized skips from toJSON(needs):
 a --skippable job where --waiver is true, a --lane job where the classifier
-job's output lane_<LANE> is false.
+job's output lane_<LANE> is false, and an --only-on job on any event but
+EVENT, read from GITHUB_EVENT_NAME.
 Exit 1 for an unaccepted result and 2 for invalid arguments or JSON.
 USAGE
 }
@@ -57,6 +65,14 @@ need_value() { # FLAG REMAINING NEXT
     -?*) die "invalid-arguments=flag-used-as-value option=$1 value=$3" \
       "$1 needs a value, got the flag '$3'" ;;
   esac
+}
+
+one_per_job() { # FLAG JOB=VALUE ENTRIES
+  while IFS= read -r seen; do
+    [ "${seen%%=*}" != "${2%%=*}" ] ||
+      die "invalid-arguments=duplicate-${1#--} job=${2%%=*}" \
+        "job '${2%%=*}' takes one $1"
+  done <<<"$3"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -82,12 +98,17 @@ $2"
         *=*) ;;
         *) die "invalid-arguments=invalid-lane value=$2" "--lane takes JOB=LANE" ;;
       esac
-      while IFS= read -r seen; do
-        [ "${seen%%=*}" != "${2%%=*}" ] ||
-          die "invalid-arguments=duplicate-lane job=${2%%=*}" \
-            "job '${2%%=*}' takes one --lane"
-      done <<<"$lanes"
+      one_per_job "$1" "$2" "$lanes"
       lanes="${lanes:+$lanes
+}$2"
+      shift 2
+      ;;
+    --only-on)
+      need_value "$1" "$#" "${2:-}"
+      [[ $2 =~ ^[^=]+=[a-z_]+$ ]] ||
+        die "invalid-arguments=invalid-only-on value=$2" "--only-on takes JOB=EVENT"
+      one_per_job "$1" "$2" "$only_on"
+      only_on="${only_on:+$only_on
 }$2"
       shift 2
       ;;
@@ -110,6 +131,24 @@ esac
 [ -n "$skippable" ] || [ -n "$lanes" ] ||
   die "invalid-arguments=missing option=--skippable" \
     "at least one --skippable or --lane job is required"
+# The event limit stands in for a verdict only on a job the verdict judges.
+while IFS= read -r limit; do
+  [ -n "$limit" ] || continue
+  judged=""
+  while IFS= read -r lane; do
+    [ "${lane%%=*}" != "${limit%%=*}" ] || judged=yes
+  done <<<"$lanes"
+  [ -n "$judged" ] || die "invalid-arguments=only-on-without-lane job=${limit%%=*}" \
+    "--only-on names a job that takes no --lane"
+done <<<"$only_on"
+event=""
+if [ -n "$only_on" ]; then
+  event="${GITHUB_EVENT_NAME:-}"
+  case "$event" in
+    "" | *[!a-z_]*) die "invalid-environment=event variable=GITHUB_EVENT_NAME value=$event" \
+      "--only-on needs the run's event in GITHUB_EVENT_NAME" ;;
+  esac
+fi
 
 if ! printf '%s\n' "$results" | jq -e '
   type == "object" and
@@ -120,14 +159,19 @@ if ! printf '%s\n' "$results" | jq -e '
 fi
 
 # One line per job not accepted: the classifier unless it succeeded, then
-# every other job neither successful nor a skip a verdict authorized.
+# every other job neither successful nor a skip the waiver, a verdict or the
+# run's event authorized.
 unaccepted="$(printf '%s\n' "$results" | jq -r \
   --arg classifier "$classifier" \
   --arg waiver "$waiver" \
   --arg skippable "$skippable" \
-  --arg lanes "$lanes" '
+  --arg lanes "$lanes" \
+  --arg only_on "$only_on" \
+  --arg event "$event" '
+    def table: split("\n") | map(select(. != "") | split("=") | {key: .[0], value: .[1]}) | from_entries;
     .[$classifier] as $verdicts |
-    ($lanes | split("\n") | map(select(. != "") | split("=") | {key: .[0], value: .[1]}) | from_entries) as $lane_of |
+    ($lanes | table) as $lane_of |
+    ($only_on | table) as $only_on_of |
     (if .[$classifier].result == "success" then empty
      else "job=\($classifier) result=\(.[$classifier].result // "absent")" end),
     (to_entries[] | select(.key != $classifier) |
@@ -139,11 +183,13 @@ unaccepted="$(printf '%s\n' "$results" | jq -r \
            ($skippable | split("\n") | index($entry.key)) != null) or
           ($lane_of[$entry.key] != null and
            $verdicts.outputs["lane_\($lane_of[$entry.key])"] == "false")
+          or ($only_on_of[$entry.key] != null and $only_on_of[$entry.key] != $event)
         ))
       ) | not) |
       "job=\($entry.key) result=\($entry.value.result)" +
       (if $lane_of[$entry.key] == null then ""
-       else " lane=\($lane_of[$entry.key]) verdict=\($verdicts.outputs["lane_\($lane_of[$entry.key])"] // "absent")" end))
+       else " lane=\($lane_of[$entry.key]) verdict=\($verdicts.outputs["lane_\($lane_of[$entry.key])"] // "absent")" end) +
+      (if $only_on_of[$entry.key] == null then "" else " only-on=\($only_on_of[$entry.key])" end))
   ')" || die "invalid-results=unreadable" "the needs object could not be judged"
 
 if [ -z "$unaccepted" ]; then
