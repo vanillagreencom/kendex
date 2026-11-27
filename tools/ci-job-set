@@ -848,7 +848,10 @@ main_proof() {
 # groups' legs carry names this night does not, as catalog's parts do, the
 # legs are not compared by name. The report reads which leg failed, not
 # which suite or cargo target inside it: a suite suite_map places on the
-# leg counts whichever suite failed.
+# leg counts whichever suite failed. On a split leg, skipped=suites counts
+# every suite suite_map places on the leg from the leg's packages, those the
+# leg's step does not run included, so such a fault can be false and the
+# reading judges it by hand.
 # One stdout line per failed check, its key first:
 #   selector-fault commit=SHA check=NAME skipped=job|leg|suites|targets[ count=N]
 #   night-red commit=SHA check=NAME selector=ran|unread|none
