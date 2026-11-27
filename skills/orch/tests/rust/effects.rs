@@ -822,13 +822,19 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
 
 /// A relaunch whose launch fails after a confirmed close, here on a harness
 /// that exits at once, answers `launch-failed` at exit 3 naming the close's
-/// intent, and leaves the lane stopped and marked with that close. The next
-/// relaunch, once the harness comes up, sends the launch alone and runs the
-/// lane, with no second close.
+/// intent, and leaves the lane stopped and marked with that close. A rerun
+/// whose server cannot start, here on a recorded socket whose directory its
+/// server may not bind in, sends no close and answers `launch-failed`
+/// naming that same close. The next relaunch, once the server binds and
+/// the harness comes up, sends the launch alone and runs the lane, with no
+/// second close.
 #[test]
 fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
+    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
+    let sockets = dir.path().join("sockets");
+    std::fs::create_dir(&sockets).unwrap();
+    let server = Server::start(&sockets, "fleet");
     let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
     end_server(&server, harness_pid(&runner, "KEN-1"));
     runner.stub = stub("stub-fail");
@@ -855,6 +861,50 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     let lane = &fleet["lanes"][0];
     assert_eq!(lane["status"], "stopped", "{lane}");
     assert_eq!(lane["restart_closed"], closes[0], "{lane}");
+    let close = closes[0].to_owned();
+    // The server the failed launch started, if it still stands, ended, so
+    // the rerun must start one on the shut directory.
+    let standing = tmux(&server.socket, &["display-message", "-p", "#{pid}"]);
+    if let Ok(pid) = String::from_utf8_lossy(&standing.stdout)
+        .trim()
+        .parse::<u32>()
+    {
+        let killed = tmux(&server.socket, &["kill-server"]);
+        assert!(killed.status.success(), "{}", stderr(&killed));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while live(pid) {
+            assert!(Instant::now() < deadline, "the started server never ended");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let unserved = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let text = stderr(&unserved);
+    assert_eq!(unserved.status.code(), Some(3), "{text}");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("orch-runtime: launch-failed item=KEN-1 "))
+        .unwrap_or_else(|| panic!("no launch-failed line: {text}"));
+    assert!(
+        line.split(' ').any(|w| w == format!("close={close}")),
+        "{line}"
+    );
+    assert!(
+        line.split(' ').any(|w| w == "cause=tmux-server-unstarted"),
+        "{line}"
+    );
+    let fleet = runner.fleet();
+    let closes = fleet["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-1")
+        .count();
+    assert_eq!(closes, 1, "the unserved rerun sends no second close");
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["restart_closed"], close, "{lane}");
     runner.stub = stub("stub-confirm");
     let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
     let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();

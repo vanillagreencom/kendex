@@ -851,8 +851,9 @@ enum LaneOp {
     /// `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared
     /// cause=CAUSE`, the launch's account refusals (`account-walled`,
     /// `account-reserved`, `account-retired`, `account-unmeasured`,
-    /// `account-unjudged`), its admission refusals and its tmux server and
-    /// session refusals (the lane directive's § Tmux session).
+    /// `account-unjudged`), its admission refusals and, where its close is
+    /// still to send, its tmux server and session refusals (the lane
+    /// directive's § Tmux session).
     Relaunch {
         #[command(flatten)]
         target: Target,
@@ -3963,8 +3964,9 @@ fn applied_live(
 /// server and session the launch opens on resolved, before the close, so
 /// every refusal at exit 1 leaves the lane as it stood; then the close,
 /// and only after a confirmed close the launch. A lane an earlier
-/// relaunch's close left stopped takes the launch alone, its lines naming
-/// that close. Every answer after the close names its outcome, the line
+/// relaunch's close left stopped takes the launch alone, its server and
+/// session resolved by that launch, so every line, a refusal there
+/// included, names that close. Every answer after the close names its outcome, the line
 /// printed and the process ended by its status.
 fn relaunch_lane(
     path: &Path,
@@ -3984,9 +3986,13 @@ fn relaunch_lane(
         effects::relaunch::Close::Confirmed(id) => Retire::Sent(id),
     };
     let launch = admitted(path, read_request(&relaunch.launch)?, &settings)?;
-    effects::relaunch::launch_server(&settings, path, locking)?;
     let close_id = match close {
-        Retire::Send(close) => relaunch_closed(path, item, *close, &settings, locking)?,
+        Retire::Send(close) => {
+            effects::relaunch::launch_server(&settings, path, locking)?;
+            relaunch_closed(path, item, *close, &settings, locking)?
+        }
+        // The lane is already closed: the launch resolves its own server and
+        // session, so a refusal there is a failed launch naming that close.
         Retire::Sent(id) => id,
     };
     // The lane is closed: a refusal of its launch from here on is a failed
