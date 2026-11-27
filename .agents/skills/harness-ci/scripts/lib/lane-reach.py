@@ -1032,9 +1032,12 @@ def job_reads(evidence, job, env_words, ordinary, readers):
                                                  or MODULE.search(path)):
                     evidence.loaded_reads(path, directory, ordinary, visited)
             except UNAVAILABLE as error:
+                # The refusal stops the job before its run lines, and the
+                # file it could not follow can read any path, so no claim
+                # stands in for what the job reads.
                 named = os.path.normpath(Path(directory) / word)
                 raise NamedUnreadable(
-                    f"opaque-workflow-env key={key} path={named} reason={error}", is_shape(error),
+                    f"opaque-workflow-env key={key} path={named} reason={error}", False,
                 ) from error
         for line in step["run"].splitlines():
             args = words(line)

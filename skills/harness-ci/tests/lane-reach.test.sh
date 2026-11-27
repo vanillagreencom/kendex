@@ -356,6 +356,9 @@ edit_workflow '  CI_CONFIG: ci/settings.toml\n' \
   '  CI_CONFIG: ci/settings.toml\n  NODE_OPTIONS: --require ./tools/setup.cjs\n'
 printf "require('./setup-lib.cjs')\n" >"$repo/tools/setup.cjs"
 printf 'module.exports = 42\n' >"$repo/tools/setup-lib.cjs"
+# A claim names another input, so no unclaimed lane keeps the shell lane as its prerequisite.
+printf '%s\n' 'installed installed.settings # reason: the installed check reads the setting' \
+  >>"$repo/.github/ci-lanes.conf"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a workflow env preload requires a sibling module'
 git -C "$repo" checkout -qb fixture-workflow-env-wrapper "$workflow_env_base"
@@ -1515,8 +1518,8 @@ workflow-env-config|ci/settings.toml|true||false|true||||||||false
 workflow-env-claimed|orphan.settings|false||false|false||||||||true
 workflow-env-step|tools/input.sh|true||false|false||||||||false
 workflow-env-step-claimed|orphan.settings|false||false|false||||||||true
-workflow-env-unreadable|tools/input.sh|true||false|true||||||||false
-workflow-env-preload|tools/setup-lib.cjs|true||false|true||||||||false
+workflow-env-unreadable|tools/input.sh|true||true|true||||||||true
+workflow-env-preload|tools/setup-lib.cjs|true||true|true||||||||true
 workflow-env-wrapper|tools/wrap-lib.sh|true||false|true||||||||false
 workflow-env-expression|tools/input.sh||||
 workflow-env-absolute|tools/input.sh||||
