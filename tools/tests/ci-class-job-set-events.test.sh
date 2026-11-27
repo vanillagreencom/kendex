@@ -237,9 +237,17 @@ case "$file" in
   artifacts-*) key=artifacts ;;
   *) cat "$GH_WORLD/$file"; exit ;;
 esac
-jq -c --arg key "$key" '
+# A run listing's head_sha parameter keeps that head's runs alone, and a
+# filtered listing serves at most 1000 rows whatever its total_count: the
+# successful main push listing served 10 full pages of 100 under
+# total_count 2500 on 2026-11-26.
+sha=""
+case "$url" in *'&head_sha='*) sha="${url#*&head_sha=}"; sha="${sha%%&*}" ;; esac
+jq -c --arg key "$key" --arg sha "$sha" '
   if (.[$key] | type) == "array" then
-    .total_count = (.fixture_total_count // (.[$key] | length))
+    if $key == "workflow_runs" and $sha != "" then .workflow_runs |= map(select(.head_sha == $sha)) else . end
+    | .total_count = (.fixture_total_count // (.[$key] | length))
+    | .[$key] |= .[:1000]
     | if $key == "jobs" then .jobs |= (to_entries | map(.value + {id: (.key + 1)})) else . end
   else . end
 ' "$GH_WORLD/$file"
@@ -267,15 +275,21 @@ plant_selection() { # DIR RUN SKIPPED RUST [EXPIRED]
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("ci-selection.json", sys.argv[2])' "$1/zip-$artifact" "{\"skipped_suites\":$3,\"rust_targets\":$4}"
 }
-# One world per GitHub state: runs.json, and per run jobs-<run>.json,
-# artifacts-<run>.json and the artifact's zip.
+# Main's successful push history ahead of PUSH_BEFORE's: more runs than a
+# listing of every successful push serves, each at a head outside this
+# history, so only a read by head finds PUSH_BEFORE's run.
+jq -cn '[range(1100) | {id: (10000 + .), event: "push", head_branch: "main", path: ".github/workflows/skill-tests.yml",
+    status: "completed", conclusion: "success", created_at: "2026-11-11T00:00:00Z", head_sha: (("f" * 40 | .[:32]) + ("0000000" + tostring | .[-8:]))}]' \
+  >"$TMP/push-history.json"
+# One world per GitHub state: runs.json, push-runs.json, and per run
+# jobs-<run>.json, artifacts-<run>.json and the artifact's zip.
 push_world() { # NAME [WORLD] — the NAME state, in the world named WORLD, NAME unless given
   local dir="$TMP/push/${2:-$1}" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
   local second=$((PUSH_RUN + 1))
   mkdir -p "$dir"
   jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$runs" >"$dir/runs.json"
   jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" >"$dir/jobs-$PUSH_RUN.json"
-  jq --arg sha "$PUSH_BEFORE" '.workflow_runs = [(.workflow_runs[0] + {id:1,event:"push",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-12T00:00:00Z",head_sha:$sha})]' \
+  jq --arg sha "$PUSH_BEFORE" --slurpfile history "$TMP/push-history.json" '.workflow_runs = [(.workflow_runs[0] + {id:1,event:"push",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-12T00:00:00Z",head_sha:$sha})] + $history[0]' \
     "$runs" >"$dir/push-runs.json"
   plant_selection "$dir" "$PUSH_RUN" '[]' "$EVERY_TARGET"
   edit_jobs() { jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" | jq "$1" >"$dir/jobs-$PUSH_RUN.json"; }
@@ -303,6 +317,7 @@ push_world() { # NAME [WORLD] — the NAME state, in the world named WORLD, NAME
     # A shard proved with only some of its Rust targets owes the rest.
     one-target) plant_selection "$dir" "$PUSH_RUN" '[]' '["orch/lib"]' ;;
     red-orch-rest) fail_leg 'orch-rest, ubuntu-latest' ;;
+    red-catalog) edit_jobs '.jobs |= map(if .name == "catalog (2/2) / kendex check" then .conclusion = "failure" else . end)' ;;
     no-selection) rm "$dir/artifacts-$PUSH_RUN.json" ;;
     expired-selection) plant_selection "$dir" "$PUSH_RUN" '[]' "$EVERY_TARGET" true ;;
     bad-selection) plant_selection "$dir" "$PUSH_RUN" '[]' '"orch/*"' ;;
@@ -311,7 +326,6 @@ push_world() { # NAME [WORLD] — the NAME state, in the world named WORLD, NAME
     unparseable) printf 'upstream connect error\n' >"$dir/runs.json" ;;
     jobs-missing) rm "$dir/jobs-$PUSH_RUN.json" ;;
     jobs-partial) edit_jobs '.fixture_total_count = ((.jobs | length) + 1)' ;;
-    foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
     *) echo "no push world named $1" >&2; exit 1 ;;
@@ -453,10 +467,18 @@ M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
 check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
 check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
 check "push route: all-proved publishes no runtime build main has" '[]' "$(field runtime_publish <"$TMP/push-out")"
-# The jobs a push runs come from what it owes: no shard job where none is
-# owed, and every job main runs whatever it owes.
-check "push route: all-proved runs no shard job and main's fixed jobs" "false false true true true" \
-  "$(for job in skill-suites-shard skill-suites-macos-queue catalog smoke cargo-check-windows; do in_list jobs "$job"; done | paste -sd ' ' -)"
+# The jobs a push runs come from what it owes: no shard job and no catalog
+# where the group proved them, and, since this range changes a build input,
+# the jobs that save main's compile cache.
+check "push route: all-proved runs no shard job or catalog, and the cache-saving jobs" "false false false true true true" \
+  "$(for job in skill-suites-shard skill-suites-macos-queue catalog smoke cargo-check-windows cargo-linux; do in_list jobs "$job"; done | paste -sd ' ' -)"
+# A red leg of the group's catalog check proves no catalog.
+red_catalog_row() {
+  push_world red-catalog "red-catalog$ROW_TAG"
+  push_select "red-catalog$ROW_TAG" >/dev/null
+  check "push route: a red group catalog leg owes the catalog job" true "$(in_list jobs catalog)"
+}
+row_spawn red_catalog_row
 # WORLD|EXPECTED. A suite counts only where no selection left it out and
 # every same-head leg that runs it on its runner succeeded; a target only
 # where every selection listed it and the orch-rest Linux leg succeeded; any
@@ -484,7 +506,6 @@ no-selection|$WHOLE $UNREAD
 expired-selection|$WHOLE $UNREAD
 bad-selection|$WHOLE $UNREAD
 no-run|$WHOLE $NO_RUN
-foreign-head-run|$WHOLE $NO_RUN
 push-event-run|$WHOLE $NO_RUN
 other-workflow-run|$WHOLE $NO_RUN
 outage|$WHOLE $UNREAD
@@ -492,7 +513,7 @@ unparseable|$WHOLE $UNREAD
 jobs-missing|$WHOLE $UNREAD
 jobs-partial|$WHOLE $UNREAD
 ROWS
-[ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -ge 20 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 # A push owing only macOS shards runs the macOS job alone of the two.
 macos_owed_row() {
   push_world linux-only "linux-only$ROW_TAG"
@@ -718,6 +739,48 @@ no_queue_row() {
 }
 row_spawn no_queue_row
 
+# THE SAME CHANGE ON BOTH EVENTS: the push's head changes GROUP_PATH alone
+# past main's last tested push, so its range is the group's diff. After a
+# passed group, with the selection the group's changes job published over
+# that diff, the push owes no job; a direct push with no group runs what its
+# range selects and every job no group proved.
+same_change_row() {
+  local group="$TMP/same-change-selection$ROW_TAG" class lines
+  own_push_repo
+  printf '\n# input\n' >>"$PUSH_REPO/$GROUP_PATH"
+  push_commit 'one change' "$GROUP_PATH"
+  PUSH_SHA=$PUSH_AFTER
+  class="$(CI_SELECTION="$group" SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group SELECT_ARG=--event-parity \
+    selection micro false "$GROUP_PATH")"
+  lines="$(tr ' ' '\n' <<<"$class")"
+  push_world all-proved "same-change$ROW_TAG"
+  plant_selection "$TMP/push/same-change$ROW_TAG" "$PUSH_RUN" "$(jq -c .skipped_suites "$group")" \
+    "$(jq -c .rust_targets "$group")"
+  check "push after a passed merge group of the same change" \
+    "shards=[] queue_macos_shards=[] rust_targets=[] main-proof=read warned=no jobs=[]" \
+    "$(push_select "same-change$ROW_TAG" | sed 's/ skips=[^ ]*//') jobs=$(field jobs <"$TMP/push-out$ROW_TAG")"
+  push_world no-run "same-change-direct$ROW_TAG"
+  check "direct push with no merge group runs its range's shards and every job" \
+    "main-proof=none shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") true true true true" \
+    "$(push_select "same-change-direct$ROW_TAG" | sed -n 's/.*\(main-proof=[a-z]*\).*/\1/p') shards=$(field shards <"$TMP/push-out$ROW_TAG") queue_macos_shards=$(field queue_macos_shards <"$TMP/push-out$ROW_TAG") $(for job in skill-suites-shard catalog smoke cargo-check-windows; do in_list jobs "$job"; done | paste -sd ' ' -)"
+}
+row_spawn same_change_row
+# A push that lands two groups: the head's group checked catalog's upgrade
+# from its own base, the head's parent, and the push owes it from the commit
+# main held before, two first-parent commits back.
+two_group_row() {
+  own_push_repo
+  printf '\n# first group\n' >>"$PUSH_REPO/$GROUP_PATH"
+  push_commit 'first group' "$GROUP_PATH"
+  printf '\n# second group\n' >>"$PUSH_REPO/$GROUP_PATH"
+  push_commit 'second group' "$GROUP_PATH"
+  PUSH_SHA=$PUSH_AFTER
+  push_world all-proved "two-groups$ROW_TAG"
+  check "push landing two groups owes the catalog the head's group proved" 'main-proof=read jobs=["catalog"]' \
+    "$(push_select "two-groups$ROW_TAG" | sed -n 's/.*\(main-proof=[a-z]*\).*/\1/p') jobs=$(field jobs <"$TMP/push-out$ROW_TAG")"
+}
+row_spawn two_group_row
+
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
 mkdir -p "$TMP/trusting/tools"
@@ -799,7 +862,7 @@ row_spawn guard_control_row
 # A pending first push can be replaced by a lock-only second push. The
 # successful baseline still precedes both, so the first input remains owed.
 control_copy event-control
-awk '{ n += sub(/git diff --name-only --no-renames "\$previous"/, "git diff --name-only --no-renames \"$PUSH_BEFORE\"") } { print } END { exit n != 1 }' \
+awk '{ n += sub(/git diff --name-only --no-renames "\$PREVIOUS_PUSH"/, "git diff --name-only --no-renames \"$PUSH_BEFORE\"") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/event-control/tools/ci-job-set"
 coalesce() { # PATH TEXT — a push of TEXT onto PATH, then a lock-only push after it
   own_push_repo
@@ -824,11 +887,10 @@ coalesced_runtime_row() {
   push_select tail "$TMP/event-control/tools/ci-job-set" >/dev/null
   check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out$ROW_TAG")"
   cp -R "$TMP/push/tail" "$TMP/push/$world"
-  for history in absent unread nonancestor; do
+  for history in absent unread; do
     case "$history" in
       absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/$world/push-runs.json" ;;
       unread) printf 'unread\n' >"$TMP/push/$world/push-runs.json" ;;
-      nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/push/tail/push-runs.json" >"$TMP/push/$world/push-runs.json" ;;
     esac
     push_select "$world" >/dev/null
     check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out$ROW_TAG")"
