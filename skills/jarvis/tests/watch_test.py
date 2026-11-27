@@ -2447,7 +2447,8 @@ with open(sys.argv[1], "ab") as out:
         status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
             "live": True, "open_intents": [], "server_start": 1790000000,
             "recorded": {"server": 4242, "pane": pane, "session_id": session,
-                         "account": account, "harness": harness, "cwd": str(self.home)}}}))
+                         "account": account, "harness": harness, "cwd": str(self.home),
+                         "server_socket": "/sock"}}}))
         box = self.home / "tmp/lane-mail/overseer"
         box.mkdir(parents=True, exist_ok=True)
         box.joinpath("context.json").write_text(json.dumps(
@@ -2816,15 +2817,15 @@ with open(sys.argv[1], "ab") as out:
             held[0][0].set_result(held[0][1]())
             watch._poll(Inline(), Future(), now + 32)
 
-    def session_record(self, harness, account, lines):
-        """ACCOUNT's own record of the Codex or Copilot session s1: LINES,
+    def session_record(self, harness, account, lines, session="s1"):
+        """ACCOUNT's own record of the Codex or Copilot SESSION: LINES,
         rows of agent-runtime's recorded real stops."""
         if harness == "codex":
-            path = account / "sessions/2026/11/26/rollout-2026-11-26T01-17-55-s1.jsonl"
+            path = account / ("sessions/2026/11/26/rollout-2026-11-26T01-17-55-" + session + ".jsonl")
         else:
-            path = account / "session-state/s1/events.jsonl"
+            path = account / "session-state" / session / "events.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.with_name("workspace.yaml").write_text("id: s1\n")
+            path.with_name("workspace.yaml").write_text("id: " + session + "\n")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(line + "\n" for line in lines))
 
@@ -2836,14 +2837,36 @@ with open(sys.argv[1], "ab") as out:
 
     def test_a_provider_stop_asks_agent_runtime_on_each_check_and_keeps_its_episode(self):
         # The failure it stops: a session whose turn the provider failed
-        # stays stopped, on any harness, with nobody typing; or a watch that
-        # drops the episode the decision named, so the decision never ages
-        # it past its patience and never moves the session to another
-        # provider. A hook row of a turn that ended without a stop ends the
-        # episode; a session record reads no stop while the resumed turn
-        # runs, so there the episode stands. A provider stop tells nobody.
-        episode = lambda since, last: {"state": "running", "provider_recovery": "resumed",
-                                       "episode": {"since": since, "last": last}}
+        # stays stopped, on any harness, with nobody typing, a Codex or
+        # Copilot stop drawn on the pane and absent from the record among
+        # them; a watch that drops the episode the decision named, so the
+        # decision never ages it past its patience and never moves the
+        # session to another provider; or one that keeps it past a returned
+        # turn, a new controller or a wall, so a later stop is moved on its
+        # first failure. A failed recovery reports once and is asked again.
+        # A provider stop tells nobody.
+        episode = lambda since, last: ({"state": "running", "provider_recovery": "resumed",
+                                        "episode": {"since": since, "last": last}}, 0)
+        failed = {"state": "failed", "reason": "handover-failed", "detail": "The session could not resume."}, 1
+        # A resume whose walk could not judge another provider.
+        unmoved = ({**episode(100, 130)[0], "provider_walk": "walk-unread"}, 0)
+        waiting = {"state": "running", "wall_recovery": "waiting"}, 0
+        fixtures = REPO / "skills/agent-runtime/tests/rust/fixtures"
+        # Screens agent-runtime's judge reads: a turn at work, an idle one
+        # that returned, and an idle one the provider stopped, the Codex one
+        # as a real pane drew it.
+        working = "› Continue your work\n\n• Working (3s • esc to interrupt)\n\n› Ask Codex to do anything\n"
+        screens = {
+            "codex": {"returned": (fixtures / "codex-idle.txt").read_text(),
+                      "drawn": '■ {"detail":"Bad Request"}\n1 background terminal running · /ps to view · /stop to close\n'
+                               "› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · "
+                               "GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view\n"},
+            "copilot": {"returned": (fixtures / "copilot-idle.txt").read_text(),
+                        "drawn": "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n" + "─" * 40 + "\n"}}
+        panes = self.root / "panes"
+        panes.mkdir()
+        self.executable("tmux", '#!/bin/sh\n[ "$1 $2 $3" = "-S /sock capture-pane" ] || exit 9\n'
+                                'for pane; do :; done\nexec cat ' + shlex.quote(str(panes)) + '/"$pane"\n')
         for harness, ends in (("claude", True), ("codex", False), ("copilot", False)):
             with self.subTest(harness=harness), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -2852,30 +2875,56 @@ with open(sys.argv[1], "ab") as out:
                 account = self.root / ("accounts-" + harness)
                 account.mkdir()
                 stop = self.recorded_stop(harness + "-overload.jsonl") if harness != "claude" else []
+                wall = {"codex": "codex-credits.jsonl", "copilot": "copilot-quota.jsonl"}
 
-                def plant(turns):
+                def plant(session, pane, turn):
                     if harness == "claude":
-                        row = {"event": "StopFailure", "error": "server_error", "at": turns} if turns % 2 else {
-                            "event": "Stop", "at": turns}
-                        self.controller("s1", str(account), row)
-                    else:
-                        # The failed turn, then a new turn opened, then that turn failed.
-                        self.controller("s1", str(account), {"event": "Stop"}, harness=harness)
-                        self.session_record(harness, account, stop + [stop[0], stop[-1]][:turns - 1])
+                        # A hook row names a provider stop, a returned turn or a
+                        # wall; the pane is never read.
+                        row = {"usage": {"event": "StopFailure", "error": "rate_limit"},
+                               "returned": {"event": "Stop"}}.get(turn, {"event": "StopFailure", "error": "server_error"})
+                        self.controller(session, str(account), row, pane=pane)
+                        return
+                    self.controller(session, str(account), {"event": "Stop"}, pane=pane, harness=harness)
+                    # A failed turn's record, a wall's, or a new turn opened
+                    # after the failed one, which the pane tells apart.
+                    lines = {"failed": stop, "usage": self.recorded_stop(wall[harness])}.get(turn, stop + [stop[0]])
+                    self.session_record(harness, account, lines, session)
+                    panes.joinpath(pane).write_text(screens[harness].get(turn, working))
                 watch = self.watch()
-                ask = ["succeed", "--home", str(self.home), "--provider-stop", "s1", "4242 %3"]
-                for index, (turns, answer, asked) in enumerate((
-                        (1, episode(100, 100), ask),
-                        (1, episode(100, 130), ask + ["--since", "100", "--last", "100"]),
-                        (2, None, None),
-                        (3, episode(160, 160), ask if ends else ask + ["--since", "100", "--last", "130"]))):
-                    plant(turns)
-                    log = self.session_command(answer, 0)
+                # The loop's log is sent and cut between checks: each pass it
+                # writes is kept as written.
+                written, append = [], watch.append
+                watch.append = lambda output: (written.append(output), append(output))[1]
+                ask = lambda session="s1", pane="%3", *since: [
+                    "succeed", "--home", str(self.home), "--provider-stop", session, "4242 " + pane, *(
+                        ["--since", since[0], "--last", since[1]] if since else [])]
+                # Each check: the controller, its turn, the session command's
+                # answer, the arguments the check passes it, and the
+                # root-unreachable events written by then.
+                for index, (session, pane, turn, (answer, code), asked, alerts) in enumerate((
+                        ("s1", "%3", "failed", episode(100, 100), ask(), 0),
+                        ("s1", "%3", "failed", failed, ask("s1", "%3", "100", "100"), 1),
+                        ("s1", "%3", "failed", episode(100, 130), ask("s1", "%3", "100", "100"), 1),
+                        ("s1", "%3", "failed", unmoved, ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "returned" if ends else "running", (None, 0), None, 2),
+                        ("s1", "%3", "failed", episode(160, 160), ask() if ends else ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "returned", (None, 0), None, 2),
+                        ("s1", "%3", "drawn", episode(200, 200), ask(), 2),
+                        ("s2", "%4", "failed", episode(230, 230), ask("s2", "%4"), 2),
+                        ("s2", "%4", "usage", waiting, ["succeed", "--home", str(self.home), "--account-walled",
+                                                        "--usage-wall", "s2", "4242 %4"], 2))):
+                    plant(session, pane, turn)
+                    log = self.session_command(answer, code)
                     self.wall_passes(watch, 1000 + 30 * index)
                     self.assertEqual(log.read_text().splitlines() if log.exists() else [],
                                      [" ".join(asked)] if asked else [], "check " + str(index))
-                self.assertEqual(self.owner_notice_rows(), [])
-                self.assertNotIn("EVENT root-unreachable", watch.log.read_text() if watch.log.exists() else "")
+                    events = [line for output in written for line in output.splitlines()
+                              if line.startswith("EVENT root-unreachable")]
+                    self.assertEqual(len(events), alerts, "check " + str(index))
+                    if turn != "usage":
+                        self.assertEqual(self.owner_notice_rows(), [], "check " + str(index))
+                self.assertNotIn("provider", watch.state)
 
     def test_a_codex_or_copilot_wall_starts_its_succession_and_tells_the_owner_once(self):
         # The failure it stops: a Codex or Copilot Jarvis session at its

@@ -226,7 +226,13 @@ class Session:
         return self.run(["tmux", *target, *map(str, args)], check=check, encoding=encoding)
 
     def runtime(self, *args, timeout=None, track_launch=False):
-        """agent-runtime's reply to ARGS: (result, status, refusal key, diagnostic).
+        """agent-runtime's reply to ARGS: (result, status, refusal key, diagnostic)."""
+        result, code, refusal, diagnostic = self.reply(*args, timeout=timeout, track_launch=track_launch)
+        return result, code, refusal.get("key"), diagnostic
+
+    def reply(self, *args, timeout=None, track_launch=False):
+        """agent-runtime's reply to ARGS: (result, status, refusal, diagnostic),
+        the refusal whole, its key, its fields as pairs and its text, or empty.
 
         The caller's own environment reaches it, since its settings and its
         installed binary are read from there, with the user manager's
@@ -255,7 +261,7 @@ class Session:
         diagnostic = result.stderr
         if reading_status and not diagnostic.strip():
             diagnostic = refusal.get("text") or refusal.get("key") or ""
-        return reply.get("result"), result.returncode, refusal.get("key"), diagnostic
+        return reply.get("result"), result.returncode, refusal, diagnostic
 
     def fleet(self, *, allow_unstarted=False):
         """The home's controller record: orch's fleet record under its state directory."""
@@ -957,17 +963,22 @@ class Session:
         move hands it over to the entry on another provider the decision
         chose. EPISODE is the start and latest failure an earlier answer
         named. The decision is asked only of a pane that sits idle: a pane
-        still busy, as with the turn the last resume started, decides
-        nothing, so a turn that runs never ages the episode."""
+        still working, as with the turn the last resume started, decides
+        nothing, so a turn that runs never ages the episode. A pane in any
+        other state, at a dialog or unjudged, is a failure that names it."""
         recorded = status["recorded"]
         facts = self.session_facts(recorded)
         answer = self.answer(record, status)
-        _, code, refusal, errors = self.runtime("deliver", "--no-paste", *facts)
+        _, code, refusal, errors = self.reply("deliver", "--no-paste", *facts)
         if code:
-            if refusal == "deliver-refused":
+            # `deliver` names the screen's state, and no unjudged cause, in
+            # its refusal's fields.
+            state = dict(refusal.get("fields") or []).get("state")
+            if refusal.get("key") == "deliver-refused" and state == "working":
                 return {**answer, "provider_recovery": "busy"}, 0
             sys.stderr.write(errors)
-            raise Refusal("handover-failed", "The session's pane could not be read: " + str(refusal) + ".", "failed")
+            raise Refusal("handover-failed", "The session's pane could not be read: " + str(refusal.get("key"))
+                          + (" state=" + state if state else "") + ".", "failed")
         handoff = Path(self.home) / "state/handoff.md"
         since = ["--since", episode[0], "--last", episode[1]] if episode else []
 
@@ -991,13 +1002,19 @@ class Session:
             return {**moved, "provider_recovery": "moved", "episode": decision["episode"]}, code
         if action != "resume":
             raise Refusal("handover-failed", "agent-runtime answered " + str(action) + " for a provider stop.", "failed")
+        # A resume past the patience whose walk could not judge another
+        # provider is why the session never moves: the answer names it.
+        unjudged = walk_unjudged(decision)
+        if unjudged:
+            print(" ".join(filter(None, ("jarvis-session: provider-walk=" + str(unjudged[0]), unjudged[1]))),
+                  file=sys.stderr)
         result, code, refusal, errors = self.runtime("deliver", "--line", PROVIDER_RESUME, *facts)
         if code or result.get("delivery") not in ("confirmed", "unconfirmed"):
             sys.stderr.write(errors)
             raise Refusal("handover-failed", "The session could not resume: " +
                           str(refusal or (result or {}).get("cause")) + ".", "failed")
         return {**answer, "provider_recovery": "resumed" if result["delivery"] == "confirmed" else "unconfirmed",
-                "episode": decision["episode"]}, 0
+                "episode": decision["episode"], **({"provider_walk": unjudged[0]} if unjudged else {})}, 0
 
     def resume_wall(self, recorded, cursor=None):
         if cursor is None:
@@ -1083,8 +1100,11 @@ class Session:
                 if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
+                    walk = (choice.get("walk_refused") or {}).get("key")
                     raise Refusal("handover-failed", short("No account is left to take over"
-                                                           + (": " + named if named else "") + "." + kept), "failed")
+                                                           + (": " + named if named else "")
+                                                           + (", the walk refused " + walk if walk else "")
+                                                           + "." + kept), "failed")
                 # The marks as they stood before this attempt: a failure
                 # retries only where it stamped the account it tried, never on
                 # an older mark, which the walk may have let expire.
@@ -1308,6 +1328,17 @@ STILL_RUNNING = {"lane": ("lane-live", ()), "overseer": ("controller-resume-fail
 def still_running(kind, refusal):
     key, fields = STILL_RUNNING[kind]
     return refusal is not None and refusal[0] == key and set(fields) <= set(refusal[1])
+
+
+def walk_unjudged(decision):
+    """A stop decision's walk that could not judge every entry, as (key,
+    fields): its refusal (`walk_refused`), else `walk-unread` with the
+    entries it read unread; None where the walk judged each one or none ran."""
+    refused = decision.get("walk_refused")
+    if refused:
+        return refused.get("key"), " ".join(name + "=" + value for name, value in refused.get("fields") or [])
+    unread = (decision.get("walk") or {}).get("unread") or []
+    return ("walk-unread", "entries=" + ",".join(unread)) if unread else None
 
 
 def orch_refusal(result):

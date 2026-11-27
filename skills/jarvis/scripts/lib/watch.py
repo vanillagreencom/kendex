@@ -1190,10 +1190,13 @@ class Watch:
     def wall(self):
         """The recorded controller's wall: session, pane, account, kind, the
         verdict's fields, whose `stop` names the stop's kind, and whether a
-        session record was read in place of the hook rows. Kind is None for a
-        session its rows do not read walled; None with no bound controller; a
-        Failure where the controller or its rows were not read: a missing
-        package, or the runtime's refusal of the status, record or verdict read."""
+        session record was read in place of the hook rows. Where that record
+        reads no stop, the pane's judged screen adds one, or `returned` for
+        an idle pane no stop is drawn on. Kind is None for a session its rows
+        do not read walled; None with no bound controller; a Failure where
+        the controller, its rows or its pane were not read: a missing
+        package, or the runtime's refusal of the status, record, verdict or
+        screen read."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
             if result.returncode:
@@ -1224,9 +1227,28 @@ class Watch:
             if rows["reading"] == "unreadable":
                 raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
             walled = rows["reading"] == "live" and rows["verdict"] == "walled"
+            if recorded and rows["reading"] == "live" and rows.get("stop") is None:
+                rows = dict(rows, **self.pane_turn(bound))
             return bound["session"], bound["pane"], bound["account"], rows["kind"] if walled else None, rows, recorded
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("controller-wall", error)
+
+    def pane_turn(self, bound):
+        """The stop BOUND's pane draws, as agent-runtime's `judge` reads its
+        screen: `stop` provider for an idle turn the provider stopped, which
+        a Codex or Copilot record need not hold, as with Codex's capacity
+        refusal; `returned` for an idle pane with none, a turn that ended;
+        nothing for a pane still at work. `judge` judges a capture the caller
+        takes, and no live verb names that turn."""
+        if not bound.get("socket"):
+            raise Failure("controller-wall", "pane", "socket-unknown", "harness=" + bound["harness"])
+        screen = checked(["tmux", "-S", bound["socket"], "capture-pane", "-p", "-N", "-t", bound["pane"].split(" ")[1]],
+                         operation="controller-wall")
+        judged = json.loads(checked([agent_runtime(), "judge", "--screen", "/dev/stdin", "--harness", bound["harness"]],
+                                    data=screen, operation="controller-wall"))["result"]
+        if judged["state"] != "idle":
+            return {}
+        return {"stop": "provider", "turn": judged["turn"]} if judged.get("turn") else {"returned": True}
 
     def accept_wall(self, reading, now):
         """One wall reading judged at NOW: the wall kind a succession starts for, or None.
@@ -1320,17 +1342,19 @@ class Watch:
         agent-runtime's decision holds the policy: the watch asks it on each
         check that reads the provider stop, and keeps only the episode the
         last answer named, passed back so the decision ages it. The episode
-        is one controller's, and a hook row that names no stop is a turn that
-        ended without one, which ends it. A session record reads no stop
-        while a resumed turn runs too, so there the episode stands until the
-        decision lapses it."""
+        is one controller's, and another stop's kind ends it. A turn that
+        ended without a stop ends it too: a hook row that names none, or a
+        session record that reads none under an idle pane that draws none.
+        A session record reads no stop while a resumed turn runs too, so
+        there the episode stands while the pane works."""
         if reading is None or isinstance(reading, Failure):
             return None
         session, pane, _, _, rows, recorded = reading
         memory = self.state.get("provider")
         stop = rows.get("stop")
         if memory is not None and ([memory["session"], memory["pane"]] != [session, pane]
-                                   or stop not in ("provider", None) or stop is None and not recorded):
+                                   or stop not in ("provider", None)
+                                   or stop is None and (not recorded or rows.get("returned"))):
             del self.state["provider"]
             self.save()
             memory = None
@@ -1345,12 +1369,18 @@ class Watch:
 
     def accept_provider(self, answer, args):
         """The provider stop's answer: the episode it names is kept for the
-        next ask; a recovery that failed reports once and is asked again."""
+        next ask; a recovery that failed, or a resume whose walk could not
+        judge another provider, reports once and is asked again."""
         if isinstance(answer, Failure) or answer.get("state") not in ("running", "handing-over"):
             self.failed_pass("provider-recovery", answer.record if isinstance(answer, Failure) else Failure(
                 "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record)
             return
-        self.state.pop("provider-recovery_failure", None)
+        if answer.get("provider_walk"):
+            self.failed_pass("provider-recovery", Failure(
+                "provider-recovery", "walk", answer["provider_walk"],
+                "The session resumes and cannot move to another provider: " + answer["provider_walk"] + ".").record)
+        else:
+            self.state.pop("provider-recovery_failure", None)
         if answer.get("episode"):
             self.state["provider"] = {"session": args[1], "pane": args[2], **answer["episode"]}
         self.save()
@@ -1991,6 +2021,9 @@ class Watch:
                     # Held notices wait for a status read to be judged: a second exit replaces a held success.
                     self.release(now)
                 kind = self.accept_wall(reading, now)
+                # Read on every reading, so a wall's verdict ends the episode
+                # before its recovery starts.
+                provider = self.provider_stop(reading)
                 if status:
                     self.exited_pending = ("read", passes.submit(self.exited))
                 if kind is not None:
@@ -2009,7 +2042,7 @@ class Watch:
                                 requested = True
                                 usage.append("--reset-passed")
                     self.wall_pending = ("succession", passes.submit(self.succeed, usage), requested)
-                elif (provider := self.provider_stop(reading)) is not None:
+                elif provider is not None:
                     self.wall_pending = ("provider", passes.submit(self.recover_provider, provider), provider)
         exited = self.exited_pending
         if exited is not None and exited[1].done():

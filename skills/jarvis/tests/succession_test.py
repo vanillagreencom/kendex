@@ -520,8 +520,11 @@ class ProviderStopDecision(unittest.TestCase):
     def test_a_busy_pane_decides_nothing_and_each_action_is_taken_as_decided(self):
         # The failure it stops: a decision asked while the resumed turn still
         # runs, which ages the episode past its patience and moves a session
-        # that works; a move the decision did not name, a resume never
-        # typed, or a transfer that keeps the stopped account.
+        # that works; a pane at a dialog or unjudged read as busy on every
+        # check, so the session never resumes and nobody is told; a move the
+        # decision did not name, a resume never typed, a transfer that keeps
+        # the stopped account, or a walk that cannot judge another provider
+        # dropped, so a session that never moves says nothing of why.
         path = session_test.SKILLS / "jarvis/scripts/lib/session.py"
         spec = importlib.util.spec_from_file_location("jarvis_session_provider", path)
         module = importlib.util.module_from_spec(spec)
@@ -533,16 +536,32 @@ class ProviderStopDecision(unittest.TestCase):
         codex, copilot = {"harness": "codex", "account": "/accounts/.ccodex"}, {
             "harness": "copilot", "account": "/accounts/.dcopilot"}
         decided = {"since": 100, "last": 160}
-        idle, busy = ({}, 0, None, ""), (None, 1, "deliver-refused", "")
-        # Each row: the pane's read, the decision's action, the successor
-        # each decision chooses, whose first transfer fails where there are
-        # two, the recovery answered, and whether a line is typed.
-        for name, pane, action, successors, recovery, typed in (
-                ("busy", busy, None, [], "busy", False),
-                ("resume", idle, "resume", [None], "resumed", True),
-                ("move", idle, "move-provider", [codex], "moved", False),
+        # agent-runtime `deliver --no-paste`'s refusal of a pane that is not
+        # idle names its state, and nothing else of an unjudged one.
+        refused = lambda state: (None, 1, {"key": "deliver-refused", "fields": [["pane", "%1"], ["state", state]],
+                                          "text": "refused"}, "")
+        idle = ({}, 0, {}, "")
+        walk_refused = {"walk_refused": {"key": "account-unjudged", "fields": [["account", "/accounts/.ccodex"]],
+                                         "text": "unjudged"}}
+        unread = {"walk": {"unread": ["codex-b", "copilot-a"]}}
+        # Each row: the pane's read, the decision's action, what each
+        # decision adds to its answer, the successor each one chooses, whose
+        # first transfer fails where there are two, the outcome (the recovery
+        # answered with its walk key, or the refusal's state and reason, and
+        # a key its detail names), and whether a line is typed.
+        for name, pane, action, adds, successors, outcome, typed in (
+                ("working", refused("working"), None, [], [], ("busy", None), False),
+                ("unjudged", refused("unjudged"), None, [], [], ("failed", "handover-failed", "unjudged"), False),
+                ("asking", refused("asking"), None, [], [], ("failed", "handover-failed", "asking"), False),
+                ("resume", idle, "resume", [{}], [None], ("resumed", None), True),
+                ("resume, walk refused", idle, "resume", [walk_refused], [None], ("resumed", "account-unjudged"), True),
+                ("resume, walk unread", idle, "resume", [unread], [None], ("resumed", "walk-unread"), True),
+                ("move", idle, "move-provider", [{}], [codex], ("moved", None), False),
                 # A successor that fails is passed for the next the decision chooses.
-                ("move again", idle, "move-provider", [codex, copilot], "moved", False)):
+                ("move again", idle, "move-provider", [{}, {}], [codex, copilot], ("moved", None), False),
+                # The next decision's walk refused: the refusal names its key.
+                ("move, then walk refused", idle, "move-provider", [{}, walk_refused], [codex, None],
+                 ("failed", "handover-failed", "account-unjudged"), False)):
             with self.subTest(row=name):
                 calls = {"decisions": [], "lines": 0, "transfers": []}
                 unproved = []
@@ -565,32 +584,37 @@ class ProviderStopDecision(unittest.TestCase):
 
                     def ready_successor(self, *args, recorded=None):
                         calls["decisions"].append([str(arg) for arg in args])
-                        return {"action": {"action": action}, "episode": decided,
-                                "successor": successors[len(calls["decisions"]) - 1],
-                                "expected": {"generation": 1}}, 0, None, ""
+                        asked = len(calls["decisions"]) - 1
+                        return {"action": {"action": action}, "episode": decided, "successor": successors[asked],
+                                "expected": {"generation": 1}, **adds[asked]}, 0, None, ""
 
-                    def runtime(self, *args, timeout=None, track_launch=False):
+                    def reply(self, *args, timeout=None, track_launch=False):
                         if args[:2] == ("deliver", "--no-paste"):
                             return pane
                         if args[:2] == ("deliver", "--line"):
                             calls["lines"] += 1
-                            return {"delivery": "confirmed"}, 0, None, ""
+                            return {"delivery": "confirmed"}, 0, {}, ""
                         if args[:2] == ("controller", "transfer"):
                             calls["transfers"].append(json.loads(Path(args[args.index("--request") + 1]).read_text()))
                             if len(calls["transfers"]) < len(successors):
                                 unproved.append({"account": successors[0]["account"], "at": "1",
                                                  "note": "successor-not-signed-in"})
-                                return {}, 3, None, ""
-                        return {}, 0, None, ""
+                                return {}, 3, {}, ""
+                        return {}, 0, {}, ""
 
                 with tempfile.TemporaryDirectory() as home:
                     home = Path(home)
                     (home / "state").mkdir()
                     (home / "state/handoff.md").write_text("handoff\n")
-                    answer, code = World(home).provider_stop({}, {"recorded": recorded}, (100, 130))
-                self.assertEqual((answer["provider_recovery"], code), (recovery, 0))
-                self.assertEqual(answer.get("episode"), decided if action else None)
-                self.assertEqual(len(calls["decisions"]), len(successors))
+                    try:
+                        answer, code = World(home).provider_stop({}, {"recorded": recorded}, (100, 130))
+                        got = (answer["provider_recovery"], answer.get("provider_walk"))
+                        self.assertEqual(code, 0)
+                        self.assertEqual(answer.get("episode"), decided if action else None)
+                    except module.Refusal as refusal:
+                        got = (refusal.state, refusal.reason, outcome[2] if outcome[2] in refusal.detail else None)
+                self.assertEqual(got, outcome)
+                self.assertEqual(len(calls["decisions"]), len(adds))
                 for words in calls["decisions"]:
                     self.assertEqual(words[words.index("--stop"):words.index("--stop") + 6],
                                      ["--stop", "provider", "--since", "100", "--last", "130"])
