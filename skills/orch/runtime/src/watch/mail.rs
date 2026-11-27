@@ -35,7 +35,10 @@
 //! lines and rows are delivered, the refused target's rows stay where they
 //! were so the next turn reads it again, and the turn is reported failed,
 //! `watch-step-failed step=mail count=N` in the log with each refused
-//! target and its cause on stderr. No box is ever read as empty.
+//! target and its cause on stderr. No box is ever read as empty. A hosted
+//! box the host did not serve (`mail-read-failed`) is judged by the
+//! provider's list first ([`Unread::listed`]): a sandbox it no longer lists
+//! took its box with it, so that lane is neither read nor refused.
 //!
 //! A provider's `sandbox-stopped` notice from a sender on the owner's
 //! channel, or in a `data` envelope whose `source` is `reap`, in the
@@ -59,6 +62,7 @@ use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
 use crate::watch::ended;
+use crate::watch::hosted::Unread;
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
@@ -500,6 +504,22 @@ fn unread_value(newest: Option<(u64, &str)>, count: u64) -> String {
     }
 }
 
+/// Whether a drain refused because the host did not serve the box's files:
+/// `lane-mail`'s `mail-read-failed` key, the one it gives a failed snapshot
+/// or a failed row of one. Any other refusal judged files the host served,
+/// which shows the sandbox stands, or never reached the host.
+fn box_unfetched(refusal: &Refusal) -> bool {
+    match refusal {
+        Refusal::Exit {
+            keyed: Some(keyed), ..
+        } => keyed.split_once('=').map(|(key, _)| key) == Some("mail-read-failed"),
+        Refusal::Exit { keyed: None, .. }
+        | Refusal::NotStarted { .. }
+        | Refusal::Unanswered { .. }
+        | Refusal::Reply { .. } => false,
+    }
+}
+
 /// Which lanes of the fleet have a mailbox the duty reads: a running lane
 /// whose kind's channel is a mailbox,
 /// with its recorded root and, for a lane on another host, that host, which
@@ -746,6 +766,23 @@ impl MailDuty {
             .zip(read)
             .filter_map(|((lane, host), drained)| match drained? {
                 Ok(drained) => Some((lane, host.as_str(), drained)),
+                Err(refusal) if box_unfetched(&refusal) => {
+                    let scripts = super::overseer::scripts_dir(&self.config.common_root);
+                    let unread = Unread::Failed {
+                        cause: refusal.to_string(),
+                    }
+                    .listed(|| super::hosted::lists_item(&scripts, host, &lane.item));
+                    match unread {
+                        // The lane's own close-out can take its sandbox
+                        // before the overseer's close: no box is left to
+                        // read, and its rows stand for that close.
+                        Unread::Gone { .. } => {}
+                        Unread::Busy { .. } | Unread::Failed { .. } => {
+                            turn.refuse(&lane.item, unread);
+                        }
+                    }
+                    None
+                }
                 Err(refusal) => {
                     turn.refuse(&lane.item, refusal);
                     None

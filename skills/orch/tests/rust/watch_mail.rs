@@ -1666,57 +1666,73 @@ print(json.dumps([read(r) for r in rows]))' '{log}'"#,
     assert_eq!(baseline.get("lane-mail", "KEN-3"), Some("2 n-3"));
 }
 
-/// A pass whose snapshot of a host failed reads none of that host's lanes:
-/// the drain refuses the batch whatever it stored and asks the provider for
-/// no file of its own, since a failed batch is no evidence of an absent one.
+/// A pass whose snapshot of a host failed reads none of that host's lanes
+/// and asks the provider for no file of its own, since a failed batch is no
+/// evidence of an absent one. The failed read is judged by the provider's
+/// list alone: a sandbox it no longer lists, as after the lane's own
+/// close-out, took its box with it, so the lane is neither read nor
+/// refused and the step does not fail; a sandbox it still lists, or a list
+/// that fails, refuses the lane `mail-read-failed` and fails the step.
 #[test]
-fn a_failed_snapshot_refuses_the_hosted_drain_with_no_provider_read() {
-    let side = tempfile::tempdir().unwrap();
-    let side = std::fs::canonicalize(side.path()).unwrap();
-    let log = side.join("provider.log");
-    let provider = side.join("provider");
-    write_executable(
-        &provider,
-        format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  read-many) echo 'provider: read-many-failed' >&2; exit 1 ;;\n  touch) exit 0 ;;\n  cat) exit 2 ;;\n  *) exit 64 ;;\nesac\n",
-            log.display()
+fn a_failed_hosted_read_is_refused_unless_the_provider_no_longer_lists_the_sandbox() {
+    // Each case's `list` answer, and whether the lane is refused.
+    for (case, list, refused) in [
+        ("sandbox gone", "exit 0", false),
+        (
+            "sandbox listed",
+            "printf 'o/r/KEN-1\\trunning\\t1m\\tbox\\n'; exit 0",
+            true,
         ),
-    );
-    let w = world(&hold(), 20);
-    let remote = w.root.join("remote");
-    std::fs::create_dir_all(&remote).unwrap();
-    let state = w.root.join(FLEET_FILE_NAME);
-    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    fleet["lanes"][0]["host"] = json!(provider.display().to_string());
-    fleet["lanes"][0]["kind"] = json!("ssh");
-    fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
-    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
-    let clock = FakeClock::new();
-    let mut duty = w.duty();
-    let baseline = Baseline::default();
-    let tick = Tick {
-        duty: Duty::Mail,
-        now: Instant::now(),
-        wall: WALL,
-        baseline: &baseline,
-        clock: &clock,
-    };
-    let (_, refused) = duty.turn(&tick).unwrap();
-    assert_eq!(
-        refused
-            .iter()
-            .map(|r| r.target.as_str())
-            .collect::<Vec<_>>(),
-        [ITEM],
-        "{refused:?}"
-    );
-    assert!(
-        refused[0].cause.contains("mail-read-failed="),
-        "the failed batch refused by its own key: {refused:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&log).unwrap_or_default(),
-        "read-many\n",
-        "no file asked for again"
-    );
+        (
+            "list failed",
+            "echo 'provider: list-failed' >&2; exit 1",
+            true,
+        ),
+    ] {
+        let side = tempfile::tempdir().unwrap();
+        let side = std::fs::canonicalize(side.path()).unwrap();
+        let log = side.join("provider.log");
+        let provider = side.join("provider");
+        write_executable(
+            &provider,
+            format!(
+                "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  read-many) echo 'provider: item-unknown item=KEN-1' >&2; exit 1 ;;\n  list) {list} ;;\n  touch) exit 0 ;;\n  cat) exit 2 ;;\n  *) exit 64 ;;\nesac\n",
+                log.display()
+            ),
+        );
+        let w = world(&hold(), 20);
+        let remote = w.root.join("remote");
+        std::fs::create_dir_all(&remote).unwrap();
+        let state = w.root.join(FLEET_FILE_NAME);
+        let mut fleet: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        fleet["lanes"][0]["host"] = json!(provider.display().to_string());
+        fleet["lanes"][0]["kind"] = json!("ssh");
+        fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
+        std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+        let clock = FakeClock::new();
+        let mut duty = w.duty();
+        let baseline = Baseline::default();
+        let tick = Tick {
+            duty: Duty::Mail,
+            now: Instant::now(),
+            wall: WALL,
+            baseline: &baseline,
+            clock: &clock,
+        };
+        let produced = duty.run(&tick).unwrap();
+        match (refused, produced.failed.as_deref()) {
+            (false, None) => {}
+            (true, Some(failed)) => assert!(
+                failed.starts_with(&format!("  item={ITEM} mail-read-failed ")),
+                "{case}: the lane refused by its own key: {failed}"
+            ),
+            (_, failed) => panic!("{case}: refused={refused} failed={failed:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap_or_default(),
+            "read-many\nlist\n",
+            "{case}: no file asked for again"
+        );
+    }
 }

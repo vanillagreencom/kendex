@@ -30,13 +30,14 @@ use serde_json::{Value, json};
 
 use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal};
+use crate::mailbox::Mailbox;
 use crate::ops::{
     self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, RecordLaneProgress, Report,
     Request,
 };
 use crate::settings::Settings;
 use crate::state::{Lane, LaneMembers};
+pub(super) use crate::watch::hosted::Unread;
 use agent_runtime::effects::{Bootstrap, EffectOutcome, Identity, Operation, Signalled, Word};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::Owner;
@@ -937,77 +938,6 @@ pub(super) fn pick_account(
 /// writes are.
 fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
     ops::apply(run.engine.path, request, run.engine.env, run.engine.locking)
-}
-
-/// Why a hosted lane's box did not read: the one judgement every close that
-/// reads the box acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Unread {
-    /// The provider's call pool refused the call at `step` (`mail-read`, or
-    /// `list` for the presence read after it): nothing ran, and the same
-    /// read asked again can answer.
-    Busy { step: &'static str },
-    /// The provider lists no sandbox for the item, or one torn down: the box
-    /// went with it, and nothing is left to read.
-    Gone { cause: String },
-    /// Any other failure, its sandbox standing or its list failed.
-    Failed { cause: String },
-}
-
-impl Unread {
-    /// A box read's refusal: one at the provider-call bound is busy,
-    /// anything else failed until the provider's list judges it.
-    fn of(refusal: &Refusal) -> Unread {
-        match refusal {
-            Refusal::Exit {
-                status: Some(crate::mailbox::HOST_BUSY_EXIT),
-                ..
-            } => Unread::Busy { step: "mail-read" },
-            Refusal::NotStarted { .. }
-            | Refusal::Unanswered { .. }
-            | Refusal::Exit { .. }
-            | Refusal::Reply { .. } => Unread::Failed {
-                cause: refusal.to_string(),
-            },
-        }
-    }
-
-    /// A failed read judged by the provider's list (`hosted::lists_item`):
-    /// no row for the item is the sandbox gone; a row standing keeps the
-    /// read's failure with its state, a list refused at the bound is busy,
-    /// and a list that fails keeps the read's failure with its cause.
-    pub(super) fn listed(
-        self,
-        list: impl FnOnce() -> std::result::Result<Option<String>, String>,
-    ) -> Unread {
-        let Unread::Failed { cause } = self else {
-            return self;
-        };
-        match list() {
-            Ok(None) => Unread::Gone { cause },
-            Ok(Some(state)) => Unread::Failed {
-                cause: format!("listed={state} {cause}"),
-            },
-            Err(list) if list.starts_with(crate::watch::hosted::BUSY) => {
-                Unread::Busy { step: "list" }
-            }
-            Err(list) => Unread::Failed {
-                cause: format!("{cause} list={list}"),
-            },
-        }
-    }
-}
-
-/// Leads with the stable key a caller reads: `host-busy step=STEP`,
-/// `host-absent` or `mail-read-failed`, the cause after it.
-impl std::fmt::Display for Unread {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Unread::Busy { step } => write!(f, "{} step={step}", crate::watch::hosted::BUSY),
-            Unread::Gone { cause } => write!(f, "{} {cause}", crate::state::HOST_ABSENT),
-            Unread::Failed { cause } => write!(f, "mail-read-failed {cause}"),
-        }
-    }
 }
 
 /// The oldest unanswered ask the lane's mailbox holds, read through the

@@ -11840,6 +11840,68 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
     }
 }
 
+/// A hosted lane's handoff read its host refused is judged by the
+/// provider's list. A sandbox the provider no longer lists, as after the
+/// lane's own close-out, holds no handoff, so the item's handoff row is
+/// cleared and no `handoff-read-failed` is said; a sandbox it still lists
+/// keeps the refusal, and with it the row.
+#[test]
+fn a_refused_hosted_handoff_read_fails_only_while_the_provider_lists_the_sandbox() {
+    for (case, listed) in [("sandbox gone", false), ("sandbox listed", true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let claude = named_sleep(dir.path(), "claude");
+        let line = format!("printf 'working\\n'; exec {} 600", claude.display());
+        let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
+        let identity = await_named(&server, &pane, "claude");
+        let scripts = dir.path().join("scripts");
+        // The provider holds a lane of KEN-4 only where its sandbox stands:
+        // its list names an item whose clone carries the lane marker.
+        let host = SshHost::new(dir.path(), &scripts, if listed { "KEN-4" } else { "KEN-9" });
+        let marker = dir.path().join("clone/.git/lane-host-item");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, "KEN-4\n").unwrap();
+        // A `.git` that is a directory with no HEAD: the host refuses its
+        // `cat`, which reads no clone.
+        let lane_root = dir.path().join("remote/KEN-4");
+        std::fs::create_dir_all(lane_root.join(".git")).unwrap();
+        let mut record = lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        );
+        record["host"] = json!(host.provider());
+        record["kind"] = json!("ssh");
+        record["mail_root"] = json!(lane_root.display().to_string());
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = scripts.clone();
+        driver.baseline.apply(Change::Set {
+            kind: "handoff".into(),
+            identity: "KEN-4".into(),
+            value: "1".into(),
+        });
+        let produced = driver.pass(&state);
+        // The pass keeps its first failure, and the lane's other host reads
+        // fail on the same refused host first, so the handoff's own answer
+        // is read from its row: a refusal kept leaves the row, no handoff
+        // clears it.
+        assert_eq!(
+            driver.baseline.get("handoff", "KEN-4"),
+            listed.then_some("1"),
+            "{case}: {:?} {:?}",
+            produced.failed,
+            lines(&produced)
+        );
+    }
+}
+
 /// A hosted lane's files are asked of its provider only under the root its
 /// host named. A launch still preparing, a first one or a relaunch, holds
 /// the checkout it ran from as `mail_root` (equal to `checkout`), which the
