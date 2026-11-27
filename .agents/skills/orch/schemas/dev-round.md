@@ -92,11 +92,11 @@ The brief's `Adds:` line and `--adds` carry the same blank-separated path list:
 
 The record is immutable per round. A second stamp of the round with any other field changed refuses `record-conflict`; an identical retry stands. Mint a new round instead, and never fall back to an unbound item list.
 
-The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run, and its stage in workflow state has not ended.
+The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run, nor its paths ask, and its stage in workflow state has not ended.
 
 - During it, `record-push` refuses to push as `live-round`.
 - Its `check-live-round` mode answers exit 3, which refuses the restack: a rebase would move the branch off the commit that round works from.
-- The receipt landing ends the live round. So does a closed round stage, which a hand `accept-result` writes with no receipt, and a fresh `dev_round_id` whose token names no stamped record.
+- The receipt landing ends the live round. So does the paths ask `tmp/paths-ask-[ISSUE_ID]-[DEV_ROUND_ID].md`, which a round stopped before an edit outside its admitted set writes in place of a receipt ([dev-start.md § Paths ask](../workflows/dev-start.md#paths-ask)). So does a closed round stage, which a hand `accept-result` writes with no receipt, and a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 

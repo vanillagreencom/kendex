@@ -93,10 +93,13 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 3. On a blocker, make no edit to that path. Write every such path, one per line with the reason the change needs it, to `[WORKTREE_PATH]/tmp/paths-ask-[ARTIFACT_KEY]-[DEV_ROUND_ID].md`.
 4. Commit nothing, write no receipt, and return `Blocked: paths outside the admitted set: [FILE]`. The orchestrator asks for every path at once and delegates a fresh round with the widened set.
 
-A path the round finds after its first edit is the same blocker, before its edit. Before returning, leave the tree clean, since a fresh fix round may restack and a restack refuses a dirty tree:
+A path the round finds after its first edit is the same blocker, before its edit. Before returning, put the tree back as the round found it, never to HEAD: a round can start dirty, after a `--directive-unconfirmed` recover or a stalled-round redelegate, on an earlier round's uncommitted edits.
 
+- Before the first edit, record the starting index and tree. `git -C [WORKTREE_PATH] write-tree` prints the starting index as `[START_INDEX]`.
+  - Then run `git -C [WORKTREE_PATH] read-tree [START_INDEX]`, `git -C [WORKTREE_PATH] add -A` and `git -C [WORKTREE_PATH] write-tree`, all three under the same `GIT_INDEX_FILE=[WORKTREE_PATH]/tmp/start-index-[ARTIFACT_KEY]-[DEV_ROUND_ID]` prefix. The last prints `[START_TREE]`.
 - Describe the edits already made in the ask file, so the fresh round can make them again.
-- Restore each changed file to HEAD and remove each file the round added, naming each path literally.
+- Restore each changed path's index entry with `git -C [WORKTREE_PATH] reset -q [START_INDEX] -- [PATH]`, then its file with `git -C [WORKTREE_PATH] restore --source=[START_TREE] --worktree -- [PATH]`. Remove only a file `git -C [WORKTREE_PATH] cat-file -e [START_TREE]:[PATH]` finds absent from the starting tree. Name each path literally.
+- A clean start leaves the tree clean. A dirty start leaves the earlier round's edits standing, and the ask file names that dirty start as the restack blocker, since a restack refuses a dirty tree.
 
 A session keeps the rule text it loaded, and a push, `worktree create --reuse` or a restack can rebase the branch onto a base that changed that text. A session that already ran a round on this branch takes these steps before the round's first step:
 

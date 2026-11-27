@@ -1560,11 +1560,36 @@ fn union(a: &[String], b: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Write a judgement onto the lane record at `index`.
+/// Write a launch's judgement onto the lane record at `index`: the set it
+/// opens with replaces whatever an earlier opening left,
+/// [`state::UNBOUNDED`] included.
 pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Judged) -> Result<()> {
     let lane = lane_doc_mut(path, doc, index)?;
     record::set(lane, "touched", serde_json::to_value(&judged.touched)?);
     record::set(lane, "in_scope", serde_json::to_value(&judged.in_scope)?);
+    record::delete(lane, state::UNBOUNDED);
+    Ok(())
+}
+
+/// Widen the standing lane record at `index` to `touched` and `in_scope`,
+/// each already holding the record's own. A lane whose record renders no
+/// admitted line runs unbounded, and the widening records that it stays so:
+/// a set made of the added paths alone would bound its own item's work by
+/// paths no judge read for it.
+fn widen(
+    path: &Path,
+    doc: &mut Document,
+    index: usize,
+    standing: &Lane,
+    touched: &[String],
+    in_scope: &[String],
+) -> Result<()> {
+    let lane = lane_doc_mut(path, doc, index)?;
+    record::set(lane, "touched", serde_json::to_value(touched)?);
+    record::set(lane, "in_scope", serde_json::to_value(in_scope)?);
+    if standing.admitted_line().is_none() {
+        record::set(lane, state::UNBOUNDED, true);
+    }
     Ok(())
 }
 
@@ -1616,16 +1641,11 @@ pub(super) fn join(
         holder.in_scope.as_deref().unwrap_or_default(),
         &judged.in_scope,
     );
+    widen(path, doc, index, &holder, &touched, &in_scope)?;
     let lane = lane_doc_mut(path, doc, index)?;
-    record::set(lane, "touched", serde_json::to_value(&touched)?);
-    record::set(lane, "in_scope", serde_json::to_value(&in_scope)?);
     record::set(lane, "carried", serde_json::to_value(&carried)?);
     let widened = lane_at(path, doc, index)?;
-    // A holder that opened with no admitted set runs unbounded: a set made
-    // of the joined item's paths alone would bound its own item's work by
-    // paths no judge read for it.
-    let admitted = holder.admitted_line().and_then(|_| widened.admitted_line());
-    tell(path, a, &widened, admitted.as_deref(), env, host)?;
+    tell(path, a, &widened, env, host)?;
     Ok(widened)
 }
 
@@ -1633,23 +1653,16 @@ pub(super) fn join(
 /// mailbox program its turn end reads, `lane-mail send --directive` on the
 /// holder's recorded root, under the delivery `join-<item>`: a repeated join
 /// lands once. The directive opens with `joined item=<item> holder=<holder>`,
-/// then `admitted`, the holder's widened `Admitted paths:` line where it
-/// holds a set, which replaces the set its next dev round is delegated, so
-/// that round asks for none of the paths the join already admitted.
+/// then the holder's widened `Admitted paths:` line where it renders one,
+/// which replaces the set its next dev round is delegated, so that round
+/// asks for none of the paths the join already admitted.
 /// A send that does not answer delivered refuses `join-unsent` with its
 /// cause, and the launch lock's transition then writes nothing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the join's directive file, created exclusively under the fleet's state directory for the mailbox program to read and removed after its send"
 )]
-fn tell(
-    path: &Path,
-    a: &Admission,
-    holder: &Lane,
-    admitted: Option<&str>,
-    env: &Env,
-    host: &Host,
-) -> Result<()> {
+fn tell(path: &Path, a: &Admission, holder: &Lane, env: &Env, host: &Host) -> Result<()> {
     use std::io::Write;
     let unsent = |cause: String| {
         Error::from(agent_runtime::Error::refused(
@@ -1683,7 +1696,7 @@ fn tell(
         .open(&file)
         .and_then(|mut f| {
             writeln!(f, "joined item={} holder={}", a.item, holder.item)?;
-            if let Some(line) = admitted {
+            if let Some(line) = holder.admitted_line() {
                 writeln!(f, "{line}")?;
             }
             writeln!(f, "\n{brief}")
@@ -1778,21 +1791,15 @@ pub(super) fn admit_paths(
         });
     };
     let standing = &lanes[index];
-    let widened = Judged {
-        touched: union(
-            standing.touched.as_deref().unwrap_or_default(),
-            &judged.touched,
-        ),
-        classified: judged.classified,
-        in_scope: judged.in_scope,
-        join: None,
-        checkout_common: None,
-    };
-    record(path, doc, index, &widened)?;
+    let touched = union(
+        standing.touched.as_deref().unwrap_or_default(),
+        &judged.touched,
+    );
+    widen(path, doc, index, standing, &touched, &judged.in_scope)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
-        touched: widened.touched,
-        in_scope: widened.in_scope,
+        touched,
+        in_scope: judged.in_scope,
         recorded: true,
     })
 }

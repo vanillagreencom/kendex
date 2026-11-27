@@ -350,7 +350,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `status` | `preparing`, `running`, `stopped`, `parked` or `done`. |
 | `restart_closed` | The intent id of the `restart-recovery` close that left the lane `stopped` with no successor launch. |
 | `over_cap`, `reservation` | The over-cap reason a launch passed, and `{reason, until}`, a finite hold on the cap slot. |
-| `touched`, `in_scope`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
+| `touched`, `in_scope`, `unbounded`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; `true` where the lane opened with no admitted set and a widening since kept it so; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
 | `obligation` | `{repo, item, parent_repo, parent_item}`, the item's original lineage. |
 | `tier`, `tier_inputs` | The tier the first launch's brief states, and `{estimate, delta, paths}`. |
 | `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` on a lane that changes no repository file. |
@@ -385,6 +385,7 @@ The members' rules, in the table's order:
 - `restart_closed`: on a `stopped` lane, `lane relaunch` sends the launch alone, and `jarvis-session resume` selects the lane beside the `running` ones ([lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch)).
 - `reservation`: `reserve-lane` or `park-lane` writes it; a relaunch, `release-lane` and a confirmed close drop it.
 - `touched`, `in_scope`, `carried`: [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) and [§ Caps](../references/lane-directive.md#caps) state the judgement.
+- `unbounded`: a join or `admit-paths` writes it over a record that renders no `Admitted paths:` line, and while it stands the record renders none. A relaunch keeps it; a launch over a `done` record, judged afresh, removes it.
 - `obligation`: the parent pair is named together or null together.
 - `obligation`: a launch binds it on a record that carries none.
 - `obligation`: a first launch that names none but names `repo` records the item as its own parent.

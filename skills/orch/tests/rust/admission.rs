@@ -2278,39 +2278,116 @@ fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_on
     }
 }
 
-/// A holder that opened with no admitted set runs unbounded, and a join
-/// keeps it so: a candidate whose launch blocker it carries joins it, its
-/// record takes the candidate's path, and the directive names no
-/// `Admitted paths:` line, which would bound the holder's own work by the
-/// candidate's paths alone.
+/// A holder that opened with no admitted set, by an empty first-launch set
+/// or a record no judgement wrote, runs unbounded, and every widening of
+/// its set keeps it so: two candidates whose launch blocker it carries join
+/// it in turn, its record takes both candidates' paths, and neither join's
+/// directive nor the brief its relaunch through the real `launch-lane`
+/// hands the harness names an `Admitted paths:` line, which would bound the
+/// holder's own work by the candidates' paths alone.
 #[test]
-fn a_join_leaves_a_holder_that_opened_unbounded_without_an_admitted_set() {
-    let mut fleet = Fleet::new();
-    fleet.init_fleet();
-    let root = fleet.checkout("h", None);
-    let harness = Owned::sleep();
-    let mut held = holder("KEN-H", "running", Some(&harness), Some(&[]));
-    held["mail_root"] = json!(root.display().to_string());
-    held["repo"] = json!("o/r");
-    fleet.write_lanes(vec![held]);
-    fleet.item_under("CC-1", "", &["KEN-H"]);
-    fleet.gh_api(&gh_map(&[]));
-    let brief = fleet.dir.path().join("brief.md");
-    std::fs::write(&brief, "Change `src/c.sh` for CC-1.\n").unwrap();
-    let mut request = launch("CC-1", &fleet.checkout("c", None));
-    request["repo"] = json!("o/r");
-    request["brief_file"] = json!(brief.display().to_string());
+fn a_holder_that_opened_unbounded_stays_so_through_every_join_and_its_relaunch() {
+    let rows: [(&str, Option<&[&str]>); 2] = [
+        ("an empty first-launch set", Some(&[])),
+        ("a record no judgement wrote", None),
+    ];
+    for (row, opened) in rows {
+        let mut fleet = Fleet::new();
+        fleet.init_fleet();
+        let root = fleet.checkout("h", None);
+        fleet.item("KEN-H", "`docs/h.md`", 0, &[]);
+        let mut harness = Owned::sleep();
+        let mut held = holder("KEN-H", "running", Some(&harness), opened);
+        held["mail_root"] = json!(root.display().to_string());
+        held["repo"] = json!("o/r");
+        fleet.write_lanes(vec![held]);
+        fleet.gh_api(&gh_map(&[]));
+        for (item, file) in [("CC-1", "src/c.sh"), ("CC-2", "src/d.sh")] {
+            fleet.item_under(item, "", &["KEN-H"]);
+            let brief = fleet.dir.path().join(format!("{item}.md"));
+            std::fs::write(&brief, format!("Change `{file}` for {item}.\n")).unwrap();
+            let mut request = launch(item, &fleet.checkout(item, None));
+            request["repo"] = json!("o/r");
+            request["brief_file"] = json!(brief.display().to_string());
+            let out = fleet.op(&request);
+            let answer = reply(&out);
+            assert_eq!(answer["ok"], true, "{row}, {item}: {}", stderr(&out));
+            assert_eq!(
+                joined_or_launched(&answer)["op"],
+                "joined",
+                "{row}, {item}: {answer}"
+            );
+        }
+        assert_eq!(
+            fleet.lane("KEN-H")["touched"],
+            json!(["src/c.sh", "src/d.sh"]),
+            "{row}"
+        );
+        let told = inbox(&root, "KEN-H");
+        assert_eq!(told.len(), 2, "{row}: {told:?}");
+        for (directive, item) in told.iter().zip(["CC-1", "CC-2"]) {
+            let text = directive["text"].as_str().unwrap();
+            assert!(
+                text.starts_with(&format!("joined item={item} holder=KEN-H")),
+                "{row}: {text}"
+            );
+            assert!(!text.contains("Admitted paths:"), "{row}, {item}: {text}");
+        }
 
-    let out = fleet.op(&request);
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    assert_eq!(joined_or_launched(&answer)["op"], "joined", "{answer}");
-    assert_eq!(fleet.lane("KEN-H")["touched"], json!(["src/c.sh"]));
-    let told = inbox(&root, "KEN-H");
-    assert_eq!(told.len(), 1, "{told:?}");
-    let text = told[0]["text"].as_str().unwrap();
-    assert!(text.starts_with("joined item=CC-1 holder=KEN-H"), "{text}");
-    assert!(!text.contains("Admitted paths:"), "{text}");
+        end(&mut harness);
+        let mut fleet_doc = fleet.fleet();
+        fleet_doc["lanes"][0]["status"] = json!("stopped");
+        fleet_doc["lanes"][0]["launch"] = Value::Null;
+        std::fs::write(
+            fleet.fleet_path(),
+            serde_json::to_string_pretty(&fleet_doc).unwrap(),
+        )
+        .unwrap();
+        let servers = tempfile::tempdir().unwrap();
+        let server = Server::start(servers.path(), "fleet");
+        let brief = fleet.dir.path().join("KEN-H.md");
+        std::fs::write(&brief, "/orch start KEN-H\n").unwrap();
+        let mut relaunch = launch("KEN-H", &root);
+        relaunch["repo"] = json!("o/r");
+        relaunch["brief_file"] = json!(brief.display().to_string());
+        let stub = fixtures().join("stub-record/claude");
+        let socket = format!("{},0,0", server.socket.display());
+        let verify = confirm_secs(1).to_string();
+        let account_state = fleet.dir.path().join("accounts");
+        let out = fleet.op_with(
+            &relaunch,
+            &[
+                ("TMUX", socket.as_str()),
+                ("AGENT_RUNTIME_TMUX_SESSION", server.session.as_str()),
+                (
+                    "AGENT_RUNTIME_HARNESS_BINARIES",
+                    &format!("claude={}", stub.display()),
+                ),
+                ("ORCH_AGENT_RUNTIME", &agent_runtime().display().to_string()),
+                ("AGENT_RUNTIME_TMUX_VERIFY_SECS", verify.as_str()),
+                (
+                    "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
+                    &account_state.display().to_string(),
+                ),
+            ],
+        );
+        // The stub writes its command line before it draws the composer
+        // marker the confirmation reads, so a confirmed relaunch has it.
+        let report = effect_report(&out);
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{row}: {report}");
+        let recorded: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("launch-record.json")).unwrap(),
+        )
+        .unwrap();
+        let brief = recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|arg| arg.starts_with("/orch start KEN-H"))
+            .unwrap_or_else(|| panic!("{row}: no brief on the line: {recorded}"));
+        assert!(!brief.contains("Admitted paths:"), "{row}: {brief}");
+    }
 }
 
 /// With the fleet's state in its own repository (`o/fleet`): a checkout

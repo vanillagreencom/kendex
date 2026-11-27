@@ -557,26 +557,38 @@ mod push {
         assert_eq!(result(&out)["live_round"], "1-1");
     }
 
+    /// A round ends at its run-keyed receipt, and at the paths ask a round
+    /// paused before an edit outside its admitted set writes in place of
+    /// one: no dev agent works it after either, so the freshness gate a
+    /// fresh round runs answers no live round and the push proceeds.
     #[test]
-    fn a_returned_or_unrecorded_round_permits_the_push() {
+    fn a_returned_paused_or_unrecorded_round_permits_the_push() {
+        let ends = [
+            (
+                "a run-keyed receipt",
+                "dev-return-KEN-1-1-1-20260101T000000Z-1.json",
+            ),
+            ("a paths ask", "paths-ask-KEN-1-1-1.md"),
+        ];
+        for (row, end) in ends {
+            let repo = Repo::new("KEN-1", "");
+            repo.record(json!({"dev_round_id": "1-1"}));
+            fs::write(repo.wt.join("tmp/dev-round-KEN-1-1-1.json"), "{}").unwrap();
+            fs::write(repo.wt.join("tmp").join(end), "{}").unwrap();
+            let out = repo.push("check-live-round");
+            assert_eq!(
+                exit(&out),
+                Some(0),
+                "{row} ends the round: {}",
+                stderr(&out)
+            );
+            assert!(result(&out).get("live_round").is_none(), "{row}");
+            let out = repo.push("branch");
+            assert_eq!(exit(&out), Some(0), "{row}: {}", stderr(&out));
+            assert_eq!(repo.remote("ken-1"), repo.head(), "{row}");
+        }
         let repo = Repo::new("KEN-1", "");
-        repo.record(json!({"dev_round_id": "1-1"}));
-        fs::write(repo.wt.join("tmp/dev-round-KEN-1-1-1.json"), "{}").unwrap();
-        fs::write(
-            repo.wt
-                .join("tmp/dev-return-KEN-1-1-1-20260101T000000Z-1.json"),
-            "{}",
-        )
-        .unwrap();
-        let out = repo.push("branch");
-        assert_eq!(
-            exit(&out),
-            Some(0),
-            "a run-keyed receipt ends the round: {}",
-            stderr(&out)
-        );
         repo.record(json!({"dev_round_id": "9-9"}));
-        commit(&repo.wt, "more", "more\n", "more");
         let out = repo.push("branch");
         assert_eq!(
             exit(&out),

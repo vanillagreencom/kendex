@@ -142,7 +142,7 @@ Run the steps below for every delegation: once for a single issue, once per grou
 
 9. **Admitted paths.** In a lane, the brief's `Admitted paths:` line names the lane's admitted set, the paths its launch judge let it hold. The runtime writes it into the lane's opening brief from the lane record's `touched`.
    - An overseer answer that widens the set replaces it: the answer names the whole widened set.
-   - A `joined` directive's `Admitted paths:` line replaces it too: the line names the set the join widened. The runtime sends that line only to a lane that already holds a set, so a lane that opened with no line stays unbounded.
+   - A `joined` directive's `Admitted paths:` line replaces it too: the line names the set the join widened. The runtime sends that line only where the lane's record renders one ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file) item 1), so a lane that opened with no line stays unbounded through every join.
    - Render the current set as the brief's `Admitted paths:` line, the JSON array unchanged.
    - A lane whose opening brief carried no such line, and a session that is not a lane, render none.
 
