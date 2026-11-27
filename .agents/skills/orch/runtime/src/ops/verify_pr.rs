@@ -61,6 +61,10 @@ pub struct PrVerified {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
     pub checks: Vec<CheckReport>,
+    /// The checks bearing a required context's name that the pull
+    /// request's required set does not count (`verify::Verified`'s).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub non_required: Vec<CheckReport>,
     /// The `record-verification` transition that committed, on `complete`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded: Option<Applied>,
@@ -117,6 +121,7 @@ pub(crate) fn run_with(
                 base: None,
                 verdict: None,
                 checks: Vec::new(),
+                non_required: Vec::new(),
                 recorded: None,
             });
         }
@@ -147,6 +152,7 @@ pub(crate) fn run_with(
         base: Some(head.base),
         verdict: verified.verdict,
         checks: verified.checks,
+        non_required: verified.non_required,
         recorded: verified.recorded,
     })
 }

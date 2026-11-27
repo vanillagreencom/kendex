@@ -1,8 +1,8 @@
 //! The classification stage: the verdict over the selected members.
 //! `judge` is the judgement's one entry: it takes a validated, complete
-//! `Evidence` by value and nothing else, runs the selection stage and
-//! classifies its members. The state machine is in `classify`'s doc
-//! comment.
+//! `Evidence` by value and the caller and nothing else, runs the selection
+//! stage and classifies its members. The state machine is in `classify`'s
+//! doc comment.
 
 use crate::ops::Verdict;
 
@@ -11,7 +11,7 @@ use super::selection::{
     AbsenceFacts, Member, Scope, Selection, by_workflow, current_execution, select,
 };
 use super::wire::{Outcome, RunConclusion};
-use super::{Bucket, CheckReport, Source};
+use super::{Bucket, Caller, CheckReport, Source};
 
 /// What one read set establishes.
 pub(super) enum Judgement {
@@ -26,9 +26,21 @@ pub(super) enum Judgement {
     },
 }
 
+/// The judgement with the checks the selection set aside, which it
+/// reports and never judges.
+pub(super) struct Judged {
+    pub(super) judgement: Judgement,
+    pub(super) non_required: Vec<CheckReport>,
+}
+
 /// The judgement's entry: `Evidence → Selection → Classification`.
-pub(super) fn judge(evidence: Evidence) -> Judgement {
-    classify(select(&evidence))
+pub(super) fn judge(evidence: Evidence, caller: Caller) -> Judged {
+    let mut selection = select(&evidence, caller);
+    let non_required = std::mem::take(&mut selection.non_required);
+    Judged {
+        judgement: classify(selection),
+        non_required,
+    }
 }
 
 /// The dispatches that make current-head work: only a substantive run

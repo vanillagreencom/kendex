@@ -633,8 +633,16 @@ fn ok_result(out: &Output) -> Value {
 type Reported = (String, String, String, String);
 
 fn checks(result: &Value) -> Vec<Reported> {
-    result["checks"]
-        .as_array()
+    reports(&result["checks"])
+}
+
+/// The reply's non-required lines, absent when there are none.
+fn non_required(result: &Value) -> Vec<Reported> {
+    result.get("non_required").map_or_else(Vec::new, reports)
+}
+
+fn reports(list: &Value) -> Vec<Reported> {
+    list.as_array()
         .unwrap()
         .iter()
         .map(|c| {
@@ -3849,6 +3857,151 @@ fn an_unreadable_pull_request_is_a_result_with_its_cause_and_an_invalid_request_
     assert_eq!(reply(&out)["refusal"]["key"], "op-kind");
     assert!(gh.log().is_empty(), "{:?}", gh.log());
     assert!(gh.state().get("verification").is_none());
+}
+
+/// One row of the pull request's required set beside a `workflow_dispatch`
+/// run of the same workflow on its head: the caller, the conclusions of
+/// the pull request's `CI` job and of the later dispatch run's, and the
+/// answer.
+struct DispatchRow {
+    name: &'static str,
+    pull_request: bool,
+    pr_ci: &'static str,
+    dispatch_ci: &'static str,
+    verdict: &'static str,
+    checks: Vec<Reported>,
+    non_required: Vec<Reported>,
+}
+
+/// GitHub evaluates a workflow job's check for a pull request's required
+/// status checks only when its run's event is `push`, `pull_request`,
+/// `pull_request_review`, `pull_request_target`, `deployment`,
+/// `deployment_status` or, for the merge queue, `merge_group`
+/// (docs.github.com, troubleshooting-required-status-checks, "Checks from
+/// some workflow jobs are not evaluated"). So under `verify-pr` a later
+/// `workflow_dispatch` run's `CI` neither fails nor passes the required
+/// `CI`, nor supersedes the pull request's own failure; it is reported as
+/// a non-required line, and a dispatch-only job (`miri`) is not reported.
+/// Each run concludes as its jobs did.
+/// `verify-head` judges a head that may have no pull request, so it keeps
+/// judging the newer run.
+#[test]
+fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it() {
+    let rows = [
+        DispatchRow {
+            name: "a failed dispatch run beside the pull request's passing CI passes",
+            pull_request: true,
+            pr_ci: "success",
+            dispatch_ci: "failure",
+            verdict: "pass",
+            checks: vec![row("CI", "check-run", "success", "pass")],
+            non_required: vec![row("CI", "check-run", "failure", "fail")],
+        },
+        DispatchRow {
+            name: "a passing dispatch run does not supersede the pull request's failed CI",
+            pull_request: true,
+            pr_ci: "failure",
+            dispatch_ci: "success",
+            verdict: "fail",
+            checks: vec![row("CI", "check-run", "failure", "fail")],
+            non_required: vec![row("CI", "check-run", "success", "pass")],
+        },
+        DispatchRow {
+            name: "verify-head judges the newer dispatch run",
+            pull_request: false,
+            pr_ci: "success",
+            dispatch_ci: "failure",
+            verdict: "fail",
+            checks: vec![row("CI", "check-run", "failure", "fail")],
+            non_required: vec![],
+        },
+    ];
+    for r in rows {
+        let dispatched = "2026-01-29T15:21:00Z";
+        let jobs = vec![
+            check_run_in(Some(700), 9, json!("CI"), "completed", json!(r.pr_ci)),
+            with(
+                check_run_in(
+                    Some(701),
+                    10,
+                    json!("CI"),
+                    "completed",
+                    json!(r.dispatch_ci),
+                ),
+                "started_at",
+                json!(dispatched),
+            ),
+            with(
+                check_run_in(
+                    Some(701),
+                    11,
+                    json!("miri"),
+                    "completed",
+                    json!(r.dispatch_ci),
+                ),
+                "started_at",
+                json!(dispatched),
+            ),
+        ];
+        let executions = vec![
+            with(
+                execution(
+                    700,
+                    1,
+                    "2026-01-29T15:09:00Z",
+                    HEAD,
+                    "completed",
+                    json!(r.pr_ci),
+                ),
+                "event",
+                json!("pull_request"),
+            ),
+            with(
+                execution(
+                    701,
+                    1,
+                    "2026-01-29T15:20:00Z",
+                    HEAD,
+                    "completed",
+                    json!(r.dispatch_ci),
+                ),
+                "event",
+                json!("workflow_dispatch"),
+            ),
+        ];
+        let mut gh = Github::green();
+        gh.pull(PR, HEAD, BASE, "OPEN")
+            .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
+            .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
+            .answer(&check_runs(HEAD, 1), check_runs_page(3, jobs))
+            .answer(&runs(HEAD, 1), runs_page(executions))
+            .answer(&rules(1), json!([status_checks_rule(&["CI"])]));
+        let result = if r.pull_request {
+            ok_result(&gh.verify_pr(PR, true))
+        } else {
+            ok_result(&gh.verify(true))
+        };
+        assert_eq!(result["status"], "complete", "{}: {result}", r.name);
+        assert_eq!(result["verdict"], r.verdict, "{}: {result}", r.name);
+        assert_eq!(checks(&result), r.checks, "{}: {result}", r.name);
+        assert_eq!(
+            non_required(&result),
+            r.non_required,
+            "{}: {result}",
+            r.name
+        );
+        assert_eq!(
+            gh.state()["verification"]["verdict"],
+            r.verdict,
+            "{}",
+            r.name
+        );
+        if r.pull_request {
+            assert_pull_then_pinned(&gh.log(), PR, HEAD);
+        } else {
+            assert_pinned(&gh.log(), HEAD);
+        }
+    }
 }
 
 // --- verify-review: the review gate --------------------------------------------
