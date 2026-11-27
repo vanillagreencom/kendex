@@ -778,6 +778,27 @@ for row in "${DAMAGED_ROWS[@]}"; do
   assert_eq "$(cat "$BOX/to-lane.cursor")" "$cursor" "$world line 8, $cmd: the cursor moves only past lines read"
 done
 
+# The Jarvis mark under --count saves the count its caller names, the count of
+# a read taken before later lines landed, below the snapshot's three lines; a
+# count past the snapshot is refused and the earlier mark of 1 stands.
+# COUNT | RC=ERR=SEEN
+MARK_COUNT_ROWS=(
+  "2|0==2"
+  "4|2=lane-mail: count-invalid=4 count=3=1"
+)
+for row in "${MARK_COUNT_ROWS[@]}"; do
+  IFS='|' read -r count want <<<"$row"
+  new_lane "mark_count_$count"
+  BOX="$LANE/tmp/lane-mail/overseer"
+  mkdir -p "$BOX"
+  for i in 1 2 3; do
+    printf '{"id":"n%s","kind":"notice","to":"owner","at":"2026-11-26T00:00:00Z","text":"n%s"}\n' "$i" "$i" >> "$BOX/to-overseer.jsonl"
+  done
+  printf '1\n' > "$BOX/to-overseer.seen"
+  lm events --item overseer --root "$LANE" --box to-overseer --after 0 --mark-read --count "$count"
+  assert_eq "$RC=$ERR=$(cat "$BOX/to-overseer.seen")" "$want" "--mark-read --count $count saves a named count, never one past the snapshot's"
+done
+
 # compact --set-aside is the repair: the damaged lines leave both files with
 # their text kept beside them, created private whatever the umask, their
 # logical numbers stay, and every reader then reads past them. A compact

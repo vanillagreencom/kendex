@@ -501,16 +501,6 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.assertNotIn("unclassified stays unread", output)
         # An entry kendex could not read is skipped, as its noted row was.
         self.assertNotIn("repo=gone", output)
-        marker = self.home / "tmp/lane-mail/overseer/to-overseer.seen"
-        self.assertEqual(marker.read_text().strip(), str(cursor[str(self.home)]["to-overseer"]["count"]))
-        # Consume the canonical marker through the unchanged relay owner.
-        probe = ('import sys; from pathlib import Path; '
-                 'sys.path.insert(0,sys.argv[1]); from relay import RootRelay; from mailbox import LaneMail; '
-                 'reader=RootRelay.__new__(RootRelay); reader._mail=LaneMail(Path(sys.argv[2])); '
-                 'events=reader.mail.events(); print(reader.jarvis_session_read(events))')
-        received = self.command([sys.executable, "-B", "-c", probe, REPO / "skills/slack/scripts/lib", self.home])
-        self.assertEqual(received.returncode, 0, received.stderr)
-        self.assertEqual(received.stdout.strip(), str(cursor[str(self.home)]["to-overseer"]["count"]))
         again, cursor = self.read_pass(cursor)
         self.assertNotIn("EVENT ", again)
         # A restored box may have a smaller logical count. The successful
@@ -532,7 +522,6 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         output, cursor = self.read_pass(cursor)
         self.assertIn("after the interrupted producer", output)
         self.assertEqual(cursor[str(self.home)]["to-overseer"]["count"], before + 2)
-        self.assertEqual(marker.read_text().strip(), str(before + 2))
 
     def test_compaction_and_failed_read(self):
         for value in ("old a", "old b"):
@@ -872,8 +861,6 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 self.assertIn("EVENT overseer-unread repo=peer unread=1", output)
                 for root in (self.home, self.peer):
                     self.assertNotIn("cause", cursor[str(root)])
-                    seen = root / "tmp/lane-mail/overseer/to-overseer.seen"
-                    self.assertEqual(int(seen.read_text()), cursor[str(root)]["to-overseer"]["count"])
                 self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
                 watch = self.watch()
                 self.append(watch, "EVENT mail\nproducer delivery " + installed + "\n")
@@ -890,14 +877,165 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         for box in ("to-lane", "to-overseer"):
             self.assertEqual(failed[str(self.peer)][box], prior[str(self.peer)][box])
         self.assertNotIn("next owner event", output)
-        seen = self.peer / "tmp/lane-mail/overseer/to-overseer.seen"
-        self.assertGreater(int(seen.read_text()), prior[str(self.peer)]["to-overseer"]["count"])
         self.assertEqual(failed[str(self.peer)]["cause"]["key"][0], "mailbox-receipts")
         shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
         output, recovered = self.read_pass(failed)
         self.assertIn("next owner event", output)
         for box in ("to-lane", "to-overseer"):
             self.assertGreater(recovered[str(self.peer)][box]["count"], prior[str(self.peer)][box]["count"])
+
+    def test_owner_notice_marks_follow_the_sessions_drain(self):
+        """to-overseer.seen takes only a count a delivered pass read, once the home's drain passes its batch."""
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        hosted = self.root / "host-registry"
+        self.executable("ssh", "#!/bin/sh\nREGISTRY=" + shlex.quote(str(hosted)) + " exec " + shlex.quote(BASH) + " -s\n")
+        lane_mail = REPO / "skills/mailbox/scripts/lane-mail"
+        owner = ["local", str(self.home.resolve())]
+        probe = ('import sys; from pathlib import Path; '
+                 'sys.path.insert(0,sys.argv[1]); from relay import RootRelay; from mailbox import LaneMail; '
+                 'reader=RootRelay.__new__(RootRelay); reader._mail=LaneMail(Path(sys.argv[2])); '
+                 'events=reader.mail.events(); print(reader.jarvis_session_read(events))')
+
+        def seen(mailbox):
+            marker = mailbox / "tmp/lane-mail/overseer/to-overseer.seen"
+            return int(marker.read_text()) if marker.exists() else None
+
+        def cycle(watch, now):
+            for target in watch.destinations:
+                watch.accept(watch.acquire(now, target.key))
+
+        def batch(watch, now, held):
+            # held: the home's own spans fill the batch, so the next span waits for a later one.
+            if not held:
+                return watch.batch(now)
+            cap = sum(span[1] - span[0] for span in watch.state["spans"] if span[2:] == [owner])
+            with patch.object(self.module, "CAP", cap):
+                watch.batch(now)
+
+        def drain():
+            result = self.command([lane_mail, "inbox", "--item", "overseer"], self.home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        # Each row names its variations of the one flow: a notice captured,
+        # batched, drained by the session, then two passes.
+        #   late: a notice lands after the captured pass.
+        #   refused: the root's first read fails at its drain --receipts read.
+        #   host: the root is on a control host.
+        #   alone: the project list omits the home.
+        #   held: the home's spans fill the first batch and the root's notice waits.
+        #   handoff: the root is a folder inside an unlisted checkout, whose
+        #     listing then takes its mailbox's read over before the batch.
+        #   restored: the box is emptied with the drained count owed, and a
+        #     notice lands once a pass has read it empty.
+        #   unmarked: the mark the drain owes is refused while a notice lands.
+        #   replaced: with the drained count owed, the box is replaced by one
+        #     line more than that count under another first envelope.
+        #   swapped: with the drained count owed, the box is replaced by one of
+        #     the same byte length and lines under another first envelope.
+        rows = (("captured", set()),
+                ("late append", {"late"}),
+                ("retry", {"refused"}),
+                ("host", {"host"}),
+                ("alone", {"alone"}),
+                ("retained", {"held"}),
+                ("handoff", {"held", "handoff"}),
+                ("restored", {"restored"}),
+                ("unmarked", {"unmarked"}),
+                ("replaced", {"replaced"}),
+                ("replaced same length", {"swapped"}))
+        for name, traits in rows:
+            with self.subTest(row=name), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                shutil.rmtree(self.root / "log", ignore_errors=True)
+                mailbox = self.project("drain-" + name.replace(" ", "-"))
+                root = mailbox / "packaging/jarvis-home" if "handoff" in traits else mailbox
+                root.mkdir(parents=True, exist_ok=True)
+                hosted.write_text(listing(root))
+                self.registry.write_text(listing(self.home) if "host" in traits else listing(root) if "alone" in traits
+                                         else listing(self.home, root))
+                self.settings["JARVIS_CONTROL_HOST"] = "alpha" if "host" in traits else ""
+                side = "ssh:alpha" if "host" in traits else "local"
+                texts = ["notice of row " + name]
+                self.mail(mailbox, "notice", texts[0], "--to", "owner")
+                if "held" in traits:
+                    self.mail(self.home, "notice", "home notice of row " + name, "--to", "owner")
+                watch = self.watch()
+                if "refused" in traits:
+                    self.intercept_mail('if [ "$PWD" = ' + shlex.quote(str(root)) + ' ] && [ "$1" = drain ]; then\nexit 1\nfi')
+                    cycle(watch, 0)
+                    self.assertIn("cause", watch.cursors[side][str(root)])
+                    self.assertIsNone(seen(mailbox), "a failed root read saves no count")
+                    shutil.copyfile(lane_mail, self.mail_command)
+                cycle(watch, 0)
+                if "handoff" in traits:
+                    self.registry.write_text(listing(self.home, root, mailbox))
+                    cycle(watch, 0)
+                    root = mailbox
+                batch(watch, 0, "held" in traits)
+                captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
+                if "late" in traits:
+                    self.mail(mailbox, "notice", "appended after the capture", "--to", "owner")
+                cycle(watch, 1)
+                self.assertIsNone(seen(mailbox), "no mark before the session drains the batch")
+                drain()
+                cycle(watch, 2)
+                if "restored" in traits:
+                    (mailbox / "tmp/lane-mail/overseer/to-overseer.jsonl").write_text("")
+                if "unmarked" in traits:
+                    self.intercept_mail('case "$*" in *--count*) exit 1;; esac')
+                box = mailbox / "tmp/lane-mail/overseer/to-overseer.jsonl"
+                if "replaced" in traits:
+                    texts.append("last notice of the replacement of row " + name)
+                    box.write_text("".join(json.dumps({"id": "r%d" % line, "kind": "notice", "to": "owner",
+                                                       "at": "2026-11-26T00:00:00Z", "text": "replacement %d" % line}) + "\n"
+                                           for line in range(1, captured + 1)) +
+                                   json.dumps({"id": "r0", "kind": "notice", "to": "owner",
+                                               "at": "2026-11-26T00:00:00Z", "text": texts[-1]}) + "\n")
+                if "swapped" in traits:
+                    old = box.read_text()
+                    first = json.loads(old.splitlines()[0])["id"]
+                    swapped = old.replace(first, first[:-1] + ("1" if first[-1] == "0" else "0"), 1)
+                    self.assertEqual(len(swapped.encode()), len(old.encode()))
+                    box.write_text(swapped)
+                cycle(watch, 3)
+                if "held" in traits:
+                    self.assertIsNone(seen(mailbox), "no mark while the root's notice waits for a batch")
+                if "restored" in traits:
+                    self.assertNotIn("cause", watch.cursors[side][str(root)])
+                    texts.append("notice after the restore of row " + name)
+                    self.mail(mailbox, "notice", texts[-1], "--to", "owner")
+                    cycle(watch, 3)
+                    self.assertNotIn("cause", watch.cursors[side][str(root)])
+                    captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
+                if traits & {"replaced", "swapped"}:
+                    self.assertIsNone(seen(mailbox), "no mark on a file the drained count did not count")
+                    self.assertNotIn("cause", watch.cursors[side][str(root)])
+                    captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
+                if "unmarked" in traits:
+                    self.assertEqual(watch.cursors[side][str(root)]["cause"]["key"][0], "mailbox-mark")
+                    self.assertIsNone(seen(mailbox))
+                    texts.append("notice beside the refused mark of row " + name)
+                    self.mail(mailbox, "notice", texts[-1], "--to", "owner")
+                    cycle(watch, 3)
+                    captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
+                    shutil.copyfile(lane_mail, self.mail_command)
+                if traits & {"held", "restored", "unmarked", "replaced"}:
+                    batch(watch, 4, False)
+                    drain()
+                    cycle(watch, 5)
+                    cycle(watch, 6)
+                # A same-length replacement's lines at or below the drained
+                # count are read past, so no batch carries one to mark.
+                expected = None if "swapped" in traits else captured
+                self.assertEqual(seen(mailbox), expected)
+                self.assertEqual(self.native_events(mailbox, "to-overseer")[0], captured + ("late" in traits))
+                bodies = [row["text"] for row in self.inbox() if row.get("delivery_id", "").startswith("jarvis-")]
+                for text in texts:
+                    self.assertEqual(sum(text in body.splitlines() for body in bodies), 1, "one batch carries " + text)
+                # The unchanged relay owner reads the mark.
+                received = self.command([sys.executable, "-B", "-c", probe, REPO / "skills/slack/scripts/lib", mailbox])
+                self.assertEqual(received.returncode, 0, received.stderr)
+                self.assertEqual(received.stdout.strip(), str(expected))
 
     def test_root_paths_are_distinct_cursor_keys(self):
         # Real registry + mailbox table: equal names and equal cross-host paths.
@@ -2239,7 +2377,6 @@ with open(sys.argv[1], "ab") as out:
         log = watch.log.read_text()
         self.assertIn("home note", log)
         self.assertNotIn("peer question", log)
-        self.assertTrue((self.home / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse(ssh_log.exists())
         self.assertEqual(passes.names, ["relay_status", "wall", "forward"])

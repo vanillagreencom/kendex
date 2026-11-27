@@ -242,7 +242,7 @@ Overseer side:
               ones the watch resolves. Either
               reads no cursor, since no directive is printed, so a cursor
               read that missed refuses neither
-  events --item ITEM [--box to-lane|to-overseer [--after N]] [--mark-read]
+  events --item ITEM [--box to-lane|to-overseer [--after N]] [--mark-read [--count N]]
               print public envelopes of both files, to-overseer.jsonl then
               to-lane.jsonl, each with `box` naming the file it came from,
               `line` its logical line number and `count` that file's logical
@@ -262,6 +262,11 @@ Overseer side:
               --box to-overseer. After printing the selected envelopes,
               atomically save the snapshot's logical count in to-overseer.seen for the
               Slack relay's hold resume, including on an --after read.
+              --count N saves N instead, the count of a read the Jarvis
+              session has taken in: the Jarvis watch saves the count its
+              passes read once the session drains the batch that carried
+              them, never at capture. A count past the snapshot's is
+              refused `count-invalid` and saves nothing.
               Without it, mark nothing: a relay keeps its own record
               of what it carried, keyed by envelope id, and needs neither
               a line cursor nor an acknowledgement
@@ -829,6 +834,7 @@ lm_message() { # KEY VALUE
     missing-value) text='The option requires a value.' ;;
     option-required) text='The command requires this option.' ;;
     item-invalid) text='An item is one path segment of ASCII letters, digits, dot, underscore and hyphen, and never . or ..' ;;
+    count-invalid) text='--count takes a non-negative integer no greater than the logical count of the to-overseer.jsonl snapshot this read printed. Nothing was saved.' ;;
     after-invalid) text='--after and --ack take a non-negative integer, the count a previous drain or inbox printed.' ;;
     seconds-invalid) text='The option takes a non-negative integer number of seconds.' ;;
     command-missing) text='The required command is not on PATH.' ;;
@@ -947,6 +953,7 @@ HOST=0
 AFTER=""
 EVENT_BOX=""
 MARK_READ=0
+MARK_COUNT=""
 SET_ASIDE=0
 MSGID=""
 TIMEOUT=0
@@ -1013,6 +1020,7 @@ while [ "$#" -gt 0 ]; do
     --after) need_val "$@"; AFTER="$2"; shift 2 ;;
     --box) need_val "$@"; EVENT_BOX="$2"; shift 2 ;;
     --mark-read) MARK_READ=1; shift ;;
+    --count) need_val "$@"; MARK_COUNT="$2"; shift 2 ;;
     --set-aside) SET_ASIDE=1; shift ;;
     --id) need_val "$@"; MSGID="$2"; shift 2 ;;
     --re) need_val "$@"; MSGID="$2"; shift 2 ;;
@@ -1160,6 +1168,10 @@ for given in $OPTS_GIVEN; do
       case "$EVENT_BOX" in to-lane | to-overseer) ;; *) refuse box-invalid "$EVENT_BOX" ;; esac ;;
     --mark-read)
       [ "$VERB:$ITEM:$EVENT_BOX:$HOST" = events:overseer:to-overseer:0 ] || refuse option-unknown --mark-read
+      ;;
+    --count)
+      [ "$MARK_READ" -eq 1 ] || refuse option-unknown --count
+      case "$MARK_COUNT" in *[!0-9]*) refuse count-invalid "$MARK_COUNT" ;; esac
       ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id)
@@ -3634,6 +3646,10 @@ case "$VERB" in
       lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" "$OUTBOUND" || refuse file-unreadable "$EVENT_FILE"
       if [ "$MARK_READ" -eq 1 ]; then
         COUNT="$(lm_count "$WORK_DIR/events.jsonl")" || refuse file-unreadable "$EVENT_FILE"
+        if [ -n "$MARK_COUNT" ]; then
+          [ "$MARK_COUNT" -le "$COUNT" ] || { REFUSE_EXTRA="count=$COUNT"; refuse count-invalid "$MARK_COUNT"; }
+          COUNT="$MARK_COUNT"
+        fi
         mkdir -p -- "$BOX" || refuse write-failed "$BOX"
         python3 "$SCRIPT_DIR/lib/lane-mail-store.py" cursor-put "$BOX/to-overseer.seen" "$COUNT" 2>"$WORK_DIR/store.err" ||
           refuse write-failed "$BOX/to-overseer.seen" "$(cat -- "$WORK_DIR/store.err")"
