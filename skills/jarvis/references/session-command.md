@@ -65,7 +65,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - An app that turns Jarvis off uses `--origin app-off`.
   - Only `start --origin app-on` clears that Off.
   - A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
-- A controller whose harness process exited without a Stop, as after a crash or a `/logout`, reads `stopped` with reason `ended`. The [watch loop](control-host-events.md#delivery) starts it again by this route:
+- A controller whose harness process exited without a Stop, as after a crash or a `/logout`, reads `stopped` with reason `ended`. A recorded controller whose record holds a Start failure reads that failure: `failed` with `launch-failed`, or `blocked` with `sign-in-required`. The [watch loop](control-host-events.md#delivery) starts either again by this route:
   1. Start with `--mode resume --origin manual --keep-brief` on the recorded harness and account.
   2. If that Start refuses, at once or once its detached start records the refusal, run `jarvis-session succeed --home HOME --exited`. It hands the exited controller over to the next account the walk picks, never the recorded one, and retires nothing live.
      - `--exited` refuses `record-unreadable` while the controller runs, while a start is open, and after a Stop. After an app-off Stop it refuses `app-off`. During an open hand-over it answers `handing-over`, as every `succeed` does.

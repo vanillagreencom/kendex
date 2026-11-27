@@ -31,6 +31,9 @@ FORWARD_EVERY_SECS = 60
 # controller that exits inside this window of its restart has not outlived
 # it, so that exit fails the restart rather than opening another.
 LIVE_SECS = 300
+# The status readings of a recorded controller that is down with no Stop
+# asked: its exit, and each failure a Start stores (Session.start_failed).
+DOWN_READINGS = {("stopped", "ended"), ("failed", "launch-failed"), ("blocked", "sign-in-required")}
 # A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
 # invalid value is still a satellite, so a typo never makes a second main.
 Role = namedtuple("Role", "kind dest home")
@@ -1242,7 +1245,8 @@ class Watch:
         """One status reading at NOW: the episode whose restart starts now, or None.
 
         A controller whose process is gone, with no stop asked, reads
-        stopped and ended. Its exit is one episode: one resume, one succeed
+        stopped and ended; one whose last Start failed reads the failure that
+        Start stored. Its exit is one episode: one resume, one succeed
         where that resume is refused, and one owner notice of the outcome.
         A restart that runs holds the episode for LIVE_SECS after it ran: an
         exit read inside that window, its success notice sent or still owed,
@@ -1287,14 +1291,16 @@ class Watch:
             # Every recorded controller names its harness: this read names none.
             return None
         if memory is None:
-            if (answer.get("state"), answer.get("reason")) != ("stopped", "ended"):
+            if reading not in DOWN_READINGS:
                 return None
-            memory = {"at": now, "harness": answer["harness"], "account": answer.get("account"),
+            # A stored Start failure is one more way down, recovered by the same route.
+            stored = None if reading == ("stopped", "ended") else (reading[1] + " (" + (answer.get("detail") or "")[:200] + ")")
+            memory = {"at": now, "harness": answer["harness"], "account": answer.get("account"), "failure": stored,
                       "route": "resume", "refused": [], "outcome": None, "noticed": False}
             self.state["exited"] = memory
             self.save()
             return memory
-        if memory.get("ran") and reading == ("stopped", "ended"):
+        if memory.get("ran") and reading in DOWN_READINGS:
             # The owner's one notice names this outcome, never a success
             # still owed from before it.
             memory.update(ran=False, noticed=False, outcome=(
@@ -1341,9 +1347,11 @@ class Watch:
 
     def tell_exited(self, memory):
         """The owner's one notice of an exited controller: its harness, its
-        account, the time it was read and the restart's outcome."""
+        account, the time it was read, the Start failure its record held and
+        the restart's outcome."""
+        down = "failed to start, " + memory["failure"] if memory.get("failure") else "exited"
         text = ("Jarvis on " + (memory["account"] or "its default account") + " (" + memory["harness"]
-                + ") exited (read at " + wall_time(memory["at"]) + "). " + memory["outcome"])
+                + ") " + down + " (read at " + wall_time(memory["at"]) + "). " + memory["outcome"])
         try:
             result = self.owner_notice(text, "exited-notice")
             if not notice_receipt(result):
