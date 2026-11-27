@@ -433,11 +433,18 @@ copy_size_kib() {
     refuse_with_log revision-unreadable sha "$SHA" "could not list the tracked files of the revision" "$ROOT/size.log"
   # A file takes whole blocks; 4 KiB is the default block of ext4 and APFS, so
   # a tree of small files is not read as smaller than the copy it becomes.
-  awk -F '\t' '
+  # ls-tree exits 0 and prints BAD as the size of a blob it cannot read, such
+  # as one a partial clone has not fetched; that row ends the sum with its path.
+  sum_status=0
+  sum=$(awk -F '\t' '
     { split($1, meta, " ") }
+    meta[2] == "blob" && meta[4] !~ /^[0-9]+$/ { print $2; unread = 1; exit 1 }
     meta[2] == "blob" { kib += int((meta[4] + 4095) / 4096) * 4 }
-    END { printf "%d\n", kib }
-  ' <<<"$listing"
+    END { if (unread) exit 1; printf "%d\n", kib }
+  ' <<<"$listing") || sum_status=$?
+  [ "$sum_status" -eq 0 ] ||
+    refuse revision-unreadable sha "$SHA" "ls-tree reported no readable size for the tracked file $sum"
+  echo "$sum"
 }
 
 # The copy's build writes what the worktree's build already wrote. That output

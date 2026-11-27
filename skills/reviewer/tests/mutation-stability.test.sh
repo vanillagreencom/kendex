@@ -310,6 +310,19 @@ exec "$(command -v git)" "\$@"
 CASE
 chmod +x "$DU_FAIL_BIN/du" "$LS_FILES_FAIL_BIN/git"
 
+# A git ls-tree that exits 0 with BAD in place of every size, as git prints for
+# a blob it cannot read.
+LS_TREE_BAD_BIN="$TMP/ls-tree-bad"
+mkdir -p "$LS_TREE_BAD_BIN"
+cat > "$LS_TREE_BAD_BIN/git" <<CASE
+#!/bin/sh
+case " \$* " in
+  *" ls-tree "*) "$(command -v git)" "\$@" | awk -F '\t' 'BEGIN { OFS = "\t" } { sub(/[0-9]+\$/, "BAD", \$1); print }'; exit 0 ;;
+esac
+exec "$(command -v git)" "\$@"
+CASE
+chmod +x "$LS_TREE_BAD_BIN/git"
+
 BUILD_OUTPUT="$REPO/target"
 printf 'target/\n' >> "$REPO/.git/info/exclude"
 
@@ -364,6 +377,7 @@ while IFS=$'\t' read -r name revision free fixture expected; do
   case "$fixture" in
     ignored-2mib-du-fails) stub_path="$DU_FAIL_BIN:$stub_path" ;;
     ls-files-fails) stub_path="$LS_FILES_FAIL_BIN:$stub_path" ;;
+    ls-tree-bad) stub_path="$LS_TREE_BAD_BIN:$stub_path" ;;
     spaced-source) source_name="stub volume" ;;
   esac
   disk_tmp="$TMP/disk-$disk_rows"
@@ -382,6 +396,7 @@ tracked files fit one copy but not two	large	1051576	none	rc=2;first=error=disk-
 ignored build output pushes the need past free space	base	1049576	ignored-2mib	rc=2;first=error=disk-space-short free=1049576 need-exceeds=yes;copies=0
 unreadable build output size	base	1049576	ignored-2mib-du-fails	rc=2;first=error=build-output-unreadable;copies=0
 unreadable ignored-file list	base	1049576	ls-files-fails	rc=2;first=error=build-output-unreadable;copies=0
+unreadable tracked size	base	1049576	ls-tree-bad	rc=2;first=error=revision-unreadable;copies=0
 source name with a space	base	1024	spaced-source	rc=2;first=error=disk-space-short free=1024 need-exceeds=yes;copies=0
 unreadable free space	base	fail	none	rc=2;first=error=disk-space-unreadable;copies=0
 ROWS
