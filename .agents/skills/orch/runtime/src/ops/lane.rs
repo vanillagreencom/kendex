@@ -49,9 +49,10 @@ use agent_runtime::journal::{new_intent, push_intent};
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
 /// field left out keeps the record's value, bar `host` and `kind`, which
-/// are always the launch's own, and `harness`, `account`,
-/// `model` and `effort` reach the record only when the launch confirms,
-/// since the session that runs is the one that confirmed; on a first
+/// are always the launch's own, and `permission`, which the confirm clears
+/// where the confirmed harness cannot carry the kept word; `harness`,
+/// `account`, `model` and `effort` reach the record only when the launch
+/// confirms, since the session that runs is the one that confirmed; on a first
 /// launch the record carries them from the start. `host` names where the
 /// lane runs: nothing for a window on this machine, `claude-cloud` for a
 /// cloud session, else a provider's path; `kind` left out follows it
@@ -1642,20 +1643,8 @@ pub(super) fn launch_lane(
             // first launch's tier, since its brief opens the workflow with
             // `start` whatever tier the item runs at; a launch over a `done`
             // record opens the item's next phase, whose brief states its own.
-            let kept: Vec<String> = previous
-                .get("permission")
-                .and_then(Value::as_str)
-                .map(|p| p.split_whitespace().map(str::to_owned).collect())
-                .unwrap_or_default();
             if let Value::String(permission) = r.permission_recorded() {
                 record::set(lane, "permission", permission.as_str());
-            } else if permission_meaning_on(&r.harness, &kept).is_err() {
-                // A kept word is its harness's own spelling. One this
-                // launch's harness cannot carry, as on a move onto Pi, which
-                // has none, would refuse every relaunch composed from the
-                // record `permission-unrepresentable`, after that relaunch's
-                // close had retired the predecessor.
-                record::set(lane, "permission", Value::Null);
             }
             if allow_all.is_some() {
                 record::set(lane, "allow_all", allow_all);
@@ -2356,6 +2345,21 @@ pub(super) fn record_launch_outcome(
             // effort of the earlier session survives into its record.
             if let Some(selection) = &selection {
                 record::set(lane, "harness", selection.harness.as_str());
+                // A kept word is its harness's own spelling. One the
+                // confirmed harness cannot carry, as on a move onto Pi,
+                // which has none, would refuse every relaunch composed from
+                // the record `permission-unrepresentable`, after that
+                // relaunch's close had retired the predecessor. The record's
+                // harness changes here alone, so a launch that fails keeps
+                // the word its harness still carries.
+                let kept: Vec<String> = lane
+                    .get("permission")
+                    .and_then(Value::as_str)
+                    .map(|p| p.split_whitespace().map(str::to_owned).collect())
+                    .unwrap_or_default();
+                if permission_meaning_on(&selection.harness, &kept).is_err() {
+                    record::set(lane, "permission", Value::Null);
+                }
                 for (key, value) in [
                     ("account", &selection.account),
                     ("model", &selection.model),
@@ -4337,24 +4341,43 @@ mod tests {
     /// A relaunch over a record whose word came from another harness's
     /// launch keeps that word only where its own harness carries it: the
     /// recovery the watch composes from the persisted record then launches.
-    /// A move onto Pi, which has no word, leaves a Pi recovery that runs its
-    /// own posture; a codex relaunch naming no word keeps the record's
-    /// codex word for the codex recovery after it.
+    /// A confirmed move onto Pi, which has no word, leaves a Pi recovery
+    /// that runs its own posture; a move onto Pi that fails leaves the
+    /// codex record its word for the codex recovery after it, as a codex
+    /// relaunch naming no word does.
     #[test]
     fn a_recovery_from_the_relaunched_record_launches_under_a_word_its_harness_carries() {
         use crate::watch::lanes::{Composed, Composition, compose_relaunch};
         const CODEX_BYPASS: &str = "--dangerously-bypass-approvals-and-sandbox";
+        // (relaunch harness, model, effort, its outcome, the record's
+        // harness after it, the recovery's word)
         let rows = [
-            ("pi", Harness::Pi, "openai/gpt-5.5:high", None, Value::Null),
+            (
+                "pi",
+                "openai/gpt-5.5:high",
+                None,
+                Outcome::Confirmed,
+                Harness::Pi,
+                Value::Null,
+            ),
+            (
+                "pi",
+                "openai/gpt-5.5:high",
+                None,
+                Outcome::Failed,
+                Harness::Codex,
+                Value::from(CODEX_BYPASS),
+            ),
             (
                 "codex",
-                Harness::Codex,
                 "gpt-5.5-codex",
                 Some("high"),
+                Outcome::Confirmed,
+                Harness::Codex,
                 Value::from(CODEX_BYPASS),
             ),
         ];
-        for (harness, recovered_on, model, effort, permission) in rows {
+        for (harness, model, effort, ended, recovered_on, permission) in rows {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
             let checkout = root.join("w");
@@ -4363,6 +4386,10 @@ mod tests {
             let path = fleet_file(&root);
             let mut rec = record("KEN-P", "stopped", None);
             rec["harness"] = json!("codex");
+            rec["model"] = json!("gpt-5.5-codex");
+            rec["effort"] = json!("high");
+            rec["class"] = json!("standard");
+            rec["class_reason"] = json!("general implementation work");
             rec["permission"] = json!(CODEX_BYPASS);
             rec["mail_root"] = json!(mail_root);
             fleet_with(&path, &[rec]);
@@ -4375,9 +4402,13 @@ mod tests {
                 ..launch_fields("KEN-P")
             }));
             let id = intend(&path, &moved);
-            run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
+            run(&path, &outcome(&id, ended)).unwrap();
             let running = lane(&path, "KEN-P");
-            assert_eq!(running.harness.as_deref(), Some(harness));
+            assert_eq!(
+                running.harness.as_deref(),
+                Some(recovered_on.name()),
+                "{harness} {ended:?}"
+            );
             let Composed { launch, .. } = compose_relaunch(
                 &running,
                 recovered_on,
@@ -4399,13 +4430,17 @@ mod tests {
             let recovery: Request =
                 serde_json::from_str(&fs::read_to_string(&launch).unwrap()).unwrap();
             let Report::LaunchLane(l) = run(&path, &recovery).unwrap().report else {
-                panic!("{harness}")
+                panic!("{harness} {ended:?}")
             };
-            assert_eq!(l.lane.status, LaneStatus::Preparing, "{harness}");
+            assert_eq!(
+                l.lane.status,
+                LaneStatus::Preparing,
+                "{harness} {ended:?}"
+            );
             assert_eq!(
                 lane_doc(&path, "KEN-P").get("permission"),
                 Some(&permission),
-                "{harness}"
+                "{harness} {ended:?}"
             );
         }
     }
