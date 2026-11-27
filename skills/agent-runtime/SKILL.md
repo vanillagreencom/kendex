@@ -67,6 +67,9 @@ This package owns launch, account selection under the caller's policy, session i
   - Charge it to its account: start it with `agent-runtime process lead --worker <name> --account <config dir> -- <program>`.
   - The runtime places the record in the account records' `workers` folder. `process group --worker <name>` and `process stop --worker <name>` read it.
   - `<name>` is one path component with no leading `.`.
+  - `process stop --worker <name>` removes the record once the stop reads the group stopped or already gone.
+  - A group still live after the grace refuses `group-live`, and one the stop could not read refuses `stop-unreadable`. Each keeps the record.
+  - `process stop --file` never removes its record.
 
 ## Confinement
 
