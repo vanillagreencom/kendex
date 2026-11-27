@@ -131,10 +131,12 @@ On every surface the watch reports a lane's questions as `lane-question` and new
      - `[REASON]` is the word `sync-base`'s own `sync-base: [REASON]` line leads with.
      - These keys come from no such line: `sync-base-timeout` for a fetch past the read bound, `sync-base-unstarted` where the script could not start and `sync-base-exit-[N]` where it printed no reason.
      - Nor does `sync-base-not-run`, for a start that never reached the sync: it ended before judging its predecessor gone, or it reconciled an earlier open start.
-   - Where the checkout did not follow, who syncs depends on the controller's state, never on the key:
-     - After a resumed controller's line at exit 4, the caller runs no `sync-base`. The resumed controller runs `sync-base` (step 5) itself once the cause is cleared, before its first decision.
-     - After a failed or unconfirmed line, the caller runs no `sync-base` until `orch-runtime state inspect --fleet` proves stopped both the predecessor and any runner the start opened.
-     - Where that stop stays unproven, leave the open intent to its reconcile (step 7) and the sync to a fresh start that judges its predecessor gone.
+   - Where the checkout did not follow, what comes next depends on the controller's state, never on the key:
+     - After a resumed controller's line at exit 4, the checkout stays behind the landed base until the next follow.
+     - After a failed or unconfirmed line, the caller runs no `sync-base` until the fleet state records that the predecessor and any runner the start opened have stopped. `orch-runtime state inspect --fleet` prints that state and reads no process.
+     - The runners' stop is the start's intent closed with outcome `failed`, which settles only once every runner the start opened reads stopped or gone. An open intent proves no stop.
+     - The predecessor's stop is the controller record's `exit.run.generation` equal to its `generation`. A predecessor identity with no such exit record is unproven, as after a failed start's `retired: false`.
+     - Where either stop stays unproven, leave the open intent to its reconcile (step 7) and the sync to a fresh start that judges its predecessor gone.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 
