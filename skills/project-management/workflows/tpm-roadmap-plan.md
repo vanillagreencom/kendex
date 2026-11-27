@@ -163,7 +163,13 @@ Where a § 2 `cross_project_findings` action already names the row, its action h
 
 - A cancel or supersede gives `cancel`.
 - An expand gives `rewrite`.
-- A descoped proposal leaves the row to the term test above.
+- A skip or descope leaves the row to the term test above.
+
+Where the term test gives a skip or descope finding's row `cancel`, turn that finding into a supersede before § 4:
+
+1. Set its `match_type` to `supersedes` and its `recommendation` to `cancel`, and add the removed term to its `reason`.
+2. Keep the proposal at its full scope. § 5 gives it `supersede` with that row as `target`.
+3. The row then takes `cancel` by the first rule above, as that supersede.
 
 Store each team's rows in `removal_review[]` per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § removal_review. Its `checked` count is that team's § 1.5 active row count. Write no tracker disposition here.
 
@@ -240,7 +246,7 @@ Assign the action:
 - Obsolete → `cancel`.
 - Exact duplicate → `skip`.
 - Partial overlap recommending expansion → `expand`.
-- Replaces an existing issue → `supersede`.
+- Replaces an existing issue, a supersede § 2.1 turned from a skip or descope included → `supersede`.
 - Fails the creation bar → `skip` with the failing test named.
 - Otherwise `create`.
 
