@@ -994,7 +994,7 @@ jobs:
       # guards-hooks runs the Claude attention suite. On macOS, guards-hooks
       # and guards-tools also run a Jarvis suite each.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && matrix.shard == 'guards-tools')
+        if: &pane-delivery-shards matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && matrix.shard == 'guards-tools')
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -1012,6 +1012,50 @@ jobs:
             export PATH="$tmux_dir:$PATH"
           fi
           tmux -V
+
+      # The Herdr engine, `hc`, on the legs that install tmux, at the 0.1.21
+      # floor, the oldest engine release the runtime's acceptance cases run
+      # against. The archive comes from the
+      # official release; the release's install.sh is not run, since this
+      # file cannot pin a script fetched at run time. Each pinned digest is the
+      # one https://releases.herdr.dev/core/0.1.21/manifest.json states for
+      # that target. The leg fails before extracting anything when the
+      # manifest states another digest or the archive hashes to another.
+      # The version check runs `hc` through PATH from this step's directory,
+      # since some systems ship an unrelated `hc`.
+      - name: hc, the Herdr engine, for terminal host tests
+        if: *pane-delivery-shards
+        env:
+          HC_VERSION: 0.1.21
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=linux-x86_64 want=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1 ;;
+            Linux-ARM64) target=linux-aarch64 want=e844a2bfab48a226097679d076bc83042fe57fccef5387ef802e5b24e78b529a ;;
+            macOS-X64) target=macos-x86_64 want=e377e1d342cddce0346da5b2f3c281b9701e4731c00024c7c5028265e77a217f ;;
+            macOS-ARM64) target=macos-aarch64 want=1ab38dd9270f63a8f794d6d60e8702eb0d1c85a72bda85d735e5eea43f05ffed ;;
+            *) echo "hc: target=unpinned runner=$RUNNER_OS-$RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          work="$RUNNER_TEMP/hc-release"
+          dir="$RUNNER_TEMP/hc"
+          mkdir -p "$work" "$dir"
+          fetch() { curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$1" "$2"; }
+          fetch "$work/manifest.json" "https://releases.herdr.dev/core/$HC_VERSION/manifest.json"
+          stated="$(jq -er --arg t "$target" '.targets[$t].sha256' "$work/manifest.json")"
+          [ "$stated" = "$want" ] || { echo "hc: checksum=manifest-differs target=$target stated=$stated pinned=$want" >&2; exit 1; }
+          url="$(jq -er --arg t "$target" '.targets[$t].url' "$work/manifest.json")"
+          fetch "$work/hc.tar.gz" "$url"
+          got="$(sha256sum "$work/hc.tar.gz")"
+          got="${got%% *}"
+          [ "$got" = "$want" ] || { echo "hc: checksum=archive-differs target=$target got=$got pinned=$want" >&2; exit 1; }
+          tar -xzf "$work/hc.tar.gz" -C "$dir" herdr-core
+          ln -s herdr-core "$dir/hc"
+          echo "$dir" >>"$GITHUB_PATH"
+          export PATH="$dir:$PATH"
+          [ "$(command -v hc)" = "$dir/hc" ] || { echo "hc: path=shadowed found=$(command -v hc)" >&2; exit 1; }
+          version="$(hc --version)"
+          echo "$version"
+          [ "$version" = "hc $HC_VERSION" ] || { echo "hc: version=unexpected got=$version want=$HC_VERSION" >&2; exit 1; }
 
       # ---- shards: orch-state, orch-rest ---------------------------------
       # run-all.sh's shard_of owns the family and its complement, by
