@@ -61,6 +61,11 @@ def literal(value):
     return re.fullmatch(r"[A-Za-z0-9_./+-]+", value) and not value.startswith("/")
 
 
+def npm_run(args):
+    return (len(args) == 3 and args[:2] == ["npm", "run"]
+            and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:-]*", args[2]))
+
+
 def words(line):
     if line.lstrip().startswith("#"):
         return []
@@ -68,7 +73,8 @@ def words(line):
         tokens = shlex.split(line)
     except ValueError as error:
         raise ShapeUnreadable(str(error)) from error
-    require_shape(all(literal(word) or word == ":" for word in tokens), "computed-command")
+    require_shape(npm_run(tokens) or all(literal(word) or word == ":" for word in tokens),
+                  "computed-command")
     return tokens
 
 
@@ -94,7 +100,18 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 # each ancestor: any(configFiles, { cwd: root }) in vitest/dist/node.js.
 VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
+NPM_CI_SCRIPTS = ("preinstall", "install", "postinstall", "prepublish",
+                  "preprepare", "prepare", "postprepare", "dependencies")
 CHECKOUT = r"actions/checkout@[^\s]+"
+CHECKOUT_EVENT_REFS = {
+    "merge_group": "github.sha",
+    "push": "github.sha",
+    "pull_request": "github.event.pull_request.head.sha",
+}
+CONDITION_ATOM = r"(?:true|false|null|-?\d+(?:\.\d+)?|'(?:[^']|'')*')"
+LITERAL_CONDITION = re.compile(
+    CONDITION_ATOM + r"(?:\s*(?:==|!=|<=?|>=?)\s*" + CONDITION_ATOM + r")?"
+)
 # Each setup action's inputs the reader accepts, ONE_PATH where the input names
 # one repository path, PATH_LIST where it names one per line, and the paths the
 # action reads unasked. A uses: step runs from the repository root. The
@@ -234,7 +251,7 @@ def lane_table(lines, lane):
 
 
 class Evidence:
-    def __init__(self, repo, authority, compared, head, work, trusted, rendered):
+    def __init__(self, repo, authority, compared, head, work, trusted, rendered, event):
         self.repo = Path(repo).resolve()
         self.authority = authority
         self.head = head
@@ -242,6 +259,7 @@ class Evidence:
         self.trusted = Path(trusted).resolve() if trusted else None
         self.rendered = rendered
         self.compared = compared
+        self.event = event
         self.changed = set((self.work / "derived-paths").read_text().split("\0")[:-1])
         self.files = self.tree(authority)
 
@@ -970,21 +988,72 @@ def literal_job_dispatches(job):
     return sorted(commands)
 
 
-def workflow_env(env):
-    # Every step inherits the workflow env, and a tool can read a path a value
-    # names, so each word is a path input of each step. literal() refuses an
-    # absolute or home path, which can name the checkout from outside it. An
+def env_words(env, scope):
+    # An absolute or home path can name the checkout from outside it. An
     # option word can join a path to its flag. BASH_ENV's value is one path.
+    cause = f"opaque-{scope}-env"
     require(isinstance(env, dict) and all(isinstance(value, str) for value in env.values()),
-            "opaque-workflow-env")
+            cause)
     script = env.get("BASH_ENV", "")
     require(not script or (literal(script) and not script.startswith("-")),
-            f"opaque-workflow-env key=BASH_ENV path={shlex.quote(script)}")
-    found = [(key, word) for key, value in env.items() if key != "BASH_ENV"
+            f"{cause} key=BASH_ENV path={shlex.quote(script)}")
+    found = [(scope, key, word) for key, value in env.items() if key != "BASH_ENV"
              for word in re.split(r"[\s=:,;]+", value) if word]
     require(all(literal(word) and not (word.startswith("-") and re.search(r"[/.]", word))
-                for _, word in found), "opaque-workflow-env")
-    return found + ([("BASH_ENV", script)] if script else [])
+                for _, _, word in found), cause)
+    return found + ([(scope, "BASH_ENV", script)] if script else [])
+
+
+def input_reads(evidence, inputs, directory, reads, visited):
+    for scope, key, word in inputs:
+        try:
+            path, passed = evidence.checkout_path(directory, word)
+            reads.update({path} | passed)
+            reads.update(name for name in evidence.changed if under(name, path))
+            if path in evidence.files and key == "BASH_ENV":
+                evidence.shell_reads(path, directory, reads, visited)
+            elif path in evidence.files and (evidence.files[path] == "100755" or MODULE.search(path)):
+                evidence.loaded_reads(path, directory, reads, visited)
+        except UNAVAILABLE as error:
+            named = os.path.normpath(Path(directory) / word)
+            cause = "opaque-matrix" if scope == "matrix" else f"opaque-{scope}-env"
+            raise NamedUnreadable(f"{cause} key={key} path={named} reason={error}", False) from error
+
+
+def expression(value):
+    return value[3:-2].strip() if value.startswith("${{") and value.endswith("}}") else value
+
+
+def matrix_words(job):
+    strategy = job.get("strategy", {})
+    require(isinstance(strategy, dict) and set(strategy) <= {"matrix", "fail-fast", "max-parallel"}
+            and strategy.get("fail-fast", "true") in ("true", "false")
+            and re.fullmatch(r"[0-9]+", strategy.get("max-parallel", "1")), "opaque-matrix")
+    matrix = strategy.get("matrix", {})
+    require(isinstance(matrix, dict), "opaque-matrix")
+    values = defaultdict(list)
+    for key, axis in matrix.items():
+        require(isinstance(axis, list), "opaque-matrix")
+        if key in {"include", "exclude"}:
+            for row in axis:
+                require(isinstance(row, dict), "opaque-matrix")
+                for name, value in row.items():
+                    values[name].append(value)
+        else:
+            values[key].extend(axis)
+    require(all(isinstance(value, str) and literal(value) for axis in values.values() for value in axis),
+            "opaque-matrix")
+    runners = job.get("runs-on", "")
+    if isinstance(runners, str):
+        runners = [runners]
+    require(isinstance(runners, list), "opaque-runner")
+    for runner in runners:
+        require(isinstance(runner, str), "opaque-runner")
+        if literal(runner):
+            continue
+        reference = re.fullmatch(r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)", expression(runner))
+        require(reference and values.get(reference[1]), "opaque-runner")
+    return [("matrix", f"matrix.{key}", value) for key, axis in values.items() for value in axis]
 
 
 def declared_lanes(work):
@@ -1009,24 +1078,32 @@ def claimed_paths(work):
     return claimed
 
 
-def job_reads(evidence, job, env_words, ordinary, readers):
+def job_reads(evidence, job, workflow_words, ordinary, readers):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
     covered = []
+    job_words = env_words(job.get("env", {}), "job")
+    inherited = workflow_words + job_words
+    matrix = matrix_words(job) if "strategy" in job else []
+    step_inputs = []
+    for step in job["steps"]:
+        condition = step.get("if", "true")
+        require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
+                "opaque-step-condition")
+        step_inputs.append(env_words(step.get("env", {}), "step"))
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
-                              "permissions", "steps", "defaults"}, "opaque-job")
+                              "permissions", "steps", "defaults", "strategy", "env"}, "opaque-job")
     visited = set()
     opaque_action = None
     default = job.get("defaults", {}).get("run", {})
     require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
-    for step in job["steps"]:
+    for step, step_words in zip(job["steps"], step_inputs):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
-                                   "shell", "with", "timeout-minutes"}, "opaque-step")
+                                   "shell", "with", "timeout-minutes", "if", "env"}, "opaque-step")
         if "uses" in step:
-            if not ((re.fullmatch(CHECKOUT, step["uses"]) and
-                     set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"})
-                    or setup_reads(evidence, step, ordinary)):
+            input_reads(evidence, job_words + step_words, ".", ordinary, visited)
+            if not (checkout_reads_head(evidence, step) or setup_reads(evidence, step, ordinary)):
                 opaque_action = step["uses"]
             continue
         require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
@@ -1034,30 +1111,14 @@ def job_reads(evidence, job, env_words, ordinary, readers):
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
             directory = evidence.working_directory(directory, ordinary)
-        for key, word in env_words:
-            try:
-                path, passed = evidence.checkout_path(directory, word)
-                ordinary.update({path} | passed)
-                ordinary.update(name for name in evidence.changed if under(name, path))
-                # Non-interactive bash sources the BASH_ENV file before the
-                # step whatever its mode, and skips one that does not exist.
-                # A file a value names that a tool executes or loads is read
-                # as code, as on a run: line. Any other file is data.
-                if path in evidence.files and key == "BASH_ENV":
-                    evidence.shell_reads(path, directory, ordinary, visited)
-                elif path in evidence.files and (evidence.files[path] == "100755"
-                                                 or MODULE.search(path)):
-                    evidence.loaded_reads(path, directory, ordinary, visited)
-            except UNAVAILABLE as error:
-                # The refusal stops the job before its run lines, and the
-                # file it could not follow can read any path, so no claim
-                # stands in for what the job reads.
-                named = os.path.normpath(Path(directory) / word)
-                raise NamedUnreadable(
-                    f"opaque-workflow-env key={key} path={named} reason={error}", False,
-                ) from error
+        input_reads(evidence, inherited + step_words + matrix, directory, ordinary, visited)
         for line in step["run"].splitlines():
-            args = words(line)
+            try:
+                args = words(line)
+            except ShapeUnreadable as error:
+                if re.match(r"\s*(?:npm|vercel)(?:\s|$)", line):
+                    raise Unreadable(str(error)) from error
+                raise
             if not args:
                 continue
             if args[0] == "cargo":
@@ -1072,12 +1133,34 @@ def job_reads(evidence, job, env_words, ordinary, readers):
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())
                 covered.append(evidence.vitest_reads(directory, readers[-1]))
-            elif args[0] == "pnpm":
-                pnpm_reads(evidence, directory, ordinary)
+            elif args[0] in {"npm", "pnpm", "vercel"}:
+                if args[0] != "pnpm":
+                    require(not any(key.lower().startswith("npm_config_") or key in {"PATH", "ENV"}
+                                    for _, key, _ in inherited + step_words), "opaque-node-env")
+                node_reads(evidence, args, directory, ordinary, visited)
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
     return covered
+
+
+def checkout_reads_head(evidence, step):
+    if not re.fullmatch(CHECKOUT, step["uses"]):
+        return False
+    given = step.get("with", {})
+    if not isinstance(given, dict) or not set(given) <= {"persist-credentials", "fetch-depth", "ref"}:
+        return False
+    ref = given.get("ref")
+    if ref is not None:
+        event_ref = CHECKOUT_EVENT_REFS.get(evidence.event)
+        supported = ref == evidence.head or (
+            event_ref and ref.startswith("${{") and expression(ref) == event_ref
+            and (event_ref != "github.sha" or os.environ.get("GITHUB_SHA", evidence.head) == evidence.head)
+        )
+        require(supported, "opaque-checkout-ref")
+    require(all(isinstance(value, str) and "${{" not in value
+                for key, value in given.items() if key != "ref"), "opaque-checkout-input")
+    return True
 
 
 def setup_reads(evidence, step, reads):
@@ -1088,8 +1171,8 @@ def setup_reads(evidence, step, reads):
     if not accepted or not isinstance(given, dict) or not set(given) <= accepted[0][0].keys():
         return False
     inputs, paths = accepted[0]
-    if not all(isinstance(value, str) and "${{" not in value for value in given.values()):
-        return False
+    require(all(isinstance(value, str) and "${{" not in value for value in given.values()),
+            f"opaque-action action={step['uses']}")
     # The action trims an input. A one-path input names one file whatever
     # it holds, so a newline in it is no list.
     paths = paths + [line.strip() for key, value in given.items() if inputs[key] == PATH_LIST
@@ -1115,21 +1198,115 @@ def setup_reads(evidence, step, reads):
     return True
 
 
-def pnpm_reads(evidence, directory, ordinary):
-    """Record the package and settings files pnpm reads in the working
-    directory and each ancestor, then refuse the job."""
-    folders = {directory, *(parent.as_posix() for parent in Path(directory).parents)}
-    ordinary.update(name for name in evidence.changed if Path(name).parent.as_posix() in folders and (
-        Path(name).name in {*JS_PACKAGES, "pnpm-workspace.yaml", ".npmrc"}
-        or Path(name).name.startswith(".pnpmfile.")))
-    manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
-    ordinary.add(manifest_path)
-    # Every pnpm command can install: pnpm run and pnpm test install first
-    # where node_modules is stale, as verifyDepsBeforeRun defaults to install
-    # from pnpm 11.0.0 (its CHANGELOG). A dependency's install script can read
-    # any repository file, and pnpm takes the settings that allow one from
-    # sources beyond the repository, such as the environment.
-    raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path} reason=dependency-builds-unproved")
+def node_reads(evidence, args, directory, reads, visited):
+    folder = Path(directory)
+    folders = {folder, *folder.parents}
+    config_names = {*JS_PACKAGES, "pnpm-workspace.yaml", ".npmrc", "npm-shrinkwrap.json"}
+    reads.update(name for name in evidence.changed if Path(name).parent in folders and (
+        Path(name).name in config_names or Path(name).name.startswith(".pnpmfile.")))
+    manifest_path = (folder / "package.json").as_posix()
+    reads.add(manifest_path)
+    if args[0] == "pnpm":
+        # pnpm 11+ can install on pnpm run and pnpm test
+        # (verifyDepsBeforeRun defaults to install).
+        raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path} reason=dependency-builds-unproved")
+
+    def script_reads(names):
+        for name in names:
+            if name in scripts:
+                literal_script(scripts[name])
+
+    def literal_script(body):
+        require(isinstance(body, str) and body.strip(), "opaque-node-script")
+        for line in body.split("\n"):
+            command_words = words(line)
+            if command_words:
+                evidence.shell_command(command_words, directory, reads, visited)
+
+    def run_script(name):
+        require(name in scripts, "opaque-npm-script")
+        script_reads(("pre" + name, name, "post" + name))
+
+    try:
+        manifest = json.loads(evidence.blob(manifest_path))
+        require(isinstance(manifest, dict), "opaque-npm-config")
+        scripts = manifest.get("scripts", {})
+        require(isinstance(scripts, dict) and "workspaces" not in manifest
+                and not any((parent / ".npmrc").as_posix() in evidence.files for parent in folders),
+                "opaque-npm-config")
+        # npm can select a containing workspace instead of the current package.
+        for parent in folder.parents:
+            parent_manifest = (parent / "package.json").as_posix()
+            if parent_manifest in evidence.files:
+                parent_package = json.loads(evidence.blob(parent_manifest))
+                require(isinstance(parent_package, dict) and "workspaces" not in parent_package,
+                        "opaque-npm-config")
+        if args == ["npm", "ci"]:
+            # npm ci runs lifecycle code from the root and installed packages.
+            # The v2/v3 lock identifies dependency install scripts and links.
+            # https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json
+            lock = next((folder / name for name in ("npm-shrinkwrap.json", "package-lock.json")
+                         if (folder / name).as_posix() in evidence.files), None)
+            require(lock, "opaque-npm-lock")
+            locked = json.loads(evidence.blob(lock.as_posix()))
+            require(isinstance(locked, dict) and locked.get("lockfileVersion") in (2, 3)
+                    and isinstance(locked.get("packages"), dict)
+                    and "" in locked["packages"], "opaque-npm-lock")
+            require(all(isinstance(entry, dict) and name.startswith("node_modules/") and not entry.get("link")
+                        and not entry.get("hasInstallScript")
+                        and isinstance(entry.get("resolved"), str) and entry["resolved"].startswith("https://")
+                        for name, entry in locked["packages"].items() if name), "opaque-npm-dependency")
+            binding = (folder / "binding.gyp").as_posix()
+            reads.add(binding)
+            require(binding not in evidence.files, "opaque-npm-binding")
+            script_reads(NPM_CI_SCRIPTS)
+        elif npm_run(args):
+            run_script(args[2])
+        elif args == ["vercel", "build"]:
+            build_words = vercel_build_words(evidence, folder, reads)
+            if npm_run(build_words):
+                run_script(build_words[2])
+            else:
+                evidence.shell_command(build_words, directory, reads, visited)
+        else:
+            raise Unreadable("opaque-shell-command")
+    except ShapeUnreadable as error:
+        # A lane's claims cannot stand in for an invoked script whose reads
+        # the job's literal command no longer exposes.
+        raise Unreadable(str(error)) from error
+
+
+def vercel_build_words(evidence, folder, reads):
+    # Vercel build can discover a project and pull its settings remotely.
+    # Only follow a local link with a checked-in static configuration.
+    # https://vercel.com/docs/cli/build
+    local = (folder / "vercel.json").as_posix()
+    project = (folder / ".vercel/project.json").as_posix()
+    config = json.loads(evidence.blob(local))
+    link = json.loads(evidence.blob(project))
+    settings = link.get("settings") if isinstance(link, dict) else None
+    require(isinstance(config, dict)
+            and set(config) <= {"$schema", "framework", "installCommand", "buildCommand", "outputDirectory"}
+            and "framework" in config and config["framework"] is None and config.get("installCommand") == ""
+            and isinstance(settings, dict) and settings and not settings.get("rootDirectory"),
+            "opaque-vercel-config")
+    output = config.get("outputDirectory", "public")
+    require(isinstance(output, str) and literal(output), "opaque-vercel-config")
+    command_text = config.get("buildCommand")
+    require(isinstance(command_text, str) and "\n" not in command_text and command_text.strip(),
+            "opaque-vercel-build")
+    fixed = {"vercel.json", "vercel.ts", "vercel.js", "now.json", ".gitignore", ".vercelignore",
+             ".vercel", "api", "public", "middleware", "server"}
+    paths = {(folder / name).as_posix() for name in fixed}
+    resolved, passed = evidence.resolve(folder.as_posix(), output)
+    reads.update(paths | {resolved} | passed)
+    reads.update(name for name in evidence.changed if any(under(name, root) for root in paths | {resolved})
+                 or (Path(name).parent == folder and Path(name).name.startswith((".env", "middleware.", "server."))))
+    require(not any(
+        Path(name).parent == folder and Path(name).name.startswith(("middleware.", "server.", ".env"))
+        or any(under(name, (folder / root).as_posix()) for root in ("api", "vercel.ts", "vercel.js", "now.json"))
+        for name in evidence.files), "opaque-vercel-discovery")
+    return words(command_text)
 
 
 def derived(evidence, claimed, settings, declared):
@@ -1141,7 +1318,7 @@ def derived(evidence, claimed, settings, declared):
     if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
     require("defaults" not in document, "opaque-workflow-defaults")
-    env_words = workflow_env(document.get("env", {}))
+    workflow_words = env_words(document.get("env", {}), "workflow")
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
@@ -1204,7 +1381,7 @@ def derived(evidence, claimed, settings, declared):
     def job_reach(name, lane):
         ordinary, readers = set(), []
         try:
-            covered = job_reads(evidence, jobs[name], env_words, ordinary, readers)
+            covered = job_reads(evidence, jobs[name], workflow_words, ordinary, readers)
             unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
@@ -1266,7 +1443,7 @@ def main():
     if event == "push" and not trusted_push(authority, head):
         return 3
     try:
-        evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render")
+        evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render", event)
         claimed = claimed_paths(Path(work))
         declared = declared_lanes(Path(work))
         for name, result in sorted(derived(evidence, claimed, settings.split(), declared).items()):
