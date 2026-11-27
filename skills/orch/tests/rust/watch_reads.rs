@@ -5870,6 +5870,9 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
             "graphql OwnerTracker": {"body": {"issue": {"description": body, "assignee": null,
                 "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
             "issues update": {"body": {}},
+            // The reserved question ID, as `comments owner-questions --id`
+            // prints it: the one the question then posts under.
+            "comments owner-questions": {"body": comment},
             "comments create": {"body": {"success": true, "data": {"success": true, "comment": {"id": comment}}}},
             // The saved comment read back, mentioning the owner.
             "graphql OwnerTrackerComment": {"body": {"comment": {"bodyData": json!({"type": "doc",
@@ -5971,8 +5974,9 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         ),
         "the owner's items under the posted asks' label: {linear_log}"
     );
-    let repaired =
-        format!("issues update KEN-7 --description **Maya, what you do:** {action}\n\n{body}");
+    let repaired = format!(
+        "issues update KEN-7 --description **Maya, what you do:** {action} `Owner question: question-1`\n\n{body}"
+    );
     assert_eq!(
         (
             linear_log.matches(&repaired).count(),
@@ -6307,7 +6311,7 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         );
         assert!(
         log.contains(&format!(
-            "issues update KEN-7 --labels owner-other,skills --description **Maya, what you do:** Do two.\n\n{body}"
+            "issues update KEN-7 --labels owner-other,skills --description **Maya, what you do:** Do two. `Owner question: question-2`\n\n{body}"
         )),
         "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
     );
@@ -6497,7 +6501,7 @@ fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item
         let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
         assert!(
             log.contains(&format!(
-                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two.\n\n{body}"
+                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two. `Owner question: {OPEN_QUESTION}`\n\n{body}"
             )),
             "the open replacement keeps its label, assignee and line, recorded as {spelling}: {log}"
         );
