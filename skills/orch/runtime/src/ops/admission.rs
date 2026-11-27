@@ -11,7 +11,7 @@
 //! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, the recorded set of a relaunch whose record was not kept, and the Location paths a set-less relaunch adds, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
-//! | otherwise kept by a no-landing close ([`retired_open`]): one asked and neither failed nor superseded, or, while the record reads `stopped`, its latest confirmed close; local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
+//! | otherwise kept by a no-landing close ([`retired_open`]), local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
 //! | `reservation`, or no charge: any other stopped, parked or gone holder | yields: nothing is recorded |
 //! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) unless kept as above; a first launch reads a running one's branch ([`branch_judged`]) |
 //! | `done` | no holder |
@@ -63,13 +63,12 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission. A record that holds its set now ([`holding`]), one a
-//! no-landing close keeps from its ask on, adds no path and meets no holder,
-//! that close having met them where the record did not hold the set
-//! ([`no_landing_held`]); any other record's set, or, where the record holds none, its item's Location
-//! paths, are the paths it adds, which meet the holders standing now as a
-//! running lane's added path does ([`relaunch_held`]). A
-//! `github` item of another repository than the checkout's,
+//! admission. A record that holds its set now ([`holding`]) adds no path
+//! and meets no holder, the no-landing close that keeps it having met them
+//! ([`no_landing_held`]); any other record's set, or, where the record holds
+//! none, its item's Location paths, are the paths it adds, which meet the
+//! holders standing now as a running lane's added path does
+//! ([`relaunch_held`]). A `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
@@ -1198,13 +1197,11 @@ pub(super) fn bound(
 /// A relaunch's holders (the module's binding paragraph): the paths it adds,
 /// met against the lanes that hold paths now, as a running lane's added path
 /// is, never joined. A record that holds its set now ([`holding`]) adds
-/// none: a kept one has held it from its no-landing close's ask on
-/// ([`retired_open`]), a close that met the holders with it where the record
-/// did not hold it ([`no_landing_held`]), so every lane that holds one of
-/// its paths now co-held it before, and the relaunch is admitted on its own
-/// set. Any other record yielded its set while it stood, a parked one or
-/// one a failed launch stopped, so another lane may have taken a path of it
-/// since: its set is the paths it adds. A
+/// none: the no-landing close that keeps it ([`retired_open`]) met the
+/// holders with it, or found it held ([`no_landing_held`]), so every lane
+/// that holds one of its paths now co-held it before, and the relaunch is
+/// admitted on its own set. Any other record yielded its set, so another
+/// lane may have taken a path of it since: its set is the paths it adds. A
 /// record no judgement wrote, a surface lane's, holds no set: its item's
 /// Location paths are the paths it adds, read as a first launch reads them,
 /// and refused where the item names no Location path, since a surface
@@ -1273,8 +1270,8 @@ pub(super) fn relaunch_held(
 }
 
 /// The holder judgement a no-landing close owes at its ask, whatever its
-/// reason: from the ask on the close keeps `record` holding its set
-/// ([`retired_open`]), and its relaunch then adds no path, so the set meets
+/// reason: the close keeps `record` holding its set ([`retired_open`]), and
+/// its relaunch then adds no path, so the set meets
 /// the holders standing now, as [`relaunch_held`] judges it, and a refusal
 /// leaves the record as it stood. That judgement meets no holder where the
 /// record holds its set now ([`holding`]): every lane that holds one of its
