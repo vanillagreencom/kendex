@@ -519,8 +519,9 @@ require_issue_header_shape() {
 # `outside_boxes` lists each checkbox outside the section by line, so the
 # write check and every completion reader see the same boxes: one under a
 # `## Post-merge` heading is otherwise read by nothing (FLT-1650). A quoted
-# line or a line inside a fenced block is not a box there; the section's own
-# grammar is left as it was.
+# line is not a box there. A line inside a fenced block is text everywhere,
+# as Linear shows it: in the section it is no box and no retired slot, so
+# box numbers match what the reader counts.
 # A post-merge reading holding a comparator before a number is numeric and
 # must name its figure, comparator, number and unit; any other reading is an
 # outcome check whose pass condition is its text. RETIRE_JSON maps a box
@@ -556,6 +557,8 @@ done_when_parse() {
              elif ($line | startswith("## ")) then .section = false
              else . end)
             | ($line | fence_run) as $run
+            # An opener, each line it holds and its closer are fenced text.
+            | (.fence != null or $run != null) as $fenced
             | if .fence != null then
                 (if $run != null and $run[0:1] == .fence[0:1] and ($run | length) >= (.fence | length)
                     and ($line | test("^[ \\t]*[`~]+[ \\t]*$")) then .fence = null else . end)
@@ -567,7 +570,7 @@ done_when_parse() {
             # A slot-shaped line without its deeper reason line is an ordinary
             # line: every branch yields one value, so the reduce state is never
             # emptied by a failed match.
-            | (if .section | not then null else
+            | (if (.section | not) or $fenced then null else
                 ((try ($line | capture("^(?<indent>[ \t]*)[-*] (?<kind>Waived|Superseded): \\S")) catch null) // null) as $slot
                 | if $slot == null then null else
                     (($lines[$i + 1] // "" | try capture("^(?<indent>[ \t]+)" + (if $slot.kind == "Waived" then "Reason" else "Replacement" end) + ": (?<text>.*)$") catch null) // null) as $reason
@@ -575,7 +578,7 @@ done_when_parse() {
                       then {kind: ($slot.kind | ascii_downcase), text: $reason.text} else null end end end) as $slot_record
             | if $slot_record != null then
                 .slots += 1 | .retired += [$slot_record + {number: .slots}] | .out += [$line]
-              elif .section and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
+              elif .section and ($fenced | not) and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
                 (.slots + 1) as $n
                 | .slots = $n
                 | ($line | test("^\\s*[-*] \\[ \\]")) as $open

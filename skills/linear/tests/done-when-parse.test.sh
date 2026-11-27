@@ -39,6 +39,18 @@ assert_eq 'the ticked box reads checked' "$(jq -c '[.ticked, .boxes[1].checked]'
 assert_eq 'the description carries the tick and its Evidence line' "$(jq -r '.description' <<<"$ticked")" \
   "${description/'- [ ] Post-merge'/'- [x] Post-merge'}  Evidence: v1.2 shipped"
 
+# A fenced example in the section is text, as Linear shows it: its checkbox
+# line is no box, so box 2 is the real box after it and the tick leaves the
+# fenced bytes as they were.
+fence_example=$'```markdown\n- [ ] Example box\n```'
+fenced=$'## Done when\n- [x] Branch proof\n  Evidence: the test\n'"$fence_example"$'\n- [ ] Real box\n'
+fenced_tick="$("$LINEAR" done-when parse --description "$fenced" --met 2 --evidence 'the row')"
+assert_eq 'a fenced checkbox line is no box, and box 2 is the real box' \
+  "$(jq -c '[.ticked, [.boxes[] | {number, checked, text}]]' <<<"$fenced_tick")" \
+  '[1,[{"number":1,"checked":true,"text":"Branch proof"},{"number":2,"checked":true,"text":"Real box"}]]'
+assert_eq 'the tick writes the real box and leaves the fence as it was' "$(jq -r '.description' <<<"$fenced_tick")" \
+  "${fenced/'- [ ] Real box'/'- [x] Real box'}  Evidence: the row"
+
 # No section: no boxes, Done.
 none="$("$LINEAR" done-when parse --description $'Just text\n')"
 assert_eq 'a description with no section has no boxes' "$(jq -c '.boxes' <<<"$none")" '[]'
