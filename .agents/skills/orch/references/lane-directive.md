@@ -105,7 +105,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 
 ### A joined launch
 
-A first launch can join a live lane of the same repository before that lane's review, through a shared path or the launch blockers that lane carries. Across worktrees the holder must be unconfined. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox, after the holder's widened `Admitted paths:` line where the holder already held a set, and the holder ships both items. A holder that opened with no admitted set stays unbounded: its record keeps that fact (`unbounded`) through every later join, added path and relaunch, so neither a directive nor a relaunch brief carries the line.
+A first launch can join a live lane of the same repository before that lane's review, through a shared path or the launch blockers that lane carries. Across worktrees the holder must be unconfined. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox, after the holder's widened `Admitted paths:` line where the holder's record renders one ([§ Brief file](#brief-file) item 1), and the holder ships both items. A holder that opened with no admitted set stays unbounded: its record keeps that fact (`unbounded`) through every later join, added path and relaunch, so neither a directive nor a relaunch brief carries the line.
 
 ### A read-only launch
 
