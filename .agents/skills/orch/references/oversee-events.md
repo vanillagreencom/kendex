@@ -417,7 +417,7 @@ Each answer:
 - Relaunch a lane that reported `handoff` per § `handoff`. Never nudge it.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line, with its merge as the close's `delivery`.
 - Under `ORCH_WALL_RELAUNCH=auto`, the watch relaunches a local lane whose item has no merge from its record, as `orch-runtime lane relaunch` does ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)), once per assignment. § `lane-relaunched` follows. Nothing is owed.
-- `relaunch-refused lane=[LANE] reason=[REASON]` under the line names the step that stopped that relaunch. Repair it, or relaunch by hand. The watch asks again on each later pass while the exit stands, and says a reason once.
+- `relaunch-refused lane=[LANE] reason=[REASON]` under the line names the step that stopped that relaunch. Repair it, or relaunch by hand. The watch asks again on each later pass while the exit stands. It tells a refusal once while it stands, and a changed refusal again.
 - `relaunch-refused lane=[LANE] reason=second-death`: the relaunched lane exited again. Tell the owner, and do not retry it.
 - Any other exit: § `window-gone`.
 
@@ -630,9 +630,9 @@ A marker beside a lane whose record still reads open is a close the watch cannot
 
 ### `usage-limit`
 
-`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]` reports a wall from the lane's pane or session rows. The banner or row message follows when available. The watch left the wall to the overseer because of `ORCH_WALL_RELAUNCH=ask`, a wall with no qualifying account, or a refusal. A `wall_kind=auth` line also prints when the watch relaunched the lane, with § `lane-relaunched` after it. Under `auto`, the watch walks again on each later pass under the same banner, before the reset and after it while the lane still sits at the wall, and relaunches the lane once an account has room; § `lane-relaunched` follows with no new `usage-limit` line. A later walk's new refusal prints the line again once, with the refusal under it. Follow the auth instructions below if the line carries `wall_kind=auth`. These lines may follow the event.
+`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]` reports a wall from the lane's pane or session rows. The banner or row message follows when available. The watch left the wall to the overseer because of `ORCH_WALL_RELAUNCH=ask`, a wall with no qualifying account, or a refusal. A `wall_kind=auth` line also prints when the watch relaunched the lane, with § `lane-relaunched` after it. Under `auto`, the watch walks again on each later pass under the same banner, before the reset and after it while the lane still sits at the wall, and relaunches the lane once an account has room; § `lane-relaunched` follows with no new `usage-limit` line. A later walk tells a refusal once while it stands, and a changed refusal again, with the line above it. Follow the auth instructions below if the line carries `wall_kind=auth`. These lines may follow the event.
 
-- `pick lane=[DIR] [harness=[HARNESS] model=[MODEL]]`, `pick none` or `pick unjudged [CAUSE]`: the lane walk's answer, excluding the spent account. `harness=` and `model=` appear where the walk chose another harness.
+- `pick lane=[DIR] [harness=[HARNESS] model=[MODEL]]`, `pick none` or `pick unjudged [CAUSE]`: the lane walk's answer, excluding the spent account. `harness=` and `model=` appear where the walk chose another harness or model. The walk keeps only the entries it judges on the lane's own host ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)), so the line names no host.
 - `recovery-stopped cause=no-room-no-reset` or `cause=no-other-account`: no account has room, and no reset or no other account can recover the lane. Tell the owner the recovery is blocked, once. The watch keeps walking.
 - `wall-relaunch-refused lane=[LANE] reason=[REASON]`: the step that stopped the watch's relaunch. Under `stop-failed` or `stop-unanswered`, the harness may still run: start nothing beside it.
 - `account-wall: record-unwritten config_dir=[DIR] cause=[CAUSE]`: the wall's record for that account did not write. Until it writes, launch nothing on that account before the reset.
@@ -642,7 +642,7 @@ A marker beside a lane whose record still reads open is a close the watch cannot
 3. With `pick lane=[DIR]` under `ask`, for a lane that section admits:
    1. On a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host --host [HOST] stop --item [ITEM] --harness [HARNESS]`, with `[HOST]` from the lane record. Require its `stopped item=[ITEM] processes=[N]` line.
    2. Keep the window; the relaunch's runtime close closes it.
-   3. Then relaunch with `[DIR]` as the request's `account`, on the line's `harness=` and `model=` where it names them. A relaunch on another harness closes its brief with the one-sentence continuation from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
+   3. Then relaunch with `[DIR]` as the request's `account`, on the lane record's own host, and on the line's `harness=` and `model=` where it names them. A relaunch on another harness closes its brief with the one-sentence continuation from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
 4. When none qualifies and the line carries `resets=`, keep the window and wait for the reset; § `usage-limit-passed` follows.
    - A `resets=` read from a clock time or weekday is an upper bound.
    - Never launch onto the spent account before its reset.

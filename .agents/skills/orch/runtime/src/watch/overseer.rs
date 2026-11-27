@@ -3164,6 +3164,12 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 relaunch: watch.wall_relaunch,
                 walk: &lane_walk,
                 preference: ctx.settings.lane_preference.as_deref(),
+                host: ctx
+                    .settings
+                    .provider
+                    .get()
+                    .map(|provider| provider.host)
+                    .map_err(|e| e.to_string()),
                 halted: &halted,
                 exited: &exited,
                 start: judges.relaunch,

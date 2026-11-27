@@ -385,6 +385,12 @@ impl LaneDriver<'_> {
             relaunch: self.settings.watch.get().unwrap().wall_relaunch,
             walk,
             preference: self.preference.as_deref(),
+            host: self
+                .settings
+                .provider
+                .get()
+                .map(|provider| provider.host)
+                .map_err(|e| e.to_string()),
             halted: &self.halted,
             exited: &exited,
             start: &start,
@@ -1969,6 +1975,13 @@ fn a_codex_api_error_is_resumed_after_each_delivered_resume_until_a_finished_ret
     )]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
+    // The row a released watch wrote at a second failure, which the wake
+    // resumes nothing for and an upgrade keeps.
+    driver.baseline.apply(Change::Set {
+        kind: "resume".into(),
+        identity: "gh-8".into(),
+        value: "told|gh-8-pane|Some(1)|None|7".into(),
+    });
     let resume = |driver: &LaneDriver<'_>| driver.baseline.get("resume", "gh-8").map(str::to_owned);
     let asked = |row: Option<String>, word: &str| {
         row.as_deref()
@@ -1980,6 +1993,10 @@ fn a_codex_api_error_is_resumed_after_each_delivered_resume_until_a_finished_ret
     }
     let first_ask = resume(&driver).unwrap();
     assert!(asked(Some(first_ask.clone()), "api-error"), "{first_ask}");
+    assert!(
+        first_ask.contains("|pass:"),
+        "the wake serves the row: {first_ask}"
+    );
     // The wake typed the resume and the resumed turn ended on the same
     // provider error.
     wake_delivered(&fleet, "KEN-8", &first_ask, driver.now);
@@ -7218,15 +7235,16 @@ fn a_merged_local_lane_whose_worktree_cannot_be_read_keeps_its_running_harness()
 
 /// A merged local lane whose work left nothing behind is closed by the
 /// watch's own pass at its finished line, and its slot is free: one local
-/// Claude Code lane at its composer, read idle on two passes
-/// (`idle-after-return`), and one whose harness ended and whose pane holds
-/// only its shell, read exited on two passes (`lane-exited`), each with its
-/// item's live state
-/// record gone from the fleet's state directory and the GitHub duty's merged
-/// row standing, are asked closed through the real close verb with their
-/// merges as the deliveries; the pass says `lane-closed` for each, the
-/// records read done, the idle lane's harness is ended, and `lane charges`
-/// no longer counts its account, which it counted before the pass.
+/// Claude Code lane at its composer on a provider stop, resumed while its
+/// item is unmerged and, once the GitHub duty's merged row stands, told
+/// (`idle-after-return`) and closed with no resume left; and one whose
+/// harness ended and whose pane holds only its shell, read exited on two
+/// passes (`lane-exited`) under its merged row. Each item's live state
+/// record is gone from the fleet's state directory, so each lane is asked
+/// closed through the real close verb with its merge as the delivery; the
+/// pass says `lane-closed` for each, the records read done, the idle
+/// lane's harness is ended, and `lane charges` no longer counts its
+/// account, which it counted before the passes.
 #[test]
 fn a_merged_local_lane_read_idle_or_exited_is_closed_by_the_watch_and_frees_its_slot() {
     let dir = tempfile::tempdir().unwrap();
@@ -7279,6 +7297,16 @@ fn a_merged_local_lane_read_idle_or_exited_is_closed_by_the_watch_and_frees_its_
     two["account"] = json!("/home/me/.fclaude");
     fleet.set_lanes(vec![one, two]);
     let state = fleet.read();
+    // The idle lane's turn ended on a provider stop.
+    let rows_file = dir
+        .path()
+        .join("worktree-1/tmp/lane-mail/issue-1/session-rows.jsonl");
+    std::fs::create_dir_all(rows_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"server_error\"}\n",
+    )
+    .unwrap();
     let scripts = real_close_scripts(dir.path(), &server, &fleet);
     let mut eight = pull_seven_timeline();
     eight["body"]["data"]["repository"]["pullRequest"]["number"] = json!(8);
@@ -7302,29 +7330,45 @@ fn a_merged_local_lane_read_idle_or_exited_is_closed_by_the_watch_and_frees_its_
     );
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = scripts;
-    for (item, merged) in [("issue-1", "o/r#7"), ("issue-2", "o/r#8")] {
+    let merge = |driver: &mut LaneDriver<'_>, item: &str, merged: &str| {
         driver.baseline.apply(Change::Set {
             kind: "merged".into(),
             identity: item.into(),
             value: merged.into(),
         });
-    }
+    };
+    merge(&mut driver, "issue-2", "o/r#8");
     let first = driver.pass(&state);
     assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
     let second = driver.pass(&state);
     let said = event_lines(&second);
-    for line in [
-        "EVENT idle-after-return gh-1",
-        "EVENT lane-exited gh-2",
-        "EVENT lane-closed issue-1",
-        "EVENT lane-closed issue-2",
-    ] {
+    for line in ["EVENT lane-exited gh-2", "EVENT lane-closed issue-2"] {
         assert!(
             said.contains(&line.to_owned()),
             "{line}: {said:?} {:?}",
             second.failed
         );
     }
+    assert!(
+        driver.baseline.get("resume", "gh-1").is_some(),
+        "the unmerged stop is resumed: {said:?}"
+    );
+    // The merge lands after the stop's resume was asked: the lane takes
+    // its finished line and the close, never the resume.
+    merge(&mut driver, "issue-1", "o/r#7");
+    let third = driver.pass(&state);
+    let said = event_lines(&third);
+    for line in [
+        "EVENT idle-after-return gh-1 cause=server_error",
+        "EVENT lane-closed issue-1",
+    ] {
+        assert!(
+            said.contains(&line.to_owned()),
+            "{line}: {said:?} {:?}",
+            third.failed
+        );
+    }
+    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
     let closed = fleet.read();
     for item in ["issue-1", "issue-2"] {
         let record = closed.lanes.iter().find(|l| l.item == item).unwrap();
@@ -7544,7 +7588,16 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             (status_file.as_str(), ok("Step: start\n")),
             ("stop --item KEN-4 --harness claude", stop),
         ]);
-        lane_driver!(server, fleet, readers, driver);
+        // The fleet's host is the lane's, where the walk judges the lane's
+        // own harness and model.
+        let host = provider(dir.path());
+        lane_driver!(
+            server,
+            fleet,
+            readers,
+            driver,
+            &[("ORCH_LANE_HOST", host.as_str())]
+        );
         driver.scripts = world.scripts.clone();
         driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
         let produced = driver.pass(&state);
@@ -7661,7 +7714,16 @@ fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch()
             (status_file.as_str(), ok("Step: start\n")),
             ("stop --item KEN-4 --harness pi", stop),
         ]);
-        lane_driver!(server, fleet, readers, driver);
+        // The fleet's host is the lane's, where the walk judges the lane's
+        // own harness and model.
+        let host = provider(dir.path());
+        lane_driver!(
+            server,
+            fleet,
+            readers,
+            driver,
+            &[("ORCH_LANE_HOST", host.as_str())]
+        );
         driver.scripts = world.scripts.clone();
         driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
         let produced = driver.pass(&state);
@@ -8119,25 +8181,23 @@ fn a_copilot_or_pi_lane_resumes_after_its_usage_reset() {
 /// provider. An entry the walk chose takes the lane, its brief naming the
 /// prior session's transcript, under `lane-relaunched` and the move's
 /// note, for a move to another harness and for a Pi lane's move to
-/// another Pi provider alike, on the host the entry names where it names
-/// one. A move refused, here a record that binds no
-/// session for the brief to name, and a walk that could not judge, are
-/// told once as `idle-after-return` with the refusal under it; the lane is
-/// resumed still and nothing starts.
+/// another Pi provider alike, on the lane's own host. An entry judged on
+/// another host is no move: with no other, nothing is walked and the
+/// resumes go on. A walk that could not judge, and a move refused, here a
+/// record that binds no session for the brief to name, are told once as
+/// `idle-after-return` with the refusal under it, a changed refusal once
+/// more; the lane is resumed still and nothing starts.
 #[test]
 fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
     enum Then {
-        /// Relaunched on this harness, account and host, the brief naming
-        /// the prior transcript of the lane's harness, after a walk of
-        /// this text.
-        Moved(
-            &'static str,
-            &'static str,
-            Option<&'static str>,
-            &'static str,
-        ),
+        /// Relaunched on this harness and account, the brief naming the
+        /// prior transcript of the lane's harness, after a walk of this
+        /// text.
+        Moved(&'static str, &'static str, &'static str),
         /// Told once with this refusal.
         Refused(&'static str),
+        /// No walk asked and nothing said: the resumes go on.
+        Resumed,
     }
     struct Row {
         case: &'static str,
@@ -8149,6 +8209,9 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
         session: bool,
         walk: Result<Option<Chosen>, String>,
         then: Then,
+        /// A later walk of the same episode and the refusal it is told
+        /// with, under a row a released watch marked `told`.
+        after: Option<(Result<Option<Chosen>, String>, &'static str)>,
     }
     let claude_stop = r#"{"harness":"claude","event":"StopFailure","error":"server_error"}"#;
     let pi_stop = r#"{"harness":"pi","event":"Stop","stop_reason":"error","working_agents":0}"#;
@@ -8163,26 +8226,20 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
             stop: claude_stop,
             session: true,
             walk: Ok(Some(codex.clone())),
-            then: Then::Moved("codex", "/home/me/.acodex", None, "codex:gpt-6.2-sol:high"),
+            then: Then::Moved("codex", "/home/me/.acodex", "codex:gpt-6.2-sol:high"),
+            after: None,
         },
         Row {
-            case: "an entry on another host",
+            case: "another provider's only entry on another host",
             harness: Harness::Claude,
             model: "opus",
             preference: "claude:opus:high,codex@/opt/box:gpt-6.2-sol:high",
             screen: "❯\u{a0}\n",
             stop: claude_stop,
             session: true,
-            walk: Ok(Some(Chosen {
-                host: Some("/opt/box".to_owned()),
-                ..codex.clone()
-            })),
-            then: Then::Moved(
-                "codex",
-                "/home/me/.acodex",
-                Some("/opt/box"),
-                "codex@/opt/box:gpt-6.2-sol:high",
-            ),
+            walk: Ok(Some(codex.clone())),
+            then: Then::Resumed,
+            after: None,
         },
         Row {
             case: "another pi provider",
@@ -8198,7 +8255,8 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
                 "high",
                 "/home/me/.api",
             ))),
-            then: Then::Moved("pi", "/home/me/.api", None, "pi:openai/gpt-5:high"),
+            then: Then::Moved("pi", "/home/me/.api", "pi:openai/gpt-5:high"),
+            after: None,
         },
         Row {
             case: "a record binding no session",
@@ -8208,8 +8266,12 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
             screen: "❯\u{a0}\n",
             stop: claude_stop,
             session: false,
-            walk: Ok(Some(codex.clone())),
-            then: Then::Refused("context-unavailable cause=session-unrecorded"),
+            walk: Err("walk-unread codex:gpt-6.2-sol:high".to_owned()),
+            then: Then::Refused("walk-unjudged walk-unread codex:gpt-6.2-sol:high"),
+            after: Some((
+                Ok(Some(codex.clone())),
+                "context-unavailable cause=session-unrecorded",
+            )),
         },
         Row {
             case: "a walk that could not judge",
@@ -8221,6 +8283,7 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
             session: true,
             walk: Err("preference-invalid entry=x".to_owned()),
             then: Then::Refused("walk-unjudged preference-invalid entry=x"),
+            after: None,
         },
     ];
     for row in rows {
@@ -8289,6 +8352,19 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
             }
         }
         let since = first_stop.expect("the stop was resumed inside the patience");
+        if let Then::Resumed = row.then {
+            assert_eq!(said, None, "{case}");
+            assert!(driver.provider_walks.borrow().is_empty(), "{case}");
+            assert!(
+                driver
+                    .baseline
+                    .get("resume", "gh-1")
+                    .is_some_and(|r| r.starts_with("server_error|")),
+                "{case}: resumed still: {:?}",
+                driver.baseline.get("resume", "gh-1")
+            );
+            continue;
+        }
         let (at, told) = said.unwrap_or_else(|| {
             panic!(
                 "{case}: nothing past the patience; resume={:?} provider-stop={:?}",
@@ -8303,7 +8379,7 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
         );
         let walks = driver.provider_walks.borrow().clone();
         match row.then {
-            Then::Moved(harness, to, host, walk) => {
+            Then::Moved(harness, to, walk) => {
                 assert_eq!(
                     told,
                     vec![
@@ -8341,9 +8417,9 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
                     (
                         &request["harness"],
                         &request["account"],
-                        request.get("host").and_then(Value::as_str)
+                        request.get("host")
                     ),
-                    (&json!(harness), &json!(to), host),
+                    (&json!(harness), &json!(to), None),
                     "{case}: {request}"
                 );
                 let brief =
@@ -8360,14 +8436,13 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
                 assert_eq!(driver.baseline.get("provider-stop", "gh-1"), None, "{case}");
             }
             Then::Refused(reason) => {
-                assert_eq!(
-                    told,
+                let refused = |reason: &str| {
                     vec![
                         "EVENT idle-after-return gh-1 cause=server_error".to_owned(),
                         format!("provider-move-refused lane=gh-1 reason={reason}"),
-                    ],
-                    "{case}"
-                );
+                    ]
+                };
+                assert_eq!(told, refused(reason), "{case}");
                 for _ in 0..2 {
                     let later = driver.pass(&state);
                     assert!(
@@ -8375,6 +8450,25 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
                         "{case}: told once: {:?}",
                         lines(&later)
                     );
+                }
+                if let Some((walk, reason)) = row.after {
+                    let episode = driver.baseline.get("provider-stop", "gh-1").unwrap();
+                    let legacy = episode.rsplit_once('|').unwrap().0;
+                    driver.baseline.apply(Change::Set {
+                        kind: "provider-stop".into(),
+                        identity: "gh-1".into(),
+                        value: format!("{legacy}|told"),
+                    });
+                    driver.provider_move = walk;
+                    assert_eq!(lines(&driver.pass(&state)), refused(reason), "{case}");
+                    for _ in 0..2 {
+                        let later = driver.pass(&state);
+                        assert!(
+                            lines(&later).is_empty(),
+                            "{case}: the changed refusal told once: {:?}",
+                            lines(&later)
+                        );
+                    }
                 }
                 assert!(driver.relaunches.borrow().is_empty(), "{case}");
                 assert!(
@@ -8386,6 +8480,7 @@ fn a_provider_stop_past_the_patience_moves_the_lane_to_another_provider() {
                     driver.baseline.get("resume", "gh-1")
                 );
             }
+            Then::Resumed => unreachable!("{case}: a resumed row ends above"),
         }
     }
 }
@@ -8410,7 +8505,8 @@ fn gone_harness() -> Identity {
 /// own account, which resumes the session the record binds, under
 /// `lane-relaunched`; the next pass says nothing more. The assignment is
 /// restarted once: its harness exiting again, on the relaunch's pane, is
-/// said as `second-death` once and starts nothing.
+/// said as `second-death` once and starts nothing, a parked pass between
+/// the two exits included.
 #[test]
 fn an_exited_lane_is_relaunched_from_its_record() {
     let temp = tempfile::tempdir().unwrap();
@@ -8469,6 +8565,14 @@ fn an_exited_lane_is_relaunched_from_its_record() {
     );
     assert!(event_lines(&driver.pass(&state)).is_empty());
     assert_eq!(driver.relaunches.borrow().len(), 1, "relaunched once");
+    // The relaunched lane parks for a review and is relaunched once the
+    // wait clears, its `launched_at` kept: the assignment's restart stays
+    // spent across the parked pass.
+    record["status"] = json!("parked");
+    fleet.set_lanes(vec![record.clone()]);
+    let parked = driver.pass(&fleet.read());
+    assert!(event_lines(&parked).is_empty(), "{:?}", lines(&parked));
+    record["status"] = json!("running");
     // The relaunch's close retired the old window; its own harness, on
     // its own pane, exits too.
     let retired = tmux(&server.socket, &["kill-pane", "-t", &pane]);
@@ -8497,87 +8601,129 @@ fn an_exited_lane_is_relaunched_from_its_record() {
     assert_eq!(driver.relaunches.borrow().len(), 1, "no second restart");
 }
 
-/// A launched harness execs in its window's shell (`exec /bin/sh` of the
-/// launch file, which execs the harness), so its exit closes the window:
-/// the pass that reads the window gone restarts the lane from its record,
-/// its process identity proving the harness ended. A standing halt holds
-/// the restart, said once, and each later pass asks it again until the
-/// halt lifts.
+/// An exited lane under a standing halt is held, said once, and each later
+/// pass asks the restart again until the halt lifts: whether the exit
+/// closed its window, since a launched harness execs in its window's shell
+/// (`exec /bin/sh` of the launch file, which execs the harness), or left
+/// the window holding its shell, read exited on two passes. The restart
+/// then starts once, from the record, and the next pass says nothing.
 #[test]
-fn a_lane_whose_exit_closed_its_window_is_restarted_once_its_halt_lifts() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().canonicalize().unwrap();
-    let server = Server::start(&dir, "fleet");
-    let fleet = Fleet::new(&server);
-    let harness = named_sleep(&dir, "claude");
-    let launch = dir.join("gh-3.launch");
-    std::fs::write(&launch, format!("exec {} 600\n", harness.display())).unwrap();
-    let pane = server.open_window("gh-3", &dir, &format!("exec /bin/sh {}", launch.display()));
-    let identity = await_named(&server, &pane, "claude");
-    let mut record = relaunchable(lane_record(
-        "KEN-3",
-        "gh-3",
-        "claude",
-        &server,
-        &pane,
-        Some(&identity),
-        &dir,
-    ));
-    record.as_object_mut().unwrap().remove("account");
-    record["session_id"] = json!("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c");
-    fleet.set_lanes(vec![record]);
-    let state = fleet.read();
-    let out = std::process::Command::new("kill")
-        .args(["-KILL", &identity.pid.to_string()])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while server.panes().contains(&pane) {
-        assert!(std::time::Instant::now() < deadline, "the window stood");
-        std::thread::sleep(std::time::Duration::from_millis(20));
+fn an_exited_lane_held_by_a_halt_is_restarted_once_the_halt_lifts() {
+    struct Row {
+        case: &'static str,
+        /// The window closes with its harness.
+        closes: bool,
+        /// The exit's line on every pass that reads it.
+        exit: &'static [&'static str],
+        /// The exit's line on the pass that reports it, after the first.
+        reported: &'static str,
     }
-    lane_driver!(
-        server,
-        fleet,
-        readers,
-        driver,
-        &[("ORCH_WALL_RELAUNCH", "auto")]
-    );
-    driver.halted = |_| Ok(true);
-    assert_eq!(
-        lines(&driver.pass(&state)),
-        vec![
-            "EVENT window-gone gh-3",
-            "relaunch-refused lane=gh-3 reason=halted"
-        ]
-    );
-    assert_eq!(lines(&driver.pass(&state)), vec!["EVENT window-gone gh-3"]);
-    assert!(driver.relaunches.borrow().is_empty());
-    driver.halted = |_| Ok(false);
-    let restarted = driver.pass(&state);
-    assert_eq!(
-        event_lines(&restarted),
-        vec![
-            "EVENT window-gone gh-3",
-            "EVENT lane-relaunched KEN-3 lane=- from=-"
-        ],
-        "{:?}",
-        lines(&restarted)
-    );
-    assert_eq!(driver.relaunches.borrow().len(), 1);
-    let launch: Value = serde_json::from_slice(
-        &std::fs::read(driver.state_dir.join("restart-relaunch-KEN-3.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        (&launch["op"], &launch["harness"]),
-        (&json!("launch-lane"), &json!("claude")),
-        "{launch}"
-    );
-    // The window the restart opens is no `window-gone` while it opens.
-    assert!(lines(&driver.pass(&state)).is_empty());
-    assert_eq!(driver.relaunches.borrow().len(), 1, "restarted once");
+    let rows = [
+        Row {
+            case: "the window closed",
+            closes: true,
+            exit: &["EVENT window-gone gh-3"],
+            reported: "EVENT window-gone gh-3",
+        },
+        Row {
+            case: "the window stands",
+            closes: false,
+            exit: &[],
+            reported: "EVENT lane-exited gh-3",
+        },
+    ];
+    for row in rows {
+        let case = row.case;
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let server = Server::start(&dir, "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = if row.closes {
+            let harness = named_sleep(&dir, "claude");
+            let launch = dir.join("gh-3.launch");
+            std::fs::write(&launch, format!("exec {} 600\n", harness.display())).unwrap();
+            let pane =
+                server.open_window("gh-3", &dir, &format!("exec /bin/sh {}", launch.display()));
+            let identity = await_named(&server, &pane, "claude");
+            (pane, identity)
+        } else {
+            let pane = server.open_window("gh-3", &dir, "bash --norc --noprofile");
+            (pane, gone_harness())
+        };
+        let mut record = relaunchable(lane_record(
+            "KEN-3",
+            "gh-3",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            &dir,
+        ));
+        record.as_object_mut().unwrap().remove("account");
+        record["session_id"] = json!("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c");
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        if row.closes {
+            let out = std::process::Command::new("kill")
+                .args(["-KILL", &identity.pid.to_string()])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", stderr(&out));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while server.panes().contains(&pane) {
+                assert!(std::time::Instant::now() < deadline, "the window stood");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        lane_driver!(
+            server,
+            fleet,
+            readers,
+            driver,
+            &[("ORCH_WALL_RELAUNCH", "auto")]
+        );
+        driver.halted = |_| Ok(true);
+        if !row.closes {
+            let first = driver.pass(&state);
+            assert!(lines(&first).is_empty(), "{case}: {:?}", lines(&first));
+        }
+        let held = driver.pass(&state);
+        assert_eq!(event_lines(&held), vec![row.reported], "{case}");
+        assert_eq!(
+            lines(&held).last().map(String::as_str),
+            Some("relaunch-refused lane=gh-3 reason=halted"),
+            "{case}"
+        );
+        assert_eq!(lines(&driver.pass(&state)), row.exit, "{case}: said once");
+        assert!(driver.relaunches.borrow().is_empty(), "{case}");
+        driver.halted = |_| Ok(false);
+        let restarted = driver.pass(&state);
+        let mut expected: Vec<&str> = row.exit.to_vec();
+        expected.push("EVENT lane-relaunched KEN-3 lane=- from=-");
+        assert_eq!(
+            event_lines(&restarted),
+            expected,
+            "{case}: {:?}",
+            lines(&restarted)
+        );
+        assert_eq!(driver.relaunches.borrow().len(), 1, "{case}");
+        let launch: Value = serde_json::from_slice(
+            &std::fs::read(driver.state_dir.join("restart-relaunch-KEN-3.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (&launch["op"], &launch["harness"]),
+            (&json!("launch-lane"), &json!("claude")),
+            "{case}: {launch}"
+        );
+        // The window the restart opens is no `window-gone` while it opens.
+        assert!(lines(&driver.pass(&state)).is_empty(), "{case}");
+        assert_eq!(
+            driver.relaunches.borrow().len(),
+            1,
+            "{case}: restarted once"
+        );
+    }
 }
 
 /// The 9claude stop of 6:40 pm PT on 2026-11-25, replayed with the figures
@@ -9288,7 +9434,15 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         }
         fleet.set_lanes(vec![record]);
         let state = fleet.read();
-        lane_driver!(server, fleet, readers, driver);
+        // A hosted lane's walk judges its own harness and model on the
+        // fleet's host, which is the lane's.
+        let host = provider(dir.path());
+        let env: &[(&str, &str)] = if hosted {
+            &[("ORCH_LANE_HOST", host.as_str())]
+        } else {
+            &[]
+        };
+        lane_driver!(server, fleet, readers, driver, env);
         driver.scripts = world.scripts.clone();
         driver.pick = Pick::Lane(account.clone());
         let produced = driver.pass(&state);

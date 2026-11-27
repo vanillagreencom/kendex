@@ -97,7 +97,8 @@ use agent_runtime::controller::successor::{self as choice, Leaving};
 use agent_runtime::intent::{EffectOp, Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
-/// when the lane leaves the fleet record.
+/// when the lane leaves flight; [`RESTART_ROW`] alone stands until the
+/// lane's assignment ends.
 const LANE_ROWS: [&str; 12] = [
     "lane-exited",
     "lane-asking",
@@ -113,9 +114,9 @@ const LANE_ROWS: [&str; 12] = [
     RESTART_ROW,
 ];
 
-/// The row of a worker's continuation episode: `<since>|<last>[|told]`,
+/// The row of a worker's continuation episode: `<since>|<last>[|<said>]`,
 /// the epoch seconds its first and latest stopped turns were read at, and
-/// whether a refused provider move was told.
+/// the [`said_once`] mark of the refusal last told.
 const PROVIDER_ROW: &str = "provider-stop";
 
 /// The row of an exited lane's restart, for the assignment its record's
@@ -123,7 +124,9 @@ const PROVIDER_ROW: &str = "provider-stop";
 /// `owed|<launched_at>|<told>` while no restart started, `<told>` the hash
 /// of the refusal last said; `started|<launched_at>|<death>` once one
 /// started for the exit on the pane hashed `<death>`; `dead|<launched_at>`
-/// once a second exit was said.
+/// once a second exit was said. A parked or stopped lane keeps the row,
+/// since its relaunch keeps `launched_at`; it goes with a done record or
+/// one gone from the fleet.
 const RESTART_ROW: &str = "lane-restart";
 
 /// Lines kept above the banner in a usage-limit block.
@@ -342,6 +345,9 @@ pub struct WallRoute<'a> {
     /// `ORCH_LANE_PREFERENCE`, which a provider move walks less the stopped
     /// lane's own provider.
     pub preference: Option<&'a str>,
+    /// `ORCH_LANE_HOST`, where the walk judges an entry naming no host and
+    /// the caller step, `None` this machine; `Err` is the setting's refusal.
+    pub host: Result<Option<String>, String>,
     /// The standing halt at the lane's mailbox.
     pub halted: &'a dyn Fn(&Lane) -> Result<bool, Refusal>,
     /// An exited local lane's relaunch from its record, its session
@@ -1131,11 +1137,23 @@ pub fn observe(pass: &Pass) -> Produced {
         .filter(|l| l.status.in_flight())
         .collect();
     let names: BTreeSet<String> = in_flight.iter().map(|l| lane_name(l)).collect();
+    let assigned: BTreeSet<String> = pass
+        .fleet
+        .lanes
+        .iter()
+        .filter(|l| l.status != LaneStatus::Done)
+        .map(lane_name)
+        .collect();
     // Rows of lanes that left the record no longer describe an observation.
     for kind in LANE_ROWS {
+        let kept = if kind == RESTART_ROW {
+            &assigned
+        } else {
+            &names
+        };
         for identity in pass.baseline.identities(kind) {
             let controller_resume = kind == wake::RESUME_KIND && identity == wake::OVERSEER_TARGET;
-            if !(names.contains(&identity) || controller_resume) {
+            if !(kept.contains(&identity) || controller_resume) {
                 out.changes.push(clear(kind, &identity));
             }
         }
@@ -1623,13 +1641,16 @@ fn observe_one(
                     })
             });
             // A lane whose merge landed takes the line and the close below,
-            // never a resume or a move.
+            // never a resume or a move, a merge read after this turn's
+            // continuation was asked included: the rows it clears are its
+            // mark of being told.
+            let merged = !matches!(
+                super::github::finished_merge(pass.baseline, obs.lane),
+                super::github::FinishedMerge::None
+            );
             if let Some(cause) = continuation
+                && !merged
                 && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
-                && matches!(
-                    super::github::finished_merge(pass.baseline, obs.lane),
-                    super::github::FinishedMerge::None
-                )
             {
                 if !reported {
                     out.changes
@@ -1638,7 +1659,9 @@ fn observe_one(
                 continue_lane(obs, cause, &key, &wakes, pass, out);
                 return reading;
             }
-            if reported {
+            let continued =
+                merged && (get(wake::RESUME_KIND).is_some() || get(PROVIDER_ROW).is_some());
+            if reported && !continued {
                 return reading;
             }
             out.changes
@@ -1679,7 +1702,8 @@ fn observe_one(
 /// preference less the lane's own provider is read, and an entry with room
 /// takes the lane, its brief naming the prior transcript; with none it is
 /// resumed still. A move refused, or a walk that could not judge, is told
-/// once as `idle-after-return` with the refusal under it. The episode
+/// once while its reason stands as `idle-after-return` with the refusal
+/// under it ([`said_once`]). The episode
 /// stands while each stopped turn follows the last one read within the
 /// patience; the first finished turn ends it.
 fn continue_lane(
@@ -1709,14 +1733,17 @@ fn continue_lane(
         let mut fields = value.split('|');
         let since = fields.next()?.parse::<u64>().ok()?;
         let last = fields.next()?.parse::<u64>().ok()?;
-        (pass.now.saturating_sub(last) <= patience)
-            .then_some((since, fields.next() == Some("told")))
+        (pass.now.saturating_sub(last) <= patience).then_some((since, fields.next()))
     });
-    let (since, told) = episode.unwrap_or((pass.now, false));
-    let row = |told: bool| format!("{since}|{}{}", pass.now, if told { "|told" } else { "" });
+    let (since, told) = episode.unwrap_or((pass.now, None));
+    let row = |said: Option<&str>| match said {
+        Some(said) => format!("{since}|{}|{said}", pass.now),
+        None => format!("{since}|{}", pass.now),
+    };
     out.changes.push(set(PROVIDER_ROW, lane, row(told)));
     let tell = |out: &mut Produced, reason: &str| {
-        if told {
+        let (news, said) = said_once(told, reason);
+        if !news {
             return;
         }
         out.events.push(Event::IdleAfterReturn {
@@ -1726,7 +1753,7 @@ fn continue_lane(
         out.events.push(Event::Tail(format!(
             "provider-move-refused lane={lane} reason={reason}"
         )));
-        out.changes.push(set(PROVIDER_ROW, lane, row(true)));
+        out.changes.push(set(PROVIDER_ROW, lane, row(Some(&said))));
     };
     let age = Duration::from_secs(pass.now.saturating_sub(since));
     if let Some(harness) = obs.lane.harness.as_deref().and_then(Harness::parse)
@@ -1737,12 +1764,15 @@ fn continue_lane(
         let found = (age >= stop::PROVIDER_PATIENCE
             && pass.route.relaunch == WallRelaunch::Auto
             && halt_reason(obs, pass).is_none())
-        .then(
-            || match provider_walk(obs.lane, harness, pass.route.preference) {
-                Some(request) => walked(&obs.lane.item, &request, pass),
-                None => Found::None,
-            },
-        );
+        .then(|| match &pass.route.host {
+            Err(cause) => Found::Unjudged(cause.clone()),
+            Ok(fleet) => {
+                match provider_walk(obs.lane, harness, pass.route.preference, fleet.as_deref()) {
+                    Some(request) => walked(&obs.lane.item, &request, pass),
+                    None => Found::None,
+                }
+            }
+        });
         let ground = stop::Ground {
             own_room: true,
             room: matches!(found, Some(Found::Destination(_))),
@@ -1834,8 +1864,8 @@ fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
         .map(|row| row.split('|').collect())
         .unwrap_or_default();
     let told = match prior.as_slice() {
-        [_, at, ..] if *at != attempt => "",
-        ["owed", _, told] => *told,
+        [_, at, ..] if *at != attempt => None,
+        ["owed", _, told] => Some(*told),
         ["started", _, restarted] if *restarted == death => return,
         ["started", _, _] => {
             out.events.push(Event::Tail(format!(
@@ -1846,11 +1876,11 @@ fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
             return;
         }
         ["dead", _] => return,
-        _ => "",
+        _ => None,
     };
     let refused = |out: &mut Produced, reason: &str| {
-        let said = hash_of(reason).to_string();
-        if said != told {
+        let (news, said) = said_once(told, reason);
+        if news {
             out.events.push(Event::Tail(format!(
                 "relaunch-refused lane={lane} reason={reason}"
             )));
@@ -1941,6 +1971,15 @@ fn keyed(key: String, note: Option<&str>) -> String {
         Some(note) => format!("{key}|{note}"),
         None => key,
     }
+}
+
+/// Whether a refusal `said` is news against the mark `prior` its row kept,
+/// and the mark to keep: a refusal is told once while it stands, and a
+/// changed one is told again. A mark no refusal hashes to, such as a
+/// legacy row's `told`, makes the next refusal news once.
+fn said_once(prior: Option<&str>, said: &str) -> (bool, String) {
+    let mark = hash_of(said).to_string();
+    (prior != Some(mark.as_str()), mark)
 }
 
 /// The account a Copilot record naming none runs on, as the lane's own
@@ -2214,8 +2253,9 @@ fn wall(
                 Routed::Opening => return unjudged("auth-recovery-opening"),
                 Routed::Waiting => {}
                 Routed::Held | Routed::Left => {
-                    let said = told_of(&notes);
-                    if prior.get(6) != Some(&said) {
+                    let (news, said) =
+                        said_once(prior.get(6).map(String::as_str), &notes.join("\n"));
+                    if news {
                         out.events.push(Event::UsageLimit { passed, line });
                         out.events.extend(notes.into_iter().map(Event::Tail));
                         let mut row = prior.clone();
@@ -2292,7 +2332,7 @@ fn wall(
     // The walk's notes are what a later walk compares with; a passed
     // reset's resume note walked nothing, so the last walk's mark stands.
     let said = if reset_at.filter(|_| passed).is_none() {
-        told_of(&notes)
+        said_once(None, &notes.join("\n")).1
     } else {
         prior
             .get(6)
@@ -2314,12 +2354,6 @@ fn wall(
         format!("{first_seen}|{hash}|{identity}|{reported}|{screen}|{retry}|{said}"),
     ));
     (walled, observed)
-}
-
-/// The mark a `usage-limit` row keeps of the notes said under its line, so
-/// a later walk under the same banner says only notes that changed.
-fn told_of(notes: &[String]) -> String {
-    hash_of(&notes.join("\n")).to_string()
 }
 
 /// What the wall route did with a walled lane.
@@ -2477,10 +2511,24 @@ fn route(
             AuthRecovery::Ready | AuthRecovery::AwaitingTurn,
         ) => {}
     }
-    let request = account_walk(obs.lane, harness, model, spent, pass.route.preference);
+    let fleet = match &pass.route.host {
+        Ok(fleet) => fleet.as_deref(),
+        Err(cause) => {
+            notes.push(format!("pick unjudged {cause}"));
+            return Routed::Left;
+        }
+    };
+    let request = account_walk(
+        obs.lane,
+        harness,
+        model,
+        spent,
+        pass.route.preference,
+        fleet,
+    );
     let to = match walked(&obs.lane.item, &request, pass) {
         Found::Destination(to) => {
-            notes.push(to.note(harness));
+            notes.push(to.note(harness, model));
             Some(to)
         }
         Found::None => {
@@ -2570,16 +2618,16 @@ struct Destination {
     /// The model the entry runs; `None` is the harness's default.
     model: Option<String>,
     effort: Option<String>,
-    /// The entry's own `@host`, which the walk judged its account on.
-    host: Option<String>,
     account: String,
 }
 
 impl Destination {
     /// The walk's line under the event: the account, and the harness and
-    /// model where the walk crossed to another harness.
-    fn note(&self, from: Harness) -> String {
-        if self.harness == from {
+    /// model where the walk chose another harness or model than the lane's
+    /// own, `model`. The walk stays on the lane's host, so the line names
+    /// none.
+    fn note(&self, from: Harness, model: &str) -> String {
+        if self.harness == from && self.model.as_deref().unwrap_or_default() == model {
             format!("pick lane={}", self.account)
         } else {
             format!(
@@ -2615,14 +2663,12 @@ fn walked(item: &str, request: &WalkRequest, pass: &Pass) -> Found {
                 harness,
                 model,
                 effort,
-                host,
                 account: Some(account),
                 ..
             } => Found::Destination(Destination {
                 harness,
                 model: Some(model).filter(|m| !m.is_empty()),
                 effort: Some(effort).filter(|e| !e.is_empty()),
-                host: host.filter(|h| !h.is_empty()),
                 account,
             }),
             Chosen { account: None, .. } => Found::Unjudged("walk-account-unnamed".to_owned()),
@@ -2646,22 +2692,46 @@ fn source_of(lane: &Lane, harness: Harness) -> lane_walk::Source {
     }
 }
 
+/// Where the walk judges an entry naming `entry` as its host, under the
+/// fleet's `ORCH_LANE_HOST` `fleet`: the entry's host, else the fleet's,
+/// else this machine, as `ops::accounts` `Hosts::hosted` judges it.
+fn judged_host<'a>(entry: Option<&'a str>, fleet: Option<&'a str>) -> &'a str {
+    entry
+        .or(fleet)
+        .filter(|host| !host.is_empty())
+        .unwrap_or("local")
+}
+
 /// The walk a walled lane leaves its account by: the lane preference, then
 /// the lane's own harness and model on any other account, the spent one
-/// left out. A hosted lane's transcript stands on its host, where no brief
-/// composed here can name it, so its walk keeps the entries of its own
-/// harness alone.
+/// left out. A lane moves only within its own host, whose store holds its
+/// session and transcript, so the walk keeps the entries it judges there,
+/// and the caller step only where `fleet` (`ORCH_LANE_HOST`) is that host.
+/// A hosted lane's transcript stands on its host, where no brief composed
+/// here can name it, so its walk keeps the entries of its own harness
+/// alone.
 fn account_walk(
     lane: &Lane,
     harness: Harness,
     model: &str,
     spent: &str,
     preference: Option<&str>,
+    fleet: Option<&str>,
 ) -> WalkRequest {
-    let preference = (hosted::host_of(lane) != "local").then(|| {
-        entries_where(preference.unwrap_or_default(), |entry| {
-            entry.harness == harness
+    let host = hosted::host_of(lane);
+    let local = host == "local";
+    let preference = preference.map(|text| {
+        entries_where(text, |entry| {
+            judged_host(entry.host.as_deref(), fleet) == host && (local || entry.harness == harness)
         })
+    });
+    let caller = (judged_host(None, fleet) == host).then(|| lane_walk::Caller {
+        harness,
+        lane: None,
+        model: Some(model.to_owned()),
+        effort: lane.effort.clone().filter(|e| !e.is_empty()),
+        pick_model: Some(model.to_owned()),
+        keep: false,
     });
     WalkRequest {
         scope: lane_walk::Scope::Lane,
@@ -2671,22 +2741,26 @@ fn account_walk(
         max_pct: None,
         min_headroom_pct: None,
         source: Some(source_of(lane, harness)),
-        caller: Some(lane_walk::Caller {
-            harness,
-            lane: None,
-            model: Some(model.to_owned()),
-            effort: lane.effort.clone().filter(|e| !e.is_empty()),
-            pick_model: Some(model.to_owned()),
-            keep: false,
-        }),
+        caller,
         keep_unmeasured: false,
     }
 }
 
 /// The walk a lane its provider stopped for the whole patience leaves that
 /// provider by: the lane preference less every entry on the lane's own
-/// provider, and no entry of its own; none where no preference is set.
-fn provider_walk(lane: &Lane, harness: Harness, preference: Option<&str>) -> Option<WalkRequest> {
+/// provider, and no entry of its own; none where no preference is set. A
+/// local lane's move names its transcript on this machine, so the walk
+/// keeps the entries it judges here; a hosted lane's transcript stands on
+/// its host, so it takes no move.
+fn provider_walk(
+    lane: &Lane,
+    harness: Harness,
+    preference: Option<&str>,
+    fleet: Option<&str>,
+) -> Option<WalkRequest> {
+    if hosted::host_of(lane) != "local" {
+        return None;
+    }
     let model = lane.model.as_deref().unwrap_or_default();
     let caller = agent_runtime::controller::views::Caller {
         harness: Some(harness),
@@ -2697,9 +2771,10 @@ fn provider_walk(lane: &Lane, harness: Harness, preference: Option<&str>) -> Opt
     // without one.
     let others = entries_where(preference?, |entry| {
         let bare = format!("{}:{}:{}", entry.harness.name(), entry.model, entry.effort);
-        choice::recovery_walk(&caller, harness, Leaving::Provider { preference: &bare })
-            .preference
-            .is_some_and(|p| !p.is_empty())
+        judged_host(entry.host.as_deref(), fleet) == "local"
+            && choice::recovery_walk(&caller, harness, Leaving::Provider { preference: &bare })
+                .preference
+                .is_some_and(|p| !p.is_empty())
     });
     (!others.is_empty()).then(|| WalkRequest {
         scope: lane_walk::Scope::Lane,
@@ -2737,9 +2812,9 @@ fn entries_where(text: &str, keep: impl Fn(&lane_walk::Entry) -> bool) -> String
     kept.join(",")
 }
 
-/// The record's own relaunch onto `to` for the watch's session: the walk's
-/// harness, model, effort, account and the entry's own host in place of
-/// the record's, a permission word the new harness takes, and a brief that
+/// The record's own relaunch onto `to` for the watch's session, on the
+/// record's own host: the walk's harness, model, effort and account in
+/// place of the record's, a permission word the new harness takes, and a brief that
 /// names the prior transcript where the move starts the harness fresh on
 /// another harness or off a provider ([`moved_start_brief`]); a move to
 /// another account of the same harness keeps the start brief.
@@ -2755,9 +2830,6 @@ fn relaunch_request(
     let mut moved = lane.clone();
     moved.model.clone_from(&to.model);
     moved.effort.clone_from(&to.effort);
-    if let Some(host) = &to.host {
-        moved.host = Some(host.clone());
-    }
     let crosses = to.harness != from;
     // A recorded word is the source's own spelling: a walk crosses
     // harnesses only under a full bypass, which the new harness spells its
@@ -4179,29 +4251,72 @@ mod tests {
     /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
     /// index each case plants): each row's five words, and `None` for the
     /// shape the count refuses.
-    /// A walled lane's walk: a local lane walks the setting's preference
-    /// whole, so it may cross harness; a hosted lane, whose transcript no
-    /// brief composed here can name, walks only its own harness's entries,
-    /// so it falls through to an account of its own harness.
+    /// A lane's recovery walks stay on its own host: the wall walk keeps the
+    /// entries judged there (the entry's `@host`, else `ORCH_LANE_HOST`,
+    /// else this machine) and the caller step only where `ORCH_LANE_HOST`
+    /// is that host, a hosted lane's walk its own harness's entries alone;
+    /// the provider walk keeps a local lane's entries judged here, and a
+    /// hosted lane takes none.
     #[test]
-    fn a_hosted_lane_s_wall_walk_keeps_its_own_harness_s_entries() {
-        let preference = "codex:gpt-5:high,claude@/opt/box:opus:high,claude:opus:high:last";
-        for (host, want) in [
-            (None, None),
+    fn a_lane_s_recovery_walks_keep_the_entries_judged_on_its_own_host() {
+        let preference = "codex:gpt-5:high,claude@/opt/box:opus:high,claude@local:opus:high,claude:opus:high:last";
+        // (lane host, ORCH_LANE_HOST, wall walk entries, caller step kept,
+        // provider walk entries)
+        let rows = [
+            (
+                None,
+                None,
+                Some("codex:gpt-5:high,claude@local:opus:high,claude:opus:high:last"),
+                true,
+                Some("codex:gpt-5:high"),
+            ),
+            (
+                None,
+                Some("/opt/box"),
+                Some("claude@local:opus:high"),
+                false,
+                None,
+            ),
             (
                 Some("/opt/box"),
-                Some("claude@/opt/box:opus:high,claude:opus:high:last"),
+                None,
+                Some("claude@/opt/box:opus:high"),
+                false,
+                None,
             ),
-        ] {
+            (
+                Some("/opt/box"),
+                Some("/opt/box"),
+                Some("claude@/opt/box:opus:high,claude:opus:high:last"),
+                true,
+                None,
+            ),
+        ];
+        for (host, fleet, wall, caller, provider) in rows {
             let lane: Lane = serde_json::from_value(json!({
                 "item": "KEN-1",
                 "harness": "claude",
+                "model": "opus",
                 "status": "running",
                 "host": host,
             }))
             .unwrap();
-            let request = account_walk(&lane, Harness::Claude, "opus", "/a", Some(preference));
-            assert_eq!(request.preference.as_deref(), want, "{host:?}");
+            let request = account_walk(
+                &lane,
+                Harness::Claude,
+                "opus",
+                "/a",
+                Some(preference),
+                fleet,
+            );
+            assert_eq!(request.preference.as_deref(), wall, "{host:?} {fleet:?}");
+            assert_eq!(request.caller.is_some(), caller, "{host:?} {fleet:?}");
+            let moved = provider_walk(&lane, Harness::Claude, Some(preference), fleet);
+            assert_eq!(
+                moved.and_then(|r| r.preference).as_deref(),
+                provider,
+                "{host:?} {fleet:?}"
+            );
         }
     }
 
