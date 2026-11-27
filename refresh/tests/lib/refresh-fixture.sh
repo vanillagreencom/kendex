@@ -122,8 +122,7 @@ run_refresh() { # CONTENT VERIFY CLASS
     : >"$TMP/state/armed"
   fi
   : >"$TMP/state/summary"
-  : >"$TMP/state/outputs"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
 }
 
@@ -196,6 +195,7 @@ PROJECT_BOT
       printf 'stale\n' >"$repo/unselected/rendered.txt"
       printf '[env]\nKENDEX_REFRESH_PROJECTS = "unselected"\n' >"$repo/packaging/jarvis home/kendex.settings.toml"
       PROJECT_SETTING_ENV=()
+      LAND_TOKEN='' LAND_CONFIGURED=''
       case "$name" in
         nested) : >"$repo/.fixture-adoption-required" ;;
         environment) PROJECT_SETTING_ENV=("KENDEX_REFRESH_PROJECTS=packaging/jarvis home") ;;
@@ -214,9 +214,10 @@ PROJECT_BOT
           [ -L "$repo/packaging/jarvis home/kendex.toml" ] || exit 1 ;;
         manifest) rm "$repo/packaging/jarvis home/kendex.toml" ;;
         apply|verify|render) : >"$repo/packaging/jarvis home/.fixture-$name-fail" ;;
+        # The landing check reads every selected project's sources, so a
+        # nested project's other source keeps the pull request.
         covered|third-party|coverage-unread|revision)
-          printf 'current\n' >"$repo/packaging/jarvis home/rendered.txt"
-          printf 'updated\n' >"$repo/packaging/jarvis home/bot.txt"
+          LAND_TOKEN=land-token LAND_CONFIGURED=true
           case "$name" in
             third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/packaging/jarvis home/.fixture-sources" ;;
             coverage-unread) : >"$repo/packaging/jarvis home/.fixture-source-unread" ;;
@@ -265,9 +266,16 @@ PROJECT_BOT
             grep -qF 'Project `.`:' "$TMP/state/body" || matched=no
             grep -qF 'Project `packaging/jarvis home`:' "$TMP/state/body" || matched=no
           fi ;;
-        sources=*)
-          if [ "$RC" -eq 0 ] && grep -qxF "$expected" "$TMP/state/outputs" &&
-              grep -qxF "$repo/packaging/jarvis home|marketplace list --scope project --json|main" "$TMP/state/project-calls"; then matched=yes; fi ;;
+        landed | refresh-land=*)
+          if [ "$RC" -eq 0 ] &&
+              grep -qxF "$repo/packaging/jarvis home|marketplace list --scope project --json|main" "$TMP/state/project-calls"; then
+            if [ "$expected" = landed ]; then
+              head="$(git --git-dir="$LEASE_REMOTE" rev-parse refs/heads/main)" &&
+                ! grep -q '^refresh-land=' <<<"$OUT" &&
+                grep -qxF "refresh-state=landed pr=none class=render head=$head" <<<"$OUT" && matched=yes
+            elif [ "$(grep '^refresh-land=' <<<"$OUT")" = "$expected" ] &&
+                grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT"; then matched=yes; fi
+          fi ;;
         project-*|read)
           if [ "$RC" -ne 0 ] && grep -qxF "refresh-error=$expected value=$selection" <<<"$OUT" &&
               [ ! -s "$TMP/state/project-calls" ]; then matched=yes; fi ;;
@@ -298,16 +306,16 @@ unread|packaging/jarvis home|read
 apply|packaging/jarvis home|apply value=48
 verify|packaging/jarvis home|verify
 render|packaging/jarvis home|bot-instructions-render value=50
-covered|packaging/jarvis home|sources=covered
-third-party|packaging/jarvis home|sources=uncovered
-coverage-unread|packaging/jarvis home|sources=unread
-revision|packaging/jarvis home|sources=uncovered
+covered|packaging/jarvis home|landed
+third-party|packaging/jarvis home|refresh-land=skipped value=sources-uncovered
+coverage-unread|packaging/jarvis home|refresh-land=unavailable value=sources-read
+revision|packaging/jarvis home|refresh-land=skipped value=sources-uncovered
 fallback|packaging/jarvis home|fallback
 PROJECT_ROWS
   done
   repo="$saved_repo"
   runner="$saved_runner"
-  unset LEASE_REMOTE CATALOG_REV PROJECT_SETTING_ENV
+  unset LEASE_REMOTE CATALOG_REV PROJECT_SETTING_ENV LAND_TOKEN LAND_CONFIGURED
   : >"$TMP/state/pr"
   : >"$TMP/state/calls"
 }

@@ -556,11 +556,10 @@ fi
 # not, and sources=unread where the evidence could not be read: the engine's
 # answer, its shape, or a project manifest. The engine owns source
 # resolution. Its subscription JSON identifies remotes but omits item
-# overrides, so inspect TOML for any revision. No revision override can be
-# covered by the main-only tuple. An unread answer writes what kendex said
+# overrides, so inspect TOML for any revision. A revision override is never
+# covered: only the default catalog at main is. An unread answer writes what kendex said
 # and one refresh-sources=unread value=PROJECT line, the cause after it, to
-# stderr. Anything but covered withholds the current route's record, so a
-# later run refreshes in full, and keeps the landing route's pull request.
+# stderr. Anything but covered keeps the landing route's pull request.
 refresh_source_coverage() {
 python3 - "${projects[@]}" <<'SOURCE_COVERAGE'
 import json, pathlib, subprocess, sys
@@ -620,10 +619,6 @@ if [ "$publication_status" -eq 0 ]; then
   report_settings
   refresh_close_superseded
   printf 'refresh-state=current pr=none class=none\n'
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    printf 'state=current\n' >>"$GITHUB_OUTPUT"
-    refresh_source_coverage >>"$GITHUB_OUTPUT"
-  fi
   printf '%s\n\nNo content changes to publish. Project lock records publish with the next content change.\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   # A run with no render change opens no pull request; its settings report

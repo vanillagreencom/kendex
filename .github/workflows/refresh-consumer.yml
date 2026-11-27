@@ -5,13 +5,9 @@
 # value below names the consumer.
 #
 # The job checks out its defining workflow commit, the one job.workflow_sha
-# names, then runs the shared input checker with the caller's GitHub token.
-# When saved inputs and source coverage remain current and no rolling pull
-# request is open, it skips the render step and the remaining steps unless one
-# merged in the last 24 hours, whose review threads the review step still
-# answers. A review-only or full run installs the one stable vN.Y.Z release
-# tagged on that commit, where vN is the tag the caller named, and stops before any
-# install when the commit carries no such tag or more than one. The default
+# names, and installs the one stable vN.Y.Z release tagged on that commit,
+# where vN is the tag the caller named. It stops before any install when the
+# commit carries no such tag or more than one. The default
 # catalog follows main, with the engine's compatibility refusal selecting the
 # release catalog. A declared rev takes precedence. Later steps run their
 # scripts from that checkout. The consumer code a run executes is the
@@ -77,8 +73,6 @@ jobs:
     env:
       KENDEX_LAND_PAIR: ${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
       KENDEX_LAND_CONFIGURED: ${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
-    # Inherit the caller's grants. Older callers have contents:read only;
-    # their unreadable review/record evidence must select a full refresh.
     steps:
       # job.workflow_sha binds co-located code to the defining reusable workflow,
       # not the consumer commit. See GitHub's contexts reference, job context.
@@ -88,26 +82,13 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: kendex
           persist-credentials: false
-      # The REST jobs reader recognizes this name when a skipped run has no record.
-      - name: refresh-input-check
-        id: inputs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          WORKFLOW_SHA: ${{ job.workflow_sha }}
-        run: |
-          set -euo pipefail
-          exec python3 "$GITHUB_WORKSPACE/kendex/refresh/check-inputs.py"
-      - if: steps.inputs.outputs.route != 'skip'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: consumer
           fetch-depth: 0
           persist-credentials: false
       - name: Install the release tagged on this commit
-        if: steps.inputs.outputs.route != 'skip'
         working-directory: kendex
         env:
           GH_TOKEN: ""
@@ -165,7 +146,6 @@ jobs:
           printf '%s\n' "$HOME/.local/bin" >>"$GITHUB_PATH"
           printf 'kendex-install: version=%s commit=%s\n' "$tag" "$WORKFLOW_SHA"
       - name: Mint the repository app token
-        if: steps.inputs.outputs.route != 'skip'
         id: token
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
@@ -192,7 +172,7 @@ jobs:
       # accepted both permissions leaves the token empty and every update on
       # the rolling pull request.
       - name: Mint the landing token
-        if: steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'
+        if: env.KENDEX_LAND_PAIR == 'true'
         id: land-token
         continue-on-error: true
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
@@ -203,10 +183,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-workflows: write
-      # The REST jobs reader recognizes this name: its skip proves a run left
-      # the recorded render alone.
       - name: Refresh and arm the rolling pull request
-        if: steps.inputs.outputs.route == 'full'
         id: refresh
         working-directory: consumer
         env:
@@ -218,7 +195,6 @@ jobs:
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-consumer.sh"
       - name: Mint the kendex issue token
-        if: steps.inputs.outputs.route != 'skip'
         id: issues-token
         continue-on-error: true
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
@@ -231,7 +207,6 @@ jobs:
       # Thread-resolution rules: review-gate references/adoption.md,
       # Automatic consumer refresh.
       - name: File rendered-file findings upstream and resolve them
-        if: steps.inputs.outputs.route != 'skip'
         working-directory: consumer
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -240,10 +215,3 @@ jobs:
         run: |
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-reviews.sh"
-      - name: Record a current refresh
-        if: steps.inputs.outputs.route == 'full' && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: kendex-refresh-current
-          path: ${{ steps.inputs.outputs.record-path }}
-          if-no-files-found: error

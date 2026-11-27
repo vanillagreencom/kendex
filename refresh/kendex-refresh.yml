@@ -34,20 +34,16 @@ jobs:
     if: ${{ github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && !(github.event_name == 'repository_dispatch' && github.run_attempt == 1 && github.event.sender.login == 'vanillagreen-fleet-lanes[bot]' && github.event.sender.type == 'Bot' && github.event.client_payload.gate_clear == true) }}
     permissions:
       actions: write
-      contents: read
-      pull-requests: read
     uses: vanillagreencom/kendex/.github/workflows/refresh-release.yml@v1
   refresh:
     needs: release
     # On this branch the release job skips only with the sender's proof.
-    if: ${{ !cancelled() && github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.release.result == 'skipped' || (needs.release.result == 'success' && needs.release.outputs.route != 'skip')) }}
+    if: ${{ !cancelled() && github.repository != 'vanillagreencom/kendex' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.release.result == 'skipped' || needs.release.result == 'success') }}
     concurrency:
       group: kendex-refresh
       cancel-in-progress: false
     permissions:
       contents: read
-      actions: read
-      pull-requests: read
     uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1
     with:
       environment: kendex

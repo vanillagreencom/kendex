@@ -59,12 +59,12 @@ The report in [github-repository-settings](../../github-repository-settings/refe
 
 Before enabling automatic refresh, wire the consumer's CI through harness-ci's references/wiring.md § Consumer refresh CI. A consumer with no required checks and an unprotected default branch needs no consumer CI or `change_class` wiring.
 
-### Schedule and input check
+### Schedule and cancellation
 
 - The shipped caller, `refresh/kendex-refresh.yml` in the kendex release, requests update checks once a day.
 - Consumers take this schedule through `refresh/adopt-refresh.sh`. An existing workflow keeps its earlier schedule until adoption.
 - GitHub can delay, drop or disable scheduled runs.
-- A manual run uses the same path.
+- Every scheduled, dispatched and manual run takes the full refresh path.
 
 A run can hold the refresh group while it waits on its selected environment gate:
 
@@ -73,34 +73,6 @@ A run can hold the refresh group while it waits on its selected environment gate
 - For a waiting run, unreadable proof, an older caller, a rerun, or a manual or daily event, the release job must succeed before refresh joins the group.
 - If that job's API call fails or times out, refresh stays outside the group.
 - The job re-reads each run just before its cancel and skips one no longer waiting. GitHub offers no cancel conditioned on status, so a run released in the instant between that re-read and the cancel can still be cancelled.
-
-Both jobs check the run's inputs:
-
-- The release job checks inputs with the caller's GitHub token at its defining workflow commit, after handling cancellation.
-- The refresh job independently checks out its defining workflow commit. It rechecks after its environment and concurrency wait, before installation or token minting.
-- The checker compares the kendex main commit, its workflow commit, the stable v1 release tags and the consumer default-branch head with its last current record.
-
-The current record:
-
-- The record lives in the consumer Actions artifact `kendex-refresh-current`. It identifies the run and attempt that produced it.
-- Only a successful run that captured the complete input tuple at its start, proves source coverage and ends `refresh-state=current` writes it.
-- Source coverage requires the engine to report only the default remote catalog without a revision. Other enabled subscriptions, local paths, any manifest revision override and unknown source evidence keep the full refresh path.
-- An incomplete tuple writes no record, so the next run refreshes in full.
-- An unchanged tuple skips the refresh job or the remaining refresh steps only when no rolling pull request is open and none merged in the last 24 hours.
-- When none is open but one merged in that window, it skips only the render step. The run still installs the release, mints both tokens and answers review threads, and saves no record.
-- A record is reused for at most 24 hours, and only while its producing attempt is still the latest attempt of that run.
-
-The run history check:
-
-- The check reads the complete workflow history from 65 days before the record. This covers the 30-day rerun request window plus the 35-day limit for execution, waiting and approval.
-- It includes older runs whose rerun was requested before the record but finished after it.
-- Every other run updated since the record must have one successful attempt. Its complete job listing must show either a successful `refresh-input-check` with the render step skipped, or a successful `release-input-check` with no other executed job.
-- In the latter form, remaining jobs are skipped or omitted. This no-render history preserves the existing record and writes no new one.
-- A rerun, a failed, cancelled or timed-out full run, or unknown attempt evidence keeps the full refresh path.
-- A newer skipped run cannot hide an earlier full attempt.
-- The history reads use separate date ranges to stay below the API search cap. Missing history or a date range that reaches 1,000 runs also runs a full refresh.
-- A changed input, a missing or unreadable record, or a failed input or review read also runs the full refresh.
-- The caller grants its GitHub token Actions-read and Pull-requests-read access for these checks. Existing callers need adoption to gain these grants. Their unreadable evidence keeps the full refresh path.
 
 ### Release and catalog
 
@@ -178,7 +150,7 @@ What the run lands:
 
 - The run lands only a commit it made itself, and only where the classifier, run from the release checkout, measures that commit as class `render`. change-scope's `change-scope --help` defines that proof, under its `render` class.
 - The proof shows that the commit holds what kendex renders. It does not judge package content. kendex's own merge queue proves the content of the kendex catalog before `main` holds it, and the consumer runs no second proof of it. No such proof covers another source.
-- The run therefore lands only where every selected project has the source coverage that [§ Schedule and input check](#schedule-and-input-check) requires of a current record: each enabled source is the kendex catalog, `vanillagreencom/kendex`, with no `path` and no `rev`, and no manifest holds a revision override.
+- The run therefore lands only where every selected project has source coverage: each enabled source is the kendex catalog, `vanillagreencom/kendex`, with no `path` and no `rev`, and no manifest holds a revision override.
 - An update in a project with a third-party catalog, a local path, a declared revision or unknown source evidence keeps the rolling pull request, where the consumer reviews it.
 - A commit that removes or renames a path against the base the run judged lands only where each such path lies at or below a path the commit's root `.kendex-lock.json` still lists in `emitted.paths`.
   - A removal inside a package the lock still emits lands.
@@ -234,8 +206,6 @@ A run that committed a new head and kept the pull request route prints one landi
 - On `value=queued`, the run does not push because a push to that branch makes GitHub rebuild each running merge group. It defers the render with no pull request. Nothing starts another run for it, so the render waits for the next daily or release-dispatched run that meets an empty queue.
 - On `refresh-land=refused`, `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset paragraph above names the refusal this route expects.
 - On `refresh-error=land-check`, the run prints the answer to stderr, exits 1 and publishes no head.
-
-The source reader also sets the `sources` step output of a `refresh-state=current` run to `covered`, `uncovered` or `unread`, with the same stderr lines on `unread`. The shared workflow saves the current record only on `covered`.
 
 ### Caller adoption contract
 
@@ -334,7 +304,6 @@ Every selected directory and its `kendex.toml` must resolve inside the checkout.
 - On a new publication, all project changes enter the same rolling pull request.
 - Adoption runs once for the root caller.
 - Catalog holds and retired-item reports name their project when extra projects are selected.
-- A current record is saved only when source coverage is known for every selected project.
 
 ### Adoption and file ownership
 

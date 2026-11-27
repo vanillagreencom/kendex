@@ -23,7 +23,7 @@ def check_shape(text):
     release, refresh = jobs['release'], jobs['refresh']
     assert not re.search(r'^concurrency:', text, re.M), 'a workflow-level group queues the release behind a stuck run'
     assert 'concurrency:' not in release and 'environment:' not in release
-    assert re.search(r'^    permissions:\n      actions: write\n      contents: read\n      pull-requests: read\n', release, re.M)
+    assert re.search(r'^    permissions:\n      actions: write\n    uses:', release, re.M)
     assert 'uses: vanillagreencom/kendex/.github/workflows/refresh-release.yml@v1' in release
     assert re.search(r'^    if: \$\{\{ ' + re.escape(cond) + r' && !\(.+\) \}\}$', release, re.M)
     assert re.search(r'^    needs: release$', refresh, re.M)
@@ -46,7 +46,6 @@ for name, old, new in (
 
 shared = (Path(sys.argv[1]).parents[1] / '.github/workflows/refresh-release.yml').read_text()
 assert 'concurrency:' not in shared and 'environment:' not in shared
-assert shared.index('force-cancel') < shared.index('actions/checkout@') < shared.index('release-input-check')
 body = textwrap.dedent(re.split(r'^      - ', shared.split('        run: |\n', 1)[1], maxsplit=1, flags=re.M)[0])
 root = Path(sys.argv[2]) / 'release-stuck'
 bin_dir = root / 'bin'
