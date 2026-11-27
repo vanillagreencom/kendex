@@ -124,6 +124,13 @@ pub enum Response {
     /// The line carries usage under none of the harness's field names: a
     /// figure stands and this reader cannot take it, never read as zero.
     Unread,
+    /// The line records a response whose usage its writer never counted:
+    /// no figure, and the output it added reaches the next response's
+    /// prompt with no count of its own. The model is the one the line
+    /// names, which its missing counts do not make unknown.
+    Uncounted {
+        model: String,
+    },
 }
 
 /// One response's figures.
@@ -154,24 +161,70 @@ pub struct Split {
 
 /// The response one line of `harness`'s session file records, `None` for a
 /// line that records none: the one reading of a line's usage, behind both
-/// [`read_file`]'s last reading and a whole walk of the file. `Err` where a
-/// usage field holds anything but a whole count.
+/// [`read_file`]'s last reading and a whole walk of the file. A Copilot
+/// CLI session's last reading is [`copilot_session`]'s instead, the CLI's
+/// own count, which no response line carries. `Err` where a usage field
+/// holds anything but a whole count.
 pub fn response(harness: Harness, line: &Map<String, Value>) -> Result<Option<Response>, String> {
     match harness {
         Harness::Claude => claude_response(line),
         Harness::Codex => Ok(codex_response(line)),
         Harness::Pi => pi_response(line),
-        Harness::Copilot => Ok(copilot_row_figure(line).map(|(tokens, window, model)| {
-            Response::Spent(Spent {
-                id: None,
-                context: tokens,
-                split: None,
-                window: Some(window),
-                model,
-            })
-        })),
+        Harness::Copilot => copilot_response(line),
     }
 }
+
+/// A Copilot CLI `session.usage_record` row's `data.usage`, one model
+/// call's. The SDK's per-call interface is the `assistant.usage` event, and
+/// it cannot serve a read of a saved session: it is ephemeral, never
+/// written to `events.jsonl`. The usage record is its durable receipt, its
+/// `data.usage` the same `AssistantUsageData` (Copilot CLI 1.0.116
+/// `schemas/session-events.schema.json`: `AssistantUsageEvent.ephemeral`
+/// is `const true`, `UsageAccountingRecordData.usage` references
+/// `AssistantUsageData`). The fields read are `inputTokens`, the whole
+/// prompt, the fresh input with `cacheReadTokens` and `cacheWriteTokens`
+/// (2 + 290185 + 699 = 290886 in a recorded 1.0.112 log); `outputTokens`,
+/// the output; `model`; and `interactionType`. A call whose
+/// `interactionType` is present and not one of [`COPILOT_LEAD_CALLS`] (a
+/// sub-agent, sampling, background or compaction call; the schema writes no
+/// `agentId` on a session-level row, so the lead's rows include it) sent a
+/// prompt of its own, not the lead conversation's, and records no response
+/// of it. A producer that classes no call is read as the lead's.
+fn copilot_response(line: &Map<String, Value>) -> Result<Option<Response>, String> {
+    if word(line, "type") != "session.usage_record" {
+        return Ok(None);
+    }
+    let Some(Value::Object(usage)) = line.get("data").and_then(|data| data.get("usage")) else {
+        return Ok(Some(Response::Unread));
+    };
+    if let Some(class) = usage.get("interactionType").and_then(Value::as_str)
+        && !COPILOT_LEAD_CALLS.contains(&class)
+    {
+        return Ok(None);
+    }
+    if !COPILOT_FIELDS.iter().any(|f| usage.contains_key(*f)) {
+        return Ok(Some(Response::Unread));
+    }
+    let split = Split {
+        prompt: summed(usage, &COPILOT_FIELDS[..1])?,
+        output: summed(usage, &COPILOT_FIELDS[1..])?,
+    };
+    Ok(Some(Response::Spent(Spent {
+        id: None,
+        context: split.prompt.saturating_add(split.output),
+        split: Some(split),
+        window: None,
+        model: word(usage, "model").to_owned(),
+    })))
+}
+
+/// A Copilot CLI usage record's prompt and output counts.
+const COPILOT_FIELDS: [&str; 2] = ["inputTokens", "outputTokens"];
+
+/// The `interactionType` values of a call the lead conversation makes,
+/// from the 1.0.116 schema's list: the agent's own follow-up and the call
+/// carrying a user prompt.
+const COPILOT_LEAD_CALLS: [&str; 2] = ["conversation-agent", "conversation-user"];
 
 /// A Claude Code assistant line's usage: the prompt is the input with both
 /// cache counts, the output its `output_tokens`. A line naming the
@@ -249,7 +302,9 @@ fn codex_response(line: &Map<String, Value>) -> Option<Response> {
 
 /// A Pi message's usage: the input with both cache counts is the prompt,
 /// `output` the output, the sum Pi's own `totalTokens` is; the response's
-/// id is the entry's own `id`.
+/// id is the entry's own `id`. A [`PI_CODEX`] message whose every count is
+/// zero is [`Response::Uncounted`]. The model is spelled `provider/id`
+/// where the message names its provider.
 fn pi_response(line: &Map<String, Value>) -> Result<Option<Response>, String> {
     let Some(Value::Object(message)) = line.get("message") else {
         return Ok(None);
@@ -270,6 +325,9 @@ fn pi_response(line: &Map<String, Value>) -> Result<Option<Response>, String> {
     } else {
         format!("{provider}/{id}")
     };
+    if provider == PI_CODEX && split.prompt == 0 && split.output == 0 {
+        return Ok(Some(Response::Uncounted { model }));
+    }
     Ok(Some(Response::Spent(Spent {
         id: Some(word(line, "id"))
             .filter(|id| !id.is_empty())
@@ -302,7 +360,7 @@ pub fn claude(text: &str, compaction_off: bool) -> Result<Usage, String> {
     let mut last = Usage::Absent;
     for line in objects(text) {
         match claude_response(&line)? {
-            None => {}
+            None | Some(Response::Uncounted { .. }) => {}
             Some(Response::Unread) => last = Usage::Unread,
             Some(Response::Spent(spent)) => {
                 last = Usage::Measured {
@@ -349,7 +407,7 @@ pub fn codex(text: &str, floor: Option<u64>) -> Result<Usage, String> {
             continue;
         }
         match codex_response(&line) {
-            None => {}
+            None | Some(Response::Uncounted { .. }) => {}
             Some(Response::Unread) => last = Some(None),
             Some(Response::Spent(spent)) => {
                 last = Some(Some((
@@ -602,8 +660,11 @@ fn session_named(at: &SessionAt) -> Result<Named, RecordUnread> {
         Harness::Claude => read_file(&file()?, |text| claude(text, false))
             .map(model)
             .map_err(failed),
-        Harness::Pi => read_file(&file()?, |text| pi(text, false, |_| None))
-            .map(model)
+        Harness::Pi => tail_first(&file()?, pi_model, |model| !model.is_empty())
+            .map(|model| Named {
+                model,
+                effort: String::new(),
+            })
             .map_err(failed),
         Harness::Copilot => {
             let transcript = at
@@ -724,9 +785,18 @@ pub fn codex_compaction_floor(
 /// own `totalTokens` is.
 const PI_FIELDS: [&str; 4] = ["input", "output", "cacheRead", "cacheWrite"];
 
+/// The provider pi-codex-bridge names its messages by. A message of it
+/// that ends in a tool call keeps the bridge's `emptyUsage()`, every count
+/// zero: Codex's rollout holds the turn's usage, and the message none (the
+/// bridge's README § Usage records).
+const PI_CODEX: &str = "pi-codex";
+
 /// One reading of a Pi session file: the last message carrying a usage
 /// object, its model spelled `provider/id` where the message names its
-/// provider, the way the account a Pi session spends is named. Pi keeps no
+/// provider, the way the account a Pi session spends is named. A message
+/// whose usage its writer never counted leaves the reading before it where
+/// both name one model, and leaves it unread where they do not: the count
+/// before is another model's, judged against another window. Pi keeps no
 /// window in that file, so where `compaction_off` the window is the one
 /// `window` finds for the reading's model, and `None` otherwise: enabled
 /// compaction has no verified point.
@@ -739,6 +809,13 @@ pub fn pi(
     for line in objects(text) {
         match pi_response(&line)? {
             None => {}
+            Some(Response::Uncounted { model: now }) => {
+                if let Usage::Measured { model, .. } = &last
+                    && *model != now
+                {
+                    last = Usage::Unread;
+                }
+            }
             Some(Response::Unread) => last = Usage::Unread,
             Some(Response::Spent(spent)) => {
                 last = Usage::Measured {
@@ -757,6 +834,24 @@ pub fn pi(
         && compaction_off
     {
         *point = window(model);
+    }
+    Ok(last)
+}
+
+/// The model a Pi session file's last response names, whether or not its
+/// writer counted it, empty where that response's usage is unread or no
+/// line records one: the model behind `session model`, which a response's
+/// missing counts do not make unknown.
+fn pi_model(text: &str) -> Result<String, String> {
+    let mut last = String::new();
+    for line in objects(text) {
+        match pi_response(&line)? {
+            None => {}
+            Some(Response::Spent(Spent { model, .. }) | Response::Uncounted { model }) => {
+                last = model;
+            }
+            Some(Response::Unread) => last.clear(),
+        }
     }
     Ok(last)
 }
@@ -929,8 +1024,11 @@ pub const COPILOT_SESSION_BOUND: u64 = 16 * TAIL_BYTES;
 /// [`copilot_usage`] taking both figures, so one session reads one window
 /// from either source. A row of those kinds whose figures do not read is
 /// passed over for the one before it. A `session.usage_record` row's
-/// `inputTokens` is another quantity, below the CLI's own count, and is
-/// never taken. `Absent` where no folder, no
+/// `inputTokens`, the prompt the provider counted for one call, is not
+/// taken: the CLI judges its compaction on its own count, which runs above
+/// and below that prompt (in a recorded 1.0.112 log, 760050 before calls
+/// of 745020 to 746507, the compaction firing at 763743 by its own count,
+/// then 44644 after a call of 45640). `Absent` where no folder, no
 /// record or no such row stands within [`COPILOT_SESSION_BOUND`]; `Err`
 /// where the id is outside the alphabet that keeps the path under its
 /// directory, or the folder or record cannot be read.
@@ -1498,6 +1596,52 @@ mod tests {
         let claude_spelled =
             r#"{"message":{"model":"claude-opus-5-5","usage":{"input_tokens":5}}}"#;
         assert_eq!(pi(claude_spelled, true, found), Ok(Usage::Unread));
+    }
+
+    /// pi-codex-bridge's placeholder on a message ending in a tool call
+    /// counts nothing and still names its model: the live reading keeps
+    /// the count before it only where that count is the same model's, and
+    /// `session model` names the placeholder's model.
+    #[test]
+    fn a_pi_placeholder_response_keeps_its_model_and_no_other_models_count() {
+        let anthropic = r#"{"type":"message","message":{"role":"assistant","provider":"anthropic","model":"claude-opus-5-5","usage":{"input":100,"output":8,"cacheRead":146000,"cacheWrite":0}}}"#;
+        let codex = r#"{"type":"message","message":{"role":"assistant","provider":"pi-codex","model":"gpt-5.5","usage":{"input":60,"output":12,"cacheRead":10600,"cacheWrite":0}}}"#;
+        let placeholder = r#"{"type":"message","message":{"role":"assistant","provider":"pi-codex","model":"gpt-5.5","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0}}}"#;
+        let rows = [
+            (
+                "a switch to pi-codex",
+                [anthropic, placeholder].join("\n"),
+                Usage::Unread,
+            ),
+            (
+                "pi-codex before it",
+                [codex, placeholder].join("\n"),
+                measured(10_672, None, "pi-codex/gpt-5.5"),
+            ),
+        ];
+        let root = tempfile::tempdir().unwrap();
+        for (name, text, usage) in rows {
+            assert_eq!(pi(&text, false, |_| None), Ok(usage), "{name}");
+            let file = root.path().join("pi.jsonl");
+            std::fs::write(&file, &text).unwrap();
+            let now = session_now(
+                &SessionAt {
+                    harness: Harness::Pi,
+                    session: "p1",
+                    transcript: Some(&file),
+                    home: None,
+                    cwd: root.path(),
+                    now: 0,
+                },
+                Some("launch/model"),
+                None,
+            );
+            assert_eq!(
+                now.model,
+                Ok(Member::Session("pi-codex/gpt-5.5".to_owned())),
+                "{name}"
+            );
+        }
     }
 
     #[test]

@@ -7,16 +7,26 @@
 //! Start is the first user turn, up to the second: its tokens are the
 //! context the turn's last response left, as the harness counted it.
 //!
-//! The four sources are the first user turn (the thread's first delivery),
+//! The five sources are the first user turn (the thread's first delivery),
 //! later user turns, rule reads (a tool call that reads a Markdown file, a
-//! `jarvis-section` section or a skill) and every other tool result.
-//! Harness-added text joins the item before it where the record holds it
-//! apart as [`Entry::Text`] names it, on Claude Code; Copilot CLI's is
-//! inside the turn's own text. Codex records its own
+//! `jarvis-section` section or a skill), every other tool result, and
+//! injected text, which the record holds apart from every item beside it
+//! as [`Entry::Foreign`] names it: a Pi extension's `custom_message`, which
+//! need not belong to the item before it, and a Claude Code Stop hook's
+//! reply. Other harness-added text joins the item before it where the
+//! record holds it apart as [`Entry::Text`] names it, on Claude Code;
+//! Copilot CLI's is inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
-//! repeat each user turn, and Pi an extension's as `custom_message`
-//! entries, which need not belong to the item before them; this reader
-//! leaves both out of the bytes, and a Pi extension's text is no item's.
+//! repeat each user turn; this reader leaves those out of the bytes. A
+//! failed call's result counts to its source, and a read of it stands only
+//! where the result's text holds the line that read's output begins with
+//! ([`printed`]): a Bash command that exits nonzero still returns what it
+//! printed on Claude Code and Pi, so a read before the part that failed
+//! may stand, and one the shell never ran does not. A read whose output
+//! begins with no line of its own (a `cat`, `sed` or `nl` read, a `head`
+//! or `tail` of one file, a read tool's or a skill's) never stands in a
+//! failed call, nor do reads that share a line the result holds fewer
+//! times than they do; a read that stands has unclear figures.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -26,11 +36,16 @@
 //! between them added. That growth goes to a source only where everything
 //! between the two responses belongs to it, and to one item or section only
 //! where it is alone there, the call having run nothing else; any other
-//! share is unclear. A gap that also holds text no item owns gives its
-//! growth only to turns; beside a result the share is unclear. The first
-//! response's prompt
-//! also holds the harness's own prompt and tools, which no record names
-//! apart, so the first delivery's tokens are unsupported.
+//! share is unclear. So a gap that holds injected text beside a turn or a
+//! result leaves each share in it unclear, and so does a gap that also
+//! holds a result the harness counted: that count is the harness's own,
+//! not shown to be in the provider's tokens, so the growth less it is no
+//! figure for the rest. A response whose usage its writer never counted
+//! ([`Response::Uncounted`]) closes no gap: the next response's growth
+//! also holds its output, and every share of that gap is unclear. The
+//! first response's prompt also holds the harness's own prompt and tools,
+//! which no record names apart, so the first delivery's tokens are
+//! unsupported.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -70,13 +85,15 @@ pub enum Source {
     LaterTurns,
     RuleReads,
     ToolResults,
+    InjectedText,
 }
 
-const SOURCES: [Source; 4] = [
+const SOURCES: [Source; 5] = [
     Source::FirstDelivery,
     Source::LaterTurns,
     Source::RuleReads,
     Source::ToolResults,
+    Source::InjectedText,
 ];
 
 /// What one rule read names.
@@ -248,8 +265,8 @@ struct Walk {
     open: Option<Open>,
     /// The items since the open response.
     gap: Vec<usize>,
-    /// Whether the gap also holds text that is no item's.
-    foreign: bool,
+    /// Whether the gap also holds an uncounted response's output.
+    uncounted: bool,
     items: Vec<Item>,
     calls: HashMap<String, Call>,
     sections: Vec<Section>,
@@ -270,7 +287,7 @@ impl Walk {
             },
             open: None,
             gap: Vec::new(),
-            foreign: false,
+            uncounted: false,
             items: Vec::new(),
             calls: HashMap::new(),
             sections: Vec::new(),
@@ -317,7 +334,9 @@ impl Walk {
                     self.push(self.turn_source(), Some(bytes), Share::Pending);
                 }
             },
-            Entry::Foreign => self.foreign = true,
+            Entry::Foreign { bytes } => {
+                self.push(Source::InjectedText, Some(bytes), Share::Pending);
+            }
             Entry::Call { id, action } => {
                 let rules = rule_reads(&action);
                 self.calls.insert(
@@ -333,6 +352,7 @@ impl Walk {
                 bytes,
                 tokens,
                 loaded,
+                failed,
             } => {
                 let share = tokens.map_or(Share::Pending, Share::Own);
                 let (turn, Rules { mut reads, more }) = match self.calls.get(&call) {
@@ -351,7 +371,10 @@ impl Walk {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
-                let shared = reads.len() > 1 || more;
+                let shared = reads.len() > 1 || more || failed.is_some();
+                if let Some(text) = failed {
+                    reads = stood(reads, &text);
+                }
                 for read in reads {
                     self.sections.push(Section {
                         item,
@@ -369,6 +392,13 @@ impl Walk {
         let (id, split, context) = match response {
             Response::Spent(spent) => (spent.id, spent.split, Some(spent.context)),
             Response::Unread => (None, None, None),
+            Response::Uncounted { .. } => {
+                if self.turns == 1 {
+                    self.start.tokens = Figure::Unsupported;
+                }
+                self.uncounted = true;
+                return;
+            }
         };
         if self.turns == 1 {
             self.start.tokens =
@@ -391,14 +421,12 @@ impl Walk {
     /// response with `next` closes it.
     fn close(&mut self, next: Option<Split>) {
         let gap = std::mem::take(&mut self.gap);
-        let foreign = std::mem::take(&mut self.foreign);
-        let pending: Vec<usize> = gap
-            .into_iter()
-            .filter(|&i| self.items[i].share == Share::Pending)
-            .collect();
+        let uncounted = std::mem::take(&mut self.uncounted);
+        let pending = self.pending(&gap);
         if pending.is_empty() {
             return;
         }
+        let counted = pending.len() < gap.len();
         // With no response before the gap, its growth also holds the
         // harness's own prompt.
         let (Some(before), Some(after)) = (self.open.as_ref().and_then(|open| open.split), next)
@@ -415,13 +443,7 @@ impl Walk {
             return;
         };
         let source = self.items[pending[0]].source;
-        let turn = |i: &usize| {
-            matches!(
-                self.items[*i].source,
-                Source::FirstDelivery | Source::LaterTurns
-            )
-        };
-        if foreign && !pending.iter().all(turn) {
+        if uncounted || counted {
             self.settle(&pending, Share::Unclear);
         } else if pending.len() == 1 {
             self.settle(&pending, Share::Whole(growth));
@@ -433,6 +455,15 @@ impl Walk {
         }
     }
 
+    /// The items of `gap` whose share is still open: every item but one
+    /// the harness counted.
+    fn pending(&self, gap: &[usize]) -> Vec<usize> {
+        gap.iter()
+            .copied()
+            .filter(|&i| self.items[i].share == Share::Pending)
+            .collect()
+    }
+
     fn settle(&mut self, items: &[usize], share: Share) {
         for &i in items {
             self.items[i].share = share;
@@ -440,7 +471,8 @@ impl Walk {
     }
 
     fn report(mut self) -> Report {
-        let open: Vec<usize> = std::mem::take(&mut self.gap);
+        let gap = std::mem::take(&mut self.gap);
+        let open = self.pending(&gap);
         self.settle(&open, Share::Unclear);
         let context = SOURCES
             .iter()
@@ -539,6 +571,88 @@ fn item_tokens(share: Share) -> Figure {
     }
 }
 
+/// The reads of a failed call that the result's `text` shows ran: each
+/// whose [`Marker`] it holds on at least as many lines as the call has
+/// reads with that marker, since a line the result holds once cannot tell
+/// two such reads apart.
+fn stood(reads: Vec<Read>, text: &str) -> Vec<Read> {
+    let markers: Vec<Option<Marker>> = reads.iter().map(marker).collect();
+    let stands: Vec<bool> = markers
+        .iter()
+        .map(|own| {
+            own.is_some_and(|own| {
+                let sharing = markers.iter().filter(|other| **other == Some(own)).count();
+                printed(own, text) >= sharing
+            })
+        })
+        .collect();
+    reads
+        .into_iter()
+        .zip(stands)
+        .filter_map(|(read, stands)| stands.then_some(read))
+        .collect()
+}
+
+/// The line a read's output begins with, where it has one of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Marker<'a> {
+    /// `jarvis-section` prints the section from its ATX heading line on
+    /// (skills/jarvis/scripts/jarvis-section, its heading rule in the
+    /// jarvis lib's `sections.py`).
+    Heading(&'a str),
+    /// `head` and `tail` of several files print `==> FILE <==` before each
+    /// file they open, and only those (GNU coreutils 9.4, measured; a
+    /// printer that writes no such header leaves the read unshown).
+    Header(&'a str),
+}
+
+fn marker(read: &Read) -> Option<Marker<'_>> {
+    match read {
+        Read::Section { heading, .. } => Some(Marker::Heading(heading)),
+        Read::File { file } => Some(Marker::Header(file)),
+        Read::Skill { .. } | Read::Unreadable => None,
+    }
+}
+
+/// The lines of `text` that begin a read's output by `marker`.
+fn printed(marker: Marker, text: &str) -> usize {
+    text.lines()
+        .filter(|line| match marker {
+            Marker::Heading(heading) => heading_title(line) == Some(heading),
+            Marker::Header(file) => {
+                line.strip_prefix("==> ")
+                    .and_then(|l| l.strip_suffix(" <=="))
+                    == Some(file)
+            }
+        })
+        .count()
+}
+
+/// The title of an ATX heading line, as `sections.py` reads one: up to
+/// three spaces, one to six `#`, then the title after a space or tab, less
+/// a closing run of `#` after one.
+fn heading_title(line: &str) -> Option<&str> {
+    let rest = line.strip_suffix('\r').unwrap_or(line);
+    let marks = rest.trim_start_matches(' ');
+    if rest.len() - marks.len() > 3 {
+        return None;
+    }
+    let title = marks.trim_start_matches('#');
+    if !(1..=6).contains(&(marks.len() - title.len())) {
+        return None;
+    }
+    if !title.is_empty() && !title.starts_with([' ', '\t']) {
+        return None;
+    }
+    let title = title.trim_matches([' ', '\t']);
+    let open = title.trim_end_matches('#');
+    let title = match open.strip_suffix([' ', '\t']) {
+        Some(_) if open.len() < title.len() => open,
+        _ => title,
+    };
+    Some(title.trim_matches([' ', '\t']))
+}
+
 /// The programs whose Markdown operands are file reads, each printing the
 /// file or the range it names: Codex has no read tool, so its file reads
 /// are shell commands.
@@ -569,10 +683,11 @@ struct Rules {
 /// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing. An
 /// output redirection's target and a heredoc's or here-string's word are
 /// no operand; an input redirection's file is one. A printer whose
-/// standard output goes to a file reads nothing into the result; one sent
-/// to another descriptor (`>&2`) still does. A segment that reads no rule,
-/// and a `cat` operand that is not Markdown, is more output; another
-/// printer's other operands are taken for its script or count.
+/// standard output goes to a file reads nothing into the result, nor does
+/// a `sed` that edits its files in place; one whose output goes to another
+/// descriptor (`>&2`) still does. A segment that reads no rule, and a
+/// `cat` operand that is not Markdown, is more output; another printer's
+/// other operands are taken for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
@@ -628,6 +743,7 @@ fn rule_reads(action: &Action) -> Rules {
                         continue;
                     }
                     if word.starts_with('-') {
+                        moved |= name == "sed" && sed_in_place(word);
                         continue;
                     }
                     if let Some((fd, rest)) = word.split_once('>') {
@@ -663,6 +779,16 @@ fn rule_reads(action: &Action) -> Rules {
         rules.more |= rules.reads.len() == before;
     }
     rules
+}
+
+/// Whether a `sed` option word edits the files in place, printing none of
+/// them: GNU's `-i[SUFFIX]` and `--in-place[=SUFFIX]`, BSD's `-i` and `-I`,
+/// alone or in a short option cluster (`-Ei`).
+fn sed_in_place(word: &str) -> bool {
+    match word.strip_prefix("--") {
+        Some(long) => long == "in-place" || long.starts_with("in-place="),
+        None => word.contains(['i', 'I']),
+    }
 }
 
 #[cfg(test)]
@@ -726,9 +852,98 @@ mod tests {
                 false,
             ),
             (shell("git log -1 -- notes.md"), vec![], true),
+            (shell("sed -n '1,40p' a.md"), vec![file("a.md")], false),
+            (shell("sed -i 's/a/b/' a.md"), vec![], true),
+            (shell("sed -Ei 's/a/b/' a.md"), vec![], true),
+            (shell("sed --in-place=.bak 's/a/b/' a.md"), vec![], true),
         ];
         for (action, reads, more) in rows {
             assert_eq!(rule_reads(&action), Rules { reads, more }, "{action:?}");
+        }
+    }
+
+    /// Each row: a failed call's reads, the text its result sent, and the
+    /// reads that stand. A row naming its command holds what that command
+    /// printed under bash with GNU coreutils 9.4 and the jarvis
+    /// `jarvis-section`.
+    #[test]
+    fn a_failed_calls_read_stands_only_where_its_result_holds_the_reads_output() {
+        let section = |file: &str, heading: &str| Read::Section {
+            file: file.to_owned(),
+            heading: heading.to_owned(),
+        };
+        let file = |file: &str| Read::File {
+            file: file.to_owned(),
+        };
+        let rows: Vec<(Vec<Read>, &str, Vec<Read>)> = vec![
+            // ls /nonexistent && jarvis-section persona.md Role
+            (
+                vec![section("persona.md", "Role")],
+                "ls: cannot access '/nonexistent': No such file or directory\n",
+                vec![],
+            ),
+            // jarvis-section persona.md Role; ls missing
+            (
+                vec![section("persona.md", "Role")],
+                "## Role\n\nThe role text.\n\nls: cannot access 'missing': No such file or directory\n",
+                vec![section("persona.md", "Role")],
+            ),
+            // A heading written with indent, a tab and a closing run.
+            (
+                vec![section("persona.md", "Role")],
+                "   ##\tRole ##\r\nThe role text.\n",
+                vec![section("persona.md", "Role")],
+            ),
+            // jarvis-section persona.md Gone; false
+            (
+                vec![section("persona.md", "Gone")],
+                "jarvis-section: {\"error\": \"unknown-heading\", \"heading\": \"Gone\", \"candidates\": [{\"heading\": \"Persona\", \"line\": 1}]}\n",
+                vec![],
+            ),
+            // Two sections of one heading, one heading line printed.
+            (
+                vec![section("a.md", "Role"), section("b.md", "Role")],
+                "## Role\n\nThe role text.\njarvis-section: {\"error\": \"read-failed\", \"file\": \"b.md\"}\n",
+                vec![],
+            ),
+            // A longer title, marks with no space after them and seven
+            // marks are no Role heading.
+            (
+                vec![section("a.md", "Role")],
+                "## Roles\n#Role\n####### Role\n",
+                vec![],
+            ),
+            // cat AGENTS.md CLAUDE.md: no line of AGENTS.md's own.
+            (
+                vec![file("AGENTS.md"), file("CLAUDE.md")],
+                "# Rules\n\nThe rules.\ncat: CLAUDE.md: No such file or directory\n",
+                vec![],
+            ),
+            // head -5 AGENTS.md CLAUDE.md
+            (
+                vec![file("AGENTS.md"), file("CLAUDE.md")],
+                "==> AGENTS.md <==\n# Rules\n\nThe rules.\nhead: cannot open 'CLAUDE.md' for reading: No such file or directory\n",
+                vec![file("AGENTS.md")],
+            ),
+            // head -3 AGENTS.md; ls missing: one file prints no header.
+            (
+                vec![file("AGENTS.md")],
+                "# Rules\n\nThe rules.\nls: cannot access 'missing': No such file or directory\n",
+                vec![],
+            ),
+            // A failed read tool's result and a failed skill's.
+            (vec![file("/h/gone.md")], "File does not exist.", vec![]),
+            (
+                vec![Read::Skill {
+                    name: Some("x".to_owned()),
+                }],
+                "x",
+                vec![],
+            ),
+            (vec![Read::Unreadable], "", vec![]),
+        ];
+        for (reads, text, want) in rows {
+            assert_eq!(stood(reads.clone(), text), want, "{reads:?} in {text:?}");
         }
     }
 }

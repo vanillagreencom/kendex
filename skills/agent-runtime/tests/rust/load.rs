@@ -15,9 +15,14 @@ use serde_json::{Value, json};
 struct Row {
     harness: &'static str,
     fixture: &'static str,
-    /// The context the first turn's last response left.
-    start: u64,
-    /// JSON pointers into the reply's `result`, each with its value.
+    /// The fixture's first lines alone, as a session's file stands while
+    /// the harness still writes it.
+    head: Option<usize>,
+    /// The context the first turn's last response left, `None` where that
+    /// response's writer never counted it.
+    start: Option<u64>,
+    /// JSON pointers into the reply's `result`, each with its value: `null`
+    /// where the pointer names nothing.
     more: fn() -> Vec<(&'static str, Value)>,
 }
 
@@ -25,10 +30,13 @@ const ROWS: &[Row] = &[
     Row {
         harness: "claude",
         fixture: "load/claude.jsonl",
+        head: None,
         // msg_1: 2 + 23454 + 900 + 30; the sidechain's message is passed over.
-        start: 24386,
+        start: Some(24386),
         more: || {
             vec![
+                // The Stop hook's reply is no turn.
+                ("/turns", json!(3)),
                 // msg_2's prompt less msg_1's prompt and output.
                 (
                     "/context/1/tokens",
@@ -42,11 +50,13 @@ const ROWS: &[Row] = &[
                 // msg_4's growth holds the persona.md read and turn p-3
                 // together, so neither the read nor its source owns it.
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
-                // msg_8's and msg_10's growth, each a call's alone.
+                // msg_8's, msg_10's, msg_14's, msg_16's, msg_18's and
+                // msg_20's growth, each a call's alone, and msg_12's, shared
+                // by the two failed reads of msg_11.
                 ("/context/2/source", json!("rule-reads")),
                 (
                     "/context/2/tokens",
-                    json!({"basis": "attributed", "value": 33 + 40}),
+                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28 + 30 + 25 + 30}),
                 ),
                 ("/context/2/unattributed", json!(1)),
                 // msg_6's growth, shared by the two results of msg_5.
@@ -62,14 +72,45 @@ const ROWS: &[Row] = &[
                 ("/sections/2/bytes", json!({"basis": "unclear"})),
                 ("/sections/3/read", json!({"kind": "file", "file": "c.md"})),
                 ("/sections/3/tokens", json!({"basis": "unclear"})),
+                // The failed read and `jarvis-section` of msg_11 read no
+                // section. msg_13's command printed its section before its
+                // `ls` failed, so the section stands, its share unclear.
+                (
+                    "/sections/4/read",
+                    json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
+                ),
+                ("/sections/4/tokens", json!({"basis": "unclear"})),
+                // msg_15's `cat` failed on its second file after printing
+                // its first, which no line of the result marks as AGENTS.md's,
+                // so neither read stands. msg_17's `ls` failed before its
+                // `jarvis-section` ran, so the result holds no Role heading.
+                // msg_19's `tail` printed AGENTS.md under its header before
+                // failing on notes.txt, whose error the result also holds.
+                (
+                    "/sections/5/read",
+                    json!({"kind": "file", "file": "AGENTS.md"}),
+                ),
+                ("/sections/5/bytes", json!({"basis": "unclear"})),
+                ("/sections/6", Value::Null),
+                // The Stop hook's reply, alone before msg_3.
+                ("/context/4/source", json!("injected-text")),
+                (
+                    "/context/4/bytes",
+                    json!({"basis": "measured", "value": 87}),
+                ),
+                (
+                    "/context/4/tokens",
+                    json!({"basis": "attributed", "value": 12}),
+                ),
             ]
         },
     },
     Row {
         harness: "codex",
         fixture: "load/codex.jsonl",
+        head: None,
         // The turn's second response; the event between repeats the first.
-        start: 12540,
+        start: Some(12540),
         more: || {
             vec![
                 // The UserMessage's text.
@@ -92,8 +133,11 @@ const ROWS: &[Row] = &[
     Row {
         harness: "copilot",
         fixture: "copilot-events.jsonl",
-        // The last tool.execution_complete count in the one turn.
-        start: 44644,
+        head: None,
+        // The turn's last session.usage_record, its prompt and output. The
+        // CLI's own count on the last tool row, 44644, is older than the
+        // turn's last calls.
+        start: Some(290886 + 96),
         more: || {
             vec![
                 ("/sections/0/read", json!({"kind": "skill", "name": "x"})),
@@ -116,7 +160,9 @@ const ROWS: &[Row] = &[
     Row {
         harness: "copilot",
         fixture: "load/copilot.jsonl",
-        start: 20130,
+        head: None,
+        // u3: the background call after it has a prompt of its own.
+        start: Some(20100 + 30),
         more: || {
             vec![
                 // The turn as the CLI sent it, its datetime included.
@@ -136,38 +182,122 @@ const ROWS: &[Row] = &[
                     "/sections/1/read",
                     json!({"kind": "file", "file": "/w/b/SKILL.md"}),
                 ),
+                (
+                    "/sections/1/tokens",
+                    json!({"basis": "measured", "value": 9}),
+                ),
+                // The failed view reads no section. u3's growth also holds
+                // b's counted result, so the failed view's share of it is
+                // unclear.
+                ("/sections/2", Value::Null),
+                (
+                    "/context/2/tokens",
+                    json!({"basis": "measured", "value": 12 + 9}),
+                ),
+                ("/context/2/unattributed", json!(1)),
+            ]
+        },
+    },
+    Row {
+        harness: "copilot",
+        fixture: "load/copilot.jsonl",
+        // Cut before u3: the open gap keeps b's counted result.
+        head: Some(10),
+        start: Some(20060 + 25),
+        more: || {
+            vec![
+                (
+                    "/sections/1/tokens",
+                    json!({"basis": "measured", "value": 9}),
+                ),
+                (
+                    "/context/2/tokens",
+                    json!({"basis": "measured", "value": 12 + 9}),
+                ),
+                ("/context/2/unattributed", json!(1)),
             ]
         },
     },
     Row {
         harness: "pi",
         fixture: "load/pi.jsonl",
-        // e4, after the read's result and the wake event.
-        start: 10520,
+        head: None,
+        // e4, after the reads' results and the wake event.
+        start: Some(10520),
         more: || {
             vec![
-                // The turn alone: the extension's text after it is no item's.
+                // The turn alone: the extension's text after it is injected
+                // text.
                 (
                     "/context/0/bytes",
                     json!({"basis": "measured", "value": 18}),
                 ),
-                // e4's growth holds the read's result and the wake event
-                // a steer delivers after it, which is not the read's.
+                // e4's growth holds the reads' results and the wake event
+                // after them, which is not the read's.
                 (
                     "/sections/0/read",
                     json!({"kind": "file", "file": "a/SKILL.md"}),
                 ),
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
+                // e15's growth holds the output of e13, whose pi-codex
+                // usage is the bridge's placeholder, beside both reads.
                 ("/context/2/source", json!("rule-reads")),
                 ("/context/2/tokens", json!({"basis": "unclear"})),
-                // e6's prompt less e4's prompt and output: a turn takes the
-                // extension's text beside it.
+                // The failed read of e2 reads no section.
                 (
-                    "/context/1/tokens",
-                    json!({"basis": "attributed", "value": 30}),
+                    "/sections/1/read",
+                    json!({"kind": "file", "file": "b/SKILL.md"}),
+                ),
+                (
+                    "/sections/2/read",
+                    json!({"kind": "file", "file": "c/SKILL.md"}),
+                ),
+                ("/sections/2/tokens", json!({"basis": "unclear"})),
+                ("/sections/3", Value::Null),
+                // e6's growth holds turn e5 and the hook's text after it.
+                ("/context/1/tokens", json!({"basis": "unclear"})),
+                // e9's growth holds two results and the wake event after
+                // them; e11's is the one result after it, alone.
+                ("/context/3/source", json!("tool-results")),
+                (
+                    "/context/3/tokens",
+                    json!({"basis": "attributed", "value": 18}),
+                ),
+                ("/context/3/unattributed", json!(2)),
+                // The four custom_message texts.
+                ("/context/4/source", json!("injected-text")),
+                (
+                    "/context/4/bytes",
+                    json!({"basis": "measured", "value": 13 + 15 + 13 + 15}),
                 ),
             ]
         },
+    },
+    Row {
+        harness: "pi",
+        fixture: "load/pi-failed.jsonl",
+        head: None,
+        // e4: 10 + 10080 + 31 + 10.
+        start: Some(10131),
+        more: || {
+            vec![
+                // The failed command printed its section before its `ls`.
+                (
+                    "/sections/0/read",
+                    json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
+                ),
+                ("/sections/0/tokens", json!({"basis": "unclear"})),
+            ]
+        },
+    },
+    Row {
+        harness: "pi",
+        fixture: "load/pi-uncounted.jsonl",
+        head: None,
+        // The first turn goes on past e2's count, after the wake event, to
+        // e3's pi-codex placeholder.
+        start: None,
+        more: Vec::new,
     },
 ];
 
@@ -187,26 +317,37 @@ fn load(harness: &str, file: &Path) -> (Value, std::process::Output) {
     (reply, out)
 }
 
-/// Each harness's Start is measured, and its first delivery, which shares
-/// the first call with the harness's own prompt, is unsupported.
+/// Each harness's Start is measured where the first turn's last response
+/// was counted, and its first delivery, which shares the first call with
+/// the harness's own prompt, is unsupported.
 #[test]
 fn session_load_reads_each_harness_record_with_each_figure_named_by_its_basis() {
+    let root = tempfile::tempdir().unwrap();
     for row in ROWS {
-        let (reply, out) = load(row.harness, &fixture(row.fixture));
+        let mut file = fixture(row.fixture);
+        if let Some(lines) = row.head {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let head: Vec<&str> = text.lines().take(lines).collect();
+            assert_eq!(head.len(), lines, "{}", row.fixture);
+            file = root.path().join("head.jsonl");
+            std::fs::write(&file, head.join("\n")).unwrap();
+        }
+        let (reply, out) = load(row.harness, &file);
         let result = &reply["result"];
+        let start = match row.start {
+            Some(value) => json!({"basis": "measured", "value": value}),
+            None => json!({"basis": "unsupported"}),
+        };
         let mut want = vec![
-            (
-                "/start/tokens",
-                json!({"basis": "measured", "value": row.start}),
-            ),
+            ("/start/tokens", start),
             ("/context/0/source", json!("first-delivery")),
             ("/context/0/tokens", json!({"basis": "unsupported"})),
         ];
         want.extend((row.more)());
         for (pointer, want) in want {
             assert_eq!(
-                result.pointer(pointer),
-                Some(&want),
+                result.pointer(pointer).unwrap_or(&Value::Null),
+                &want,
                 "{}: {pointer} in {reply}\n{}",
                 row.harness,
                 stderr(&out)

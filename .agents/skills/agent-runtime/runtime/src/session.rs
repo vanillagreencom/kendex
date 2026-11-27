@@ -26,8 +26,9 @@
 //! pane paste returned. These are the user-turn rows in each harness's
 //! session file.
 //!
-//! - Claude Code: a `user` row whose `message.content` is a string; a tool
-//!   result is a `user` row too, with an array.
+//! - Claude Code: a `user` row whose `message.content` is a string, unless
+//!   it is marked `isMeta` (text Claude Code added, such as a Stop hook's
+//!   reply); a tool result is a `user` row too, with an array.
 //! - Codex: an `event_msg` row completing a `UserMessage` item.
 //! - Copilot CLI: a `user.message` row in `events.jsonl`.
 //! - Pi: a `message` row whose `message.role` is `user`.
@@ -617,7 +618,9 @@ fn user_text(harness: Harness, row: &Value) -> Option<String> {
     let kind = row.get("type").and_then(Value::as_str);
     match harness {
         Harness::Claude => {
-            if kind != Some("user") || row.get("isSidechain").and_then(Value::as_bool) == Some(true)
+            if kind != Some("user")
+                || row.get("isSidechain").and_then(Value::as_bool) == Some(true)
+                || claude_meta(row)
             {
                 return None;
             }
@@ -651,6 +654,13 @@ fn user_text(harness: Harness, row: &Value) -> Option<String> {
             text_parts(message.get("content")?)
         }
     }
+}
+
+/// Whether Claude Code marks a `user` row `isMeta`: text it added, such as
+/// a Stop hook's reply (`Stop hook feedback:`, the row dev-stop-check
+/// reads), which no one typed.
+fn claude_meta(row: &Value) -> bool {
+    row.get("isMeta").and_then(Value::as_bool) == Some(true)
 }
 
 fn claude_user_text(text: &str) -> String {
@@ -728,21 +738,27 @@ pub enum Entry {
     /// such as a skill body a slash command expands to, marked `isMeta`
     /// (measured on Claude Code 2.1.330).
     Text { bytes: u64 },
-    /// Text that enters the context and belongs to no item beside it: a Pi
-    /// `custom_message`, an extension's message, which a steer delivers
-    /// after whatever tool result came last.
-    Foreign,
+    /// Text that enters the context and belongs to no item beside it, with
+    /// its bytes: a Pi `custom_message`, an extension's message, which
+    /// reaches the model as a steer, as a follow-up, or with the next
+    /// request where it was appended between them (`triggerTurn: false`);
+    /// and a Claude Code `user` row of string content marked `isMeta`, such
+    /// as a Stop hook's reply.
+    Foreign { bytes: u64 },
     /// A tool call the model made.
     Call { id: String, action: Action },
     /// A tool result sent back: its bytes, `None` where the text it added
     /// is not the row's; the tokens the harness counted for it where it
-    /// counts them; and the name of what it loaded where the harness names
-    /// that only on the result (a Copilot skill).
+    /// counts them; the name of what it loaded where the harness names
+    /// that only on the result (a Copilot skill); and, where the record
+    /// marks the call failed, the text the result sent, each part on its
+    /// own line.
     Result {
         call: String,
         bytes: Option<u64>,
         tokens: Option<u64>,
         loaded: Option<String>,
+        failed: Option<String>,
     },
 }
 
@@ -789,7 +805,9 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 /// - Claude Code (2.1.330, a recorded transcript): a turn's `promptId`;
 ///   an assistant message's `tool_use` blocks, `Read` naming `file_path`,
 ///   `Bash` `command` and `Skill` `skill`; a `user` row's `tool_result`
-///   blocks, by `tool_use_id`, and its text blocks.
+///   blocks, by `tool_use_id`, failed where `is_error`, and its text
+///   blocks; a `user` row of string content marked `isMeta`, as no item's
+///   text.
 /// - Codex (rust-v0.171.0, `codex-rs/protocol/src/{models,items,protocol}.rs`
 ///   and `core/src/tools/handlers/shell_spec.rs`): a turn's `turn_id`; a
 ///   `function_call` or `custom_tool_call` by `call_id`, the shell being
@@ -803,14 +821,15 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 ///   `command` is `view`) `arguments.path`, and `skill` its skill only on
 ///   the result's `toolTelemetry.restrictedProperties.skillName`; a
 ///   `tool.execution_complete`'s `result.content`, or a failure's
-///   `error.message`. A skill's result is not its body: the log records
-///   `skillContentLength` 30809 beside `result_token_count` 27, so the
-///   body reaches the context apart from the result, and the result
-///   counts neither its bytes nor its tokens.
+///   `error.message`, failed where it carries `error`. A skill's result
+///   is not its body: the log records `skillContentLength` 30809 beside
+///   `result_token_count` 27, so the body reaches the context apart from
+///   the result, and the result counts neither its bytes nor its tokens.
 /// - Pi (Pi 1.6.0's session format and message type documentation):
 ///   a turn's entry `id`; an assistant message's `toolCall` blocks,
 ///   `read` naming `path` and `bash` `command`; a `toolResult` message's
-///   text by `toolCallId`; a `custom_message`, as no item's text.
+///   text by `toolCallId`, failed where `isError`; a `custom_message`'s
+///   text, as no item's.
 pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
     fn text(value: Option<&Value>) -> &str {
         value.and_then(Value::as_str).unwrap_or_default()
@@ -827,8 +846,16 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
             if let Some(turn) = turn(row.get("promptId")) {
                 return vec![turn];
             }
-            let Some(Value::Array(blocks)) = row.get("message").and_then(|m| m.get("content"))
-            else {
+            let content = row.get("message").and_then(|m| m.get("content"));
+            if kind == "user"
+                && claude_meta(row)
+                && let Some(Value::String(said)) = content
+            {
+                return vec![Entry::Foreign {
+                    bytes: said.len() as u64,
+                }];
+            }
+            let Some(Value::Array(blocks)) = content else {
                 return Vec::new();
             };
             let mut found = Vec::new();
@@ -856,6 +883,8 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         bytes: Some(text_bytes(block.get("content"), "text")),
                         tokens: None,
                         loaded: None,
+                        failed: (block.get("is_error").and_then(Value::as_bool) == Some(true))
+                            .then(|| content_text(block.get("content"), "text")),
                     }),
                     ("user", "text") => found.push(Entry::Text {
                         bytes: text(block.get("text")).len() as u64,
@@ -892,6 +921,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     bytes: Some(text_bytes(payload.get("output"), "input_text")),
                     tokens: None,
                     loaded: None,
+                    failed: None,
                 }],
                 _ => Vec::new(),
             }
@@ -922,6 +952,9 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         Some(result) => result.get("content"),
                         None => field("error").and_then(|e| e.get("message")),
                     };
+                    let failed = field("error")
+                        .is_some_and(|error| !error.is_null())
+                        .then(|| text(sent).to_owned());
                     let loaded = field("toolTelemetry")
                         .and_then(|t| t.get("restrictedProperties"))
                         .and_then(|p| p.get("skillName"))
@@ -940,6 +973,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         bytes,
                         tokens,
                         loaded,
+                        failed,
                     }]
                 }
                 _ => Vec::new(),
@@ -950,7 +984,9 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                 return vec![turn];
             }
             if kind == "custom_message" {
-                return vec![Entry::Foreign];
+                return vec![Entry::Foreign {
+                    bytes: text_bytes(row.get("content"), "text"),
+                }];
             }
             let Some(message) = row.get("message").filter(|_| kind == "message") else {
                 return Vec::new();
@@ -981,6 +1017,8 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     bytes: Some(text_bytes(message.get("content"), "text")),
                     tokens: None,
                     loaded: None,
+                    failed: (message.get("isError").and_then(Value::as_bool) == Some(true))
+                        .then(|| content_text(message.get("content"), "text")),
                 }],
                 _ => Vec::new(),
             }
@@ -1010,19 +1048,32 @@ fn turn_bytes(harness: Harness, row: &Value) -> u64 {
     text_bytes(content, "text")
 }
 
-/// The bytes of a content value: a string whole, or the `text` of each part
-/// of type `part` in an array; anything else, an image among them, adds none.
-fn text_bytes(content: Option<&Value>, part: &str) -> u64 {
+/// The texts of a content value: a string whole, or the `text` of each part
+/// of type `part` in an array; anything else, an image among them, holds
+/// none.
+fn content_texts<'a>(content: Option<&'a Value>, part: &str) -> Vec<&'a str> {
     match content {
-        Some(Value::String(text)) => text.len() as u64,
+        Some(Value::String(text)) => vec![text],
         Some(Value::Array(parts)) => parts
             .iter()
             .filter(|p| p.get("type").and_then(Value::as_str) == Some(part))
             .filter_map(|p| p.get("text").and_then(Value::as_str))
-            .map(|text| text.len() as u64)
-            .sum(),
-        _ => 0,
+            .collect(),
+        _ => Vec::new(),
     }
+}
+
+/// The bytes of a content value's [`content_texts`].
+fn text_bytes(content: Option<&Value>, part: &str) -> u64 {
+    content_texts(content, part)
+        .iter()
+        .map(|text| text.len() as u64)
+        .sum()
+}
+
+/// A content value's [`content_texts`], each on its own line.
+fn content_text(content: Option<&Value>, part: &str) -> String {
+    content_texts(content, part).join("\n")
 }
 
 /// A session file a store lists for a cwd, with the modification time read
