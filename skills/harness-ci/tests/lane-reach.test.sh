@@ -369,7 +369,8 @@ printf 'true\n' >"$repo/tools/wrap-lib.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a workflow env wrapper sources a helper'
 # Talk's app job at talk a0ba803ae, with its root package files and scripts.
-# The reader refuses it at pnpm install, so its claim stands in for what it reads.
+# The reader refuses it at its first pnpm command, so its claim stands in for
+# what it reads.
 git -C "$repo" checkout -qb fixture-pnpm "$static_base"
 write_workflow web-only >"$repo/.github/workflows/ci.yml"
 edit_workflow '      - uses: actions/checkout@v7\n      - working-directory: web\n        run: ./node_modules/.bin/vitest run\n' \
@@ -386,23 +387,22 @@ printf '%s\n' 'web src/* eslint.config.js # reason: eslint, tsc and jest read th
 git -C "$repo" add -A
 git -C "$repo" commit -qm "Talk's pnpm app job"
 pnpm_base="$(git -C "$repo" rev-parse HEAD)"
-# The same job with no install, scripts the reader follows and no claim.
-git -C "$repo" checkout -qb fixture-pnpm-followed "$pnpm_base"
-edit_workflow '      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n' ''
-edit_file "$repo/package.json" '"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"' \
-  '"pretest":"cat ./tools/fixture.txt","test":"bash ./tools/test.sh"'
-printf 'true\n' | tee "$repo/tools/test.sh" "$repo/tools/fixture.txt" >/dev/null
+# The same setup steps with a shell step in place of its pnpm steps, and no claim.
+git -C "$repo" checkout -qb fixture-pnpm-setup "$pnpm_base"
+edit_workflow '      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n      - run: pnpm test\n' \
+  '      - run: bash ./tools/test.sh\n'
+printf 'true\n' >"$repo/tools/test.sh"
 git -C "$repo" rm -q -- .github/ci-lanes.conf
 git -C "$repo" add -A
-git -C "$repo" commit -qm 'a pnpm job whose scripts the reader follows'
-pnpm_followed_base="$(git -C "$repo" rev-parse HEAD)"
-# Each variant of the followed job, as branch fixture-LABEL: its rows edit
-# it in order, and a file a row names that is absent starts empty.
+git -C "$repo" commit -qm 'setup actions and a shell step'
+pnpm_setup_base="$(git -C "$repo" rev-parse HEAD)"
+# Each variant of that job, as branch fixture-LABEL: its rows edit it in
+# order, and a file a row names that is absent starts empty.
 while IFS='|' read -r variant file old new; do
   if git -C "$repo" rev-parse -q --verify "refs/heads/fixture-$variant" >/dev/null; then
     git -C "$repo" checkout -q "fixture-$variant"
   else
-    git -C "$repo" checkout -qb "fixture-$variant" "$pnpm_followed_base"
+    git -C "$repo" checkout -qb "fixture-$variant" "$pnpm_setup_base"
   fi
   mkdir -p "$(dirname "$repo/$file")"
   touch "$repo/$file"
@@ -410,26 +410,15 @@ while IFS='|' read -r variant file old new; do
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$variant"
 done <<'ROWS'
-pnpm-refused-local|package.json|"eslint":"^9.0.0"|"eslint":"^9.0.0","lib":"file:./lib"
-pnpm-refused-body|package.json|"test":"bash ./tools/test.sh"|"test":"jest"
-pnpm-refused-setup|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
-pnpm-refused-npmrc|.npmrc||node-options=--require ./tools/preload.cjs\n
-pnpm-refused-override|pnpm-workspace.yaml|semver: ^7.6.0|semver: link:./vendor/semver
-pnpm-refused-pnpmfile|.pnpmfile.cjs||module.exports = {}\n
-pnpm-refused-install|.github/workflows/ci.yml|      - run: pnpm test\n|      - run: pnpm install --frozen-lockfile\n      - run: pnpm test\n
-pnpm-refused-install|.github/workflows/ci.yml|\njobs:\n|\nenv:\n  pnpm_config_dangerously_allow_all_builds: "true"\njobs:\n
-pnpm-refused-install|pnpm-workspace.yaml|allowBuilds:\n  esbuild: true\n|
-pnpm-refused-shorthand|.github/workflows/ci.yml|      - run: pnpm test\n|      - run: pnpm test\n      - run: pnpm lint\n
-pnpm-refused-lockfile|pnpm-workspace.yaml|overrides:|lockfileDir: locks\noverrides:
-pnpm-refused-ancestor|.github/workflows/ci.yml|      - run: pnpm test\n|      - working-directory: app\n        run: pnpm test\n
-pnpm-refused-ancestor|app/package.json||{"private":true,"scripts":{"test":"bash ../tools/test.sh"}}\n
-pnpm-refused-ancestor|package.json|"private":true|"private":true,"pnpm":{"overrides":{}}
-pnpm-refused-volta|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: tools/node.json
-pnpm-refused-volta|tools/node.json||{"volta":{"extends":"../tooling.json"}}\n
-pnpm-refused-newline|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: |\n            .nvmrc\n            .node-version
-pnpm-variant-lines|tools/test.sh|true|source ./tools/helper.sh
-pnpm-variant-lines|tools/helper.sh||true\n
-pnpm-variant-lines|package.json|"test":"bash ./tools/test.sh"|"test":"cat ./tools/fixture.txt\u000abash ./tools/test.sh"
+pnpm-variant-input|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
+pnpm-variant-volta|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: tools/node.json
+pnpm-variant-volta|tools/node.json||{"volta":{"extends":"../tooling.json"}}\n
+pnpm-variant-newline|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: |\n            .nvmrc\n            .node-version
+pnpm-variant-pnpm|.github/workflows/ci.yml|      - run: bash ./tools/test.sh\n|      - run: bash ./tools/test.sh\n      - run: pnpm test\n
+pnpm-variant-pnpm|package.json|"test":"jest"|"test":"cat ./tools/fixture.txt"
+pnpm-variant-pnpm|tools/fixture.txt||true\n
+pnpm-variant-pnpm|pnpm-workspace.yaml|esbuild: true|prisma: true
+pnpm-variant-pnpm|prisma/schema.prisma||model User {}\n
 ROWS
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
@@ -1164,16 +1153,6 @@ chmod +x "$SANDBOX/bin/kendex"
 mkdir -p "$SANDBOX/failing-cargo"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$SANDBOX/failing-cargo/cargo"
 chmod +x "$SANDBOX/failing-cargo/cargo"
-mkdir -p "$SANDBOX/failing-git"
-real_git="$(command -v git)"
-cat >"$SANDBOX/failing-git/git" <<GIT
-#!/usr/bin/env bash
-case "\${1-} \${2-} \${3-}" in
-  'cat-file blob '*:pnpm-workspace.yaml) exit 128 ;;
-esac
-exec '$real_git' "\$@"
-GIT
-chmod +x "$SANDBOX/failing-git/git"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
 
@@ -1314,8 +1293,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-fleet-*) base="$dispatch_fleet_base" ;;
     queued-render-push) base="$queue_base" ;;
     pnpm-talk-*) base="$pnpm_base" ;;
-    pnpm-followed-*) base="$pnpm_followed_base" ;;
-    pnpm-refused-*|pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    pnpm-setup-*) base="$pnpm_setup_base" ;;
+    pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
   event="${event:-merge_group}"
@@ -1414,8 +1393,6 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   tools="$SANDBOX/bin"
   # Cargo fails on this run, which says nothing of the job's shape.
   [ "$label" != cargo-tool-failure ] || tools="$SANDBOX/failing-cargo:$tools"
-  # Git fails to read one base blob, which says nothing of the job's shape.
-  [ "$label" != pnpm-followed-git-failure ] || tools="$SANDBOX/failing-git:$tools"
   head="$(git -C "$repo" rev-parse HEAD)"
   cli="$CHANGE_CLASS"
   case "$label" in
@@ -1545,14 +1522,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
-    pnpm-talk-*) refused_jobs='job=web cause=pnpm-config-unread' ;;
-    pnpm-followed-git-failure) refused_jobs='job=web cause=git-exit-128' ;;
-    pnpm-refused-local|pnpm-refused-npmrc|pnpm-refused-pnpmfile|pnpm-refused-override|pnpm-refused-lockfile|\
-      pnpm-refused-ancestor|pnpm-refused-install)
-      refused_jobs='job=web cause=pnpm-config-unread' ;;
-    pnpm-refused-shorthand) refused_jobs='job=web cause=opaque-pnpm-command' ;;
-    pnpm-refused-body) refused_jobs='job=web cause=unresolved-pnpm-script' ;;
-    pnpm-refused-setup|pnpm-refused-volta|pnpm-refused-newline) refused_jobs='job=web cause=opaque-action' ;;
+    pnpm-talk-*|pnpm-variant-pnpm) refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-variant-input|pnpm-variant-volta|pnpm-variant-newline) refused_jobs='job=web cause=opaque-action' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1711,23 +1682,11 @@ dispatch-fleet-queue-unproved|skills/review-gate/scripts/x.txt|||||pull_request|
 pnpm-talk-gitignore|.gitignore|||false|
 pnpm-talk-node-version|.nvmrc|||true|
 pnpm-talk-workspace|pnpm-workspace.yaml|||true|
-pnpm-followed-gitignore|.gitignore|||false|
-pnpm-followed-script|tools/test.sh|||true|
-pnpm-followed-pre|tools/fixture.txt|||true|
-pnpm-refused-local|.gitignore|||true|
-pnpm-refused-body|.gitignore|||true|
-pnpm-refused-setup|.gitignore|||true|
-pnpm-refused-npmrc|.gitignore|||true|
-pnpm-refused-override|.gitignore|||true|
-pnpm-refused-pnpmfile|.gitignore|||true|
-pnpm-refused-install|.gitignore|||true|
-pnpm-refused-shorthand|.gitignore|||true|
-pnpm-followed-git-failure|.gitignore|||true|
-pnpm-refused-lockfile|.gitignore|||true|
-pnpm-refused-ancestor|.gitignore|||true|
-pnpm-refused-volta|.gitignore|||true|
-pnpm-refused-newline|.gitignore|||true|
-pnpm-variant-lines|tools/helper.sh|||true|
+pnpm-setup-gitignore|.gitignore|||false|
+pnpm-variant-input|.gitignore|||true|
+pnpm-variant-volta|.gitignore|||true|
+pnpm-variant-newline|.gitignore|||true|
+pnpm-variant-pnpm|prisma/schema.prisma|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
