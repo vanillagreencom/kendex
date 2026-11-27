@@ -19,8 +19,8 @@ while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
   row_spawn sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
 done <<ROWS
-trivial|true|$UNREAD_DOC|$UNPLACED_LANES|$ROSTER
-trivial|true|AGENTS.md|$UNPLACED_LANES|$ROSTER
+trivial|true|$UNREAD_DOC|$NONE_PROSE|[]
+trivial|true|AGENTS.md|$NONE_PROSE|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
@@ -54,14 +54,16 @@ micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
 micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans
+micro|true|$SKILLS_AGENTS|$SHARD_PROSE|-guards-scans
+micro|true|skills/orch/scripts/notes.md|$SHARD_PROSE|+guards-scans
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
-micro|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
-small|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
-standard|true|$UNREAD_DOC CHANGELOG.md|$UNPLACED_LANES|$ROSTER
-standard|true|AGENTS.md|$UNPLACED_LANES|$ROSTER
-standard|true|CLAUDE.md|$UNPLACED_LANES|$ROSTER
-standard|true|GEMINI.md|$UNPLACED_LANES|$ROSTER
+micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
+small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
+standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
+standard|true|AGENTS.md|$NONE_PROSE|[]
+standard|true|CLAUDE.md|$NONE_PROSE|[]
+standard|true|GEMINI.md|$NONE_PROSE|[]
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|README.md|$NONE_PROSE|[]
@@ -84,6 +86,57 @@ linear_row() {
 row_spawn linear_row
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
+
+# A docs-set change no reader names runs the always-run jobs alone, whatever
+# its class, in a world whose one Rust target resolves every read and where
+# each path's job family ran on a docs-blind selection: every shell and
+# macOS shard and the Cargo matrix (no reader), the UI tests (ui/) and every
+# shard again (the rest of .github/). No such path reaches cargo-lint, the
+# Windows lanes or smoke; the jobs line holds them off too. The catalog
+# job's docs-only rows are ci-class-job-set-catalog's skill text rows.
+# CLASS|PATHS
+ALWAYS_RUN='["bot-instructions","preflight","markdown"]'
+docs_jobs_row() { # CLASS PATHS
+  # shellcheck disable=SC2086 # one path per word
+  check "docs-only $1 over '$2' runs the always-run jobs alone" "$ALWAYS_RUN" \
+    "$(SELECT_IN="$READ_WORLD" SELECT_JOBS=true SELECT_EVENT=merge_group selection "$1" true "$(printf '%s\n' $2)" | field jobs)"
+}
+while IFS='|' read -r class paths; do
+  row_spawn docs_jobs_row "$class" "$paths"
+done <<ROWS
+trivial|AGENTS.md
+standard|$UNREAD_DOC CLAUDE.md
+micro|ui/README.md
+trivial|.github/AGENTS.md
+ROWS
+
+# A docs-set path a reader names keeps that reader's job: the suite whose
+# fixture it is, and the Rust lint and target that compile it in.
+suite_read_row() {
+  local got
+  got="$(SELECT_IN="$SEL_WORLD" SELECT_EVENT=merge_group selection trivial true docs/x/policy.md)"
+  check "a docs-only suite fixture keeps its suite's shard" '' \
+    "$(shards_miss +guards-hooks "$(field shards <<<"$got")")"
+  check "a docs-only suite fixture keeps its suite" hooks/tests/policy.test.sh \
+    "$(cd "$SEL_WORLD" && SKIPPED_SUITES="$(field skipped_suites <<<"$got")" "$JOB_SET" --suite-list hooks/tests/policy.test.sh)"
+}
+include_row() {
+  local got
+  got="$(SELECT_JOBS=true SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true docs/authoring/README.md)"
+  check "a docs-only include_str! file keeps the lint and the target compiling it" 'true true' \
+    "$(field cargo_lint <<<"$got") $(field cargo_linux_matrix <<<"$got" |
+      jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
+}
+# A target whose checkout read rust-reads cannot resolve runs for every
+# docs-only path: the core lib's render check reads each tracked render.
+render_row() {
+  check "a docs-only tracked render keeps kendex-core --lib" true \
+    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true .agents/skills/code-quality/SKILL.md |
+      field cargo_linux_matrix | jq 'any(.include[]; .crate == "kendex-core" and (.targets | index("--lib")))')"
+}
+row_spawn suite_read_row
+row_spawn include_row
+row_spawn render_row
 
 # The Rust targets are the reach's: a runtime source runs every target of its
 # runtime and of each runtime that path-depends on it, a path a target or the
@@ -223,14 +276,16 @@ done <<<"$sources"
 
 # Cargo metadata and the source read select targets independently of the
 # review classes. This fixture has one reading lib and no shell inputs.
-while IFS='|' read -r class path expected; do
-  got="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection "$class" true "$path")"
-  check "workspace reaches over $class $path" "$expected" "$(field cargo_linux_matrix <<<"$got")"
+# A path no target reads runs the whole matrix, save in a docs-set change.
+while IFS='|' read -r class docs path expected; do
+  got="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection "$class" "$docs" "$path")"
+  check "workspace reaches over $class docs_only=$docs $path" "$expected" "$(field cargo_linux_matrix <<<"$got")"
 done <<'ROWS'
-trivial|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
-render|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
-trivial|docs/legal/terms.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
-trivial|docs/other.md|null
+trivial|true|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+render|true|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+trivial|true|docs/legal/terms.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+trivial|false|docs/other.md|null
+trivial|true|docs/other.md|{"include":[]}
 ROWS
 
 # Each declared build name is a build input. Read in the fixture checkout,
