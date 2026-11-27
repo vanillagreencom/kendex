@@ -419,7 +419,9 @@ if: >-
 **Workflow shape**
 
 - A top-level `env:` holds literal values. The reader splits each value but `BASH_ENV`'s at blanks, `=`, `:`, `,` and `;`, and reads each word as a path every run step reads from its working directory.
-- Only `BASH_ENV` is read as a script, since bash sources it before each run step. Its value is one whole path from the step's working directory, and a file that script sources is an input too. A script line the shell reader cannot follow refuses that job with `cause=opaque-workflow-env key=BASH_ENV path=SCRIPT`.
+- `BASH_ENV`'s value is one whole path from the step's working directory. Bash sources that file before each run step, so a file it sources is an input too.
+- A tracked file another value names is code where a tool can execute or load it: its mode is executable, or it ends in `.js`, `.cjs`, `.mjs`, `.ts`, `.cts`, `.mts`, `.jsx` or `.tsx`, such as a compiler wrapper or a `--require` preload. The reader follows it as it follows `./FILE` on a run line: a Bash or sh script's literal reads are inputs too, and any other such file refuses each job that inherits it. The rule reads the file, never the key. Any other file is data, an input and nothing more.
+- A path or script line the reader cannot follow refuses that job with `cause=opaque-workflow-env key=KEY path=PATH reason=CAUSE`, `PATH` from the step's working directory.
 - An `env:` value leaves the roster unreadable with `cause=opaque-workflow-env` when it holds a `${{ }}` expression, or when one of its words starts with `/` or `~`, starts with `-` and holds `/` or `.`, or holds any character outside letters, digits, `_`, `.`, `/`, `+` and `-`. A `BASH_ENV` value that is not one such word, such as an absolute path or one with a blank, leaves it unreadable with `cause=opaque-workflow-env key=BASH_ENV path=VALUE`.
 - A top-level `defaults:` leaves the roster unreadable with `cause=opaque-workflow-defaults`.
 - A gated job uses only the job keys, step keys and `actions/checkout` inputs `job_reads` in `lane-reach.py` accepts. Any other key or action, a job or step `env:` among them, refuses the job.
