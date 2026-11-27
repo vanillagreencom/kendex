@@ -65,7 +65,7 @@ Linear only: activate the issue, or the parent alone if bundled (sub-issues acti
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
-- Read the comment thread, `linear.sh comments list [ISSUE_ID]`, only when the description has no `## Done when` section.
+- Read the comment thread, `linear.sh comments list [ISSUE_ID]`, only when the description has no `## Done when` section or `.blocked_by` names an item. A blocker posts its `Handoff from` comment to that thread (§ 9.2).
 - Every read is live.
 - A failed read or activation stops the round with its exact diagnostic, an auth, API or configuration failure.
 - A rate-limited activation is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds.
