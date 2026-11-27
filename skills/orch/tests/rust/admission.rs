@@ -733,22 +733,36 @@ fn no_landing() -> Value {
     json!({"ground": "no-landing", "reason": "usage-limit", "source": "overseer"})
 }
 
-/// A lane record a no-landing close stopped, its item still open, holds its
-/// touched set: an `admit` of another running lane and a first launch of
-/// another item for one of its paths refuse `launch-overlap` naming it, never
-/// joining it, nothing written; so does the record after its relaunch failed,
-/// and a hosted one. A record stopped by a failed launch with no close, or by
-/// a failed next-phase launch after a full close, and a `done` record hold
-/// nothing: both are admitted. Under `ORCH_DELIVERY=push-base` a first
-/// launch passes a local kept record in its review, the publication taking
-/// the order, and a hosted one, whose review is its host's, still refuses.
+/// A lane record a no-landing close keeps, its item still open, holds its
+/// touched set from the close's ask: an `admit` of another running lane and a
+/// first launch of another item for one of its paths refuse `launch-overlap`
+/// naming it, never joining it, nothing written. It holds while the close
+/// stands open, over a record whose charge yields (parked, or stopped by a
+/// failed launch), and once it is confirmed; so does the record after its
+/// relaunch failed, a hosted one, and a kept record under a later full close
+/// that is open or failed. A record stopped by a failed launch with no
+/// close, or by a failed next-phase launch after a full close, a `done`
+/// record, and a parked record whose no-landing close failed or was
+/// superseded hold nothing: each is admitted. Under `ORCH_DELIVERY=push-base`
+/// a first launch passes a local kept record in its review, the publication
+/// taking the order, and a hosted one, whose review is its host's, still
+/// refuses.
 #[test]
-fn a_record_a_no_landing_close_stopped_holds_its_set_against_another_lane() {
+fn a_record_a_no_landing_close_keeps_holds_its_set_against_another_lane() {
     let failed_launch = json!({
         "id": "launch-session:KEN-R:2-1", "op": "launch-session", "target": "KEN-R",
         "created_at": "2026-01-29T15:40:00Z", "lane_since": "2026-01-29T15:40:00Z",
         "outcome": "failed",
     });
+    // The item's close `n` on `ground`, as `outcome` left it.
+    let close = |n: u32, ground: Value, outcome: &str| {
+        let mut close = closed("KEN-R", n, ground);
+        close["outcome"] = json!(outcome);
+        close
+    };
+    let mut superseded = close(1, no_landing(), "unconfirmed");
+    superseded["reconciled"] = json!("intent-stale");
+    let exited = || json!({"ground": "exited"});
     // The row, the record's status and host, its item's journal, and
     // whether it holds.
     type Row = (
@@ -758,12 +772,60 @@ fn a_record_a_no_landing_close_stopped_holds_its_set_against_another_lane() {
         Vec<Value>,
         bool,
     );
-    let rows: [Row; 6] = [
+    let rows: [Row; 12] = [
         (
             "a no-landing close",
             "stopped",
             None,
             vec![closed("KEN-R", 1, no_landing())],
+            true,
+        ),
+        (
+            "a parked record under an open no-landing close",
+            "parked",
+            None,
+            vec![close(1, no_landing(), "unconfirmed")],
+            true,
+        ),
+        (
+            "a failed launch's record under a not-started no-landing close",
+            "stopped",
+            None,
+            vec![close(1, no_landing(), "not-started")],
+            true,
+        ),
+        (
+            "a parked record whose no-landing close failed",
+            "parked",
+            None,
+            vec![close(1, no_landing(), "failed")],
+            false,
+        ),
+        (
+            "a parked record whose no-landing close was superseded",
+            "parked",
+            None,
+            vec![superseded],
+            false,
+        ),
+        (
+            "a kept record under an open full close",
+            "stopped",
+            None,
+            vec![
+                closed("KEN-R", 1, no_landing()),
+                close(2, exited(), "unconfirmed"),
+            ],
+            true,
+        ),
+        (
+            "a kept record whose full close failed",
+            "stopped",
+            None,
+            vec![
+                closed("KEN-R", 1, no_landing()),
+                close(2, exited(), "failed"),
+            ],
             true,
         ),
         (
@@ -787,7 +849,7 @@ fn a_record_a_no_landing_close_stopped_holds_its_set_against_another_lane() {
             None,
             vec![
                 closed("KEN-R", 1, no_landing()),
-                closed("KEN-R", 2, json!({"ground": "exited"})),
+                closed("KEN-R", 2, exited()),
             ],
             false,
         ),

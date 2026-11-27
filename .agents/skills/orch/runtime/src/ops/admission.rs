@@ -11,7 +11,7 @@
 //! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, the recorded set of a relaunch whose record was not kept, and the Location paths a set-less relaunch adds, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
-//! | otherwise `stopped`, its latest confirmed close a no-landing one ([`retired_open`]), local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
+//! | otherwise kept by a no-landing close ([`retired_open`]): one asked and neither failed nor superseded, or, while the record reads `stopped`, its latest confirmed close; local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
 //! | `reservation`, or no charge: any other stopped, parked or gone holder | yields: nothing is recorded |
 //! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) unless kept as above; a first launch reads a running one's branch ([`branch_judged`]) |
 //! | `done` | no holder |
@@ -63,8 +63,9 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission. A kept record's set adds no path and meets no holder, its
-//! no-landing close having met them where the record did not hold the set
+//! admission. A record that holds its set now ([`holding`]), one a
+//! no-landing close keeps from its ask on, adds no path and meets no holder,
+//! that close having met them where the record did not hold the set
 //! ([`no_landing_held`]); any other record's set, or, where the record holds none, its item's Location
 //! paths, are the paths it adds, which meet the holders standing now as a
 //! running lane's added path does ([`relaunch_held`]). A
@@ -816,13 +817,16 @@ fn same_repo(lane: &Lane, repo: Option<&str>) -> bool {
 /// never joined, unknown blocks as unreadable, anything else yields.
 enum Holding {
     Live,
-    /// A record a no-landing close stopped ([`retired_open`]): no session
-    /// runs, and its item's work stands on its paths.
+    /// A record a no-landing close keeps ([`retired_open`]): no session
+    /// reads, and its item's work stands on its paths.
     Kept,
     Unknown(String),
     Yields,
 }
 
+/// The one rule of whether a record holds its set: `Live` or `Kept` holds
+/// it, against another lane's launch or added path ([`judge`]), at a
+/// no-landing close's ask and at its relaunch ([`relaunch_held`]).
 fn holding(
     path: &Path,
     lane: &Lane,
@@ -862,30 +866,35 @@ fn holding(
     })
 }
 
-/// Whether a `stopped` record was stopped by a no-landing close: the latest
-/// confirmed close of its item in the intent journal is on that ground. Such
-/// a close retires the attempt and keeps the item's work, so a second lane
-/// taking one of its paths would make the overlap its relaunch meets. A
-/// launch that failed also leaves `stopped`, after no close (a first
-/// launch) or after the full close of a `done` record (a next phase): that
-/// attempt has no work to keep. A failed relaunch after a no-landing close
-/// keeps it held.
+/// Whether a no-landing close keeps the record's set held: the close
+/// retires the attempt and keeps the item's work. The hold starts at the
+/// close's ask, whose judgement ([`no_landing_held`]) met the holders, and
+/// lasts through its outcome, since the record's status moves only then: an
+/// open close holds whatever the record's charge reads, so the repeat that
+/// settles it owes no second judgement. A failed or superseded close, and
+/// an open full one, hold nothing of their own. Past those, the item's
+/// latest confirmed close holds on that ground while the record reads
+/// `stopped`, so a park ends the hold and a failed relaunch keeps it; a
+/// launch that failed after no close, or after the full close of a `done`
+/// record, also leaves `stopped`, an attempt with no work to keep.
 fn retired_open(path: &Path, lane: &Lane, intents: &[Intent]) -> Result<bool> {
-    if lane.status != LaneStatus::Stopped {
-        return Ok(false);
+    let closes = intents.iter().rev().filter(|i| {
+        i.target == lane.item && i.op == EffectOp::CloseResources && i.reconciled.is_none()
+    });
+    for close in closes {
+        let no_landing = || -> Result<bool> {
+            Ok(matches!(
+                LaneMembers::of(path, close)?.close,
+                Some(CloseGround::NoLanding { .. })
+            ))
+        };
+        match close.outcome {
+            Outcome::NotStarted | Outcome::Unconfirmed if no_landing()? => return Ok(true),
+            Outcome::NotStarted | Outcome::Unconfirmed | Outcome::Failed => {}
+            Outcome::Confirmed => return Ok(lane.status == LaneStatus::Stopped && no_landing()?),
+        }
     }
-    let Some(close) = intents.iter().rev().find(|i| {
-        i.target == lane.item
-            && i.op == EffectOp::CloseResources
-            && i.outcome == Outcome::Confirmed
-            && i.reconciled.is_none()
-    }) else {
-        return Ok(false);
-    };
-    Ok(matches!(
-        LaneMembers::of(path, close)?.close,
-        Some(CloseGround::NoLanding { .. })
-    ))
+    Ok(false)
 }
 
 /// The branch the holder's item state records, read beside the fleet
@@ -1188,13 +1197,14 @@ pub(super) fn bound(
 
 /// A relaunch's holders (the module's binding paragraph): the paths it adds,
 /// met against the lanes that hold paths now, as a running lane's added path
-/// is, never joined. A kept record ([`retired_open`]) adds none: it held its
-/// set from its no-landing close on ([`Holding::Kept`]), a close that met
-/// the holders with it where the record did not hold it ([`no_landing_held`]),
-/// so a lane that holds one of its paths now co-held it before the record
-/// was kept, and the relaunch is admitted on its own set. Any other record yielded its set
-/// while it stood, a parked one or one a failed launch stopped, so another
-/// lane may have taken a path of it since: its set is the paths it adds. A
+/// is, never joined. A record that holds its set now ([`holding`]) adds
+/// none: a kept one has held it from its no-landing close's ask on
+/// ([`retired_open`]), a close that met the holders with it where the record
+/// did not hold it ([`no_landing_held`]), so every lane that holds one of
+/// its paths now co-held it before, and the relaunch is admitted on its own
+/// set. Any other record yielded its set while it stood, a parked one or
+/// one a failed launch stopped, so another lane may have taken a path of it
+/// since: its set is the paths it adds. A
 /// record no judgement wrote, a surface lane's, holds no set: its item's
 /// Location paths are the paths it adds, read as a first launch reads them,
 /// and refused where the item names no Location path, since a surface
@@ -1223,7 +1233,14 @@ pub(super) fn relaunch_held(
     };
     let read;
     let paths = match (&record.touched, tracker) {
-        (Some(_), _) if retired_open(path, record, intents)? => return Ok(()),
+        (Some(_), _)
+            if matches!(
+                holding(path, record, intents, env, host)?,
+                Holding::Live | Holding::Kept
+            ) =>
+        {
+            return Ok(());
+        }
         (Some(paths), _) => paths.as_slice(),
         (None, Some(tracker)) if !record.read_only => {
             let reads = host
@@ -1255,17 +1272,17 @@ pub(super) fn relaunch_held(
     judge(path, lanes, intents, &a, env, host).map(drop)
 }
 
-/// The holder judgement a no-landing close owes before it is recorded,
-/// whatever its reason: the close keeps `record` ([`retired_open`]), whose
-/// relaunch then adds no path, so a record holding a set it does not hold
-/// when the close is asked (parked, stopped by a failed launch, or running
-/// with no session read) meets the holders standing now with that set, as
-/// its relaunch would, and a refusal leaves it as it stood. A record that
-/// holds its set, a running lane whose session reads or one already kept,
-/// has held it from its admission on. A record holding no set is never
-/// kept: its relaunch adds its item's Location paths, met here only where
-/// the close `relaunches` it, a recovery reason, so the relaunch it is
-/// closed for is not refused after the close.
+/// The holder judgement a no-landing close owes at its ask, whatever its
+/// reason: from the ask on the close keeps `record` holding its set
+/// ([`retired_open`]), and its relaunch then adds no path, so the set meets
+/// the holders standing now, as [`relaunch_held`] judges it, and a refusal
+/// leaves the record as it stood. That judgement meets no holder where the
+/// record holds its set now ([`holding`]): every lane that holds one of its
+/// paths now is a co-holder, so the close meets none. A record holding no
+/// set relaunches on its item's Location paths, which its relaunch adds and
+/// meets itself; they are met here only where the close `relaunches` it, a
+/// recovery reason, so the relaunch it is closed for is not refused after
+/// the close.
 pub(super) fn no_landing_held(
     path: &Path,
     lanes: &[Lane],
@@ -1275,14 +1292,7 @@ pub(super) fn no_landing_held(
     env: &Env,
     host: &Host,
 ) -> Result<()> {
-    let judged = match &record.touched {
-        Some(_) => !matches!(
-            holding(path, record, intents, env, host)?,
-            Holding::Live | Holding::Kept
-        ),
-        None => relaunches,
-    };
-    if !judged {
+    if record.touched.is_none() && !relaunches {
         return Ok(());
     }
     relaunch_held(

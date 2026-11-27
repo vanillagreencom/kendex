@@ -721,9 +721,11 @@ pub struct Lane {
     /// sorted and unique, and empty where a `read_only` launch is judged,
     /// which writes none of them. A relaunch keeps the record's set, scope,
     /// `read_only`, Ancestor gate and tier. A record a no-landing close
-    /// stopped holds the set against other lanes, and its relaunch adds no
-    /// path, so the set meets no holder: that close, of a record not holding
-    /// the set when it is asked, met the holders with it first. Any other
+    /// keeps holds the set against other lanes from that close's ask, while
+    /// the close stands open and then while the record reads `stopped`, and
+    /// its relaunch adds no path, so the set meets no holder: that close, of
+    /// a record not holding the set when it is asked, met the holders with it
+    /// first. A failed or superseded close holds nothing of its own. Any other
     /// record's relaunch meets the holders standing now with the set, as a
     /// running lane's added path does. `None` on a record written with no
     /// judgement.

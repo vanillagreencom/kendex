@@ -1839,7 +1839,9 @@ pub(super) fn close_owned_resources(
     // recovery ground retires the lane for that relaunch: judged here, by
     // every caller's close, a set the record did not hold meets the holders
     // before it is kept, and a relaunch the holders refuse leaves the lane
-    // as it stood instead of stopped with no relaunch.
+    // as it stood instead of stopped with no relaunch. The persisted close
+    // holds the set from here, so the repeat that settles it (`Same` above)
+    // is judged no second time.
     if let CloseGround::NoLanding { reason, .. } = &ground {
         admission::no_landing_held(
             path,
