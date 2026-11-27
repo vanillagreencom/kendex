@@ -1,6 +1,6 @@
 exit=0
-stdout=change_class=trivial
+stdout=change_class=standard
 changed-path: path=CLAUDE.md
 changed-path: path=docs/guide.md
 harness-note: cause=not-render-owned path=docs/guide.md
-class: class=trivial measured=true cause=documentation-paths lines=3
+class: class=standard measured=false cause=verify-refused verifier=path version=0.0.0-stub

@@ -128,9 +128,10 @@
 #            such document, or another version of it, answers standard.
 #   trivial  a range confined to kendex manifests, JSON settings files and
 #            Markdown files takes this class at any size, except a harness
-#            registry file and .gemini/settings.json (below), a changed
-#            `sources` table in kendex.toml or kendex-local.toml, a changed
-#            .kendex-lock.json and a path HARNESS_CI_STANDARD_PATHS names.
+#            registry file and .gemini/settings.json (below), changed catalog
+#            selection, a changed .kendex-lock.json and a path
+#            HARNESS_CI_STANDARD_PATHS names. A mixed range needs passing
+#            render proof for its inventoried paths before it can be trivial.
 #            The kendex manifests are kendex.toml, kendex-local.toml,
 #            kendex.settings.toml and .kendex/settings.toml; a JSON settings
 #            file is one named settings.json, settings.jsonc,
@@ -176,9 +177,9 @@
 #            narrower class. An inventory the base holds and harness-only
 #            cannot read or parse stays a refusal.
 #
-# A changed kendex.toml or kendex-local.toml whose `sources` value differs
-# between the range's ends answers standard, cause=manifest-sources path=P,
-# measured: it names the catalogs a later install runs code from. A manifest
+# A changed `sources` value in kendex.toml or kendex-local.toml, or a change
+# of selected manifest through kendex.toml's `is_source_catalog`, answers
+# standard, cause=manifest-sources path=P, measured. A manifest
 # python3's tomllib cannot read at either end answers standard,
 # cause=manifest-sources-unreadable path=P detail=D, measured=false, D one of
 # python3-absent, tomllib-absent, manifest-read-failed, manifest-parse-failed
@@ -234,8 +235,8 @@
 # cause=source-mirror-missing with those remedy fields. It grants no class
 # until the caller refreshes the mirror and the proof passes.
 #
-# Only the render class reads kendex state. The caller prepares the judged
-# checkout's sources. The render proof can also own the adopted refresh caller
+# Render proof reads kendex state. The caller prepares the judged checkout's
+# sources. The render proof can also own the adopted refresh caller
 # under ../SKILL.md § Shared refresh caller ownership.
 #
 # A measured class needs --event pull_request or --event merge_group; any
@@ -673,9 +674,9 @@ fi
 
 # A [sources] change in a kendex manifest names the catalogs a later install
 # runs code from, and a revert does not undo a run, so it keeps the full
-# route. Each changed manifest's `sources` value is compared at both ends
-# with Python's TOML reader; a manifest an end lacks holds none, and one
-# that cannot be read or parsed refuses the cheapest class.
+# route. Compare the source table and, in the root manifest alone, the
+# local-manifest selector. A manifest that cannot be read or parsed refuses
+# the cheapest class.
 # The answer is one word on stdout with status 0: `changed` or `unchanged`.
 # Every other word, an empty stdout or another status is no answer, so an
 # interpreter that fails before the program runs, or a python3 older than
@@ -695,14 +696,18 @@ def sources(rev):
         listed = subprocess.run(["git", "-C", repo, "ls-tree", rev, "--", path],
                                 check=True, capture_output=True).stdout
         if not listed:
-            return None
+            return False, None
         blob = subprocess.run(["git", "-C", repo, "cat-file", "blob", f"{rev}:{path}"],
                               check=True, capture_output=True).stdout
     except (OSError, subprocess.CalledProcessError):
         print("manifest-read-failed")
         sys.exit(2)
     try:
-        return tomllib.loads(blob.decode()).get("sources")
+        manifest = tomllib.loads(blob.decode())
+        # project_manifest_from selects kendex-local.toml only on boolean true
+        # in kendex.toml. A switch matters even if neither file changed sources.
+        local = path == "kendex.toml" and manifest.get("is_source_catalog") is True
+        return local, manifest.get("sources")
     except Exception:
         print("manifest-parse-failed")
         sys.exit(2)
@@ -937,7 +942,7 @@ except caller.InvalidCaller:
     sys.exit(1)
 PY
 }
-render_paths_covered() { # [narrow]
+render_paths_covered() { # PATHS [narrow]
   local path owns foreign position owned partial head_entry inventory_status owned_status retired=""
   if ! named_positions >"$work/render-named" 2>/dev/null; then
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
@@ -950,7 +955,7 @@ render_paths_covered() { # [narrow]
     [ -n "$path" ] || continue
     # Legacy verify can own engine positions, but cannot lift exclusions
     # outside the inventory. Release proof owns only the adopted caller.
-    if [ "${1:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then
+    if [ "${2:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then
       change_class_path "$path" narrow
       if [ "$CHANGE_CLASS_PATH" = standard ]; then
         released_workflow_owned "$path" && continue
@@ -1021,7 +1026,7 @@ render_paths_covered() { # [narrow]
     fi
     RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured
     return 1
-  done <<<"$changed"
+  done <<<"$1"
   [ -n "$retired" ] || return 0
   # Every changed path read and none refused, so the retirement is standard
   # by rule.
@@ -1078,7 +1083,7 @@ quick_set_holds() {
 # paths included, must be owned by a passing verify row. A failed proof stays
 # standard rather than reaching a size class.
 if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then
-  renders_match && render_paths_covered &&
+  renders_match && render_paths_covered "$changed" &&
     answer render "cause=renders-match-their-sources"
   answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
 fi
@@ -1124,7 +1129,7 @@ if path_class_matches narrow standard; then
   narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"
   # Package outputs outside the engine inventory can still be proved by
   # their trusted checker. Without full ownership the path rule stands.
-  renders_match && render_paths_covered narrow &&
+  renders_match && render_paths_covered "$changed" narrow &&
     answer render "cause=renders-match-their-sources"
   [ "$RENDER_WORKFLOW_CHECKED" = false ] || answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
   answer standard "cause=$narrow_refusal" measured
@@ -1172,12 +1177,27 @@ fi
 # lists read.
 docs_read
 
+# harness-only validated both committed inventories. Use their union so an
+# edit that also drops a path from the inventory still has to prove it.
+prove_mixed_renders() {
+  local inventoried
+  inventoried="$(git -C "$repo" show "$base_rev:.kendex-generated.json" "$head_rev:.kendex-generated.json" |
+    jq -sr --arg changed "$changed" '
+      (add | map(if type == "string" then . else .path end)) as $inventory
+      | $changed | split("\n")[] | . as $path | select($inventory | index($path) != null)
+    ')" || answer standard "cause=mixed-render-paths-unreadable"
+  [ -n "$inventoried" ] || return 0
+  renders_match && render_paths_covered "$inventoried" ||
+    answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
+}
+
 # A diff that removes test protection, read by the measurement library's
 # branch_protection_removed against the list's markers, never answers below
 # small: deleted lines cost nothing in the size rules, so its size alone would
 # leave it unreviewed. That read is fail-closed, as the measurement is. Every
 # trivial and micro answer goes through here.
 answer_narrow() { # CLASS FIELDS
+  [ "$1" != trivial ] || prove_mixed_renders
   branch_protection_removed "$repo" "$base" "$head" "$NARROW_CONF" ||
     answer standard "cause=protection-unreadable detail=$BRANCH_GROWTH_ERROR"
   [ -z "$BRANCH_PROTECTION_KIND" ] ||

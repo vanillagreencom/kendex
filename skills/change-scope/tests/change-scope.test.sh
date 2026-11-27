@@ -855,16 +855,23 @@ PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='*' \
   assert_class "an allowlist cannot reach an excluded path" standard \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
-# A harness instruction pointer beside a docs edit is Markdown alone, which
-# the trivial rule takes without a render proof.
+# A generated Markdown edit beside README.md needs the verifier's proof
+# for the render. README.md belongs to the consumer, outside that proof.
 reset_case
-set_verifier dirty
-write_lines "$repo" CLAUDE.md 2
-write_lines "$repo" docs/guide.md 1
+write_lines "$repo" .agents/skills/orch/SKILL.md 2
+write_lines "$repo" README.md 1
 git -C "$repo" add -A
-git -C "$repo" commit -q -m "a hand-edited pointer beside a docs edit"
-PATH="$stub_bin:$PATH" assert_class "a pointer edit beside docs takes the trivial rule" \
-  trivial --repo "$repo" --event pull_request --base "$base" --head HEAD
+git -C "$repo" commit -q -m "a render beside a README edit"
+while IFS='|' read -r verifier expected; do
+  set_verifier "$verifier"
+  mixed_err="$(PATH="$stub_bin:$PATH" "$CHANGE_SCOPE" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "a mixed Markdown range under $verifier render verification" \
+    "$expected" "$(sed -n 's/^class: //p' <<<"$mixed_err")"
+done <<'MIXED_RENDER_ROWS'
+dirty|class=standard measured=false cause=verify-refused verifier=path version=0.0.0-stub
+clean|class=trivial measured=true cause=documentation-paths lines=3
+MIXED_RENDER_ROWS
 
 # A class is never read from an author-writable field. The branch name and the
 # label say render; the diff says otherwise and the diff decides.
@@ -1665,9 +1672,9 @@ FIXTURES
 require_rows change-scope-fixture "$fixture_rows"
 
 # A kendex manifest alone is trivial at any size and any table, save a
-# changed `sources` value, which names the catalogs a later install runs
-# code from, a manifest TOML cannot read, and a manifest the repository's
-# standard paths name. The edit kinds: `lines N` appends N comment lines,
+# changed `sources` value or root manifest selection, a manifest TOML cannot
+# read, and a manifest the repository's standard paths name.
+# The edit kinds: `lines N` appends N comment lines,
 # `swap FILE~A~B` replaces the one line A of FILE with B, `write FILE~TEXT`
 # writes TEXT whole with printf %b.
 manifest_repo="$(new_repo change-scope-manifest)"
@@ -1680,6 +1687,12 @@ printf '[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.toml"\n' >"$manifest_repo/ken
 git -C "$manifest_repo" add -A
 git -C "$manifest_repo" commit -q -m 'the repository keeps its manifest on the full run'
 manifest_standard="$(git -C "$manifest_repo" rev-parse HEAD)"
+git -C "$manifest_repo" checkout -q --detach "$manifest_base"
+awk 'NR == 1 { print; print "is_source_catalog = true"; next } { print }' \
+  "$manifest_repo/kendex.toml" >"$SANDBOX/catalog-manifest"
+mv -- "$SANDBOX/catalog-manifest" "$manifest_repo/kendex.toml"
+git -C "$manifest_repo" commit -qa -m 'the root selects the catalog-local manifest'
+manifest_catalog="$(git -C "$manifest_repo" rev-parse HEAD)"
 manifest_case() { # LABEL BASE EDIT...
   local label="$1" from_var="manifest_$2" edit file rest added
   shift 2
@@ -1751,6 +1764,8 @@ a consumer manifest edit|base|merge_group|lines 2|class=trivial measured=true ca
 a consumer manifest edit past the small ceiling|base|pull_request|lines 151|class=trivial measured=true cause=quick-files files=kendex.toml lines=151
 an install table edit|base|pull_request|swap kendex.toml~method = "copy"~method = "symlink"|class=trivial measured=true cause=quick-files files=kendex.toml lines=2
 a source catalog manifest edit|base|pull_request|swap kendex-local.toml~is_source_catalog = true~is_source_catalog = false|class=trivial measured=true cause=quick-files files=kendex-local.toml lines=2
+the root disables catalog-local selection|catalog|pull_request|swap kendex.toml~is_source_catalog = true~is_source_catalog = false|class=standard measured=true cause=manifest-sources path=kendex.toml
+the root drops catalog-local selection|catalog|pull_request|swap kendex.toml~is_source_catalog = true~# Use the root manifest|class=standard measured=true cause=manifest-sources path=kendex.toml
 a manifest beside JSON settings and Markdown|base|pull_request|lines 2;write .vscode/settings.json~{};write docs/guide.md~# Guide|class=trivial measured=true cause=quick-files files=.vscode/settings.json,kendex.toml lines=4
 a manifest the repository's standard paths name|standard|merge_group|lines 2|class=standard measured=true cause=repository-standard-path path=kendex.toml glob=kendex.toml
 a sources value the head changes|base|merge_group|swap kendex.toml~url = "https://example.invalid/cat.git"~url = "https://example.invalid/other.git"|class=standard measured=true cause=manifest-sources path=kendex.toml
