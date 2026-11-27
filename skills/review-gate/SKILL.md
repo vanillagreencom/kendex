@@ -67,7 +67,7 @@ No lane runs a raw `--admin` merge. The repair gives no app token a merge path.
 ## Read when
 
 - Before adopting the refresh workflow in a consumer, or provisioning its environment and app credentials: [references/adoption.md § Caller adoption contract](references/adoption.md#caller-adoption-contract) and § Adoption and file ownership.
-- Before enabling automatic refresh, and when a refresh run's schedule, cancel or input check does not do what you expect: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
+- Before enabling automatic refresh, and when a refresh run's schedule or cancel does not do what you expect: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 - When a refresh run prints a `refresh-state=` or `refresh-verify=` line, `refresh-error=merge` or `refresh-error=verify`: [references/adoption.md § Publication](references/adoption.md#publication).
 - When adoption stops with `refresh-error=caller-secrets`, `refresh-error=environment` or `refresh-error=workflow-edited`: [references/adoption.md § Caller adoption contract](references/adoption.md#caller-adoption-contract).
 - When a refresh run prints `refresh-error=` with `workflow-symlink`, `workflow-changed`, `template-edited`, `template-changed`, `read`, `render-edited`, `bot-instructions-render` or `refresh`: [references/adoption.md § Adoption and file ownership](references/adoption.md#adoption-and-file-ownership).

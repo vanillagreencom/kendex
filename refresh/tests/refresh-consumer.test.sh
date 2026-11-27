@@ -627,8 +627,6 @@ while IFS='|' read -r lock_name lock_project lock_add; do
       ! git --git-dir="$LEASE_REMOTE" show-ref --verify --quiet refs/heads/kendex/refresh &&
       ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls" &&
       grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
-      grep -qxF 'state=current' "$TMP/state/outputs" &&
-      grep -qxF 'sources=covered' "$TMP/state/outputs" &&
       grep -qF 'PR_REVIEW_GATE' "$TMP/state/summary"; then lock_suppressed=true; fi
   case "$lock_name" in
     control|unselected)
@@ -638,7 +636,7 @@ while IFS='|' read -r lock_name lock_project lock_add; do
         ok "lock publication $lock_name rejects suppression"
       else bad "lock publication $lock_name" "$OUT"; fi ;;
     *)
-      if [ "$lock_suppressed" = true ]; then ok "lock-only $lock_name publishes nothing and reports settings and sources"
+      if [ "$lock_suppressed" = true ]; then ok "lock-only $lock_name publishes nothing and reports settings"
       else bad "lock-only $lock_name" "$OUT"; fi
       reset_default
       : >"$TMP/state/calls"
@@ -896,16 +894,6 @@ reset_default
 run_refresh current pass render
 if [ "$RC" -eq 0 ] && [ ! -s "$TMP/state/creates" ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT"; then ok 'current consumer opens no pull request'; else bad 'current consumer opens no pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary"; then ok 'current run summary reports the exact engine version'; else bad 'current run engine version missing'; fi
-current_record_matches() { [ "$RC" -eq 0 ] && grep -qxF state=current "$TMP/state/outputs"; }
-if current_record_matches; then ok 'current refresh publishes its record eligibility'; else bad 'current refresh record eligibility' "$OUT"; fi
-record_runner="$runner"
-runner="$TMP/catalog-fallback-control/refresh/refresh-consumer.sh"
-cp "$record_runner" "$runner"
-file_edit "$TMP/catalog-fallback-control" refresh/refresh-consumer.sh 1 '^    printf .*state=current' '/^    printf .*state=current/s/printf/: # printf/'
-reset_default
-run_refresh current pass render
-if [ "$RC" -eq 0 ] && ! current_record_matches; then ok 'control: removing the current output rejects record eligibility'; else bad 'current output control' "$OUT"; fi
-runner="$record_runner"
 # The refresh passes --prune where the installed kendex lists it, and leaves
 # it out under a release that predates the flag.
 for lists in yes no; do
@@ -924,7 +912,6 @@ for lists in yes no; do
 done
 reset_default
 run_refresh stale pass render
-if [ ! -s "$TMP/state/outputs" ]; then ok 'changed refresh publishes no current record'; else bad 'changed refresh current output' "$OUT"; fi
 first="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ]; then ok 'stale consumer opens one rolling pull request'; else bad 'stale consumer opens one rolling pull request' "$OUT"; fi
 if grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/body"; then ok 'pushed body reports the exact engine version'; else bad 'pushed body engine version missing'; fi

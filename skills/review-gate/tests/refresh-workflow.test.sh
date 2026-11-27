@@ -97,7 +97,8 @@ done
 printf 'pass: %s   fail: 0\n' "$PASS"
 
 # GitHub evaluates this job condition before allocating its runner. Execute
-# the declared expression for each route; a missing output must refresh.
+# the declared expression for each release outcome: a release job that
+# succeeded or was skipped starts the refresh.
 python3 - "$CALLER" "$GH_EVAL" <<'PY'
 from pathlib import Path
 import json, re, subprocess, sys
@@ -109,29 +110,28 @@ def check(text):
     conditions = [re.search(r'^    if: \$\{\{ (.+) \}\}$', job, re.M).group(1) for job in (release, refresh)]
     assert conditions[1].startswith('!cancelled() && ')
     fleet = 'vanillagreen-fleet-lanes[bot]'
-    for event, actor, attempt, clear, outcome, route, wanted in (
-        ('repository_dispatch', fleet, 1, True, 'skipped', '', 'refresh'),
-        ('repository_dispatch', fleet, 1, False, 'success', 'full', 'release\nrefresh'),
-        ('repository_dispatch', fleet, 1, None, 'success', '', 'release\nrefresh'),
-        ('repository_dispatch', fleet, 2, True, 'success', 'reviews', 'release\nrefresh'),
-        ('repository_dispatch', 'another[bot]', 1, True, 'success', 'skip', 'release'),
-        ('repository_dispatch', fleet, 1, False, 'failure', 'full', 'release'),
-        ('schedule', fleet, 1, True, 'success', 'skip', 'release'),
-        ('workflow_dispatch', fleet, 1, True, 'cancelled', 'full', 'release'),
+    for event, actor, attempt, clear, outcome, wanted in (
+        ('repository_dispatch', fleet, 1, True, 'skipped', 'refresh'),
+        ('repository_dispatch', fleet, 1, False, 'success', 'release\nrefresh'),
+        ('repository_dispatch', fleet, 1, None, 'success', 'release\nrefresh'),
+        ('repository_dispatch', fleet, 2, True, 'success', 'release\nrefresh'),
+        ('repository_dispatch', 'another[bot]', 1, True, 'success', 'release\nrefresh'),
+        ('repository_dispatch', fleet, 1, False, 'failure', 'release'),
+        ('schedule', fleet, 1, True, 'success', 'release\nrefresh'),
+        ('workflow_dispatch', fleet, 1, True, 'cancelled', 'release'),
     ):
         context = dict(github=dict(repository='acme/widgets', ref='refs/heads/main', event_name=event,
                                    run_attempt=attempt, event=dict(repository=dict(default_branch='main'),
                                    sender=dict(login=actor, type='Bot'), client_payload=dict(gate_clear=clear))),
-                       needs=dict(release=dict(result=outcome, outputs=dict(route=route))))
+                       needs=dict(release=dict(result=outcome)))
         result = subprocess.run([sys.executable, sys.argv[2], 'jobs', json.dumps(context)],
                                 input='release\t\t' + conditions[0] + '\nrefresh\trelease\t' + conditions[1] + '\n',
                                 text=True, capture_output=True, check=True, timeout=10)
-        assert result.stdout == wanted + '\n', (event, actor, attempt, route, result.stdout)
+        assert result.stdout == wanted + '\n', (event, actor, attempt, outcome, result.stdout)
 for path in sys.argv[1:2]:
     text = Path(path).read_text()
     check(text)
-    for old, new in ((" && needs.release.outputs.route != 'skip'", ''),
-                     (" && github.run_attempt == 1", ''),
+    for old, new in ((" && github.run_attempt == 1", ''),
                      (" && github.event.sender.login == 'vanillagreen-fleet-lanes[bot]'", ''),
                      ("needs.release.result == 'success'", "needs.release.result != 'skipped'")):
         assert text.count(old) == 1

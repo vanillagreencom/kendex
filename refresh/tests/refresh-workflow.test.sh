@@ -46,7 +46,6 @@ for name, old, new in (
 
 shared = (Path(sys.argv[1]).parents[1] / '.github/workflows/refresh-release.yml').read_text()
 assert 'concurrency:' not in shared and 'environment:' not in shared
-assert shared.index('force-cancel') < shared.index('actions/checkout@') < shared.index('release-input-check')
 body = textwrap.dedent(re.split(r'^      - ', shared.split('        run: |\n', 1)[1], maxsplit=1, flags=re.M)[0])
 root = Path(sys.argv[2]) / 'release-stuck'
 bin_dir = root / 'bin'
