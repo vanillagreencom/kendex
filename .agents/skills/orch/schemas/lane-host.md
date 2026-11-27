@@ -85,6 +85,7 @@ Each verb, its arguments, and its answer:
   - Optional: `state=preparing` where the create returns before its preparation ends.
   - Optional: `pi-root=DIR` where a Pi lane runs under a Pi root other than `.pi/agent` under the host home.
   - Optional: `copilot-home=DIR` where a Copilot lane runs under a Copilot home other than `.copilot` under the host home.
+  - Optional: `read-prefix=PREFIX` for a Copilot lane: the `remote-prefix` environment, its account and credential, without the step that records the lane's process group. The launch reads the host's Copilot model list under it (§ Launch on a provider).
   - Optional: `tree=unrebased` where a reused worktree stands on the item's own head because its rebase onto the base was aborted.
   - On `--relaunch`, reuse the worktree the host holds for the item.
   - Hold the item under a durable repository and item identity, so a retry reaches the same host.
@@ -257,7 +258,19 @@ After `create`, and after `wait` for an accepted create, the launch reads and wr
   - A confined provider must supply an in-root `copilot-home` for these checks.
 - Codex: none. Every Codex command the launch builds carries `--dangerously-bypass-hook-trust`.
 
-The launch then verifies the launch record (§ Launch record) and builds the command:
+The launch then verifies the launch record (§ Launch record).
+
+A Copilot launch naming a model next reads the host's Copilot model list, through its own ssh exec rather than `cat`:
+
+```text
+ssh -T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'READ_PREFIX LINE'
+```
+
+- `READ_PREFIX` is `read-prefix`, and `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment, shell-quoted as one word.
+- The lane starts with `--context long_context` only where that list prices the model the same at both tiers.
+- A create with no `read-prefix`, or a read that fails, starts the lane with no `--context`, on the host's own `contextTier`, and records the cause on the launch as `copilot_model_list_unavailable`.
+
+The launch then builds the command:
 
 ```text
 ssh -t|-T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'PREFIX LINE'

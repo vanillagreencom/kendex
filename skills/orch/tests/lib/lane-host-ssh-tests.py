@@ -556,12 +556,21 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
         # The home the launcher installs the context reader into and finds the hooks under.
         self.assertEqual(fields["copilot-home"], self.row["account"])
+        # The launcher's model-list read signs in as the lane does, and its
+        # process group never becomes the lane's recorded one.
+        group = Path(self.row["clone"] + "/.git/lane-host-pid")
+        command = "cd / && exec sh -c " + shlex.quote('printf "%s\\n%s" "$COPILOT_HOME" "$ORCH_STATE_DIR"')
+        read = subprocess.run(["bash", "-c", fields["read-prefix"] + " " + shlex.quote(command)],
+                              env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
+        self.assertEqual(read.stdout.decode(), self.row["account"] + "\n" + fields["path"] + "/tmp", read.stderr)
+        self.assertFalse(group.exists(), "the read recorded a process group")
         command = "cd / && exec sh -c " + shlex.quote('printf "%s" "$COPILOT_HOME"')
         run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
                              env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
         self.assertEqual(run.stdout.decode(), self.row["account"], run.stderr)
+        self.assertTrue(group.exists(), "the lane's own prefix records its group where the read was checked")
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",
@@ -1004,11 +1013,11 @@ rc=0
 
     def test_control_prefix_without_state_export_fails_the_state_contract(self):
         original = self.script.read_text()
-        export = 'shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names,'
+        export = 'account_env = ["ORCH_STATE_DIR=" + path + "/tmp", *names]'
         self.assertEqual(original.count(export), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(export, 'shlex.join([*names,'))
+            self.executable(self.script, original.replace(export, 'account_env = [*names]'))
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
                 self.assert_hosted_state(fields, path, run)

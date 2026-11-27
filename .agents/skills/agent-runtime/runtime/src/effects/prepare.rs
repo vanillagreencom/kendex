@@ -140,8 +140,8 @@ pub fn build_launch(
         grants: None,
         claude_sign_in: spec.claude_sign_in.clone(),
         // The tier is the launching step's to decide, once, on the intent it
-        // builds last (`launch::copilot_context_tier`): a hosted launch built
-        // from this intent decides none.
+        // builds last: a local launch in `launch::build_local`, a hosted one
+        // from its host's own list (`Operation::copilot_tier_through`).
         context_tier: ContextTier::Native,
     };
     let command = crate::launch::build(&intent)?;

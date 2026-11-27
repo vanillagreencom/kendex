@@ -409,7 +409,8 @@ impl Harness {
             ],
             // The context tier is no setting every launch carries: the
             // builder adds `COPILOT_LONG_TIER` to a launch whose step decided
-            // the long tier (`launch::copilot_context_tier`).
+            // the long tier from the model list of the machine its session
+            // signs in on (`launch::ContextTier::of_copilot_list`).
             Harness::Copilot => vec![
                 "--autopilot",
                 "--max-autopilot-continues",
@@ -722,19 +723,27 @@ const COPILOT_LIST_ID: u64 = 1;
 /// closing.
 const COPILOT_LIST_BOUND: Duration = Duration::from_secs(10);
 
+/// The words that start the server Copilot's SDK starts
+/// (`CopilotClient.startCLIServer`), which answers [`copilot_model_list`].
+pub(crate) const COPILOT_SERVER_WORDS: [&str; 3] = ["--headless", "--stdio", "--no-auto-update"];
+
 /// Copilot's own model list, the `result` of the `models.list` request its
-/// SDK server answers, read from the Copilot CLI at `executable` with `env`
-/// added to the inherited environment. The server is the one the Copilot SDK
-/// starts (`copilot --headless --stdio --no-auto-update`, its
-/// `CopilotClient.startCLIServer`), framed as JSON-RPC with `Content-Length`
-/// headers, and the list sends no prompt. Its stdin stays open until the
-/// answer stands, since a server whose input ends first answers that its
-/// connection is no longer active. `Err` names why no list stands: the
-/// runner's own cause where the CLI cannot start or gives no answer within
-/// [`COPILOT_LIST_BOUND`], the server's `error.message` where it answers
-/// with an error, or that no framed answer came.
+/// SDK server answers, read from `executable` started with `args` and `env`
+/// added to the inherited environment, under `program` as the runner names
+/// it. The executable is the Copilot CLI started with
+/// [`COPILOT_SERVER_WORDS`], or a client that starts that server elsewhere
+/// and relays its standard streams, such as `ssh` to a lane's host. The
+/// request is framed as JSON-RPC with `Content-Length` headers, and the list
+/// sends no prompt. Its stdin stays open until the answer stands, since a
+/// server whose input ends first answers that its connection is no longer
+/// active. `Err` names why no list stands: the runner's own cause where the
+/// program cannot start or gives no answer within [`COPILOT_LIST_BOUND`],
+/// the server's `error.message` where it answers with an error, or that no
+/// framed answer came.
 pub fn copilot_model_list(
+    program: &'static str,
     executable: &Path,
+    args: &[&str],
     env: &[(&str, &OsStr)],
 ) -> std::result::Result<serde_json::Value, String> {
     let request = serde_json::json!({
@@ -747,10 +756,10 @@ pub fn copilot_model_list(
     let framed = format!("Content-Length: {}\r\n\r\n{request}", request.len());
     let out = host::run_tagged_fed_own_group(
         "copilot-models",
-        Harness::Copilot.binary(),
+        program,
         executable,
         "models-list",
-        &["--headless", "--stdio", "--no-auto-update"],
+        args,
         host::Place { cwd: None, env },
         framed.as_bytes(),
         Some(host::Hold {
