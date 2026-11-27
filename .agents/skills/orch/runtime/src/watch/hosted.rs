@@ -911,28 +911,111 @@ fn item_unknown(stderr: &str, item: &str) -> bool {
 /// lists after its close answered, and `exited`.
 const TORN_DOWN: [&str; 3] = ["destroying", "destroyed", "exited"];
 
-/// The state of the sandbox the provider's `list` names for `item`: the
-/// second field of a row whose first ends in `/ITEM`, in any case, outside
-/// an `available` row and the [`TORN_DOWN`] states; `None` where no such row
-/// stands, the sandbox gone. `list` is the protocol's one presence read.
-/// `Err` is a list that failed or was refused at the bound ([`BUSY`]).
+/// The state of the sandbox the provider's `list` names for `item`
+/// ([`listed_in`] over one [`listing`]); `None` where no such row stands,
+/// the sandbox gone. `list` is the protocol's one presence read. `Err` is a
+/// list that failed or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
     scripts: &Path,
     host: &str,
     item: &str,
 ) -> std::result::Result<Option<String>, String> {
+    listing(scripts, host).map(|rows| listed_in(&rows, item))
+}
+
+/// The provider's plain `list` reply, read once so a caller judging several
+/// items on one host asks the host once. `Err` as [`lists_item`].
+pub fn listing(scripts: &Path, host: &str) -> std::result::Result<String, String> {
     let out = lane_host(scripts, host, &["list"])?;
     if exit_code(&out) != 0 {
         return Err(cause_of("list", &out));
     }
+    Ok(host::stdout_text(&out))
+}
+
+/// The state a [`listing`] names for `item`: the second field of a row
+/// whose first ends in `/ITEM`, in any case, outside an `available` row and
+/// the [`TORN_DOWN`] states.
+pub fn listed_in(listing: &str, item: &str) -> Option<String> {
     let suffix = format!("/{}", item.to_ascii_lowercase());
-    Ok(host::stdout_text(&out).lines().find_map(|row| {
+    listing.lines().find_map(|row| {
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
         let state = fields.next().unwrap_or("");
         (state != "available" && !TORN_DOWN.contains(&state) && name.ends_with(&suffix))
             .then(|| state.to_owned())
-    }))
+    })
+}
+
+/// Why a read of a hosted lane's files did not answer, judged by
+/// [`Unread::listed`]: the close's ask and box reads, the watch's mail drain
+/// and its handoff read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unread {
+    /// The provider's call pool refused the call at `step` (`mail-read`, or
+    /// `list` for the presence read after it): nothing ran, and the same
+    /// read asked again can answer.
+    Busy { step: &'static str },
+    /// The provider lists no sandbox for the item, or one torn down: the box
+    /// went with it, and nothing is left to read.
+    Gone { cause: String },
+    /// Any other failure, its sandbox standing or its list failed.
+    Failed { cause: String },
+}
+
+impl Unread {
+    /// A box read's refusal: one at the provider-call bound is busy,
+    /// anything else failed until the provider's list judges it.
+    pub(crate) fn of(refusal: &crate::mailbox::Refusal) -> Unread {
+        use crate::mailbox::Refusal;
+        match refusal {
+            Refusal::Exit {
+                status: Some(crate::mailbox::HOST_BUSY_EXIT),
+                ..
+            } => Unread::Busy { step: "mail-read" },
+            Refusal::NotStarted { .. }
+            | Refusal::Unanswered { .. }
+            | Refusal::Exit { .. }
+            | Refusal::Reply { .. } => Unread::Failed {
+                cause: refusal.to_string(),
+            },
+        }
+    }
+
+    /// A failed read judged by the provider's list ([`lists_item`]):
+    /// no row for the item is the sandbox gone; a row standing keeps the
+    /// read's failure with its state, a list refused at the bound is busy,
+    /// and a list that fails keeps the read's failure with its cause.
+    pub(crate) fn listed(
+        self,
+        list: impl FnOnce() -> std::result::Result<Option<String>, String>,
+    ) -> Unread {
+        let Unread::Failed { cause } = self else {
+            return self;
+        };
+        match list() {
+            Ok(None) => Unread::Gone { cause },
+            Ok(Some(state)) => Unread::Failed {
+                cause: format!("listed={state} {cause}"),
+            },
+            Err(list) if list.starts_with(BUSY) => Unread::Busy { step: "list" },
+            Err(list) => Unread::Failed {
+                cause: format!("{cause} list={list}"),
+            },
+        }
+    }
+}
+
+/// Leads with the stable key a caller reads: `host-busy step=STEP`,
+/// `host-absent` or `mail-read-failed`, the cause after it.
+impl std::fmt::Display for Unread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unread::Busy { step } => write!(f, "{BUSY} step={step}"),
+            Unread::Gone { cause } => write!(f, "{} {cause}", state::HOST_ABSENT),
+            Unread::Failed { cause } => write!(f, "mail-read-failed {cause}"),
+        }
+    }
 }
 
 /// The rows of the provider's `list --json` (`schemas/lane-host.md`,
@@ -2551,23 +2634,27 @@ pub fn retained_clone(fleet: &Path, item: &str) -> Result<Option<PathBuf>, Strin
 /// checkout's configured state directory ([`configured_state_dir`]) and the
 /// lane root's `tmp`, the root's alone for a worktree the host no longer
 /// has. The first standing record wins, else a place that could not be read
-/// or holds no JSON object, else none. `Err` is the read that failed, as the
-/// fields after `item=`. The clone the worktree's `.git` names is kept in
-/// [`CLONE_ROW`] where it moved.
+/// or holds no JSON object, else none. A state directory that does not
+/// read is judged by the provider's list ([`refused_handoff`]): its first
+/// read, the worktree's `.git`, is the one a host holding no sandbox for the
+/// item refuses, and a host that answered it holds the sandbox for the
+/// places after it. `Err` is the read that failed, as the fields after
+/// `item=`. The clone the worktree's `.git` names is kept in [`CLONE_ROW`]
+/// where it moved.
 pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffReading, String> {
     let scripts = pass.scripts;
     let root = mail_root(lane).map_err(|cause| format!("cause={cause}"))?;
-    let places =
-        match configured_state_dir(scripts, lane, root).map_err(|c| format!("cause={c}"))? {
-            Some((dir, clone)) => {
-                let clone = clone.display().to_string();
-                if pass.baseline.get(CLONE_ROW, &lane.item) != Some(clone.as_str()) {
-                    out.changes.push(set(CLONE_ROW, &lane.item, clone));
-                }
-                handoff_places(&dir, &lane.item, Some(Path::new(root)))
+    let places = match configured_state_dir(scripts, lane, root) {
+        Ok(Some((dir, clone))) => {
+            let clone = clone.display().to_string();
+            if pass.baseline.get(CLONE_ROW, &lane.item) != Some(clone.as_str()) {
+                out.changes.push(set(CLONE_ROW, &lane.item, clone));
             }
-            None => vec![state::item_path(&Path::new(root).join("tmp"), &lane.item)],
-        };
+            handoff_places(&dir, &lane.item, Some(Path::new(root)))
+        }
+        Ok(None) => vec![state::item_path(&Path::new(root).join("tmp"), &lane.item)],
+        Err(cause) => return refused_handoff(pass, lane, format!("cause={cause}")),
+    };
     let mut unread = None;
     for place in places {
         let place = place.display().to_string();
@@ -2589,6 +2676,20 @@ pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffRe
         }
     }
     unread.map_or(Ok(HandoffReading::None), Err)
+}
+
+/// A handoff read the host refused, judged by the provider's list
+/// ([`Unread::listed`]): a sandbox it no longer lists, as after the lane's
+/// own close-out, took its records with it and holds no handoff; one it
+/// lists, or a list that fails, keeps the read's failure.
+fn refused_handoff(pass: &Pass, lane: &Lane, fields: String) -> Result<HandoffReading, String> {
+    let unread = Unread::Failed { cause: fields }
+        .listed(|| lists_item(pass.scripts, host_of(lane), &lane.item));
+    match unread {
+        Unread::Gone { .. } => Ok(HandoffReading::None),
+        Unread::Failed { cause } => Err(cause),
+        Unread::Busy { .. } => Err(format!("cause={unread}")),
+    }
 }
 
 /// A lane's session rows through the provider: the file the lane's hook

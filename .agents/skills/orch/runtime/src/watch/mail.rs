@@ -35,7 +35,11 @@
 //! lines and rows are delivered, the refused target's rows stay where they
 //! were so the next turn reads it again, and the turn is reported failed,
 //! `watch-step-failed step=mail count=N` in the log with each refused
-//! target and its cause on stderr. No box is ever read as empty.
+//! target and its cause on stderr. No box is ever read as empty. A hosted
+//! box the host did not serve (`mail-read-failed`) is judged by the
+//! provider's list first ([`Unread::listed`]): a sandbox it no longer lists
+//! took its box with it, so nothing of that lane is delivered and it is
+//! not refused; it is read again each turn until the overseer's close.
 //!
 //! A provider's `sandbox-stopped` notice from a sender on the owner's
 //! channel, or in a `data` envelope whose `source` is `reap`, in the
@@ -59,6 +63,7 @@ use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
 use crate::watch::ended;
+use crate::watch::hosted::Unread;
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
@@ -500,6 +505,25 @@ fn unread_value(newest: Option<(u64, &str)>, count: u64) -> String {
     }
 }
 
+/// Each host's `list` reply, or its refusal, read at most once per turn.
+type Listings = BTreeMap<String, std::result::Result<String, String>>;
+
+/// Whether a drain refused because the host did not serve the box's files:
+/// `lane-mail`'s `mail-read-failed` key, the one it gives a failed snapshot
+/// or a failed row of one. Any other refusal judged files the host served,
+/// which shows the sandbox stands, or never reached the host.
+fn box_unfetched(refusal: &Refusal) -> bool {
+    match refusal {
+        Refusal::Exit {
+            keyed: Some(keyed), ..
+        } => keyed.split_once('=').map(|(key, _)| key) == Some("mail-read-failed"),
+        Refusal::Exit { keyed: None, .. }
+        | Refusal::NotStarted { .. }
+        | Refusal::Unanswered { .. }
+        | Refusal::Reply { .. } => false,
+    }
+}
+
 /// Which lanes of the fleet have a mailbox the duty reads: a running lane
 /// whose kind's channel is a mailbox,
 /// with its recorded root and, for a lane on another host, that host, which
@@ -703,11 +727,15 @@ impl MailDuty {
     /// The cached lanes batched per host. Keep the individual cached route
     /// for boxes the batch could not answer, so a refusal or timeout holding
     /// one box cannot hold the others, and a client without hosted batching
-    /// can still read the same snapshot.
+    /// can still read the same snapshot. A box the host did not serve is
+    /// judged by the host's listing, read once per host into `listings` for
+    /// the whole turn, so one failed host is asked once however many of its
+    /// lanes it refused.
     fn drain_hosted<'a>(
         &self,
         lanes: &'a [(Drain, String)],
         snapshots: &BTreeMap<String, PathBuf>,
+        listings: &mut Listings,
         turn: &mut Turn,
     ) -> Vec<(&'a Drain, &'a str, Drained)> {
         let mut groups = BTreeMap::<&str, Vec<usize>>::new();
@@ -746,6 +774,30 @@ impl MailDuty {
             .zip(read)
             .filter_map(|((lane, host), drained)| match drained? {
                 Ok(drained) => Some((lane, host.as_str(), drained)),
+                Err(refusal) if box_unfetched(&refusal) => {
+                    let unread = Unread::Failed {
+                        cause: refusal.to_string(),
+                    }
+                    .listed(|| {
+                        let scripts = super::overseer::scripts_dir(&self.config.common_root);
+                        listings
+                            .entry(host.clone())
+                            .or_insert_with(|| super::hosted::listing(&scripts, host))
+                            .as_ref()
+                            .map(|rows| super::hosted::listed_in(rows, &lane.item))
+                            .map_err(Clone::clone)
+                    });
+                    match unread {
+                        // The lane's own close-out can take its sandbox
+                        // before the overseer's close: no box is left to
+                        // read, and its rows stand for that close.
+                        Unread::Gone { .. } => {}
+                        Unread::Busy { .. } | Unread::Failed { .. } => {
+                            turn.refuse(&lane.item, unread);
+                        }
+                    }
+                    None
+                }
                 Err(refusal) => {
                     turn.refuse(&lane.item, refusal);
                     None
@@ -783,8 +835,9 @@ impl MailDuty {
             .map(|(lane, drained)| (lane, drained, None))
             .collect();
         let snapshots = self.snapshots(&hosted, turn);
+        let mut listings = Listings::new();
         read.extend(
-            self.drain_hosted(&hosted, &snapshots, turn)
+            self.drain_hosted(&hosted, &snapshots, &mut listings, turn)
                 .into_iter()
                 .map(|(lane, host, drained)| (lane.clone(), drained, Some(host.to_owned()))),
         );
@@ -820,7 +873,7 @@ impl MailDuty {
             .map(|(lane, drained)| (lane.item, drained))
             .collect();
         reread.extend(
-            self.drain_hosted(&again_hosted, &snapshots, turn)
+            self.drain_hosted(&again_hosted, &snapshots, &mut listings, turn)
                 .into_iter()
                 .map(|(lane, _, drained)| (lane.item.clone(), drained)),
         );
