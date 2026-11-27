@@ -1026,6 +1026,7 @@ fn continue_overseer(
         own_room: true,
         room,
         reset: false,
+        resets: &[],
     };
     // The patience is the action's own: asked as though another provider
     // had room, a session still inside it is resumed with no walk. Under
@@ -1073,7 +1074,10 @@ fn continue_overseer(
                 None => resume(out),
             }
         }
-        Action::MoveAccount { .. } | Action::WaitForReset | Action::Notify { .. } => {
+        Action::MoveAccount { .. }
+        | Action::WaitForReset
+        | Action::Notify { .. }
+        | Action::NotifyReset { .. } => {
             unreachable!("a provider stop is resumed or moved to another provider")
         }
     }
@@ -2139,6 +2143,7 @@ fn transfer(
             own_room: false,
             room: successor.is_some(),
             reset: matches!(own, OwnRoom::Lifts(Some(_))),
+            resets: &[],
         };
         let account = record.account.as_deref().unwrap_or("unrecorded");
         // A wall's step does not turn on its age.
@@ -2159,7 +2164,7 @@ fn transfer(
             // Waiting for the reset is no step of its own: the pending case
             // is walked on each pass and resumed once its account reads
             // room, so a reset only changes what the owner is told.
-            Action::Notify { .. } | Action::WaitForReset => {
+            Action::Notify { .. } | Action::WaitForReset | Action::NotifyReset { .. } => {
                 if let Some(line) = &unread
                     && !unread_patience_passed(key, pass, out)
                 {

@@ -211,6 +211,10 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
+    /// The unused limit resets the provider states for the account, on
+    /// each reading of it ([`Roster::carry_limit_resets`]) and on the
+    /// reading a pick takes ([`resolve`]); `None` where it states none.
+    pub limit_resets: Option<u64>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
     /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: the judge refuses it
@@ -341,6 +345,7 @@ impl AccountRow {
             },
             reserved: flag(raw, "reserved"),
             seat: flag(raw, "seat"),
+            limit_resets: None,
             retire,
             excluded,
             configured: raw.get("configured") != Some(&Value::Bool(false)),
@@ -547,6 +552,16 @@ pub fn today(now_secs: u64) -> String {
     clock::iso_utc(now_secs)[..10].to_owned()
 }
 
+/// An account holding an unused limit reset ([`Roster::reset_holders`]).
+/// The directory names the account, as a launch names it; the alias is a
+/// label only, since `AGENT_RUNTIME_ACCOUNT_ALIASES` can give two
+/// directories one alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResetHolder {
+    pub config_dir: String,
+    pub alias: String,
+}
+
 /// One listing under the judge's statement: its rows, the cause the
 /// provider's read failed with, and the keyed lines the listing says
 /// beside the rows.
@@ -623,6 +638,56 @@ impl Roster {
         lines
     }
 
+    /// Carries onto each reading, this machine's or the provider's, the
+    /// unused limit resets the provider's `accounts --json --headroom`
+    /// document `doc` states for its account, matched on the harness and
+    /// the directory name, never the local alias, since the document names
+    /// the account by its directory's name; the cause where the document
+    /// cannot be read, with no row changed. A Codex account reaches the
+    /// roster as this machine's reading alone, since the provider's plain
+    /// `accounts` answer lists no Codex row. The document states no full
+    /// directory, so two directories of one name in different parents both
+    /// carry the count.
+    pub fn carry_limit_resets(&mut self, doc: &str) -> std::result::Result<(), String> {
+        let stated = batch::limit_resets(doc)?;
+        for row in &mut self.rows {
+            row.limit_resets = stated
+                .iter()
+                .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
+                .map(|s| s.count);
+        }
+        Ok(())
+    }
+
+    /// Each account holding at least one unused limit reset that a choice
+    /// among accounts for `req` could take, `req` being the question the
+    /// stopped session's walk asks: the pick's own candidates
+    /// ([`choosable`]) whose word stands open; none where the request's
+    /// model bills no harness; the cause where the pick could not read the
+    /// token files it signs in by. The stop decision's
+    /// [`crate::stop::Ground::resets`].
+    pub fn reset_holders(
+        &self,
+        req: &PickRequest,
+        tokens: &settings::Judged<Vec<(String, PathBuf)>>,
+        now: u64,
+    ) -> std::result::Result<Vec<ResetHolder>, String> {
+        let Some((billed, rows)) = resolved(&self.rows, req, tokens, now)? else {
+            return Ok(Vec::new());
+        };
+        let today = today(now);
+        Ok(choosable(&rows, billed, req)
+            .filter(|r| {
+                r.limit_resets.is_some_and(|n| n > 0)
+                    && standing_for(r, req, &today) == Standing::Open
+            })
+            .map(|r| ResetHolder {
+                config_dir: r.config_dir.clone(),
+                alias: r.alias.clone(),
+            })
+            .collect())
+    }
+
     /// Whether an account bills the harness and pool a pick would judge
     /// (`owed_wall`'s roster check).
     pub fn bills(&self, billed: Harness, pool: &str) -> bool {
@@ -688,8 +753,8 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// windows, its buckets as read, marked `scope: unread`; and a local copy
 /// with no credential file is no reading, so the provider's measured one
 /// stands as an account's one reading does. The provider's words
-/// (`reserved`, `plan-ends`) stand whichever reading does, a row with no
-/// reading included. An account with one reading keeps it. The roster is
+/// (`reserved`, `plan-ends`) and its count of unused limit resets stand
+/// whichever reading does, a row with no reading included. An account with one reading keeps it. The roster is
 /// never resolved: it reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
@@ -743,7 +808,11 @@ fn resolve(
                         sign(&own),
                         Some(usage::SignIn::StoredLogin | usage::SignIn::TokenFile(_))
                     );
-                let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
+                let (reserved, plan_ends, limit_resets) = (
+                    provider.reserved,
+                    provider.plan_ends.clone(),
+                    provider.limit_resets,
+                );
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
                 } else {
@@ -753,6 +822,7 @@ fn resolve(
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
+                stands.limit_resets = stands.limit_resets.or(limit_resets);
                 out[i] = stands;
             }
             None => out.push(row.clone()),
@@ -2064,6 +2134,55 @@ fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
     req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own_question(req))
 }
 
+/// What a pick for `req` reads of `rows` before it judges any account: the
+/// harness the request's model bills, and the rows resolved to the one
+/// reading per account a pick judges ([`resolve`]). `None` where the model
+/// bills no harness; the cause where the token files a session opening
+/// here on a Claude account signs in by do not read, since they are read
+/// whole before any account and a setting that does not read judges none,
+/// as the transfer refuses it.
+fn resolved(
+    rows: &[AccountRow],
+    req: &PickRequest,
+    tokens: &settings::Judged<Vec<(String, PathBuf)>>,
+    now: u64,
+) -> std::result::Result<Option<(Harness, Vec<AccountRow>)>, String> {
+    let model = req.model.as_deref().unwrap_or("");
+    let Some(billed) = req.harness.billed(model) else {
+        return Ok(None);
+    };
+    let files = match (req.opens_here, billed) {
+        (true, Harness::Claude) => usage::token_files(tokens).map_err(|e| e.to_string())?,
+        (true, Harness::Codex | Harness::Copilot | Harness::Pi) | (false, _) => {
+            usage::TokenFiles::none()
+        }
+    };
+    Ok(Some((
+        billed,
+        resolve(rows, billed, model, req, &files, now),
+    )))
+}
+
+/// Whether a resolved row is billed under the launch's harness `billed`
+/// and spends the request's pool.
+fn candidate(row: &AccountRow, billed: Harness, req: &PickRequest) -> bool {
+    let api_credit = req.harness.pool(req.model.as_deref().unwrap_or("")) == "api-credit";
+    row.harness == billed && ((row.pool == "api-credit") == api_credit)
+}
+
+/// The resolved rows a choice among accounts for `req` judges: the
+/// candidates the owner configured that the request leaves in by name. The
+/// pick judges each, and the reset holders are drawn from the same set
+/// ([`Roster::reset_holders`]).
+fn choosable<'a>(
+    rows: &'a [AccountRow],
+    billed: Harness,
+    req: &'a PickRequest,
+) -> impl Iterator<Item = &'a AccountRow> + 'a {
+    rows.iter()
+        .filter(move |r| candidate(r, billed, req) && r.configured && !left_out(r, req))
+}
+
 /// The account's standing for `req`: its word's, except that a
 /// controller's question about its own account reads a provider's
 /// reservation and a stated end as no refusal, as it reads the owner's
@@ -2116,49 +2235,38 @@ pub fn pick(
 ) -> PickAnswer {
     let today = today(now);
     let model = req.model.as_deref().unwrap_or("");
-    let Some(billed) = req.harness.billed(model) else {
-        return match (&req.lane, &req.provider_key) {
-            (Some(lane), Some(key)) => keyed(
-                named(
-                    &unmeasured_row(lane, req.harness.pool(model), settings),
-                    req,
-                    facts,
-                    settings,
-                    now,
+    let (billed, rows) = match resolved(rows, req, tokens, now) {
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => {
+            return match (&req.lane, &req.provider_key) {
+                (Some(lane), Some(key)) => keyed(
+                    named(
+                        &unmeasured_row(lane, req.harness.pool(model), settings),
+                        req,
+                        facts,
+                        settings,
+                        now,
+                    ),
+                    key,
                 ),
-                key,
-            ),
-            (Some(_), None) | (None, _) => unbilled_answer(req),
-        };
+                (Some(_), None) | (None, _) => unbilled_answer(req),
+            };
+        }
+        Err(cause) => return PickAnswer::Unjudged { cause },
     };
+    let rows = &rows;
     let pool = req.harness.pool(model);
     let api_credit = pool == "api-credit";
     // A pool nobody measured is a read to repair, never a window to wait
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    // A session opening here on a Claude account signs in as the token
-    // files say, read whole before any account: a setting that does not
-    // read judges none, as the transfer refuses it.
-    let files = match (req.opens_here, billed) {
-        (true, Harness::Claude) => match usage::token_files(tokens) {
-            Ok(files) => files,
-            Err(e) => {
-                return PickAnswer::Unjudged {
-                    cause: e.to_string(),
-                };
-            }
-        },
-        (true, Harness::Codex | Harness::Copilot | Harness::Pi) | (false, _) => {
-            usage::TokenFiles::none()
-        }
-    };
-    let rows = &resolve(rows, billed, model, req, &files, now);
-    let candidate =
-        |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
-        return match rows.iter().find(|r| r.canon == canon && candidate(r)) {
+        return match rows
+            .iter()
+            .find(|r| r.canon == canon && candidate(r, billed, req))
+        {
             Some(row) => named(row, req, facts, settings, now),
             None if grant_pool => named(
                 &unmeasured_row(lane, pool, settings),
@@ -2170,10 +2278,8 @@ pub fn pick(
             None => PickAnswer::NoRecord,
         };
     }
-    let candidates = rows.iter().filter(|r| candidate(r)).count();
-    let judged: Vec<Judged> = rows
-        .iter()
-        .filter(|r| candidate(r) && r.configured && !left_out(r, req))
+    let candidates = rows.iter().filter(|r| candidate(r, billed, req)).count();
+    let judged: Vec<Judged> = choosable(rows, billed, req)
         .map(|r| judge(r, req, facts, settings, &today, now))
         .collect();
     let mut room: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "room").collect();
@@ -2394,6 +2500,161 @@ mod tests {
             assert_eq!(harness.billed(model), billed, "{harness} {model}");
             assert_eq!(harness.pool(model), pool, "{harness} {model}");
         }
+    }
+
+    /// Fleet's `accounts --json --headroom` answer as recorded on its control
+    /// VM (2026-11-26, trimmed to its Codex accounts and one Claude account):
+    /// `meters.limit_resets` on 1codex (1) and 3codex (0), none on 2codex
+    /// (an expired sign-in) nor on a Claude account.
+    const HEADROOM: &str = r#"{"accounts":[
+        {"name":"2claude","harness":"claude","meters":{"windows":[{"wall":"weekly","used_pct":69,"resets":"2026-12-01T23:00:00Z"}]}},
+        {"name":"1codex","harness":"codex","meters":{"windows":[{"wall":"weekly","used_pct":2,"resets":"2026-12-03T02:15:29Z"}],"credits":0.0,"credit_flags":{"has_credits":false,"overage_limit_reached":false,"spend_control_reached":false},"limit_resets":1}},
+        {"name":"2codex","harness":"codex","meters":{"windows":[]}},
+        {"name":"3codex","harness":"codex","meters":{"windows":[{"wall":"weekly","used_pct":0,"resets":"2026-12-03T07:24:18Z"}],"credits":0.0,"credit_flags":{"has_credits":false,"overage_limit_reached":false,"spend_control_reached":false},"limit_resets":0}}
+    ],"notes":[]}"#;
+
+    /// Each provider's reading carries the count the provider states for
+    /// its account's directory, on its harness alone, whatever alias the
+    /// machine gives it, and none where the provider states none. A
+    /// provider that answers its rows in place of the document changes no
+    /// row.
+    #[test]
+    fn each_row_carries_the_limit_resets_the_provider_states_for_its_account() {
+        let codex = |dir: &str, alias: &str| {
+            row(
+                json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"host","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
+            )
+        };
+        let claude = row(
+            json!({"alias":"1codex","harness":"claude","config_dir":"/h/.c","measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
+        );
+        let mut roster = Roster {
+            rows: vec![
+                codex("/h/.1codex", "x"),
+                codex("/h/.2codex", "y"),
+                // `AGENT_RUNTIME_ACCOUNT_ALIASES="3codex=1codex"`.
+                codex("/h/.3codex", "1codex"),
+                claude,
+            ],
+            provider_failure: None,
+            notes: Vec::new(),
+        };
+        let counts = |roster: &Roster| -> Vec<Option<u64>> {
+            roster.rows.iter().map(|r| r.limit_resets).collect()
+        };
+        roster.carry_limit_resets(HEADROOM).unwrap();
+        assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
+        assert!(
+            roster
+                .carry_limit_resets("account=/h/.1codex\tharness=codex\n")
+                .is_err()
+        );
+        assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
+    }
+
+    /// A reset holder is an account the stopped session's pick could take,
+    /// read through the pick's own candidate step, that lists at least one
+    /// unused reset, named by its directory. Each row is one case:
+    /// - the provider's later end overrides a past retirement this machine
+    ///   states;
+    /// - a question of another harness takes no holder;
+    /// - an account is configured on the reading the pick takes;
+    /// - a Codex account this machine alone reads carries the provider's
+    ///   count;
+    /// - the provider's count reaches the reading of this machine that
+    ///   stands where the provider read nothing.
+    #[test]
+    fn the_reset_holders_are_the_pick_candidates_that_list_a_reset() {
+        let settings = AccountSettings {
+            retire: vec![Retirement {
+                name: "5codex".to_owned(),
+                date: "2026-10-20".to_owned(),
+            }],
+            ..settings()
+        };
+        let reading = |dir: &str, through: &str, extra: Value| {
+            let alias = base(dir).trim_start_matches('.').to_owned();
+            let mut raw = json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":through,"status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null});
+            if let (Value::Object(raw), Value::Object(extra)) = (&mut raw, extra) {
+                raw.extend(extra);
+            }
+            AccountRow::parse(&raw, &settings).expect("a row")
+        };
+        let doc = r#"{"accounts":[
+            {"name":"1codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"5codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"6codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"7codex","harness":"codex","meters":{"limit_resets":1}}
+        ]}"#;
+        let tokens = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+        // 2026-11-26T12:00:00Z.
+        let now = 1_795_694_400;
+        let codex = PickRequest::new(Harness::Codex);
+        let claude = PickRequest::new(Harness::Claude);
+        let cases = [
+            (
+                "a past machine retirement under a later provider end",
+                vec![
+                    reading("/h/.5codex", "local", json!({})),
+                    reading("/h/.5codex", "host", json!({"plan_ends":"2026-12-31"})),
+                ],
+                &codex,
+                vec!["/h/.5codex"],
+            ),
+            (
+                "a Codex holder under a Claude question",
+                vec![reading("/h/.1codex", "host", json!({}))],
+                &claude,
+                vec![],
+            ),
+            (
+                "an account configured on its provider's reading alone",
+                vec![
+                    reading("/h/.7codex", "local", json!({"configured":false})),
+                    reading("/h/.7codex", "host", json!({})),
+                ],
+                &codex,
+                vec!["/h/.7codex"],
+            ),
+            (
+                "a Codex account this machine alone reads",
+                vec![reading("/h/.1codex", "local", json!({}))],
+                &codex,
+                vec!["/h/.1codex"],
+            ),
+            (
+                "a provider reading that read nothing beside this machine's measured one",
+                vec![
+                    reading("/h/.6codex", "local", json!({})),
+                    reading(
+                        "/h/.6codex",
+                        "host",
+                        json!({"status":"unreachable","headroom_pct":null}),
+                    ),
+                ],
+                &codex,
+                vec!["/h/.6codex"],
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(case, rows, req, want)| {
+                let mut roster = Roster {
+                    rows,
+                    provider_failure: None,
+                    notes: Vec::new(),
+                };
+                roster.carry_limit_resets(doc).unwrap();
+                let got: Vec<String> = roster
+                    .reset_holders(req, &tokens, now)
+                    .unwrap()
+                    .into_iter()
+                    .map(|h| h.config_dir)
+                    .collect();
+                (got != want).then(|| format!("{case}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     /// The machine's stated end is matched on the alias, the directory name

@@ -162,6 +162,7 @@ fn a_limit_increase_prompt_is_a_usage_limit_that_is_never_resumed() {
                 own_room,
                 room,
                 reset,
+                resets: &[],
             };
             let action = stop::action(Kind::Usage, Duration::from_secs(60), session, ground);
             assert_ne!(action, Action::Resume, "{session:?} {ground:?}");

@@ -1,9 +1,11 @@
-//! Measurements someone else took, in the one form the judge reads them:
-//! the provider `accounts` answer, one tab-separated `key=value` line per
+//! Measurements someone else took, in the two forms a provider's `accounts`
+//! answer takes. The first is one tab-separated `key=value` line per
 //! account. Its one parser reads a provider's answer for orch's listing and
 //! a supplied batch for `accounts judge`; each line's row is finished as the
 //! listing finishes its own, and a batch's rows are judged as a named pick
-//! judges one account.
+//! judges one account. The second, the `accounts --json --headroom`
+//! document, is read for its `meters.limit_resets` alone
+//! ([`super::Roster::carry_limit_resets`]).
 //!
 //! A Codex row carries the facts of its credit as OpenAI's answer states
 //! them, never a verdict: the balance and whether credit exists, whether the
@@ -405,6 +407,59 @@ pub fn host_words(ctx: &mut Ctx, text: &str, host_pool: &str) -> Vec<Value> {
     text.lines()
         .filter_map(words_line)
         .map(|read| line_row(ctx, read, host_pool, "host"))
+        .collect()
+}
+
+/// One account's unused limit resets as a provider's `accounts --json
+/// --headroom` document states them: Fleet's `meters.limit_resets`, OpenAI's
+/// reset credits on a Codex account whose answer states them. The document
+/// names an account by its directory's name without the dot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LimitResets {
+    pub name: String,
+    pub harness: Harness,
+    pub count: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct Headroom {
+    accounts: Vec<HeadroomAccount>,
+}
+
+#[derive(serde::Deserialize)]
+struct HeadroomAccount {
+    name: String,
+    harness: String,
+    #[serde(default)]
+    meters: Meters,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct Meters {
+    limit_resets: Option<u64>,
+}
+
+/// The count of each account the document `doc` states one for. An account
+/// it states none for is left out, never counted as none. The cause where
+/// the document cannot be read, such as a provider's `accounts` lines
+/// answered in its place.
+pub(super) fn limit_resets(doc: &str) -> std::result::Result<Vec<LimitResets>, String> {
+    let read: Headroom =
+        serde_json::from_str(doc).map_err(|e| format!("limit-resets-unreadable cause={e}"))?;
+    read.accounts
+        .into_iter()
+        .filter_map(|account| Some((account.meters.limit_resets?, account)))
+        .map(|(count, account)| match Harness::parse(&account.harness) {
+            Some(harness) => Ok(LimitResets {
+                name: account.name,
+                harness,
+                count,
+            }),
+            None => Err(format!(
+                "limit-resets-unreadable account={} field=harness",
+                account.name
+            )),
+        })
         .collect()
 }
 

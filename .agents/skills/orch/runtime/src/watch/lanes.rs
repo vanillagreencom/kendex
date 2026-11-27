@@ -1784,6 +1784,7 @@ fn continue_lane(
             own_room: true,
             room: matches!(found, Some(Found::Destination(_))),
             reset: false,
+            resets: &[],
         };
         match (
             stop::action(Kind::Provider, age, Session::Worker, ground),
@@ -1809,8 +1810,10 @@ fn continue_lane(
             (Action::Resume, None | Some(Found::None | Found::Destination(_))) => {}
             (action @ Action::MoveProvider, None | Some(Found::None | Found::Unjudged(_)))
             | (
-                action
-                @ (Action::MoveAccount { .. } | Action::WaitForReset | Action::Notify { .. }),
+                action @ (Action::MoveAccount { .. }
+                | Action::WaitForReset
+                | Action::Notify { .. }
+                | Action::NotifyReset { .. }),
                 _,
             ) => tell(out, &format!("action-unexpected action={action:?}")),
         }
@@ -1911,13 +1914,15 @@ fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
         own_room: true,
         room: false,
         reset: false,
+        resets: &[],
     };
     match stop::action(Kind::Exited, Duration::ZERO, Session::Worker, ground) {
         Action::Resume => {}
         action @ (Action::MoveAccount { .. }
         | Action::MoveProvider
         | Action::WaitForReset
-        | Action::Notify { .. }) => {
+        | Action::Notify { .. }
+        | Action::NotifyReset { .. }) => {
             return refused(out, &format!("action-unexpected action={action:?}"));
         }
     }
@@ -2552,6 +2557,7 @@ fn route(
         own_room: false,
         room: to.is_some(),
         reset,
+        resets: &[],
     };
     let to = match (
         stop::action(Kind::from(kind), Duration::ZERO, Session::Worker, ground),
@@ -2571,7 +2577,7 @@ fn route(
         }
         (action @ Action::MoveAccount { .. }, None)
         | (action @ (Action::WaitForReset | Action::Notify { .. }), Some(_))
-        | (action @ (Action::Resume | Action::MoveProvider), _) => {
+        | (action @ (Action::Resume | Action::MoveProvider | Action::NotifyReset { .. }), _) => {
             return refused(notes, &format!("action-unexpected action={action:?}"));
         }
     };
