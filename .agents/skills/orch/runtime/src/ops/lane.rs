@@ -268,23 +268,8 @@ impl LaunchLane {
         }
     }
 
-    /// The permission word judged against the harness's table: `Ok` with
-    /// the meaning of the word that stands (`None` for no word), `Err` for
-    /// a word the table lacks, which no launch line can carry faithfully.
     fn permission_meaning(&self) -> std::result::Result<Option<PermissionMeaning>, ()> {
-        let words = self.permission_words();
-        if words.is_empty() {
-            return Ok(None);
-        }
-        let Some(harness) = Harness::parse(&self.harness) else {
-            return Ok(None);
-        };
-        match harness.permission_word_in(&words) {
-            Some((spelling, meaning)) if spelling.split_whitespace().count() == words.len() => {
-                Ok(Some(meaning))
-            }
-            Some(_) | None => Err(()),
-        }
+        permission_meaning_on(&self.harness, &self.permission_words())
     }
 
     /// The record's `allow_all`: whether a Copilot lane's line grants the
@@ -1302,6 +1287,28 @@ fn choice_named(r: &LaunchLane, harness: Harness) -> Result<()> {
     Ok(())
 }
 
+/// The permission words `words` judged against `harness`'s table: `Ok`
+/// with the meaning of the word that stands (`None` for no word), `Err` for
+/// a word the table lacks, which no launch line of that harness can carry
+/// faithfully.
+fn permission_meaning_on(
+    harness: &str,
+    words: &[String],
+) -> std::result::Result<Option<PermissionMeaning>, ()> {
+    if words.is_empty() {
+        return Ok(None);
+    }
+    let Some(harness) = Harness::parse(harness) else {
+        return Ok(None);
+    };
+    match harness.permission_word_in(words) {
+        Some((spelling, meaning)) if spelling.split_whitespace().count() == words.len() => {
+            Ok(Some(meaning))
+        }
+        Some(_) | None => Err(()),
+    }
+}
+
 pub(super) fn launch_lane(
     path: &Path,
     doc: &mut Document,
@@ -1635,8 +1642,20 @@ pub(super) fn launch_lane(
             // first launch's tier, since its brief opens the workflow with
             // `start` whatever tier the item runs at; a launch over a `done`
             // record opens the item's next phase, whose brief states its own.
+            let kept: Vec<String> = previous
+                .get("permission")
+                .and_then(Value::as_str)
+                .map(|p| p.split_whitespace().map(str::to_owned).collect())
+                .unwrap_or_default();
             if let Value::String(permission) = r.permission_recorded() {
                 record::set(lane, "permission", permission.as_str());
+            } else if permission_meaning_on(&r.harness, &kept).is_err() {
+                // A kept word is its harness's own spelling. One this
+                // launch's harness cannot carry, as on a move onto Pi, which
+                // has none, would refuse every relaunch composed from the
+                // record `permission-unrepresentable`, after that relaunch's
+                // close had retired the predecessor.
+                record::set(lane, "permission", Value::Null);
             }
             if allow_all.is_some() {
                 record::set(lane, "allow_all", allow_all);
@@ -4313,5 +4332,81 @@ mod tests {
             after,
             "a parked lane is left as it is"
         );
+    }
+
+    /// A relaunch over a record whose word came from another harness's
+    /// launch keeps that word only where its own harness carries it: the
+    /// recovery the watch composes from the persisted record then launches.
+    /// A move onto Pi, which has no word, leaves a Pi recovery that runs its
+    /// own posture; a codex relaunch naming no word keeps the record's
+    /// codex word for the codex recovery after it.
+    #[test]
+    fn a_recovery_from_the_relaunched_record_launches_under_a_word_its_harness_carries() {
+        use crate::watch::lanes::{Composed, Composition, compose_relaunch};
+        const CODEX_BYPASS: &str = "--dangerously-bypass-approvals-and-sandbox";
+        let rows = [
+            ("pi", Harness::Pi, "openai/gpt-5.5:high", None, Value::Null),
+            (
+                "codex",
+                Harness::Codex,
+                "gpt-5.5-codex",
+                Some("high"),
+                Value::from(CODEX_BYPASS),
+            ),
+        ];
+        for (harness, recovered_on, model, effort, permission) in rows {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let checkout = root.join("w");
+            fs::create_dir(&checkout).unwrap();
+            let mail_root = checkout.display().to_string();
+            let path = fleet_file(&root);
+            let mut rec = record("KEN-P", "stopped", None);
+            rec["harness"] = json!("codex");
+            rec["permission"] = json!(CODEX_BYPASS);
+            rec["mail_root"] = json!(mail_root);
+            fleet_with(&path, &[rec]);
+            // The wall walk's move names no word where the harness has none.
+            let moved = Request::LaunchLane(Box::new(LaunchLane {
+                harness: harness.into(),
+                model: Some(model.into()),
+                effort: effort.map(str::to_owned),
+                mail_root: mail_root.clone(),
+                ..launch_fields("KEN-P")
+            }));
+            let id = intend(&path, &moved);
+            run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
+            let running = lane(&path, "KEN-P");
+            assert_eq!(running.harness.as_deref(), Some(harness));
+            let Composed { launch, .. } = compose_relaunch(
+                &running,
+                recovered_on,
+                &Composition {
+                    stem: "recovery",
+                    account: None,
+                    exclude: None,
+                    brief: |_, _| Ok(String::new()),
+                    ground: RecoveryReason::UsageLimit,
+                },
+                &root,
+            )
+            .unwrap();
+            // The recovery's close has retired the predecessor.
+            let mut retired = lane_doc(&path, "KEN-P");
+            retired.insert("status".into(), json!("stopped"));
+            retired.insert("launch".into(), Value::Null);
+            fleet_with(&path, &[Value::Object(retired)]);
+            let recovery: Request =
+                serde_json::from_str(&fs::read_to_string(&launch).unwrap()).unwrap();
+            let Report::LaunchLane(l) = run(&path, &recovery).unwrap().report else {
+                panic!("{harness}")
+            };
+            assert_eq!(l.lane.status, LaneStatus::Preparing, "{harness}");
+            assert_eq!(
+                lane_doc(&path, "KEN-P").get("permission"),
+                Some(&permission),
+                "{harness}"
+            );
+        }
     }
 }
