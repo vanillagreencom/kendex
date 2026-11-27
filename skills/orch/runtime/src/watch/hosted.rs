@@ -2723,8 +2723,8 @@ pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut 
 
 /// The retry of failed or deferred closes:
 /// only one pending at the pass's entry and untouched by it, while its
-/// notification row still reads `<key>|reported`; a new pane or state ends
-/// the earlier pending close.
+/// notification row still reads `<key>|reported`; a row that reads
+/// otherwise, a new key or none, ends the earlier pending close.
 pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     for lane in lanes {
         let name = lane_name(lane);

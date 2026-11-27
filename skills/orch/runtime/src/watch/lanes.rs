@@ -1682,14 +1682,23 @@ fn observe_one(
             out.events.extend(payload(bounded_tail(&slice, cap)));
             hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
         }
-        LaneState::Gone
-        | LaneState::Unreadable { .. }
-        | LaneState::Exited
-        | LaneState::Walled { .. }
+        // A pass that reads no stopped turn ends a first sighting, which two
+        // consecutive idle passes confirm, but never a told one: the told
+        // key's own parts tell the next turn apart, and one transient
+        // reading between two idle passes would otherwise tell the same
+        // stop again.
+        LaneState::Walled { .. }
         | LaneState::Asking
         | LaneState::RateLimitSwitch
         | LaneState::Working
         | LaneState::Unjudged { .. } => {
+            if get("lane-idle").is_some_and(|row| !row.ends_with("|reported")) {
+                out.changes.push(clear("lane-idle", lane));
+            }
+            out.changes.push(clear("model-capacity", lane));
+        }
+        // These returned above, the pane or session they key on ended.
+        LaneState::Gone | LaneState::Unreadable { .. } | LaneState::Exited => {
             out.changes.push(clear("lane-idle", lane));
             out.changes.push(clear("model-capacity", lane));
         }
@@ -4609,6 +4618,250 @@ mod tests {
         ];
         for (text, want) in rows {
             assert_eq!(step_of(text), want, "{text:?}");
+        }
+    }
+
+    /// One pass of the idle table: the lane read in a state on a screen at
+    /// a row position, a wake the lane's mark confirms delivered at an epoch
+    /// second, or the watch replaced by one that loads the stored baseline.
+    enum Step {
+        Read(LaneState, &'static str, usize),
+        Woken(u64),
+        Restart,
+    }
+
+    fn idle() -> LaneState {
+        LaneState::Idle {
+            capacity: false,
+            cause: None,
+        }
+    }
+
+    /// The `idle-after-return` lines one local Claude lane draws over
+    /// `steps`, each read through [`observe_one`] and its rows applied as
+    /// the runner commits a pass.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the fixture plants the wake record the wake duty writes"
+    )]
+    fn idle_lines(steps: &[Step]) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let roots = agent_runtime::settings::Roots {
+            project: root.clone(),
+            common: root.clone(),
+        };
+        let environment = [(
+            std::ffi::OsString::from("AGENT_RUNTIME_ACCOUNT_STATE_DIR"),
+            root.join("accounts").into_os_string(),
+        )];
+        let settings = settings::load(
+            &roots,
+            &environment,
+            &settings::Flags {
+                state_dir: Some(root.clone()),
+                private_env: false,
+            },
+        )
+        .unwrap();
+        let watch = settings.watch.get().unwrap();
+        let lane: Lane = serde_json::from_value(json!({
+            "item": "KEN-1",
+            "harness": "claude",
+            "status": "running",
+            "window": "gh-1",
+        }))
+        .unwrap();
+        let fleet = FleetState {
+            lanes: vec![lane.clone()],
+            overseer: None,
+            fleet_log: Vec::new(),
+            triaged: Vec::new(),
+            launch_queue: Vec::new(),
+            intents: Vec::new(),
+        };
+        let readers = Readers::kernel();
+        let walk = |_: &str, _: &WalkRequest| Err("unasked".to_owned());
+        let halted = |_: &Lane| Ok::<_, Refusal>(false);
+        let exited = |_: &Lane| Err("unasked".to_owned());
+        let start = |_: &Relaunch| Err("unasked".to_owned());
+        let route = WallRoute {
+            relaunch: watch.wall_relaunch,
+            walk: &walk,
+            preference: None,
+            host: Ok(None),
+            halted: &halted,
+            exited: &exited,
+            start: &start,
+        };
+        let roster = || Err("unasked".to_owned());
+        let reads = hosted::Reads {
+            gh: Path::new("/nonexistent/gh"),
+            roster: &roster,
+            project: &settings.roots.project,
+            reads: &settings.reads,
+        };
+        let wall_pauses = |_: RecordWallPauses| Ok(());
+        let hosts = Hosts::read(Path::new("/nonexistent"), std::iter::empty());
+        let stored = root.join("oversee-watch.baseline.json");
+        let mut baseline = Baseline::default();
+        let mut told = 0;
+        for (n, step) in steps.iter().enumerate() {
+            let (state, screen, position) = match step {
+                Step::Read(state, screen, position) => (state, *screen, *position),
+                Step::Woken(at) => {
+                    let mark = json!({"marks": {"KEN-1": {
+                        "pane": "%1", "server": 1, "unread": "u", "turns_before": 0,
+                        "line_digest": 0, "at": at,
+                        "outcome": {"wake": "delivered", "turns_after": 1},
+                    }}});
+                    std::fs::write(root.join(wake::WAKE_FILE), mark.to_string()).unwrap();
+                    continue;
+                }
+                Step::Restart => {
+                    baseline.store(&stored).unwrap();
+                    baseline = Baseline::load(&stored).unwrap();
+                    continue;
+                }
+            };
+            let walled = matches!(state, LaneState::Walled { .. });
+            let obs = Observed {
+                lane: &lane,
+                name: "gh-1".to_owned(),
+                pane_key: Some("1 %1".to_owned()),
+                identity: None,
+                screen: Some(screen.to_owned()),
+                row: Some(rows::Row {
+                    position,
+                    message: walled.then(|| "429 Usage limit reached for this model".to_owned()),
+                    ..rows::Row::default()
+                }),
+                provider_running: false,
+                state: state.clone(),
+            };
+            let pass = Pass {
+                fleet: &fleet,
+                fleet_path: &root.join("fleet.json"),
+                readers: &readers,
+                baseline: &baseline,
+                settings: &watch,
+                now: 1_800_000_000 + 240 * u64::try_from(n).unwrap(),
+                session: None,
+                own_panes: &[],
+                state_dir: &root,
+                claim_store: &settings.claim_store,
+                account_state: &settings.account_state,
+                scripts: Path::new("/nonexistent"),
+                route: &route,
+                wall_pauses: &wall_pauses,
+                hosted: &reads,
+                copilot_home: None,
+                server: None,
+            };
+            let mut out = Produced::default();
+            observe_one(&obs, &pass, &hosts, 20, &mut out);
+            assert_eq!(out.failed, None, "pass {n}");
+            told += out
+                .events
+                .iter()
+                .filter(|e| matches!(e, Event::IdleAfterReturn { .. }))
+                .count();
+            for change in out.changes {
+                baseline.apply(change);
+            }
+        }
+        told
+    }
+
+    /// The idle line tells a stopped turn once per pane, row position,
+    /// confirmed wake and slice: a pass in another state between idle
+    /// passes on the unchanged screen, or a restart on the stored baseline,
+    /// tells it no second time; a first sighting that pass interrupts is not
+    /// confirmed; a changed slice, position or confirmed wake is a new turn.
+    #[test]
+    fn the_idle_line_tells_each_stopped_turn_once() {
+        const DONE: &str = "Done: the suite passes.\n";
+        let walled = LaneState::Walled {
+            kind: WallKind::Usage,
+            banner: String::new(),
+            source: WallSource::Rows,
+        };
+        let unjudged = LaneState::Unjudged {
+            cause: "foreground-unread".to_owned(),
+        };
+        let between = |state: LaneState| {
+            vec![
+                Step::Read(idle(), DONE, 3),
+                Step::Read(idle(), DONE, 3),
+                Step::Read(state, "Running the suite\n", 3),
+                Step::Read(idle(), DONE, 3),
+                Step::Read(idle(), DONE, 3),
+            ]
+        };
+        let rows: Vec<(&str, Vec<Step>, usize)> = vec![
+            ("working_between", between(LaneState::Working), 1),
+            ("unjudged_between", between(unjudged), 1),
+            ("walled_between", between(walled), 1),
+            ("asking_between", between(LaneState::Asking), 1),
+            ("switch_between", between(LaneState::RateLimitSwitch), 1),
+            (
+                "restart_after_working",
+                vec![
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(LaneState::Working, "Running the suite\n", 3),
+                    Step::Restart,
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                ],
+                1,
+            ),
+            (
+                "first_sighting_interrupted",
+                vec![
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(LaneState::Working, "Running the suite\n", 3),
+                    Step::Read(idle(), DONE, 3),
+                ],
+                0,
+            ),
+            (
+                "new_slice_after_working",
+                vec![
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(LaneState::Working, "Running the suite\n", 3),
+                    Step::Read(idle(), "Done: the fix is committed.\n", 3),
+                    Step::Read(idle(), "Done: the fix is committed.\n", 3),
+                ],
+                2,
+            ),
+            (
+                "new_position_after_working",
+                vec![
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(LaneState::Working, "Running the suite\n", 3),
+                    Step::Read(idle(), DONE, 5),
+                    Step::Read(idle(), DONE, 5),
+                ],
+                2,
+            ),
+            (
+                "confirmed_wake_after_working",
+                vec![
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                    Step::Woken(1_800_000_500),
+                    Step::Read(LaneState::Working, "Running the suite\n", 3),
+                    Step::Read(idle(), DONE, 3),
+                    Step::Read(idle(), DONE, 3),
+                ],
+                2,
+            ),
+        ];
+        for (name, steps, want) in rows {
+            assert_eq!(idle_lines(&steps), want, "{name}");
         }
     }
 }
