@@ -985,6 +985,11 @@ pub struct Created {
     /// The Copilot home a Copilot lane runs under on the host, where the
     /// provider named one.
     pub copilot_home: Option<String>,
+    /// The prefix a Copilot lane's model-list read runs under on the host,
+    /// where the provider named one: the lane's account environment with no
+    /// process group of the lane's, so the read never stands as the lane's
+    /// recorded group.
+    pub read_prefix: Option<String>,
     /// `tree=unrebased`: the item's retained tree stands on its own head,
     /// its rebase onto the base aborted on a conflict, the work intact.
     pub unrebased: bool,
@@ -1029,6 +1034,7 @@ pub fn create(
         preparing: false,
         pi_root: None,
         copilot_home: None,
+        read_prefix: None,
         unrebased: kept_unrebased(&line),
         notices: crate::provider::notices(&host::stderr_text(&out)),
     };
@@ -1036,6 +1042,7 @@ pub fn create(
         match field.split_once('=') {
             Some(("pi-root", v)) if !v.is_empty() => created.pi_root = Some(v.to_owned()),
             Some(("copilot-home", v)) if !v.is_empty() => created.copilot_home = Some(v.to_owned()),
+            Some(("read-prefix", v)) if !v.is_empty() => created.read_prefix = Some(v.to_owned()),
             Some(("ssh-target", v)) => created.target = v.to_owned(),
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),

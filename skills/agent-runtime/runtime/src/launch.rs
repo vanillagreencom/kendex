@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::confine::{Confinement, Grants};
 use crate::error::{Error, Result};
 use crate::harness::{
-    COPILOT_LONG_TIER, Harness, PermissionMeaning, copilot_long_tier_at_par, copilot_model_list,
+    COPILOT_LONG_TIER, COPILOT_SERVER_WORDS, Harness, PermissionMeaning, copilot_long_tier_at_par,
+    copilot_model_list,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -150,9 +151,10 @@ pub struct LaunchIntent {
     #[serde(skip)]
     pub claude_sign_in: Option<ClaudeSignIn>,
     /// The context tier the session starts on, decided once by the step
-    /// that starts a local session ([`build_local`]) and spelled
-    /// here. Off the JSON contract, so only a site that decided it sets it;
-    /// a hosted launch decides none and keeps [`ContextTier::Native`].
+    /// that starts the session ([`build_local`] for a local one) from the
+    /// model list of the machine the session signs in on
+    /// ([`ContextTier::of_copilot_list`]), and spelled here. Off the JSON
+    /// contract, so only a site that decided it sets it.
     #[serde(skip)]
     pub context_tier: ContextTier,
 }
@@ -169,6 +171,24 @@ pub enum ContextTier {
     Long,
     /// No tier word, since Copilot's model list could not be read: the cause.
     Unread(String),
+}
+
+impl ContextTier {
+    /// The tier a Copilot launch of `model` starts on, given its model-list
+    /// read ([`copilot_model_list`]): [`ContextTier::Long`] where the list
+    /// prices the model the same at both tiers ([`copilot_long_tier_at_par`]),
+    /// [`ContextTier::Unread`] with the cause where no list was read, else
+    /// [`ContextTier::Native`].
+    pub fn of_copilot_list(
+        read: std::result::Result<serde_json::Value, String>,
+        model: &str,
+    ) -> ContextTier {
+        match read {
+            Ok(list) if copilot_long_tier_at_par(&list, model) => ContextTier::Long,
+            Ok(_) => ContextTier::Native,
+            Err(cause) => ContextTier::Unread(cause),
+        }
+    }
 }
 
 fn brief_none() -> Brief {
@@ -331,10 +351,10 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
 /// The command a local launch of `intent` runs: its context tier decided
 /// once, on this final intent, then spelled. Every step that starts a
 /// session on this machine builds through here, so none starts a Copilot
-/// session without the decision; a hosted launch and a preview build call
-/// [`build`] and decide none. A model list that cannot be read leaves the
-/// tier native and names its cause on the command
-/// (`copilot_model_list_unavailable`), which the caller records.
+/// session without the decision; a hosted launch decides its tier from its
+/// host's list and calls [`build`], as a preview build does. A model list
+/// that cannot be read leaves the tier native and names its cause on the
+/// command (`copilot_model_list_unavailable`), which the caller records.
 pub fn build_local(intent: &mut LaunchIntent) -> Result<LaunchCommand> {
     intent.context_tier = copilot_context_tier(intent)?;
     build(intent)
@@ -617,13 +637,10 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
 /// name the command clears set empty, which Copilot CLI 1.0.116 reads as
 /// unset (`COPILOT_GITHUB_TOKEN` among them), then each name it sets. A
 /// local launch therefore reads the list of the account its session signs
-/// in as on this machine. A hosted launch's session signs in on its host,
-/// which no read here reaches, so a hosted launch decides nothing.
-/// [`ContextTier::Long`] where the list prices the model the same at both
-/// tiers ([`copilot_long_tier_at_par`]), [`ContextTier::Unread`] with the
-/// cause where the list cannot be read, else [`ContextTier::Native`],
-/// which a launch on another harness or naming no model also takes with no
-/// read. Refuses what the build refuses.
+/// in as on this machine; a hosted launch's session signs in on its host,
+/// which reads its own list. The tier is [`ContextTier::of_copilot_list`];
+/// a launch on another harness or naming no model takes
+/// [`ContextTier::Native`] with no read. Refuses what the build refuses.
 fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
     let model = match (intent.harness, intent.model.as_deref()) {
         (Harness::Copilot, Some(model)) if !model.is_empty() => model,
@@ -645,13 +662,15 @@ fn copilot_context_tier(intent: &LaunchIntent) -> Result<ContextTier> {
                 .map(|(name, value)| (name.as_str(), OsStr::new(value))),
         )
         .collect();
-    Ok(
-        match copilot_model_list(Path::new(&command.program), &env) {
-            Ok(list) if copilot_long_tier_at_par(&list, model) => ContextTier::Long,
-            Ok(_) => ContextTier::Native,
-            Err(cause) => ContextTier::Unread(cause),
-        },
-    )
+    Ok(ContextTier::of_copilot_list(
+        copilot_model_list(
+            Harness::Copilot.binary(),
+            Path::new(&command.program),
+            &COPILOT_SERVER_WORDS,
+            &env,
+        ),
+        model,
+    ))
 }
 
 /// Whether a launch of `harness` under `permission` with the caller's

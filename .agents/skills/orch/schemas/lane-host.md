@@ -85,6 +85,7 @@ Each verb, its arguments, and its answer:
   - Optional: `state=preparing` where the create returns before its preparation ends.
   - Optional: `pi-root=DIR` where a Pi lane runs under a Pi root other than `.pi/agent` under the host home.
   - Optional: `copilot-home=DIR` where a Copilot lane runs under a Copilot home other than `.copilot` under the host home.
+  - Optional: `read-prefix=PREFIX` for a Copilot lane: the `remote-prefix` environment, its account and credential, without the step that records the lane's process group. The launch reads the host's Copilot model list under it (§ Launch on a provider).
   - Optional: `tree=unrebased` where a reused worktree stands on the item's own head because its rebase onto the base was aborted.
   - On `--relaunch`, reuse the worktree the host holds for the item.
   - Hold the item under a durable repository and item identity, so a retry reaches the same host.
@@ -255,6 +256,8 @@ After `create`, and after `wait` for an accepted create, the launch reads and wr
 - Copilot:
   - Under the Copilot home (`copilot-home=`, else `.copilot`): the context reader extension `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json`; then the lane-mail hooks registered in the worktree or the home.
   - A confined provider must supply an in-root `copilot-home` for these checks.
+  - A launch naming a model reads the host's Copilot model list: `ssh -T` to `TARGET` runs `READ_PREFIX 'LINE'`, where `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment. The lane starts with `--context long_context` only where that list prices the model the same at both tiers.
+  - A create with no `read-prefix`, or a read that fails, starts the lane with no `--context`, on the host's own `contextTier`, and records the cause on the launch as `copilot_model_list_unavailable`.
 - Codex: none. Every Codex command the launch builds carries `--dangerously-bypass-hook-trust`.
 
 The launch then verifies the launch record (§ Launch record) and builds the command:

@@ -15,11 +15,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::harness::Harness;
+use agent_runtime::harness::{COPILOT_SERVER_WORDS, Harness, copilot_model_list};
 use agent_runtime::host::{self, Place};
 use agent_runtime::launch::{
-    COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent,
-    Permission, QuestionTool, Resume, shell_quote,
+    COPILOT_MODEL_LIST_UNAVAILABLE, ClaudeSignIn, Compaction, ContextTier, LaunchCommand,
+    LaunchIntent, Permission, QuestionTool, Resume, shell_quote,
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::rows;
@@ -1382,6 +1382,9 @@ fn hosted_launch(
     if created.unrebased {
         outcome.annotate("tree", json!("unrebased"));
     }
+    if let Some(cause) = &command.copilot_model_list_unavailable {
+        outcome.annotate(COPILOT_MODEL_LIST_UNAVAILABLE, json!(cause));
+    }
     Ok(outcome)
 }
 
@@ -1498,7 +1501,8 @@ enum Client {
 /// the harness is the host's own program by name; no account variable
 /// reaches the host, whose prefix carries the credential it placed. A Pi
 /// lane on the Copilot pool runs the session-environment step first, in
-/// the same login shell.
+/// the same login shell. A Copilot lane naming a model starts on the tier
+/// its host's own model list decides ([`hosted_copilot_tier`]).
 fn hosted_command(
     settings: &Settings,
     r: &LaunchLane,
@@ -1533,11 +1537,18 @@ fn hosted_command(
         },
     )?;
     intent.program = None;
-    // The session signs in on its host under the host's own Copilot home,
-    // which no model-list read from this machine reaches, so a hosted lane
-    // decides no tier and starts on the host's own `contextTier` setting.
-    intent.context_tier = agent_runtime::launch::ContextTier::Native;
     lane_words(&mut intent, &remote_cwd);
+    // The client by the path this process finds it at: the pane's shell
+    // runs it, and its search path is the fleet server's, not this one's.
+    let program = crate::ready::on_path("ssh")
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "ssh".to_owned());
+    let connect = format!("ConnectTimeout={}", settings.engine.verify.get()?.as_secs());
+    if let (Harness::Copilot, Some(model)) = (harness, r.model.as_deref())
+        && !model.is_empty()
+    {
+        intent.context_tier = hosted_copilot_tier(&program, &connect, created, &intent, model)?;
+    }
     let mut remote = if claude_launch_consent {
         agent_runtime::launch::build_with_hosted_claude_consent(&intent)?
     } else {
@@ -1553,11 +1564,6 @@ fn hosted_command(
         shell_line = format!("{} && {shell_line}", PI_SESSION_ENV_STEP.trim_end());
     }
     let line = format!("{} {}", created.prefix, shell_quote(&shell_line));
-    // The client by the path this process finds it at: the pane's shell
-    // runs it, and its search path is the fleet server's, not this one's.
-    let program = crate::ready::on_path("ssh")
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "ssh".to_owned());
     let terminal = match client {
         Client::Window => "-t",
         Client::Detached => "-T",
@@ -1569,7 +1575,7 @@ fn hosted_command(
             "-o".to_owned(),
             "BatchMode=yes".to_owned(),
             "-o".to_owned(),
-            format!("ConnectTimeout={}", settings.engine.verify.get()?.as_secs()),
+            connect,
             "--".to_owned(),
             created.target.clone(),
             line,
@@ -1581,8 +1587,52 @@ fn hosted_command(
         brief_arg: None,
         brief_path: None,
         confinement: None,
-        copilot_model_list_unavailable: None,
+        copilot_model_list_unavailable: remote.copilot_model_list_unavailable,
     })
+}
+
+/// The tier a hosted Copilot lane on `model` starts on, from its host's own
+/// model list: the session signs in on the host, under the host's Copilot
+/// home and CLI, so this machine's list would price it from another account.
+/// The server is the one the session's own line would start, in its worktree
+/// and environment, run on `created.target` over `ssh -T` under the
+/// provider's `read-prefix`, never its `remote-prefix`, whose process group
+/// the provider records as the lane's. A provider that names no read prefix
+/// gets no read, and the cause.
+fn hosted_copilot_tier(
+    ssh: &str,
+    connect: &str,
+    created: &hosted::Created,
+    intent: &LaunchIntent,
+    model: &str,
+) -> Result<ContextTier> {
+    let Some(read_prefix) = created.read_prefix.as_deref() else {
+        return Ok(ContextTier::Unread(
+            "host-create-field-absent field=read-prefix".to_owned(),
+        ));
+    };
+    let mut server = agent_runtime::launch::build(intent)?;
+    server.args = COPILOT_SERVER_WORDS.map(str::to_owned).to_vec();
+    server.brief_arg = None;
+    server.brief_path = None;
+    server.confinement = None;
+    let line = format!("{read_prefix} {}", shell_quote(&server.shell_line()));
+    let read = copilot_model_list(
+        "ssh",
+        Path::new(ssh),
+        &[
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            connect,
+            "--",
+            &created.target,
+            &line,
+        ],
+        &[],
+    );
+    Ok(ContextTier::of_copilot_list(read, model))
 }
 
 /// The pace of a detached launch's confirming reads, each a provider call
@@ -3172,5 +3222,107 @@ mod tests {
             route_of(&lane, &r, None, Some(&home), &linked),
             Route::Resume { .. }
         ));
+    }
+
+    /// A hosted Copilot lane's tier is its host's own model list, read over
+    /// `ssh` under the provider's read prefix and never through a `copilot`
+    /// this machine starts: a model the host prices the same at both tiers
+    /// takes the long tier, a dearer one none, and a provider naming no read
+    /// prefix gets no read and the cause. The lane's own prefix ends any
+    /// line run under it, so a read made there answers nothing.
+    #[test]
+    fn a_hosted_copilot_tier_is_read_from_the_host_list_over_ssh_and_never_from_a_local_copilot() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = dir.path().join("ssh");
+        crate::write_executable(
+            &ssh,
+            "#!/bin/bash\nPATH=\"${0%/*}/host:$PATH\" exec bash -c \"${@: -1}\"\n",
+        );
+        std::fs::create_dir(dir.path().join("host")).unwrap();
+        let prices = |input: u32| format!(r#"{{"inputPrice":{input},"outputPrice":2000}}"#);
+        let list = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"models":[{{"id":"claude-opus-5.5","billing":{{"tokenPrices":{{"inputPrice":400,"outputPrice":2000,"longContext":{}}}}}}},{{"id":"gpt-6","billing":{{"tokenPrices":{{"inputPrice":400,"outputPrice":2000,"longContext":{}}}}}}}]}}}}"#,
+            prices(400),
+            prices(800),
+        );
+        crate::write_executable(
+            &dir.path().join("host").join("copilot"),
+            format!(
+                "#!/bin/bash\n[ \"$*\" = '--headless --stdio --no-auto-update' ] || exit 64\nbody='{list}'\nprintf 'Content-Length: %s\\r\\n\\r\\n%s' \"${{#body}}\" \"$body\"\ncat > /dev/null\n"
+            ),
+        );
+        let intent = |model: &str| LaunchIntent {
+            harness: Harness::Copilot,
+            home: None,
+            account: None,
+            cwd: dir.path().to_path_buf(),
+            model: Some(model.to_owned()),
+            effort: None,
+            agent: None,
+            permission: Permission::Native,
+            question_tool: QuestionTool::Off,
+            compaction: lane_compaction(Harness::Copilot),
+            brief: agent_runtime::launch::Brief::None,
+            resume: None,
+            session_id: None,
+            env: Default::default(),
+            env_remove: Vec::new(),
+            compaction_env: None,
+            extra_args: Vec::new(),
+            program: None,
+            grants: None,
+            claude_sign_in: None,
+            context_tier: Default::default(),
+        };
+        #[derive(Debug, PartialEq)]
+        enum Want {
+            Long,
+            Native,
+            Unread,
+        }
+        let rows = [
+            ("claude-opus-5.5", Some("exec bash -c"), Want::Long, 1),
+            ("gpt-6", Some("exec bash -c"), Want::Native, 1),
+            ("claude-opus-5.5", None, Want::Unread, 0),
+        ];
+        for (model, read_prefix, want, reads) in rows {
+            let created = hosted::Created {
+                target: "lane.example".to_owned(),
+                path: dir.path().display().to_string(),
+                prefix: "exit 9 #".to_owned(),
+                preparing: false,
+                pi_root: None,
+                copilot_home: None,
+                read_prefix: read_prefix.map(str::to_owned),
+                unrebased: false,
+                notices: Default::default(),
+            };
+            let before = host::counts();
+            let tier = hosted_copilot_tier(
+                &ssh.display().to_string(),
+                "ConnectTimeout=5",
+                &created,
+                &intent(model),
+                model,
+            )
+            .unwrap();
+            let after = host::counts();
+            let got = match tier {
+                ContextTier::Long => Want::Long,
+                ContextTier::Native => Want::Native,
+                ContextTier::Unread(_) => Want::Unread,
+            };
+            assert_eq!(got, want, "{model} {read_prefix:?}");
+            let started = |program: &str| {
+                after.of(program, Some("copilot-models"))
+                    - before.of(program, Some("copilot-models"))
+            };
+            assert_eq!(started("ssh"), reads, "{model} {read_prefix:?}");
+            assert_eq!(
+                started("copilot"),
+                0,
+                "{model} {read_prefix:?}: no local copilot"
+            );
+        }
     }
 }

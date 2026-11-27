@@ -961,7 +961,8 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item, fix=PATH_FIX)
         raise SystemExit(1)
-    prefix = "exec env " + shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names, lead, "process", "lead",
+    account_env = ["ORCH_STATE_DIR=" + path + "/tmp", *names]
+    prefix = "exec env " + shlex.join([*account_env, lead, "process", "lead",
                                        "--file", row["clone"] + IDENTITY_FILE, "--", *command])
     # The item marker is local to this clone; it is not part of the install record.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
@@ -981,8 +982,11 @@ exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
            json.dumps({"identity_file": row["clone"] + IDENTITY_FILE, "runtime": runtime}))
     home = {"pi": "pi-root", "copilot": "copilot-home"}.get(args.harness)
     home = f"\t{home}={remote_account}" if home else ""
+    # The launcher's model-list read runs under the lane's account and leads
+    # no process group, so it never stands in IDENTITY_FILE as the lane's.
+    read_prefix = "\tread-prefix=exec env " + shlex.join([*account_env, *command]) if args.harness == "copilot" else ""
     tree = "\ttree=unrebased" if unrebased else ""
-    lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{home}{tree}\n".encode())
+    lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{home}{read_prefix}{tree}\n".encode())
 
 
 def archive_tmp(row, item, worktree_path):
@@ -1483,7 +1487,9 @@ PI_CODING_AGENT_DIR=<row account> kendex update-pi --scope global.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields, and the row's account directory as pi-root for a Pi lane and as
-copilot-home for a Copilot lane. Existing
+copilot-home for a Copilot lane. A Copilot lane's create also returns
+read-prefix, the remote-prefix's environment without process lead, which
+the launcher's read of the host's Copilot model list runs under. Existing
 ownership exits 75; --reuse and --relaunch pass --reuse --keep-on-conflict to
 the worktree command when the target exists: a tree that command hands back
 without the base (a conflicting rebase aborted, uncommitted work, a detached

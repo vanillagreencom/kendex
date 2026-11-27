@@ -10432,16 +10432,17 @@ fn plant_hooks_off(tools: &Path, answer: Value) {
 }
 
 /// A Copilot stand-in at `path`: started as Copilot's SDK server
-/// (`--headless`) it touches `probed` and lists claude-opus-5.5 at one price
-/// at both tiers, so a launch's model-list read decides the long tier;
-/// started any other way it runs the `stub` fixture's `copilot`.
+/// (`--headless`) it writes its `HOME` and `COPILOT_HOME` to `probed`, one a
+/// line, and lists claude-opus-5.5 at one price at both tiers, so a launch's
+/// model-list read decides the long tier; started any other way it runs the
+/// `stub` fixture's `copilot`.
 fn copilot_at_par(path: &Path, stub: &str, probed: &Path) {
     write_executable(
         path,
         format!(
             r#"#!/bin/bash
 if [ "$1" = --headless ]; then
-  touch '{probed}'
+  printf '%s\n%s\n' "$HOME" "${{COPILOT_HOME-}}" > '{probed}'
   prices='{{"inputPrice":400,"outputPrice":2000}}'
   body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
   printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
@@ -11161,7 +11162,10 @@ fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
 /// put only where they differ, and its three lane-mail hooks are found on
 /// the host before the window opens. A host holding no hooks, and a home
 /// whose flag is set false, refuse naming the host, with no window and
-/// nothing put.
+/// nothing put. The lane's tier is its host's own model list: read on the
+/// host under the Copilot home the shipped provider names, it puts the long
+/// tier on the line for a model at par; a provider naming no read prefix
+/// gets no read, no tier and the cause on the launch.
 #[test]
 fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hooks_stand() {
     const EXTENSION: &str =
@@ -11225,8 +11229,8 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
             HostedLaunch::new(&server, dir.path(), record)
         };
         world.runner.verify = Some(1);
-        // The one `copilot` this machine and the host run: a read would put
-        // the long tier on the line; a hosted launch makes none.
+        // The one `copilot` the host runs, its list pricing the lane's model
+        // at par.
         let probed = dir.path().join("model-list-read");
         copilot_at_par(&world.tools.join("copilot"), "stub-record", &probed);
         let home = if shipped {
@@ -11314,15 +11318,35 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                     Some("copilot"),
                     "{case}: {launched}"
                 );
-                assert!(
-                    !launched["argv"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|word| word == "--context"),
-                    "{case}: a hosted line decides no tier: {launched}"
-                );
-                assert!(!probed.exists(), "{case}: no model list was read");
+                let long = launched["argv"]
+                    .as_array()
+                    .unwrap()
+                    .windows(2)
+                    .any(|w| w == [json!("--context"), json!("long_context")]);
+                let unread = &report["intent"]["observation"]["copilot_model_list_unavailable"];
+                if shipped {
+                    assert!(
+                        long,
+                        "{case}: the host's list prices the model at par: {launched}"
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(&probed).ok(),
+                        Some(format!("{}\n{home}\n", world.home().display())),
+                        "{case}: the list read on the host, under its Copilot home"
+                    );
+                    assert!(unread.is_null(), "{case}: {report}");
+                } else {
+                    assert!(
+                        !launched["argv"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|word| word == "--context"),
+                        "{case}: no read prefix, no tier: {launched}"
+                    );
+                    assert!(!probed.exists(), "{case}: no model list was read");
+                    assert!(unread.is_string(), "{case}: the cause recorded: {report}");
+                }
                 assert!(
                     calls
                         .iter()
