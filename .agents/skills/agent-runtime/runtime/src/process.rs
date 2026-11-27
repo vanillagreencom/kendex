@@ -970,7 +970,8 @@ pub enum Stop {
     AlreadyGone,
     /// The identity no longer matches: the pid now holds another process.
     IdentityStale,
-    /// A signaled process still runs after the grace.
+    /// A signaled process, or a group member the stop read after its signals
+    /// ([`stop_group`]), still runs after the grace.
     Timeout { pid: u32 },
     /// A read the stop depends on failed at `pid`, so whether that process
     /// runs is not known; nothing was signalled past that read. `signalled`
@@ -1172,7 +1173,11 @@ pub(crate) fn group_table(leader: &Identity) -> Reading<Vec<Row>> {
 /// End every member of the group `leader` leads ([`group_members`]), each by
 /// its own identity: TERM, the grace, then KILL. `AlreadyGone` where the
 /// group reads gone; refused `stop-unreadable` where the group or a member's
-/// identity cannot be read, nothing signalled.
+/// identity cannot be read, nothing signalled. `Stopped` only where the
+/// group reads gone after the members it read ended: a member that joined
+/// after that read, as one a TERM handler forks, was never signalled, so the
+/// group still live answers `Timeout` with that member's pid, and a group
+/// that cannot be read again answers `Unreadable`.
 pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
     let unreadable = |cause: &str| Error::refused("stop-unreadable", &[("cause", cause)]);
     let rows = match group_members(leader) {
@@ -1188,7 +1193,22 @@ pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
             Reading::Unreadable { cause } => return Err(unreadable(cause)),
         }
     }
-    stop_identities(&members, grace)
+    let stop = stop_identities(&members, grace)?;
+    if !matches!(stop, Stop::Stopped { .. }) {
+        return Ok(stop);
+    }
+    Ok(match group_members(leader) {
+        Reading::Gone => stop,
+        // A live group with no member row is one whose leader still runs.
+        Reading::Live(rows) => Stop::Timeout {
+            pid: rows.first().map_or(leader.pid, |row| row.pid),
+        },
+        Reading::Unreadable { cause } => Stop::Unreadable {
+            pid: leader.pid,
+            cause: cause.to_owned(),
+            signalled: true,
+        },
+    })
 }
 
 #[cfg(test)]

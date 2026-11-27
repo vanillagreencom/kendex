@@ -2737,7 +2737,7 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
         command
     };
     let record = |name: &str| state.join("workers").join(name);
-    let led = |name: &str| {
+    let led = |name: &str, program: &[&str]| {
         let mut lead = in_world(Command::new("setsid"));
         let leader = lead
             .arg(binary())
@@ -2749,7 +2749,8 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
                 "--account",
                 "/srv/.wclaude",
             ])
-            .args(["--", "sleep", "300"])
+            .arg("--")
+            .args(program)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -2775,7 +2776,7 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     };
-    let _world = led("w");
+    let _world = led("w", &["sleep", "300"]);
     await_reading("w", "live");
     let charges = || {
         agent_runtime::group::charges(
@@ -2794,7 +2795,7 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
     assert!(!record("w").exists());
     // A leader this row killed and still holds unreaped: its group reads
     // gone and its pid stays this row's.
-    let mut gone = led("g");
+    let mut gone = led("g", &["sleep", "300"]);
     await_reading("g", "live");
     gone.children[0].kill().unwrap();
     await_reading("g", "gone");
@@ -2805,6 +2806,33 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
         "{stopped}"
     );
     assert!(!record("g").exists());
+    // A leader whose TERM handler forks a member into its group and exits:
+    // the members the stop read all end, the group does not, so the record
+    // stays and the group reads live until a second stop ends that member.
+    let _forked = led(
+        "t",
+        &[
+            "sh",
+            "-c",
+            r#"trap 'sleep 300 >/dev/null 2>&1 & exit 0' TERM; : > trapped; while :; do sleep 1; done"#,
+        ],
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !project.join("trapped").exists() {
+        assert!(std::time::Instant::now() < deadline, "t never set its trap");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    await_reading("t", "live");
+    let refused = reply(&["process", "stop", "--grace-secs", "5", "--worker", "t"]);
+    assert_eq!(refused["refusal"]["key"], "group-live", "{refused}");
+    assert!(record("t").exists());
+    assert_eq!(
+        reply(&["process", "group", "--worker", "t"])["result"]["reading"],
+        "live"
+    );
+    let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "t"]);
+    assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
+    assert!(!record("t").exists());
 }
 
 /// The recorded group, read and stopped: a member whose parent exited still
