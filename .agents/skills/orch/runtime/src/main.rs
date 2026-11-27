@@ -431,20 +431,37 @@ enum Verb {
         account: Option<String>,
     },
     /// Resume the recorded controller's own native session once its pane
-    /// ended, as after a restart: the record's own launch with `resume` set
-    /// to its `session_id`, on the record's `server_socket`, where a server
-    /// gone from it is started again, and with the watch flags the last
-    /// claimed runner recorded beside the fleet state. One stdout line, the
-    /// effect's outcome: `controller-resumed intent=ID generation=N pane=%P
-    /// session=ID socket=PATH` at exit 0, `controller-resume-failed
-    /// intent=ID note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
+    /// ended, as after a restart: the start's transition, then the checkout
+    /// brought to the landed base by `sync-base` where the controller's
+    /// status reads no controller running, then the record's own launch
+    /// with `resume` set to its `session_id`, on the record's
+    /// `server_socket`, where a server gone from it is started again, and
+    /// with the watch flags the last claimed runner recorded beside the
+    /// fleet state. A base sync that refuses leaves the checkout where it
+    /// stood, and the start still runs. A controller the status reads
+    /// running keeps its checkout as it stands, and the start refuses it on
+    /// the same reads; a status read that refuses moves nothing either. One
+    /// stdout line, the effect's outcome:
+    /// `controller-resumed intent=ID generation=N pane=%P session=ID
+    /// socket=PATH` at exit 0, `controller-resume-failed intent=ID
+    /// note=NOTE cause=CAUSE` at 3, `controller-resume-unconfirmed
     /// intent=ID` at 75 with the intent left for its reconcile. Where the
     /// start was refused, `note` is the refusal's key and `cause` its own
     /// cause; otherwise `note` names the failure and `cause` its cause, `-`
-    /// where it carries none. A refusal,
-    /// with nothing started, at exit 1: `server-socket-unrecorded
-    /// field=server_socket`, `session-unrecorded field=session_id`,
-    /// `harness-unnamed`, `session-missing`, `watch-flags-unrecorded`.
+    /// where it carries none. Where the checkout did not follow, a resumed
+    /// controller's line leads `sync-base-REASON` in place of
+    /// `controller-resumed`, at exit 4, and a failed or unconfirmed one
+    /// carries `base=sync-base-REASON` after its `intent`. REASON is the
+    /// word `sync-base`'s own `sync-base: REASON` line leads with, `exit-N`
+    /// where it printed none, `unstarted` where it could not start,
+    /// `timeout` past the read bound, `controller-live` for a controller
+    /// the status reads running, the status read's refusal key where it
+    /// refused, and `not-run` for a start that failed before the sync. A
+    /// refusal, with nothing started or synced, at exit 1:
+    /// `server-socket-unrecorded field=server_socket`, `session-unrecorded
+    /// field=session_id`, `harness-unnamed`, `session-missing`,
+    /// `watch-flags-unrecorded`, and the start transition's own, such as
+    /// `intent-open`.
     ResumeController {
         #[command(flatten)]
         target: Target,
@@ -1902,6 +1919,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &env,
                 locking,
                 effect_exit,
+                None,
             )?;
             let status = applied
                 .settled
@@ -3769,17 +3787,22 @@ fn resume_controller(
         path: PathBuf::from("<resume-controller>"),
         cause: e.to_string(),
     })?;
-    let settled = match applied_live(
-        &path,
-        admitted(&path, request, &settings)?,
-        &settings,
-        locking,
-    ) {
+    let admitted = admitted(&path, request, &settings)?;
+    // The sync runs once the transition stands, so every refusal at exit 1
+    // leaves the checkout unmoved; a start that fails before it reaches the
+    // sync names it `not-run`.
+    let mut base = Some("sync-base-not-run".to_owned());
+    let mut follow = || base = unfollowed_base(&path, &settings);
+    let applied = applied_live(&path, admitted, &settings, locking, Some(&mut follow));
+    let base_word = base
+        .as_deref()
+        .map_or_else(String::new, |key| format!(" base={key}"));
+    let settled = match applied {
         Ok(settled) => settled,
         Err(Error::Persisted { intent, error }) => answered(
             true,
             &format!(
-                "controller-resume-unconfirmed intent={intent} {}",
+                "controller-resume-unconfirmed intent={intent}{base_word} {}",
                 refusal_words(&error)
             ),
             agent_runtime::effects::UNCONFIRMED_EXIT,
@@ -3798,10 +3821,14 @@ fn resume_controller(
                     .unwrap_or("-")
                     .to_owned()
             };
+            let (lead, status) = match &base {
+                Some(key) => (key.as_str(), BASE_UNFOLLOWED_EXIT),
+                None => ("controller-resumed", 0),
+            };
             answered(
                 true,
                 &format!(
-                    "controller-resumed intent={} generation={} pane={} session={} socket={}",
+                    "{lead} intent={} generation={} pane={} session={} socket={}",
                     intent.id,
                     overseer
                         .generation
@@ -3810,13 +3837,13 @@ fn resume_controller(
                     overseer.session_id.as_deref().unwrap_or("-"),
                     text("server_socket"),
                 ),
-                0,
+                status,
             )
         }
         3 => answered(
             true,
             &format!(
-                "controller-resume-failed intent={} {}",
+                "controller-resume-failed intent={}{base_word} {}",
                 intent.id,
                 observed(intent)
             ),
@@ -3824,11 +3851,36 @@ fn resume_controller(
         ),
         status => answered(
             true,
-            &format!("controller-resume-unconfirmed intent={}", intent.id),
+            &format!(
+                "controller-resume-unconfirmed intent={}{base_word}",
+                intent.id
+            ),
             status,
         ),
     }
 }
+
+/// The resume's base follow, run before its start's effect: the key its
+/// line carries where the checkout did not follow, none where `sync-base`
+/// followed. An unattended restart must not leave the overseer down, so a
+/// refusal is reported and the start goes on. A controller the status reads
+/// running is never moved under, since its start refuses it on the same
+/// reads, nor is one the status cannot read; the key names why the follow
+/// did not run, for a start that succeeds all the same.
+fn unfollowed_base(path: &Path, settings: &Settings) -> Option<String> {
+    let reason = match agent_runtime::controller::status::status(path, &settings.engine, None) {
+        Ok(status) if status.live => "controller-live".to_owned(),
+        Ok(_) => effects::follow_base(&settings.roots.project, "resume-controller").err()?,
+        Err(e) => e.key().to_owned(),
+    };
+    Some(format!("sync-base-{reason}"))
+}
+
+/// A resumed controller's exit where its checkout did not follow: a
+/// nonzero answer apart from a refusal's 1, a failed start's 3 and an
+/// unconfirmed one's 75, so a caller that reads only a failed call's line
+/// still reads the sync's key.
+const BASE_UNFOLLOWED_EXIT: i32 = 4;
 
 /// A request the command composed itself, admitted as `op` admits a
 /// request file before its transition, with the brief it opens on held
@@ -3848,19 +3900,30 @@ fn admitted(path: &Path, mut request: Request, settings: &Settings) -> Result<Ad
 }
 
 /// An admitted request applied as `op --effect-exit` applies it: the
-/// intent its live effect settled as.
+/// intent its live effect settled as, `before_effect` run once the
+/// transition stands and before the effect.
 fn applied_live(
     path: &Path,
     admitted: Admitted,
     settings: &Settings,
     locking: Locking,
+    before_effect: Option<&mut dyn FnMut()>,
 ) -> Result<controller_run::Settled> {
     let env = Env::system()?;
     let Admitted {
         request,
         held_brief,
     } = admitted;
-    let answer = applied_effect(path, &request, held_brief, settings, &env, locking, true)?;
+    let answer = applied_effect(
+        path,
+        &request,
+        held_brief,
+        settings,
+        &env,
+        locking,
+        true,
+        before_effect,
+    )?;
     let Some(settled) = answer.settled else {
         unreachable!("a start, close or launch runs its live effect and settles it")
     };
@@ -3898,7 +3961,7 @@ fn relaunch_lane(
     };
     // The lane is closed: a refusal of its launch from here on is a failed
     // launch, never an exit 1 that reads as nothing done.
-    let launched = match applied_live(path, launch, &settings, locking) {
+    let launched = match applied_live(path, launch, &settings, locking, None) {
         Ok(launched) => launched,
         Err(Error::Persisted { intent, error }) => answered(
             false,
@@ -3969,7 +4032,7 @@ fn relaunch_closed(
     settings: &Settings,
     locking: Locking,
 ) -> Result<String> {
-    let closed = match applied_live(path, close, settings, locking) {
+    let closed = match applied_live(path, close, settings, locking, None) {
         Ok(closed) => closed,
         Err(Error::Persisted { intent, error }) => answered(
             false,
@@ -4077,7 +4140,12 @@ struct OpAnswer {
 /// Under `effect_exit`, a job's outcome is waited for and the intent read
 /// last is the answer's `settled`. Every refusal after the transition names
 /// the persisted intent, which stands for the reconcile, so no caller reads
-/// it as nothing done.
+/// it as nothing done. `before_effect` runs once the transition stands,
+/// just before the effect.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the request, its brief, settings, environment, lock mode, exit mode and pre-effect step are each the caller's own"
+)]
 fn applied_effect(
     path: &Path,
     request: &Request,
@@ -4086,6 +4154,7 @@ fn applied_effect(
     env: &Env,
     locking: Locking,
     effect_exit: bool,
+    before_effect: Option<&mut dyn FnMut()>,
 ) -> Result<OpAnswer> {
     let notice_reach =
         matches!(request, Request::ReconcileRound(_)).then(|| effects::fleet_mailbox(settings));
@@ -4106,6 +4175,9 @@ fn applied_effect(
         // as well as before, so that notice is sent in this call.
         if let Some(reach) = &notice_reach {
             orch_runtime::validate::run::deliver_owed(settings, reach, path, env, locking)?;
+        }
+        if let Some(before_effect) = before_effect {
+            before_effect();
         }
         let Some(outcome) = effects::run(
             path,
