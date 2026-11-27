@@ -311,10 +311,10 @@ derive_lanes() {
     while IFS= read -r -d '' path; do
       index=0
       while [ "$index" -lt "$lane_count" ]; do
-        if ci_lanes_claims "$index" "$path"; then
-          printf '%s\n' "${lane_names[$index]}" || exit 2
-          printf '%s\t%s\0' "${lane_names[$index]}" "$path" >&3 || exit 2
-        fi
+        ! ci_lanes_claims "$index" "$path" || {
+          printf '%s\n' "${lane_names[$index]}" &&
+            printf '%s\t%s\0' "${lane_names[$index]}" "$path" >&3
+        } || exit 2
         index=$((index + 1))
       done
     done <"$changed"
