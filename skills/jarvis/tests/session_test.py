@@ -44,7 +44,7 @@ REASONS = {
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required", "home-not-dedicated"},
+                "trust-required", "home-not-dedicated", "account-walled"},
     "failed": {"launch-failed", "handover-failed"},
 }
 # The full-bypass words each harness's CLI takes for an unattended launch.
@@ -53,7 +53,8 @@ PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--d
                     "copilot": {"--allow-all"}, "pi": set()}
 ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
-DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required"), ("blocked", "home-not-dedicated")}
+DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required"), ("blocked", "home-not-dedicated"),
+            ("blocked", "account-walled")}
 
 
 def validate(output, code, verb, duplicate_boot=False, adopt=False):
@@ -795,16 +796,8 @@ class SessionContract(unittest.TestCase):
             "accessToken": "token-" + name, "refreshToken": "refresh-" + name,
             "expiresAt": (now + 365 * 86400) * 1000, "subscriptionType": "max"}}))
         os.utime(credential, (now - 60, now - 60))
-        iso = lambda seconds: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + seconds))
-        text = str(account)
-        crc = subprocess.run(["cksum"], input=text.encode(), capture_output=True, check=True).stdout.split()[0].decode()
-        usage = self.account_state / "usage" / ("claude-" + crc + "-" + str(len(text.encode())) + ".json")
-        usage.parent.mkdir(parents=True, exist_ok=True)
-        usage.write_text(json.dumps({"harness": "claude", "config_dir": text, "fetched_at": now, "sample_claims": 1,
-                                     "prior": None, "usage": {
-                                         "five_hour": {"utilization": 5, "resets_at": iso(3600)},
-                                         "seven_day": {"utilization": used, "resets_at": iso(60 * 3600)}}}))
-        self.accounts.append(text)
+        self.measure(account, used)
+        self.accounts.append(str(account))
         # The home's state directory is the scratch's own: a home under a
         # checkout would otherwise resolve that checkout's common root.
         # No preference: a context succession keeps its own entry, a wall
@@ -816,6 +809,19 @@ class SessionContract(unittest.TestCase):
         (self.home / "kendex.settings.toml").write_text("[env]\n" + "".join(
             key + " = " + json.dumps(value) + "\n" for key, value in settings.items()))
         return account
+
+    def measure(self, account, used):
+        """ACCOUNT's usage record, fresh: `used` percent of its week."""
+        now = int(time.time())
+        iso = lambda seconds: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + seconds))
+        text = str(account)
+        crc = subprocess.run(["cksum"], input=text.encode(), capture_output=True, check=True).stdout.split()[0].decode()
+        usage = self.account_state / "usage" / ("claude-" + crc + "-" + str(len(text.encode())) + ".json")
+        usage.parent.mkdir(parents=True, exist_ok=True)
+        usage.write_text(json.dumps({"harness": "claude", "config_dir": text, "fetched_at": now, "sample_claims": 1,
+                                     "prior": None, "usage": {
+                                         "five_hour": {"utilization": 5, "resets_at": iso(3600)},
+                                         "seven_day": {"utilization": used, "resets_at": iso(60 * 3600)}}}))
 
     def call(self, verb, harness="claude", mode="resume", origin="manual", **kwargs):
         argv = [str(SCRIPT), verb, "--home", str(self.home)]
@@ -989,6 +995,37 @@ print(json.dumps(session.terminal(status)))
         self.wait("stopped", "ended", seconds=30)
         # The exited controller is named as it was while it ran.
         self.assertEqual(self.marked()[1:], (False, running_identity))
+
+    def test_a_start_on_a_walled_account_refuses_before_its_window_opens(self):
+        # The failure it stops: a Start on the spent account an ended
+        # controller ran on opens a window that closes at once and leaves a
+        # start failure, so the watch loop never hands Jarvis to an account
+        # with room.
+        roomy = self.plant_account("claude-b", 20)
+        self.call("start", mode="new")
+        self.wait(reason="new-no-record")
+        os.kill(self.started()[-1]["pid"], signal.SIGKILL)
+        self.wait("stopped", "ended", seconds=30)
+        self.measure(self.account, 100)
+        identity = self.marked()[2]
+        for mode, account, walled in (("resume", self.account, True), ("new", self.account, True),
+                                      ("new", roomy, False)):
+            with self.subTest(mode=mode, account=account.name):
+                windows, launched = self.windows(), len(self.started())
+                answer, code = self.call("start", mode=mode, account=account)
+                if not walled:
+                    self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+                    after = self.wait(reason="new-selection-changed")
+                    self.assertEqual((after["account"], len(self.started())), (str(roomy), launched + 1))
+                    continue
+                self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "account-walled", 1),
+                                 self.stderr)
+                self.assertIn(str(account), answer["detail"])
+                self.assertEqual((self.windows(), len(self.started())), (windows, launched))
+                status, unread, controller = self.marked()
+                self.assertEqual((status["state"], status["reason"], unread, controller),
+                                 ("stopped", "ended", False, identity))
+                self.assertIsNone(json.loads(self.record.read_text()).get("failure"))
 
     def test_stop_and_off_during_start_end_the_pending_controller(self):
         scoped_tmux = reached_through_path(self.root)
