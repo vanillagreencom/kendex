@@ -266,6 +266,40 @@ class Report(World):
         self.assertEqual(len(sized), 1)
         self.assertNotIn("status", report[0])
 
+    def test_retired_route_table_warns_once(self):
+        # A repository whose installed docs-writing still carries the retired
+        # Shape column is audited, with md-type's warning once per repository
+        # even across batches, never as one document's row.
+        self.shape_fixture()
+        installed = self.repo / ".agents/skills/docs-writing"
+        shutil.copytree(CATALOG / "docs-writing", installed, ignore=shutil.ignore_patterns("tests"))
+        lines, table = [], False
+        for line in (installed / "SKILL.md").read_text().splitlines():
+            if line == "| Path | Section | Example |":
+                table, line = True, line + " Shape |"
+            elif table and line == "|---|---|---|":
+                line += "---|"
+            elif table and line.startswith("|"):
+                line += " none |"
+            else:
+                table = False
+            lines.append(line)
+        retired = "\n".join(lines) + "\n"
+        self.assertIn("| Path | Section | Example | Shape |", retired)
+        (installed / "SKILL.md").write_text(retired)
+        source = (SCRIPTS / "docs-audit").read_text()
+        self.assertEqual(source.count("SHAPE_BATCH = 100"), 1)
+        script = self.control("one-per-batch", source.replace("SHAPE_BATCH = 100", "SHAPE_BATCH = 1")) / "docs-audit"
+        result = self.audit(script=script)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = rows(result.stdout)
+        warnings = [r["md_type"].split()[1] for r in report if r.get("md_type", "").startswith("md-type: warning=")]
+        self.assertEqual(warnings, ["warning=route-table-shape"])
+        self.assertNotIn("path", [r for r in report if r.get("md_type", "").startswith("md-type: warning=")][0])
+        shapes = [(r["path"], r["md_type"].split()[1].split("=")[0]) for r in report
+                  if "path" in r and "md_type" in r and not r["md_type"].startswith("md-type: signal=")]
+        self.assertEqual(shapes, [("docs/plan.md", "fence-unclosed")])
+
     def test_unjudged_shape(self):
         self.shape_fixture()
         source = (SCRIPTS / "docs-audit").read_text()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read committed Markdown growth through Git's documented metadata interface,
-# and judge each committed document's shape with the commit-guards md-type
-# installed beside this package.
+# and fail each committed Markdown document its parser cannot end with the
+# commit-guards md-type installed beside this package.
 set -euo pipefail
 case "${BASH_SOURCE[0]}" in
   */*) SELF_DIR="${BASH_SOURCE[0]%/*}" ;;
@@ -48,6 +48,9 @@ md_type = os.environ["DOCS_AUDIT_MD_TYPE"]
 bash = os.environ["DOCS_AUDIT_BASH"]
 signal_words = re.compile(r" words=(\d+) example_words=(\d+) ")
 judged_mark = re.compile(r"md-type: judged=(\d+)$")
+# A warning names the repository's docs-writing, never one document, so it is
+# reported once per repository.
+warning_mark = "md-type: warning="
 # Documents per md-type run: md-type reads its rules once per run, and a
 # bounded batch keeps the argument list within the system's limit.
 SHAPE_BATCH = 100
@@ -104,7 +107,7 @@ def snapshot(repo, revision):
 
 def shape(repo, identity, revision, selected):
     """Each selected document's md-type rows, ranked size signals, and the first unjudged document's cause."""
-    rows, sizes = [], []
+    rows, sizes, warned = [], [], set()
     paths = sorted(selected)
     for first in range(0, len(paths), SHAPE_BATCH):
         batch = paths[first:first + SHAPE_BATCH]
@@ -125,6 +128,11 @@ def shape(repo, identity, revision, selected):
         pending, judged = [], 0
         for line in result.stdout.decode(errors="replace").splitlines():
             if not line.startswith("md-type: "):
+                continue
+            if line.startswith(warning_mark):
+                if line not in warned:
+                    warned.add(line)
+                    rows.append(f"shape-warning {identity} md_type={quote(line)}")
                 continue
             mark = judged_mark.match(line)
             if not mark:

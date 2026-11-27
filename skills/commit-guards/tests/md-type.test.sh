@@ -129,10 +129,12 @@ lane_rows() { # label | fixture | args | expect
 fx_plugin() { repo "$1"; put skills/vgs/README.md "${PLUGIN/A desktop assistant for one person across their machines.\\n\\n/}\n## Install\n\nRun it.\n"; }
 fx_unended() { repo "$1"; put docs/plan.md '```\nopen\n'; }
 fx_unended_pushed() { repo "$1"; put README.md '# Tool\n'; commit; put docs/plan.md '```\nopen\n'; commit plan; }
+fx_moved_in() { repo "$1"; put notes.txt '```\nopen\n'; commit; mkdir -p "$R/docs"; git -C "$R" mv notes.txt docs/notes.md; }
 lane_rows \
   "the plugin README, with value tables, sections out of order and no description, passes|fx_plugin plugin|--staged|rc=0" \
   "a staged file the parser cannot end fails|fx_unended unended|--staged|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
-  "and the same file pushed fails over the range|fx_unended_pushed unended-pushed|--against HEAD~1|rc=1 md-type: fence-unclosed=docs/plan.md:1"
+  "and the same file pushed fails over the range|fx_unended_pushed unended-pushed|--against HEAD~1|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
+  "a file moved unedited into the Markdown paths is parsed where it arrives|fx_moved_in moved-in|--staged|rc=1 md-type: fence-unclosed=docs/notes.md:1"
 
 echo "=== a docs-writing --as cannot read is a gap, never a pass ==="
 # A copy of the scripts with no docs-writing beside it, so the fixture's own
@@ -190,6 +192,22 @@ assert_eq "a repository git refuses to read fails the route, never reads as outs
   "rc=2 md-type: route-repo=$RP" "$(route_refused "$MDT")"
 repo route-none none
 MDT="$LONE/md-type" route_rows "with no docs-writing the route fails for the hook to name|README.md|rc=2 md-type: gap=docs-writing-missing"
+# The retired route table: a fourth Shape column on the header, the
+# delimiter and every row, as a docs-writing render from before the
+# three-column table carries it.
+RETIRED="$TMP/retired-shape"
+cp -R "$DW_SOURCE" "$RETIRED"
+LC_ALL=C awk '
+  $0 == "| Path | Section | Example |" { table = 1; print "| Path | Section | Example | Shape |"; next }
+  table && $0 == "|---|---|---|" { print "|---|---|---|---|"; next }
+  table && /^\|/ { print $0 " none |"; rows++; next }
+  { table = 0; print }
+  END { if (rows < 2) exit 3 }
+' "$DW_SOURCE/SKILL.md" >"$RETIRED/SKILL.md" || { echo "harness: no route table to widen in SKILL.md" >&2; exit 2; }
+RETIRED_HEADER="$(LC_ALL=C grep -n '^| Path | Section | Example | Shape |$' "$RETIRED/SKILL.md" | cut -d: -f1)"
+repo route-retired "$RETIRED"
+RP="$(cd "$R" && pwd -P)"
+MDT="$LONE/md-type" route_rows "a retired route table with a Shape column still routes, with one warning|skills/new/README.md|rc=0 md-type: warning=route-table-shape path=$RP/$DWR/SKILL.md:$RETIRED_HEADER;md-type: type=readme;md-type: reference=$RP/$DWR/references/readme.md;md-type: example=$RP/$DWR/examples/readme.md"
 
 echo "=== must-fail controls ==="
 gg_mutant NO_FLOOR md-type '[ "$readme" -eq 1 ] && [ "$linked" -eq 1 ] || { rules_gap floor SKILL.md; return 0; }' ':'

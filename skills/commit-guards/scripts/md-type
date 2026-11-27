@@ -158,6 +158,7 @@ done
 RULES=missing
 RULES_DETECTOR=""
 RULES_FILE=""
+RULES_RETIRED=""
 DW=""
 ROW_TYPE=()
 ROW_GLOBS=()
@@ -197,6 +198,10 @@ load_rules() { # DOCS-WRITING-DIR, or empty when none was found
         return 0
         ;;
       R) ;;
+      W)
+        RULES_RETIRED="$line"
+        continue
+        ;;
       *) gg_fail rules-record "$kind" "The route table reader returned an unknown record." ;;
     esac
     # An empty cell arrives as "-": a tab IFS merges adjacent tabs.
@@ -223,6 +228,12 @@ load_rules() { # DOCS-WRITING-DIR, or empty when none was found
   classify README.md && readme=1
   [ "$readme" -eq 1 ] && [ "$linked" -eq 1 ] || { rules_gap floor SKILL.md; return 0; }
   RULES=ok
+  # The retired route table with a Shape column still reads until the next
+  # major release (changelog.d/README.md § Release standard): a repository
+  # whose docs-writing render predates the three-column table keeps its route
+  # and its size signal. On stderr, so --route's stdout stays the hook's.
+  [ -z "$RULES_RETIRED" ] \
+    || gg_message warning "route-table-shape path=$DW/SKILL.md:$RULES_RETIRED" "The route table's Shape column is retired and not read. The table is Path | Section | Example; refresh docs-writing." >&2
 }
 
 # The words of DOC, counted from its LINES stream, into WORDS.
@@ -458,6 +469,11 @@ fi
 # --- the lane -----------------------------------------------------------------
 gg_repo_root_cd
 gg_md_load_paths md-type COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
+# Every move and copy the diff reports is parsed at its new path, an
+# unchanged move included: a file moved unedited from outside
+# COMMIT_GUARDS_MD_PATHS arrives as Markdown no lane has parsed, and the
+# exact walk drops that move.
+GG_MD_RENAMES=detect
 gg_md_scope md-type "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 

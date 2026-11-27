@@ -10,7 +10,9 @@
 #                    example" per route row, tab-separated, "-" for an empty
 #                    cell; "U detector line" when the table breaks the
 #                    contract (one Path|Section|Example table, three cells a
-#                    row)
+#                    row); "W line" for the retired table with a fourth
+#                    Shape column, whose rows of four cells read with that
+#                    cell ignored
 #   -v mode=example  an example file -> its document's lines: the content of
 #                    its first `markdown` fence before any thematic break,
 #                    else the file up to its first thematic break, front
@@ -88,7 +90,7 @@ mode == "rules" {
     if (CONTENT !~ /^[ \t]*\|/) { in_table = 0; next }
     if (is_delim_row(trim(CONTENT))) next
     cells(CONTENT)
-    if (NCELLS != 3) { printf "U\tcells\t%d\n", LINE; next }
+    if (NCELLS != table_cells) { printf "U\tcells\t%d\n", LINE; next }
     globs = spans(CELL[1])
     reference = link_target(CELL[2])
     if (reference != "") {
@@ -108,9 +110,12 @@ mode == "rules" {
     next
   }
   cells(CONTENT)
-  if (CONTENT ~ /^[ \t]*\|/ && NCELLS == 3 && CELL[1] == "Path" && CELL[2] == "Section" && CELL[3] == "Example") {
+  if (CONTENT ~ /^[ \t]*\|/ && CELL[1] == "Path" && CELL[2] == "Section" && CELL[3] == "Example" &&
+      (NCELLS == 3 || (NCELLS == 4 && CELL[4] == "Shape"))) {
     headers++
     in_table = 1
+    table_cells = NCELLS
+    if (NCELLS == 4) printf "W\t%d\n", LINE
   }
   next
 }

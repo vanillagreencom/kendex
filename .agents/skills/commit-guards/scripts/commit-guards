@@ -118,7 +118,7 @@ EOF
 
 retired_notice() { # CHECK
   case "$1" in
-    md-format) gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type judges a file's shape. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
+    md-format) gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type fails a Markdown file its parser cannot end. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
     *) gg_message retired-check "$1" "$1 was removed from commit-guards and nothing replaces it. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
   esac
 }

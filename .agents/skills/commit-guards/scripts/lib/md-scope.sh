@@ -4,12 +4,13 @@
 # and lib/settings.sh; the caller runs under `set -f`, has cd'd to the
 # repository root, and calls gg_tmpdir before selecting.
 #
-# The staged and range scopes select by the walks' one rename policy,
-# gg_walk_diff_flags in lib/configured-paths.sh.
+# Each lane keeps its own rename policy, GG_MD_RENAMES below. The staged and
+# range scopes select by it; --all selects every matching tracked file under
+# either policy.
 #
 # Four scopes, one setting:
 #   --staged   every markdown file the staged diff changes, renames as
-#              the walks select them, judged in full from the index
+#              GG_MD_RENAMES selects them, judged in full from the index
 #   --base REF the same files over a commit range, three dots: what the
 #              branch ADDS over the ancestor it and REF share
 #              (the scopes are exclusive: naming two is exit 2 scope-flags,
@@ -21,8 +22,8 @@
 #              a flag name is two answers behind one word
 #   --all      every tracked markdown file matching the lane's path globs
 #   neither    COMMIT_GUARDS_MD_SCOPE decides: `touched` (the default) is
-#              --staged, and with no staged change the walk would select
-#              the lane judges nothing and says so; `all` is --all.
+#              --staged, and with no staged change under the lane's rename
+#              policy the lane judges nothing and says so; `all` is --all.
 #              gg_md_bare_scope reports which,
 #              for a caller that has to know before running the lane
 #
@@ -36,6 +37,13 @@
 
 GG_MD_SCOPE_DEFAULT="touched"
 GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
+
+# The lane's rename policy, one of the GG_WALK_RENAMES modes that
+# configured-paths.sh states, set by the lane before gg_md_scope; `exact`
+# unless the lane sets another. md-type sets `detect` and states why. The
+# staged trigger and the diff walks read this one value, so the trigger and
+# the walk cannot disagree about a move.
+GG_MD_RENAMES=exact
 
 # What a run with no scope flag resolves to, without resolving it.
 #
@@ -158,6 +166,7 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
   # --exit-code with the names discarded, never --quiet: git 2.54's --quiet
   # stops before rename pairing, so a move reaches the filter as an addition
   # and a deletion, never as the walk's pair.
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
   gg_walk_diff_flags
   status=0
   git diff --cached --exit-code --name-only "${GG_WALK_DIFF[@]}" >/dev/null || status=$?
@@ -188,10 +197,11 @@ gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
 
 # The selected files, as "sha NUL path NUL source NUL" records in
 # $GG_TMP/md-files.z, every one a text blob the lane may read; source is the
-# walk's GG_WALK_SRC. Sets GG_MD_COUNT; the skips are counted in
-# GG_WALK_SKIPPED.
+# path the walk paired it with under GG_WALK_RENAMES, else empty. Sets
+# GG_MD_COUNT; the skips are counted in GG_WALK_SKIPPED.
 gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
   local noun="$1"
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
   GG_MD_COUNT=0
   : >"$GG_TMP/md-files.z"
   case "$GG_MD_MODE" in

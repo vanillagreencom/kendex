@@ -105,6 +105,7 @@ CRLF line ends are normalized, not judged. The lane reads no docs-writing file.
 `--route` and `--as` read docs-writing's route table as data:
 
 - The table is the one under docs-writing's `## Per file type` whose header is `Path | Section | Example`.
+- A table with a fourth `Shape` column, the retired form, is read with that column ignored until the next major release, and prints one `warning=route-table-shape path=<file>:<line>` on stderr.
 - docs-writing is found the way the pre-commit chain finds a sibling gate: the judged tree's install first, then the copy beside this package.
 - The first row with a code-span glob matching the repo-relative path wins; `*` crosses `/`.
 - `--as` prints one size line for a classified path whose row names an example, which docs-audit relays. Size is the file's words outside front matter and code blocks, beside the words of the row's example document counted the same way. The example document is the content of the example's first `markdown` fence before any thematic break, else the example up to its first thematic break. Size is a signal only and never changes the exit status.
@@ -115,7 +116,7 @@ md-type: signal=size path=<p> type=<t> words=<n> example_words=<n> example=<file
 
 Exits:
 
-- An unended file exits 1 in every mode.
+- An unended file exits 1 in the lane scopes and under `--as`.
 - With no docs-writing, `--as` and `--route` print `gap=docs-writing-missing` and exit 2.
 - Where docs-writing breaks the route-table contract, `--as` and `--route` print `rules=unreadable detector=<d> path=<file>` and exit 2, so the audit never reports an unread rule set clean.
 
@@ -124,7 +125,7 @@ The detectors are `unended` (a SKILL.md the block parser cannot end), `route-tab
 Scopes and modes:
 
 - md-type's scopes, from `scripts/lib/md-scope.sh`, are `--staged`, `--base REF`, `--against REF` and `--all` over `COMMIT_GUARDS_MD_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, renders excluded as [hooks and settings § Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions) states. With no flag, `COMMIT_GUARDS_MD_SCOPE` decides.
-- A move with changed bytes is parsed at its new path. An unchanged move adds no content and is not selected.
+- md-type alone detects renames at git's default similarity, and copies from the files the change modifies. Under `--staged`, `--base` and `--against`, every moved or copied file is parsed at its new path, an unchanged move included, so a file moved into `COMMIT_GUARDS_MD_PATHS` is parsed where it arrives. `--all` parses every matching tracked file.
 - The batch hands it `--staged` at commit and the range a caller hands under either `COMMIT_GUARDS_MD_SCOPE`, or `--against` the ref a `--history REF` caller names. Push withholding is defined in [hooks and settings § Pre-push scope](references/hooks-and-settings.md#pre-push-scope).
 - `--route PATH` prints `type=`, `reference=` and `example=` lines, or `route=ignored`, `route=outside-repo`, or `route=unclassified` with `skill=`. It runs only `git rev-parse` and `git check-ignore` in the path's repository. A path under a `.git` entry that git cannot read, or where git cannot run, is exit 2 `route-repo=<dir>` with git's message.
 - `[--root REPO] --as PATH FILE` parses and sizes FILE, `-` for stdin, as PATH with docs-writing read from REPO's install first. Repeated pairs are read in order with the route table read once, each followed by `judged=<n>`.
