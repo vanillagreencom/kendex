@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::accounts::ResetHolder;
 use crate::harness::Harness;
 use crate::observe::WallKind;
 
@@ -229,10 +230,10 @@ pub struct Ground<'a> {
     pub room: bool,
     /// No entry has room, and the soonest reset among them is known.
     pub reset: bool,
-    /// The accounts holding an unused limit reset
+    /// The accounts holding an unused limit reset that a pick could take
     /// ([`crate::accounts::Roster::reset_holders`]), the stopped session's
     /// own left out for an ended sign-in.
-    pub resets: &'a [String],
+    pub resets: &'a [ResetHolder],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -249,12 +250,12 @@ pub enum Action {
     WaitForReset,
     /// Nothing can recover the session: tell its owner once.
     Notify { to: Owner },
-    /// No entry has room, but these accounts hold an unused limit reset:
-    /// tell whoever presses one once, then take `then`, the wait or the
-    /// stop the decision takes without them.
+    /// No entry has room, but these accounts hold an unused limit reset,
+    /// each named by its directory: tell whoever presses one once, then
+    /// take `then`, the wait or the stop the decision takes without them.
     NotifyReset {
         to: Owner,
-        accounts: Vec<String>,
+        accounts: Vec<ResetHolder>,
         then: Box<Action>,
     },
 }
@@ -266,11 +267,12 @@ pub const PROVIDER_PATIENCE: Duration = Duration::from_secs(30 * 60);
 
 /// The action for a stop of `kind` first read `age` ago on a `session`,
 /// over the walk's `ground`. A session stops for good, and its owner is
-/// told, only when no entry in the walk has room, none lists an unused
-/// limit reset and, for a limit or an exited harness, none has a known
-/// reset. An unused reset is named before the session waits or stops. An
-/// ended sign-in never waits for a reset. A provider stop never ends so:
-/// its own account still has room.
+/// told, only when no entry in the walk has room and, for a limit or an
+/// exited harness, none has a known reset. Where an account lists an
+/// unused limit reset, that wait or stop comes as [`Action::NotifyReset`]:
+/// the caller tells its `to` once, then takes its `then`, a final
+/// [`Action::Notify`] included. An ended sign-in never waits for a reset.
+/// A provider stop never ends so: its own account still has room.
 pub fn action(kind: Kind, age: Duration, session: Session, ground: Ground) -> Action {
     let press_or = |otherwise: Action| {
         if ground.resets.is_empty() {
@@ -317,7 +319,10 @@ mod tests {
     #[test]
     fn each_kind_age_and_ground_takes_one_action() {
         const MINUTE: Duration = Duration::from_secs(60);
-        let held = ["1codex".to_owned()];
+        let held = [ResetHolder {
+            config_dir: "/h/.1codex".to_owned(),
+            alias: "1codex".to_owned(),
+        }];
         let ground = |own_room, room, reset| Ground {
             own_room,
             room,

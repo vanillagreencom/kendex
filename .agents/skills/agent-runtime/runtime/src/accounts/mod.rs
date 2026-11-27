@@ -551,6 +551,16 @@ pub fn today(now_secs: u64) -> String {
     clock::iso_utc(now_secs)[..10].to_owned()
 }
 
+/// An account holding an unused limit reset ([`Roster::reset_holders`]).
+/// The directory names the account, as a launch names it; the alias is a
+/// label only, since `AGENT_RUNTIME_ACCOUNT_ALIASES` can give two
+/// directories one alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResetHolder {
+    pub config_dir: String,
+    pub alias: String,
+}
+
 /// One listing under the judge's statement: its rows, the cause the
 /// provider's read failed with, and the keyed lines the listing says
 /// beside the rows.
@@ -643,16 +653,37 @@ impl Roster {
         Ok(())
     }
 
-    /// The alias of each account whose row lists at least one unused limit
-    /// reset, the account at the directory `leave_out` excepted: the stop
-    /// decision's [`crate::stop::Ground::resets`].
-    pub fn reset_holders(&self, leave_out: Option<&str>) -> Vec<String> {
-        let left_out = leave_out.map(wall::canon);
+    /// Each account that lists at least one unused limit reset and that a
+    /// choice among accounts could take `today`, once though the roster
+    /// holds two readings of it, the account at the directory `leave_out`
+    /// excepted: the stop decision's [`crate::stop::Ground::resets`]. A
+    /// reset pressed on an account the pick then refuses buys nothing, so
+    /// the pick's own rules judge each account over both readings, as
+    /// [`resolve`] merges them: configured on some reading, a provider's
+    /// reading being configured, and on no reading left out or refused by
+    /// its word, since a provider's reservation and stated end carry onto
+    /// the reading a pick takes.
+    pub fn reset_holders(&self, leave_out: Option<&str>, today: &str) -> Vec<ResetHolder> {
+        let exclude: Vec<String> = leave_out.into_iter().map(str::to_owned).collect();
+        let same = |a: &AccountRow, b: &AccountRow| a.harness == b.harness && a.canon == b.canon;
         self.rows
             .iter()
-            .filter(|r| r.limit_resets.is_some_and(|n| n > 0))
-            .filter(|r| left_out.as_ref() != Some(&r.canon))
-            .map(|r| r.alias.clone())
+            .enumerate()
+            .filter(|(i, row)| !self.rows[..*i].iter().any(|r| same(r, row)))
+            .filter(|(_, row)| {
+                let mut readings = self.rows.iter().filter(|r| same(r, row));
+                readings
+                    .clone()
+                    .any(|r| r.limit_resets.is_some_and(|n| n > 0))
+                    && readings.clone().any(|r| r.configured)
+                    && readings.all(|r| {
+                        !left_out(r, &exclude, false) && r.standing(today) == Standing::Open
+                    })
+            })
+            .map(|(_, row)| ResetHolder {
+                config_dir: row.config_dir.clone(),
+                alias: row.alias.clone(),
+            })
             .collect()
     }
 
@@ -2090,11 +2121,12 @@ fn own_question(req: &PickRequest) -> bool {
     req.for_overseer && req.lane.is_some()
 }
 
-/// Whether `req` leaves the account out by name: `--exclude-lane`'s
-/// directories, and the owner's exclusion, which keeps an account from
-/// every pick but a controller's question about its own account.
-fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
-    req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own_question(req))
+/// Whether the account is left out by name: the directories `exclude`
+/// names (`--exclude-lane`), and the owner's exclusion, which keeps an
+/// account from every pick but a controller's question about its own
+/// account (`own`, [`own_question`]).
+fn left_out(row: &AccountRow, exclude: &[String], own: bool) -> bool {
+    exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own)
 }
 
 /// The account's standing for `req`: its word's, except that a
@@ -2117,7 +2149,7 @@ pub fn judge_one(
     now: u64,
 ) -> Judged {
     let mut judged = judge(row, req, facts, settings, &today(now), now);
-    if left_out(row, req) {
+    if left_out(row, &req.exclude, own_question(req)) {
         judged.verdict = EXCLUDED.to_owned();
     }
     judged
@@ -2206,7 +2238,7 @@ pub fn pick(
     let candidates = rows.iter().filter(|r| candidate(r)).count();
     let judged: Vec<Judged> = rows
         .iter()
-        .filter(|r| candidate(r) && r.configured && !left_out(r, req))
+        .filter(|r| candidate(r) && r.configured && !left_out(r, &req.exclude, own_question(req)))
         .map(|r| judge(r, req, facts, settings, &today, now))
         .collect();
     let mut room: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "room").collect();
@@ -2443,8 +2475,7 @@ mod tests {
     /// Each row carries the count the provider states for its account's
     /// directory, on its harness alone, whatever alias the machine gives
     /// it, and none where the provider states none. A provider that answers
-    /// its rows in place of the document changes no row. The holders are
-    /// the accounts with a count above zero, a left-out account excepted.
+    /// its rows in place of the document changes no row.
     #[test]
     fn each_row_carries_the_limit_resets_the_provider_states_for_its_account() {
         let codex = |dir: &str, alias: &str| {
@@ -2477,11 +2508,68 @@ mod tests {
                 .is_err()
         );
         assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
-        assert_eq!(roster.reset_holders(None), vec!["x".to_owned()]);
-        assert!(roster.reset_holders(Some("/h/.1codex")).is_empty());
+    }
+
+    /// The holders are the accounts listing a reset that a choice among
+    /// accounts could take, each named once by its directory: two
+    /// directories sharing one alias stay two holders, two readings of one
+    /// account one, and an account the pick refuses by the owner's
+    /// exclusion, its stated end, a provider's reservation or as
+    /// unconfigured is none. A left-out account is none on either reading.
+    #[test]
+    fn the_reset_holders_are_the_accounts_a_pick_could_take_named_by_directory() {
+        let settings = AccountSettings {
+            retire: vec![Retirement {
+                name: "5codex".to_owned(),
+                date: "2026-10-20".to_owned(),
+            }],
+            exclude: vec!["4codex".to_owned()],
+            ..settings()
+        };
+        let reading = |dir: &str, alias: &str, extra: Value, resets: Option<u64>| {
+            let mut raw = json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null});
+            if let (Value::Object(raw), Value::Object(extra)) = (&mut raw, extra) {
+                raw.extend(extra);
+            }
+            let mut row = AccountRow::parse(&raw, &settings).expect("a row");
+            row.limit_resets = resets;
+            row
+        };
+        let host = || json!({"measured_through":"host"});
+        let roster = Roster {
+            rows: vec![
+                reading("/h/.1codex", "1codex", json!({}), Some(1)),
+                reading("/h/.1codex", "1codex", host(), Some(1)),
+                // `AGENT_RUNTIME_ACCOUNT_ALIASES="3codex=1codex"`.
+                reading("/h/.3codex", "1codex", json!({}), Some(1)),
+                reading("/h/.4codex", "4codex", json!({}), Some(1)),
+                reading("/h/.5codex", "5codex", json!({}), Some(1)),
+                reading("/h/.6codex", "6codex", json!({}), Some(1)),
+                reading(
+                    "/h/.6codex",
+                    "6codex",
+                    json!({"measured_through":"host","reserved":1}),
+                    Some(1),
+                ),
+                reading("/h/.7codex", "7codex", json!({"configured":false}), Some(1)),
+                reading("/h/.8codex", "8codex", json!({}), Some(0)),
+                reading("/h/.9codex", "9codex", json!({}), None),
+            ],
+            provider_failure: None,
+            notes: Vec::new(),
+        };
+        let holder = |dir: &str| ResetHolder {
+            config_dir: dir.to_owned(),
+            alias: "1codex".to_owned(),
+        };
+        let today = "2026-11-26";
         assert_eq!(
-            roster.reset_holders(Some("/h/.2codex")),
-            vec!["x".to_owned()]
+            roster.reset_holders(None, today),
+            vec![holder("/h/.1codex"), holder("/h/.3codex")]
+        );
+        assert_eq!(
+            roster.reset_holders(Some("/h/.1codex"), today),
+            vec![holder("/h/.3codex")]
         );
     }
 
