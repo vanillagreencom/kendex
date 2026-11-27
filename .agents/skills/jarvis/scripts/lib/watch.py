@@ -1317,6 +1317,27 @@ class Watch:
             self.notify(memory, now)
         return kind
 
+    def accept_wedged(self, reading, now):
+        if reading is None or isinstance(reading, Failure):
+            return
+        session, pane, account, _, rows = reading
+        controller = [session, pane]
+        previous = self.state.get("wedged")
+        # A live reading can be an open turn in the same full session.
+        if controller == previous:
+            return
+        if rows.get("verdict") != "wedged":
+            if previous is not None:
+                del self.state["wedged"]
+                self.save()
+            return
+        self.state["wedged"] = controller
+        # Persist the notice with its identity so mailbox failure cannot hold a wall's recovery.
+        account = account or "its default account"
+        text = (f"Jarvis session {session} in pane {pane} on {account} cannot continue "
+                f"(read at {wall_time(now)}). The context window is full.")
+        self.owner_notice(text, "wedged-notice", now, defer=True)
+
     def session(self, operation, verb, *args):
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
         try:
@@ -1357,12 +1378,16 @@ class Watch:
         memory = self.state.get("provider")
         stop = rows.get("stop")
         stands = stop == "provider" or stop is None and rows.get("pane") not in (None, "idle")
-        if (not stands or memory is not None and [memory["session"], memory["pane"]] != [session, pane]) and (
-                memory is not None or "provider-recovery_failure" in self.state):
-            self.state.pop("provider", None)
-            self.state.pop("provider-recovery_failure", None)
-            self.save()
+        ends_episode = memory is not None and (not stands or (memory["session"], memory["pane"]) != (session, pane))
+        report = self.state.get("provider-recovery_failure")
+        clears_report = report is not None and (not stands or report.get("controller") != [session, pane])
+        if ends_episode:
+            del self.state["provider"]
             memory = None
+        if clears_report:
+            del self.state["provider-recovery_failure"]
+        if ends_episode or clears_report:
+            self.save()
         if stop != "provider":
             return None
         episode = ["--since", str(memory["since"]), "--last", str(memory["last"])] if memory else []
@@ -1375,17 +1400,21 @@ class Watch:
     def accept_provider(self, answer, args):
         """The provider stop's answer: the episode it names is kept for the
         next ask; a recovery that failed, or a resume whose walk could not
-        judge another provider, reports once per episode and is asked again.
-        Only a decided answer with no walk refusal clears that report: a busy
-        pane, or a hand-over another caller holds, decided nothing."""
+        judge another provider, reports once per refusal key in this
+        controller's episode and is asked again. Resumed, unconfirmed or
+        moved answers without a walk refusal clear the report. The end of
+        the episode or a reading of another controller clears it too."""
+        controller = args[1:3]
         if isinstance(answer, Failure) or answer.get("state") not in ("running", "handing-over"):
             self.failed_pass("provider-recovery", answer.record if isinstance(answer, Failure) else Failure(
-                "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record)
+                "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record,
+                controller=controller)
             return
         if answer.get("provider_walk"):
             self.failed_pass("provider-recovery", Failure(
                 "provider-recovery", "walk", answer["provider_walk"],
-                "The session resumes and cannot move to another provider: " + answer["provider_walk"] + ".").record)
+                "The session resumes and cannot move to another provider: " + answer["provider_walk"] + ".").record,
+                controller=controller)
         elif answer.get("provider_recovery") in ("resumed", "unconfirmed", "moved"):
             self.state.pop("provider-recovery_failure", None)
         if answer.get("episode"):
@@ -1542,19 +1571,20 @@ class Watch:
         self.state.pop("owner-quiet_failure", None)
         return not answer
 
-    def owner_notice(self, text, operation, now, ref=None, replaces=None):
+    def owner_notice(self, text, operation, now, ref=None, replaces=None, *, defer=False):
         """The receipt id of the owner notice TEXT in REF's thread: lane-mail's,
         or a held one while the owner's quiet hours cover NOW or an earlier
         notice is still held. The episode counts a held notice as sent, so
         holding it holds no recovery; release sends it after the hours. TEXT
-        takes the place of the held notice REPLACES while it is still held."""
+        takes the place of the held notice REPLACES while it is still held.
+        DEFER saves a notice before attempting any mailbox send."""
         held = self.state.get("held_notices", [])
         superseded = next((entry for entry in held if entry["id"] == replaces), None)
         if superseded is not None:
             superseded["text"] = text
             self.save()
             return superseded["id"]
-        if not held and self.waking(now):
+        if not held and not defer and self.waking(now):
             return self.send_notice(text, operation, ref)
         entry = next((entry for entry in held if entry["id"] == ref), None)
         if entry is not None:
@@ -2017,6 +2047,7 @@ class Watch:
                 self.accept_provider(wall[1].result(), wall[2])
             else:
                 reading = wall[1].result()
+                self.accept_wedged(reading, now)
                 # A wall read that binds no live controller, or an exit's
                 # episode still open, reads the recorded one's status. A
                 # wall read whose status read was refused, or found no
@@ -2123,15 +2154,23 @@ class Watch:
             self.batch(now)
         return pending
 
-    def failed_pass(self, side, cause):
+    def failed_pass(self, side, cause, *, controller=None):
         side = self.destination_key(side)
         prior = self.state.get(side + "_failure", {})
-        if prior.get("key") != cause["key"]:
-            self.append(pass_output(side, self.cursors.get(side, {}), [(None,
-                event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
-                      cause=cause["detail"]))]))
-            self.state[side + "_failure"] = cause
-            self.save()
+        if controller is None:
+            if prior.get("key") == cause["key"]:
+                return
+            report = cause
+        else:
+            keys = prior.get("keys", [])
+            if cause["key"] in keys:
+                return
+            report = {"controller": controller, "keys": [*keys, cause["key"]]}
+        self.append(pass_output(side, self.cursors.get(side, {}), [(None,
+            event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
+                  cause=cause["detail"]))]))
+        self.state[side + "_failure"] = report
+        self.save()
 
     def accept_presence(self, side, results):
         side = self.destination_key(side)

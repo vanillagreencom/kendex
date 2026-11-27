@@ -2843,10 +2843,8 @@ with open(sys.argv[1], "ab") as out:
         # decision never ages it past its patience and never moves the
         # session to another provider; or one that keeps it past a returned
         # turn, a new controller or a wall, so a later stop is moved on its
-        # first failure. A failed recovery reports once per episode, through
-        # a busy pane, and is asked again. A full context, which a Codex pane
-        # draws as it draws a provider error, is no provider stop. A provider
-        # stop tells nobody.
+        # first failure. A failed recovery reports once per refusal key,
+        # through a busy pane, and is asked again. A provider stop tells nobody.
         episode = lambda since, last: ({"state": "running", "provider_recovery": "resumed",
                                         "episode": {"since": since, "last": last}}, 0)
         failed = {"state": "failed", "reason": "handover-failed", "detail": "The session could not resume."}, 1
@@ -2863,12 +2861,8 @@ with open(sys.argv[1], "ab") as out:
                           "› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · "
                           "GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view\n",
                  "copilot": "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n" + "─" * 40 + "\n"}
-        # A full context's record is drawn on the pane as its error is.
         screens = {harness: {"returned": (fixtures / (harness + "-idle.txt")).read_text(), "drawn": drawn[harness],
                              "full": drawn[harness]} for harness in drawn}
-        # The words each record types a full context with, in place of the overload's.
-        full = {"codex": ('"codex_error_info":"server_overloaded"', '"codex_error_info":"context_window_exceeded"'),
-                "copilot": ('"errorType":"query"', '"errorType":"context_limit"')}
         panes = self.root / "panes"
         panes.mkdir()
         self.executable("tmux", '#!/bin/sh\n[ "$1 $2 $3" = "-S /sock capture-pane" ] || exit 9\n'
@@ -2880,11 +2874,7 @@ with open(sys.argv[1], "ab") as out:
                 self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-provider-" + harness))
                 account = self.root / ("accounts-" + harness)
                 account.mkdir()
-                stop, filled = [], []
-                if harness != "claude":
-                    stop = self.recorded_stop(harness + "-overload.jsonl")
-                    filled = [line.replace(*full[harness]) for line in stop]
-                    self.assertNotEqual(filled, stop)
+                stop, filled = self.provider_stop_records(harness)
                 wall = {"codex": "codex-credits.jsonl", "copilot": "copilot-quota.jsonl"}
 
                 def plant(session, pane, turn):
@@ -2914,6 +2904,7 @@ with open(sys.argv[1], "ab") as out:
                 # Each check: the controller, its turn, the session command's
                 # answer, the arguments the check passes it, and the
                 # root-unreachable events written by then.
+                full_seen = False
                 for index, (session, pane, turn, (answer, code), asked, alerts) in enumerate((
                         ("s1", "%3", "failed", episode(100, 100), ask(), 0),
                         ("s1", "%3", "failed", failed, ask("s1", "%3", "100", "100"), 1),
@@ -2929,7 +2920,7 @@ with open(sys.argv[1], "ab") as out:
                         ("s1", "%3", "returned", (None, 0), None, 3),
                         ("s1", "%3", "failed", failed, ask(), 4),
                         ("s1", "%3", "drawn", episode(200, 200), ask(), 4),
-                        # A full context asks nothing and ends the episode.
+                        # The full-context verdict ends the provider episode.
                         ("s1", "%3", "full", (None, 0), None, 4),
                         ("s1", "%3", "failed", episode(220, 220), ask(), 4),
                         ("s2", "%4", "failed", episode(230, 230), ask("s2", "%4"), 4),
@@ -2943,9 +2934,107 @@ with open(sys.argv[1], "ab") as out:
                     events = [line for output in written for line in output.splitlines()
                               if line.startswith("EVENT root-unreachable")]
                     self.assertEqual(len(events), alerts, "check " + str(index))
-                    if turn != "usage":
+                    full_seen = full_seen or turn == "full"
+                    if not full_seen:
                         self.assertEqual(self.owner_notice_rows(), [], "check " + str(index))
                 self.assertNotIn("provider", watch.state)
+
+    def test_provider_failure_reports_belong_to_the_session_and_pane(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "86400"
+        # A handover refusal can arrive before agent-runtime returns an episode.
+        self.session_command({"state": "failed", "reason": "handover-failed", "detail": "pane-unread"}, 1)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for index, (session, pane, count) in enumerate((
+                    ("s1", "%3", 1), ("s1", "%3", 1), ("s2", "%3", 2), ("s2", "%4", 3))):
+                self.controller(session, "/accounts/a", {"event": "StopFailure", "error": "server_error"}, pane=pane)
+                watch = self.watch()
+                self.wall_passes(watch, 1000 + 30 * index)
+                events = re.findall(r"^EVENT root-unreachable .*", watch.log.read_text(), re.M)
+                self.assertEqual(len(events), count, (session, pane, events))
+
+    def test_provider_failure_reports_each_refusal_key_once_until_recovery(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "86400"
+        self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "server_error"})
+        resumed = {"state": "running", "provider_recovery": "resumed", "episode": {"since": 100, "last": 130}}
+        walk = dict(resumed, provider_walk="walk-unread")
+        refused = {"state": "failed", "reason": "handover-failed", "detail": "pane-unread"}
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for index, (answer, count) in enumerate((
+                    (walk, 1), (refused, 2), (walk, 2), (resumed, 2), (walk, 3),
+                    (dict(resumed, provider_recovery="moved"), 3))):
+                self.session_command(answer, int(answer["state"] == "failed"))
+                watch = self.watch()
+                self.wall_passes(watch, 1000 + 30 * index)
+                events = re.findall(r"^EVENT root-unreachable .*", watch.log.read_text(), re.M)
+                self.assertEqual(len(events), count, events)
+            # A move finishes the report before the next controller status read.
+            self.assertNotIn("provider-recovery_failure", self.watch().state)
+
+    def provider_stop_records(self, harness):
+        """The recorded overload and full-context stops for Codex and Copilot."""
+        full = {"codex": ('"codex_error_info":"server_overloaded"', '"codex_error_info":"context_window_exceeded"'),
+                "copilot": ('"errorType":"query"', '"errorType":"context_limit"')}
+        if harness not in full:
+            return [], []
+        stop = self.recorded_stop(harness + "-overload.jsonl")
+        filled = [line.replace(*full[harness]) for line in stop]
+        self.assertNotEqual(filled, stop)
+        return stop, filled
+
+    def test_a_wedged_controller_tells_the_owner_once_with_the_cause(self):
+        # The recorded verdict decides the stop before any pane capture.
+        for harness in ("claude", "codex", "copilot"):
+            with self.subTest(harness=harness), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-wedged-" + harness)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-wedged-" + harness))
+                account = self.root / ("accounts-wedged-" + harness)
+                row = {"event": "StopFailure", "error": "invalid_request", "message": "Prompt is too long"}
+                self.controller("s1", str(account), row, harness=harness)
+                _, filled = self.provider_stop_records(harness)
+                if filled:
+                    self.session_record(harness, account, filled)
+                log = self.session_command(None, 1)
+                self.wall_passes(self.watch(), 1000)
+                if harness == "claude":
+                    self.controller("s1", str(account), {"event": "Stop"})
+                    self.wall_passes(self.watch(), 1030)
+                    self.controller("s1", str(account), row)
+                self.wall_passes(self.watch(), 1060)
+                self.assertFalse(log.exists())
+                notices = self.owner_notices()
+                self.assertEqual(len(notices), 1, notices)
+                for word in ("s1", "4242 %3", str(account), "context window is full"):
+                    self.assertIn(word, notices[0])
+
+    def test_an_unsent_wedge_notice_and_wall_recovery_survive_each_other(self):
+        row = {"event": "StopFailure", "error": "invalid_request", "message": "Prompt is too long"}
+        wedged = dict(session="wedged", account="/accounts/a", row=row)
+        auth = dict(session="wall", pane="%4", account="/accounts/b",
+                    row={"event": "StopFailure", "error": "authentication_failed"})
+        for first, second in ((wedged, auth), (auth, wedged)):
+            with self.subTest(first=first["session"]), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-wedge-notice-" + first["session"])
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-wedge-notice-" + first["session"]))
+                self.intercept_mail('if [ "$1" = notice ]; then echo "lane-mail: write-failed=overseer" >&2; exit 1; fi')
+                try:
+                    log = self.session_command({"state": "running", "account": "/accounts/c"}, 0)
+                    for at, controller in ((1000, first), (1030, second)):
+                        self.controller(**controller)
+                        self.wall_passes(self.watch(), at)
+                    self.assertEqual(log.read_text().splitlines() if log.exists() else [],
+                                     [f"succeed --home {self.home} --account-walled"])
+                    self.assertEqual(self.owner_notices(), [])
+                finally:
+                    shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+                self.controller("replacement", "/accounts/c", {"event": "Stop"}, pane="%5")
+                self.wall_passes(self.watch(), 1060)
+                self.wall_passes(self.watch(), 1090)
+                notices = self.owner_notices()
+                self.assertEqual(len(notices), 2, notices)
+                self.assertTrue(any("context window is full" in text for text in notices), notices)
+                self.assertTrue(any("signed out" in text for text in notices), notices)
 
     def test_a_codex_or_copilot_wall_starts_its_succession_and_tells_the_owner_once(self):
         # The failure it stops: a Codex or Copilot Jarvis session at its
