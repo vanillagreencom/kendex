@@ -55,7 +55,8 @@ a source with root documentation|40|small|class: class=small measured=true cause
 a source with a root instruction file|31|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 AGENTS.md:1
 documentation still counts at the small size ceiling|150|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/runtime.md:120
 documentation still counts past the small size ceiling|151|standard|class: class=standard measured=true cause=production-past-small production=151|runtime/product.ts:30 docs/runtime.md:121
-an all-docs change permits complete empty outside discovery|30|small|class: class=small measured=true cause=production-within-small subsystem=|docs/runtime.md:30
+a source with its skill reference|40|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 skills/runtime/references/guide.md:10
+a source with a settings file|31|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 kendex.settings.toml:1
 two source subsystems beside docs select the standard CI class|70|small|class: class=standard measured=true cause=several-subsystems production=70|runtime/product.ts:30 payload/data.conf:30 docs/runtime.md:10
 an excluded path beside docs selects standard at launch and in CI|40|standard|class: class=standard measured=true cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/*|runtime/product.ts:30 .github/workflows/ci.yml:1 docs/runtime.md:9
 DOCS

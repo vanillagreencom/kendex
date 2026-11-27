@@ -6,14 +6,18 @@
 # diff or repository settings.
 #
 # change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
-# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, pointer, narrow or
+# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, narrow or
 # launch (all phases). An unmatched path leaves both empty.
+# change_class_quick_path PATH returns 0 for a kendex manifest or a JSON
+# settings file that no registry or .gemini glob matches at any depth, the
+# paths beside Markdown that the cheapest class takes.
 # The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
 # narrow class. Call it before the narrow or launch phase.
-# change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
-# GLOBS is newline-separated, with bash patterns matching the whole path.
+# change_class_path_match PATH GLOBS [any-depth] sets PATH_MATCH_HIT on the
+# first match. GLOBS is newline-separated, with bash patterns matching the
+# whole path, or with any-depth the whole path or a suffix after a `/`.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 # change_scope_location_load REPO loads the narrow-phase lists and
 # CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
@@ -72,15 +76,19 @@ names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
   set +f
 }
 
-change_class_path_match() { # PATH GLOBS
+change_class_path_match() { # PATH GLOBS [any-depth]
   local glob
   PATH_MATCH_HIT=""
   while IFS= read -r glob; do
     [ -n "$glob" ] || continue
     # shellcheck disable=SC2254
     case "$1" in
-      $glob) PATH_MATCH_HIT="path=$1 glob=$glob"; return 0 ;;
+      $glob) ;;
+      */$glob) [ "${3:-}" = any-depth ] || continue ;;
+      *) continue ;;
     esac
+    PATH_MATCH_HIT="path=$1 glob=$glob"
+    return 0
   done <<<"$2"
   return 1
 }
@@ -96,42 +104,14 @@ change_class_list_globs() { # CONF KEYWORD
 change_class_path_load() { # CONF
   CHANGE_CLASS_PATH_CAUSE=narrow-change-list-unreadable
   [ -r "$1" ] || return 1
-  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" &&
-    CHANGE_CLASS_INSTRUCTION="$(change_class_list_globs "$1" instruction)" || return 1
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-floor-missing
-  [ -n "$CHANGE_CLASS_INSTRUCTION" ] || return 1
+  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" || return 1
   CHANGE_CLASS_PATH_CAUSE=""
 }
 
-change_class_path() { # PATH PHASE
-  local globs
-  CHANGE_CLASS_PATH=""
-  CHANGE_CLASS_PATH_CAUSE=""
-  if [ "$2" = launch ]; then
-    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    # These files decide the render and classifier inputs. Gemini's shim
-    # owns one key only, not the other settings its harness executes.
-    globs='kendex.toml
-kendex.settings.toml
-kendex-local.toml
-.kendex/settings.toml
-.gemini/settings.json'
-    if change_class_path_match "$1" "$globs"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = registry ] || [ "$2" = launch ]; then
-    # Registries execute hooks, permissions and MCP servers. A proven render
-    # can own their changed keys; a Location alone proves no render.
-    globs='.claude/settings.json
+# Registries execute hooks, permissions and MCP servers, at the root of the
+# repository and of every nested project in it. A proven render can own their
+# changed keys; a Location alone proves no render.
+CHANGE_CLASS_REGISTRY_GLOBS='.claude/settings.json
 .claude/settings.local.json
 .mcp.json
 .codex/config.toml
@@ -148,28 +128,57 @@ kendex-local.toml
 .pi/kendex/hooks.json
 opencode.json
 opencode.jsonc'
-    if change_class_path_match "$1" "$globs"; then
+# Gemini's shim owns one key only, not the other settings its harness
+# executes, so no render can own the file.
+CHANGE_CLASS_GEMINI_GLOB=.gemini/settings.json
+
+# A kendex manifest, or a JSON settings file by its name that is no harness
+# registry. A [sources] change and the install record keep their own rules,
+# which the callers apply first.
+change_class_quick_path() { # PATH
+  local PATH_MATCH_HIT
+  ! change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS
+$CHANGE_CLASS_GEMINI_GLOB" any-depth || return 1
+  case "$1" in
+    kendex.toml | kendex-local.toml | kendex.settings.toml | .kendex/settings.toml) return 0 ;;
+  esac
+  case "${1##*/}" in
+    settings.json | settings.jsonc | settings.local.json | settings.local.jsonc) return 0 ;;
+  esac
+  return 1
+}
+
+change_class_path() { # PATH PHASE
+  CHANGE_CLASS_PATH=""
+  CHANGE_CLASS_PATH_CAUSE=""
+  if [ "$2" = launch ]; then
+    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
+      CHANGE_CLASS_PATH=standard
+      CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
+      return 0
+    fi
+  fi
+  if [ "$2" = before-render ] || [ "$2" = launch ]; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_GEMINI_GLOB" any-depth; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
     fi
   fi
-  if [ "$2" = pointer ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" $'CLAUDE.md\n*/CLAUDE.md'; then
+  if [ "$2" = registry ] || [ "$2" = launch ]; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS" any-depth; then
       CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="instruction-pointer $PATH_MATCH_HIT"
+      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
     fi
   fi
   if [ "$2" = narrow ] || [ "$2" = launch ]; then
+    # Markdown at any path takes the cheapest class, so a `path` glob that
+    # names a whole tree, such as tools/*, holds none of its Markdown.
+    case "$1" in *.md | *.markdown) return 0 ;; esac
     if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
-      return 0
-    fi
-    if change_class_path_match "$1" "$CHANGE_CLASS_INSTRUCTION"; then
-      CHANGE_CLASS_PATH=small
-      CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
     fi
   fi
 }
@@ -298,8 +307,7 @@ base_file() { # PATH OUT
 # The settings the base endpoint's commit holds, read from the [env] tables
 # of BASE_SETTINGS_FILES, never from the judged tree: a branch cannot choose
 # the ceilings or the roots its own size is scored against, nor the paths
-# that keep it in the queue, and a settings file the branch changes answers
-# standard as a configuration source. That commit is the one --base names,
+# that keep it in the queue. That commit is the one --base names,
 # the pull request's base end or a merge group's base, never the merge base,
 # which the author picks by choosing where to fork. The tables are parsed by
 # kendex-env.sh beside this library, the shared settings reader, in its

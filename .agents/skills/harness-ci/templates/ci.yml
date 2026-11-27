@@ -158,10 +158,7 @@ jobs:
   # job per lane. Publish its `lane_<name>` output above and give it this
   # `needs:` and this `if:` with its
   # own output, named in CI's `needs:` and aggregate step as they name
-  # `test`. A lane that reads a file under docs/ or changelog.d/, or a root
-  # .md or .markdown file, is the exception
-  # .agents/skills/harness-ci/references/wiring.md § Through the composite action
-  # states. Copied as it stands, this lane fails, and CI with it.
+  # `test`. Copied as it stands, this lane fails, and CI with it.
   test:
     name: Test
     needs: changes

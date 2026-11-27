@@ -40,25 +40,20 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 
 | Setting | What to configure |
 |---|---|
-| `HARNESS_CI_STANDARD_PATHS` | High-risk paths that always need full checks. |
-| `HARNESS_CI_DOCS_PATHS` | Exact Markdown files containing text displayed to users outside the built-in docs set. |
+| `HARNESS_CI_STANDARD_PATHS` | High-risk paths that keep the `standard` class and full review. A path outside the docs set also keeps its lanes; a change confined to the docs set, such as Markdown, runs none. |
+| `HARNESS_CI_DOCS_PATHS` | Exact Markdown files containing text displayed to users. |
 | `HARNESS_CI_UNREAD_PATHS` | Globs for files no CI job reads, such as `.github/dependabot.yml`. |
 | `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. |
 | `HARNESS_CI_QUEUE_PATHS` | The repository's own CI inputs that need the merge queue. |
 | `HARNESS_CI_QUEUE_SELECTOR` | The repository command that identifies merge-group jobs. |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
-| `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. |
-| `HARNESS_CI_TRIVIAL_SETTINGS` | Adjustments to the installed packages' CI-unread keys. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside the branch measurement's default patterns. |
 
-- `HARNESS_CI_DOCS_PATHS`: keep the checks claiming those files through the lane outputs. A path in the built-in docs set cannot be declared, and its entry is ignored. [Declaration contract](references/wiring.md#declared-product-text).
+- `HARNESS_CI_DOCS_PATHS`: keep the checks claiming those files through the lane outputs. [Declaration contract](references/wiring.md#declared-product-text).
 - `HARNESS_CI_UNREAD_PATHS`: a change to only those files, with no lane claiming them, runs no lane. Declared product text, a path on the shipped queue list, such as a workflow, and a path git quotes keep the unclaimed-path fallback. [Per-lane contract](references/wiring.md#per-lane-verdicts).
 - `HARNESS_CI_PER_PUSH_REASON`: unset, every change is queue-only. A repository with no merge queue sets it to `no merge queue`. What it changes: [references/wiring.md § The CI template](references/wiring.md#the-ci-template).
 - `HARNESS_CI_QUEUE_PATHS` is read only with `HARNESS_CI_PER_PUSH_REASON`. Set it empty when the shipped list covers all those inputs. Leaving it unset requires the queue for every change.
 - `HARNESS_CI_QUEUE_SELECTOR` is read only with `HARNESS_CI_PER_PUSH_REASON`. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template).
-- `HARNESS_CI_TRIVIAL_MAX_LINES`: a diff of admitted settings files alone has no ceiling.
-- `HARNESS_CI_TRIVIAL_SETTINGS`: add key globs, or prefix a glob with `!` to remove them.
-- `HARNESS_CI_TRIVIAL_SETTINGS`: list only keys that no CI job or review gate reads.
 
 harness-ci selects a workflow lane when a changed file reaches a command that lane runs. The reader uses the committed workflow, Cargo's package graph, Vitest's module graph, literal shell sources, and installed package ownership. [Per-lane wiring](references/wiring.md#per-lane-verdicts) describes supported commands, and its Exception and legacy declarations paragraph states which lanes run when the reader cannot read a job.
 

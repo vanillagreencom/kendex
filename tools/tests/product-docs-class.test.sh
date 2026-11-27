@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# kendex's committed kendex.settings.toml holds the product content a user
-# reads or accepts to the standard class: a few changed lines of the Terms or
-# of the authoring reference the app compiles in answer standard through the
-# repository-standard-path rule, and prove no quick change, so their review
-# request stays. Without that setting the same edit is trivial and proves
-# one, as any documentation Markdown does.
+# kendex's committed kendex.settings.toml holds the Terms and Privacy Policy
+# a user accepts to the standard class: a few changed lines of the Terms
+# answer standard through the repository-standard-path rule, and prove no
+# quick change, so their review request stays. Without that setting the same
+# edit is trivial and proves one, as any Markdown does, the authoring
+# reference the app compiles in included.
 #
 # Lives under tools/tests/: change-scope's own suites ship to every
 # repository, and this setting is kendex's alone.
@@ -49,9 +49,8 @@ while IFS='|' read -r path settings class proved; do
     "$(sed -n 's/^class: //p' <<<"$err" | cut -d' ' -f1-3) $(sed -n '/^quick-proof: /p' <<<"$err")"
 done <<'ROWS'
 docs/legal/terms.md|settings-committed|class=standard measured=true cause=repository-standard-path|false
-docs/authoring/README.md|settings-committed|class=standard measured=true cause=repository-standard-path|false
+docs/authoring/README.md|settings-committed|class=trivial measured=true cause=documentation-paths|true
 docs/legal/terms.md|settings-without|class=trivial measured=true cause=documentation-paths|true
-docs/authoring/README.md|settings-without|class=trivial measured=true cause=documentation-paths|true
 ROWS
 require_rows product-docs "$rows"
 

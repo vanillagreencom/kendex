@@ -151,8 +151,12 @@ workspace = "../elsewhere"
       write_lines "$KEPT_RENDER" 2
       edit_inventory 'map(select(. != $kept))' ;;
     inventory-invalid) printf '{unparsed\n' >"$repo/$INVENTORY" ;;
-    standard-head-clear) printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$repo/kendex.settings.toml" ;;
-    standard-head-add) printf '[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/*"\n' >"$repo/kendex.settings.toml" ;;
+    standard-head-clear)
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$repo/kendex.settings.toml"
+      write_lines runtime/product.ts 2 ;;
+    standard-head-add)
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/*"\n' >"$repo/kendex.settings.toml"
+      write_lines runtime/product.ts 2 ;;
     unmark-bench) printf 'bench benches/*\n' >"$repo/.github/ci-lanes.conf" ;;
     case-removed | case-rewritten | ignore-added | case-added) lib_rs "$1" >"$repo/runtime/src/lib.rs" ;;
     case-moved)
@@ -243,12 +247,12 @@ done <<'ROWS'
 a test deleted under a rendered skill, its inventory row with it|class=small measured=true cause=protection-removed|test-removed
 an inventory entry whose hash changed stays excluded|class=standard measured=true cause=excluded-path|hash-changed
 an inventory that unlists a path the diff edits is excluded|class=standard measured=true cause=excluded-path|edited-unlisted
-a prose schema document measures on its size|class=micro measured=true cause=production-within-micro|skills/orch/schemas/state.md=12
-a package README measures on its size|class=micro measured=true cause=production-within-micro|skills/review-gate/README.md=12
+a prose schema document takes the trivial rule|class=trivial measured=true cause=documentation-paths|skills/orch/schemas/state.md=12
+a package README takes the trivial rule|class=trivial measured=true cause=documentation-paths|skills/review-gate/README.md=12
 a package suite measures as test lines|class=micro measured=true cause=production-within-micro|skills/review-gate/tests/gate.test.sh=200
-a package reference measures on its size|class=micro measured=true cause=production-within-micro|skills/preflight/references/lanes.md=12
+a package reference takes the trivial rule|class=trivial measured=true cause=documentation-paths|skills/preflight/references/lanes.md=12
 a hook suite measures as test lines|class=micro measured=true cause=production-within-micro|hooks/tests/guard.test.sh=200
-a hook package's markdown measures on its size|class=micro measured=true cause=production-within-micro|hooks/README.md=12
+a hook package's markdown takes the trivial rule|class=trivial measured=true cause=documentation-paths|hooks/README.md=12
 a hook body is excluded|class=standard measured=true cause=excluded-path|hooks/guard.sh=2
 a hook body a harness renders is excluded|class=standard measured=true cause=excluded-path|.claude/hooks/guard.sh=2
 a gate script is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/scripts/gate.sh=2
@@ -266,12 +270,13 @@ the lane launch effect is excluded|class=standard measured=true cause=excluded-p
 a session launch's words are excluded|class=standard measured=true cause=excluded-path|skills/agent-runtime/runtime/src/launch.rs=2
 the runtime's settings read is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/settings.rs=2
 the validation entry is excluded|class=standard measured=true cause=excluded-path|skills/orch/runtime/src/validate/entry.rs=2
-a root AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10
-a nested AGENTS.md edit is held to small|class=small measured=true cause=instruction-file|skills/AGENTS.md=3
-a SKILL.md edit is held to small|class=small measured=true cause=instruction-file|skills/orch/SKILL.md=3
-a root SKILL.md edit is held to small|class=small measured=true cause=instruction-file|SKILL.md=3
-an AGENTS.md edit an allowlist takes is held to small|class=small measured=true cause=instruction-file|AGENTS.md=10|HARNESS_CI_TRIVIAL_PATHS=*.md
-an instruction edit past small stays standard|class=standard measured=true cause=production-past-small|skills/orch/SKILL.md=200
+a root AGENTS.md edit takes the trivial rule|class=trivial measured=true cause=documentation-paths|AGENTS.md=10
+a nested AGENTS.md edit takes the trivial rule|class=trivial measured=true cause=documentation-paths|skills/AGENTS.md=3
+a SKILL.md edit past small takes the trivial rule|class=trivial measured=true cause=documentation-paths|skills/orch/SKILL.md=200
+a root SKILL.md edit takes the trivial rule|class=trivial measured=true cause=documentation-paths|SKILL.md=3
+an AGENTS.md edit an allowlist takes is trivial|class=trivial measured=true cause=allowlisted-paths|AGENTS.md=10|HARNESS_CI_TRIVIAL_PATHS=*.md
+Markdown under a whole-tree path line takes the trivial rule|class=trivial measured=true cause=documentation-paths|tools/AGENTS.md=3
+a script under that tree is excluded|class=standard measured=true cause=excluded-path|tools/guard=2
 ROWS
 ROW_ENV=""
 require_rows narrow-change "$rows"
@@ -302,15 +307,6 @@ if planted="$(mutant validation-entry change-scope \
 else
   assert_eq "the validation-entry control is an edit" edited "not edited"
 fi
-
-# A list from before the floor carries no `instruction` line; the classifier
-# refuses it rather than reading AGENTS.md with no floor.
-plant_layout "$SANDBOX/floorless" >/dev/null
-grep -v '^instruction ' "$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf" \
-  >"$SANDBOX/floorless/change-scope/references/narrow-change.conf"
-assert_eq "a list with no floor is refused" \
-  "class=standard measured=false cause=narrow-change-floor-missing" \
-  "$(verdict_of "$(run_row "$SANDBOX/floorless/change-scope/scripts/change-scope" AGENTS.md=10)")"
 
 # A base commit of the fixture repository whose settings hold CONTENT.
 settings_base() { # CONTENT -> prints the base commit
@@ -359,8 +355,8 @@ the environment cannot add exclusions|base|runtime/product.ts=2|HARNESS_CI_STAND
 the settings overlay wins over the root table|standard_overlay_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
 repository paths use the shared extglob grammar|standard_glob_base|runtime/product.ts=2||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/!(kept).ts
 an extglob miss keeps micro|standard_glob_base|runtime/kept.ts=2||class=micro measured=true cause=production-within-micro production=2
-clearing the setting in the head cannot narrow its class|standard_base|standard-head-clear||class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml
-adding the setting in the head cannot select its cause|base|standard-head-add||class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml
+clearing the setting in the head cannot narrow its class|standard_base|standard-head-clear||class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*
+adding the setting in the head cannot select its cause|base|standard-head-add||class=micro measured=true cause=production-within-micro production=4
 ROWS
 require_rows repository-standard-path "$standard_rows"
 ROW_ENV=""

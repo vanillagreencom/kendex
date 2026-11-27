@@ -1,6 +1,6 @@
 exit=0
-stdout=change_class=standard
+stdout=change_class=trivial
 changed-path: path=CLAUDE.md
 changed-path: path=docs/guide.md
 harness-note: cause=not-render-owned path=docs/guide.md
-class: class=standard measured=true cause=instruction-pointer path=CLAUDE.md glob=CLAUDE.md
+class: class=trivial measured=true cause=documentation-paths lines=3

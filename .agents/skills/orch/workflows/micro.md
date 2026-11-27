@@ -325,7 +325,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 1. § 1 read a container, a blocked child or a bundle. This tier implements one item's own Done-when and nothing else.
 2. § 2 step 1's policy read refused, or the policy runs `git-hooks` and the commit chain is not armed or its answer could not be read.
 3. The edit reached a path the shared path rules refuse this tier: a `path` line of [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf).
-   - The conf's header states how its lines read. A `path` line a `superseded` line names does not refuse. An `instruction` line answers `small` where a diff would earn micro.
+   - The conf's header states how its lines read. A `path` line a `superseded` line names does not refuse, and no `path` line refuses a `.md` or `.markdown` file.
    - The repository adds its own refusals through `HARNESS_CI_STANDARD_PATHS` in the main checkout's settings. Those refusals floor at `standard`.
    - § 2 step 4 reads the changed paths against this class.
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix, and are no escape.

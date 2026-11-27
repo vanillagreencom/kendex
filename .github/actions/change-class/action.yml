@@ -100,8 +100,8 @@ outputs:
     description: >-
       true where a review request may be skipped: the shipped classifier's
       `quick-proof:` line reads proved=true, which change-scope prints only
-      for a trivial pull request whose every changed path is an admitted
-      settings file or Markdown of the docs set, with no repository
+      for a trivial pull request whose every changed path is a kendex
+      manifest, a JSON settings file or a Markdown file, with no repository
       allowlist. false where that line is absent or reads anything else.
       Empty where the step failed; act on the literal true alone.
     value: ${{ steps.classify.outputs.quick }}
@@ -121,7 +121,7 @@ outputs:
       none. The installed scripts/lib/change-class.sh owns the shared rules.
       The derived producer opens this gate when an eligible lane reads a
       changed path or lacks complete evidence. A proved render uses installed
-      package ownership. The existing docs, trivial, manifest and legacy
+      package ownership. The existing docs, trivial and legacy
       declaration rules are in skills/harness-ci/references/wiring.md
       § Per-lane verdicts. On pull_request and
       push, with queue-only-default true, a base that names no
@@ -139,11 +139,8 @@ outputs:
     value: ${{ steps.classify.outputs.lanes }}
   lanes_cause:
     description: >-
-      Why lanes answered as it did: render, trivial, docs-only, manifest or
-      queue-only where lanes is false; full-run on schedule and
-      workflow_dispatch; manifest-claim where a declared lane claims a
-      consumer manifest's changed path; manifest-declaration-unreadable where
-      a manifest's lane declaration cannot be read;
+      Why lanes answered as it did: render, trivial, docs-only or queue-only
+      where lanes is false; full-run on schedule and workflow_dispatch;
       render-claim where a declared lane claims a path a render changes;
       declared-text where changed declared product text keeps its checks;
       queue-only-reader-absent where a render lacks the queue-only default's

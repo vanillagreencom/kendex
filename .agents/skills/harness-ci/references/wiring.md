@@ -69,7 +69,7 @@ Keep each expression on ONE line. A folded scalar (`>-`) whose continuations are
 
 ## Docs-only mode
 
-Pass `--mode docs` to produce `docs_only=true|false`. With no declaration, this mode accepts files under `docs/`, files under `changelog.d/`, and root files ending in `.md` or `.markdown`. Other paths make the verdict false. [Declared product text](#declared-product-text) adds exact files and requires the lane interface instead of the blanket waiver below.
+Pass `--mode docs` to produce `docs_only=true|false`. With no declaration, this mode accepts files under `docs/`, files under `changelog.d/`, and every file ending in `.md` or `.markdown`. Other paths make the verdict false. [Declared product text](#declared-product-text) adds exact files and requires the lane interface instead of the blanket waiver below.
 
 A docs-only adoption changes each applicable verdict site in the selected shape:
 
@@ -83,9 +83,9 @@ A docs-only adoption changes each applicable verdict site in the selected shape:
 
 ### Declared product text
 
-Set `HARNESS_CI_DOCS_PATHS` in the `[env]` tables of the commit `--base` names. The docs reader, change-scope's `harness-only`, reads it through change-scope's committed-settings reader and the settings parser that package ships. `.kendex/settings.toml` overrides `kendex.settings.toml`. The process environment, private env file, judged head and working tree cannot authorize a declaration. Unset or blank adds no files and preserves the built-in docs set. A path in the built-in docs set cannot be declared: the docs reader accepts it before it reads the declaration, so its entry is ignored. A lane that reads such a file follows the [built-in docs-set rule](#through-the-composite-action).
+Set `HARNESS_CI_DOCS_PATHS` in the `[env]` tables of the commit `--base` names. The docs reader, change-scope's `harness-only`, reads it through change-scope's committed-settings reader and the settings parser that package ships. `.kendex/settings.toml` overrides `kendex.settings.toml`. The process environment, private env file, judged head and working tree cannot authorize a declaration. Unset or blank declares no files. The docs reader reads the declaration before the built-in docs set, so a declared file keeps its owning lanes wherever it sits. A lane that reads an undeclared Markdown file follows the [built-in docs-set rule](#through-the-composite-action).
 
-The value is whitespace-separated exact repository-relative `.md` or `.markdown` file names. Supported characters are ASCII letters, digits, `.`, `_`, `-` and `/`. Use canonical paths without absolute names, dot segments, repeated separators or globs. A changed declared file must be a regular non-executable blob at each endpoint where it exists. The existing path rules exclude known agent instructions, high-risk paths and paths the trusted `HARNESS_CI_STANDARD_PATHS` names. Invalid syntax, unreadable settings or entries, and unavailable protected-path or settings readers grant no declaration waiver.
+The value is whitespace-separated exact repository-relative `.md` or `.markdown` file names. Supported characters are ASCII letters, digits, `.`, `_`, `-` and `/`. Use canonical paths without absolute names, dot segments, repeated separators or globs. A changed declared file must be a regular non-executable blob at each endpoint where it exists. The paths the repository's trusted `HARNESS_CI_STANDARD_PATHS` names are the paths a declaration cannot name. Invalid syntax, unreadable settings or entries, and unavailable protected-path or settings readers grant no declaration waiver.
 
 - Declare only prose displayed to users.
 - Do not declare agent instructions, executable templates, scripts or other loaded policy. Consumer review establishes this distinction for arbitrary file names; the classifier cannot discover every reader.
@@ -93,7 +93,7 @@ The value is whitespace-separated exact repository-relative `.md` or `.markdown`
 
 Use `change-class --output FILE --lanes-from DIR` or the composite action's `lanes` and per-lane outputs. Every trusted lane claiming a changed declared file remains selected, even when the class is trivial or `docs_only=true`. Unrelated lanes can stand down. An unclaimed declared file keeps the existing ordinary-lane fallback; absent or malformed lane declarations keep `lanes=true` and publish no invented lane verdict. Queue-default stand-down, queue deferral and nightly/manual full runs keep their existing rules. A declaration does not reduce measured line counts or admit a mixed product change to the docs-only set.
 
-Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration. The [built-in docs-set loaded-input rule](#through-the-composite-action) remains unchanged.
+Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -233,15 +233,7 @@ Every trigger the ruleset requires the context on must appear under `on:`, `merg
 
 Set `HARNESS_CI_STANDARD_PATHS` in the base endpoint's `kendex.settings.toml` or `.kendex/settings.toml` `[env]` table to blank-separated globs for high-risk paths. The second table wins. Before render proof and size classification, a match selects `standard` with `measured=true` and `cause=repository-standard-path path=<p> glob=<g>`. This includes generated files with proved ownership. The globs use the shared exclusion grammar and add to its exclusions. Unset or empty adds none. Caller environment values and edits in the judged head cannot change this setting for their own classification.
 
-A settings change can answer `trivial`, so every lane stands down, only on a pull request or merge group, only where it changes nothing but admitted `[env]` keys, comments and blank lines. A key is admitted by default where the installed package that declares it marks it `# ci: unread` in its `kendex.settings.toml.example`: the package's word that no CI job reads the key and that a change to it needs no review.
-
-- Set `HARNESS_CI_TRIVIAL_SETTINGS` in the same tables to blank-separated globs of `[env]` key names to change the default: a glob adds keys, and a glob starting with `!` removes them.
-- Add only keys that no CI job or review gate reads, such as a second-opinion model choice.
-- Remove a marked key one of your own workflows reads.
-
-A trivial settings change stays queue-only. Rules and refusals: `change-scope --help`.
-
-A consumer's `kendex.toml` changed alone, on a pull request or merge group, answers `small` with `cause=consumer-manifest` at most, which the default review policy gives one bot round, and prints `light-ci: kind=manifest` for the lanes, [§ Per-lane verdicts](#per-lane-verdicts). Its refusals: `change-scope --help`. Name `kendex.toml` in `HARNESS_CI_STANDARD_PATHS` to keep every manifest change on the full run.
+A change confined to kendex manifests, JSON settings files and Markdown files answers `trivial` at any size on a pull request or merge group, so every lane stands down. The exceptions, a harness file that registers hooks, permissions or MCP servers, a changed `[sources]` table, a changed `.kendex-lock.json` and a path `HARNESS_CI_STANDARD_PATHS` names, and the file names each kind covers: `change-scope --help`. A kendex manifest change stays queue-only. A path `HARNESS_CI_STANDARD_PATHS` names keeps the `standard` class and its full review. One outside the [docs set](#docs-only-mode) also keeps its lanes; a change confined to the docs set, such as Markdown, runs no lanes, since `docs_only=true` stands them down.
 
 The shape has TWO checkouts, and that is the whole point of it. The verdict decides whether a required lane may be skipped, so the script that produces it comes from the default branch, where the pull request's author cannot change it, and the pull request's tree is what `--repo` points at.
 
@@ -361,23 +353,19 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 - **`lanes` is the action's answer to whether the diff runs the lanes.**
   - A proved render opens the gate for derived package readers, unread evidence or a matching legacy claim. See [§ Per-lane verdicts](#per-lane-verdicts).
-  - For non-render classes, it is also `false` on `trivial` or `docs_only=true`. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
-  - On a consumer manifest's `small` with the `light-ci: kind=manifest` record, it is `false` unless derived reach opens the gate, a legacy claim matches, or the declaration cannot be read.
+  - For non-render classes, it is also `false` on `trivial` or `docs_only=true`, a docs-set path `HARNESS_CI_STANDARD_PATHS` names included. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
   - On `pull_request` and `push`, with `queue-only-default: true`, it is `false` wherever `change-class`'s per-push line names the queue-only default, under [§ Per-lane verdicts](#per-lane-verdicts).
   - On `schedule` and `workflow_dispatch` it is `true`.
   - It is `true` on every other diff.
-  - `lanes_cause` uses `derived-reach` when derived evidence keeps an eligible lane and `lane-reach-unreadable` when the roster is inconclusive. Other causes are `render`, `trivial`, `docs-only`, `manifest` or `queue-only` where it is `false`; `manifest-claim` where a declared lane claims the manifest's changed path, and `manifest-declaration-unreadable` where the declaration cannot be read; `full-run` on the nightly run; `render-claim` where a declared lane claims a path a render changes; `declared-text` where changed declared product text keeps its protecting checks; `queue-only-reader-absent` where a render lacks the stand-down's reader; `queue-only-lanes-from-unset` where the default was asked for with no `lanes-from`; or the class otherwise.
+  - `lanes_cause` uses `derived-reach` when derived evidence keeps an eligible lane and `lane-reach-unreadable` when the roster is inconclusive. Other causes are `render`, `trivial`, `docs-only` or `queue-only` where it is `false`; `full-run` on the nightly run; `render-claim` where a declared lane claims a path a render changes; `declared-text` where changed declared product text keeps its protecting checks; `queue-only-reader-absent` where a render lacks the stand-down's reader; `queue-only-lanes-from-unset` where the default was asked for with no `lanes-from`; or the class otherwise.
   - The classify step also prints both on a `lanes:` line in its log.
   - Standard job gates read `lanes` and any per-lane verdict, and the aggregate waiver reads `lanes == 'false'`. The repository-wide scan gate in [§ Per-lane verdicts](#per-lane-verdicts) also reads the class to preserve coverage for Markdown merge groups and non-render changes without queue deferral.
   - The shared rules live in the installed `scripts/lib/change-class.sh`, read from the selected classifier checkout.
   - A refused step publishes no `lanes`, and the Shape 1 status function then runs every lane.
 - **An older classifier can lack the shared lane producer.** The action sets `lanes=true`, `lanes_cause=lane-producer-unavailable` and an empty `lane_verdicts`, regardless of the class or docs verdict.
-- **A lane that reads a file in the built-in docs set does not gate on `lanes` or on its own verdict.**
-  - The built-in docs set is `harness-only --mode docs`'s: `docs/`, `changelog.d/` and root `.md` or `.markdown` files, and no setting narrows it.
-  - A lane such as a build that embeds a Markdown file under `docs/` keeps `needs: changes`.
-  - It takes `if: ${{ !cancelled() }}` with no `lanes` or verdict term so it runs on every diff.
-  - It stays out of every `--skippable` and `--lane`, so a skip of it fails the aggregate.
-  - Under the queue-only default it still runs on every pull-request push: keep such a lane short.
+- **A lane that reads a file in the built-in docs set may gate on `lanes`.**
+  - The built-in docs set is `harness-only --mode docs`'s: `docs/`, `changelog.d/` and every `.md` or `.markdown` file, and no setting narrows it.
+  - A change whose paths are all in that set, kendex manifests or JSON settings files, outside the exceptions [§ Shape 4](#shape-4--one-change-class-for-every-reader) names, reads `trivial` or `docs_only=true`, so `lanes` is `false` and it runs none of those lanes.
   - A declared glob does not lift this: every lane verdict is `false` wherever `lanes` is.
 - **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action and behind the same `render-reach` step and `if:` gates. That step reads `harness-only` out of the `classifier` checkout, so a consumer that wants the gate keeps that checkout for it; one that drops both pays the network install on every diff.
 - **Every refusal exits 2**, and stderr carries a line starting `change-class-action: wiring-error: cause=`, after anything the wrapped scripts printed, so the step goes red rather than publishing an empty class.
@@ -525,7 +513,6 @@ check         fixtures/* # reason: the binary reads fixture names at runtime
   - The setting decides lane verdicts alone: the class, `docs_only`, `queue_only`, `lanes` and the nightly full run are unchanged, and an absent or malformed lane declaration keeps its fallback.
   - `change-class` prints the globs on one `unread-paths:` line on every verdict, bare where the setting is unset, after all it relays from tools that read the head; the shared producer reads the last such line. Where it cannot read that `queue` list, the producer prints `setting-refused: setting=HARNESS_CI_UNREAD_PATHS cause=queue-list-unreadable` and applies no glob.
   - Declare no other file a job reads, such as one the lanes' steps load: the classifier cannot see a job's reads, so consumer review holds that distinction.
-- **A consumer manifest runs only the lanes that claim it.** Where `change-class` printed `light-ci: kind=manifest` beside `small`, and no default-branch lane claims a changed path, the action answers `lanes=false` with `lanes_cause=manifest`. Where one does, it answers `lanes=true` with `lanes_cause=manifest-claim`: the claiming lane runs and the others stay `false`. A declaration that cannot be read runs the lanes with `lanes_cause=manifest-declaration-unreadable`. The record beside any other class, and a library from before it, stand nothing down.
 - **An absent or malformed default-branch declaration publishes no verdict**, and the step still succeeds: failing it would redden every pull request, the one repairing the default branch's declaration included. The lanes and the aggregate below then fall back to `lanes` alone, as a workflow with no declaration reads it, which is also what an adopting repository gets until its declaration reaches the default branch. The step prints a `lane-declaration:` line with the state and a `::warning` annotation. A malformed line is a name outside the set above or a lane with no glob; a file naming no lane, or one the step cannot read, is malformed too.
 - **Republish the verdicts as step outputs.** A composite action publishes only the outputs it declares, so `lane_verdicts` arrives as one `lane_<name>=true|false` line per lane. A step after the action appends it to its own `$GITHUB_OUTPUT`, and the job publishes each line under its own name:
 
@@ -634,7 +621,6 @@ A render that the refresh run lands on the default branch, under the review-gate
   - Publish its `lane_<name>` output from the `changes` job.
   - Give it the same `needs:`, and the condition and aggregate arguments [§ Per-lane verdicts](#per-lane-verdicts) sets out.
   - Name each lane in CI's `needs:`.
-  - A lane that reads a file in the built-in docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action).
   - Copied as it stands, the placeholder fails wherever it runs, and `CI` fails with it. Under the queue-only default it first runs in the merge group.
 - **The merge-queue run is the only proof of a head.** The classify step passes `queue-only-default: true`, so on `pull_request` the action stands every lane down on a repository with no `HARNESS_CI_PER_PUSH_REASON`, per [§ Per-lane verdicts](#per-lane-verdicts). A copy that drops the input runs its lanes on every pull request. The pull request run then reports `Classify the diff` and a passing `CI`, which GitHub needs before it admits the pull request to the queue, and no product lane. The merge group runs the lanes its own diff selects. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for. The derived reader uses the committed event base. No line of the template reads the change class.
 - **The default needs the merge-queue ruleset.** Without a queue no run proves the head, and `pr-merge` takes the plain route on the stub run. A repository with no merge queue sets `HARNESS_CI_PER_PUSH_REASON = "no merge queue"`, and its pull requests run their lanes.

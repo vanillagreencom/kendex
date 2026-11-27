@@ -28,23 +28,16 @@ for root in default no-reader; do
 done
 mkdir -p "$SANDBOX/default/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"
-# A declaration whose `check` lane claims the consumer manifest, and one no
-# reader can read.
-mkdir -p "$SANDBOX/manifest-claim/.github" "$SANDBOX/manifest-bad/.github"
+# A declaration whose `check` lane claims the consumer manifest.
+mkdir -p "$SANDBOX/manifest-claim/.github"
 printf 'check src/* kendex.toml\nother elsewhere/*\nmac:nightly macos/*\n' \
   >"$SANDBOX/manifest-claim/.github/ci-lanes.conf"
-printf 'Bad kendex.toml\n' >"$SANDBOX/manifest-bad/.github/ci-lanes.conf"
 
 repo="$(new_repo lanes-output)"
 mkdir -p "$repo/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$repo/$READER"
-# The manifest a manifest row replaces, and the installed bot-instructions
-# copy whose check its admission runs at both ends.
+# The manifest a manifest row replaces.
 printf 'schema = 7\n' >"$repo/kendex.toml"
-# The whole package, as an install copies it, since the running copy reads
-# its own schemas.
-mkdir -p "$repo/.agents/skills"
-cp -R "$BOT_INSTRUCTIONS_PACKAGE" "$repo/.agents/skills/bot-instructions"
 commit_paths "$repo" baseline seed.txt
 # One base per state of the opt-back in the base commit's settings.
 base_with_settings() { # NAME SETTINGS — prints the base commit
@@ -57,6 +50,9 @@ base_with_settings() { # NAME SETTINGS — prints the base commit
   git -C "$repo" rev-parse HEAD
 }
 base_default="$(base_with_settings base-default '')"
+# A repository whose standard paths hold its docs: their class is standard,
+# and the docs-only waiver still stands the lanes down.
+base_docsstandard="$(base_with_settings base-docsstandard "$(printf '[env]\nHARNESS_CI_STANDARD_PATHS = "docs/*"')")"
 base_optback="$(base_with_settings base-optback "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "no merge queue"\nHARNESS_CI_QUEUE_PATHS = ""')")"
 base_blank="$(base_with_settings base-blank "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "  "\nHARNESS_CI_QUEUE_PATHS = ""')")"
 base_undeclared="$(base_with_settings base-undeclared "$(printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "no merge queue"')")"
@@ -94,7 +90,7 @@ write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
   git -C "$repo" clean -qfd
   for path in $3; do
     mkdir -p "$repo/$(dirname "$path")"
-    # A manifest stays a TOML document its review-bot check parses.
+    # A manifest stays a TOML document the sources check parses.
     prefix=""
     [ "$path" != kendex.toml ] || prefix="# "
     awk -v lines="$4" -v prefix="$prefix" 'BEGIN { for (i=1; i<=lines; i++) print prefix "line " i }' \
@@ -131,7 +127,7 @@ while IFS='|' read -r name event base_name paths lines declaration default expec
     "$(sed -n '/^change_class=/p' "$SANDBOX/local-output")" "$(cat "$SANDBOX/local-stdout")"
 done <<'ROWS'
 trivial|pull_request|default|docs/guide.md|1|none|yes|false|trivial|true|-
-docs-only|pull_request|default|docs/guide.md|21|default|yes|false|docs-only|true|lane_check=false,lane_other=false,lane_mac=false
+docs-only|merge_group|docsstandard|docs/guide.md|21|default|yes|false|docs-only|true|lane_check=false,lane_other=false,lane_mac=false
 pull-request-code|pull_request|default|src/main.sh|21|default|yes|false|queue-only|true|lane_check=false,lane_other=false,lane_mac=false
 pull-request-standard|pull_request|default|src/main.sh|151|default|yes|false|queue-only|true|-
 push-code|push|default|src/main.sh|21|default|yes|false|queue-only|true|-
@@ -146,10 +142,9 @@ reader-absent|pull_request|default|src/main.sh|21|no-reader|yes|true|queue-only-
 opted-back|pull_request|optback|src/main.sh|21|default|yes|true|small|false|lane_check=true,lane_other=false,lane_mac=false
 opted-back-queue-only|pull_request|undeclared|src/main.sh|21|default|yes|true|small|true|lane_check=true,lane_other=false,lane_mac=false
 blank-reason|pull_request|blank|src/main.sh|21|default|yes|false|queue-only|true|-
-manifest|merge_group|default|kendex.toml|3|default|yes|false|manifest|true|lane_check=false,lane_other=false,lane_mac=false
-manifest-claim|merge_group|default|kendex.toml|3|manifest-claim|yes|true|manifest-claim|true|lane_check=true,lane_other=false,lane_mac=false
-manifest-declaration-unreadable|merge_group|default|kendex.toml|3|manifest-bad|yes|true|manifest-declaration-unreadable|true|-
-manifest-past-small|merge_group|default|kendex.toml|151|default|yes|true|standard|true|lane_check=true,lane_other=true,lane_mac=false
+manifest|merge_group|default|kendex.toml|3|default|yes|false|trivial|true|lane_check=false,lane_other=false,lane_mac=false
+manifest-claim|merge_group|default|kendex.toml|3|manifest-claim|yes|false|trivial|true|lane_check=false,lane_other=false,lane_mac=false
+manifest-past-small|merge_group|default|kendex.toml|151|default|yes|false|trivial|true|lane_check=false,lane_other=false,lane_mac=false
 ROWS
 require_rows lanes-output "$rows"
 
@@ -249,19 +244,19 @@ base_unreadable="$(git -C "$repo" rev-parse HEAD)"
 # change-scope for the class alone.
 declared_rows() {
   cat <<'ROWS'
-no-declaration|default|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+no-declaration|default|product/text.md|1|none|merge_group|text|0|true|trivial|false/trivial|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
 declared-owner|text|product/text.md|1|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
-declared-large|text|product/text.md|21|none|merge_group|text|0|true|small|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+declared-large|text|product/text.md|200|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
 mixed-source|text|product/text.md src/main.sh|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=false,lane_mac=false|small
 mixed-unclaimed|text|product/text.md Makefile|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
 unclaimed-text|text|product/text.md|1|none|merge_group|default|0|true|trivial|true/declared-text|lane_check=true,lane_other=true,lane_mac=false
 no-lane-declaration|text|product/text.md|1|none|merge_group|none|0|true|trivial|true/declared-text|-
 malformed-lanes|text|product/text.md|1|none|merge_group|text-bad|0|true|trivial|true/declared-text|-
-head-only-declaration|default|product/text.md|1|setting|merge_group|text|0|false|standard|true/standard|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
-environment-declaration|default|product/text.md|1|env|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
-overriding-empty|overlay|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+head-only-declaration|default|product/text.md|1|setting|merge_group|text|0|false|trivial|false/trivial|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
+environment-declaration|default|product/text.md|1|env|merge_group|text|0|true|trivial|false/trivial|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
+overriding-empty|overlay|product/text.md|1|none|merge_group|text|0|true|trivial|false/trivial|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
 invalid-glob|glob|product/text.md|1|none|merge_group|text|2|-|-|-|-
-protected-instruction|instruction|product/AGENTS.md|1|none|merge_group|text|2|-|-|-|-
+instruction-declaration|instruction|product/AGENTS.md|1|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
 protected-standard|standard|product/text.md|1|none|merge_group|text|2|-|-|-|-
 executable-text|text|product/text.md|1|executable|merge_group|text|2|-|-|-|-|micro
 mixed-executable|text|alpha/source.rs product/text.md zeta/source.rs|21|executable|merge_group|text|2|-|-|-|-|standard
@@ -465,34 +460,5 @@ for command in "$CHANGE_CLASS" "$legacy_control"; do
   assert_eq "an older library caller without declaration evidence: $command" \
     "$expected" "$answer exit=$status"
 done
-
-# The light-ci record stands lanes down beside the small class alone, the
-# one change-class prints it with. The control drops the class condition.
-printf 'light-ci: kind=manifest\n' >"$legacy_work/class-log"
-printf 'kendex.toml\n' >"$legacy_work/paths"
-: >"$legacy_work/outside"
-light_answers() { # COMMAND
-  local class
-  for class in small micro standard; do
-    (
-      shopt -s extglob
-      . "${1%/*}/lib/change-class.sh"
-      die() { printf '%s\n' "$1"; exit 2; }
-      change_class_lanes "$class" docs_only=false merge_group "$repo" HEAD true "$legacy_work" ""
-      printf '%s lanes=%s lanes_cause=%s\n' "$class" "$lanes" "$lanes_cause"
-    )
-  done
-}
-assert_eq "the light-ci record stands lanes down beside small alone" \
-  "small lanes=false lanes_cause=manifest
-micro lanes=true lanes_cause=micro
-standard lanes=true lanes_cause=standard" "$(light_answers "$CHANGE_CLASS")"
-light_control="$(mutant light-any-class lib/change-class.sh \
-  'if [ "$light" = manifest ] && [ "$class" = small ] && [ "$lanes_cause" != full-run ]; then' \
-  'if [ "$light" = manifest ] && [ "$lanes_cause" != full-run ]; then')"
-assert_eq "must-fail: the record read beside any class stands micro and standard down" \
-  "small lanes=false lanes_cause=manifest
-micro lanes=false lanes_cause=manifest
-standard lanes=false lanes_cause=manifest" "$(light_answers "$light_control")"
 
 report lanes-output

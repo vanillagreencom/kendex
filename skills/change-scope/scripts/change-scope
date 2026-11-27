@@ -16,16 +16,9 @@
 # and a body with neither a valid delta nor an estimate is standard; --floor
 # is a class already held, at or above micro; --path is classified by the
 # shared path rules' launch phase, no render proved, and an unmatched path
-# changes nothing; --base and --head classify the range's changed paths: a
-# range containing only kendex.settings.toml or .kendex/settings.toml
-# within micro_max_production can clear configuration-source when both
-# endpoints prove edits to ordinary assignments in existing regular files.
-# HARNESS_CI_*, ORCH_SIZE_* and is_source_catalog are protected. A range
-# editing one line of kendex.toml or kendex-local.toml can also take micro
-# if that line is a plain string entry in [skill-instructions] and all
-# multiline content stays byte-identical. A Location keeps its own
-# class. A names-only inventory change under rendered roots is left to the classifier,
-# which answers standard for a range that adds a catalog source (its render
+# changes nothing; --base and --head classify the range's changed paths:
+# a names-only inventory change under rendered roots is left to the
+# classifier, which answers standard for a range that adds a catalog source (its render
 # proof owns no catalog source) and reads a removal by its size, while a
 # changed lock is standard whatever the classifier answers; a range that
 # removes test protection, read as the size path below reads it, small with
@@ -76,9 +69,8 @@
 # Every verdict prints `quick-proof: proved=true|false` on stderr just before
 # its `class:` line. It is true only on --event pull_request, for a trivial
 # answer with HARNESS_CI_TRIVIAL_PATHS unset or empty, where every changed
-# path is a settings file the admission below admitted or a .md or .markdown
-# file of the docs set. A caller that skips a review on it acts on the literal
-# true alone: a wiring error prints no such line, and an absent line proves
+# path is a kendex manifest, a JSON settings file or a .md or .markdown
+# file. A caller that skips a review on it acts on the literal true alone: a wiring error prints no such line, and an absent line proves
 # nothing.
 # The render proof runs `kendex verify --scope
 # project --json` in the head revision's private checkout, with `--base` set to the base-rev:
@@ -134,36 +126,39 @@
 #            nobody. The proof reads that program's `--json` document,
 #            version 1, and never its human rows; a kendex that prints no
 #            such document, or another version of it, answers standard.
-#   trivial  every changed path is in the `harness-only --mode docs` set and
-#            the change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
-#            Where HARNESS_CI_TRIVIAL_PATHS names the repository's own
-#            allowlist as blank-separated globs, it replaces that set, within
-#            the same ceiling. A changed kendex.settings.toml or
-#            .kendex/settings.toml joins the set where the base commit's
-#            the settings admission below admits it; a diff of
-#            admitted settings files alone has no ceiling.
+#   trivial  a range confined to kendex manifests, JSON settings files and
+#            Markdown files takes this class at any size, except a harness
+#            registry file and .gemini/settings.json (below), a changed
+#            `sources` table in kendex.toml or kendex-local.toml, a changed
+#            .kendex-lock.json and a path HARNESS_CI_STANDARD_PATHS names.
+#            The kendex manifests are kendex.toml, kendex-local.toml,
+#            kendex.settings.toml and .kendex/settings.toml; a JSON settings
+#            file is one named settings.json, settings.jsonc,
+#            settings.local.json or settings.local.jsonc, at any path; the
+#            Markdown is the `harness-only --mode docs` set, every .md or
+#            .markdown file plus docs/ and changelog.d/. Where
+#            HARNESS_CI_TRIVIAL_PATHS names the repository's own allowlist as
+#            blank-separated globs, it replaces that docs set. A paired
+#            dependency lock keeps a diff out of the class.
 #   micro   production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
 #            root removed first so a source and the render mirroring it agree.
 #            A path the measurement counts as a test or fixture, by its
 #            built-in rule or ORCH_SIZE_TEST_PATHS, belongs to no subsystem.
-#            A path in harness-only's docs set also belongs to no subsystem;
-#            its lines still count toward the production ceiling.
+#            A path in harness-only's docs set, a kendex manifest and a JSON
+#            settings file also belong to no subsystem; their lines still
+#            count toward the production ceiling.
 #            A dependency lock paired by references/narrow-change.conf adds
 #            no subsystem and its lines are reported separately. A paired
 #            change goes through the small class's size and subsystem checks.
-#            An agent instruction file, an `instruction` line of this
-#            package's references/narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
-#            micro answers small instead, cause=instruction-file: it changes
-#            how every agent behaves, and small is the lowest class the
-#            default review policy gives a bot review round. A diff that
-#            removes test protection and earns trivial or micro answers small
-#            too, cause=protection-removed kind=case|suite|skip|selection
-#            path=P removed=N added=M measured-class=C, by the `case`,
-#            `skip` and `selection` lines of that list, counted net over the
-#            whole range; an instruction file keeps its cause. A diff whose
-#            protection read fails answers standard,
+#            A diff that removes test protection and earns trivial or micro
+#            answers small instead, cause=protection-removed
+#            kind=case|suite|skip|selection path=P removed=N added=M
+#            measured-class=C, by the `case`, `skip` and `selection` lines
+#            of this package's references/narrow-change.conf, counted net
+#            over the whole range. A diff whose protection read fails answers
+#            standard,
 #            cause=protection-unreadable, measured=false.
 #   standard everything else, and every diff this script cannot prove into a
 #            narrower class. A size is measured only where harness-only read
@@ -181,109 +176,24 @@
 #            narrower class. An inventory the base holds and harness-only
 #            cannot read or parse stays a refusal.
 #
-# A changed kendex configuration file refuses every narrow class, not only
-# render: those files decide what is rendered and what each judgement below
-# reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
-# The settings admission admits a changed kendex.settings.toml or
-# .kendex/settings.toml to the trivial set, on --event pull_request or
-# merge_group, where every [env] key it changes is admitted. A key is light
-# by default where all of these hold at the commit --base names, the one
-# the allowlist below is read from, never the merge base, so the branch
-# under judgement writes none of it and a branch forked before a mark was
-# dropped keeps none:
-#   - an [env] declaration in a kendex.settings.toml.example that
-#     commit's inventory lists, with an inventoried SKILL.md in its
-#     directory, has
-#     the exact trimmed line `# ci: unread` in its comment block, the block
-#     directly above the assignment that a blank line, a table header or
-#     another assignment ends. The mark is the declaring package's word that
-#     no CI job reads the key and that a change to it needs no review;
-#   - every kendex.settings.toml.example that commit tracks that declares
-#     the key, in any table, inventoried or not, marks it;
-#   - the key starts with the namespace of every package that declares it:
-#     the example's directory name in upper snake case and an underscore,
-#     SLACK_ for .../slack/kendex.settings.toml.example, where a name
-#     outside kebab case gives none;
-#   - a package that declares it owns the longest namespace that starts the
-#     key among every directory that commit tracks holding a SKILL.md or an
-#     example, so a package whose name starts another's, github beside
-#     github-repository-settings, marks none of the longer one's keys;
-#   - no `# keys:` family line in any tracked example matches the key, each
-#     item an anchored whole key with <NAME> read as [A-Za-z0-9_]+;
-#   - that commit's kendex.toml has no line starting with the key
-#     is_source_catalog.
-# HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
-# from the settings of the commit --base names alone, adjusts that default:
-# an entry starting with `!` removes the keys its remainder names, and any
-# other entry adds keys, both matched as the same extglob patterns. The
-# admitted set is the
-# default and the additions, less the removals and the floor: a key in the
-# settings this script reads from the base, or any HARNESS_CI_* key, never
-# qualifies, whatever the globs say, so a change to the allowlist itself is
-# refused. Admission needs every changed configuration source to be one of
-# those two files, each a regular file at every endpoint that holds it, an
-# endpoint without it read as an empty file, loaded there by lib/kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
-# multiline string delimiter, and changed only in comment lines, blank lines
-# and [env] assignments of admitted keys. A diff that changes only comments
-# and blank lines is admitted. A diff of admitted settings files alone is
-# trivial at any line count. Beside any other path, the trivial rule
-# judges those paths and the ceiling, over the whole diff, as it does for any
-# diff, with no agent instruction file beside it. It answers
-# `cause=declared-unread-settings settings=<file>[,<file>]
-# keys=<key>[,<key>]|- lines=<n>`, keys naming those whose loaded value
-# differs, or `cause=allowlisted-settings` with the same fields where one of
-# those keys is outside the default. harness-only's
-# refusals, cause=base-inventory-absent and an empty path list answer ahead
-# of the configuration-source rule and print no admission line. Once that rule
-# holds the change, every other answer, whatever its class or cause, is
-# that refusal, measured, and prints one `settings-admission:
-# admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
-# admission rule that refused: unsupported-event, base-settings-unreadable,
-# configuration-file, declarations-unreadable, settings-unreadable,
-# settings-not-regular, settings-bytes-dropped, multiline-string,
-# settings-unparsed or unadmitted-change. declarations-unreadable carries
-# step=inventory where harness-only's base inventory list could not be
-# read, step=manifest where the base kendex.toml is not a regular file or
-# could not be read, and
-# step=example, with path= where one is named, where an example could not
-# be listed or read, holds a multiline string delimiter or the reader
-# refuses it; it refuses even where the allowlist alone would admit the
-# change. After admission it is
-# class-<class> rule=<cause>, the class and cause a later rule would have
-# answered.
-# A hand edit counts the same as the engine's: that line decides no render or
-# classifier input. The render path still verifies the head. Product paths
-# use the existing size rules without render verification.
-# A consumer's kendex.toml, on --event pull_request or merge_group, where it
-# is the only changed path, a regular file at every endpoint that holds it,
-# no line at either endpoint starts with the key is_source_catalog, and
-# bot-instructions renders at each endpoint the outputs that endpoint
-# commits, leaves only the configuration-source refusal behind. That render
-# is `check --staged` over an index read from the endpoint, run by the base
-# commit's installed .agents/skills/bot-instructions out of a private
-# checkout of that commit, as the queue selector is, with that copy as
-# --spec: a change to the manifest alone leaves the copy byte-identical, so
-# it is the checker a lane's bot-instructions check runs. Both endpoints
-# are asked, one without the manifest included, which that check reports
-# as a finding, so a diff that adds or deletes the manifest keeps the
-# refusal; passing at both against the same committed outputs, the edit
-# changes nothing a lane's bot-instructions check renders. Every later rule judges it,
-# HARNESS_CI_STANDARD_PATHS included, and the size rules with a floor of
-# small: trivial, micro and small answer `small cause=consumer-manifest
-# lines=<n>`, and past the small ceiling it is standard. That answer also
-# prints one `light-ci: kind=manifest` line before the class line, which
-# harness-ci reads to stand lanes down. A refused candidate prints one `manifest-admission:
-# admitted=false cause=<c>` line: unsupported-event, or, with
-# side=base|head, manifest-not-regular, manifest-unreadable, source-catalog,
-# bot-instructions-render, where that check reported findings, or
-# bot-instructions-unread, where it could not answer, with
-# detail=checkout-failed, detail=checker-absent, detail=checker-unreadable
-# or detail=checker-unusable where the base's copy could not be run.
-# A harness's own registry files refuse every narrow class but
-# render, the files it executes as configuration: its hooks, its permissions,
-# and the MCP servers it may run. kendex writes keys in those and never the
-# file, so a re-rendered one reaches render only where the row owning it says
-# the rest of the file did not move. The paths trivial, micro and small all
+# A changed kendex.toml or kendex-local.toml whose `sources` value differs
+# between the range's ends answers standard, cause=manifest-sources path=P,
+# measured: it names the catalogs a later install runs code from. A manifest
+# python3's tomllib cannot read at either end answers standard,
+# cause=manifest-sources-unreadable path=P detail=D, measured=false, D one of
+# python3-absent, tomllib-absent, manifest-read-failed, manifest-parse-failed
+# or python3-failed.
+# .gemini/settings.json at any depth refuses every narrow class, render
+# included, cause=configuration-source: Gemini's shim owns one key of it.
+# harness-only removes a byte-exact top-level kendex.toml schema step first.
+# A harness's own registry files, at any depth, refuse every narrow class but
+# render, cause=configuration-source, the files it executes as configuration:
+# its hooks, its permissions, and the MCP servers it may run, such as
+# .claude/settings.json, .codex/hooks.json, .codex/config.toml,
+# .github/hooks/*.json, .pi/kendex/hooks.json, .mcp.json and opencode.json;
+# CHANGE_CLASS_REGISTRY_GLOBS in lib/change-scope.sh holds the whole list. kendex
+# writes keys in those and never the file, so a re-rendered one reaches
+# render only where the row owning it says the rest of the file did not move. The paths trivial, micro and small all
 # refuse are this package's references/narrow-change.conf; the
 # ceilings in that file are micro's and small's alone. The render inventory
 # on that list is read against it only where its change is more than names.
@@ -297,14 +207,13 @@
 # diff being judged writes all of them, so trusting one fails open on exactly
 # the diffs that most want to pass. For the same reason the judged tree's own
 # configuration decides nothing here, and no script out of that tree is run.
-# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS, HARNESS_CI_TRIVIAL_MAX_LINES
-# and HARNESS_CI_TRIVIAL_PATHS come from this process's environment, else
-# from the [env] tables of kendex.settings.toml and .kendex/settings.toml, the
-# second winning, as the base endpoint's commit holds them.
+# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS and HARNESS_CI_TRIVIAL_PATHS
+# come from this process's environment, else from the [env] tables of
+# kendex.settings.toml and .kendex/settings.toml, the second winning, as the
+# base endpoint's commit holds them.
 # HARNESS_CI_STANDARD_PATHS (additional exclusions before render and size
-# classes, blank-separated, unset or empty adds none) and
-# HARNESS_CI_TRIVIAL_SETTINGS come from those tables alone, never from the
-# environment. The private env file is never read.
+# classes, blank-separated, unset or empty adds none) comes from those tables
+# alone, never from the environment. The private env file is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
@@ -343,10 +252,12 @@ BOT_INSTRUCTIONS_DIR="$SCRIPT_DIR/../../bot-instructions"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # shellcheck source=lib/change-scope.sh
 . "$SCRIPT_DIR/lib/change-scope.sh"
-# The micro-tier measurement's boundary as this script reaches it: every file
-# it reads or runs whose edit changes the range measured, the settings the
-# measurement reads, or the ceilings it compares against. This package's
-# narrow-change.conf refuses the narrow classes on each, and
+# The micro-tier measurement's boundary as this script reaches it: its
+# non-Markdown inputs, every such file it reads or runs whose edit changes the
+# range measured, the settings the measurement reads, or the ceilings it
+# compares against. A Markdown input is not listed, since a Markdown file at
+# any path takes the cheapest class. This package's narrow-change.conf
+# refuses the narrow classes on each listed file, and
 # https://github.com/vanillagreencom/kendex/blob/main/skills/change-scope/tests/narrow-boundary.test.sh
 # holds that file's boundary group to this list and the source lines of every
 # file it names.
@@ -384,7 +295,6 @@ NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # measures-with: skills/bot-instructions/scripts/lib/verbs.py
 # measures-with: skills/bot-instructions/scripts/lib/writer.py
 # measures-with: skills/bot-instructions/scripts/lib/yamlemit.py
-# measures-with: skills/bot-instructions/schemas/repo-toml.md
 # The one version of `kendex verify --json` this script reads. The document
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.
@@ -396,14 +306,9 @@ head="HEAD"
 repo="."
 paths_output=""
 changed=""
-# A settings change admitted by the base declarations and allowlist: its class-line
-# fields, its files, the refusal it keeps, and the keys one file changed.
-SETTINGS_ADMITTED=""
-MANIFEST_ADMITTED=""
-SETTINGS_FILES=""
-SETTINGS_REFUSAL=""
-SETTINGS_FILE_KEYS=""
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS'
+# The changed kendex manifests and JSON settings files, one per line.
+QUICK_FILES=""
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS'
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -419,213 +324,6 @@ need_value() { # FLAG REMAINING NEXT
     -?*) die "cause=flag-used-as-value option=$1 value=$3" \
       "$1 needs a value, got the flag '$3'" ;;
   esac
-}
-
-configuration_unread() { printf 'configuration-unreadable: %s\n' "$1" >&2; }
-settings_note() {
-  printf 'settings-admission: admitted=false %s\n' "$1" >&2
-  [ "${2:-}" != unreadable ] || configuration_unread "$1"
-}
-
-launch_key_admitted() { # KEY
-  local LC_ALL=C grammar='^[a-zA-Z_][a-zA-Z0-9_]*$'
-  case "$1" in HARNESS_CI_* | ORCH_SIZE_* | is_source_catalog) return 1 ;; esac
-  [[ "$1" =~ $grammar ]]
-}
-
-# FILE without its admitted assignments at RESIDUE. For settings, comment
-# and blank lines also drop, each admitted key goes to stdout and the
-# settings value reader validates headers on the same bytes.
-# Returns 2 where the lines read are not FILE's bytes: Bash drops a NUL,
-# and git counts a file holding one as binary.
-settings_scan() { # FILE RESIDUE [launch|manifest]
-  (
-    local LC_ALL=C
-    exec 3>&1 1>&2
-    # shellcheck source=lib/kendex-env.sh
-    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
-    : >"$2" && : >"$2.read" || exit 1
-    section="" seen=" " delimiter=""
-    while :; do
-      newline=$'\n'
-      IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
-      printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
-      kendex_trim trimmed "${line%$'\r'}"
-      content="$trimmed"
-      if [ -z "$delimiter" ]; then
-        case "$trimmed" in
-          '' | '#'*) [ "${3:-}" = manifest ] || continue ;;
-          '['*) section="$trimmed" ;;
-          *=*)
-            kendex_trim key "${trimmed%%=*}"
-            if [ "${3:-}" = manifest ]; then
-              kendex_trim content "${trimmed#*=}"
-              case "$content" in
-                '"""'* | "'''"*)
-                  delimiter="${content:0:3}"
-                  content="${content:3}" ;;
-              esac
-              if [ "$section" = '[skill-instructions]' ]; then
-                # Quoted or dotted keys can alias a bare key.
-                [[ "$key" =~ ^[A-Za-z0-9_-]+$ && "$seen" != *" $key "* ]] || exit 3
-                seen="$seen$key "
-                if [ -z "$delimiter" ]; then
-                  kendex_decode_value value "$content" || exit 3
-                  continue
-                fi
-              fi
-            elif [ "$section" = '[env]' ] &&
-              { { [ "$#" -eq 2 ] && settings_key_admitted "$key"; } ||
-                { [ "${3:-}" = launch ] && launch_key_admitted "$key"; }; }; then
-              printf '%s\n' "$key" >&3
-              continue
-            fi ;;
-        esac
-        if [ "${3:-}" = manifest ] && [ -z "$delimiter" ]; then
-          case "$trimmed" in '' | '#'*) ;; *'"""'* | *"'''"*) exit 3 ;; esac
-        fi
-      fi
-      if [ -n "$delimiter" ] && [[ "$content" == *"$delimiter"* ]]; then
-        # Resume only at a proven closing delimiter. In a basic string a
-        # backslash can make a quote content, so refuse that boundary.
-        if [ "$delimiter" = '"""' ] && [[ "${content%%"$delimiter"*}" == *\\ ]]; then
-          exit 3
-        fi
-        closing_quote="${delimiter:0:1}"
-        tail="${content#*"$delimiter"}"
-        tail="${tail#"$closing_quote"}"
-        kendex_trim tail "${tail#"$closing_quote"}"
-        case "$tail" in '' | '#'*) delimiter="" ;; *) exit 3 ;; esac
-      fi
-      [ "${3:-}" = manifest ] || newline=$'\n'
-      printf '%s%s' "$line" "$newline" >>"$2" || exit 1
-    done <"$1"
-    [ -z "$delimiter" ] || exit 3
-    status=0
-    cmp -s -- "$1" "$2.read" || status=$?
-    case "$status" in
-      0) ;;
-      1) exit 2 ;;
-      *) exit 1 ;;
-    esac
-  )
-}
-
-# KEY=value for each KEY the reader loads from FILE. Returns 1 where it
-# refuses FILE. The keys arrive as arguments, which no loaded key can
-# overwrite.
-settings_values() { # FILE KEY...
-  (
-    exec 3>&1 1>&2
-    # shellcheck source=lib/kendex-env.sh
-    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
-    for key in "${@:2}"; do unset "$key" || exit 1; done
-    kendex_load_settings_file "$1" -- "${@:2}" || exit 1
-    for key in "${@:2}"; do
-      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
-    done
-  )
-}
-
-# The keys whose value differs between the range's endpoints of PATH, as
-# SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
-# refuses the file. A settings file with a multiline string delimiter is
-# outside the settings reader's grammar.
-settings_file_admitted() { # PATH [launch|manifest]
-  local side rev status mode=""
-  if ! : >"$work/settings-keys"; then
-    settings_note "cause=settings-unreadable path=$1" unreadable
-    return 1
-  fi
-  for side in base head; do
-    rev="$base_rev"
-    [ "$side" = base ] || rev="$head_rev"
-    status=0
-    rev_file "$rev" "$1" "$work/settings-$side" || status=$?
-    case "$status" in
-      0) ;;
-      2) [ "$#" -eq 1 ] || return 1; : >"$work/settings-$side" || status=1 ;;
-      3)
-        settings_note "cause=settings-not-regular path=$1 side=$side"
-        return 1 ;;
-    esac
-    [ "$status" = 0 ] || [ "$status" = 2 ] || {
-      settings_note "cause=settings-unreadable path=$1 side=$side rev=${rev:-unresolved}" unreadable
-      return 1
-    }
-    [ "$#" -eq 1 ] || [ "$side" = base ] || [ "$mode" = "$REV_FILE_MODE" ] || return 1
-    mode="$REV_FILE_MODE"
-    if [ "${2:-}" != manifest ]; then
-      status=0
-      grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
-      case "$status" in
-        0)
-          settings_note "cause=multiline-string path=$1 side=$side"
-          return 1 ;;
-        1) ;;
-        *)
-          settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
-          return 1 ;;
-      esac
-    fi
-    status=0
-    settings_scan "$work/settings-$side" "$work/settings-residue-$side" "${@:2}" \
-      >>"$work/settings-keys" || status=$?
-    case "$status" in
-      0) ;;
-      2)
-        settings_note "cause=settings-bytes-dropped path=$1 side=$side" unreadable
-        return 1 ;;
-      3)
-        settings_note "cause=unadmitted-change path=$1 side=$side"
-        return 1 ;;
-      *)
-        settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
-        return 1 ;;
-    esac
-  done
-  if cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then
-    status=0
-  else
-    status=$?
-  fi
-  if [ "${2:-}" != manifest ]; then
-    settings_changed_values "$1" || return 1
-  fi
-  case "$status" in
-    0) ;;
-    1) settings_note "cause=unadmitted-change path=$1"; return 1 ;;
-    *) settings_note "cause=unadmitted-change path=$1"; configuration_unread "cause=settings-unreadable path=$1"; return 1 ;;
-  esac
-}
-
-settings_changed_values() { # PATH
-  local keys base_values head_values key line base_value head_value
-  if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
-    settings_note "cause=settings-unreadable path=$1" unreadable
-    return 1
-  fi
-  # shellcheck disable=SC2086
-  if ! base_values="$(settings_values "$work/settings-base" $keys)"; then
-    settings_note "cause=settings-unparsed path=$1 side=base" unreadable
-    return 1
-  fi
-  # shellcheck disable=SC2086
-  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then
-    settings_note "cause=settings-unparsed path=$1 side=head" unreadable
-    return 1
-  fi
-  SETTINGS_FILE_KEYS=""
-  for key in $keys; do
-    base_value="" head_value=""
-    while IFS= read -r line; do
-      case "$line" in "$key="*) base_value="=${line#*=}" ;; esac
-    done <<<"$base_values"
-    while IFS= read -r line; do
-      case "$line" in "$key="*) head_value="=${line#*=}" ;; esac
-    done <<<"$head_values"
-    [ "$base_value" = "$head_value" ] || SETTINGS_FILE_KEYS="$SETTINGS_FILE_KEYS,$key"
-  done
 }
 
 # The launch arm's choice so far: the first input naming the widest class.
@@ -649,76 +347,13 @@ ceiling() { # KEY
   sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1
 }
 
-# Reuse the classifier's regular-file and changed-key proof for launch.
-# The PR's base tip owns its exclusions even when its merge base is older.
-launch_settings_range() ( # BASE HEAD REPO WORK
-  local base="$1" head="$2" repo="$3" work="$4" path limit numstat added removed lines=0 hunks
-  local base_rev head_rev="$2" changed="" mode=launch settings_paths="${BASE_SETTINGS_FILES// /$'\n'}"
-  settings_paths+=$'\nkendex.toml\nkendex-local.toml'
-  while IFS= read -r -d '' path; do
-    change_class_path_match "$path" "$settings_paths" || return 1
-    changed="${changed:+$changed$'\n'}$path"
-  done <"$work/paths"
-  [ -n "$changed" ] || return 1
-  case "$changed" in
-    kendex.toml | kendex-local.toml) mode=manifest ;;
-    *kendex.toml* | *kendex-local.toml*) return 1 ;;
-  esac
-  unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
-  base_settings || { configuration_unread "$MEASURE_CAUSE"; return 1; }
-  set_globs "${HARNESS_CI_STANDARD_PATHS:-}"
-  path_matches any && return 1
-  if ! base_rev="$(git -C "$repo" merge-base "$base" "$head" 2>/dev/null)"; then
-    configuration_unread "cause=settings-base-unreadable base=$base head=$head"
-    return 1
-  fi
-  while IFS= read -r path; do
-    settings_file_admitted "$path" "$mode" || return 1
-  done <<<"$changed"
-  if ! limit="$(ceiling micro_max_production)" || [ -z "$limit" ]; then
-    configuration_unread "cause=settings-ceiling-unreadable"
-    return 1
-  fi
-  if ! branch_size_numstat "$repo" "" "$head" numstat "$base"; then
-    configuration_unread "cause=settings-size-unreadable detail=$BRANCH_GROWTH_ERROR"
-    return 1
-  fi
-  while IFS=$'\t' read -r added removed path; do
-    [[ "$added" =~ ^[0-9]+$ && "$removed" =~ ^[0-9]+$ ]] || return 1
-    [ "$mode" != manifest ] || { [ "$added" -le 1 ] && [ "$removed" -le 1 ]; } || return 1
-    lines=$((lines + added))
-  done <<<"$numstat"
-  if [ "$mode" = manifest ]; then
-    if ! hunks="$(git -C "$repo" diff --no-color --unified=0 --inter-hunk-context=0 --no-ext-diff \
-        --no-textconv --no-renames "$base_rev" "$head_rev" -- "$changed" |
-        awk '/^@@ / { count++ } END { print count+0 }')"; then
-      configuration_unread "cause=settings-hunks-unreadable path=$changed"
-      return 1
-    fi
-    [ "$hunks" -eq 1 ] || return 1
-  fi
-  [ "$lines" -le "$limit" ]
-)
-
-launch_unread_configuration() { # STDERR_FILE
-  local failure
-  if ! failure="$(sed -n 's/^configuration-unreadable: //p' "$1")"; then
-    launch_consider standard "configuration-evidence-unreadable" unmeasured
-  elif [ -n "$failure" ]; then
-    failure="${failure%%$'\n'*}"
-    launch_consider standard "${failure#cause=}" unmeasured
-  else
-    return 1
-  fi
-}
-
 # The range's class as this script's own classifier reads it, the reading
 # review depth takes through the same reader, so the range's production lines
 # decide its cycle as they decide its review. A work item runs at micro or
 # wider, so a ranked class below micro reads as micro; an unranked one reaches
 # launch_consider, which refuses it.
-launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
-  local class rule refusal
+launch_range_class() { # BASE HEAD REPO STDERR_FILE
+  local class rule
   if ! change_scope_read "$1" "$2" "$3" "$4"; then
     # The classifier's own cause, which the detail cannot carry.
     [ ! -s "$4" ] || cat -- "$4" >&2
@@ -727,29 +362,6 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
   fi
   rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${CHANGE_SCOPE_RULE#cause=}"
   class="$CHANGE_SCOPE_CLASS"
-  if [ "$5" = true ] && [ "$CHANGE_SCOPE_MEASURED" = true ] &&
-    [[ "$CHANGE_SCOPE_RULE" = cause=configuration-source\ * ||
-      "$CHANGE_SCOPE_RULE" = cause=consumer-manifest\ * ]]; then
-    if launch_unread_configuration "$4"; then
-      return 0
-    fi
-    if ! refusal="$(sed -n 's/^manifest-admission: admitted=false cause=//p' "$4")"; then
-      launch_consider standard configuration-evidence-unreadable unmeasured
-    else
-      case "$refusal" in
-        '' | 'bot-instructions-unread side=base detail=checker-absent')
-          launch_consider micro settings-only ;;
-        *)
-          sed '/^class: /d; /^quick-proof: /d' "$4" >&2
-          case "$refusal" in
-            bot-instructions-unread\ * | manifest-unreadable\ *)
-              launch_consider standard "$refusal" unmeasured ;;
-            *) launch_consider standard "$refusal" ;;
-          esac ;;
-      esac
-    fi
-    return 0
-  fi
   if change_scope_rank "$class" && ! change_scope_floor "$class"; then
     class=micro
   fi
@@ -762,7 +374,7 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
 
 launch_class() { # ARG...
   local production="" body="" base="" head="" repo=. body_text delta="" path floor
-  local micro_max small_max paths=() floors=() launch_work settings_range=false
+  local micro_max small_max paths=() floors=() launch_work
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --production) need_value "$1" "$#" "${2:-}"; production="$2"; shift 2 ;;
@@ -851,16 +463,8 @@ launch_class() { # ARG...
     elif ! change_scope_location_load "$repo"; then
       launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
     else
-      if launch_settings_range "$base" "$head" "$repo" "$launch_work" 2>"$launch_work/settings-err"; then
-        settings_range=true
-      else
-        launch_unread_configuration "$launch_work/settings-err" || true
-      fi
       while IFS= read -r -d '' path; do
         change_class_path "$path" launch
-        if [ "$settings_range" = true ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = configuration-source\ * ]]; then
-          continue
-        fi
         if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
           change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then
           continue
@@ -872,7 +476,7 @@ launch_class() { # ARG...
       elif [ -n "$BRANCH_PROTECTION_KIND" ]; then
         launch_consider small "protection-removed kind=$BRANCH_PROTECTION_KIND path=$BRANCH_PROTECTION_PATH removed=$BRANCH_PROTECTION_REMOVED added=$BRANCH_PROTECTION_ADDED"
       fi
-      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err" "$settings_range"
+      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"
     fi
   fi
 
@@ -923,41 +527,22 @@ harness_err="$work/harness-stderr"
 #
 # The quick proof the header states, for the class answer() prints. A trivial
 # answer with no repository allowlist holds every changed path in the docs set
-# or among the admitted settings files, so each path is judged here only for
-# being one of those files or Markdown: the docs set also takes a template or
-# a script under docs/.
+# or among the quick files, so each path is judged here only for being one of
+# those files or Markdown: the docs set also takes a template or a script
+# under docs/.
 quick_proof() { # CLASS
   local path
   [ "$1" = trivial ] || return 1
   [ "$event" = pull_request ] || return 1
   [ -z "${HARNESS_CI_TRIVIAL_PATHS:-}" ] || return 1
   while IFS= read -r path; do
-    case $'\n'"$SETTINGS_FILES"$'\n' in *$'\n'"$path"$'\n'*) continue ;; esac
+    change_class_quick_path "$path" && continue
     case "$path" in *.md | *.markdown) ;; *) return 1 ;; esac
   done <<<"$changed"
 }
 
-# The configuration-source rule holding an admitted settings change read its
-# paths alone, so every answer for that change but trivial, a later read
-# failure included, is that refusal, measured, with the answer it replaced
-# on the admission line that settings_note, with the admission below, prints.
 answer() { # CLASS FIELDS [measured]
-  local rule quick=false
-  if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
-    rule="${2%% *}"
-    if [ "$1" = standard ] && [ "${3:-}" != measured ]; then
-      configuration_unread "$2"
-    fi
-    settings_note "cause=class-$1 rule=${rule#cause=}"
-    set -- standard "$SETTINGS_REFUSAL" measured
-  fi
-  if [ -n "$MANIFEST_ADMITTED" ]; then
-    case "$1" in
-      trivial | micro | small)
-        set -- small "cause=consumer-manifest lines=$total"
-        printf 'light-ci: kind=manifest\n' >&2 ;;
-    esac
-  fi
+  local quick=false
   measured=true
   [ "$1" != standard ] || measured=false
   [ "${3:-}" != measured ] || measured=true
@@ -981,7 +566,7 @@ answer() { # CLASS FIELDS [measured]
 harness_args=(--event "$event" --head "$head" --repo "$repo")
 [ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
 if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
-  --paths-output "$paths_file" --base-inventory-output "$work/base-inventory" --output /dev/null 2>"$harness_err")"; then
+  --paths-output "$paths_file" --output /dev/null 2>"$harness_err")"; then
   cat "$harness_err" >&2
   die "cause=harness-only-failed event=$event" \
     "the shipped harness-only classifier refused this call"
@@ -1041,10 +626,10 @@ path_class_matches() { # PHASE CLASS
 # the base endpoint's commit holds, through the shared reader in the library:
 # a branch cannot choose the ceilings or the roots its own size is scored
 # against. A key this process's environment carries keeps that value, save
-# the standard paths and the settings allowlist: a caller's environment is
+# the standard paths: a caller's environment is
 # its own checkout's settings, which github.sh's router exports from the
 # working tree, so those are dropped and the base's alone decide.
-unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
+unset HARNESS_CI_STANDARD_PATHS
 
 # The changed paths harness-only read, ahead of every refusal below.
 [ ! -s "$paths_file" ] || changed="$(cat -- "$paths_file")"
@@ -1086,339 +671,60 @@ if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then
   answer standard "${harness_note:-cause=no-changed-paths}"
 fi
 
-# The settings admission the header states. A key no CI job reads decides no
-# render or classifier input, the reason a configuration source is refused.
-# A table other than [env] counts as a change: the reader ignores it and
-# other tools may read it. The trivial rule below reads the ceiling where
-# any other path is beside the admitted files, and answer() turns any other
-# class an admitted change reaches into the refusal.
-# The keys a merge-group run reads from the base never qualify, the
-# allowlist itself included: their breakage stops the queue that would merge
-# the repair.
-settings_key_admitted() { # KEY
-  local glob admitted=false
-  case "$1" in
-    '' | [0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;;
-    HARNESS_CI_*) return 1 ;;
-  esac
-  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac
-  case " $SETTINGS_DEFAULT_KEYS " in *" $1 "*) admitted=true ;; esac
-  set -f
-  for glob in ${HARNESS_CI_TRIVIAL_SETTINGS:-}; do
-    case "$glob" in
-      '!'*)
-        # shellcheck disable=SC2254
-        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;
-      *)
-        # shellcheck disable=SC2254
-        case "$1" in $glob) admitted=true ;; esac ;;
-    esac
-  done
-  set +f
-  [ "$admitted" = true ]
+# A [sources] change in a kendex manifest names the catalogs a later install
+# runs code from, and a revert does not undo a run, so it keeps the full
+# route. Each changed manifest's `sources` value is compared at both ends
+# with Python's TOML reader; a manifest an end lacks holds none, and one
+# that cannot be read or parsed refuses the cheapest class.
+# The answer is one word on stdout with status 0: `changed` or `unchanged`.
+# Every other word, an empty stdout or another status is no answer, so an
+# interpreter that fails before the program runs, or a python3 older than
+# 3.11 with no tomllib, can never read as an unchanged value.
+manifest_sources_changed() { # PATH
+  command -v python3 >/dev/null 2>&1 || { echo python3-absent; return 0; }
+  python3 -I -c '
+import subprocess, sys
+try:
+    import tomllib
+except ImportError:
+    print("tomllib-absent")
+    sys.exit(2)
+repo, path, *revs = sys.argv[1:]
+def sources(rev):
+    try:
+        listed = subprocess.run(["git", "-C", repo, "ls-tree", rev, "--", path],
+                                check=True, capture_output=True).stdout
+        if not listed:
+            return None
+        blob = subprocess.run(["git", "-C", repo, "cat-file", "blob", f"{rev}:{path}"],
+                              check=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        print("manifest-read-failed")
+        sys.exit(2)
+    try:
+        return tomllib.loads(blob.decode()).get("sources")
+    except Exception:
+        print("manifest-parse-failed")
+        sys.exit(2)
+sides = [sources(rev) for rev in revs]
+print("changed" if sides[0] != sides[1] else "unchanged")
+' "$repo" "$1" "$base_rev" "$head_rev" 2>/dev/null
 }
 
-# A directory's package namespace, as NAMESPACE: its name in upper snake
-# case and an underscore, empty for a name outside kebab case.
-NAMESPACE=""
-package_namespace() { # DIR
-  local name="${1##*/}"
-  NAMESPACE=""
-  case "$name" in
-    '' | -* | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) ;;
-    *) NAMESPACE="$(printf '%s' "${name//-/_}" | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ)_" ;;
-  esac
-}
-
-# The [env] keys light by default, as SETTINGS_DEFAULT_KEYS, read from the
-# declarations at the commit --base names alone, the one base_settings reads
-# the allowlist from: the branch under judgement writes no mark, inventory
-# entry or manifest key this reads, and the merge base, which the author
-# picks by choosing where to fork, never speaks for a mark the base end has
-# since dropped. harness-only writes that commit's validated inventory. The
-# header states the rule. Every kendex.settings.toml.example the base tracks
-# is read, an in-place or hand-written one included, since any of them can
-# veto a key; only one the base inventory lists beside an inventoried
-# SKILL.md, a skill's installed template, can admit one. Every tracked
-# directory holding a SKILL.md or an example names a namespace a key's owner
-# is chosen from. A source catalog's CI runs every package's own tests over
-# the repository's settings, so it has no default. Returns 1, with the
-# admission line, where a declaration could not be read, even where the
-# allowlist alone would admit the change: one rule costs a full run, never a
-# waiver. Called after base_settings, which resolves BASE_REV.
-SETTINGS_DEFAULT_KEYS=""
-settings_declarations() {
-  local inventoried status path dir namespace admittable n=0 catalog=false owners=" "
-  local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"
-  if ! inventoried="$(cat -- "$work/base-inventory" 2>/dev/null)"; then
-    settings_note "$refused=inventory" unreadable
-    return 1
-  fi
-  inventoried=$'\n'"$inventoried"$'\n'
+! path_class_matches before-render standard ||
+  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
+while IFS= read -r path; do
+  case "$path" in kendex.toml | kendex-local.toml) ;; *) continue ;; esac
   status=0
-  source_catalog_at "$rev" "$work/declarations-manifest" || status=$?
-  case "$status" in
-    0) ;;
-    1) catalog=true ;;
-    *) settings_note "$refused=manifest" unreadable; return 1 ;;
+  sources_answer="$(manifest_sources_changed "$path")" || status=$?
+  case "$status:$sources_answer" in
+    0:changed) answer standard "cause=manifest-sources path=$path" measured ;;
+    0:unchanged) ;;
+    *:python3-absent | *:tomllib-absent | *:manifest-read-failed | *:manifest-parse-failed)
+      answer standard "cause=manifest-sources-unreadable path=$path detail=$sources_answer" ;;
+    *) answer standard "cause=manifest-sources-unreadable path=$path detail=python3-failed" ;;
   esac
-  if [ -z "$rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
-    "$rev" >"$work/declarations-tree" 2>/dev/null; then
-    settings_note "$refused=example" unreadable
-    return 1
-  fi
-  while IFS= read -r -d '' path; do
-    dir=""
-    case "$path" in */*) dir="${path%/*}" ;; esac
-    case "$path" in
-      SKILL.md | */SKILL.md | kendex.settings.toml.example | */kendex.settings.toml.example)
-        package_namespace "$dir"
-        namespace="$NAMESPACE"
-        case "$owners" in *" $namespace "*) ;; *) owners="$owners$namespace " ;; esac ;;
-    esac
-    case "$path" in
-      kendex.settings.toml.example | */kendex.settings.toml.example) ;;
-      *) continue ;;
-    esac
-    n=$((n + 1))
-    status=0
-    rev_file "$rev" "$path" "$work/declaration-$n" || status=$?
-    [ "$status" = 0 ] || { settings_note "$refused=example path=$path" unreadable; return 1; }
-    # The line scan below cannot tell a comment from a line inside a
-    # multiline string.
-    status=0
-    grep -qE "\"\"\"|'''" -- "$work/declaration-$n" || status=$?
-    [ "$status" = 1 ] || { settings_note "$refused=example path=$path" unreadable; return 1; }
-    settings_values "$work/declaration-$n" >/dev/null ||
-      { settings_note "$refused=example path=$path" unreadable; return 1; }
-    admittable=1
-    case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac
-    case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac
-    args=("${args[@]+"${args[@]}"}" "ns=$namespace" "adm=$admittable" "$work/declaration-$n")
-  done <"$work/declarations-tree"
-  if [ "$catalog" = true ]; then return 0; fi
-  [ "$n" -gt 0 ] || return 0
-  # One comment block per assignment, as the template grammar reads it: a
-  # blank line, a table header or an assignment ends it, so a mark speaks for
-  # the one key below it. A `# keys:` line names a family one code path
-  # builds every member of at run time, a member a consumer adds included,
-  # so a mark on one declared member cannot speak for that reader. The
-  # longest namespace that starts a key names its owner, which has to be a
-  # package declaring it.
-  if ! SETTINGS_DEFAULT_KEYS="$(awk -v owners="$owners" '
-    BEGIN { split(owners, owned, " ") }
-    FNR == 1 { section = ""; marked = 0 }
-    {
-      line = $0
-      sub(/^[ \t\r\n]+/, "", line)
-      sub(/[ \t\r\n]+$/, "", line)
-    }
-    line == "" { marked = 0; next }
-    line ~ /^#/ {
-      if (line == "# ci: unread") marked = 1
-      if (match(line, /^#[ \t]*keys:/)) {
-        count = split(substr(line, RLENGTH + 1), items, /[ \t,]+/)
-        for (i = 1; i <= count; i++) {
-          if (items[i] !~ /^[A-Za-z_<][A-Za-z0-9_<>]*$/) continue
-          pattern = items[i]
-          gsub(/<NAME>/, "[A-Za-z0-9_]+", pattern)
-          family[++families] = "^" pattern "$"
-        }
-      }
-      next
-    }
-    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); marked = 0; next }
-    index(line, "=") {
-      was_marked = marked; marked = 0
-      key = substr(line, 1, index(line, "=") - 1)
-      sub(/[ \t]+$/, "", key)
-      if (!was_marked) veto[key] = 1
-      if (ns == "") veto[key] = 1
-      if (index(key, ns) != 1) veto[key] = 1
-      if (ns != "" && index(key, ns) == 1) declarer[key, ns] = 1
-      if (was_marked && adm && section == "env" && key ~ /^[A-Za-z_][A-Za-z0-9_]*$/) light[key] = 1
-    }
-    END {
-      for (key in light) {
-        if (key in veto) continue
-        owner = ""
-        for (o in owned) if (index(key, owned[o]) == 1 && length(owned[o]) > length(owner)) owner = owned[o]
-        if (!((key, owner) in declarer)) continue
-        for (i = 1; i <= families; i++) if (key ~ family[i]) break
-        if (i <= families) continue
-        print key
-      }
-    }
-  ' "${args[@]}")"; then
-    settings_note "$refused=example" unreadable
-    return 1
-  fi
-  SETTINGS_DEFAULT_KEYS="${SETTINGS_DEFAULT_KEYS//$'\n'/ }"
-}
-
-# SETTINGS_FILES, the admitted files one per line in byte order, and
-# SETTINGS_ADMITTED, their class-line fields. Returns 1, with the admission
-# line, where admission refuses the change. Another event defines no range
-# the size rules read; unreadable base settings refuse admission.
-settings_admission() {
-  local path files="" file key keys=""
-  case "$event" in
-    pull_request | merge_group) ;;
-    *)
-      settings_note "cause=unsupported-event event=$event"
-      return 1 ;;
-  esac
-  base_settings || {
-    settings_note "$MEASURE_CAUSE" unreadable
-    return 1
-  }
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    change_class_path "$path" before-render
-    [ "$CHANGE_CLASS_PATH" = standard ] || continue
-    case " $BASE_SETTINGS_FILES " in
-      *" $path "*) files="$files$path"$'\n' ;;
-      *) settings_note "cause=configuration-file path=$path"; return 1 ;;
-    esac
-  done <<<"$changed"
-  if ! files="$(printf '%s' "$files" | LC_ALL=C sort -u)"; then
-    settings_note "cause=settings-unreadable" unreadable
-    return 1
-  fi
-  settings_declarations || return 1
-  while IFS= read -r file; do
-    settings_file_admitted "$file" || return 1
-    for key in ${SETTINGS_FILE_KEYS//,/ }; do
-      case ",$keys," in *",$key,"*) ;; *) keys="$keys,$key" ;; esac
-    done
-  done <<<"$files"
-  keys="${keys#,}"
-  SETTINGS_CAUSE=cause=declared-unread-settings
-  for key in ${keys//,/ }; do
-    case " $SETTINGS_DEFAULT_KEYS " in
-      *" $key "*) ;;
-      *) SETTINGS_CAUSE=cause=allowlisted-settings ;;
-    esac
-  done
-  SETTINGS_FILES="$files"
-  SETTINGS_ADMITTED="settings=${files//$'\n'/,} keys=${keys:--}"
-}
-
-# Whether the kendex.toml commit REV holds starts a line with the key
-# is_source_catalog, its bytes at OUT: 0 where no line does or REV holds no
-# manifest, 1 where one does, 3 where the manifest is not a regular file and
-# 4 where it could not be read.
-source_catalog_at() { # REV OUT
-  local status=0
-  rev_file "$1" kendex.toml "$2" || status=$?
-  case "$status" in
-    0) ;;
-    2) return 0 ;;
-    3) return 3 ;;
-    *) return 4 ;;
-  esac
-  status=0
-  grep -qE -- "^[[:space:]]*[\"']?is_source_catalog" "$2" || status=$?
-  case "$status" in
-    0) return 1 ;;
-    1) return 0 ;;
-    *) return 4 ;;
-  esac
-}
-
-# The manifest admission the header states, which owns the rule. Returns 1,
-# with the admission line, where it refuses the change.
-manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
-# The checker the header names, at MANIFEST_CHECKER: the base commit's
-# installed bot-instructions, out of a private checkout of that commit, as
-# a branch cannot choose the code that judges its manifest.
-MANIFEST_CHECKER=""
-manifest_checker() {
-  local tree="$work/manifest-checker" log="$work/manifest-checker-log" status=0 installed
-  local package=.agents/skills/bot-instructions
-  rev_file "$base_rev" "$package/scripts/bot-instructions" "$work/checker-blob" || status=$?
-  if [ "$status" -eq 2 ]; then
-    # A missing executable within a tracked package is an incomplete install.
-    if ! installed="$(git -C "$repo" ls-tree "$base_rev" -- "$package")"; then
-      status=1
-    elif [ -z "$installed" ]; then
-      manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
-      return 1
-    fi
-  fi
-  if [ "$status" -eq 1 ]; then
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-unreadable"
-    return 1
-  fi
-  if [ "$status" -ne 0 ] || [ "$REV_FILE_MODE" != 100755 ]; then
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-unusable"
-    return 1
-  fi
-  if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
-    cat -- "$log" >&2 2>/dev/null || true
-    manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed"
-    return 1
-  fi
-  MANIFEST_CHECKER="$tree/$package"
-  if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
-    [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-unusable"
-    return 1
-  fi
-}
-# Whether bot-instructions renders, from REV's tree, the outputs REV commits:
-# MANIFEST_CHECKER's own `check --staged` over an index read from REV, with
-# the environment queue_selection gives the base's command.
-manifest_render_check() { # SIDE REV
-  local index="$work/manifest-index-$1" status=0
-  GIT_INDEX_FILE="$index" git -C "$repo" read-tree "$2" >/dev/null 2>&1 || status=2
-  [ "$status" -ne 0 ] ||
-    env -i PATH="$PATH" HOME="${HOME:-}" GIT_INDEX_FILE="$index" \
-      "$MANIFEST_CHECKER/scripts/bot-instructions" --repo "$repo" --spec "$MANIFEST_CHECKER" \
-      --staged check >"$work/manifest-check-$1" 2>&1 </dev/null || status=$?
-  case "$status" in
-    0) return 0 ;;
-    1) cat -- "$work/manifest-check-$1" >&2; manifest_note "cause=bot-instructions-render side=$1" ;;
-    *)
-      [ ! -s "$work/manifest-check-$1" ] || cat -- "$work/manifest-check-$1" >&2
-      manifest_note "cause=bot-instructions-unread side=$1" ;;
-  esac
-  return 1
-}
-manifest_admission() {
-  local side rev status
-  case "$event" in
-    pull_request | merge_group) ;;
-    *) manifest_note "cause=unsupported-event event=$event"; return 1 ;;
-  esac
-  for side in base head; do
-    rev="$base_rev"
-    [ "$side" = base ] || rev="$head_rev"
-    status=0
-    # An endpoint without the manifest holds no catalog key; the render
-    # check below still asks it.
-    source_catalog_at "$rev" "$work/manifest-$side" || status=$?
-    case "$status" in
-      0) ;;
-      1) manifest_note "cause=source-catalog side=$side"; return 1 ;;
-      3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
-      *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
-    esac
-  done
-  manifest_checker || return 1
-  manifest_render_check base "$base_rev" || return 1
-  manifest_render_check head "$head_rev" || return 1
-  MANIFEST_ADMITTED=true
-}
-
-if path_class_matches before-render standard; then
-  SETTINGS_REFUSAL="cause=$CHANGE_CLASS_PATH_CAUSE"
-  if [ "$changed" = kendex.toml ]; then
-    manifest_admission || answer standard "$SETTINGS_REFUSAL" measured
-  else
-    settings_admission || answer standard "$SETTINGS_REFUSAL" measured
-  fi
-fi
+done <<<"$changed"
 
 # Repository exclusions add to the shared list and precede every render and
 # size class. The base alone declares them so the change cannot select its
@@ -1737,6 +1043,36 @@ render_refused_at() { # PATH
     }' "$work/render-named" >&2
 }
 
+# harness-only owns the docs set. Its docs mode is read once, for the size
+# rules, and its outside list is the changed paths beyond the set.
+docs_outside="$work/docs-outside"
+docs_verdict=""
+docs_read() {
+  [ -z "$docs_verdict" ] || return 0
+  docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
+    --outside-output "$docs_outside" --output /dev/null 2>/dev/null)" || docs_verdict=unreadable
+  case "$docs_verdict" in
+    docs_only=true | docs_only=false) ;;
+    *) docs_verdict=unreadable ;;
+  esac
+}
+
+# Whether every changed path is in the docs set or is a kendex manifest or a
+# JSON settings file. harness-only writes a false verdict with an empty
+# outside list on a read failure, so a false verdict needs a nonempty list.
+quick_set_holds() {
+  local path
+  docs_read
+  case "$docs_verdict" in
+    docs_only=true) return 0 ;;
+    docs_only=false) [ -s "$docs_outside" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  while IFS= read -r path; do
+    change_class_quick_path "$path" || return 1
+  done <"$docs_outside"
+}
+
 # An ownership gain needs the same proof as existing generated files: the
 # head inventory cannot grant the render class. Every changed path, gained
 # paths included, must be owned by a passing verify row. A failed proof stays
@@ -1748,8 +1084,6 @@ if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=ge
 fi
 
 ! path_class_matches registry standard ||
-  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
-! path_class_matches pointer standard ||
   answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
 
 # The measurement's library, beside this script, and the render roots it
@@ -1833,29 +1167,17 @@ if [ -n "$BRANCH_SIZE_PAIRED_LOCK_FILES" ]; then
   printf 'size: production=%s paired-lock=%s\n' "$production" "$BRANCH_SIZE_PAIRED_LOCK" >&2
 fi
 
-# harness-only owns the docs set. Use its non-doc paths for the subsystem
-# rule as well as its verdict for trivial, without changing the measured size
-# or the paths the refusal lists read.
-docs_outside="$work/docs-outside"
-docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
-  --outside-output "$docs_outside" --output /dev/null 2>/dev/null)" || docs_verdict=unreadable
-case "$docs_verdict" in
-  docs_only=true | docs_only=false) ;;
-  *) docs_verdict=unreadable ;;
-esac
+# The docs set's non-doc paths serve the subsystem rule as well as the
+# trivial rule, without changing the measured size or the paths the refusal
+# lists read.
+docs_read
 
-# An agent instruction file, an `instruction` line of the list, changes
-# how every agent behaves, so it never answers below small, the lowest class
-# the default review policy gives a bot round; CLAUDE.md is refused above by
-# name. A diff that removes test protection, read by the measurement
-# library's branch_protection_removed against the list's markers, never
-# answers below small either: deleted lines cost nothing in the size rules,
-# so its size alone would leave it unreviewed. That read is fail-closed, as
-# the measurement is. Every trivial and micro answer goes through here.
-instruction_file=""
-! path_class_matches narrow small || instruction_file="$PATH_MATCH_HIT"
+# A diff that removes test protection, read by the measurement library's
+# branch_protection_removed against the list's markers, never answers below
+# small: deleted lines cost nothing in the size rules, so its size alone would
+# leave it unreviewed. That read is fail-closed, as the measurement is. Every
+# trivial and micro answer goes through here.
 answer_narrow() { # CLASS FIELDS
-  [ -z "$instruction_file" ] || answer small "cause=instruction-file $instruction_file measured-class=$1"
   branch_protection_removed "$repo" "$base" "$head" "$NARROW_CONF" ||
     answer standard "cause=protection-unreadable detail=$BRANCH_GROWTH_ERROR"
   [ -z "$BRANCH_PROTECTION_KIND" ] ||
@@ -1863,52 +1185,29 @@ answer_narrow() { # CLASS FIELDS
   answer "$1" "$2"
 }
 
-trivial_max="${HARNESS_CI_TRIVIAL_MAX_LINES:-20}"
-case "$trivial_max" in
-  '' | *[!0123456789]*)
-    die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
-      "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number" ;;
-esac
-# An admitted settings file is a member of the trivial set, and the rule
-# below judges every other changed path. In the docs set, harness-only lists
-# each admitted file outside it, which also shows its list was read.
-# The ceiling bounds what a trivial diff can change unreviewed, and a
-# documentation path can still be one the product reads — compiled into a
-# binary, shipped as a template. Admitted settings bytes are only keys no CI
-# job or gate reads, comments and blanks, so a diff of those files alone
-# holds at any size; beside any other path the whole diff keeps the ceiling.
-trivial_paths="$changed"
-within_trivial=false
-[ "$total" -gt "$trivial_max" ] || within_trivial=true
-docs_trivial=false
-[ "$docs_verdict" != "docs_only=true" ] || docs_trivial=true
-settings_cause=""
-if [ -n "$SETTINGS_ADMITTED" ]; then
-  trivial_paths=""
-  while IFS= read -r path; do
-    case $'\n'"$SETTINGS_FILES"$'\n' in
-      *$'\n'"$path"$'\n'*) ;;
-      *) trivial_paths="$trivial_paths$path"$'\n' ;;
-    esac
-  done <<<"$changed"
-  [ -n "$trivial_paths" ] || within_trivial=true
-  if [ "$docs_verdict" = docs_only=false ] &&
-    outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
-    docs_trivial=true
+# The trivial set holds at any size, and a paired dependency lock is no
+# member of it. A repository allowlist judges every changed path but the
+# kendex manifests and JSON settings files, which stay members beside it.
+trivial_paths=""
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  if change_class_quick_path "$path"; then
+    QUICK_FILES="$QUICK_FILES$path"$'\n'
+  else
+    trivial_paths="$trivial_paths$path"$'\n'
   fi
-  settings_cause="$SETTINGS_CAUSE $SETTINGS_ADMITTED"
-fi
-[ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ] || within_trivial=false
-if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
-  if [ "$within_trivial" = true ]; then
+done <<<"$changed"
+QUICK_FILES="${QUICK_FILES%$'\n'}"
+trivial_cause="cause=documentation-paths"
+[ -z "$QUICK_FILES" ] || trivial_cause="cause=quick-files files=${QUICK_FILES//$'\n'/,}"
+if [ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ]; then
+  if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
+    [ -n "$QUICK_FILES" ] || trivial_cause="cause=allowlisted-paths"
     path_matches every "$trivial_paths" &&
-      answer_narrow trivial "${settings_cause:-cause=allowlisted-paths} lines=$total"
-  fi
-else
-  # The shipped allowlist is that mode's own path set, read from its verdict.
-  if [ "$docs_trivial" = true ] && [ "$within_trivial" = true ]; then
-    answer_narrow trivial "${settings_cause:-cause=documentation-paths} lines=$total"
+      answer_narrow trivial "$trivial_cause lines=$total"
+  elif quick_set_holds; then
+    answer_narrow trivial "$trivial_cause lines=$total"
   fi
 fi
 
@@ -1945,7 +1244,7 @@ set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
 render_roots=("${GLOB_LIST[@]}")
 subsystem=""
 one_subsystem=true
-excluded_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'"$BRANCH_SIZE_PAIRED_LOCK_FILES"$'\n'
+excluded_files=$'\n'"$BRANCH_SIZE_TEST_FILES"$'\n'"$BRANCH_SIZE_PAIRED_LOCK_FILES"$'\n'"$QUICK_FILES"$'\n'
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$non_docs" in *$'\n'"$path"$'\n'*) ;; *) continue ;; esac

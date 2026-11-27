@@ -402,21 +402,18 @@ schema_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
 assert_eq "a schema-only step keeps its conservative queue answer" \
   "queue_only=true inputs=declared cause=no-changed-paths" "$(queue_of "$schema_err")"
 
-# A settings change the base's HARNESS_CI_TRIVIAL_SETTINGS admits to trivial
-# keeps the queue route in the merge group that admits it, a settings file
-# being a `queue` line.
-admitted_base="$(settings_base "$(printf '[env]\nHARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_*"\nSECOND_OPINION_MODEL = "a"')")"
-git -C "$repo" checkout -q -B admitted-case "$admitted_base"
-printf '[env]\nHARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_*"\nSECOND_OPINION_MODEL = "b"\n' \
-  >"$repo/kendex.settings.toml"
-git -C "$repo" commit -q -am "an admitted settings change"
-admitted_err="$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
-  -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
-  "$CHANGE_CLASS" --repo "$repo" --event merge_group --base "$admitted_base" \
+# A settings change, trivial at any key, keeps the queue route in its merge
+# group, a settings file being a `queue` line.
+settings_change_base="$(settings_base "$(printf '[env]\nHARNESS_CI_EXTRA = "a"')")"
+git -C "$repo" checkout -q -B settings-case "$settings_change_base"
+printf '[env]\nHARNESS_CI_EXTRA = "b"\n' >"$repo/kendex.settings.toml"
+git -C "$repo" commit -q -am "a settings change"
+settings_change_err="$(env -u HARNESS_CI_TRIVIAL_PATHS -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+  "$CHANGE_CLASS" --repo "$repo" --event merge_group --base "$settings_change_base" \
   --head HEAD 2>&1 >/dev/null)" || true
-assert_eq "an admitted settings change is trivial and queue-only in its merge group" \
+assert_eq "a settings change is trivial and queue-only in its merge group" \
   "queue-only: queue_only=true inputs=run cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml
-class: class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml keys=SECOND_OPINION_MODEL lines=2" \
-  "$(grep -E '^(queue-only|class): ' <<<"$admitted_err")"
+class: class=trivial measured=true cause=quick-files files=kendex.settings.toml lines=2" \
+  "$(grep -E '^(queue-only|class): ' <<<"$settings_change_err")"
 
 report queue-only

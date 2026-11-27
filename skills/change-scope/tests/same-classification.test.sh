@@ -8,7 +8,9 @@
 # expected files under fixtures/same-classification/ were recorded by running
 # that legacy script over this table once, so every row pins a decision the
 # move had to keep: a class per threshold edge the conf names, the path rules,
-# the render proof's verdict and the refusals the reader cannot measure.
+# the render proof's verdict and the refusals the reader cannot measure. The
+# rows the cheapest-class rule decides, a Markdown or settings path among
+# their changed paths, are recorded from this classifier under that rule.
 #
 # SAME_CLASSIFICATION_CLASSIFIER names another classifier to judge with, as a
 # control copy. SAME_CLASSIFICATION_RECORD=1 rewrites the expected files from
@@ -16,7 +18,7 @@
 # never run by a suite.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT
-unset ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_TRIVIAL_MAX_LINES
+unset ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_PATHS
 unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_LOCK_KENDEX
 
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -173,15 +175,13 @@ while IFS='|' read -r name verifier event env_pair edits; do
 done <<'ROWS'
 render-skill-tree|clean|pull_request|-|.agents/skills/orch/SKILL.md=4 .agents/skills/orch/app.ts=2
 render-shim-only|clean|pull_request|-|CLAUDE.md=2
-render-hand-edit|dirty|pull_request|-|.agents/skills/orch/SKILL.md=6
-render-no-verifier|absent|pull_request|-|.agents/skills/orch/SKILL.md=6
+render-hand-edit|dirty|pull_request|-|.agents/skills/orch/app.ts=6
+render-no-verifier|absent|pull_request|-|.agents/skills/orch/app.ts=6
 inventory-unparsable-head|clean|pull_request|-|.kendex-generated.json=1
 render-pointer-beside-docs|dirty|pull_request|-|CLAUDE.md=2 docs/guide.md=1
 trivial-at-ceiling|dirty|pull_request|-|docs/guide.md=20
-trivial-one-over|dirty|pull_request|-|docs/guide.md=21
 trivial-root-markdown|dirty|pull_request|-|README.md=3
 trivial-changelog|dirty|pull_request|-|changelog.d/fixed/note.md=2
-trivial-configured-ceiling|dirty|pull_request|HARNESS_CI_TRIVIAL_MAX_LINES=5|docs/guide.md=6
 trivial-configured-allowlist|dirty|pull_request|HARNESS_CI_TRIVIAL_PATHS=runtime/*|runtime/product.ts=2
 docs-outside-configured-allowlist|dirty|pull_request|HARNESS_CI_TRIVIAL_PATHS=runtime/*|docs/guide.md=2
 docs-past-small|dirty|pull_request|-|docs/plans/v2.md=400
@@ -197,8 +197,7 @@ small-binary-test|dirty|pull_request|-|runtime/product.ts=30 payload/tests/image
 small-render-root-is-one-subsystem|dirty|pull_request|-|runtime/one.ts=30 .agents/runtime/two.ts=30
 small-configured-test-glob|dirty|pull_request|ORCH_SIZE_TEST_PATHS=payload/fixtures/*|runtime/product.ts=30 payload/fixtures/data.conf=30
 small-deleted-test|dirty|pull_request|-|rm:runtime/tests/kept.test.ts runtime/product.ts=2
-configuration-settings|dirty|pull_request|-|kendex.settings.toml=2 runtime/product.ts=2
-configuration-manifest|dirty|pull_request|-|kendex.toml=2
+settings-beside-product|dirty|pull_request|-|kendex.settings.toml=2 runtime/product.ts=2
 configuration-gemini|clean|pull_request|-|.gemini/settings.json=2
 registry-claude-settings|dirty|pull_request|-|.claude/settings.json=2 runtime/product.ts=2
 registry-copilot-hook|dirty|pull_request|-|.github/hooks/guard.json=2 runtime/product.ts=2
