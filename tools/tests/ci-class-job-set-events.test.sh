@@ -988,6 +988,7 @@ a shard the group did not select@all-proved@$(group_drop "$NIGHT_LEG")@$(night_f
 a cancelled leg the group did not select@all-proved@$(group_drop "$NIGHT_LEG")@$(night_fail "$NIGHT_LEG" cancelled)@selector-fault commit=HEAD check=$NIGHT_LEG skipped=leg|read
 a suite the group's selection skipped@kept-subset@.@$(night_fail "$NIGHT_LEG")@selector-fault commit=HEAD check=$NIGHT_LEG skipped=suites|read
 a runtime target the group's selection left out@one-target@.@$(night_fail 'Skill suites shard (orch-rest, ubuntu-latest)')@selector-fault commit=HEAD check=Skill suites shard (orch-rest, ubuntu-latest) skipped=targets|read
+the orch-rest leg with every target held@all-proved@.@$(night_fail 'Skill suites shard (orch-rest, ubuntu-latest)')@night-red commit=HEAD check=Skill suites shard (orch-rest, ubuntu-latest) selector=ran|read
 another package's targets held whole@one-package@.@$(night_fail 'Skill suites shard (orch-rest, ubuntu-latest)')@selector-fault commit=HEAD check=Skill suites shard (orch-rest, ubuntu-latest) skipped=targets|read
 legs named apart from the night's@all-proved@.@$CATALOG_APART@night-red commit=HEAD check=catalog (1/1) / kendex check selector=ran|read
 a failed classifier, no lane@all-proved@.@$(night_fail 'Classify the diff')@|read
@@ -995,7 +996,7 @@ no merge group at the head@no-run@.@$(night_fail "$NIGHT_LEG")@night-red commit=
 the group's jobs unread@jobs-missing@.@$(night_fail "$NIGHT_LEG")@night-red commit=HEAD check=$NIGHT_LEG selector=unread|unread cause=jobs-read-failed
 the night's own jobs unread@outage@.@.@|unread cause=night-jobs-unread
 ROWS
-[ "$night_rows" -ge 13 ] || { echo "the night fault table read $night_rows rows" >&2; exit 1; }
+[ "$night_rows" -ge 14 ] || { echo "the night fault table read $night_rows rows" >&2; exit 1; }
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
