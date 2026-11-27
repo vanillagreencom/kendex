@@ -286,7 +286,8 @@ const ROWS: &[Row] = &[
         start: Some(10131),
         more: || {
             vec![
-                // The failed command printed its section before its `ls`.
+                // The result closes on the shell's exit status, and the
+                // command printed its section before its `ls` failed.
                 (
                     "/sections/0/read",
                     json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
