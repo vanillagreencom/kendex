@@ -241,8 +241,8 @@ pub struct StartController {
     /// The in-process caller's step before the controller's window opens:
     /// run once, by a newly persisted start's effect, after its predecessor
     /// is judged absent and before anything is built or opened. A
-    /// reconciled start and a refused one never run it. A request file
-    /// never carries it.
+    /// reconciled start and one that ends before that judgment never run
+    /// it. A request file never carries it.
     #[serde(skip)]
     pub pre_launch: PreLaunch,
 }

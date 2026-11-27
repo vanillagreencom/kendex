@@ -464,8 +464,9 @@ enum Verb {
     /// carries `base=sync-base-REASON` after its `intent`. REASON is the
     /// word `sync-base`'s own `sync-base: REASON` line leads with, `exit-N`
     /// where it printed none, `unstarted` where it could not start,
-    /// `timeout` past the read bound, and `not-run` for a start that ended
-    /// before the sync: a predecessor refused, a start reconciled. A
+    /// `timeout` past the read bound, and `not-run` for a start that never
+    /// reached the sync: it ended before judging its predecessor gone, or
+    /// it reconciled an earlier open start. A
     /// refusal, with nothing started or synced, at exit 1:
     /// `server-socket-unrecorded field=server_socket`, `session-unrecorded
     /// field=session_id`, `harness-unnamed`, `session-missing`,
@@ -3826,9 +3827,9 @@ fn resume_controller(
         cause: e.to_string(),
     })?;
     // The base follows as the start's own pre-launch step, which its effect
-    // runs only once it judges the predecessor gone: a refusal, a
-    // reconciled start and a predecessor that may still run leave the
-    // checkout unmoved, and name the follow `not-run`. An unattended
+    // runs only once it judges the predecessor gone: a start that never
+    // reaches the step, ended before that judgment or reconciled from an
+    // earlier open one, leaves the checkout unmoved. An unattended
     // restart must not leave the overseer down, so a follow that refuses
     // is reported and the start goes on.
     let base = Arc::new(Mutex::new(Some("sync-base-not-run".to_owned())));
