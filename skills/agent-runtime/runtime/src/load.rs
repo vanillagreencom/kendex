@@ -993,6 +993,13 @@ fn sets_failure_options(words: &[&str]) -> bool {
     false
 }
 
+enum ShellFrame {
+    Single,
+    Double,
+    AnsiC,
+    Parenthesis,
+}
+
 /// The segments of a shell command, each with the operator before it: a
 /// `;`, `&`, `&&`, `|`, `||`, `|&` or newline outside quotes and not
 /// escaped, the `&` of a redirection (`2>&1`, `>&2`, `&>F`) being none. A
@@ -1000,20 +1007,13 @@ fn sets_failure_options(words: &[&str]) -> bool {
 /// reads it. A comment, from a `#` that opens a word to the end of its
 /// line, and a heredoc's body, from the newline after `<<WORD` or
 /// `<<-WORD` to the line that is its word, are in no segment; a `<<` with
-/// no such line after it opens no body. Where a quote is still open at the
-/// end, as a stray apostrophe leaves it, quotes hide no operator.
+/// no such line after it opens no body. An unclosed quote prevents Bash
+/// from executing any segment of the incomplete input line.
 fn segments(command: &str) -> Vec<(Join, &str)> {
-    split(command, true)
-        .or_else(|| split(command, false))
-        .unwrap_or_default()
-}
-
-/// [`segments`], with `quotes` whether a quote hides what it holds: `None`
-/// where a quote is still open at the end.
-fn split(command: &str, quotes: bool) -> Option<Vec<(Join, &str)>> {
     let bytes = command.as_bytes();
     let (mut out, mut join, mut start, mut i) = (Vec::new(), Join::List, 0, 0);
-    let mut quote: Option<u8> = None;
+    let mut complete = 0;
+    let mut frames = Vec::new();
     // Where a comment ends the current segment.
     let mut cut: Option<usize> = None;
     // The words of the heredocs whose bodies open at the next newline, each
@@ -1021,19 +1021,53 @@ fn split(command: &str, quotes: bool) -> Option<Vec<(Join, &str)>> {
     let mut heredocs: Vec<(Vec<u8>, bool)> = Vec::new();
     while i < bytes.len() {
         let byte = bytes[i];
-        if let Some(open) = quote {
-            if byte == open {
-                quote = None;
-            } else if open == b'"' && byte == b'\\' {
-                i += 1;
+        let after = bytes.get(i + 1).copied();
+        let consumed = match (frames.last(), byte, after) {
+            (Some(ShellFrame::Double | ShellFrame::AnsiC), b'\\', _) => 2,
+            // A substitution reopens shell quoting inside the double quotes.
+            (Some(ShellFrame::Double), b'$', Some(b'(')) => {
+                frames.push(ShellFrame::Parenthesis);
+                2
             }
-            i += 1;
+            (Some(ShellFrame::Single | ShellFrame::AnsiC), b'\'', _)
+            | (Some(ShellFrame::Double), b'"', _)
+            | (Some(ShellFrame::Parenthesis), b')', _) => {
+                frames.pop();
+                1
+            }
+            (Some(ShellFrame::Single | ShellFrame::Double | ShellFrame::AnsiC), _, _) => 1,
+            (_, b'$', Some(b'\'')) => {
+                frames.push(ShellFrame::AnsiC);
+                2
+            }
+            (_, b'\'', _) => {
+                frames.push(ShellFrame::Single);
+                1
+            }
+            (_, b'"', _) => {
+                frames.push(ShellFrame::Double);
+                1
+            }
+            (Some(ShellFrame::Parenthesis), b'(', _) => {
+                frames.push(ShellFrame::Parenthesis);
+                1
+            }
+            (_, b'\\', _) => 2,
+            _ => 0,
+        };
+        if consumed != 0 {
+            i += consumed;
             continue;
         }
-        let after = bytes.get(i + 1).copied();
         if byte == b'#' && (i == 0 || breaks(bytes[i - 1])) {
-            cut = Some(i);
+            if frames.is_empty() {
+                cut = Some(i);
+            }
             i = command[i..].find('\n').map_or(bytes.len(), |n| i + n);
+            continue;
+        }
+        if !frames.is_empty() {
+            i += 1;
             continue;
         }
         if byte == b'<' && after == Some(b'<') {
@@ -1051,15 +1085,6 @@ fn split(command: &str, quotes: bool) -> Option<Vec<(Join, &str)>> {
         let redirect =
             byte == b'&' && (after == Some(b'>') || (i > 0 && matches!(bytes[i - 1], b'>' | b'<')));
         let (next, width) = match (byte, after) {
-            (b'\'' | b'"', _) if quotes => {
-                quote = Some(byte);
-                i += 1;
-                continue;
-            }
-            (b'\\', _) => {
-                i += 2;
-                continue;
-            }
             (b'&', _) if redirect => {
                 i += 1;
                 continue;
@@ -1086,17 +1111,21 @@ fn split(command: &str, quotes: bool) -> Option<Vec<(Join, &str)>> {
             for (word, strip) in std::mem::take(&mut heredocs) {
                 i = body_end(command, i, &word, strip).unwrap_or(i);
             }
+            if join == Join::List {
+                complete = out.len();
+            }
         }
         start = i;
     }
-    if quote.is_some() {
-        return None;
+    if !frames.is_empty() {
+        out.truncate(complete);
+        return out;
     }
     let rest = &command[start..cut.unwrap_or(bytes.len())];
     if !rest.trim().is_empty() {
         out.push((join, rest));
     }
-    Some(out)
+    out
 }
 
 /// Whether `byte` is a shell metacharacter, which ends a word.
@@ -1431,8 +1460,19 @@ mod tests {
             ),
             // A `<<` with no line of its word after it opens no body.
             (shell("echo $((1<<2))\ncat a.md"), vec![file("a.md")], true),
-            // A quote still open at the end hides no operator.
-            (shell("echo it's done\ncat a.md"), vec![file("a.md")], true),
+            (
+                shell(
+                    r#"printf '%s\n' "$(printf '%s' "
+cat AGENTS.md
+it's done
+")"
+cat a.md"#,
+                ),
+                vec![file("a.md")],
+                true,
+            ),
+            (shell("echo $'it\\'s'; cat a.md"), vec![file("a.md")], true),
+            (shell("echo it's done\ncat a.md"), vec![], false),
         ];
         for (action, reads, more) in rows {
             let rules = rule_reads(&action);
@@ -1448,6 +1488,32 @@ mod tests {
     #[test]
     fn a_failed_calls_read_stands_unless_its_result_shows_it_printed_nothing() {
         let rows: Vec<(Action, Failed, Vec<Read>)> = vec![
+            (
+                shell("echo it's done\ncat a.md"),
+                exited("bash: -c: line 1: unexpected EOF while looking for matching `''\n"),
+                vec![],
+            ),
+            (
+                shell("cat a.md\necho it's\ncat b.md"),
+                exited("# A\nbash: -c: line 2: unexpected EOF while looking for matching `''\n"),
+                vec![file("a.md")],
+            ),
+            (
+                shell("gh pr comment 1 -b 'Don't ship'\ncat AGENTS.md"),
+                exited("bash: -c: line 1: unexpected EOF while looking for matching `''\n"),
+                vec![],
+            ),
+            // A separator can end a segment before Bash can execute its line.
+            (
+                shell("cat a.md\ncat b.md; echo okay && echo it's\ncat AGENTS.md"),
+                exited("# A\nbash: -c: line 2: unexpected EOF while looking for matching `''\n"),
+                vec![file("a.md")],
+            ),
+            (
+                shell("cat a.md\ncat b.md |\necho it's\ncat AGENTS.md"),
+                exited("# A\nbash: -c: line 3: unexpected EOF while looking for matching `''\n"),
+                vec![file("a.md")],
+            ),
             // The read before the failed part printed.
             (
                 shell("cat README.md && cat missing.md"),
