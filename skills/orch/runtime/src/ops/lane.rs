@@ -4373,7 +4373,7 @@ mod tests {
                 "claude",
                 "claude-opus-5-5",
                 Some("high"),
-                Some("--dangerously-skip-permissions"),
+                Harness::Claude.bypass_words().first().copied(),
                 Outcome::Failed,
                 Harness::Codex,
                 Value::from(CODEX_BYPASS),
