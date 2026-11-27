@@ -1918,8 +1918,8 @@ class Watch:
                 # controller status failure: the exit read would report it again.
                 unread = isinstance(reading, Failure) and reading.record["key"][1:] == ["refusal", "dependency"]
                 status = self.exited_pending is None and (reading is None or "exited" in self.state and not unread)
-                if not status:
-                    # Held notices wait for the pass's status read: a second exit replaces a held success.
+                if not status and (self.exited_pending is None or self.exited_pending[0] != "read"):
+                    # Held notices wait for a status read to be judged: a second exit replaces a held success.
                     self.release(now)
                 kind = self.accept_wall(reading, now)
                 if status:
