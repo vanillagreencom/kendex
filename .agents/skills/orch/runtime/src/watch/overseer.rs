@@ -989,16 +989,14 @@ fn continue_overseer(
             agent_runtime::session::text_digest(screen)
         ),
     };
-    // The episode stands while each failure follows the last one read
-    // within the patience. A pane read busy on every pass hides the turn
-    // that returned between them, and a resumed turn that failed again
-    // moves the row position as a returned one does, so a failure read
-    // after a whole patience with none read opens a new episode.
-    let standing = episode.and_then(|value| {
+    let recorded = episode.and_then(|value| {
         let (since, last) = value.split_once('|')?;
-        let (since, last) = (since.parse::<u64>().ok()?, last.parse::<u64>().ok()?);
-        (pass.now.saturating_sub(last) <= stop::PROVIDER_PATIENCE.as_secs()).then_some(since)
+        Some(stop::Episode {
+            since: since.parse().ok()?,
+            last: last.parse().ok()?,
+        })
     });
+    let standing = stop::standing(recorded, pass.now);
     if standing.is_none() && episode.is_some() {
         end_provider_episode(&pane_key, out);
     }

@@ -6,12 +6,15 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+#[path = "account_planters.rs"]
+mod account_planters;
 #[path = "isolation.rs"]
 mod isolation;
+use account_planters::{account_fixtures, plant_listing};
 use isolation::*;
 
 const FLEET: &str = include_str!("fixtures/workflow-state-oversee.json");
@@ -1384,4 +1387,233 @@ fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
     let (key, _) = refusal(&resume());
     assert_eq!(key, "harness-unnamed");
     assert_eq!(world.log("tmux.log"), "");
+}
+
+/// The epoch second this row reads its accounts and episodes against.
+fn epoch_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// A local account `alias` on `harness` as the listing reads it, `used`
+/// percent through its weekly window, which binds; that window resets at
+/// `resets`, or states no reset where `None`.
+fn account(alias: &str, harness: &str, used: u64, resets: Option<u64>, now: u64) -> Value {
+    let weekly = resets.map(agent_runtime::clock::iso_utc);
+    json!({
+        "alias": alias, "harness": harness, "config_dir": format!("/home/me/.{alias}"),
+        "measured_through": "local", "status": "ok",
+        "verdict": if used < 95 { "room" } else { "walled" },
+        "headroom_pct": 100 - used, "binding_bucket": "weekly", "binding_resets_at": weekly,
+        "wall": used, "session_5h_pct": 5, "weekly_pct": used, "monthly_pct": null,
+        "model_buckets": [],
+        "resets": {"session": agent_runtime::clock::iso_utc(now + 3600), "weekly": weekly,
+                   "model": null, "monthly": null},
+        "usage_rate_state": "one-sample", "usage_age_s": 0, "claims": 0, "pool": "plan"
+    })
+}
+
+/// `controller successor --stop` answers Jarvis's stop decision through
+/// `stop::action`, one row per action, over a controller on Claude account
+/// `a1` and accounts planted as the listing reads them, the preference a
+/// Claude entry then a Codex one. A provider stop inside the patience
+/// resumes with no walk run; past it, room on another provider moves it to
+/// a pending on no entry of the caller's provider, and no room resumes it.
+/// A limit or an ended sign-in with room moves it off the stopped account,
+/// the sign-in telling the owner's channel; a limit with no room waits for
+/// its own account's reset, or with none notifies. Each answer names the
+/// episode start that stands; an exited harness is refused.
+#[test]
+fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
+    const MINUTE: u64 = 60;
+    let now = epoch_now();
+    let reset = now + 40 * 3600;
+    let own = |used| account("a1", "claude", used, Some(reset), now);
+    let other_claude = account("a2", "claude", 20, Some(reset), now);
+    let codex = |used| account("c1", "codex", used, Some(reset), now);
+    // case, the kind, the episode recorded (age of its start and of its
+    // latest failure), the accounts, the action, the successor's harness
+    // and account (alias), the reset answered
+    type Row = (
+        &'static str,
+        &'static str,
+        Option<(u64, u64)>,
+        Vec<Value>,
+        Value,
+        Option<(&'static str, &'static str)>,
+        Option<u64>,
+    );
+    let rows: Vec<Row> = vec![
+        (
+            "provider inside the patience",
+            "provider",
+            Some((5 * MINUTE, MINUTE)),
+            vec![own(20), codex(20)],
+            json!({"action": "resume"}),
+            None,
+            None,
+        ),
+        (
+            "provider past the patience, another provider with room",
+            "provider",
+            Some((31 * MINUTE, MINUTE)),
+            vec![own(20), other_claude.clone(), codex(20)],
+            json!({"action": "move-provider"}),
+            Some(("codex", "c1")),
+            None,
+        ),
+        (
+            "provider past the patience, no other provider with room",
+            "provider",
+            Some((31 * MINUTE, MINUTE)),
+            vec![own(20), other_claude.clone(), codex(99)],
+            json!({"action": "resume"}),
+            None,
+            None,
+        ),
+        (
+            "usage limit, another account with room",
+            "usage",
+            None,
+            vec![own(99), other_claude.clone(), codex(99)],
+            json!({"action": "move-account", "tell": null}),
+            Some(("claude", "a2")),
+            None,
+        ),
+        (
+            "ended sign-in, another account with room",
+            "auth",
+            None,
+            vec![own(20), other_claude.clone(), codex(99)],
+            json!({"action": "move-account", "tell": "channel"}),
+            Some(("claude", "a2")),
+            None,
+        ),
+        (
+            "usage limit, no room, its reset known",
+            "usage",
+            None,
+            vec![own(99), codex(99)],
+            json!({"action": "wait-for-reset"}),
+            None,
+            Some(reset),
+        ),
+        (
+            "usage limit, no room, no reset",
+            "usage",
+            None,
+            vec![account("a1", "claude", 99, None, now), codex(99)],
+            json!({"action": "notify", "to": "channel"}),
+            None,
+            None,
+        ),
+    ];
+    for (case, kind, episode, accounts, action, moved, reset) in rows {
+        let world = World::new();
+        for (name, fixture) in [
+            ("bin/curl", "usage-curl/curl"),
+            ("bin/kendex", "kendex-launch/kendex"),
+        ] {
+            std::os::unix::fs::symlink(account_fixtures().join(fixture), world.root().join(name))
+                .unwrap();
+        }
+        let planted = plant_listing(world.root(), world.root(), &accounts, now);
+        let dir = |alias: &str| {
+            world
+                .root()
+                .join("home")
+                .join(format!(".{alias}"))
+                .display()
+                .to_string()
+        };
+        let mut doc: Value = serde_json::from_str(FLEET).unwrap();
+        doc["controller"]["account"] = json!(dir("a1"));
+        doc["controller"]["home"] = json!(dir("a1"));
+        // A recorded bypass crosses to another harness's entry.
+        doc["controller"]["permission"] = json!("bypass");
+        let record = world.root().join("workflow-state-oversee.json");
+        world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+        let mut words = args(&["successor"], &record, None);
+        words.extend(
+            [
+                "--cwd",
+                &world.root().display().to_string(),
+                "--predecessor",
+                "%7",
+                "--stop",
+                kind,
+            ]
+            .map(str::to_owned),
+        );
+        if let Some((since, last)) = episode {
+            words.extend([
+                "--since".to_owned(),
+                (now - since).to_string(),
+                "--last".to_owned(),
+                (now - last).to_string(),
+            ]);
+        }
+        let fixtures = world.root().join("fixtures").display().to_string();
+        let mut pairs: Vec<(&str, &str)> = planted
+            .env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        pairs.extend([
+            ("USAGE_FIXTURE_DIR", fixtures.as_str()),
+            ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "0"),
+            (
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+                "claude:standard:high,codex:gpt-6.1-sol:high",
+            ),
+        ]);
+        let out = world.controller(world.root(), &words, &pairs);
+        assert!(
+            out.status.success(),
+            "{case}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let result = &reply["result"];
+        assert_eq!(result["action"], action, "{case}: {result}");
+        assert_eq!(
+            result["successor"].as_object().map(|pending| (
+                pending["harness"].as_str().unwrap_or_default().to_owned(),
+                pending["account"].as_str().unwrap_or_default().to_owned()
+            )),
+            moved.map(|(harness, alias)| (harness.to_owned(), dir(alias))),
+            "{case}: {result}"
+        );
+        assert_eq!(result["reset"].as_u64(), reset, "{case}: {result}");
+        let since = episode.map_or(result["episode"]["last"].as_u64().unwrap(), |(since, _)| {
+            now - since
+        });
+        assert_eq!(result["episode"]["since"], since, "{case}: {result}");
+        // Inside the patience no walk classifies an entry.
+        if episode.is_some_and(|(since, _)| since < 30 * MINUTE) {
+            assert!(
+                !world.root().join("bin/kendex.log").exists(),
+                "{case}: a walk ran"
+            );
+        }
+    }
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    world.record(&record, FLEET);
+    let mut words = args(&["successor"], &record, None);
+    words.extend(
+        [
+            "--cwd",
+            &world.root().display().to_string(),
+            "--predecessor",
+            "%7",
+            "--stop",
+            "exited",
+        ]
+        .map(str::to_owned),
+    );
+    let (key, fields) = refusal(&world.controller(world.root(), &words, &[]));
+    assert_eq!(key, "stop-kind-unjudged", "{fields}");
 }

@@ -9,6 +9,7 @@
 //! ground: the host each entry names and the pick over the accounts there.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -22,6 +23,7 @@ use crate::harness::Harness;
 use crate::launch::Permission;
 use crate::record;
 use crate::settings::{CONTROLLER_PREFERENCE_KEY, ControllerSettings, Judged, LaunchSettings};
+use crate::stop::{self, Action, Episode, Kind, Session};
 
 /// What the choice reads beside the record: the account judge's settings,
 /// the launch's posture, the hand-over's preference, and the wall mark the
@@ -225,10 +227,43 @@ pub fn successor(
     ground: Ground,
     now: u64,
 ) -> Result<Value> {
+    choose(
+        choosing,
+        path,
+        predecessor,
+        mark.map(Departure::Mark),
+        cwd,
+        handoff,
+        ground,
+        now,
+    )
+}
+
+/// What a succession walks as: the mark that sent it ([`walk_request`]),
+/// or what a stop leaves ([`recovery_walk`]).
+#[derive(Debug, Clone, Copy)]
+enum Departure<'a> {
+    Mark(MarkKind),
+    Leaving(Leaving<'a>),
+}
+
+/// The choice [`successor`] and [`stopped`] answer, a succession walked
+/// as its `departure` decides.
+#[allow(clippy::too_many_arguments)]
+fn choose(
+    choosing: &Choosing,
+    path: &Path,
+    predecessor: Option<&str>,
+    departure: Option<Departure>,
+    cwd: &Path,
+    handoff: Option<&str>,
+    ground: Ground,
+    now: u64,
+) -> Result<Value> {
     // An empty preference is a setting with no entry to walk, not a walk
     // that found no room: no wait for headroom could open anything. A mark's
     // succession still walks the caller's own entry.
-    if mark.is_none()
+    if departure.is_none()
         && Preference::parse(&choosing.controller.preference, Scope::Overseer)
             .is_ok_and(|preference| preference.entries.is_empty())
     {
@@ -257,10 +292,13 @@ pub fn successor(
             .as_ref()
             .and_then(|(caller, _, _)| caller.handoff.clone())
     });
-    let mut request = match (recorded.as_ref(), mark) {
-        (Some((caller, harness, _)), Some(mark)) => {
+    let mut request = match (recorded.as_ref(), departure) {
+        (Some((caller, harness, _)), Some(Departure::Mark(mark))) => {
             let mut pick = |request: &PickRequest| (ground.pick)(request, None);
             walk_request(choosing, &mut pick, caller, *harness, mark, now)?
+        }
+        (Some((caller, harness, _)), Some(Departure::Leaving(leaving))) => {
+            recovery_walk(caller, *harness, leaving)
         }
         (recorded, _) => WalkRequest {
             scope: Scope::Overseer,
@@ -308,6 +346,131 @@ pub fn successor(
         "successor": successor,
         "expected": recorded.map(|(_, _, expected)| expected),
     }))
+}
+
+/// A stop of the recorded controller as its caller asks it: the stop's
+/// kind, and the episode the caller recorded from an earlier answer.
+#[derive(Debug)]
+pub struct Stopped {
+    pub kind: Kind,
+    pub recorded: Option<Episode>,
+}
+
+/// The stop decision for the recorded controller whose pane `predecessor`
+/// names, on the opener's `ground`: [`stop::action`]'s action for Jarvis,
+/// its one caller (an overseer's stop is orch's watch's, on the fleet's
+/// ground), the episode that stands, for the caller to record, and the
+/// reset a wait waits for, beside [`successor`]'s answer: the walk, the
+/// pending a move's transfer carries and its compare-and-swap set.
+///
+/// A provider stop inside the patience is asked as though another
+/// provider had room, so no walk runs; past it the walk leaves the
+/// provider, and a walk that chose none resumes the session. A limit or
+/// an ended sign-in walks off the account, and a limit no other account
+/// has room for reads its own account's reset. Where neither a move nor a
+/// resume follows, a walk that chose none past an entry it could not read
+/// decides nothing (`walk-unread`), and nor does an own account the judge
+/// could not read (`account-unread`). An exited harness is refused
+/// (`stop-kind-unjudged`): its own account's room decides it, and no
+/// caller asks it here.
+#[allow(clippy::too_many_arguments)]
+pub fn stopped(
+    choosing: &Choosing,
+    path: &Path,
+    predecessor: &str,
+    asked: Stopped,
+    cwd: &Path,
+    handoff: Option<&str>,
+    ground: Ground,
+    now: u64,
+) -> Result<Value> {
+    let since = stop::standing(asked.recorded, now).unwrap_or(now);
+    let age = Duration::from_secs(now.saturating_sub(since));
+    let session = Session::Jarvis;
+    let own_room = asked.kind == Kind::Provider;
+    let ground_of = |room, reset| stop::Ground {
+        own_room,
+        room,
+        reset,
+        resets: &[],
+    };
+    let leaving = match asked.kind {
+        Kind::Provider => (stop::action(Kind::Provider, age, session, ground_of(true, false))
+            == Action::MoveProvider)
+            .then_some(Leaving::Provider {
+                preference: &choosing.controller.preference,
+            }),
+        Kind::Usage | Kind::Auth => Some(Leaving::Account),
+        Kind::Exited => return Err(refused("stop-kind-unjudged", &[("kind", "exited")])),
+    };
+    let Ground { walk, pick } = ground;
+    let mut answer = match leaving {
+        Some(leaving) => choose(
+            choosing,
+            path,
+            Some(predecessor),
+            Some(Departure::Leaving(leaving)),
+            cwd,
+            handoff,
+            Ground {
+                walk: &mut *walk,
+                pick: &mut *pick,
+            },
+            now,
+        )?,
+        None => json!({"walk": null, "successor": null, "expected": null}),
+    };
+    let moves = !answer["successor"].is_null();
+    let decided = moves || asked.kind == Kind::Provider;
+    let unread: Vec<&str> = answer["walk"]["unread"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !decided && !unread.is_empty() {
+        return Err(refused("walk-unread", &[("entries", &unread.join(","))]));
+    }
+    let reset = match asked.kind {
+        Kind::Usage if !moves => {
+            own_reset(choosing, path, &mut |request| pick(request, None), now)?
+        }
+        Kind::Usage | Kind::Auth | Kind::Provider | Kind::Exited => None,
+    };
+    let action = stop::action(asked.kind, age, session, ground_of(moves, reset.is_some()));
+    answer["action"] = json!(action);
+    answer["episode"] = json!(Episode { since, last: now });
+    answer["reset"] = json!(reset);
+    Ok(answer)
+}
+
+/// The reset of the recorded controller's own account, epoch seconds, as
+/// the judge reads it at the trigger: `None` where nothing measures it or
+/// its reading states no reset.
+fn own_reset(
+    choosing: &Choosing,
+    path: &Path,
+    pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
+    now: u64,
+) -> Result<Option<u64>> {
+    let record = controller_record(path)?
+        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
+    let caller = Caller::of(&record);
+    let harness = caller
+        .harness
+        .ok_or_else(|| refused("harness-unnamed", &[("pane", &record.pane)]))?;
+    let trigger = choosing.accounts.accounts.get()?.controller_headroom_pct;
+    let read = caller.own_account(harness, pick, trigger, now);
+    match read.state {
+        AccountState::HasRoom | AccountState::AtTrigger => {
+            Ok(crate::clock::epoch_secs(&read.resets))
+        }
+        AccountState::Unmeasured => Ok(None),
+        AccountState::Unreadable => Err(refused(
+            "account-unread",
+            &[("account", caller.account.as_deref().unwrap_or_default())],
+        )),
+    }
 }
 
 /// How long a failed attempt holds its account out of the walk. A mark
