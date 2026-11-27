@@ -1260,13 +1260,16 @@ class Watch:
         for it. A wall is one episode of one controller, its session in its
         pane: a resumed session is another controller, and the episode ends
         once the controller in control reads unwalled, so a refused succession
-        whose predecessor recovers in place is told of again when next walled."""
+        whose predecessor recovers in place is told of again when next walled.
+        A wedged controller uses the same notice flow without a succession."""
         if isinstance(reading, Failure):
             self.failed_pass("wall", reading.record)
             return None
         self.state.pop("wall_failure", None)
         memory = self.state.get("wall")
         session, pane, account, kind, rows = reading or (None, None, None, None, {})
+        if rows.get("verdict") == "wedged":
+            kind = "wedged"
         if (memory is not None and "row_at" not in memory and memory["kind"] == kind == "usage"
                 and session == memory["session"] and pane == memory["pane"]
                 and (rows.get("at") is None or rows["at"] <= memory["at"])):
@@ -1303,19 +1306,19 @@ class Watch:
         if memory is not None and memory["noticed"] and reading is not None and kind is None:
             del self.state["wall"]
             memory = None
-        if kind is None or memory is not None and ((session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
-                                                   or not memory["noticed"]):
+        if kind is None or memory is not None and (not memory["noticed"] or (
+                kind == memory["kind"] != "usage" and (session, pane) == (memory["session"], memory["pane"]))):
             self.save()
             return None
         memory = {"session": session, "pane": pane, "account": account, "kind": kind, "at": now,
-                  "outcome": None, "noticed": False}
+                  "outcome": "The context window is full." if kind == "wedged" else None, "noticed": False}
         if kind == "usage":
             memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"))
         self.state["wall"] = memory
         self.save()
-        if kind == "usage":
+        if kind in ("usage", "wedged"):
             self.notify(memory, now)
-        return kind
+        return None if kind == "wedged" else kind
 
     def session(self, operation, verb, *args):
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
@@ -1357,12 +1360,16 @@ class Watch:
         memory = self.state.get("provider")
         stop = rows.get("stop")
         stands = stop == "provider" or stop is None and rows.get("pane") not in (None, "idle")
-        if (not stands or memory is not None and [memory["session"], memory["pane"]] != [session, pane]) and (
-                memory is not None or "provider-recovery_failure" in self.state):
-            self.state.pop("provider", None)
-            self.state.pop("provider-recovery_failure", None)
-            self.save()
+        ends_episode = memory is not None and (not stands or (memory["session"], memory["pane"]) != (session, pane))
+        report = self.state.get("provider-recovery_failure")
+        clears_report = report is not None and (not stands or report.get("controller") != [session, pane])
+        if ends_episode:
+            del self.state["provider"]
             memory = None
+        if clears_report:
+            del self.state["provider-recovery_failure"]
+        if ends_episode or clears_report:
+            self.save()
         if stop != "provider":
             return None
         episode = ["--since", str(memory["since"]), "--last", str(memory["last"])] if memory else []
@@ -1375,17 +1382,21 @@ class Watch:
     def accept_provider(self, answer, args):
         """The provider stop's answer: the episode it names is kept for the
         next ask; a recovery that failed, or a resume whose walk could not
-        judge another provider, reports once per episode and is asked again.
-        Only a decided answer with no walk refusal clears that report: a busy
-        pane, or a hand-over another caller holds, decided nothing."""
+        judge another provider, reports once per refusal key in this
+        controller's episode and is asked again. Resumed, unconfirmed or
+        moved answers without a walk refusal clear the report. The end of
+        the episode or a reading of another controller clears it too."""
+        controller = args[1:3]
         if isinstance(answer, Failure) or answer.get("state") not in ("running", "handing-over"):
             self.failed_pass("provider-recovery", answer.record if isinstance(answer, Failure) else Failure(
-                "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record)
+                "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record,
+                controller=controller)
             return
         if answer.get("provider_walk"):
             self.failed_pass("provider-recovery", Failure(
                 "provider-recovery", "walk", answer["provider_walk"],
-                "The session resumes and cannot move to another provider: " + answer["provider_walk"] + ".").record)
+                "The session resumes and cannot move to another provider: " + answer["provider_walk"] + ".").record,
+                controller=controller)
         elif answer.get("provider_recovery") in ("resumed", "unconfirmed", "moved"):
             self.state.pop("provider-recovery_failure", None)
         if answer.get("episode"):
@@ -1680,6 +1691,8 @@ class Watch:
             window = memory["window"] or "usage"
             reset = "resets at " + wall_time(memory["reset"]) if memory["reset"] is not None else "reset time unknown"
             text = session + f" hit its {window} limit on {account} (read at {at}, {reset})."
+        elif memory["kind"] == "wedged":
+            text = session + f" in pane {memory['pane']} on {account} cannot continue (read at {at}). " + memory["outcome"]
         else:
             text = legacy_wall_notice(memory)
         try:
@@ -2123,15 +2136,23 @@ class Watch:
             self.batch(now)
         return pending
 
-    def failed_pass(self, side, cause):
+    def failed_pass(self, side, cause, *, controller=None):
         side = self.destination_key(side)
         prior = self.state.get(side + "_failure", {})
-        if prior.get("key") != cause["key"]:
-            self.append(pass_output(side, self.cursors.get(side, {}), [(None,
-                event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
-                      cause=cause["detail"]))]))
-            self.state[side + "_failure"] = cause
-            self.save()
+        if controller is None:
+            if prior.get("key") == cause["key"]:
+                return
+            report = cause
+        else:
+            keys = prior.get("keys", [])
+            if cause["key"] in keys:
+                return
+            report = {"controller": controller, "keys": [*keys, cause["key"]]}
+        self.append(pass_output(side, self.cursors.get(side, {}), [(None,
+            event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
+                  cause=cause["detail"]))]))
+        self.state[side + "_failure"] = report
+        self.save()
 
     def accept_presence(self, side, results):
         side = self.destination_key(side)
