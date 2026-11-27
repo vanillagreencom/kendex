@@ -1801,9 +1801,10 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
 }
 
 /// The candidate lane charged: the candidate is a lane in the projection's
-/// charge, one hour of burn whatever its reset, and the reset bonus
-/// `1 + 1 / (1 + hours to the binding reset)` is the selection score's
-/// weight, never a charge. Two accounts at one wall with resets one hour
+/// charge, one hour of burn whatever its reset, and the selection score,
+/// the least over the projected windows of each window's room weighted by
+/// its own reset bonus `1 + 1 / (1 + hours to that window's reset)`, is
+/// never a charge. Two accounts at one wall with resets one hour
 /// and a hundred hours away: the sooner reset is the lane, and each
 /// projected room is the room less the candidate's one hour; the account at
 /// the bound with a reset a minute away is never the lane over one with
