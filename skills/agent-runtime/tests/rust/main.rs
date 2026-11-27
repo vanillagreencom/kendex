@@ -2807,8 +2807,8 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
     );
     assert!(!record("g").exists());
     // A leader whose TERM handler forks a member into its group and exits:
-    // the members the stop read all end, the group does not, so the record
-    // stays and the group reads live until a second stop ends that member.
+    // the stop ends that member too, so one stop leaves the group gone and
+    // its record removed.
     let _forked = led(
         "t",
         &[
@@ -2823,16 +2823,14 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     await_reading("t", "live");
-    let refused = reply(&["process", "stop", "--grace-secs", "5", "--worker", "t"]);
-    assert_eq!(refused["refusal"]["key"], "group-live", "{refused}");
-    assert!(record("t").exists());
-    assert_eq!(
-        reply(&["process", "group", "--worker", "t"])["result"]["reading"],
-        "live"
-    );
+    let leader = agent_runtime::group::read(&record("t")).unwrap().unwrap();
     let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "t"]);
     assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
     assert!(!record("t").exists());
+    assert_eq!(
+        agent_runtime::process::group_members(&leader),
+        agent_runtime::reading::Reading::Gone
+    );
 }
 
 /// The recorded group, read and stopped: a member whose parent exited still
