@@ -427,8 +427,8 @@ render-hand-edit-under-a-hook|standard|hook-failed|.pi/kendex/hooks/guard.ts:3
 render-hand-edit-small|standard|dirty|.agents/skills/orch/app.ts:6
 render-hand-edit-large|standard|dirty|.agents/skills/orch/app.ts:400
 render-hand-edit-no-verifier|standard|absent|.agents/skills/orch/app.ts:6
-render-hand-edit-markdown-takes-the-trivial-rule|trivial|dirty|CLAUDE.md:10 .agents/skills/orch/SKILL.md:400
-render-markdown-with-no-verifier-takes-the-trivial-rule|trivial|absent|.agents/skills/orch/SKILL.md:6
+render-hand-edit-markdown-keeps-the-render-refusal|standard|dirty|CLAUDE.md:10 .agents/skills/orch/SKILL.md:400
+render-markdown-with-no-verifier-keeps-the-render-refusal|standard|absent|.agents/skills/orch/SKILL.md:6
 render-verifier-checked-nothing|standard|empty|.agents/skills/orch/app.ts:4
 render-verifier-prints-human-rows|standard|human|runtime/agent.conf:2
 render-verifier-other-document-version|standard|other-version|runtime/agent.conf:2

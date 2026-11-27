@@ -365,7 +365,7 @@ skills/x/workflows/run.md=# Run
 skills/orch/workflows/micro.md=# Micro
 tools/AGENTS.md=# Tools'
 while IFS= read -r spec; do quick_write "$spec"; done <<<"$QUICK_FILES"
-jq --arg path "$QUICK_RENDER" '. + [$path]' "$QUICK/.kendex-generated.json" >"$SANDBOX/quick-inventory"
+jq --arg path "$QUICK_RENDER" 'map(select(. != "CLAUDE.md")) + [$path]' "$QUICK/.kendex-generated.json" >"$SANDBOX/quick-inventory"
 cp "$SANDBOX/quick-inventory" "$QUICK/.kendex-generated.json"
 git -C "$QUICK" add -A
 git -C "$QUICK" commit -qm base
@@ -410,6 +410,7 @@ root-skill|SKILL.md+3|micro cause=branch-class class=trivial
 root-agents|AGENTS.md+3|micro cause=branch-class class=trivial
 nested-agents|skills/x/AGENTS.md+3|micro cause=branch-class class=trivial
 claude-pointer|CLAUDE.md+3|micro cause=branch-class class=trivial
+skill-render-alone|$QUICK_RENDER+3|change_class=standard class=standard measured=true delta=- cause=branch-class class=standard rule=render-path-unowned path=$QUICK_RENDER|true
 skill-readme|skills/x/README.md+3|micro cause=branch-class class=trivial
 skill-workflow|skills/x/workflows/run.md+3|micro cause=branch-class class=trivial
 orch-tier-workflow|skills/orch/workflows/micro.md+3|micro cause=branch-class class=trivial

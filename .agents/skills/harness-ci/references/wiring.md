@@ -363,12 +363,9 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
   - The shared rules live in the installed `scripts/lib/change-class.sh`, read from the selected classifier checkout.
   - A refused step publishes no `lanes`, and the Shape 1 status function then runs every lane.
 - **An older classifier can lack the shared lane producer.** The action sets `lanes=true`, `lanes_cause=lane-producer-unavailable` and an empty `lane_verdicts`, regardless of the class or docs verdict.
-- **A lane that reads a file in the built-in docs set does not gate on `lanes` or on its own verdict.**
+- **A lane that reads a file in the built-in docs set may gate on `lanes`.**
   - The built-in docs set is `harness-only --mode docs`'s: `docs/`, `changelog.d/` and every `.md` or `.markdown` file, and no setting narrows it.
-  - A lane such as a build that embeds a Markdown file under `docs/` keeps `needs: changes`.
-  - It takes `if: ${{ !cancelled() }}` with no `lanes` or verdict term so it runs on every diff.
-  - It stays out of every `--skippable` and `--lane`, so a skip of it fails the aggregate.
-  - Under the queue-only default it still runs on every pull-request push: keep such a lane short.
+  - A change whose paths are all in that set, kendex manifests or JSON settings files, outside the exceptions [§ Shape 4](#shape-4--one-change-class-for-every-reader) names, reads `trivial` or `docs_only=true`, so `lanes` is `false` and it runs none of those lanes.
   - A declared glob does not lift this: every lane verdict is `false` wherever `lanes` is.
 - **The `render` class still needs the install and mirror steps above**, in the same job ahead of the action and behind the same `render-reach` step and `if:` gates. That step reads `harness-only` out of the `classifier` checkout, so a consumer that wants the gate keeps that checkout for it; one that drops both pays the network install on every diff.
 - **Every refusal exits 2**, and stderr carries a line starting `change-class-action: wiring-error: cause=`, after anything the wrapped scripts printed, so the step goes red rather than publishing an empty class.
@@ -624,7 +621,6 @@ A render that the refresh run lands on the default branch, under the review-gate
   - Publish its `lane_<name>` output from the `changes` job.
   - Give it the same `needs:`, and the condition and aggregate arguments [§ Per-lane verdicts](#per-lane-verdicts) sets out.
   - Name each lane in CI's `needs:`.
-  - A lane that reads a file in the built-in docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action).
   - Copied as it stands, the placeholder fails wherever it runs, and `CI` fails with it. Under the queue-only default it first runs in the merge group.
 - **The merge-queue run is the only proof of a head.** The classify step passes `queue-only-default: true`, so on `pull_request` the action stands every lane down on a repository with no `HARNESS_CI_PER_PUSH_REASON`, per [§ Per-lane verdicts](#per-lane-verdicts). A copy that drops the input runs its lanes on every pull request. The pull request run then reports `Classify the diff` and a passing `CI`, which GitHub needs before it admits the pull request to the queue, and no product lane. The merge group runs the lanes its own diff selects. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for. The derived reader uses the committed event base. No line of the template reads the change class.
 - **The default needs the merge-queue ruleset.** Without a queue no run proves the head, and `pr-merge` takes the plain route on the stub run. A repository with no merge queue sets `HARNESS_CI_PER_PUSH_REASON = "no merge queue"`, and its pull requests run their lanes.

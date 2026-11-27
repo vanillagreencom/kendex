@@ -139,9 +139,7 @@
 #            .markdown file plus docs/ and changelog.d/. Where
 #            HARNESS_CI_TRIVIAL_PATHS names the repository's own allowlist as
 #            blank-separated globs, it replaces that docs set. A paired
-#            dependency lock keeps a diff out of the class. A range of
-#            generated files alone whose render proof fails takes this rule
-#            in its place where every path is in that set.
+#            dependency lock keeps a diff out of the class.
 #   micro   production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -1024,9 +1022,8 @@ render_refused_at() { # PATH
     }' "$work/render-named" >&2
 }
 
-# harness-only owns the docs set. Its docs mode is read once, for the render
-# fallthrough below and the size rules, and its outside list is the changed
-# paths beyond the set.
+# harness-only owns the docs set. Its docs mode is read once, for the size
+# rules, and its outside list is the changed paths beyond the set.
 docs_outside="$work/docs-outside"
 docs_verdict=""
 docs_read() {
@@ -1058,15 +1055,11 @@ quick_set_holds() {
 # An ownership gain needs the same proof as existing generated files: the
 # head inventory cannot grant the render class. Every changed path, gained
 # paths included, must be owned by a passing verify row. A failed proof stays
-# standard rather than reaching a size class, save a range in the trivial
-# set, whose rule needs no render proof. A harness registry file keeps the
-# render refusal, the one route that names its foreign judgement.
+# standard rather than reaching a size class.
 if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then
   renders_match && render_paths_covered &&
     answer render "cause=renders-match-their-sources"
-  if ! quick_set_holds || path_class_matches registry standard; then
-    answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
-  fi
+  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"
 fi
 
 ! path_class_matches registry standard ||
