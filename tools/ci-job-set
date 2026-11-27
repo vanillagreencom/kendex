@@ -25,6 +25,7 @@
 #        tools/ci-job-set --all-rust-targets
 #        tools/ci-job-set --lanes
 #        tools/ci-job-set --fallback
+#        tools/ci-job-set --night-faults
 #
 #   --lanes         print LANES, one `|`-separated row per job, for
 #                   tools/ci-aggregate and tools/ci-reach, which read the
@@ -34,6 +35,10 @@
 #                   classifies, so a classification that fails still runs
 #                   the event's whole job set; on workflow_dispatch it is
 #                   the whole selection.
+#
+#   --night-faults  report each failed check of this night's run that the
+#                   same-head merge group left out, as THE NIGHT'S FAULT
+#                   REPORT below states. The night-faults job runs it last.
 #
 #   --event-parity  also derive the selection at every other event and refuse
 #                   `event-parity` where one differs. The `changes` job of
@@ -107,8 +112,10 @@
 #
 # THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
 # successful scheduled main run of this workflow has GITHUB_SHA. Otherwise
-# nightly=true selects the full night. An unread history retains the night.
-# A manual dispatch runs the full night without a selection.
+# nightly=true selects the full night: every job a selection can leave out,
+# each with its whole matrix, and the night's fault report. An unread
+# history retains the night. A manual dispatch runs the full night without
+# a selection and without the report.
 #
 # CI projects the shell and skill runtime reach from tools/guard, and the
 # workspace Cargo selection from tools/rust-reads. Change class is a review
@@ -296,22 +303,29 @@ die() { # CAUSE MESSAGE
 # cell names a shard matrix, whose check name carries the shard at its `*`.
 # Preflight and Markdown start before the classifier, so their `if:` names
 # the merge group alone; their `on` cell lists them for CI to hold.
+# A selected night runs every job a selection can leave out, each with its
+# whole matrix, so a check the selector wrongly skipped fails there. Every
+# class row selects bot-instructions, so no selection leaves it out, and its
+# diff checks judge a merge group's range a night does not have: it has no
+# night cell. night-faults judges the night's failed checks, under THE
+# NIGHT'S FAULT REPORT below.
 # The class cells that are neither `-`, `on` nor a shard list are the
 # boolean lanes select_row writes, in this order.
-LANES='ui-tests|UI (vitest, tsc, biome)|ui|-|-|-
+LANES='ui-tests|UI (vitest, tsc, biome)|ui|-|nightly|on
 bot-instructions|Bot instructions|bot_instructions|-|-|-
-skill-suites-shard|Skill suites shard (*, ubuntu-latest)|shards|shards|-|-
+skill-suites-shard|Skill suites shard (*, ubuntu-latest)|shards|shards|nightly|on
 skill-suites-macos|-|-|-|nightly|on
 skill-suites-macos-queue|Skill suites shard (*, macos-latest)|queue_macos_shards|queue_macos_shards|-|-
 preflight|Preflight (diff-scoped deterministic checks)|on|-|-|-
 markdown|Markdown (shape + references)|on|-|-|-
 cargo-linux|Cargo * (Linux)|cargo_linux|cache_compile|nightly|on
 cargo-macos|macOS cargo *|cargo_macos|cache_compile|nightly|on
-cargo-lint|Cargo lints (clippy, fmt, doc)|cargo_lint|-|-|-
+cargo-lint|Cargo lints (clippy, fmt, doc)|cargo_lint|-|nightly|on
 cargo-tests-windows|Windows cargo (workspace tests)|cargo_windows|cache_compile|nightly|on
 cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|cargo_windows_check|nightly|on
 catalog|catalog (*|catalog|catalog|nightly|on
-smoke|real-CLI round trip|smoke|smoke|nightly|on'
+smoke|real-CLI round trip|smoke|smoke|nightly|on
+night-faults|-|-|-|nightly|-'
 
 # The LANES column an event reads: 3 class, 4 push, 5 schedule, 6 dispatch.
 lane_column() { # EVENT
@@ -402,16 +416,23 @@ done
 
 # A mistyped mode would drop the parity check or the publication the
 # workflow relies on.
-parity=false publish=false
+parity=false publish=false faults=false
 for arg in "$@"; do
   case "$arg" in
     --event-parity) parity=true ;;
     --runtime-publish) publish=true ;;
-    *) die "unknown-argument value=$*" "the arguments are --event-parity and --runtime-publish" ;;
+    --night-faults) faults=true ;;
+    *) die "unknown-argument value=$*" "the arguments are --event-parity, --runtime-publish and --night-faults" ;;
   esac
 done
+[ "$faults" = false ] || [ "$#" -eq 1 ] ||
+  die "unexpected-argument mode=--night-faults" "--night-faults takes no other argument"
+if [ "$faults" = true ]; then
+  [[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ && -n ${GITHUB_SHA:-} && -n ${GITHUB_REPOSITORY:-} ]] ||
+    die night-run-unnamed "--night-faults reads GITHUB_RUN_ID, GITHUB_SHA and GITHUB_REPOSITORY"
+fi
 
-[ -n "$suite_path" ] || [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
+[ -n "$suite_path" ] || [ "$faults" = true ] || [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
   "GITHUB_OUTPUT is unset, so no lane could read the selection"
 
 # The one writer of a selection. SHARDS and QUEUE are the Linux shard list
@@ -629,34 +650,39 @@ group_proved() { # JOB JOBS_FILE
   [ "$seen" = true ]
 }
 
-# A failed proof read subtracts nothing from the selected work.
-main_proof() {
-  local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
-  local runs ids="" id page jobs="" sels="" listing artifact sel work owed replacements
-  local linux macos skipped skipped_macos rust linux_n macos_n targets_n
-  local catalog_owed=true smoke_owed=true windows_owed=true
+# The same-head merge groups' record at GITHUB_SHA, read into WORK for the
+# push route's proof and the night's fault report: jobs.json, each group
+# run's latest jobs as {name, status, conclusion}; selections.json, each
+# run's published {skipped_suites, rust_targets}; map.json, suite_map's rows;
+# targets.json, runtime_targets. GROUP_STATE is read, none where no group ran
+# the head, or unread, with GROUP_CAUSE naming the failed read and GROUP_IDS
+# the runs. A run whose jobs or selection cannot be read leaves the record
+# unread, never short.
+group_reads() { # WORK
+  local work="$1" sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions"
+  local runs id page jobs="" sels="" listing artifact sel
+  GROUP_STATE=read GROUP_CAUSE="" GROUP_IDS=""
   if [ "$SUITE_INPUTS_READ" = false ]; then
-    state=unread cause=checkout-inventory-unread
+    GROUP_STATE=unread GROUP_CAUSE=checkout-inventory-unread
   elif ! runs="$(api_list "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100" workflow_runs)"; then
-    state=unread cause=runs-read-failed
-  elif ! ids="$(jq -r --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
+    GROUP_STATE=unread GROUP_CAUSE=runs-read-failed
+  elif ! GROUP_IDS="$(jq -r --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
       [.[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
       | unique | .[]' <<<"$runs")"; then
-    state=unread cause=runs-unparseable ids=""
+    GROUP_STATE=unread GROUP_CAUSE=runs-unparseable GROUP_IDS=""
   fi
-  if [ "$state" = read ] && [ -z "$ids" ]; then
-    state=none cause=no-merge-group-run
+  if [ "$GROUP_STATE" = read ] && [ -z "$GROUP_IDS" ]; then
+    GROUP_STATE=none GROUP_CAUSE=no-merge-group-run
   fi
-  work="$(mktemp -d)" || die proof-scratch "mktemp could not make the proof's scratch directory"
   # Each run's latest jobs, each checked for the head and run it claims.
   run_jobs() { # RUN
-    page="$(api_list "$api/runs/$1/jobs?filter=latest&per_page=100" jobs)" || { cause="jobs-read-failed run=$1"; return 1; }
+    page="$(api_list "$api/runs/$1/jobs?filter=latest&per_page=100" jobs)" || { GROUP_CAUSE="jobs-read-failed run=$1"; return 1; }
     page="$(jq -c --arg sha "$sha" --argjson id "$1" '
         [.[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")" ||
-      { cause="jobs-unparseable run=$1"; return 1; }
+      { GROUP_CAUSE="jobs-unparseable run=$1"; return 1; }
   }
-  for id in $ids; do
-    run_jobs "$id" || { state=unread; break; }
+  for id in $GROUP_IDS; do
+    run_jobs "$id" || { GROUP_STATE=unread; break; }
     jobs="$jobs$page"
     # The run's newest unexpired selection: a rerun of its changes job
     # overwrites it, and a run that published none proves nothing.
@@ -671,19 +697,32 @@ main_proof() {
           | select((.skipped_suites | type) == "array" and all(.skipped_suites[]; type == "string")
             and (.rust_targets | type) == "array" and all(.rust_targets[]; type == "string"))
           | {skipped_suites, rust_targets}')"; then
-      state=unread cause="selection-unread run=$id"
+      GROUP_STATE=unread GROUP_CAUSE="selection-unread run=$id"
       break
     fi
     sels="$sels$sel"
   done
-  linux_n=0 macos_n=0 targets_n=0
-  if [ "$state" = read ] && ! {
+  if [ "$GROUP_STATE" = read ] && ! {
      jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
       jq -cs '.' <<<"$sels" >"$work/selections.json" &&
       suite_map | jq -Rcs 'split("\n") | map(select(length > 0) | split("\t"))' >"$work/map.json" &&
-      runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" &&
-      replacements="$(native_replacements)"
+      runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json"
   }; then
+    GROUP_STATE=unread GROUP_CAUSE=proof-inputs-unread
+  fi
+}
+
+# A failed proof read subtracts nothing from the selected work.
+main_proof() {
+  local sha="$GITHUB_SHA" state cause mark=main-proof
+  local ids work owed replacements
+  local linux macos skipped skipped_macos rust linux_n macos_n targets_n
+  local catalog_owed=true smoke_owed=true windows_owed=true
+  work="$(mktemp -d)" || die proof-scratch "mktemp could not make the proof's scratch directory"
+  group_reads "$work"
+  state=$GROUP_STATE cause=$GROUP_CAUSE ids=$GROUP_IDS
+  linux_n=0 macos_n=0 targets_n=0
+  if [ "$state" = read ] && ! replacements="$(native_replacements)"; then
     state=unread cause=proof-inputs-unread
   fi
   if [ "$state" = read ]; then
@@ -779,9 +818,137 @@ main_proof() {
     'main push' "$mark" "$state" "$cause"
 }
 
+# THE NIGHT'S FAULT REPORT, --night-faults: each failed check of this
+# night's run, GITHUB_RUN_ID at GITHUB_SHA, judged against the same-head
+# merge groups' record. A check is a selector fault where the groups'
+# selection left it out of that commit:
+#   skipped=job     no group ran a leg of the check's LANES job;
+#   skipped=leg     the groups ran that job's legs, every one under a name
+#                   this night also ran, and none under this check's name;
+#   skipped=suites  the check is a shell shard leg, and every group's
+#                   selection skipped a suite suite_map places on that leg;
+#   skipped=targets the check is the orch-rest Linux leg, and no group's
+#                   selection held a skill runtime Rust target.
+# A failed check the groups ran whole is an ordinary red night. Where the
+# groups' legs carry names this night does not, as catalog's parts do, the
+# legs are not compared by name. The report reads which leg failed, not
+# which suite or cargo target inside it: a suite suite_map places on the
+# leg counts whichever suite failed, and a cargo-linux leg the groups ran
+# with fewer test targets reads as ordinary.
+# One stdout line per failed check, its key first:
+#   selector-fault commit=SHA check=NAME skipped=job|leg|suites|targets[ count=N]
+#   night-red commit=SHA check=NAME selector=ran|unread|none
+# beside an `::error` annotation for each fault. A check no LANES row names,
+# such as the classifier's, takes no line. On stderr,
+# `ci-job-set: night-faults=read|none|unread failed=N faults=N runs=IDS`,
+# with ` cause=` where the groups' record could not be read or no group ran
+# the head. The report is advisory: an unread record is a warning and judges
+# no check a fault, and the report exits 0.
+night_faults() {
+  local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" work night failed state cause ids
+  local name status conclusion row job glob legs comparable shard runner verdict faults=0 count
+  local -a failed_names=()
+  local night_names=$'\n'
+  if ! night="$(api_list "$api/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" jobs)" ||
+    ! night="$(jq -r --arg sha "$sha" --argjson id "$GITHUB_RUN_ID" '
+      .[] | select(.run_id == $id and .head_sha == $sha) | [.name, .status, (.conclusion // "none")] | @tsv' <<<"$night")"; then
+    printf 'ci-job-set: night-faults=unread failed=unknown faults=0 runs=none cause=night-jobs-unread run=%s\n' "$GITHUB_RUN_ID" >&2
+    printf '::warning title=selector faults unavailable::ci-job-set: night-faults=unread cause=night-jobs-unread run=%s\n' "$GITHUB_RUN_ID"
+    return 0
+  fi
+  # The failed checks a LANES row names, and every name this night ran.
+  while IFS=$'\t' read -r name status conclusion; do
+    [ -n "$name" ] || continue
+    night_names+="$name"$'\n'
+    case "$conclusion" in failure | timed_out) ;; *) continue ;; esac
+    while IFS='|' read -r job glob _; do
+      [ "$glob" != - ] || continue
+      # shellcheck disable=SC2254 # the check column is a glob
+      case "$name" in $glob) failed_names+=("$name"); break ;; esac
+    done <<<"$LANES"
+  done <<<"$night"
+  failed=${#failed_names[@]}
+  if [ "$failed" -eq 0 ]; then
+    printf 'ci-job-set: night-faults=read failed=0 faults=0 runs=none\n' >&2
+    return 0
+  fi
+  work="$(mktemp -d)" || die fault-scratch "mktemp could not make the report's scratch directory"
+  group_reads "$work"
+  state=$GROUP_STATE cause=$GROUP_CAUSE
+  ids="$(printf '%s' "$GROUP_IDS" | tr '\n' ',')"
+  ids="${ids#,}"
+  ids="${ids%,}"
+  for name in "${failed_names[@]}"; do
+    if [ "$state" != read ]; then
+      printf 'night-red commit=%s check=%s selector=%s\n' "$sha" "$name" "$state"
+      continue
+    fi
+    while IFS='|' read -r job glob _; do
+      [ "$glob" != - ] || continue
+      # shellcheck disable=SC2254 # the check column is a glob
+      case "$name" in $glob) break ;; esac
+    done <<<"$LANES"
+    # The legs of the check's job that the groups ran, one name per line.
+    legs=""
+    while IFS= read -r row; do
+      # shellcheck disable=SC2254 # the check column is a glob
+      case "$row" in $glob) legs+="$row"$'\n' ;; esac
+    done < <(jq -r '.[] | select(.status == "completed" and .conclusion != "skipped") | .name' "$work/jobs.json")
+    verdict="" count=0
+    if [ -z "$legs" ]; then
+      verdict=job
+    else
+      comparable=true
+      while IFS= read -r row; do
+        [ -z "$row" ] || [[ $night_names == *$'\n'"$row"$'\n'* ]] || comparable=false
+      done <<<"$legs"
+      if [ "$comparable" = true ] && [[ $'\n'$legs != *$'\n'"$name"$'\n'* ]]; then
+        verdict=leg
+      elif [[ $name =~ ^Skill\ suites\ shard\ \(([^,]+),\ ([^\)]+)\)$ ]]; then
+        shard=${BASH_REMATCH[1]} runner=${BASH_REMATCH[2]}
+        # The suites on the leg that every group's selection skipped.
+        count="$(jq -rn --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" \
+          --arg shard "$shard" --arg runner "$runner" '
+          ([$sels[0][].skipped_suites] | reduce .[1:][] as $s (.[0]; . - (. - $s))) as $skipped
+          | [$map[0][] | select(.[0] == $runner and .[1] == $shard) | .[2]] | unique
+          | map(select(. as $s | $skipped | index($s))) | length')" || count=unread
+        if [ "$count" != unread ] && [ "$count" -gt 0 ]; then
+          verdict=suites
+        elif [ "$count" != unread ] && [ "$shard/$runner" = orch-rest/ubuntu-latest ]; then
+          # The runtime targets no group's selection held.
+          count="$(jq -rn --slurpfile sels "$work/selections.json" --slurpfile targets "$work/targets.json" '
+            [$sels[0][].rust_targets[]] as $held
+            | [$targets[0][] | select(. as $t | any($held[]; . == $t or
+                (endswith("/*") and ($t | startswith(rtrimstr("*"))))) | not)] | length')" || count=unread
+          [ "$count" = unread ] || [ "$count" -eq 0 ] || verdict=targets
+        fi
+        [ "$count" != unread ] || verdict=unread
+      fi
+    fi
+    case "$verdict" in
+      "") printf 'night-red commit=%s check=%s selector=ran\n' "$sha" "$name" ;;
+      unread)
+        printf 'night-red commit=%s check=%s selector=unread\n' "$sha" "$name"
+        state=unread cause="${cause:+$cause }selection-unparseable" ;;
+      *)
+        faults=$((faults + 1))
+        row="commit=$sha check=$name skipped=$verdict"
+        [ "$verdict" = job ] || [ "$verdict" = leg ] || row="$row count=$count"
+        printf 'selector-fault %s\n' "$row"
+        printf '::error title=selector fault::%s\n' "$row" ;;
+    esac
+  done
+  rm -rf -- "${work:?}"
+  printf 'ci-job-set: night-faults=%s failed=%d faults=%d runs=%s%s\n' \
+    "$state" "$failed" "$faults" "${ids:-none}" "${cause:+ cause=$cause}" >&2
+  [ "$state" != unread ] ||
+    printf '::warning title=selector faults unavailable::ci-job-set: night-faults=unread cause=%s\n' "$cause"
+}
+
 # The proof routes read no class and no paths.
 proof_route=false
 [ -n "$suite_path" ] || case "${EVENT:-}" in push | schedule) proof_route=true ;; esac
+[ "$faults" = false ] || proof_route=true
 [ -n "$suite_path" ] || [ "$proof_route" = true ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
 
 # Present-but-empty is a state of its own, and not the same as absent.
@@ -1600,6 +1767,14 @@ select_row() { # CLASS DOCS PATHS EVENT
   fi
   printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=$linux cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$windows catalog=$catalog smoke=$smoke shards=$shards skipped_suites=$skipped rust_targets=$rust cargo_linux_matrix=${matrix:-null}"
 }
+
+if [ "$faults" = true ]; then
+  if checkout_inventory && suite_inputs_readable; then
+    SUITE_INPUTS_READ=true
+  fi
+  night_faults
+  exit 0
+fi
 
 if [ "${EVENT:-}" = schedule ]; then
   nightly=true

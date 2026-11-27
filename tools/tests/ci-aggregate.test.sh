@@ -359,7 +359,10 @@ jarvis_change="$(fetched jarvis_change)"
 push_unread="$(fetched push_unread)"
 night_unread="$(fetched night_unread)"
 MAIN_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos-queue skill-suites-shard smoke"
-NIGHT_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos smoke"
+# A night runs every job a selection can leave out, and its fault report; a
+# manual dispatch runs the same jobs without the report.
+DISPATCH_JOBS="cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog changes skill-suites-macos skill-suites-shard smoke ui-tests"
+NIGHT_JOBS="cargo-check-windows cargo-lint cargo-linux cargo-macos cargo-tests-windows catalog changes night-faults skill-suites-macos skill-suites-shard smoke ui-tests"
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone, whatever
 # its diff; a dead classifier runs its event's whole job set.
 event_rows=0
@@ -375,7 +378,7 @@ push|success|$push_unread|$MAIN_JOBS
 push|failure||$MAIN_JOBS
 schedule|success|$night_unread|$NIGHT_JOBS
 schedule|failure||$NIGHT_JOBS
-workflow_dispatch|success||$NIGHT_JOBS
+workflow_dispatch|success||$DISPATCH_JOBS
 ROWS
 [ "$event_rows" -ge 9 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
 # A dead classifier's merge group runs exactly CI's needs, besides CI: a
@@ -418,6 +421,18 @@ check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
 check "a night runs the fixed full shard roster" "$ROSTER" \
   "$(legs "$WORKFLOW" "$night_unread" success schedule shard skill-suites-macos)"
+# A night and a manual dispatch publish no shard list, so their Linux legs
+# run the whole roster.
+for event in schedule workflow_dispatch; do
+  check "the Linux shard matrix runs the whole roster on $event" \
+    "$(fetched lane_source | sed -n 's/.* shards=\([^ ]*\).*/\1/p')" \
+    "$(legs "$WORKFLOW" "$([ "$event" = schedule ] && printf '%s' "$night_unread")" success "$event" shard)"
+done
+# The fault report waits for every other job a night runs, so it reads
+# each one's result.
+check "the night's fault report needs every other job a night runs" "missing= extra=" \
+  "$(set_gap "$(sed -n 's/^jobs=//p' <<<"$FALLBACK_NIGHT" | jq -r '.[] | select(. != "night-faults")'; echo changes)" \
+    "$(job_needs "$WORKFLOW" | awk -F '\t' '$1 == "night-faults" { print $2 }' | tr ',' '\n')")"
 
 # The document byte ceilings run in the job a `render` or `trivial` diff
 # runs, and in no other, so every class that runs any gated job runs that

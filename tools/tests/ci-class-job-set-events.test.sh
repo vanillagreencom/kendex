@@ -930,5 +930,60 @@ no-success|.workflow_runs = []|true
 unread|del(.workflow_runs)|true
 ROWS
 
+# THE NIGHT'S FAULT REPORT: a night run, NIGHT_RUN, whose jobs are the
+# group's recorded legs run whole at the same head, judged against the
+# group's record in a push world. A failed check the group's selection left
+# out is a selector fault naming the commit and the check; one the group ran
+# whole is an ordinary red night. Each stdout line is the report's
+# program-read output; a targets fault's count follows the runtime
+# inventory, so the rows leave it out.
+NIGHT_RUN=999
+NIGHT_LEG='Skill suites shard (guards-tools, ubuntu-latest)'
+# `<stdout lines, ;-joined>|<night-faults state>[ <cause key>]`.
+night_faults_row() { # LABEL WORLD GROUP_EDIT NIGHT_EDIT EXPECTED
+  local tag="night$night_rows" dir out err status=0
+  dir="$TMP/push/$tag"
+  push_world "$2" "$tag"
+  if [ -f "$dir/jobs-$PUSH_RUN.json" ]; then
+    jq "$3" "$dir/jobs-$PUSH_RUN.json" >"$dir/group.json" && mv "$dir/group.json" "$dir/jobs-$PUSH_RUN.json"
+  fi
+  jq --argjson id "$NIGHT_RUN" --arg sha "$PUSH_SHA" \
+    '.jobs |= map(.run_id = $id | .head_sha = $sha | .status = "completed" | .conclusion = "success")' \
+    "$TMP/push-jobs.json" | jq "$4" >"$dir/jobs-$NIGHT_RUN.json"
+  out="$(cd "$PUSH_REPO" && PATH="$TMP/gh-stub:$PATH" GH_WORLD="$dir" GITHUB_REPOSITORY=vanillagreencom/kendex \
+    GITHUB_SHA="$PUSH_SHA" GITHUB_RUN_ID="$NIGHT_RUN" "$JOB_SET" --night-faults 2>"$dir/err")" || status=$?
+  [ "$status" -eq 0 ] || out="exit=$status"
+  out="$(printf '%s\n' "$out" | { grep -v '^::' || true; } | sed "s/commit=$PUSH_SHA /commit=HEAD /; s/ count=[0-9]*$//" | paste -sd ';' -)"
+  err="$(sed -n 's/^ci-job-set: night-faults=\([a-z]*\) .*\( cause=[a-z-]*\).*/\1\2/p; s/^ci-job-set: night-faults=\([a-z]*\) [^c]*$/\1/p' "$dir/err")"
+  check "night faults: $1" "$5" "$out|$err"
+}
+night_fail() { # NAME — the night edit failing NAME
+  printf '.jobs |= map(if .name == "%s" then .conclusion = "failure" else . end)' "$1"
+}
+group_drop() { # NAME — the group edit removing NAME
+  printf '.jobs |= map(select(.name != "%s"))' "$1"
+}
+# The catalog legs a merge group splits in two and a night runs as one.
+CATALOG_APART='.jobs |= map(if .name == "catalog (1/2) / kendex check" then .name = "catalog (1/1) / kendex check" | .conclusion = "failure" else select(.name != "catalog (2/2) / kendex check") end)'
+# LABEL@WORLD@GROUP_EDIT@NIGHT_EDIT@EXPECTED, `@` apart since the edits are jq.
+night_rows=0
+while IFS='@' read -r label world group night expected; do
+  night_rows=$((night_rows + 1))
+  night_faults_row "$label" "$world" "$group" "$night" "$expected"
+done <<ROWS
+no failed check@all-proved@.@.@|read
+a leg the group ran whole@all-proved@.@$(night_fail "$NIGHT_LEG")@night-red commit=HEAD check=$NIGHT_LEG selector=ran|read
+a job the group did not run@all-proved@$(group_drop 'UI (vitest, tsc, biome)')@$(night_fail 'UI (vitest, tsc, biome)')@selector-fault commit=HEAD check=UI (vitest, tsc, biome) skipped=job|read
+a shard the group did not select@all-proved@$(group_drop "$NIGHT_LEG")@$(night_fail "$NIGHT_LEG")@selector-fault commit=HEAD check=$NIGHT_LEG skipped=leg|read
+a suite the group's selection skipped@kept-subset@.@$(night_fail "$NIGHT_LEG")@selector-fault commit=HEAD check=$NIGHT_LEG skipped=suites|read
+a runtime target the group's selection left out@one-target@.@$(night_fail 'Skill suites shard (orch-rest, ubuntu-latest)')@selector-fault commit=HEAD check=Skill suites shard (orch-rest, ubuntu-latest) skipped=targets|read
+legs named apart from the night's@all-proved@.@$CATALOG_APART@night-red commit=HEAD check=catalog (1/1) / kendex check selector=ran|read
+a failed classifier, no lane@all-proved@.@$(night_fail 'Classify the diff')@|read
+no merge group at the head@no-run@.@$(night_fail "$NIGHT_LEG")@night-red commit=HEAD check=$NIGHT_LEG selector=none|none cause=no-merge-group-run
+the group's jobs unread@jobs-missing@.@$(night_fail "$NIGHT_LEG")@night-red commit=HEAD check=$NIGHT_LEG selector=unread|unread cause=jobs-read-failed
+the night's own jobs unread@outage@.@.@|unread cause=night-jobs-unread
+ROWS
+[ "$night_rows" -ge 11 ] || { echo "the night fault table read $night_rows rows" >&2; exit 1; }
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
