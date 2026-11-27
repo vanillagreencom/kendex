@@ -259,14 +259,10 @@ impl LaunchLane {
     /// The permission choice as the record carries it: the line's words
     /// joined by one blank, so a relaunch composed from the record (the
     /// model-switch recovery) runs the replacement under the same choice;
-    /// `null` where the launch runs the settings' posture.
-    fn permission_recorded(&self) -> Value {
+    /// `None` where the launch runs the settings' posture.
+    fn permission_recorded(&self) -> Option<String> {
         let words = self.permission_words();
-        if words.is_empty() {
-            Value::Null
-        } else {
-            Value::from(words.join(" "))
-        }
+        (!words.is_empty()).then(|| words.join(" "))
     }
 
     fn permission_meaning(&self) -> std::result::Result<Option<PermissionMeaning>, ()> {
@@ -324,6 +320,7 @@ impl LaunchLane {
             account: self.account.clone(),
             model: self.model.clone(),
             effort: self.effort.clone(),
+            permission: self.permission_recorded(),
             class,
             class_reason,
             relaunch,
@@ -1583,8 +1580,8 @@ pub(super) fn launch_lane(
             // belongs to the earlier session, and so does a reservation: the
             // new attempt takes the slot itself; `running_at` and `launch`
             // are written empty until the launch confirms, and the selection
-            // (harness, account, model, effort) waits on the intent until
-            // then, as the record reads it at `running`.
+            // (harness, account, model, effort, permission word) waits on the
+            // intent until then, as the record reads it at `running`.
             //
             // A cloud record's session would leave with its fields: its close
             // row is written first, unless a close already wrote one naming
@@ -1638,14 +1635,11 @@ pub(super) fn launch_lane(
             record::set(lane, "running_at", Value::Null);
             record::set(lane, "status", LaneStatus::Preparing.word());
             // What this launch states of the lane, over what the record
-            // keeps: a permission choice and a grant judged now, and the
-            // lineage where the record binds none. A relaunch keeps the
+            // keeps: a grant judged now, and the lineage where the record
+            // binds none. A relaunch keeps the
             // first launch's tier, since its brief opens the workflow with
             // `start` whatever tier the item runs at; a launch over a `done`
             // record opens the item's next phase, whose brief states its own.
-            if let Value::String(permission) = r.permission_recorded() {
-                record::set(lane, "permission", permission.as_str());
-            }
             if allow_all.is_some() {
                 record::set(lane, "allow_all", allow_all);
             }
@@ -2345,13 +2339,16 @@ pub(super) fn record_launch_outcome(
             // effort of the earlier session survives into its record.
             if let Some(selection) = &selection {
                 record::set(lane, "harness", selection.harness.as_str());
-                // A kept word is its harness's own spelling. One the
-                // confirmed harness cannot carry, as on a move onto Pi,
-                // which has none, would refuse every relaunch composed from
-                // the record `permission-unrepresentable`, after that
-                // relaunch's close had retired the predecessor. The record's
-                // harness changes here alone, so a launch that fails keeps
-                // the word its harness still carries.
+                // The record's harness and a relaunch's named word change
+                // here alone, so a launch that fails leaves the record the
+                // pair it had. A word the confirmed harness cannot carry, a
+                // kept one on a move onto Pi, which has none, would refuse
+                // every relaunch composed from the record
+                // `permission-unrepresentable`, after that relaunch's close
+                // had retired the predecessor.
+                if let Some(permission) = &selection.permission {
+                    record::set(lane, "permission", permission.as_str());
+                }
                 let kept: Vec<String> = lane
                     .get("permission")
                     .and_then(Value::as_str)
@@ -2963,6 +2960,7 @@ mod tests {
                 account: Some("/a/a1".into()),
                 model: Some("claude-opus-5-5".into()),
                 effort: Some("high".into()),
+                permission: None,
                 class: ModelClass::Standard,
                 class_reason: "general implementation work".into(),
                 relaunch: false,
@@ -4344,17 +4342,19 @@ mod tests {
     /// A confirmed move onto Pi, which has no word, leaves a Pi recovery
     /// that runs its own posture; a move onto Pi that fails leaves the
     /// codex record its word for the codex recovery after it, as a codex
-    /// relaunch naming no word does.
+    /// relaunch naming no word does. A move onto Claude that names Claude's
+    /// own word and fails leaves the codex record its codex word too.
     #[test]
     fn a_recovery_from_the_relaunched_record_launches_under_a_word_its_harness_carries() {
         use crate::watch::lanes::{Composed, Composition, compose_relaunch};
         const CODEX_BYPASS: &str = "--dangerously-bypass-approvals-and-sandbox";
-        // (relaunch harness, model, effort, its outcome, the record's
-        // harness after it, the recovery's word)
+        // (relaunch harness, model, effort, its word, its outcome, the
+        // record's harness after it, the recovery's word)
         let rows = [
             (
                 "pi",
                 "openai/gpt-5.5:high",
+                None,
                 None,
                 Outcome::Confirmed,
                 Harness::Pi,
@@ -4364,6 +4364,16 @@ mod tests {
                 "pi",
                 "openai/gpt-5.5:high",
                 None,
+                None,
+                Outcome::Failed,
+                Harness::Codex,
+                Value::from(CODEX_BYPASS),
+            ),
+            (
+                "claude",
+                "claude-opus-5-5",
+                Some("high"),
+                Some("--dangerously-skip-permissions"),
                 Outcome::Failed,
                 Harness::Codex,
                 Value::from(CODEX_BYPASS),
@@ -4372,12 +4382,13 @@ mod tests {
                 "codex",
                 "gpt-5.5-codex",
                 Some("high"),
+                None,
                 Outcome::Confirmed,
                 Harness::Codex,
                 Value::from(CODEX_BYPASS),
             ),
         ];
-        for (harness, model, effort, ended, recovered_on, permission) in rows {
+        for (harness, model, effort, word, ended, recovered_on, permission) in rows {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
             let checkout = root.join("w");
@@ -4393,11 +4404,14 @@ mod tests {
             rec["permission"] = json!(CODEX_BYPASS);
             rec["mail_root"] = json!(mail_root);
             fleet_with(&path, &[rec]);
-            // The wall walk's move names no word where the harness has none.
+            // The wall walk's move across harnesses names the new harness's
+            // own bypass word, or none where it has none; a move within the
+            // harness names none.
             let moved = Request::LaunchLane(Box::new(LaunchLane {
                 harness: harness.into(),
                 model: Some(model.into()),
                 effort: effort.map(str::to_owned),
+                permission: word.map(str::to_owned),
                 mail_root: mail_root.clone(),
                 ..launch_fields("KEN-P")
             }));
@@ -4432,11 +4446,7 @@ mod tests {
             let Report::LaunchLane(l) = run(&path, &recovery).unwrap().report else {
                 panic!("{harness} {ended:?}")
             };
-            assert_eq!(
-                l.lane.status,
-                LaneStatus::Preparing,
-                "{harness} {ended:?}"
-            );
+            assert_eq!(l.lane.status, LaneStatus::Preparing, "{harness} {ended:?}");
             assert_eq!(
                 lane_doc(&path, "KEN-P").get("permission"),
                 Some(&permission),

@@ -2275,7 +2275,7 @@ fn wall(
             && prior.get(3).is_some_and(|r| r != "lane-relaunched")
         {
             let mut notes = Vec::new();
-            match route(obs, kind, reset_at.is_some(), pass, out, &mut notes) {
+            let said = match route(obs, kind, reset_at.is_some(), pass, out, &mut notes) {
                 Routed::Relaunched { .. } => {
                     let mut row = format!("{first_seen}|{hash}|{identity}|lane-relaunched");
                     // The passed wall's own-account resume goes with it.
@@ -2284,23 +2284,22 @@ fn wall(
                         out.changes.push(clear(wake::RESUME_KIND, lane));
                     }
                     out.changes.push(set("usage-limit", lane, row));
+                    None
                 }
                 Routed::Opening => return unjudged("auth-recovery-opening"),
-                Routed::Waiting => {}
-                routed @ (Routed::Held { .. } | Routed::Left) => {
-                    let said = match routed {
-                        Routed::Held { mark } => mark,
-                        _ => notes.join("\n"),
-                    };
-                    let (news, said) = said_once(prior.get(6).map(String::as_str), &said);
-                    if news {
-                        out.events.push(Event::UsageLimit { passed, line });
-                        out.events.extend(notes.into_iter().map(Event::Tail));
-                        let mut row = prior.clone();
-                        row.resize(7, String::new());
-                        row[6] = said;
-                        out.changes.push(set("usage-limit", lane, row.join("|")));
-                    }
+                Routed::Waiting => None,
+                Routed::Held { mark } => Some(mark),
+                Routed::Left => Some(notes.join("\n")),
+            };
+            if let Some(said) = said {
+                let (news, said) = said_once(prior.get(6).map(String::as_str), &said);
+                if news {
+                    out.events.push(Event::UsageLimit { passed, line });
+                    out.events.extend(notes.into_iter().map(Event::Tail));
+                    let mut row = prior.clone();
+                    row.resize(7, String::new());
+                    row[6] = said;
+                    out.changes.push(set("usage-limit", lane, row.join("|")));
                 }
             }
         }
@@ -2497,7 +2496,8 @@ fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
 /// stands. A refusal's cause text, stderr or reply line can carry a
 /// timestamp, pid or path that changes from pass to pass, so the mark keeps
 /// only what stays fixed under one refusal: its verb and kind, and an
-/// exit's status and keyed line's key.
+/// exit's status and keyed line's key and value, which names the repair
+/// (`command-missing=jq`, then `command-missing=date` once jq is back).
 struct Halt {
     mark: String,
     reason: String,
@@ -2519,11 +2519,18 @@ fn halt_reason(obs: &Observed, pass: &Pass) -> Option<Halt> {
                 Refusal::Unanswered { .. } => "unanswered".to_owned(),
                 Refusal::Exit { status, keyed, .. } => {
                     let status = status.map_or_else(|| "signal".to_owned(), |c| c.to_string());
-                    let key = keyed
+                    // `lane-mail --help`'s keyed line: `<key>=<value>`, or a
+                    // key whose value follows its own ` field=`, closed by
+                    // trailing fields that may change from pass to pass.
+                    let pair = keyed
                         .as_deref()
-                        .and_then(|line| line.split_once('='))
-                        .map_or("unkeyed", |(key, _)| key);
-                    format!("exit status={status} key={key}")
+                        .and_then(|line| {
+                            let (key, rest) = line.split_once('=')?;
+                            let value = rest.split_whitespace().next().unwrap_or_default();
+                            Some(format!("{key}={value}"))
+                        })
+                        .unwrap_or_else(|| "unkeyed".to_owned());
+                    format!("exit status={status} key={pair}")
                 }
                 Refusal::Reply { cause, .. } => format!("reply-{cause}"),
             };
@@ -4613,16 +4620,22 @@ mod tests {
     /// changed one again, before its reset and after it: a halt the mailbox
     /// could not read (`halt-unread`) after a standing halt is told, never
     /// hidden under the first, and the same refusal whose cause text moves
-    /// from pass to pass is told once. A wall a watch before the refusal
-    /// mark held (a bare `held`) is still held: once its halt clears after
-    /// the reset, the wake's resume is queued. The lines are the ones the
-    /// overseer reads under `usage-limit` (`oversee-events.md`).
+    /// from pass to pass is told once. A wall told and left, then walked
+    /// again on each quiet pass, tells its halt refusal once the same way.
+    /// An exit is the same refusal while its keyed line stands, whatever
+    /// its stderr says, and another one when the keyed value names another
+    /// repair. A wall a watch before the refusal mark held (a bare `held`)
+    /// is still held: once its halt clears after the reset, the wake's
+    /// resume is queued. The lines are the ones the overseer reads under
+    /// `usage-limit` (`oversee-events.md`).
     #[test]
     fn a_held_wall_tells_each_changed_halt_refusal_once() {
         #[derive(Clone, Copy)]
         enum Read {
             Halted,
             Unread(&'static str),
+            /// `lane-mail events`' exit 2: its keyed line, and its stderr.
+            Exit(&'static str, &'static str),
             Clear,
         }
         const BEFORE: u64 = 1_800_000_000;
@@ -4632,6 +4645,10 @@ mod tests {
         const HALTED: &str = "wall-relaunch-refused lane=gh-1 reason=halted";
         const UNREAD: &str =
             "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=inbox: timeout pid=1";
+        const JQ: &str = "command-missing=jq";
+        const DATE: &str = "command-missing=date";
+        const NO_JQ: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=jq";
+        const NO_DATE: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=date";
         // The row a watch before the refusal mark wrote at a passed reset
         // it held: `first_seen|banner|identity|reported|screen|held|said`.
         let legacy = format!(
@@ -4641,7 +4658,7 @@ mod tests {
         // (case, the seeded row, whether the wake reaches the lane, per
         // pass: (now, the halt read, lines told, the wake's resume queued))
         type Step = (u64, Read, &'static [&'static str], bool);
-        let scenarios: [(&str, Option<String>, bool, &[Step]); 2] = [
+        let scenarios: [(&str, Option<String>, bool, &[Step]); 4] = [
             (
                 "halt_then_unread",
                 None,
@@ -4661,6 +4678,53 @@ mod tests {
                 ],
             ),
             (
+                "left_then_unread",
+                None,
+                false,
+                &[
+                    (BEFORE, Read::Clear, &["pick none"], false),
+                    (
+                        BEFORE + 240,
+                        Read::Unread("timeout pid=1"),
+                        &[UNREAD],
+                        false,
+                    ),
+                    (BEFORE + 480, Read::Unread("timeout pid=2"), &[], false),
+                    (BEFORE + 720, Read::Unread("timeout pid=3"), &[], false),
+                ],
+            ),
+            (
+                "exit_by_keyed_value",
+                None,
+                false,
+                &[
+                    (
+                        BEFORE,
+                        Read::Exit(JQ, "lane-mail: command-missing=jq\nat 1"),
+                        &[NO_JQ],
+                        false,
+                    ),
+                    (
+                        BEFORE + 240,
+                        Read::Exit(JQ, "lane-mail: command-missing=jq\nat 2"),
+                        &[],
+                        false,
+                    ),
+                    (
+                        BEFORE + 480,
+                        Read::Exit(DATE, "lane-mail: command-missing=date\nat 3"),
+                        &[NO_DATE],
+                        false,
+                    ),
+                    (
+                        BEFORE + 720,
+                        Read::Exit(DATE, "lane-mail: command-missing=date\nat 4"),
+                        &[],
+                        false,
+                    ),
+                ],
+            ),
+            (
                 "legacy_held_cleared",
                 Some(legacy),
                 true,
@@ -4675,12 +4739,31 @@ mod tests {
             }
             let obs = observed(&lane, message);
             let read = std::cell::Cell::new(Read::Clear);
-            let walk = |_: &str, _: &WalkRequest| Err("unasked".to_owned());
+            // No account has room, and the wall names its reset: the lane
+            // waits, told once.
+            let walk = |_: &str, request: &WalkRequest| {
+                Ok(Walked {
+                    answer: WalkAnswer::None,
+                    walk: request.preference.clone().unwrap_or_default(),
+                    entries: 0,
+                    skipped: Vec::new(),
+                    walled: 0,
+                    unmeasured: 0,
+                    unread: Vec::new(),
+                    deprecated: Vec::new(),
+                })
+            };
             let halted_at = |_: &Lane| match read.get() {
                 Read::Halted => Ok(true),
                 Read::Unread(cause) => Err(Refusal::Unanswered {
                     verb: "inbox",
                     cause: cause.to_owned(),
+                }),
+                Read::Exit(keyed, stderr) => Err(Refusal::Exit {
+                    verb: "events",
+                    status: Some(2),
+                    keyed: Some(keyed.to_owned()),
+                    stderr: stderr.to_owned(),
                 }),
                 Read::Clear => Ok(false),
             };
@@ -4726,7 +4809,9 @@ mod tests {
                         }
                     })
                     .filter(|line| {
-                        line.starts_with("wall-relaunch-refused") || line.starts_with("resume ")
+                        ["wall-relaunch-refused", "resume ", "pick "]
+                            .iter()
+                            .any(|told| line.starts_with(told))
                     })
                     .collect();
                 assert_eq!(told, want, "{case} {now}");
