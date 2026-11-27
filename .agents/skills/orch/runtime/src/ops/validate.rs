@@ -730,12 +730,13 @@ pub fn reuse(
         base,
         declaration,
         &mut |_| None,
-        &mut |_, _| None,
+        &mut |_| None,
     )
 }
 
 /// Publication can also follow a chain through committed base trees, and
-/// judge a docs row by the head `tree` is committed at.
+/// judge a docs row by the head `tree` is committed at against the base
+/// `docs_only` names.
 pub(super) fn reusable_run(
     stages: &[Stage],
     tree: &str,

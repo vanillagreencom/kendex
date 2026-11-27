@@ -1124,8 +1124,9 @@ fn standing_validation(
         return Ok(false);
     };
     let declaration = proof::Declaration::of(&settings.validate);
-    let mut docs_only =
-        |head: &str, base: &str| crate::validate::docs_only(settings, worktree, head, base);
+    // The prepared base is the base branch's commit the prepared head was
+    // rebased onto: the base a docs run classifies against.
+    let mut docs_only = |head: &str| crate::validate::docs_only(settings, worktree, head, base);
     Ok(validate::reusable_run(
         &stages,
         &tree,

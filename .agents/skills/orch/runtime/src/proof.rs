@@ -37,10 +37,12 @@ pub fn run(settings: &Settings, item: &str, request: &ReadProof) -> Result<Proof
             .as_deref()
             .and_then(|worktree| committed_tree(Path::new(worktree), commit))
     };
-    let mut docs_only = |commit: &str, base: &str| {
-        worktree
-            .as_deref()
-            .and_then(|worktree| validate::docs_only(settings, Path::new(worktree), commit, base))
+    // Submit and restack name the head's merge base with the base branch,
+    // the base a docs run classifies against.
+    let docs_base = request.base.as_deref();
+    let mut docs_only = |commit: &str| {
+        let (worktree, base) = (worktree.as_deref()?, docs_base?);
+        validate::docs_only(settings, Path::new(worktree), commit, base)
     };
     Ok(crate::ops::proof::read(
         &stages,

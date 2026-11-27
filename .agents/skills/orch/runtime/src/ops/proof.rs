@@ -306,9 +306,12 @@ fn partial_base(row: &ProofRow) -> Option<&str> {
     (!base.is_empty()).then_some(base)
 }
 
-/// Whether a commit's committed tree, compared with a base commit's, is
-/// docs-only, as `(commit, base)`; `None` where that cannot be read.
-pub type DocsOnly<'a> = dyn FnMut(&str, &str) -> Option<bool> + 'a;
+/// Whether a commit's committed tree is docs-only against the base the
+/// need lands on, the base a docs run classifies against; `None` where that
+/// cannot be read. The caller names that base: a read's own base can be one
+/// that partial rows chain to and no docs run ever classified against, such
+/// as a fix round's head at delegation.
+pub type DocsOnly<'a> = dyn FnMut(&str) -> Option<bool> + 'a;
 
 /// The reader. `tree_of` reads a base commit's committed tree, the one
 /// read a chain across rounds needs; `None` is a base that cannot be read,
@@ -483,7 +486,7 @@ impl Reader<'_> {
                 // into a code change.
                 let still_docs = match (base, commit) {
                     (None, _) => true,
-                    (Some(base), Some(commit)) => (self.docs_only)(commit, base) == Some(true),
+                    (Some(_), Some(commit)) => (self.docs_only)(commit) == Some(true),
                     (Some(_), None) => false,
                 };
                 if still_docs {
@@ -1121,7 +1124,7 @@ mod tests {
             &ask(Need::Submit, "t1", Some("mb")),
             &range_declared(),
             &mut tree_of,
-            &mut |_, _| None,
+            &mut |_| None,
         );
         assert_eq!(read.proof, Verdict::Missing);
     }
@@ -1145,7 +1148,7 @@ mod tests {
         use Verdict::{Complete, Missing};
         // The tree, its head, the read's base, the judge's answer, the
         // verdict, and whether the judge was asked about `h1`, the commit
-        // whose tree is the docs row's, against `b`.
+        // whose tree is the docs row's.
         let rows = [
             ("t1", Some("h1"), None, Some(false), Complete, false),
             ("t1", Some("h1"), Some("b"), Some(true), Complete, true),
@@ -1157,8 +1160,8 @@ mod tests {
         ];
         for (tree, head, base, answer, verdict, judged) in rows {
             let mut asked = Vec::new();
-            let mut docs_only = |commit: &str, base: &str| {
-                asked.push((commit.to_owned(), base.to_owned()));
+            let mut docs_only = |commit: &str| {
+                asked.push(commit.to_owned());
                 answer
             };
             let mut tree_of = |commit: &str| (commit == "h1").then(|| "t1".to_owned());
@@ -1176,7 +1179,7 @@ mod tests {
             let row = (tree, head, base, answer);
             assert_eq!(read.proof, verdict, "{row:?}");
             let judged = if judged {
-                vec![("h1".to_owned(), "b".to_owned())]
+                vec!["h1".to_owned()]
             } else {
                 Vec::new()
             };
