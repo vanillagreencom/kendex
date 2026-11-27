@@ -406,6 +406,23 @@ impl Reading {
     }
 }
 
+impl AccountRow {
+    /// Whether the row's status is a read that failed, which this listing
+    /// writes where the usage query or the keyring read could not run,
+    /// outlasted its bound or answered a 5xx (`unreachable`), an answer, a
+    /// credential or a record beside it did not read (`error`), or the
+    /// endpoint refused it with a 429 (`rate_limited`) or another code
+    /// (`refused`). Such a read with no figure kept beside it leaves the
+    /// account unread, where `no_usage_data`, `no_credentials` or an ended
+    /// sign-in say nothing measures it.
+    pub fn usage_read_failed(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "unreachable" | "error" | "rate_limited" | "refused"
+        )
+    }
+}
+
 /// One local account's row: its credential read, its usage answered from
 /// its record or fetched under the host-wide lock.
 fn measure(ctx: &mut Ctx, account: &Found) -> Value {
@@ -426,8 +443,8 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
         )
     };
     // A Copilot account whose own login yields no reading: the owner's
-    // stated pool where one is stated, else no credential.
-    let unread = |ctx: &Ctx, why: &str| {
+    // stated pool where one is stated, else the read's own `status`.
+    let unread = |ctx: &Ctx, status: &str, why: &str| {
         let canon = wall::canon(dir);
         let stated = ctx
             .accounts
@@ -437,7 +454,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
         let reading = match stated {
             Some(entry) => Reading::stated(entry, &format!("copilot login unread: {why}")),
             None => Reading::refused(
-                "no_credentials",
+                status,
                 format!(
                     "copilot login unread: {why}, and AGENT_RUNTIME_COPILOT_POOL states no reading for this account"
                 ),
@@ -460,7 +477,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
     let (token, account_id, plan) = match harness {
         Harness::Copilot | Harness::Pi => match copilot_token(harness, dir) {
             Ok(token) => (token, String::new(), String::new()),
-            Err(why) => return unread(ctx, &why),
+            Err(LoginUnread { status, why }) => return unread(ctx, status, &why),
         },
         Harness::Claude | Harness::Codex => match usage::credential(harness, dir) {
             Credential::Missing(path) => {
@@ -529,12 +546,12 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
     // login measures the pool: a refused, unanswered or empty answer keeps
     // it, where a Copilot CLI home reads the error.
     if harness == Harness::Pi && row["headroom_pct"].is_null() {
-        let status = row["status"].as_str().unwrap_or("error");
+        let status = row["status"].as_str().unwrap_or("error").to_owned();
         let why = match row["detail"].as_str() {
             Some(detail) => format!("{status}: {detail}"),
-            None => status.to_owned(),
+            None => status.clone(),
         };
-        return unread(ctx, &why);
+        return unread(ctx, &status, &why);
     }
     if renewed {
         row["refreshable"] = json!(true);
@@ -546,13 +563,12 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
 /// `auth.json` entry; for a Copilot CLI home `config.json`'s own, or the
 /// Secret Service item Copilot CLI keeps a keyring login in, read through
 /// `secret-tool search` under the item's `:github` username and then the
-/// older one, without unlocking anything. `Err` is the keyed reason and
-/// where the login was sought.
+/// older one, without unlocking anything. `Err` is why no token was read.
 #[allow(
     clippy::disallowed_methods,
     reason = "the listing's read of a Copilot keyring login, `secret-tool search`, through the one runner under its tag, bounded; it acts on nothing"
 )]
-fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
+fn copilot_token(harness: Harness, dir: &str) -> Result<String, LoginUnread> {
     let stored = if harness == Harness::Pi {
         usage::pi_copilot_login(dir)
     } else {
@@ -560,7 +576,16 @@ fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
     };
     let login = match stored {
         CopilotLogin::Token(token) => return Ok(token),
-        CopilotLogin::Unread { reason, place } => return Err(format!("{reason} in {place}")),
+        CopilotLogin::Unread { reason, place } => {
+            // A login file that did not read is a failed read, as a Claude or
+            // Codex credential file that is not JSON is; every other reason
+            // says the login holds no token.
+            let status = match reason {
+                "config-unreadable" | "auth-unreadable" => "error",
+                _ => "no_credentials",
+            };
+            return Err(LoginUnread::new(status, format!("{reason} in {place}")));
+        }
         CopilotLogin::Keyring(login) => login,
     };
     let users = [
@@ -581,19 +606,34 @@ fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
             Ok(out) => out,
             Err(e) => {
                 let cause = e.to_string();
-                let place = if cause.contains("os error 2") {
-                    "the Secret Service: no secret-tool on PATH".to_owned()
+                // A host with no secret-tool has no keyring reader, so
+                // nothing here measures the login; a search that outlasted
+                // its bound or failed to run is a read that failed.
+                let (status, place) = if cause.contains("os error 2") {
+                    (
+                        "no_credentials",
+                        "the Secret Service: no secret-tool on PATH".to_owned(),
+                    )
                 } else if cause.contains("no answer within") {
-                    format!(
-                        "the Secret Service: secret-tool search outlasted {}s for username={user}",
-                        KEYRING_BOUND.as_secs()
+                    (
+                        "unreachable",
+                        format!(
+                            "the Secret Service: secret-tool search outlasted {}s for username={user}",
+                            KEYRING_BOUND.as_secs()
+                        ),
                     )
                 } else {
-                    format!(
-                        "the Secret Service: secret-tool search failed for username={user}: {cause}"
+                    (
+                        "error",
+                        format!(
+                            "the Secret Service: secret-tool search failed for username={user}: {cause}"
+                        ),
                     )
                 };
-                return Err(format!("keyring-absent in {place}"));
+                return Err(LoginUnread::new(
+                    status,
+                    format!("keyring-absent in {place}"),
+                ));
             }
         };
         let err_line = host::stderr_text(&out)
@@ -601,10 +641,13 @@ fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
             .find(|l| l.starts_with("secret-tool: "))
             .map(str::to_owned);
         if !out.status.success() {
-            return Err(format!(
-                "keyring-absent in the Secret Service: secret-tool search exited {} for username={user}{}",
-                out.status.code().unwrap_or(-1),
-                err_line.map(|e| format!(": {e}")).unwrap_or_default()
+            return Err(LoginUnread::new(
+                "error",
+                format!(
+                    "keyring-absent in the Secret Service: secret-tool search exited {} for username={user}{}",
+                    out.status.code().unwrap_or(-1),
+                    err_line.map(|e| format!(": {e}")).unwrap_or_default()
+                ),
             ));
         }
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -614,7 +657,8 @@ fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
             }
         } else if stdout.lines().any(|l| l.starts_with("label = ")) {
             let place = format!("the Secret Service item service=copilot-cli username={user}");
-            return Err(
+            return Err(LoginUnread::new(
+                "no_credentials",
                 if err_line.as_deref() == Some("secret-tool: Cannot get secret of a locked object")
                 {
                     format!("keyring-locked in {place}")
@@ -626,13 +670,31 @@ fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
                         })
                     )
                 },
-            );
+            ));
         }
     }
-    Err(format!(
-        "keyring-empty in the Secret Service items service=copilot-cli username={} and {}",
-        users[0], users[1]
+    Err(LoginUnread::new(
+        "no_credentials",
+        format!(
+            "keyring-empty in the Secret Service items service=copilot-cli username={} and {}",
+            users[0], users[1]
+        ),
     ))
+}
+
+/// Why a Copilot login yielded no token: the status its row reads as,
+/// `no_credentials` where the login holds none to read and a failed read's
+/// own status otherwise ([`AccountRow::usage_read_failed`]), and the keyed
+/// reason with where the login was sought.
+struct LoginUnread {
+    status: &'static str,
+    why: String,
+}
+
+impl LoginUnread {
+    fn new(status: &'static str, why: String) -> LoginUnread {
+        LoginUnread { status, why }
+    }
 }
 
 /// The live token of an account whose access token expired: the refusal

@@ -16,13 +16,13 @@ pub mod reset;
 
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::accounts::ResetHolder;
 use crate::harness::Harness;
 use crate::observe::WallKind;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     /// The account's limit: a usage window, or credit or a pool the account
@@ -264,6 +264,27 @@ pub enum Action {
 /// before the session moves to another provider: the owner's 30 minutes,
 /// about seven resumes at one per watch pass.
 pub const PROVIDER_PATIENCE: Duration = Duration::from_secs(30 * 60);
+
+/// A stop's episode as its caller recorded it: the epoch seconds its first
+/// failed turn was read at and its latest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Episode {
+    pub since: u64,
+    pub last: u64,
+}
+
+/// The start of the `recorded` episode where a failure read at `now`
+/// continues it, else `None`, and that failure opens a new episode. The
+/// episode stands while each failure follows the last one read within
+/// [`PROVIDER_PATIENCE`]. A pane read busy on every pass hides the turn
+/// that returned between them, and a resumed turn that failed again moves
+/// the row position as a returned one does, so a failure read after a whole
+/// patience with none read opens a new episode.
+pub fn standing(recorded: Option<Episode>, now: u64) -> Option<u64> {
+    recorded
+        .filter(|episode| now.saturating_sub(episode.last) <= PROVIDER_PATIENCE.as_secs())
+        .map(|episode| episode.since)
+}
 
 /// The action for a stop of `kind` first read `age` ago on a `session`,
 /// over the walk's `ground`. A session stops for good, and its owner is

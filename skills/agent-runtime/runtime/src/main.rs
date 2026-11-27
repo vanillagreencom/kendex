@@ -35,6 +35,7 @@ use agent_runtime::record::{self, Expect};
 use agent_runtime::rows;
 use agent_runtime::session;
 use agent_runtime::settings;
+use agent_runtime::stop;
 use agent_runtime::subagent;
 
 const RECORD_VERSION: u64 = 1;
@@ -188,6 +189,8 @@ enum Verb {
     /// Judge a captured screen held in a file, drawn by the named harness: a
     /// sender asks it, over the provider's own capture of a lane's screen,
     /// whether the lane takes input, and input is allowed only for `idle`.
+    /// An idle turn its provider stopped is named beside the state as
+    /// `turn`: `capacity` or `api-error`.
     /// The screen alone is judged: `--process` is the caller's own reading of
     /// the pane (`harness-up` asserts the harness holds it), which a live
     /// `inspect` reads from the pane's foreground process instead.
@@ -347,7 +350,9 @@ enum ControllerOp {
     /// The controller walk's choice: the pending a start or transfer request
     /// carries, for a first controller in `--cwd`, or for the successor of
     /// the recorded controller whose pane `--predecessor` names, walked as
-    /// its `--mark` decides; `--recover` replays its own launch.
+    /// its `--mark` decides; `--recover` replays its own launch. `--stop`
+    /// answers Jarvis's stop decision instead: the action, the episode that
+    /// stands, and the successor a move takes or the reset a wait waits for.
     Successor {
         #[arg(long)]
         record: PathBuf,
@@ -361,6 +366,22 @@ enum ControllerOp {
         mark: Option<MarkKind>,
         #[arg(long, requires = "predecessor")]
         recover: bool,
+        /// The stop's kind: `usage` or `auth` as `rows verdict` names a
+        /// wall, `provider` for a failed turn the provider made, which an
+        /// idle `turn` from `judge` is.
+        #[arg(
+            long,
+            requires = "predecessor",
+            conflicts_with_all = ["mark", "recover"],
+            value_parser = stop_kind
+        )]
+        stop: Option<stop::Kind>,
+        /// The episode's start and its latest failure, epoch seconds, as an
+        /// earlier `--stop` answer named them; left out, the stop opens one.
+        #[arg(long, requires_all = ["stop", "last"])]
+        since: Option<u64>,
+        #[arg(long, requires_all = ["stop", "since"])]
+        last: Option<u64>,
         /// The handoff the pending names; the recorded controller's own
         /// where left out.
         #[arg(long)]
@@ -641,6 +662,12 @@ fn recorded_socket(path: &Path) -> Result<Option<PathBuf>> {
             .as_ref()
             .and_then(agent_runtime::effects::overseer_socket),
     )
+}
+
+/// A stop's kind word as `stop::Kind` serializes it.
+fn stop_kind(word: &str) -> std::result::Result<stop::Kind, String> {
+    serde_json::from_value(serde_json::Value::from(word))
+        .map_err(|_| format!("{word} is none of usage, auth, provider, exited"))
 }
 
 /// A mark word as the choice takes it.
@@ -2438,7 +2465,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     ));
                 }
             };
-            Ok(serde_json::to_value(observe::judge(&text, h, &reading, None)).unwrap_or_default())
+            Ok(observe::observe_pane(&text, h, &reading, None).reply())
         }
         Verb::SessionFile {
             harness: name,
@@ -2767,6 +2794,9 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             predecessor,
             mark,
             recover,
+            stop: stopped,
+            since,
+            last,
             handoff,
             preference,
             resume,
@@ -2815,19 +2845,40 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                         cause: e.to_string(),
                     },
                 };
-            controller::successor::successor(
-                &choosing,
-                &record,
-                predecessor.as_deref(),
-                mark,
-                &cwd,
-                handoff.as_deref(),
-                controller::successor::Ground {
-                    walk: &mut walk,
-                    pick: &mut pick,
-                },
-                now,
-            )
+            let ground = controller::successor::Ground {
+                walk: &mut walk,
+                pick: &mut pick,
+            };
+            match stopped {
+                Some(kind) => {
+                    let pane = predecessor
+                        .as_deref()
+                        .expect("clap requires --predecessor with --stop");
+                    let recorded = since
+                        .zip(last)
+                        .map(|(since, last)| stop::Episode { since, last });
+                    controller::successor::stopped(
+                        &choosing,
+                        &record,
+                        pane,
+                        controller::successor::Stopped { kind, recorded },
+                        &cwd,
+                        handoff.as_deref(),
+                        ground,
+                        now,
+                    )
+                }
+                None => controller::successor::successor(
+                    &choosing,
+                    &record,
+                    predecessor.as_deref(),
+                    mark,
+                    &cwd,
+                    handoff.as_deref(),
+                    ground,
+                    now,
+                ),
+            }
         }
         ControllerOp::Start {
             record,

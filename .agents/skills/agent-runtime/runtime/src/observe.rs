@@ -401,6 +401,19 @@ pub enum IdleTurn {
     ApiError,
 }
 
+impl IdleTurn {
+    /// The word for a turn its provider stopped: `capacity` for Codex's
+    /// capacity refusal, [`crate::stop::API_ERROR`] for the provider's error
+    /// on the pane. An ordinary turn has none.
+    pub fn stopped(self) -> Option<&'static str> {
+        match self {
+            IdleTurn::Capacity => Some("capacity"),
+            IdleTurn::ApiError => Some(crate::stop::API_ERROR),
+            IdleTurn::Ordinary { .. } => None,
+        }
+    }
+}
+
 /// Classify the current idle turn using the lines below the last prompt.
 fn idle_turn(harness: Harness, slice: &str, after_prompt: bool) -> IdleTurn {
     if harness == Harness::Codex && codex_capacity_refused(slice) {
@@ -417,6 +430,20 @@ fn idle_turn(harness: Harness, slice: &str, after_prompt: bool) -> IdleTurn {
 pub struct PaneObservation {
     pub state: State,
     pub idle: Option<IdleTurn>,
+}
+
+impl PaneObservation {
+    /// The `judge` verb's answer: the state, and beside an idle one the
+    /// `turn` its provider stopped ([`IdleTurn::stopped`]), which is a
+    /// provider stop to the stop decision (`controller successor --stop
+    /// provider`), so its caller reads no screen of its own.
+    pub fn reply(&self) -> serde_json::Value {
+        let mut reply = serde_json::to_value(&self.state).unwrap_or_default();
+        if let Some(turn) = self.idle.and_then(IdleTurn::stopped) {
+            reply["turn"] = turn.into();
+        }
+        reply
+    }
 }
 
 pub fn observe_pane(
@@ -1289,6 +1316,45 @@ mod tests {
         assert!(!codex_api_error(
             "› Continue the task.\n▲ Selected model is at capacity. Try again later.\n› Ask Codex to do anything"
         ));
+    }
+
+    /// The `judge` answer names the idle turn a provider stopped beside the
+    /// state, and none for an ordinary one, on drawn panes: Codex's capacity
+    /// refusal and the API error a real Codex pane drew, Copilot's
+    /// execution failure, and the recorded Codex idle.
+    #[test]
+    fn the_judge_answer_names_a_provider_stopped_idle_turn_beside_its_state() {
+        let rows = [
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n▲ Selected model is at capacity. Try again later.\n\n› Ask Codex to do anything",
+                Some("capacity"),
+            ),
+            (
+                Harness::Codex,
+                "■ {\"detail\":\"Bad Request\"}\n1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view",
+                Some("api-error"),
+            ),
+            (
+                Harness::Copilot,
+                "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n────────────────────────────────────────\n",
+                Some("api-error"),
+            ),
+            (
+                Harness::Codex,
+                include_str!("../../tests/rust/fixtures/codex-idle.txt"),
+                None,
+            ),
+        ];
+        for (harness, screen, turn) in rows {
+            let reply = observe_pane(screen, harness, &ProcessReading::HarnessUp, None).reply();
+            assert_eq!(reply["state"], "idle", "{harness:?} {turn:?}: {reply}");
+            assert_eq!(
+                reply.get("turn").and_then(serde_json::Value::as_str),
+                turn,
+                "{harness:?}: {reply}"
+            );
+        }
     }
 
     /// Codex's rate-limit choice list stands in place of the composer, and

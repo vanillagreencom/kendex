@@ -10578,19 +10578,32 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
     }
 }
 
+/// A caller with no figure answers `mark-unmeasured headroom`, with a
+/// reason that tells a usage read that failed from one nothing measures.
 #[test]
-fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
-    let mut world = MarksWorld::new();
-    let mut unread = measured_account("eclaude", 10);
-    unread["status"] = json!("unreachable");
-    unread["headroom_pct"] = Value::Null;
-    unread["wall"] = Value::Null;
-    world.plant(None, &[unread, measured_account("bclaude", 10)]);
-    world.write_fleet(&world.dir("eclaude"));
-    let answer = world.marks(&[], &[]);
-    assert_eq!(answer["key"], json!("mark-unmeasured"), "{answer}");
-    assert_eq!(answer["kind"], json!("headroom"));
-    assert_eq!(answer["reason"], json!("headroom-none"));
+fn a_caller_with_no_headroom_figure_answers_mark_unmeasured_by_its_read() {
+    for (status, reason) in [
+        ("unreachable", "headroom-unreadable"),
+        ("no_usage_data", "headroom-none"),
+    ] {
+        let mut world = MarksWorld::new();
+        let mut unread = measured_account("eclaude", 10);
+        unread["status"] = json!(status);
+        unread["verdict"] = json!("unmeasured");
+        for figure in ["headroom_pct", "wall", "weekly_pct", "session_5h_pct"] {
+            unread[figure] = Value::Null;
+        }
+        world.plant(None, &[unread, measured_account("bclaude", 10)]);
+        world.write_fleet(&world.dir("eclaude"));
+        let answer = world.marks(&[], &[]);
+        assert_eq!(
+            answer["key"],
+            json!("mark-unmeasured"),
+            "{status}: {answer}"
+        );
+        assert_eq!(answer["kind"], json!("headroom"), "{status}: {answer}");
+        assert_eq!(answer["reason"], json!(reason), "{status}: {answer}");
+    }
 }
 
 /// On fixture cgroup files, the fullest cap is chosen by anonymous memory,

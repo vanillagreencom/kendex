@@ -9,9 +9,11 @@
 //! ground: the host each entry names and the pick over the accounts there.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use super::transition::OverseerExpected;
 use super::views::{AccountState, Caller, MarkKind, Record};
 use super::{MEMBER, Overseer, Pending};
 use crate::accounts::walk::{Preference, Scope, Source, WalkAnswer, WalkRequest, Walked};
@@ -21,7 +23,10 @@ use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::launch::Permission;
 use crate::record;
-use crate::settings::{CONTROLLER_PREFERENCE_KEY, ControllerSettings, Judged, LaunchSettings};
+use crate::settings::{
+    CONTROLLER_PREFERENCE_KEY, ControllerSettings, Judged, LaunchSettings, Succession,
+};
+use crate::stop::{self, Action, Episode, Kind, Session};
 
 /// What the choice reads beside the record: the account judge's settings,
 /// the launch's posture, the hand-over's preference, and the wall mark the
@@ -158,6 +163,18 @@ pub fn recovery_walk(caller: &Caller, harness: Harness, leaving: Leaving) -> Wal
     }
 }
 
+/// The walk a stop of the recorded `caller` on `harness` takes as it
+/// leaves `leaving` ([`recovery_walk`]), or none where the record names no
+/// account: a stop's move retires the stopped session as walled, which
+/// spends that account (`transition::check_cause` refuses a walled
+/// transfer naming none), so nothing moves it.
+pub fn stop_walk(caller: &Caller, harness: Harness, leaving: Leaving) -> Option<WalkRequest> {
+    caller
+        .account
+        .as_ref()
+        .map(|_| recovery_walk(caller, harness, leaving))
+}
+
 /// The company whose service a session on `harness` running `model` sends
 /// its turns to, which every account and harness on that service shares: a
 /// Pi model's `provider/` word names it, a `pi-claude/` model running on a
@@ -205,6 +222,31 @@ pub struct Ground<'g> {
     pub pick: &'g mut dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer,
 }
 
+/// The recorded controller a succession or a stop is chosen for: its
+/// session, its harness, and the compare-and-swap set naming its pane.
+struct Recorded {
+    caller: Caller,
+    harness: Harness,
+    expected: OverseerExpected,
+}
+
+/// The controller recorded at `path` whose pane `pane` names.
+fn recorded(path: &Path, pane: &str) -> Result<Recorded> {
+    let record = controller_record(path)?
+        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
+    let caller = Caller::of(&record);
+    let harness = caller
+        .harness
+        .ok_or_else(|| refused("harness-unnamed", &[("pane", pane)]))?;
+    let mut expected = record.expected();
+    expected.pane = json!(pane);
+    Ok(Recorded {
+        caller,
+        harness,
+        expected,
+    })
+}
+
 /// The choice: the controller walk for the record at `path`, for its
 /// first controller in `cwd`, or for the successor of the recorded
 /// controller whose pane `predecessor` names, walked as the `mark` that
@@ -237,30 +279,18 @@ pub fn successor(
             &[("setting", CONTROLLER_PREFERENCE_KEY)],
         ));
     }
-    let recorded = match predecessor {
-        None => None,
-        Some(pane) => {
-            let record = controller_record(path)?.ok_or_else(|| {
-                refused("record-missing", &[("path", &path.display().to_string())])
-            })?;
-            let caller = Caller::of(&record);
-            let harness = caller
-                .harness
-                .ok_or_else(|| refused("harness-unnamed", &[("pane", pane)]))?;
-            let mut expected = record.expected();
-            expected.pane = json!(pane);
-            Some((caller, harness, expected))
-        }
-    };
-    let handoff = handoff.map(str::to_owned).or_else(|| {
-        recorded
-            .as_ref()
-            .and_then(|(caller, _, _)| caller.handoff.clone())
-    });
-    let mut request = match (recorded.as_ref(), mark) {
-        (Some((caller, harness, _)), Some(mark)) => {
+    let recorded = predecessor.map(|pane| recorded(path, pane)).transpose()?;
+    let request = match (recorded.as_ref(), mark) {
+        (Some(recorded), Some(mark)) => {
             let mut pick = |request: &PickRequest| (ground.pick)(request, None);
-            walk_request(choosing, &mut pick, caller, *harness, mark, now)?
+            walk_request(
+                choosing,
+                &mut pick,
+                &recorded.caller,
+                recorded.harness,
+                mark,
+                now,
+            )?
         }
         (recorded, _) => WalkRequest {
             scope: Scope::Overseer,
@@ -269,11 +299,19 @@ pub fn successor(
             exclude: Vec::new(),
             max_pct: None,
             min_headroom_pct: None,
-            source: recorded.map(|(caller, harness, _)| source(caller, *harness)),
+            source: recorded.map(|recorded| source(&recorded.caller, recorded.harness)),
             caller: None,
             keep_unmeasured: false,
         },
     };
+    let walked = (ground.walk)(&held(path, request, now)?)?;
+    let successor = opened(choosing, recorded.as_ref(), &walked, cwd, handoff)?;
+    Ok(reply(Some(&walked), successor.as_ref(), recorded.as_ref()))
+}
+
+/// The walk `request` with the accounts the record at `path` holds
+/// unproved left out ([`hold_unproved`]).
+fn held(path: &Path, mut request: WalkRequest, now: u64) -> Result<WalkRequest> {
     let doc = record::read_document(path)?;
     hold_unproved(
         &mut request,
@@ -282,32 +320,198 @@ pub fn successor(
             .and_then(|member| member.get("unproved")),
         now,
     );
-    let walked = (ground.walk)(&request)?;
-    let successor = match &walked.answer {
-        WalkAnswer::Lane(chosen) => {
-            let mut pending = match &recorded {
-                None => {
-                    let mut pending = Caller::default().successor_of(chosen);
-                    pending.permission = Some(choosing.launch.permission.get()?);
-                    pending
-                }
-                Some((caller, _, _)) => {
-                    let mut pending = caller.successor_of(chosen);
-                    posture(&mut pending, choosing.launch)?;
-                    pending
-                }
-            };
-            pending.cwd.get_or_insert_with(|| cwd.display().to_string());
-            pending.handoff = handoff.clone();
-            Some(pending)
-        }
-        WalkAnswer::None | WalkAnswer::Held { .. } => None,
+    Ok(request)
+}
+
+/// The pending the walk's chosen entry opens, in `cwd` with the handoff at
+/// `handoff`, else the recorded controller's own: a first controller under
+/// the settings' posture, a successor under the one it carries. `None`
+/// where the walk chose none.
+fn opened(
+    choosing: &Choosing,
+    recorded: Option<&Recorded>,
+    walked: &Walked,
+    cwd: &Path,
+    handoff: Option<&str>,
+) -> Result<Option<Pending>> {
+    let chosen = match &walked.answer {
+        WalkAnswer::Lane(chosen) => chosen,
+        WalkAnswer::None | WalkAnswer::Held { .. } => return Ok(None),
     };
-    Ok(json!({
-        "walk": walked.reply(),
+    let mut pending = match recorded {
+        None => {
+            let mut pending = Caller::default().successor_of(chosen);
+            pending.permission = Some(choosing.launch.permission.get()?);
+            pending
+        }
+        Some(recorded) => {
+            let mut pending = recorded.caller.successor_of(chosen);
+            posture(&mut pending, choosing.launch)?;
+            pending
+        }
+    };
+    pending.cwd.get_or_insert_with(|| cwd.display().to_string());
+    pending.handoff = handoff
+        .map(str::to_owned)
+        .or_else(|| recorded.and_then(|recorded| recorded.caller.handoff.clone()));
+    Ok(Some(pending))
+}
+
+/// The answer a choice prints: the walk's own reply (`null` where none
+/// ran), the pending, and the compare-and-swap set a succession's transfer
+/// carries.
+fn reply(
+    walked: Option<&Walked>,
+    successor: Option<&Pending>,
+    recorded: Option<&Recorded>,
+) -> Value {
+    json!({
+        "walk": walked.map(Walked::reply),
         "successor": successor,
-        "expected": recorded.map(|(_, _, expected)| expected),
-    }))
+        "expected": recorded.map(|recorded| &recorded.expected),
+    })
+}
+
+/// A stop of the recorded controller as its caller asks it: the stop's
+/// kind, and the episode the caller recorded from an earlier answer.
+#[derive(Debug)]
+pub struct Stopped {
+    pub kind: Kind,
+    pub recorded: Option<Episode>,
+}
+
+/// The stop decision for the recorded controller whose pane `predecessor`
+/// names, on the opener's `ground`: [`stop::action`]'s action for Jarvis,
+/// its one caller (an overseer's stop is orch's watch's, on the fleet's
+/// ground), the episode that stands, for the caller to record, and the
+/// reset a wait waits for, beside [`successor`]'s answer: the walk, the
+/// pending a move's transfer carries and its compare-and-swap set.
+///
+/// A provider stop inside the patience is asked as though another
+/// provider had room, so no walk runs; past it the walk leaves the
+/// provider ([`stop_walk`]), and a walk that chose none, left an entry
+/// unread or refused resumes the session, the refusal answered as
+/// `walk_refused`. A limit or an ended sign-in walks off the account, and
+/// a limit no other account has room for reads its own account's reset.
+/// Under succession off, or for a record naming no account, no walk runs
+/// and nothing moves. Where neither a move nor a resume follows, a walk
+/// that chose none past an entry it could not read decides nothing
+/// (`walk-unread`), and nor does an own account the judge could not read
+/// (`account-unread`). An exited harness is refused (`stop-kind-unjudged`):
+/// its own account's room decides it, and no caller asks it here.
+#[allow(clippy::too_many_arguments)]
+pub fn stopped(
+    choosing: &Choosing,
+    path: &Path,
+    predecessor: &str,
+    asked: Stopped,
+    cwd: &Path,
+    handoff: Option<&str>,
+    ground: Ground,
+    now: u64,
+) -> Result<Value> {
+    let since = stop::standing(asked.recorded, now).unwrap_or(now);
+    let age = Duration::from_secs(now.saturating_sub(since));
+    let session = Session::Jarvis;
+    let own_room = asked.kind == Kind::Provider;
+    let ground_of = |room, reset| stop::Ground {
+        own_room,
+        room,
+        reset,
+        resets: &[],
+    };
+    let leaving = match asked.kind {
+        Kind::Provider => (stop::action(Kind::Provider, age, session, ground_of(true, false))
+            == Action::MoveProvider)
+            .then_some(Leaving::Provider {
+                preference: &choosing.controller.preference,
+            }),
+        Kind::Usage | Kind::Auth => Some(Leaving::Account),
+        Kind::Exited => return Err(refused("stop-kind-unjudged", &[("kind", "exited")])),
+    };
+    let recorded = recorded(path, predecessor)?;
+    // Under succession off the hand-over admits no transfer, so a move
+    // named here could never happen.
+    let may_move = choosing.controller.succession.get()? == Succession::On;
+    let request = leaving
+        .filter(|_| may_move)
+        .and_then(|leaving| stop_walk(&recorded.caller, recorded.harness, leaving));
+    let Ground { walk, pick } = ground;
+    let found = match request {
+        Some(request) => Some(walk(&held(path, request, now)?)),
+        None => None,
+    };
+    let (walked, walk_refused) = match found {
+        Some(Ok(walked)) => (Some(walked), None),
+        // A provider stop's own account still has room: a walk that could
+        // not judge another provider leaves the session where it stopped,
+        // as one that left an entry unread does.
+        Some(Err(refusal)) if asked.kind == Kind::Provider => (None, Some(refusal)),
+        Some(Err(refusal)) => return Err(refusal),
+        None => (None, None),
+    };
+    let successor = match &walked {
+        Some(walked) => opened(choosing, Some(&recorded), walked, cwd, handoff)?,
+        None => None,
+    };
+    let moves = successor.is_some();
+    if !moves
+        && asked.kind != Kind::Provider
+        && let Some(walked) = &walked
+        && !walked.unread.is_empty()
+    {
+        return Err(refused(
+            "walk-unread",
+            &[("entries", &walked.unread.join(","))],
+        ));
+    }
+    let reset = match asked.kind {
+        Kind::Usage if !moves => {
+            own_reset(choosing, &recorded, &mut |request| pick(request, None), now)?
+        }
+        Kind::Usage | Kind::Auth | Kind::Provider | Kind::Exited => None,
+    };
+    let action = stop::action(asked.kind, age, session, ground_of(moves, reset.is_some()));
+    let mut answer = reply(walked.as_ref(), successor.as_ref(), Some(&recorded));
+    answer["action"] = json!(action);
+    answer["episode"] = json!(Episode { since, last: now });
+    answer["reset"] = json!(reset);
+    if let Some(refusal) = &walk_refused {
+        answer["walk_refused"] = json!(crate::protocol::Refusal::from(refusal));
+    }
+    Ok(answer)
+}
+
+/// The reset of the recorded controller's own account, epoch seconds, as
+/// the judge reads it at the trigger: `None` where nothing measures it or
+/// its reading states no reset. An account the judge could not read
+/// ([`AccountState::Unreadable`]) refuses `account-unread` with the
+/// listing's status where it holds one: the reset such a reading lacks is
+/// unread, never one nobody states.
+fn own_reset(
+    choosing: &Choosing,
+    recorded: &Recorded,
+    pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
+    now: u64,
+) -> Result<Option<u64>> {
+    let trigger = choosing.accounts.accounts.get()?.controller_headroom_pct;
+    let read = recorded
+        .caller
+        .own_account(recorded.harness, pick, trigger, now);
+    match read.state {
+        AccountState::HasRoom | AccountState::AtTrigger => {
+            Ok(crate::clock::epoch_secs(&read.resets))
+        }
+        AccountState::Unmeasured => Ok(None),
+        AccountState::Unreadable => {
+            let account = recorded.caller.account.as_deref().unwrap_or_default();
+            let mut fields = vec![("account", account)];
+            if !read.status.is_empty() {
+                fields.push(("status", read.status.as_str()));
+            }
+            Err(refused("account-unread", &fields))
+        }
+    }
 }
 
 /// How long a failed attempt holds its account out of the walk. A mark

@@ -989,16 +989,14 @@ fn continue_overseer(
             agent_runtime::session::text_digest(screen)
         ),
     };
-    // The episode stands while each failure follows the last one read
-    // within the patience. A pane read busy on every pass hides the turn
-    // that returned between them, and a resumed turn that failed again
-    // moves the row position as a returned one does, so a failure read
-    // after a whole patience with none read opens a new episode.
-    let standing = episode.and_then(|value| {
+    let recorded = episode.and_then(|value| {
         let (since, last) = value.split_once('|')?;
-        let (since, last) = (since.parse::<u64>().ok()?, last.parse::<u64>().ok()?);
-        (pass.now.saturating_sub(last) <= stop::PROVIDER_PATIENCE.as_secs()).then_some(since)
+        Some(stop::Episode {
+            since: since.parse().ok()?,
+            last: last.parse().ok()?,
+        })
     });
+    let standing = stop::standing(recorded, pass.now);
     if standing.is_none() && episode.is_some() {
         end_provider_episode(&pane_key, out);
     }
@@ -1085,24 +1083,23 @@ fn continue_overseer(
 
 /// The successor of a provider stop past its patience: the walk's first
 /// entry with room on another provider, the accounts a failed attempt left
-/// unproved held out. A record naming no account leaves no account for the
-/// walled retirement to spend, so it does not move; neither does a walk
-/// that chose none or left an entry unread, whose next pass walks again.
+/// unproved held out. A record naming no account does not move
+/// (`successor::stop_walk`); neither does a walk that chose none or left
+/// an entry unread, whose next pass walks again.
 fn provider_successor(
     record: &Record,
     harness: Harness,
     pass: &Pass,
     out: &mut Produced,
 ) -> Option<Pending> {
-    record.account.as_ref()?;
     let caller = Caller::of(record);
-    let mut request = choice::recovery_walk(
+    let mut request = choice::stop_walk(
         &caller,
         harness,
         Leaving::Provider {
             preference: pass.preference.unwrap_or(DEFAULT_CONTROLLER_PREFERENCE),
         },
-    );
+    )?;
     choice::hold_unproved(&mut request, unproved(pass), pass.now);
     match walk_successor(&caller, &request, pass, out) {
         Found::Successor(pending) => Some(*pending),
@@ -2077,7 +2074,7 @@ fn case_prefix(case: OverseerCase) -> &'static str {
 
 /// The announced succession: `request-transfer` with the case's cause and
 /// the spent account; a walled case's successor is agent-runtime's walk
-/// leaving the spent account (`successor::recovery_walk`), the record's
+/// leaving the spent account (`successor::stop_walk`), the record's
 /// unproved accounts held out. A walled case then takes `stop::action`'s
 /// step for its wall, over what its `own` account can do: a move to
 /// the walk's successor, an ended sign-in's telling the owner once which
@@ -2117,14 +2114,16 @@ fn transfer(
             ),
         ),
         OverseerCase::Walled | OverseerCase::Reserve => {
-            let found = match (record.harness, record.account.as_ref()) {
-                (Some(harness), Some(_)) => {
-                    let mut request = choice::recovery_walk(&caller, harness, Leaving::Account);
+            let found = match record
+                .harness
+                .map(|harness| choice::stop_walk(&caller, harness, Leaving::Account))
+            {
+                Some(Some(mut request)) => {
                     choice::hold_unproved(&mut request, unproved(pass), pass.now);
                     walk_successor(&caller, &request, pass, out)
                 }
-                (None, _) => Found::None("harness-unrecorded".to_owned()),
-                (_, None) => Found::None("account-unrecorded".to_owned()),
+                None => Found::None("harness-unrecorded".to_owned()),
+                Some(None) => Found::None("account-unrecorded".to_owned()),
             };
             (TransferCause::Walled, record.account.clone(), found)
         }

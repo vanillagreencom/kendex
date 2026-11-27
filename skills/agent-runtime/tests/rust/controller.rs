@@ -6,12 +6,15 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+#[path = "account_planters.rs"]
+mod account_planters;
 #[path = "isolation.rs"]
 mod isolation;
+use account_planters::{account_fixtures, plant_listing};
 use isolation::*;
 
 const FLEET: &str = include_str!("fixtures/workflow-state-oversee.json");
@@ -1384,4 +1387,533 @@ fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
     let (key, _) = refusal(&resume());
     assert_eq!(key, "harness-unnamed");
     assert_eq!(world.log("tmux.log"), "");
+}
+
+/// The epoch second this row reads its accounts and episodes against.
+fn epoch_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// A local account `alias` on `harness` as the listing reads it, `used`
+/// percent through its weekly window, which binds; that window resets at
+/// `resets`, or states no reset where `None`.
+fn account(alias: &str, harness: &str, used: u64, resets: Option<u64>, now: u64) -> Value {
+    let weekly = resets.map(agent_runtime::clock::iso_utc);
+    json!({
+        "alias": alias, "harness": harness, "config_dir": format!("/home/me/.{alias}"),
+        "measured_through": "local", "status": "ok",
+        "verdict": if used < 95 { "room" } else { "walled" },
+        "headroom_pct": 100 - used, "binding_bucket": "weekly", "binding_resets_at": weekly,
+        "wall": used, "session_5h_pct": 5, "weekly_pct": used, "monthly_pct": null,
+        "model_buckets": [],
+        "resets": {"session": agent_runtime::clock::iso_utc(now + 3600), "weekly": weekly,
+                   "model": null, "monthly": null},
+        "usage_rate_state": "one-sample", "usage_age_s": 0, "claims": 0, "pool": "plan"
+    })
+}
+
+/// `controller successor --stop` answers Jarvis's stop decision through
+/// `stop::action`, one row per action, over a controller on Claude account
+/// `a1` and accounts planted as the listing reads them, the preference a
+/// Claude entry then a Codex one. A provider stop inside the patience
+/// resumes with no walk run; past it, room on another provider moves it to
+/// a pending on no entry of the caller's provider, and no room, a walk that
+/// refuses, succession off or a record naming no account resumes it. A
+/// limit or an ended sign-in with room moves it off the stopped account,
+/// the sign-in telling the owner's channel; a limit with no room waits for
+/// its own account's reset, or with none or nothing measuring that account
+/// notifies, and decides nothing where the walk left an entry unread or
+/// the judge could not read its own account: a usage or keyring read that
+/// failed, on Claude or Copilot, or an account the judge gave no answer
+/// for. Each answer names the episode start that stands and writes
+/// nothing; an exited harness is refused.
+#[test]
+fn a_stop_answers_the_one_action_jarvis_takes_with_its_successor_or_reset() {
+    const MINUTE: u64 = 60;
+    const PREFERENCE: &str = "claude:standard:high,codex:gpt-6.1-sol:high";
+    let now = epoch_now();
+    let reset = now + 40 * 3600;
+    let own = |used| account("a1", "claude", used, Some(reset), now);
+    let other_claude = account("a2", "claude", 20, Some(reset), now);
+    let walled_claude = account("a2", "claude", 99, Some(reset), now);
+    let codex = |used| account("c1", "codex", used, Some(reset), now);
+    // The own account on `harness` read with no figure, under `status`: a
+    // 5xx (`unreachable`), a 429 whose last figure is older than the five
+    // hours a refusal answers from (`rate_limited`), or a fresh answer
+    // carrying no window (`no_usage_data`).
+    let figureless = |harness: &str, status: &str| {
+        let mut row = account("a1", harness, 99, Some(reset), now);
+        let age = if status == "rate_limited" {
+            6 * 3600
+        } else {
+            0
+        };
+        for (key, value) in [
+            ("status", json!(status)),
+            ("verdict", json!("unmeasured")),
+            ("headroom_pct", Value::Null),
+            ("wall", Value::Null),
+            ("weekly_pct", Value::Null),
+            ("session_5h_pct", Value::Null),
+            ("usage_age_s", json!(age)),
+        ] {
+            row[key] = value;
+        }
+        row
+    };
+    let copilot = vec![("harness", json!("copilot")), ("model", json!("gpt-5"))];
+    /// What a row answers: the action, the successor's harness and account
+    /// (alias), the reset, and the key of the walk's refusal a provider
+    /// stop resumes past; or the verb's refusal with one field it names.
+    enum Answer {
+        Action {
+            action: Value,
+            moved: Option<(&'static str, &'static str)>,
+            reset: Option<u64>,
+            walk_refused: Option<&'static str>,
+        },
+        /// The verb's refusal and one field it names, if any is
+        /// asserted.
+        Refused {
+            key: &'static str,
+            field: Option<(&'static str, &'static str)>,
+        },
+    }
+    let act = |action: Value, moved, reset| Answer::Action {
+        action,
+        moved,
+        reset,
+        walk_refused: None,
+    };
+    struct Row {
+        case: &'static str,
+        kind: &'static str,
+        /// The episode recorded: the age of its start and of its latest
+        /// failure.
+        episode: Option<(u64, u64)>,
+        accounts: Vec<Value>,
+        /// The settings beside the preference, and the preference.
+        env: Vec<(&'static str, &'static str)>,
+        /// Whether the record names the controller's account.
+        account: bool,
+        /// The controller's recorded fields beside its account and home.
+        controller: Vec<(&'static str, Value)>,
+        /// Whether a walk may run.
+        walks: bool,
+        /// Files written under the root after the accounts are planted,
+        /// each executable under `bin/`.
+        files: Vec<(&'static str, &'static str)>,
+        answer: Answer,
+    }
+    let row = |case, kind, episode, accounts, answer| Row {
+        case,
+        kind,
+        episode,
+        accounts,
+        env: vec![("AGENT_RUNTIME_CONTROLLER_PREFERENCE", PREFERENCE)],
+        account: true,
+        controller: Vec::new(),
+        walks: true,
+        files: Vec::new(),
+        answer,
+    };
+    let past = Some((31 * MINUTE, MINUTE));
+    let rows: Vec<Row> = vec![
+        Row {
+            walks: false,
+            ..row(
+                "provider inside the patience",
+                "provider",
+                Some((5 * MINUTE, MINUTE)),
+                vec![own(20), codex(20)],
+                act(json!({"action": "resume"}), None, None),
+            )
+        },
+        row(
+            "provider past the patience, another provider with room",
+            "provider",
+            past,
+            vec![own(20), other_claude.clone(), codex(20)],
+            act(
+                json!({"action": "move-provider"}),
+                Some(("codex", "c1")),
+                None,
+            ),
+        ),
+        row(
+            "provider past the patience, no other provider with room",
+            "provider",
+            past,
+            vec![own(20), other_claude.clone(), codex(99)],
+            act(json!({"action": "resume"}), None, None),
+        ),
+        // The default preference's Codex class runs the native default,
+        // which names no model to judge, so the walk judged none.
+        Row {
+            env: vec![(
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+                "claude:standard:high,codex:standard:high",
+            )],
+            ..row(
+                "provider past the patience, the walk refused",
+                "provider",
+                past,
+                vec![own(20), other_claude.clone(), codex(20)],
+                Answer::Action {
+                    action: json!({"action": "resume"}),
+                    moved: None,
+                    reset: None,
+                    walk_refused: Some("account-unjudged"),
+                },
+            )
+        },
+        Row {
+            env: vec![
+                ("AGENT_RUNTIME_CONTROLLER_PREFERENCE", PREFERENCE),
+                ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off"),
+            ],
+            walks: false,
+            ..row(
+                "provider past the patience, succession off",
+                "provider",
+                past,
+                vec![own(20), other_claude.clone(), codex(20)],
+                act(json!({"action": "resume"}), None, None),
+            )
+        },
+        Row {
+            account: false,
+            walks: false,
+            ..row(
+                "provider past the patience, no account recorded",
+                "provider",
+                past,
+                vec![own(20), other_claude.clone(), codex(20)],
+                act(json!({"action": "resume"}), None, None),
+            )
+        },
+        row(
+            "usage limit, another account with room",
+            "usage",
+            None,
+            vec![own(99), other_claude.clone(), codex(99)],
+            act(
+                json!({"action": "move-account", "tell": null}),
+                Some(("claude", "a2")),
+                None,
+            ),
+        ),
+        row(
+            "ended sign-in, another account with room",
+            "auth",
+            None,
+            vec![own(20), other_claude.clone(), codex(99)],
+            act(
+                json!({"action": "move-account", "tell": "channel"}),
+                Some(("claude", "a2")),
+                None,
+            ),
+        ),
+        row(
+            "usage limit, no room, its reset known",
+            "usage",
+            None,
+            vec![own(99), codex(99)],
+            act(json!({"action": "wait-for-reset"}), None, Some(reset)),
+        ),
+        row(
+            "usage limit, no room, no reset",
+            "usage",
+            None,
+            vec![account("a1", "claude", 99, None, now), codex(99)],
+            act(json!({"action": "notify", "to": "channel"}), None, None),
+        ),
+        // A Pi controller on its Claude seat: nothing measures the Copilot
+        // pool its second entry spends, so the walk cannot read that entry.
+        Row {
+            env: vec![(
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+                "pi:pi-claude/opus:high,pi:github-copilot/gpt-5:high",
+            )],
+            controller: vec![("harness", json!("pi")), ("model", json!("pi-claude/opus"))],
+            ..row(
+                "usage limit, no room, an entry unread",
+                "usage",
+                None,
+                vec![own(99), walled_claude.clone()],
+                Answer::Refused {
+                    key: "walk-unread",
+                    field: Some(("entries", "pi:github-copilot/gpt-5:high")),
+                },
+            )
+        },
+        row(
+            "usage limit, no room, its own usage query answered a 5xx",
+            "usage",
+            None,
+            vec![
+                figureless("claude", "unreachable"),
+                walled_claude.clone(),
+                codex(99),
+            ],
+            Answer::Refused {
+                key: "account-unread",
+                field: Some(("status", "unreachable")),
+            },
+        ),
+        row(
+            "usage limit, no room, nothing measures its own account",
+            "usage",
+            None,
+            vec![
+                figureless("claude", "no_usage_data"),
+                walled_claude.clone(),
+                codex(99),
+            ],
+            act(json!({"action": "notify", "to": "channel"}), None, None),
+        ),
+        // The listing cannot read an account below a file, so the judge
+        // gives no answer for it; under succession off no walk reads it
+        // first.
+        Row {
+            env: vec![
+                ("AGENT_RUNTIME_CONTROLLER_PREFERENCE", PREFERENCE),
+                ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off"),
+            ],
+            controller: vec![("account", json!("{root}/home/.a2/.credentials.json/a1"))],
+            walks: false,
+            ..row(
+                "usage limit, no room, the judge gave no answer for its own account",
+                "usage",
+                None,
+                vec![walled_claude.clone(), codex(99)],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: None,
+                },
+            )
+        },
+        Row {
+            controller: copilot.clone(),
+            ..row(
+                "usage limit, no room, its own Copilot usage query answered a 5xx",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "unreachable"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "unreachable")),
+                },
+            )
+        },
+        Row {
+            controller: copilot.clone(),
+            ..row(
+                "usage limit, no room, its own Copilot usage query answered a 429",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "rate_limited"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "rate_limited")),
+                },
+            )
+        },
+        // A keyring login whose search fails, no pool stated for it.
+        Row {
+            controller: copilot.clone(),
+            files: vec![
+                (
+                    "home/.a1/config.json",
+                    r#"{"lastLoggedInUser": {"host": "https://github.com", "login": "probe"}}"#,
+                ),
+                (
+                    "bin/secret-tool",
+                    "#!/bin/sh\necho 'secret-tool: The name is not activatable' >&2\nexit 1\n",
+                ),
+            ],
+            ..row(
+                "usage limit, no room, its own Copilot keyring read failed",
+                "usage",
+                None,
+                vec![
+                    figureless("copilot", "unreachable"),
+                    walled_claude.clone(),
+                    codex(99),
+                ],
+                Answer::Refused {
+                    key: "account-unread",
+                    field: Some(("status", "error")),
+                },
+            )
+        },
+    ];
+    for row in rows {
+        let case = row.case;
+        let world = World::new();
+        for (name, fixture) in [
+            ("bin/curl", "usage-curl/curl"),
+            ("bin/kendex", "kendex-launch/kendex"),
+        ] {
+            std::os::unix::fs::symlink(account_fixtures().join(fixture), world.root().join(name))
+                .unwrap();
+        }
+        let planted = plant_listing(world.root(), world.root(), &row.accounts, now);
+        let dir = |alias: &str| {
+            world
+                .root()
+                .join("home")
+                .join(format!(".{alias}"))
+                .display()
+                .to_string()
+        };
+        let mut doc: Value = serde_json::from_str(FLEET).unwrap();
+        doc["controller"]["account"] = json!(dir("a1"));
+        doc["controller"]["home"] = json!(dir("a1"));
+        if !row.account {
+            doc["controller"].as_object_mut().unwrap().remove("account");
+        }
+        for (key, value) in &row.controller {
+            doc["controller"][*key] = match value.as_str() {
+                Some(text) => json!(text.replace("{root}", &world.root().display().to_string())),
+                None => value.clone(),
+            };
+        }
+        for (path, text) in &row.files {
+            let path = world.root().join(path);
+            if path.starts_with(world.root().join("bin")) {
+                write_executable(&path, text);
+            } else {
+                std::fs::write(&path, text).unwrap();
+            }
+        }
+        // A recorded bypass crosses to another harness's entry.
+        doc["controller"]["permission"] = json!("bypass");
+        let record = world.root().join("workflow-state-oversee.json");
+        world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+        let written = std::fs::read(&record).unwrap();
+        let mut words = args(&["successor"], &record, None);
+        words.extend(
+            [
+                "--cwd",
+                &world.root().display().to_string(),
+                "--predecessor",
+                "%7",
+                "--stop",
+                row.kind,
+            ]
+            .map(str::to_owned),
+        );
+        if let Some((since, last)) = row.episode {
+            words.extend([
+                "--since".to_owned(),
+                (now - since).to_string(),
+                "--last".to_owned(),
+                (now - last).to_string(),
+            ]);
+        }
+        let fixtures = world.root().join("fixtures").display().to_string();
+        let mut pairs: Vec<(&str, &str)> = planted
+            .env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        pairs.extend([
+            ("USAGE_FIXTURE_DIR", fixtures.as_str()),
+            ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "0"),
+        ]);
+        pairs.extend(row.env.iter().copied());
+        let out = world.controller(world.root(), &words, &pairs);
+        match row.answer {
+            Answer::Action {
+                action,
+                moved,
+                reset,
+                walk_refused,
+            } => {
+                assert!(
+                    out.status.success(),
+                    "{case}: {}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+                let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+                let result = &reply["result"];
+                assert_eq!(result["action"], action, "{case}: {result}");
+                assert_eq!(
+                    result["successor"].as_object().map(|pending| (
+                        pending["harness"].as_str().unwrap_or_default().to_owned(),
+                        pending["account"].as_str().unwrap_or_default().to_owned()
+                    )),
+                    moved.map(|(harness, alias)| (harness.to_owned(), dir(alias))),
+                    "{case}: {result}"
+                );
+                assert_eq!(result["reset"].as_u64(), reset, "{case}: {result}");
+                assert_eq!(
+                    result["walk_refused"]["key"].as_str(),
+                    walk_refused,
+                    "{case}: {result}"
+                );
+                let since = row
+                    .episode
+                    .map_or(result["episode"]["last"].as_u64().unwrap(), |(since, _)| {
+                        now - since
+                    });
+                assert_eq!(result["episode"]["since"], since, "{case}: {result}");
+            }
+            Answer::Refused { key, field } => {
+                assert!(
+                    !out.status.success(),
+                    "{case}: {}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+                let (refused, fields) = refusal(&out);
+                assert_eq!(refused, key, "{case}: {fields}");
+                assert!(
+                    field.is_none_or(|field| fields
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|pair| *pair == json!([field.0, field.1]))),
+                    "{case}: {fields}"
+                );
+            }
+        }
+        // A walk classifies the preference's Claude class word through
+        // `kendex tier-model`.
+        if !row.walks {
+            assert!(
+                !world.root().join("bin/kendex.log").exists(),
+                "{case}: a walk ran"
+            );
+        }
+        assert_eq!(std::fs::read(&record).unwrap(), written, "{case}: written");
+    }
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    world.record(&record, FLEET);
+    let mut words = args(&["successor"], &record, None);
+    words.extend(
+        [
+            "--cwd",
+            &world.root().display().to_string(),
+            "--predecessor",
+            "%7",
+            "--stop",
+            "exited",
+        ]
+        .map(str::to_owned),
+    );
+    let (key, fields) = refusal(&world.controller(world.root(), &words, &[]));
+    assert_eq!(key, "stop-kind-unjudged", "{fields}");
 }

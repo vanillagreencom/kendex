@@ -232,6 +232,9 @@ pub struct AccountRead {
     /// The minutes to the wall at the measured rate, counted from the
     /// sample's instant.
     pub projected: Option<u64>,
+    /// The listing's status for the account, empty where the judge held
+    /// no record of it.
+    pub status: String,
 }
 
 impl AccountRead {
@@ -291,8 +294,11 @@ fn read_account(
 ) -> AccountRead {
     let record = judged.record();
     let headroom = whole_pct(&record, "wall").map(|wall| 100 - wall);
+    // A room answer with no wall, and an unmeasured one whose usage read
+    // failed, lack a figure nobody read: neither says nothing measures it.
     let state = match (answer, headroom) {
         (AccountState::HasRoom | AccountState::AtTrigger, None) => AccountState::Unreadable,
+        (AccountState::Unmeasured, _) if judged.row.usage_read_failed() => AccountState::Unreadable,
         (state, _) => state,
     };
     let projected = (record_text(&record, "usage_rate_state") == "measured")
@@ -312,6 +318,7 @@ fn read_account(
         reserve_only: at_trigger && crate::accounts::credit_room(&judged.row, 0.0),
         rate_state: record_text(&record, "usage_rate_state"),
         projected,
+        status: record_text(&record, "status"),
     }
 }
 
@@ -325,6 +332,7 @@ fn unmeasured_account() -> AccountRead {
         reserve_only: false,
         rate_state: String::new(),
         projected: None,
+        status: String::new(),
     }
 }
 
