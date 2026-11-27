@@ -36,7 +36,7 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision.
 1. Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. That one team is the scope of § 1.4 placement and the § 2 comparison, and roadmap-create files into it.
 2. Pass `--team` on every comparison `issues list` to filter on the server.
 3. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison.
-4. The removal scope is `TEAM`, plus each `TEAMS` entry that is not `TEAM` when `REMOVED_TERMS[]` is nonempty. Resolve each added entry with `.agents/skills/linear/scripts/linear.sh teams get [ENTRY]` and keep its `name` and `key`. Halt when one resolves none. Only § 2.1 reads an added team's rows.
+4. The removal scope starts as `TEAM`. When `REMOVED_TERMS[]` is nonempty, resolve each `TEAMS` entry with `.agents/skills/linear/scripts/linear.sh teams get [ENTRY]` first, and halt when one resolves none. Add its `name` and `key` only when that `key` differs from `TEAM_PREFIX` and from every key already in the removal scope. Only § 2.1 reads an added team's rows.
 
 - § 2 proposes changes only to active rows. Closed rows remain historical comparison evidence per tpm-audit § 1.1.
 - roadmap-create executes the recommendations.

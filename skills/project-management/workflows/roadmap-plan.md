@@ -203,7 +203,8 @@ Report as JSON:
 - Render `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer`.
 - Render every `cross_project_findings.conflicts[]` entry in the Conflicts table.
 - Render each `removal_review[]` team as one OPEN ITEMS CHECKED row, and each of its `cancel` and `rewrite` items under EXISTING WORK AFFECTED. Its `keep` items stay in the plan JSON.
-- Render each issue once under EXISTING WORK AFFECTED. A removal item whose row a `cross_project_findings` action also names takes that action's row, with both reasons folded into one Why.
+- A removal item whose row a `cross_project_findings` cancel, supersede or expand also names takes that action's row, with both reasons folded into one Why, so that issue renders once under EXISTING WORK AFFECTED.
+- A row a descope finding names keeps its removal action as its own EXISTING WORK AFFECTED row.
 
 <output_format>
 
