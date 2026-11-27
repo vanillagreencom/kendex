@@ -102,6 +102,9 @@ VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 NPM_CI_SCRIPTS = ("preinstall", "install", "postinstall", "prepublish",
                   "preprepare", "prepare", "postprepare", "dependencies")
+# Vercel's compileVercelConfig and config/constants.ts enumerate these names.
+VERCEL_OTHER_CONFIGS = {"now.json", "vercel.toml", "vercel.ts", "vercel.mts",
+                        "vercel.js", "vercel.mjs", "vercel.cjs"}
 CHECKOUT = r"actions/checkout@[^\s]+"
 CHECKOUT_EVENT_REFS = {
     "merge_group": "github.sha",
@@ -1134,9 +1137,16 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                 readers.append(set())
                 covered.append(evidence.vitest_reads(directory, readers[-1]))
             elif args[0] in {"npm", "pnpm", "vercel"}:
-                if args[0] != "pnpm":
-                    require(not any(key.lower().startswith("npm_config_") or key in {"PATH", "ENV"}
-                                    for _, key, _ in inherited + step_words), "opaque-node-env")
+                env_keys = {key.upper() for _, key, _ in inherited + step_words}
+                node_override = any(key.startswith("NPM_CONFIG_") for key in env_keys) or bool(
+                    env_keys & {"PATH", "ENV"}
+                )
+                if args[0] == "vercel":
+                    require(opaque_action is None and not node_override and not any(
+                        key.startswith(("VERCEL_", "NOW_")) for key in env_keys
+                    ), "opaque-vercel-env")
+                elif args[0] == "npm":
+                    require_shape(not node_override, "opaque-node-env")
                 node_reads(evidence, args, directory, ordinary, visited)
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
@@ -1219,93 +1229,119 @@ def node_reads(evidence, args, directory, reads, visited):
     def literal_script(body):
         require(isinstance(body, str) and body.strip(), "opaque-node-script")
         for line in body.split("\n"):
-            command_words = words(line)
+            try:
+                command_words = words(line)
+            except ShapeUnreadable as error:
+                # A computed script can hide reads from every lane claim.
+                raise Unreadable(str(error)) from error
             if command_words:
                 evidence.shell_command(command_words, directory, reads, visited)
 
     def run_script(name):
-        require(name in scripts, "opaque-npm-script")
+        require_shape(name in scripts, "opaque-npm-script")
         script_reads(("pre" + name, name, "post" + name))
 
-    try:
-        manifest = json.loads(evidence.blob(manifest_path))
-        require(isinstance(manifest, dict), "opaque-npm-config")
+    def npm_json(path):
+        try:
+            value = json.loads(evidence.blob(path))
+        except json.JSONDecodeError as error:
+            raise ShapeUnreadable(f"opaque-npm-json path={path}") from error
+        require_shape(isinstance(value, dict), f"opaque-npm-json path={path}")
+        return value
+
+    def npm_scripts():
+        manifest = npm_json(manifest_path)
         scripts = manifest.get("scripts", {})
-        require(isinstance(scripts, dict) and "workspaces" not in manifest
-                and not any((parent / ".npmrc").as_posix() in evidence.files for parent in folders),
-                "opaque-npm-config")
+        require_shape(isinstance(scripts, dict) and "workspaces" not in manifest
+                      and not any((parent / ".npmrc").as_posix() in evidence.files for parent in folders),
+                      "opaque-npm-config")
         # npm can select a containing workspace instead of the current package.
         for parent in folder.parents:
             parent_manifest = (parent / "package.json").as_posix()
             if parent_manifest in evidence.files:
-                parent_package = json.loads(evidence.blob(parent_manifest))
-                require(isinstance(parent_package, dict) and "workspaces" not in parent_package,
-                        "opaque-npm-config")
-        if args == ["npm", "ci"]:
-            # npm ci runs lifecycle code from the root and installed packages.
-            # The v2/v3 lock identifies dependency install scripts and links.
-            # https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json
-            lock = next((folder / name for name in ("npm-shrinkwrap.json", "package-lock.json")
-                         if (folder / name).as_posix() in evidence.files), None)
-            require(lock, "opaque-npm-lock")
-            locked = json.loads(evidence.blob(lock.as_posix()))
-            require(isinstance(locked, dict) and locked.get("lockfileVersion") in (2, 3)
-                    and isinstance(locked.get("packages"), dict)
-                    and "" in locked["packages"], "opaque-npm-lock")
-            require(all(isinstance(entry, dict) and name.startswith("node_modules/") and not entry.get("link")
-                        and not entry.get("hasInstallScript")
-                        and isinstance(entry.get("resolved"), str) and entry["resolved"].startswith("https://")
-                        for name, entry in locked["packages"].items() if name), "opaque-npm-dependency")
-            binding = (folder / "binding.gyp").as_posix()
-            reads.add(binding)
-            require(binding not in evidence.files, "opaque-npm-binding")
-            script_reads(NPM_CI_SCRIPTS)
-        elif npm_run(args):
-            run_script(args[2])
-        elif args == ["vercel", "build"]:
+                require_shape("workspaces" not in npm_json(parent_manifest), "opaque-npm-config")
+        return scripts
+
+    if args[0] == "vercel":
+        require(args == ["vercel", "build"], "opaque-vercel-command")
+        try:
             build_words = vercel_build_words(evidence, folder, reads)
             if npm_run(build_words):
+                scripts = npm_scripts()
                 run_script(build_words[2])
             else:
+                require(build_words, "opaque-vercel-build")
                 evidence.shell_command(build_words, directory, reads, visited)
-        else:
-            raise Unreadable("opaque-shell-command")
-    except ShapeUnreadable as error:
-        # A lane's claims cannot stand in for an invoked script whose reads
-        # the job's literal command no longer exposes.
-        raise Unreadable(str(error)) from error
+        except ShapeUnreadable as error:
+            raise Unreadable(str(error)) from error
+        return
+
+    require_shape(args == ["npm", "ci"] or npm_run(args), "opaque-shell-command")
+    scripts = npm_scripts()
+    if args == ["npm", "ci"]:
+        # The v2/v3 lock identifies dependency install scripts and links.
+        # https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json
+        lock = next((folder / name for name in ("npm-shrinkwrap.json", "package-lock.json")
+                     if (folder / name).as_posix() in evidence.files), None)
+        require_shape(lock, "opaque-npm-lock")
+        locked = npm_json(lock.as_posix())
+        packages = locked.get("packages")
+        require_shape(locked.get("lockfileVersion") in (2, 3) and isinstance(packages, dict)
+                      and "" in packages, "opaque-npm-lock")
+        entries = {name: entry for name, entry in packages.items() if name}
+        require_shape(all(isinstance(entry, dict) and name.startswith("node_modules/") and not entry.get("link")
+                          and isinstance(entry.get("resolved"), str) and entry["resolved"].startswith("https://")
+                          for name, entry in entries.items()), "opaque-npm-dependency")
+        require(not any(entry.get("hasInstallScript") for entry in entries.values()), "opaque-npm-dependency")
+        binding = (folder / "binding.gyp").as_posix()
+        reads.add(binding)
+        require(binding not in evidence.files, "opaque-npm-binding")
+        script_reads(NPM_CI_SCRIPTS)
+    else:
+        run_script(args[2])
 
 
 def vercel_build_words(evidence, folder, reads):
-    # Vercel build can discover a project and pull its settings remotely.
-    # Only follow a local link with a checked-in static configuration.
-    # https://vercel.com/docs/cli/build
+    # vercel.json overrides the build settings but cannot bind the project
+    # root. The CLI's build command reads that root before applying its overrides.
+    # https://github.com/vercel/vercel/blob/main/packages/cli/src/util/projects/project-settings.ts
+    # https://github.com/vercel/vercel/blob/main/internals/cli-builder-integration/src/do-build.ts
     local = (folder / "vercel.json").as_posix()
     project = (folder / ".vercel/project.json").as_posix()
+    # Detect alternate config, server code and generated env before trusting a
+    # literal build command. build/index.ts loads .vercel/.env.<target>.local.
+    # The CLI walks the project even for a static preset, so its directory
+    # entries and packaged files are inputs too.
+    ancestors = {(parent / ".vercel").as_posix() for parent in folder.parents}
+    reads.update(name for name in evidence.changed if under(name, folder.as_posix())
+                 or any(under(name, root) for root in ancestors))
+    for path, mode in evidence.files.items():
+        require(not any(under(path, root) for root in ancestors), "opaque-vercel-discovery")
+        if not under(path, folder.as_posix()):
+            continue
+        relative = Path(path).relative_to(folder)
+        root = relative.parts[0]
+        require(mode not in LINK_MODES and root not in VERCEL_OTHER_CONFIGS | {"api", "middleware", "server"}
+                and not root.startswith((".env", "middleware.", "server."))
+                and (root != ".vercel" or path == project), "opaque-vercel-discovery")
     config = json.loads(evidence.blob(local))
     link = json.loads(evidence.blob(project))
     settings = link.get("settings") if isinstance(link, dict) else None
     require(isinstance(config, dict)
             and set(config) <= {"$schema", "framework", "installCommand", "buildCommand", "outputDirectory"}
             and "framework" in config and config["framework"] is None and config.get("installCommand") == ""
-            and isinstance(settings, dict) and settings and not settings.get("rootDirectory"),
+            and isinstance(settings, dict) and "rootDirectory" in settings
+            and settings["rootDirectory"] in (None, ".") and not settings.get("vercelFlags")
+            and all(isinstance(link.get(key), str) and link[key] for key in ("projectId", "orgId")),
             "opaque-vercel-config")
-    output = config.get("outputDirectory", "public")
-    require(isinstance(output, str) and literal(output), "opaque-vercel-config")
+    output = config.get("outputDirectory")
+    require(isinstance(output, str) and literal(output) and not output.startswith("-"), "opaque-vercel-config")
+    resolved, passed = evidence.resolve(folder.as_posix(), output)
+    require(under(resolved, folder.as_posix()), "opaque-vercel-config")
+    reads.update(passed)
     command_text = config.get("buildCommand")
     require(isinstance(command_text, str) and "\n" not in command_text and command_text.strip(),
             "opaque-vercel-build")
-    fixed = {"vercel.json", "vercel.ts", "vercel.js", "now.json", ".gitignore", ".vercelignore",
-             ".vercel", "api", "public", "middleware", "server"}
-    paths = {(folder / name).as_posix() for name in fixed}
-    resolved, passed = evidence.resolve(folder.as_posix(), output)
-    reads.update(paths | {resolved} | passed)
-    reads.update(name for name in evidence.changed if any(under(name, root) for root in paths | {resolved})
-                 or (Path(name).parent == folder and Path(name).name.startswith((".env", "middleware.", "server."))))
-    require(not any(
-        Path(name).parent == folder and Path(name).name.startswith(("middleware.", "server.", ".env"))
-        or any(under(name, (folder / root).as_posix()) for root in ("api", "vercel.ts", "vercel.js", "now.json"))
-        for name in evidence.files), "opaque-vercel-discovery")
     return words(command_text)
 
 
