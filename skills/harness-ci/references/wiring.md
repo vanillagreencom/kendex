@@ -218,7 +218,7 @@ Two rules, both about a check that never appears.
           --skippable test --skippable build
 ```
 
-Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that a true verdict did not authorize.
+Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that neither a stood-down verdict nor, for an `--only-on` job, a run of another event authorized.
 
 - Run `aggregate-needs` from the default branch on every event, including `pull_request`, `merge_group` and an adopted `push` trigger. A missing default-branch helper fails `CI` with one `::error::` line naming its path.
 - Keep the trusted checkout unconditional. A pull request must not change the helper that judges its own skipped jobs.
@@ -319,7 +319,7 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
 - Publish `change_class` as the job output in place of `harness_only`.
 - Feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`.
 
-`aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
+`aggregate-needs` keeps its rule unchanged: a skipped `--skippable` job is accepted only against the class that authorized it.
 
 ### Through the composite action
 
@@ -388,7 +388,7 @@ The producer reads the event's base workflow. Push derivation needs runner proof
 
 An ordinary lane job that runs on one event only joins a literal event test after the status function: `${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}`. The event test limits the events the job runs on and does not change the verdict the reader derives for the lane. The repository-wide scan gate below takes no extra event test. A gate that drops the `result != 'success'` fallback, or a scan gate with an event test, leaves the roster unreadable with `cause=unsupported-lane-gate`.
 
-On every other event the job skips while its verdict can read `true`, as it always does on `schedule` and `workflow_dispatch`. Pass `--only-on JOB=EVENT` to `aggregate-needs` beside the job's `--lane`, naming the event its test names. The aggregate reads the run's event from `GITHUB_EVENT_NAME` and accepts the job's skip on every other event. On the named event a skip passes only where `lanes` or the lane's own verdict reads `false`, as for any lane; the `lanes` bullets in [§ Through the composite action](#through-the-composite-action) say where `lanes` reads `false`. A lane job takes one `--only-on`, and a job with no `--lane` takes none. An `--only-on` that names another event than the job's test fails `CI` on the run of that event, and one left out fails it on every other event.
+On every other event the job skips while its verdict can read `true`, as it always does on `schedule` and `workflow_dispatch`. Pass `--only-on JOB=EVENT` to `aggregate-needs` beside the job's `--lane`, naming the event its test names. The aggregate reads the run's event from `GITHUB_EVENT_NAME` and accepts the job's skip on every other event. On the named event a skip passes only where `lanes` or the lane's own verdict reads `false`, as for any lane; the `lanes` bullets in [§ Through the composite action](#through-the-composite-action) say where `lanes` reads `false`. A lane job takes one `--only-on`, and a job with no `--lane` takes none. An `--only-on` that names another event than the job's test fails `CI` only on a run of the event it names where `lanes` and the lane's verdict read `true`, and never where the workflow does not run on that event. One left out fails `CI` on each other event where neither `lanes` nor the verdict stands the job down, which is every run on `schedule` and `workflow_dispatch`.
 
 Map the job's `lanes` output directly from the classifier. To narrow it with a Boolean step output, use `${{ steps.markdown.outputs.markdown_only == 'true' && 'false' || steps.classify.outputs.lanes }}`. Use the IDs and output names from your workflow.
 

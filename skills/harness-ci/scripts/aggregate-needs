@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# aggregate-needs — accept successful jobs and classifier-authorized skips.
+# aggregate-needs — accept successful jobs and the skips a verdict or the run's
+# event authorized.
 #
 # Usage:
 #   aggregate-needs --results JSON --classifier JOB
@@ -43,7 +44,7 @@ Usage: aggregate-needs --results JSON --classifier JOB
                        [--waiver true|false --skippable JOB [--skippable JOB...]]
                        [--lane JOB=LANE... [--only-on JOB=EVENT...]]
 
-Accepts successful jobs and classifier-authorized skips from toJSON(needs):
+Accepts successful jobs and authorized skips from toJSON(needs):
 a --skippable job where --waiver is true, a --lane job where the classifier
 job's output lane_<LANE> is false, and an --only-on job on any event but
 EVENT, read from GITHUB_EVENT_NAME.
@@ -158,7 +159,8 @@ if ! printf '%s\n' "$results" | jq -e '
 fi
 
 # One line per job not accepted: the classifier unless it succeeded, then
-# every other job neither successful nor a skip a verdict authorized.
+# every other job neither successful nor a skip the waiver, a verdict or the
+# run's event authorized.
 unaccepted="$(printf '%s\n' "$results" | jq -r \
   --arg classifier "$classifier" \
   --arg waiver "$waiver" \
