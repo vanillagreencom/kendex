@@ -1137,12 +1137,12 @@ fn the_recorded_witnesses_keep_their_verdicts() {
             defect: "a lagging aggregate judged settled on the approved run's green jobs alone",
             fixture: "stale-preapproval-status-lag",
             required_only: false,
-            status: "pending",
-            verdict: None,
-            cause: Some("checks-pending"),
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
             checks: vec![
                 row("Build", "check-run", "success", "pass"),
-                row("CI Required", "commit-status", "expected", "pending"),
+                row("CI Required", "commit-status", "failure", "fail"),
             ],
         },
         Witness {
@@ -4027,77 +4027,116 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
     }
 }
 
-/// A required run-level aggregate status keeps every run of its
-/// publisher's workflow, so under `verify-pr` its failure on an older run
-/// is held `expected` behind a newer green run of the workflow while that
-/// run publishes its own, whatever the newer run's event. The recorded
-/// `newer-sibling-active` witness's `CI Required` targets its run and is
-/// published by `pull_request_review_comment` runs. The newer run's `build`
-/// counts for no required context and is reported as a non-required line.
+/// A required run-level aggregate keeps every run of its publisher's
+/// workflow, so under `verify-pr` its failure on an older run is held
+/// `expected` behind a newer green run of the workflow while that run
+/// publishes its own, whatever the newer run's event. A commit status is
+/// held only while that run is in flight: once it has concluded without
+/// publishing the status, the failure is GitHub's latest status for the
+/// context and fails. A check aggregate (a check of no Actions suite
+/// linking the run) stays held, since a newer green run replaces a failed
+/// check. The recorded `newer-sibling-active` witness's `CI Required`
+/// targets its run and is published by `pull_request_review_comment` runs.
+/// The newer run's `build` counts for no required context and is reported
+/// as a non-required line.
 #[test]
-fn a_required_aggregate_is_held_behind_a_newer_green_run_of_any_event() {
+fn a_required_aggregate_is_held_behind_a_newer_green_run_of_any_event_while_it_can_publish() {
+    // (newer run in flight, the aggregate is a check, answer)
+    let cases: [(bool, bool, &str); 3] = [
+        (true, false, "held"),
+        (false, false, "fail"),
+        (false, true, "held"),
+    ];
     for event in ["pull_request_review_comment", "workflow_dispatch"] {
-        let jobs = vec![
-            check_run_in(Some(700), 9, json!("build"), "completed", json!("success")),
-            with(
-                check_run_in(Some(701), 10, json!("build"), "completed", json!("success")),
-                "started_at",
-                json!("2026-01-29T15:21:00Z"),
-            ),
-        ];
-        let executions = vec![
-            with(
-                run(700, HEAD, "completed", json!("failure")),
-                "event",
-                json!("pull_request"),
-            ),
-            with(
-                execution(
-                    701,
-                    1,
-                    "2026-01-29T15:20:00Z",
-                    HEAD,
-                    "completed",
-                    json!("success"),
+        for (in_flight, as_check, answer) in cases {
+            let name = format!("{event}, in flight {in_flight}, check {as_check}");
+            let mut jobs = vec![
+                check_run_in(Some(700), 9, json!("build"), "completed", json!("success")),
+                with(
+                    check_run_in(Some(701), 10, json!("build"), "completed", json!("success")),
+                    "started_at",
+                    json!("2026-01-29T15:21:00Z"),
                 ),
-                "event",
-                json!(event),
-            ),
-        ];
-        let aggregate = with(
-            status("CI Required", "failure"),
-            "target_url",
-            json!(format!("https://github.com/{REPO}/actions/runs/700")),
-        );
-        let mut gh = Github::green();
-        gh.pull(PR, HEAD, BASE, "OPEN")
-            .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
-            .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
-            .answer(&check_runs(HEAD, 1), check_runs_page(2, jobs))
-            .answer(&statuses(HEAD, 1), statuses_page(vec![aggregate]))
-            .answer(&runs(HEAD, 1), runs_page(executions))
-            .answer(
-                &rules(1),
-                json!([status_checks_rule(&["CI Required", "build"])]),
-            );
-        let result = ok_result(&gh.verify_pr(PR, true));
-        assert_eq!(result["status"], "pending", "{event}: {result}");
-        assert_eq!(key(&result), "checks-pending", "{event}: {result}");
-        assert_eq!(
-            checks(&result),
-            vec![
-                row("CI Required", "commit-status", "expected", "pending"),
-                row("build", "check-run", "success", "pass"),
-            ],
-            "{event}: {result}"
-        );
-        assert_eq!(
-            non_required(&result),
-            vec![row("build", "check-run", "success", "pass")],
-            "{event}: {result}"
-        );
-        assert!(gh.state().get("verification").is_none(), "{event}");
-        assert_pull_then_pinned(&gh.log(), PR, HEAD);
+            ];
+            let (run_status, conclusion) = if in_flight {
+                ("in_progress", Value::Null)
+            } else {
+                ("completed", json!("success"))
+            };
+            let executions = vec![
+                with(
+                    run(700, HEAD, "completed", json!("failure")),
+                    "event",
+                    json!("pull_request"),
+                ),
+                with(
+                    execution(701, 1, "2026-01-29T15:20:00Z", HEAD, run_status, conclusion),
+                    "event",
+                    json!(event),
+                ),
+            ];
+            let run_700 = json!(format!("https://github.com/{REPO}/actions/runs/700"));
+            let (statuses_listed, source) = if as_check {
+                jobs.push(with(
+                    check_run_in(
+                        None,
+                        11,
+                        json!("CI Required"),
+                        "completed",
+                        json!("failure"),
+                    ),
+                    "details_url",
+                    run_700,
+                ));
+                (vec![], "check-run")
+            } else {
+                (
+                    vec![with(
+                        status("CI Required", "failure"),
+                        "target_url",
+                        run_700,
+                    )],
+                    "commit-status",
+                )
+            };
+            let mut gh = Github::green();
+            gh.pull(PR, HEAD, BASE, "OPEN")
+                .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
+                .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
+                .answer(&check_runs(HEAD, 1), check_runs_page(jobs.len(), jobs))
+                .answer(&statuses(HEAD, 1), statuses_page(statuses_listed))
+                .answer(&runs(HEAD, 1), runs_page(executions))
+                .answer(
+                    &rules(1),
+                    json!([status_checks_rule(&["CI Required", "build"])]),
+                );
+            let result = ok_result(&gh.verify_pr(PR, true));
+            let build = row("build", "check-run", "success", "pass");
+            if answer == "held" {
+                assert_eq!(result["status"], "pending", "{name}: {result}");
+                assert_eq!(key(&result), "checks-pending", "{name}: {result}");
+                assert_eq!(
+                    checks(&result),
+                    vec![
+                        row("CI Required", source, "expected", "pending"),
+                        build.clone()
+                    ],
+                    "{name}: {result}"
+                );
+                assert!(gh.state().get("verification").is_none(), "{name}");
+            } else {
+                assert_eq!(result["status"], "complete", "{name}: {result}");
+                assert_eq!(result["verdict"], "fail", "{name}: {result}");
+                assert_eq!(
+                    checks(&result),
+                    vec![row("CI Required", source, "failure", "fail"), build.clone()],
+                    "{name}: {result}"
+                );
+                assert_eq!(gh.state()["verification"]["verdict"], "fail", "{name}");
+            }
+            assert_eq!(non_required(&result), vec![build], "{name}: {result}");
+            assert_pull_then_pinned(&gh.log(), PR, HEAD);
+        }
     }
 }
 
@@ -4131,6 +4170,9 @@ fn a_required_status_is_held_while_a_run_of_its_publisher_is_active() {
 /// that run's workflow and state, its one job, and the answer.
 struct FailedStatusRow {
     name: &'static str,
+    /// `lint`'s target: run 800 itself (a run-level aggregate) or the job
+    /// of it that published the status.
+    run_level: bool,
     later_workflow: u64,
     later_status: &'static str,
     later_conclusion: Value,
@@ -4146,14 +4188,31 @@ struct FailedStatusRow {
 /// green dispatch of the publisher's workflow whose publishing job was
 /// skipped leaves the failure failed. A run in flight of another workflow
 /// will publish nothing for the context either, so it holds no settled
-/// failure pending. `lint` targets the job of run 800 (`Lint`) that
-/// published it; `CI` passes on the pull request's run 700.
+/// failure pending. `lint` targets run 800 (`Lint`) or the job of it that
+/// published it; `CI` passes on the pull request's run 700. The later run
+/// also runs a green `test`, so it is substantive and, in the publisher's
+/// workflow, ranks above run 800.
 #[test]
 fn a_failed_required_status_stands_until_its_context_reports_again() {
     const LINT_WORKFLOW_ID: u64 = REQUIRED_WORKFLOW_ID;
     let rows = [
         FailedStatusRow {
             name: "a green dispatch of the publisher's workflow that skipped the publishing job",
+            run_level: false,
+            later_workflow: LINT_WORKFLOW_ID,
+            later_status: "completed",
+            later_conclusion: json!("success"),
+            later_job: "publish",
+            later_job_conclusion: json!("skipped"),
+            checks: vec![
+                row("CI", "check-run", "success", "pass"),
+                row("lint", "commit-status", "failure", "fail"),
+            ],
+            non_required: vec![],
+        },
+        FailedStatusRow {
+            name: "the same dispatch beside a run-level aggregate",
+            run_level: true,
             later_workflow: LINT_WORKFLOW_ID,
             later_status: "completed",
             later_conclusion: json!("success"),
@@ -4167,6 +4226,7 @@ fn a_failed_required_status_stands_until_its_context_reports_again() {
         },
         FailedStatusRow {
             name: "another workflow's dispatch in flight",
+            run_level: false,
             later_workflow: WORKFLOW_ID,
             later_status: "in_progress",
             later_conclusion: Value::Null,
@@ -4206,6 +4266,11 @@ fn a_failed_required_status_stands_until_its_context_reports_again() {
                 json!("success"),
             ),
             later_check,
+            with(
+                check_run_in(Some(801), 22, json!("test"), "completed", json!("success")),
+                "started_at",
+                json!(later_started),
+            ),
         ];
         let in_workflow = |run: Value, workflow: u64, event: &str| {
             with(
@@ -4241,13 +4306,17 @@ fn a_failed_required_status_stands_until_its_context_reports_again() {
         let lint = with(
             status("lint", "failure"),
             "target_url",
-            json!(format!("https://github.com/{REPO}/actions/runs/800/job/20")),
+            json!(if r.run_level {
+                format!("https://github.com/{REPO}/actions/runs/800")
+            } else {
+                format!("https://github.com/{REPO}/actions/runs/800/job/20")
+            }),
         );
         let mut gh = Github::green();
         gh.pull(PR, HEAD, BASE, "OPEN")
             .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
             .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
-            .answer(&check_runs(HEAD, 1), check_runs_page(3, jobs))
+            .answer(&check_runs(HEAD, 1), check_runs_page(4, jobs))
             .answer(&statuses(HEAD, 1), statuses_page(vec![lint]))
             .answer(&runs(HEAD, 1), runs_page(executions))
             .answer(&workflows(1), workflows_page(2, &["active", "active"]))
