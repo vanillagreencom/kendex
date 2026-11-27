@@ -32,8 +32,9 @@ export CONTROL_TRACE="$TMP/trace"
 : >"$CONTROL_TRACE"
 
 # A suite that writes its pid once it has started, then runs until a signal
-# ends it. The runner's cap would stop it too, so the cap sits past the
-# deadline below, and the acknowledgement it waits for is the TERM's.
+# ends it. The runner's fixed 60-second suite cap would stop it too, and sits
+# past the 10-second deadline below, so the acknowledgement it waits for is the
+# TERM's.
 root="$TMP/skill"
 marks="$TMP/marks"
 mkdir -p "$root/scripts" "$root/tests/controls" "$marks"
@@ -66,7 +67,7 @@ mark_time() { # FILE
     perl -MTime::HiRes=stat -e 'printf "%.6f\n", (stat $ARGV[0])[9]' "$1" 2>/dev/null || echo unread
 }
 
-CONTROL_TIMEOUT=20 bash "$root/tests/must-fail-controls.sh" >"$TMP/run.log" 2>&1 &
+bash "$root/tests/must-fail-controls.sh" >"$TMP/run.log" 2>&1 &
 runner=$!
 if ! wait_for test -s "$marks/started"; then
     kill -TERM "$runner" 2>/dev/null
