@@ -64,10 +64,10 @@
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
 //! admission. A record that holds its set now ([`holding`]) adds no path
-//! and meets no holder, the no-landing close that keeps it having met them
-//! ([`no_landing_held`]); any other record's set, or, where the record holds
-//! none, its item's Location paths, are the paths it adds, which meet the
-//! holders standing now as a running lane's added path does
+//! and meets no holder ([`no_landing_held`]); any other record's set, or,
+//! where the record holds none, its item's Location paths, are the paths it
+//! adds, which meet the holders standing now as a running lane's added path
+//! does
 //! ([`relaunch_held`]). A `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
@@ -867,10 +867,10 @@ fn holding(
 
 /// Whether a no-landing close keeps the record's set held: the close
 /// retires the attempt and keeps the item's work. The hold starts at the
-/// close's ask, whose judgement ([`no_landing_held`]) met the holders, and
-/// lasts through its outcome, since the record's status moves only then: an
-/// open close holds whatever the record's charge reads, so the repeat that
-/// settles it owes no second judgement. A failed or superseded close, and
+/// close's ask ([`no_landing_held`]) and lasts through its outcome, since
+/// the record's status moves only then: an open close holds whatever the
+/// record's charge reads, so the repeat that settles it owes no second
+/// judgement. A failed or superseded close, and
 /// an open full one, hold nothing of their own. Past those, the item's
 /// latest confirmed close holds on that ground while the record reads
 /// `stopped`, so a park ends the hold and a failed relaunch keeps it; a
