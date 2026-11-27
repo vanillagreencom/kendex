@@ -68,13 +68,9 @@ fixture() {
     if [ "$mode" = broken ]; then
         printf 'A=2\n' >"$root/scripts/a.sh"
     fi
-    if [ "$mode" = baseline-timeout ]; then
+    if [ "$mode" = slow ]; then
+        # Longer than the 1-second mutation cap, well inside the suite cap.
         printf 'A=1\nsleep 2\n' >"$root/scripts/a.sh"
-    fi
-    if [ "$mode" = baseline-term-ignore ]; then
-        # The finite fallback bounds the old runner too; the fixed cap must
-        # kill the suite before this timer can finish on its own.
-        printf 'A=1\ntrap "" TERM\nsleep 4\n' >"$root/scripts/a.sh"
     fi
     if [ "$mode" = baseline-exit ]; then
         printf 'A=1\nexit 7\n' >"$root/scripts/a.sh"
@@ -258,8 +254,7 @@ the prefix report names the assertion the mutation did not redden|plain|prefix|-
 a suite with no control file is reported missing|plain|missing|-|verdicts|beta.test.sh:0|rc=1;MISSING alpha.test.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
 a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
 the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh; | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
-the baseline timeout report names its exit status and suite cap|baseline-timeout|clean|1|verdicts|alpha.test.sh:124|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
-the baseline cap kills a suite that ignores TERM|baseline-term-ignore|clean|1|verdicts|alpha.test.sh:137|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
+a baseline slower than the mutation cap runs under the suite cap|slow|capped|1|verdicts|alpha.test.sh:0|rc=1;TIMEOUT alpha.test.sh mutation 1;1 controls, 1 failing, 0 orphaned
 the baseline failure report names its exit status|baseline-exit|clean|-|verdicts|alpha.test.sh:7|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
 a control declaring no mutation changed nothing|plain|empty|-|verdicts|alpha.test.sh:0|rc=1;NOOP alpha.test.sh;1 controls, 1 failing, 0 orphaned
 a mutation whose line the file lacks did not apply|plain|badctrl|-|verdicts|alpha.test.sh:0|rc=1;BADCTRL alpha.test.sh mutation 1;1 controls, 1 failing, 0 orphaned
@@ -272,9 +267,10 @@ while IFS='|' read -r label fix ctl cap keep baselines expect; do
     assert_eq "$label" "$RUN_RESULT" "$expect"
     # CI triage reads these machine fields. Ignore elapsed values while
     # checking their format, each baseline status, and exactly-once delivery.
+    # Every baseline runs under the 60-second suite cap, whatever CAP is.
     baseline_output="$(awk '
         /^BASELINE / {
-            if (NF != 5 || $3 !~ /^elapsed=[0-9]+s$/ || $4 !~ /^exit=[0-9]+$/ || $5 !~ /^cap=[0-9]+s$/) {
+            if (NF != 5 || $3 !~ /^elapsed=[0-9]+s$/ || $4 !~ /^exit=[0-9]+$/ || $5 != "cap=60s") {
                 print "invalid-baseline"; next
             }
             sub(/^exit=/, "", $4)
@@ -282,7 +278,7 @@ while IFS='|' read -r label fix ctl cap keep baselines expect; do
         }
     ' "$RUN_LOG")"
     assert_eq "$label: baseline output" "$baseline_output" "$baselines"
-    if [[ "$fix" = baseline-term-ignore || "$ctl" = capped-term-ignore ]]; then
+    if [[ "$ctl" = capped-term-ignore ]]; then
         cap_output=$(sed -n '/^SUITE_CAP /p' "$RUN_LOG")
         assert_matches "$label: KILL completes at cap plus grace" "$cap_output" \
             '^SUITE_CAP suite=alpha.test.sh elapsed=[12]s cap=1s grace=1s exit=137$'

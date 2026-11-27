@@ -33,7 +33,10 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
-SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
+# CONTROL_TIMEOUT caps mutation runs only. The unmutated baseline keeps the
+# suite cap, so a fixture that caps a slow mutation does not cap its baseline.
+SUITE_TIMEOUT=60
+MUTATION_TIMEOUT="${CONTROL_TIMEOUT:-$SUITE_TIMEOUT}"
 SUITE_KILL_GRACE=1
 source "$TESTS_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 # Cap diagnostics must reach CI even while an earlier roster entry is pending.
@@ -284,13 +287,15 @@ flush() {
 	done
 }
 
-# timed_suite ROOT SUITE OUT [WANTED]: SUITE run under the cap, with its
+# timed_suite CAP ROOT SUITE OUT [WANTED]: SUITE run under CAP seconds, with its
 # output in OUT and unmatched names returned in WANTED. Mutations stop once
 # every name in WANTED has reddened:
 # later suite work cannot change that evidence and can exhaust the CI bound.
 # A job stopped mid-run tears down its tree and ends there rather than
 # going on to stage a copy under a scratch the runner has removed.
 timed_suite() {
+	local cap=$1
+	shift
 	local pid="" rc line i remaining=0 stopped=0 capped=0 started=$SECONDS tree fragment="" consumed
 	local STOP_GRACE=$SUITE_KILL_GRACE
 	local -a wanted=()
@@ -335,7 +340,7 @@ timed_suite() {
 			[[ "$consumed" -eq 1 ]] && continue
 			break
 		fi
-		if [[ "$SECONDS" -ge "$((started + SUITE_TIMEOUT))" ]]; then
+		if [[ "$SECONDS" -ge "$((started + cap))" ]]; then
 			capped=1
 			tree="$(tree_of "$pid")"
 			stop_tree "$tree"
@@ -350,7 +355,7 @@ timed_suite() {
 	if [[ "$capped" -eq 1 ]]; then
 		[[ "$rc" -eq 137 ]] || rc=124
 		printf 'SUITE_CAP suite=%s elapsed=%ss cap=%ss grace=%ss exit=%s\n' \
-			"$2" "$((SECONDS - started))" "$SUITE_TIMEOUT" "$SUITE_KILL_GRACE" "$rc" >&5
+			"$2" "$((SECONDS - started))" "$cap" "$SUITE_KILL_GRACE" "$rc" >&5
 	fi
 	if [[ "$#" -eq 4 ]]; then
 		if [[ "$remaining" -gt 0 ]]; then
@@ -430,7 +435,7 @@ prepare_one() {
 	# assertion's detail after its FAIL: line, so a tail alone can hold
 	# detail and no FAIL: line.
 	started=$SECONDS
-	timed_suite "$root" "$suite" "$WORK/$stem/suite.out"
+	timed_suite "$SUITE_TIMEOUT" "$root" "$suite" "$WORK/$stem/suite.out"
 	rc=$?
 	printf 'BASELINE %-52s elapsed=%ss exit=%s cap=%ss\n' "$suite" "$((SECONDS - started))" "$rc" "$SUITE_TIMEOUT"
 	out="$(<"$WORK/$stem/suite.out")" || die "cannot read the output of $suite"
@@ -548,12 +553,12 @@ mutate_one() {
 		grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2- >"$root.wanted" ||
 			die "cannot read wanted assertions for $suite mutation $k"
 		started=$SECONDS
-		timed_suite "$root" "$suite" "$root.out" "$root.wanted"
+		timed_suite "$MUTATION_TIMEOUT" "$root" "$suite" "$root.out" "$root.wanted"
 		rc=$?
 		# CI triage reads this beside BASELINE to hold every suite run
 		# under the cap.
 		printf 'MUTATION %-52s mutation=%d elapsed=%ss exit=%s cap=%ss\n' \
-			"$suite" "$k" "$((SECONDS - started))" "$rc" "$SUITE_TIMEOUT"
+			"$suite" "$k" "$((SECONDS - started))" "$rc" "$MUTATION_TIMEOUT"
 		out="$(<"$root.out")" || die "cannot read the output of $suite"
 		if [[ "$rc" -eq 0 ]]; then
 			printf 'GREEN    %-52s suite passed with mutation %d, its only break\n' \
@@ -566,7 +571,7 @@ mutate_one() {
 		# assertion and send its author looking at the mutation.
 		if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
 			printf 'TIMEOUT  %-52s mutation %d hit the %ss cap having measured nothing\n' \
-				"$suite" "$k" "$SUITE_TIMEOUT"
+				"$suite" "$k" "$MUTATION_TIMEOUT"
 			return 1
 		fi
 		# The whole verdict on a mutation: its own run reddened the
