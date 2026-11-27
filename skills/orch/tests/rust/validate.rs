@@ -7180,7 +7180,9 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
     assert!(lane.unit().exists(), "the claim keeps the unit");
     let mut again = Owned(
         program(lane.host.provider())
-            .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop"])
+            .args([
+                "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+            ])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
@@ -7198,7 +7200,10 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
     assert_eq!(again.0.wait().unwrap().code(), Some(0));
     assert_eq!(
         answer.trim(),
-        format!("host=lane.example stopped item={ITEM_ID} run-id={}", lane.id)
+        format!(
+            "host=lane.example stopped item={ITEM_ID} run-id={}",
+            lane.id
+        )
     );
     fs::write(key.with_extension("release"), "").unwrap();
     assert_eq!(holder.0.wait().unwrap().code(), Some(1));
@@ -7434,7 +7439,10 @@ fn overlapping_stops_of_one_host_unit_both_answer_stopped() {
     assert!(lane.unit().join("tree/.git").exists());
     let gate = lane.w.root.join("remove-gate");
     fs::create_dir_all(&gate).unwrap();
-    let found = program("sh").args(["-c", "command -v git"]).output().unwrap();
+    let found = program("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
     let real = String::from_utf8_lossy(&found.stdout).trim().to_owned();
     assert!(!real.is_empty(), "{}", stderr(&found));
     support::write_executable(
@@ -7448,7 +7456,9 @@ fn overlapping_stops_of_one_host_unit_both_answer_stopped() {
         let file = |stream: &str| fs::File::create(gate.join(format!("{which}.{stream}"))).unwrap();
         Owned(
             program(&provider)
-                .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop"])
+                .args([
+                    "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+                ])
                 .stdout(file("out"))
                 .stderr(file("err"))
                 .spawn()
@@ -7475,7 +7485,10 @@ fn overlapping_stops_of_one_host_unit_both_answer_stopped() {
         assert_eq!(out.status.code(), Some(0), "{which}: {}", stderr(&out));
         assert_eq!(
             text(&out),
-            format!("host=lane.example stopped item={ITEM_ID} run-id={}", lane.id),
+            format!(
+                "host=lane.example stopped item={ITEM_ID} run-id={}",
+                lane.id
+            ),
             "{which}"
         );
     }
@@ -7494,7 +7507,9 @@ fn a_host_stop_with_no_unit_writes_nothing_and_a_held_lock_names_lock_timeout() 
     let provider = lane.host.provider();
     let stop = || {
         program(&provider)
-            .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop"])
+            .args([
+                "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+            ])
             .output()
             .unwrap()
     };
@@ -7505,7 +7520,10 @@ fn a_host_stop_with_no_unit_writes_nothing_and_a_held_lock_names_lock_timeout() 
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         text(&out),
-        format!("host=lane.example stopped item={ITEM_ID} run-id={}", lane.id)
+        format!(
+            "host=lane.example stopped item={ITEM_ID} run-id={}",
+            lane.id
+        )
     );
     assert!(
         fs::symlink_metadata(&clone).is_err(),
@@ -7532,7 +7550,10 @@ fn a_host_stop_with_no_unit_writes_nothing_and_a_held_lock_names_lock_timeout() 
             && line.contains(" cause=lane-host-ssh: lock-timeout lock="),
         "{line}"
     );
-    assert!(lane.unit().join("tree").exists(), "the held stop kept the unit");
+    assert!(
+        lane.unit().join("tree").exists(),
+        "the held stop kept the unit"
+    );
     fs::remove_file(&flock).unwrap();
     let out = stop();
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
