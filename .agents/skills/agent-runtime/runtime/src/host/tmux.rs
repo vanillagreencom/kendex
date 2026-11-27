@@ -515,7 +515,7 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
         return Ok(true);
     }
     let err = stderr_text(&output);
-    if err.starts_with("can't find session") {
+    if names_missing_session(&err) {
         return Ok(false);
     }
     Err(Error::External {
@@ -672,9 +672,7 @@ pub fn new_window(
 /// `Unreadable`.
 pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
     let target = format!("={session}");
-    lone_idle_shell(server, &["-s", "-t", &target], |stderr| {
-        stderr.starts_with("can't find session")
-    })
+    lone_idle_shell(server, &["-s", "-t", &target], names_missing_session)
 }
 
 /// The pane `id` where it stands alone in its window as an idle shell, read
@@ -806,10 +804,25 @@ fn printed_pane(server: &Server, line: &str) -> Option<Pane> {
     })
 }
 
+/// tmux's answer to a command with a target where the server holds no
+/// session at all: `cmd-find.c`'s `cmd_find_target` prints it before it
+/// reads the target, once no session can give it a current state, as on a
+/// server `tmux -D` started (tmux 3.4 and 3.8, measured). A server with no
+/// session holds no window or pane either, so every target is gone.
+const NO_SESSION: &str = "no current target";
+
+/// tmux's answer to a command on a missing session, the one failure that is
+/// its absence.
+fn names_missing_session(stderr: &str) -> bool {
+    stderr.starts_with("can't find session") || stderr.starts_with(NO_SESSION)
+}
+
 /// tmux's answer to a command on a missing target, the one failure that is
 /// an absence.
 fn names_missing_target(stderr: &str) -> bool {
-    stderr.starts_with("can't find pane") || stderr.starts_with("can't find window")
+    stderr.starts_with("can't find pane")
+        || stderr.starts_with("can't find window")
+        || stderr.starts_with(NO_SESSION)
 }
 
 /// The pane `id` names on the server where its process runs: [`pane_state`]
@@ -952,7 +965,7 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
         }
     };
     if !output.status.success() {
-        return if stderr_text(&output).starts_with("can't find session") {
+        return if names_missing_session(&stderr_text(&output)) {
             Reading::Gone
         } else {
             Reading::Unreadable {
@@ -1763,6 +1776,27 @@ mod tests {
             "the sibling stands"
         );
         assert_eq!(kill_pane(&sibling.pane), Close::AlreadyGone);
+    }
+
+    /// A server that stands holding no session, its `exit-empty` off as
+    /// `tmux -D` leaves it, answers every target `no current target`: the
+    /// session it lacks reads absent, its windows gone, and a close of a pane
+    /// it once held reads already gone, never a tmux failure.
+    #[test]
+    fn a_server_holding_no_session_reads_every_target_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        let Reading::Live(first) = pane_fields(server, "%0") else {
+            panic!("the session's pane is live");
+        };
+        private.ask(&["set-option", "-s", "exit-empty", "off"]);
+        private.ask(&["kill-session", "-t", "=t"]);
+        assert_eq!(private.ask(&["list-sessions"]), "", "no session stands");
+        assert_eq!(session_present(server, "t").ok(), Some(false));
+        assert_eq!(list_windows(server, "t"), Reading::Gone);
+        assert_eq!(kill_pane(&first.pane), Close::AlreadyGone);
+        assert_eq!(kill_window(&first.pane), Close::AlreadyGone);
     }
 
     /// A close of its session's one pane, by window or by pane, gives the

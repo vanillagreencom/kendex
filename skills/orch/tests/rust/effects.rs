@@ -1038,22 +1038,35 @@ fn a_fleet_server_that_exits_at_once_refuses_at_once_with_its_own_line() {
 }
 
 /// A server that stands without the fleet's session, as a user's tmux
-/// service starts one at boot holding a session of its own: on the socket
-/// the controller record names, the launch makes the fleet's session beside
-/// the other and opens its window there; on a socket the record does not
-/// name it refuses `tmux-session-missing` and makes nothing, a `failed`
-/// launch naming the session and socket to repair, never a bare error that
-/// wedges the intent at not-started. Either way the server's `exit-empty`
-/// stays as its starter set it.
+/// service starts one at boot, holding a session of its own or, started
+/// with `tmux -D`, none at all: on the socket the controller record names,
+/// the launch makes the fleet's session beside any other and opens its
+/// window there; on a socket the record does not name it refuses
+/// `tmux-session-missing` and makes nothing, a `failed` launch naming the
+/// session and socket to repair, never a bare error that wedges the intent
+/// at not-started. Either way the server's `exit-empty` stays as its
+/// starter set it.
 #[test]
 fn a_standing_server_without_the_fleet_session_has_it_made_only_on_the_recorded_socket() {
-    for recorded in [true, false] {
+    let rows: [(bool, &[&str]); 4] = [
+        (true, &["dot"]),
+        (false, &["dot"]),
+        (true, &[]),
+        (false, &[]),
+    ];
+    for (recorded, held) in rows {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "dot");
         let runner = Runner::new(&server, "stub-confirm");
         runner.init_fleet();
         let off = tmux(&server.socket, &["set-option", "-s", "exit-empty", "off"]);
         assert!(off.status.success(), "{}", stderr(&off));
+        if held.is_empty() {
+            // The server then stands as `tmux -D` starts one: no session,
+            // `exit-empty` off.
+            let ended = tmux(&server.socket, &["kill-session", "-t", "=dot"]);
+            assert!(ended.status.success(), "{}", stderr(&ended));
+        }
         if recorded {
             let mut fleet = runner.fleet();
             fleet["controller"] = json!({"server_socket": server.socket.display().to_string()});
@@ -1069,44 +1082,51 @@ fn a_standing_server_without_the_fleet_session_has_it_made_only_on_the_recorded_
             .map(str::to_owned)
             .collect();
         sessions.sort();
+        let row = format!("recorded={recorded} held={held:?}");
         let intent = &report["intent"];
         if recorded {
-            assert_eq!(intent["outcome"], "confirmed", "{report}");
-            assert_eq!(sessions, ["dot", "fleet"], "{report}");
+            assert_eq!(intent["outcome"], "confirmed", "{row}: {report}");
+            let mut made: Vec<&str> = held.to_vec();
+            made.push("fleet");
+            assert_eq!(sessions, made, "{row}: {report}");
             let pane = report["lane"]["launch"]["pane"]
                 .as_str()
                 .unwrap_or_default();
-            let held = tmux(
+            let opened_in = tmux(
                 &server.socket,
                 &["display-message", "-p", "-t", pane, "#{session_name}"],
             );
             assert_eq!(
-                String::from_utf8_lossy(&held.stdout).trim(),
+                String::from_utf8_lossy(&opened_in.stdout).trim(),
                 "fleet",
-                "the window opened in the made session: {report}"
+                "{row}: the window opened in the made session: {report}"
             );
         } else {
-            assert_eq!(intent["outcome"], "failed", "{report}");
-            assert_eq!(report["lane"]["status"], "stopped", "{report}");
+            assert_eq!(intent["outcome"], "failed", "{row}: {report}");
+            assert_eq!(report["lane"]["status"], "stopped", "{row}: {report}");
             let observation = &intent["observation"];
             assert_eq!(
                 observation["cause"], "tmux-session-missing",
-                "{observation}"
+                "{row}: {observation}"
             );
-            assert_eq!(observation["session"], "fleet", "{observation}");
+            assert_eq!(observation["session"], "fleet", "{row}: {observation}");
             assert_eq!(
                 observation["socket"],
                 server.socket.display().to_string(),
-                "{observation}"
+                "{row}: {observation}"
             );
-            assert_eq!(sessions, ["dot"], "{report}");
-            assert_eq!(server.panes().len(), 1, "no window ever opened");
+            assert_eq!(sessions, held, "{row}: {report}");
+            assert_eq!(
+                server.panes().len(),
+                held.len(),
+                "{row}: no window ever opened"
+            );
         }
         let exit_empty = tmux(&server.socket, &["show-options", "-s", "-v", "exit-empty"]);
         assert_eq!(
             String::from_utf8_lossy(&exit_empty.stdout).trim(),
             "off",
-            "recorded={recorded}"
+            "{row}"
         );
     }
 }
