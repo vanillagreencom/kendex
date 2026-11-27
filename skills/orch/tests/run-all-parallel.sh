@@ -88,6 +88,31 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/suite-process.sh"
 
+# Waits on RUNNER, a fixture runner this file started as its own group's
+# leader, under a deadline of this file's own, since a defect in the stop can
+# leave the runner running: RC is its status, or hung where the deadline ended
+# it. The 40 seconds clear the runner's STOP_GRACE of 10 and a row's own
+# teardown. A hung runner's tree and each PID named print before the KILL to
+# its group, so its red row shows what held it; a suite or holder the runner no
+# longer parents is reached only by its PID.
+wait_runner() { # RUNNER [PID...]
+  local runner="$1" until=$((SECONDS + 40)) pids
+  shift
+  while kill -0 "$runner" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
+  RC=0
+  if kill -0 "$runner" 2>/dev/null; then
+    pids="$({ tree_of "$runner"; printf '%s\n' "$@"; } | awk '$1 != "" && !seen[$1]++ { printf "%s%s", sep, $1; sep = "," }')"
+    printf 'hung runner=%s pids=%s\n' "$runner" "$pids"
+    ps -o pid,pgid,stat,command -p "$pids"
+    kill -KILL -- "-$runner" 2>/dev/null
+    wait "$runner" 2>/dev/null
+    RC=hung
+  else
+    wait "$runner" 2>/dev/null || RC=$?
+  fi
+  LIVE_RUNNER=""
+}
+
 # A fresh battery directory holding run-all.sh, its process library and no
 # suites, github's group leader at its path beside the battery's tree, and
 # DIR.tmp for its TMPDIR. Nothing of orch's scripts is copied: the runner
@@ -388,9 +413,7 @@ SH
   holder_start=""
   [ -z "$holder_pid" ] || holder_start="$(started_at "$holder_pid")" || holder_start=""
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
-  RC=0
-  wait "$runner" 2>/dev/null || RC=$?
-  LIVE_RUNNER=""
+  wait_runner "$runner" "$suite_pid" "$holder_pid"
   # A suite orphaned by the runner's exit stays visible until it is reaped.
   tick=0
   while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
@@ -603,13 +626,13 @@ EOF
 }
 
 # Runs DIR's battery on one worker with each VAR=VALUE in its environment, and
-# under a deadline of this file's own, since a defect in the stop can leave the
-# runner running: $OUT and $RC as run_battery leaves them, RC=hung where that
-# deadline ended the run, and CHILD the hung child's state once the run is
-# over, alive, gone or never-started. A child still alive is killed here; one
-# gone is never signalled, since its pid may by now name another process.
+# under wait_runner's deadline: $OUT and $RC as run_battery leaves them,
+# RC=hung where that deadline ended the run, and CHILD the hung child's state
+# once the run is over, alive, gone or never-started. A child still alive is
+# killed here; one gone is never signalled, since its pid may by now name
+# another process.
 run_bounded() { # DIR [VAR=VALUE]...
-  local dir="$1" runner until=$((SECONDS + 40)) child
+  local dir="$1" runner child
   shift
   mkdir -p "$dir.bin"
   printf '#!/usr/bin/env bash\necho 1\n' >"$dir.bin/nproc"
@@ -620,16 +643,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   runner=$!
   LIVE_RUNNER=$runner LIVE_PIDFILE="$dir.pid"
   set +m
-  while kill -0 "$runner" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
-  RC=0
-  if kill -0 "$runner" 2>/dev/null; then
-    kill -KILL -- "-$runner" 2>/dev/null
-    wait "$runner" 2>/dev/null
-    RC=hung
-  else
-    wait "$runner" || RC=$?
-  fi
-  LIVE_RUNNER=""
+  wait_runner "$runner"
   OUT="$(cat "$dir.out")"
   child="$(cat "$dir.pid" 2>/dev/null)"
   CHILD=never-started
