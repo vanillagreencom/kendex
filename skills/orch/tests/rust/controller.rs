@@ -10596,7 +10596,11 @@ fn a_caller_with_no_headroom_figure_answers_mark_unmeasured_by_its_read() {
         world.plant(None, &[unread, measured_account("bclaude", 10)]);
         world.write_fleet(&world.dir("eclaude"));
         let answer = world.marks(&[], &[]);
-        assert_eq!(answer["key"], json!("mark-unmeasured"), "{status}: {answer}");
+        assert_eq!(
+            answer["key"],
+            json!("mark-unmeasured"),
+            "{status}: {answer}"
+        );
         assert_eq!(answer["kind"], json!("headroom"), "{status}: {answer}");
         assert_eq!(answer["reason"], json!(reason), "{status}: {answer}");
     }
