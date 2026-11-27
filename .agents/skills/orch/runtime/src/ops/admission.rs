@@ -402,10 +402,12 @@ pub(super) enum Launch<'r> {
     /// repository before anything is read: it may join a live holder.
     First(&'r Path),
     /// A recorded lane's relaunch, bound on its own ([`bound`]): it carries
-    /// its own record's work, so it never joins another lane.
-    Relaunch,
-    /// Paths a running lane adds, bound when it was admitted.
-    Added,
+    /// its own record's work, so it never joins another lane. It names the
+    /// record's checkout.
+    Relaunch(Option<&'r Path>),
+    /// Paths a running lane adds, bound when it was admitted. It names the
+    /// lane's checkout, else the request's `repo_dir`.
+    Added(Option<&'r Path>),
 }
 
 impl<'r> Admission<'r> {
@@ -413,7 +415,16 @@ impl<'r> Admission<'r> {
     fn checkout(&self) -> Option<&'r Path> {
         match self.launch {
             Launch::First(checkout) => Some(checkout),
-            Launch::Relaunch | Launch::Added => None,
+            Launch::Relaunch(_) | Launch::Added(_) => None,
+        }
+    }
+
+    /// The checkout the judged sets' folder entries are read in
+    /// ([`folders`]).
+    fn root(&self) -> Option<&'r Path> {
+        match self.launch {
+            Launch::First(checkout) => Some(checkout),
+            Launch::Relaunch(root) | Launch::Added(root) => root,
         }
     }
 }
@@ -776,6 +787,29 @@ fn meets(a: &str, b: &str) -> bool {
 /// Whether an in-scope entry `scope` covers `file`.
 fn covers(scope: &str, file: &str) -> bool {
     scope == file || (scope.ends_with('/') && file.starts_with(scope))
+}
+
+/// `entries` as an admitted set holds them, sorted and once each: an entry
+/// naming a folder in `root`, the checkout it is admitted in, ends in `/`,
+/// so [`meets`] and [`covers`] read it as that folder. A file, or a path
+/// naming nothing there or whose metadata cannot be read, stays as written,
+/// as an entry did before. A set is read through this where it is judged
+/// and where a record's set is read.
+fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
+    let is_folder =
+        |root: &Path, e: &str| std::fs::metadata(root.join(e)).is_ok_and(|m| m.is_dir());
+    let folder = |e: &String| match root {
+        Some(root) if !e.is_empty() && !e.ends_with('/') && is_folder(root, e) => format!("{e}/"),
+        _ => e.clone(),
+    };
+    let set: BTreeSet<String> = entries.iter().map(folder).collect();
+    set.into_iter().collect()
+}
+
+/// A lane record's touched set read in its own checkout ([`folders`]).
+fn held(lane: &Lane) -> Option<Vec<String>> {
+    let root = lane.mail_root.as_deref().map(Path::new);
+    lane.touched.as_deref().map(|t| folders(root, t))
 }
 
 /// The paths `a` and `b` share that the scope leaves in, each the longer
@@ -1198,7 +1232,7 @@ pub(super) fn relaunch_held(
         scope_range: None,
         in_scope: record.in_scope.as_deref().unwrap_or_default(),
         paths,
-        launch: Launch::Relaunch,
+        launch: Launch::Relaunch(record.mail_root.as_deref().map(Path::new)),
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
@@ -1280,15 +1314,9 @@ pub(super) fn judge(
     let touched = if a.read_only {
         Vec::new()
     } else {
-        classified.clone()
+        folders(a.root(), &classified)
     };
-    let in_scope: Vec<String> = a
-        .in_scope
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let in_scope = folders(a.root(), a.in_scope);
     let mut join = None;
     if let Some((index, blockers)) = blocked {
         let holder = &lanes[index];
@@ -1322,8 +1350,11 @@ pub(super) fn judge(
             Holding::Unknown(cause) => Err(cause),
         };
         let read;
-        let held = match &lane.touched {
-            Some(paths) => paths,
+        let held = match held(lane) {
+            Some(paths) => {
+                read = paths;
+                &read
+            }
             None => {
                 let tracker = lane.tracker.as_deref().ok_or_else(|| {
                     holder_unreadable(&lane.item, "touched", "tracker-unnamed".to_owned())
@@ -1362,8 +1393,8 @@ pub(super) fn judge(
         let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
         let direct = match a.launch {
             Launch::First(_) => direct(host)?,
-            Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
-            Launch::Added => false,
+            Launch::Relaunch(_) => unreachable(lane).is_none() && direct(host)?,
+            Launch::Added(_) => false,
         };
         let before = if joinable || direct {
             Some(before_review(path, lane, a.item, &tie)?)
@@ -1610,10 +1641,7 @@ pub(super) fn join(
     host: &Host,
 ) -> Result<Lane> {
     let holder = lane_at(path, doc, index)?;
-    let touched = union(
-        holder.touched.as_deref().unwrap_or_default(),
-        &judged.touched,
-    );
+    let touched = union(&held(&holder).unwrap_or_default(), &judged.touched);
     if let Some(tier) = holder.extra.get("tier").and_then(Value::as_str) {
         let dir = a.checkout().unwrap_or(Path::new(""));
         if let Some(needs) = wider_cycle(a.item, tier, &touched, dir, host)? {
@@ -1776,7 +1804,11 @@ pub(super) fn admit_paths(
             scope_range: r.scope_range.as_ref(),
             in_scope: &in_scope,
             paths: &r.paths,
-            launch: Launch::Added,
+            launch: Launch::Added(
+                position
+                    .and_then(|i| lanes[i].mail_root.as_deref().map(Path::new))
+                    .or(r.repo_dir.as_deref()),
+            ),
             read_only: position.is_some_and(|i| lanes[i].read_only),
         },
         env,
@@ -1791,10 +1823,7 @@ pub(super) fn admit_paths(
         });
     };
     let standing = &lanes[index];
-    let touched = union(
-        standing.touched.as_deref().unwrap_or_default(),
-        &judged.touched,
-    );
+    let touched = union(&held(standing).unwrap_or_default(), &judged.touched);
     widen(path, doc, index, standing, &touched, &judged.in_scope)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
@@ -2345,7 +2374,7 @@ mod tests {
             scope_range: None,
             in_scope: &[],
             paths,
-            launch: Launch::Added,
+            launch: Launch::Added(None),
             read_only: false,
         }
     }
