@@ -610,7 +610,7 @@ fn stood(rules: Rules, failed: &Failed) -> Vec<Read> {
         Failed::Exited(text) if !rules.options => text.as_str(),
         Failed::Exited(_) | Failed::Unshown => return Vec::new(),
     };
-    let skipped = skipped(&rules.commands, text);
+    let skipped = skipped(&rules.commands, text, !rules.incomplete);
     let shown: Vec<Rule> = rules
         .reads
         .into_iter()
@@ -683,11 +683,9 @@ struct Pipeline {
 /// Whether the shell skipped each of `commands`, as far as the failed
 /// call's result `text` shows. A pipeline after `&&` runs only where the
 /// one before ended `Ok`, and one after `||` only where it ended `Failed`;
-/// a skipped pipeline leaves that status as it was. The call's status is
-/// the status of the last pipeline its last list ran, so a pipeline of
-/// that list that would end `Ok`, with nothing after it run, did not run
-/// either. A command that `exit` stops is not seen.
-fn skipped(commands: &[Command], text: &str) -> Vec<bool> {
+/// a skipped pipeline leaves that status as it was. If the last list
+/// failed, a trailing pipeline that would end `Ok` did not run.
+fn skipped(commands: &[Command], text: &str, last_list_failed: bool) -> Vec<bool> {
     let mut pipelines: Vec<Pipeline> = Vec::new();
     for (i, command) in commands.iter().enumerate() {
         let status = command.status(text);
@@ -724,6 +722,9 @@ fn skipped(commands: &[Command], text: &str) -> Vec<bool> {
             None => Status::Unknown,
         };
         ran.push(runs);
+    }
+    if !last_list_failed {
+        last_list = ran.len();
     }
     for (runs, pipeline) in ran[last_list..]
         .iter_mut()
@@ -793,6 +794,7 @@ struct Rules {
     reads: Vec<Rule>,
     more: bool,
     commands: Vec<Command>,
+    incomplete: bool,
     /// Whether a `set` command of the call turns on errexit or pipefail
     /// ([`sets_failure_options`]), which [`skipped`] does not follow.
     options: bool,
@@ -997,6 +999,7 @@ enum ShellFrame {
     Single,
     Double,
     AnsiC,
+    Substitution(usize),
     Parenthesis,
 }
 
@@ -1008,26 +1011,39 @@ enum ShellFrame {
 /// line, and a heredoc's body, from the newline after `<<WORD` or
 /// `<<-WORD` to the line that is its word, are in no segment; a `<<` with
 /// no such line after it opens no body. An unclosed quote prevents Bash
-/// from executing any segment of the incomplete input line.
-fn segments(command: &str) -> Vec<(Join, &str)> {
+/// from executing any segment of the incomplete input line, reported by
+/// the second return value.
+fn segments(command: &str) -> (Vec<(Join, &str)>, bool) {
     let bytes = command.as_bytes();
     let (mut out, mut join, mut start, mut i) = (Vec::new(), Join::List, 0, 0);
     let mut complete = 0;
     let mut frames = Vec::new();
+    let mut word_start = true;
     // Where a comment ends the current segment.
     let mut cut: Option<usize> = None;
-    // The words of the heredocs whose bodies open at the next newline, each
-    // with whether `<<-` strips its lines' leading tabs.
-    let mut heredocs: Vec<(Vec<u8>, bool)> = Vec::new();
+    // A substitution's newlines open only its own pending heredocs.
+    let (mut heredocs, mut heredoc_base) = (Vec::new(), 0);
     while i < bytes.len() {
         let byte = bytes[i];
         let after = bytes.get(i + 1).copied();
+        let starts_word = word_start;
+        word_start = breaks(byte) || (byte, after) == (b'\\', Some(b'\n')) && starts_word;
         let consumed = match (frames.last(), byte, after) {
             (Some(ShellFrame::Double | ShellFrame::AnsiC), b'\\', _) => 2,
-            // A substitution reopens shell quoting inside the double quotes.
-            (Some(ShellFrame::Double), b'$', Some(b'(')) => {
-                frames.push(ShellFrame::Parenthesis);
+            (Some(frame), b'$', Some(b'('))
+                if !matches!(frame, ShellFrame::Single | ShellFrame::AnsiC) =>
+            {
+                frames.push(ShellFrame::Substitution(heredoc_base));
+                heredoc_base = heredocs.len();
+                word_start = true;
                 2
+            }
+            (Some(ShellFrame::Substitution(base)), b')', _) => {
+                heredocs.truncate(heredoc_base);
+                heredoc_base = *base;
+                frames.pop();
+                word_start = false;
+                1
             }
             (Some(ShellFrame::Single | ShellFrame::AnsiC), b'\'', _)
             | (Some(ShellFrame::Double), b'"', _)
@@ -1048,7 +1064,7 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
                 frames.push(ShellFrame::Double);
                 1
             }
-            (Some(ShellFrame::Parenthesis), b'(', _) => {
+            (Some(ShellFrame::Substitution(_) | ShellFrame::Parenthesis), b'(', _) => {
                 frames.push(ShellFrame::Parenthesis);
                 1
             }
@@ -1059,15 +1075,11 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
             i += consumed;
             continue;
         }
-        if byte == b'#' && (i == 0 || breaks(bytes[i - 1])) {
+        if byte == b'#' && starts_word {
             if frames.is_empty() {
                 cut = Some(i);
             }
             i = command[i..].find('\n').map_or(bytes.len(), |n| i + n);
-            continue;
-        }
-        if !frames.is_empty() {
-            i += 1;
             continue;
         }
         if byte == b'<' && after == Some(b'<') {
@@ -1075,11 +1087,21 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
                 i += 3;
                 continue;
             }
-            let (word, end, strip) = heredoc_word(bytes, i + 2);
-            if !word.is_empty() {
-                heredocs.push((word, strip));
+            match heredoc_word(bytes, i + 2, &mut heredocs) {
+                Some(end) => i = end,
+                None => break,
             }
-            i = end;
+            word_start = false;
+            continue;
+        }
+        let mut body = i + 1;
+        if byte == b'\n' {
+            for (word, strip) in heredocs.drain(heredoc_base..) {
+                body = body_end(command, body, &word, strip).unwrap_or(body);
+            }
+        }
+        if !frames.is_empty() {
+            i = body;
             continue;
         }
         let redirect =
@@ -1106,26 +1128,21 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
         } else if byte != b'\n' {
             join = next;
         }
-        i += width;
-        if byte == b'\n' {
-            for (word, strip) in std::mem::take(&mut heredocs) {
-                i = body_end(command, i, &word, strip).unwrap_or(i);
-            }
-            if join == Join::List {
-                complete = out.len();
-            }
+        i = (i + width).max(body);
+        if byte == b'\n' && join == Join::List {
+            complete = out.len();
         }
         start = i;
     }
-    if !frames.is_empty() {
+    if i < bytes.len() || !frames.is_empty() {
         out.truncate(complete);
-        return out;
+        return (out, true);
     }
     let rest = &command[start..cut.unwrap_or(bytes.len())];
     if !rest.trim().is_empty() {
         out.push((join, rest));
     }
-    out
+    (out, false)
 }
 
 /// Whether `byte` is a shell metacharacter, which ends a word.
@@ -1136,37 +1153,36 @@ fn breaks(byte: u8) -> bool {
     )
 }
 
-/// The word of a heredoc whose `<<` ends before `at`, its quotes and
-/// escapes removed, the index after it, and whether it is `<<-`'s.
-fn heredoc_word(bytes: &[u8], at: usize) -> (Vec<u8>, usize, bool) {
+/// Queue the delimiter of a heredoc with its quotes and escapes removed.
+/// An unclosed quote leaves the whole input unfinished.
+fn heredoc_word(bytes: &[u8], at: usize, pending: &mut Vec<(Vec<u8>, bool)>) -> Option<usize> {
     let strip = bytes.get(at) == Some(&b'-');
     let mut i = at + usize::from(strip);
     while matches!(bytes.get(i), Some(b' ' | b'\t')) {
         i += 1;
     }
+    let start = i;
     let mut word = Vec::new();
+    let mut quote = None;
     while let Some(&byte) = bytes.get(i) {
-        match byte {
-            byte if breaks(byte) => break,
-            b'\'' | b'"' => {
-                let close = bytes[i + 1..]
-                    .iter()
-                    .position(|&b| b == byte)
-                    .map_or(bytes.len(), |n| i + 1 + n);
-                word.extend_from_slice(&bytes[i + 1..close]);
-                i = close + 1;
-            }
-            b'\\' => {
-                word.extend(bytes.get(i + 1));
-                i += 2;
-            }
-            _ => {
-                word.push(byte);
+        match (quote, byte) {
+            (None, byte) if breaks(byte) => break,
+            (None, b'\'' | b'"') => quote = Some(byte),
+            (Some(open), byte) if byte == open => quote = None,
+            (None | Some(b'"'), b'\\')
+                if quote.is_none() || bytes.get(i + 1).is_some_and(|b| b"\\\"$`\n".contains(b)) =>
+            {
                 i += 1;
+                word.extend(bytes.get(i).filter(|&&b| b != b'\n'));
             }
+            _ => word.push(byte),
         }
+        i += 1;
     }
-    (word, i.min(bytes.len()), strip)
+    if quote.is_none() && i != start {
+        pending.push((word, strip));
+    }
+    quote.is_none().then_some(i.min(bytes.len()))
 }
 
 /// The index after the line from `at` on that is the heredoc word `word`,
@@ -1250,7 +1266,8 @@ fn rule_reads(action: &Action) -> Rules {
         Action::Read(_) | Action::Other => return Rules::default(),
     };
     let mut rules = Rules::default();
-    for (join, segment) in segments(command) {
+    let (segments, incomplete) = segments(command);
+    for (join, segment) in segments {
         let shape = words(segment);
         let Some((&program, args)) = shape.words.split_first() else {
             continue;
@@ -1333,6 +1350,7 @@ fn rule_reads(action: &Action) -> Rules {
         rules.commands.push(Command { join, reader });
         rules.more |= rules.reads.len() == before;
     }
+    rules.incomplete = incomplete;
     rules
 }
 
@@ -1460,21 +1478,19 @@ mod tests {
             ),
             // A `<<` with no line of its word after it opens no body.
             (shell("echo $((1<<2))\ncat a.md"), vec![file("a.md")], true),
-            (
-                shell(
-                    r#"printf '%s\n' "$(printf '%s' "
+        ];
+        let a_only = [
+            r#"printf '%s\n' "$(printf '%s' "
 cat AGENTS.md
 it's done
 ")"
 cat a.md"#,
-                ),
-                vec![file("a.md")],
-                true,
-            ),
-            (shell("echo $'it\\'s'; cat a.md"), vec![file("a.md")], true),
-            (shell("echo it's done\ncat a.md"), vec![], false),
-        ];
-        for (action, reads, more) in rows {
+            "echo $'it\\'s'; cat a.md",
+            "printf '%s\\n' \"$(cat <<'END'\nit's done\nEND\n)\"\ncat a.md",
+            "printf '%s\\n' \"$(printf %s hello\\ #tag)\"\ncat a.md",
+        ]
+        .map(|command| (shell(command), vec![file("a.md")], true));
+        for (action, reads, more) in rows.into_iter().chain(a_only) {
             let rules = rule_reads(&action);
             let got: Vec<Read> = rules.reads.into_iter().map(|rule| rule.read).collect();
             assert_eq!((got, rules.more), (reads, more), "{action:?}");
@@ -1487,33 +1503,25 @@ cat a.md"#,
     /// heading row's, which is built.
     #[test]
     fn a_failed_calls_read_stands_unless_its_result_shows_it_printed_nothing() {
-        let rows: Vec<(Action, Failed, Vec<Read>)> = vec![
-            (
-                shell("echo it's done\ncat a.md"),
-                exited("bash: -c: line 1: unexpected EOF while looking for matching `''\n"),
-                vec![],
-            ),
-            (
-                shell("cat a.md\necho it's\ncat b.md"),
-                exited("# A\nbash: -c: line 2: unexpected EOF while looking for matching `''\n"),
-                vec![file("a.md")],
-            ),
-            (
-                shell("gh pr comment 1 -b 'Don't ship'\ncat AGENTS.md"),
-                exited("bash: -c: line 1: unexpected EOF while looking for matching `''\n"),
-                vec![],
-            ),
+        let unfinished = [
+            ("echo it's done\ncat a.md", 1, false),
+            ("cat a.md\necho it's\ncat b.md", 2, true),
+            ("gh pr comment 1 -b 'Don't ship'\ncat AGENTS.md", 1, false),
             // A separator can end a segment before Bash can execute its line.
-            (
-                shell("cat a.md\ncat b.md; echo okay && echo it's\ncat AGENTS.md"),
-                exited("# A\nbash: -c: line 2: unexpected EOF while looking for matching `''\n"),
-                vec![file("a.md")],
-            ),
-            (
-                shell("cat a.md\ncat b.md |\necho it's\ncat AGENTS.md"),
-                exited("# A\nbash: -c: line 3: unexpected EOF while looking for matching `''\n"),
-                vec![file("a.md")],
-            ),
+            ("cat a.md\ncat b.md; echo it's\ncat AGENTS.md", 2, true),
+            ("cat a.md\ncat b.md |\necho it's\ncat AGENTS.md", 3, true),
+            ("true && cat a.md\necho it's done\ncat b.md", 2, true),
+            ("cat a.md; cat <<'END\ncat b.md", 1, false),
+        ]
+        .map(|(command, line, read)| {
+            let stdout = if read { "# A\n" } else { "" };
+            let failed = exited(&format!(
+                "{stdout}bash: -c: line {line}: unexpected EOF while looking for matching `''\n"
+            ));
+            let want = read.then(|| file("a.md")).into_iter().collect();
+            (shell(command), failed, want)
+        });
+        let rows: Vec<(Action, Failed, Vec<Read>)> = vec![
             // The read before the failed part printed.
             (
                 shell("cat README.md && cat missing.md"),
@@ -1731,7 +1739,7 @@ cat a.md"#,
             ),
             (Action::Skill(Some("x".to_owned())), Failed::Unshown, vec![]),
         ];
-        for (action, failed, want) in rows {
+        for (action, failed, want) in unfinished.into_iter().chain(rows) {
             assert_eq!(
                 stood(rule_reads(&action), &failed),
                 want,
