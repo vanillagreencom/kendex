@@ -73,8 +73,8 @@ cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/catalog/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
-needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'
-replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false'
+needle='  catalog_input && catalog=true'
+replacement='  catalog_input && catalog=false'
 [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
 NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
 ! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
@@ -84,6 +84,77 @@ if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-inputs"; 
 else
   ok "must-fail: inputs inverse fails catalog selection"
 fi
+
+# Skill text: a world whose head commit edits each file below in place since
+# its base, adds one skill Markdown file and removes another.
+TEXT_WORLD="$TMP/text-world"
+cp -R "$READ_WORLD" "$TEXT_WORLD"
+text_git() { git -C "$TEXT_WORLD" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set "$@"; }
+mkdir -p "$TEXT_WORLD/skills/orch/references" "$TEXT_WORLD/skills/orch/workflows" "$TEXT_WORLD/skills/group/nested"
+for file in skills/orch/SKILL.md skills/orch/README.md skills/orch/references/r.md skills/orch/workflows/w.md \
+  skills/orch/gone.md skills/group/nested/SKILL.md skills/group/nested/README.md skills/notes.md kendex.toml; do
+  printf 'base\n' >"$TEXT_WORLD/$file"
+done
+text_git add -A
+text_git commit -q -m base
+TEXT_BASE="$(text_git rev-parse HEAD)"
+for file in skills/orch/SKILL.md skills/orch/README.md skills/orch/references/r.md skills/orch/workflows/w.md \
+  skills/group/nested/README.md skills/notes.md kendex.toml; do
+  printf 'head\n' >>"$TEXT_WORLD/$file"
+done
+printf 'new\n' >"$TEXT_WORLD/skills/orch/references/new.md"
+text_git rm -q skills/orch/gone.md
+text_git add -A
+text_git commit -q -m head
+
+# BASE|PATHS|CATALOG, every row micro at the merge group; BASE `base` is
+# TEXT_BASE, `-` unset and `unread` a commit the world does not hold. Smoke
+# stays false throughout: no row reaches its fixture.
+text_rows() { # SCRIPT
+  local base path selected change_base
+  while IFS='|' read -r base path selected; do
+    case "$base" in base) change_base=$TEXT_BASE ;; unread) change_base=0123456789abcdef0123456789abcdef01234567 ;; *) change_base="" ;; esac
+    check "skill text: $base $path" "catalog=$selected
+smoke=false" "$(catalog_bits "$(CHANGE_BASE="$change_base" SELECT_IN="$TEXT_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection micro false "$(printf '%s\n' $path)")")"
+  done <<'ROWS'
+base|skills/orch/README.md|false
+base|skills/orch/references/r.md|false
+base|skills/orch/workflows/w.md|false
+base|skills/group/nested/README.md|false
+base|skills/orch/README.md skills/orch/references/r.md|false
+base|skills/orch/SKILL.md|true
+base|skills/orch/README.md skills/orch/SKILL.md|true
+base|kendex.toml|true
+base|skills/orch/README.md kendex.toml|true
+base|skills/orch/references/new.md|true
+base|skills/orch/gone.md|true
+base|skills/notes.md|true
+-|skills/orch/README.md|true
+unread|skills/orch/README.md|true
+ROWS
+}
+text_rows "$JOB_SET"
+# Each planted fault leaves at least one row above red: the narrowing gone,
+# SKILL.md counted as skill text, and one skill text path excusing the other
+# catalog inputs of its change.
+while IFS='#' read -r label needle replacement; do
+  [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || { bad "must-fail $label: no single edit site"; continue; }
+  NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
+  if cmp -s "$JOB_SET" "$catalog_copy"; then
+    bad "must-fail $label: the copy changed nothing"
+    continue
+  fi
+  chmod +x "$catalog_copy"
+  if (PASS=0 FAIL=0; text_rows "$catalog_copy" >"$TMP/text-control"; [ "$FAIL" -eq 0 ]); then
+    bad "must-fail: $label leaves skill text selection green"
+  else
+    ok "must-fail: $label fails skill text selection"
+  fi
+done <<'ROWS'
+narrowing removed#  catalog_input && catalog=true#  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
+SKILL.md as text#    [[ $path =~ $PROSE && $path != */SKILL.md ]] || continue#    [[ $path =~ $PROSE ]] || continue
+text excuses others#    [[ $SKILL_TEXT == *$'\n'"$path"$'\n'* ]] || return 0#    [[ $SKILL_TEXT == *$'\n'?* ]] || return 0
+ROWS
 
 # The shard selection in a fixture world, where every reader is planted, so
 # each list is the projection of the whole reach:

@@ -329,6 +329,9 @@ jobs:
           CHANGE_CLASS: ${{ steps.classify.outputs.change_class }}
           DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
+          # The range's base, which this full-depth checkout holds: a skill
+          # Markdown file edited in place since it selects no catalog job.
+          CHANGE_BASE: ${{ env.BASE }}
           EVENT: ${{ env.EVENT }}
           GH_TOKEN: ${{ github.token }}
           CI_SELECTION: ${{ runner.temp }}/ci-selection.json

@@ -63,7 +63,10 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
-#   EVENT          pull_request|merge_group|push|schedule, the event the selection is
+#   CHANGE_BASE    the commit CHANGED_PATHS were measured from, where read;
+#                  only a path edited in place since it can be skill text
+#                  (SKILL_TEXT below). Unset or unreadable, no path is.
+#   EVENT         pull_request|merge_group|push|schedule, the event the selection is
 #                  for. The first two select the same lanes and shards for
 #                  the same class, docs verdict and paths, which
 #                  --event-parity checks. The workflow classifies on
@@ -1015,6 +1018,45 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # The release check runs a downloaded engine whose catalog and Git inputs
 # cannot be inspected by the source reach.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
+# Skill text, the changed Markdown inside a skill directory other than its
+# SKILL.md, edited in place since CHANGE_BASE, selects no catalog job. An
+# install copies it as written, so neither install leg can fail on it, and
+# a package suite runs the same against either engine for it. The released
+# check reads it only for links: catalog_render_lint, which the Cargo reach
+# selects for it, holds a relative link to a part the render leaves out, and
+# a link into this catalog's GitHub source is caught on the push to main,
+# which owes the catalog job wherever its group did not prove it. An added,
+# removed or renamed file changes the layout and still selects the job.
+SKILL_TEXT=$'\n'
+skill_text() {
+  local edited path rest top
+  [ -n "${CHANGE_BASE:-}" ] && [ -n "$paths" ] || return 0
+  if ! edited="$(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=M \
+    "$CHANGE_BASE" HEAD -- skills 2>/dev/null)"; then
+    printf 'ci-job-set: skill-text=unread base=%s coverage=catalog\n' "$CHANGE_BASE" >&2
+    return 0
+  fi
+  while IFS= read -r path; do
+    [[ $path =~ $PROSE && $path != */SKILL.md ]] || continue
+    [[ $'\n'$edited$'\n' == *$'\n'"$path"$'\n'* ]] || continue
+    rest="${path#skills/}"
+    top="${rest%%/*}"
+    [ "$rest" != "$top" ] || continue
+    rest="${rest#*/}"
+    if tracked_file "skills/$top/SKILL.md" ||
+      { [[ $rest == */* ]] && tracked_file "skills/$top/${rest%%/*}/SKILL.md"; }; then
+      SKILL_TEXT="$SKILL_TEXT$path"$'\n'
+    fi
+  done <<<"$paths"
+}
+catalog_input() { # is some changed path a catalog input that is not skill text?
+  local path inputs="$CATALOG_INPUTS|$LANE_SOURCES"
+  while IFS= read -r path; do
+    [[ $path =~ $inputs ]] || continue
+    [[ $SKILL_TEXT == *$'\n'"$path"$'\n'* ]] || return 0
+  done <<<"$paths"
+  return 1
+}
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
@@ -1709,7 +1751,8 @@ macos_shard() { # SHARDS
 # and PATHS select at EVENT. Every rule on those four inputs is here, the
 # refusals included. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard projection starts empty each
-# time. The reach it projects is read once, before any selection.
+# time. The reach it projects, and SKILL_TEXT, are read once, before any
+# selection.
 select_row() { # CLASS DOCS PATHS EVENT
   local class="$1" docs="$2" event="$4" platform=false uitree=false build=false
   local shards skipped macos=false catalog=false smoke=false linux=false rust matrix="" each known=false
@@ -1736,7 +1779,7 @@ select_row() { # CLASS DOCS PATHS EVENT
     printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] skipped_suites=[] rust_targets=[] cargo_linux_matrix=null"
     return
   fi
-  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
+  catalog_input && catalog=true
   any "$UI_INPUTS" && uitree=true
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *workflow-smoke=1*) smoke=true ;; esac
@@ -1863,6 +1906,9 @@ if [ "${EVENT:-}" = push ]; then
   main_proof
   exit 0
 fi
+
+# Read once, so every event's selection judges the same skill text.
+skill_text
 
 # The class route says on stderr which step it starts, so the CI step that
 # waits on it shows what it is doing: `ci-job-set: progress=<step>
