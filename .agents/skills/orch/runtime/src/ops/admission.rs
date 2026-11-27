@@ -9,7 +9,7 @@
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
 //! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
-//! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
+//! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
 //! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
@@ -388,13 +388,34 @@ pub(super) struct Admission<'r> {
     pub in_scope: &'r [String],
     /// The paths the request adds to the touched set.
     pub paths: &'r [String],
-    /// The checkout a launch runs in, bound to the fleet's repository
-    /// before anything is read; `None` for paths a running lane adds,
-    /// bound when it was admitted.
-    pub checkout: Option<&'r Path>,
+    pub launch: Launch<'r>,
     /// The lane changes no repository file, as its launch enforces: it
     /// touches no path and is not held on its item's launch blockers.
     pub read_only: bool,
+}
+
+/// What the judged set is to the fleet, which decides what a live holder
+/// of a shared path does to it.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Launch<'r> {
+    /// A first launch, from the checkout it runs in, bound to the fleet's
+    /// repository before anything is read: it may join a live holder.
+    First(&'r Path),
+    /// A recorded lane's relaunch, bound on its own ([`bound`]): it carries
+    /// its own record's work, so it never joins another lane.
+    Relaunch,
+    /// Paths a running lane adds, bound when it was admitted.
+    Added,
+}
+
+impl<'r> Admission<'r> {
+    /// The checkout a first launch runs in; none for any other judgement.
+    fn checkout(&self) -> Option<&'r Path> {
+        match self.launch {
+            Launch::First(checkout) => Some(checkout),
+            Launch::Relaunch | Launch::Added => None,
+        }
+    }
 }
 
 /// What the judge answers when it admits.
@@ -1113,7 +1134,7 @@ pub(super) fn bound(
         scope_range: None,
         in_scope: &[],
         paths: &[],
-        checkout: Some(checkout),
+        launch: Launch::First(checkout),
         read_only: false,
     };
     bind(path, &a, checkout, reads, host.accounts)
@@ -1124,17 +1145,46 @@ pub(super) fn bound(
 /// that hold paths now, as a running lane's added path is, never joined. A
 /// stopped or parked record yields while it stands, so another lane can be
 /// admitted a path it holds; its relaunch must not take that path back.
-/// `repo` is the relaunch's effective repository, the request's else the
-/// record's.
+/// `tracker` and `repo` are the relaunch's effective ones, the request's
+/// else the record's. A record no judgement wrote, a surface lane's, holds
+/// no set: its item's Location paths are its set, read as a first launch
+/// reads them, and with no tracker to read them through it is refused, as
+/// a holder whose set is unread is.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
+)]
 pub(super) fn relaunch_held(
     path: &Path,
     lanes: &[Lane],
     intents: &[Intent],
     record: &Lane,
+    tracker: Option<&str>,
     repo: Option<&str>,
     env: &Env,
     host: &Host,
 ) -> Result<()> {
+    let unreadable = |read: &'static str, cause: String| Error::TouchedUnreadable {
+        item: record.item.clone(),
+        read,
+        cause,
+    };
+    let read;
+    let paths = match (&record.touched, tracker) {
+        (Some(paths), _) => paths.as_slice(),
+        (None, _) if record.read_only => &[],
+        (None, None) => return Err(unreadable("item", "tracker-unnamed".to_owned())),
+        (None, Some(tracker)) => {
+            let reads = host
+                .admission
+                .as_ref()
+                .ok_or_else(|| unreadable("item", "admission-reads-unavailable".to_owned()))?;
+            let item = (reads.item)(&reads.clis, tracker, &record.item, repo)
+                .map_err(|c| unreadable("item", c))?;
+            read = location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?;
+            read.as_slice()
+        }
+    };
     let a = Admission {
         item: &record.item,
         tracker: None,
@@ -1143,8 +1193,8 @@ pub(super) fn relaunch_held(
         repo_dir: None,
         scope_range: None,
         in_scope: record.in_scope.as_deref().unwrap_or_default(),
-        paths: record.touched.as_deref().unwrap_or_default(),
-        checkout: None,
+        paths,
+        launch: Launch::Relaunch,
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
@@ -1170,7 +1220,7 @@ pub(super) fn judge(
             .as_ref()
             .ok_or_else(|| unreadable(read, "admission-reads-unavailable".to_owned()))
     };
-    let checkout_common = match a.checkout {
+    let checkout_common = match a.checkout() {
         Some(checkout) => bound(path, a.item, a.tracker, a.repo, checkout, host)?,
         None => None,
     };
@@ -1196,7 +1246,7 @@ pub(super) fn judge(
             match launch_blockers(a.item, &item, |parent| {
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
             }) {
-                Err(Error::LaunchBlocked { item, blockers }) if a.checkout.is_some() => {
+                Err(Error::LaunchBlocked { item, blockers }) if a.checkout().is_some() => {
                     match carrier(lanes, &blockers, a.repo) {
                         Some(index) => blocked = Some((index, blockers)),
                         None => return Err(Error::LaunchBlocked { item, blockers }),
@@ -1288,16 +1338,21 @@ pub(super) fn judge(
         match holding(lane, intents, env, host) {
             // A first launch joins one live holder before its review, and
             // under direct delivery passes one in its review, the publication
-            // taking the order; the paths a running lane adds never merge two
-            // lanes.
+            // taking the order; a relaunch, which never joins, passes one in
+            // its review there too, where its review reads here; the paths a
+            // running lane adds never merge two lanes.
             Holding::Live => {
-                let first = a.checkout.is_some();
+                let first = a.checkout().is_some();
                 let tie = Tie::File(file.clone());
                 if first && let Some(route) = unreachable(lane) {
                     branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
                 }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
-                let direct = first && direct(host)?;
+                let direct = match a.launch {
+                    Launch::First(_) => direct(host)?,
+                    Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
+                    Launch::Added => false,
+                };
                 let before = if joinable || direct {
                     Some(before_review(path, lane, a.item, &tie)?)
                 } else {
@@ -1323,7 +1378,7 @@ pub(super) fn judge(
             Holding::Yields => {}
         }
     }
-    let check_unowned = a.checkout.is_some() && !touched.is_empty();
+    let check_unowned = a.checkout().is_some() && !touched.is_empty();
     if (join.is_some() || check_unowned) && (a.repo.is_some() || a.repo_dir.is_some()) {
         let reads = host
             .admission
@@ -1401,7 +1456,7 @@ pub(super) fn judge(
             }
         }
     }
-    if let (Some(join), Some(checkout)) = (&join, a.checkout) {
+    if let (Some(join), Some(checkout)) = (&join, a.checkout()) {
         join_checkout(path, a.item, checkout, &lanes[join.holder], intents)?;
     }
     Ok(Judged {
@@ -1529,7 +1584,7 @@ pub(super) fn join(
         &judged.touched,
     );
     if let Some(tier) = holder.extra.get("tier").and_then(Value::as_str) {
-        let dir = a.checkout.unwrap_or(Path::new(""));
+        let dir = a.checkout().unwrap_or(Path::new(""));
         if let Some(needs) = wider_cycle(a.item, tier, &touched, dir, host)? {
             return Err(Error::from(agent_runtime::Error::refused(
                 "join-tier-narrower",
@@ -1702,7 +1757,7 @@ pub(super) fn admit_paths(
             scope_range: r.scope_range.as_ref(),
             in_scope: &in_scope,
             paths: &r.paths,
-            checkout: None,
+            launch: Launch::Added,
             read_only: position.is_some_and(|i| lanes[i].read_only),
         },
         env,
@@ -2277,7 +2332,7 @@ mod tests {
             scope_range: None,
             in_scope: &[],
             paths,
-            checkout: None,
+            launch: Launch::Added,
             read_only: false,
         }
     }

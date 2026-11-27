@@ -1476,26 +1476,29 @@ pub(super) fn launch_lane(
         scope_range: r.scope_range.as_ref(),
         in_scope: &r.in_scope,
         paths: &[],
-        checkout: Some(Path::new(&r.mail_root)),
+        launch: admission::Launch::First(Path::new(&r.mail_root)),
         read_only,
     };
-    let judged = match relaunch {
+    // A relaunch is bound before anything is read, as a first launch is:
+    // its sets were judged when first admitted, bar where it runs and whose
+    // item it is, so the binding is judged on its effective tracker and
+    // repository before the patch writes them. Either binding answers the
+    // checkout's common git folder it read.
+    let (judged, checkout_common) = match relaunch {
         Some(index) => {
             let record = &lanes[index];
-            admission::relaunch_held(
-                path,
-                &lanes,
-                &intents,
-                record,
-                r.repo.as_deref().or(record.repo.as_deref()),
-                env,
-                host,
-            )?;
-            None
+            let tracker = r.tracker.as_deref().or(record.tracker.as_deref());
+            let repo = r.repo.as_deref().or(record.repo.as_deref());
+            let common =
+                admission::bound(path, &r.item, tracker, repo, Path::new(&r.mail_root), host)?;
+            admission::relaunch_held(path, &lanes, &intents, record, tracker, repo, env, host)?;
+            (None, common)
         }
-        None => Some(admission::judge(
-            path, &lanes, &intents, &candidate, env, host,
-        )?),
+        None => {
+            let judged = admission::judge(path, &lanes, &intents, &candidate, env, host)?;
+            let common = judged.checkout_common.clone();
+            (Some(judged), common)
+        }
     };
     // A launch joined to a running lane opens none: no record, no intent,
     // no slot and no account.
@@ -1520,24 +1523,6 @@ pub(super) fn launch_lane(
         env,
         host,
     )?;
-    // A relaunch's sets were judged when first admitted, bar where it runs
-    // and whose item it is: the binding, on its effective tracker and
-    // repository, before the patch writes them. Either binding answers the
-    // checkout's common git folder it read.
-    let checkout_common = match relaunch {
-        Some(index) => {
-            let record = &lanes[index];
-            admission::bound(
-                path,
-                &r.item,
-                r.tracker.as_deref().or(record.tracker.as_deref()),
-                r.repo.as_deref().or(record.repo.as_deref()),
-                Path::new(&r.mail_root),
-                host,
-            )?
-        }
-        None => judged.as_ref().and_then(|j| j.checkout_common.clone()),
-    };
     if admission.occupancy >= cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
