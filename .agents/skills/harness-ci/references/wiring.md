@@ -69,7 +69,7 @@ Keep each expression on ONE line. A folded scalar (`>-`) whose continuations are
 
 ## Docs-only mode
 
-Pass `--mode docs` to produce `docs_only=true|false`. With no declaration, this mode accepts files under `docs/`, files under `changelog.d/`, and root files ending in `.md` or `.markdown`. Other paths make the verdict false. [Declared product text](#declared-product-text) adds exact files and requires the lane interface instead of the blanket waiver below.
+Pass `--mode docs` to produce `docs_only=true|false`. With no declaration, this mode accepts files under `docs/`, files under `changelog.d/`, and every file ending in `.md` or `.markdown`. Other paths make the verdict false. [Declared product text](#declared-product-text) adds exact files and requires the lane interface instead of the blanket waiver below.
 
 A docs-only adoption changes each applicable verdict site in the selected shape:
 
@@ -85,7 +85,7 @@ A docs-only adoption changes each applicable verdict site in the selected shape:
 
 Set `HARNESS_CI_DOCS_PATHS` in the `[env]` tables of the commit `--base` names. The docs reader, change-scope's `harness-only`, reads it through change-scope's committed-settings reader and the settings parser that package ships. `.kendex/settings.toml` overrides `kendex.settings.toml`. The process environment, private env file, judged head and working tree cannot authorize a declaration. Unset or blank declares no files. The docs reader reads the declaration before the built-in docs set, so a declared file keeps its owning lanes wherever it sits. A lane that reads an undeclared Markdown file follows the [built-in docs-set rule](#through-the-composite-action).
 
-The value is whitespace-separated exact repository-relative `.md` or `.markdown` file names. Supported characters are ASCII letters, digits, `.`, `_`, `-` and `/`. Use canonical paths without absolute names, dot segments, repeated separators or globs. A changed declared file must be a regular non-executable blob at each endpoint where it exists. The existing path rules exclude high-risk paths and paths the trusted `HARNESS_CI_STANDARD_PATHS` names. Invalid syntax, unreadable settings or entries, and unavailable protected-path or settings readers grant no declaration waiver.
+The value is whitespace-separated exact repository-relative `.md` or `.markdown` file names. Supported characters are ASCII letters, digits, `.`, `_`, `-` and `/`. Use canonical paths without absolute names, dot segments, repeated separators or globs. A changed declared file must be a regular non-executable blob at each endpoint where it exists. The paths the repository's trusted `HARNESS_CI_STANDARD_PATHS` names are the paths a declaration cannot name. Invalid syntax, unreadable settings or entries, and unavailable protected-path or settings readers grant no declaration waiver.
 
 - Declare only prose displayed to users.
 - Do not declare agent instructions, executable templates, scripts or other loaded policy. Consumer review establishes this distinction for arbitrary file names; the classifier cannot discover every reader.
@@ -93,7 +93,7 @@ The value is whitespace-separated exact repository-relative `.md` or `.markdown`
 
 Use `change-class --output FILE --lanes-from DIR` or the composite action's `lanes` and per-lane outputs. Every trusted lane claiming a changed declared file remains selected, even when the class is trivial or `docs_only=true`. Unrelated lanes can stand down. An unclaimed declared file keeps the existing ordinary-lane fallback; absent or malformed lane declarations keep `lanes=true` and publish no invented lane verdict. Queue-default stand-down, queue deferral and nightly/manual full runs keep their existing rules. A declaration does not reduce measured line counts or admit a mixed product change to the docs-only set.
 
-Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration. The [built-in docs-set loaded-input rule](#through-the-composite-action) remains unchanged.
+Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -233,7 +233,7 @@ Every trigger the ruleset requires the context on must appear under `on:`, `merg
 
 Set `HARNESS_CI_STANDARD_PATHS` in the base endpoint's `kendex.settings.toml` or `.kendex/settings.toml` `[env]` table to blank-separated globs for high-risk paths. The second table wins. Before render proof and size classification, a match selects `standard` with `measured=true` and `cause=repository-standard-path path=<p> glob=<g>`. This includes generated files with proved ownership. The globs use the shared exclusion grammar and add to its exclusions. Unset or empty adds none. Caller environment values and edits in the judged head cannot change this setting for their own classification.
 
-A change confined to kendex manifests, JSON settings files and Markdown files answers `trivial` at any size on a pull request or merge group, so every lane stands down. The exceptions, a harness file that registers hooks, permissions or MCP servers, a changed `[sources]` table, a changed `.kendex-lock.json` and a path `HARNESS_CI_STANDARD_PATHS` names, and the file names each kind covers: `change-scope --help`. A settings change stays queue-only. Name a path in `HARNESS_CI_STANDARD_PATHS` to keep its changes on the full run.
+A change confined to kendex manifests, JSON settings files and Markdown files answers `trivial` at any size on a pull request or merge group, so every lane stands down. The exceptions, a harness file that registers hooks, permissions or MCP servers, a changed `[sources]` table, a changed `.kendex-lock.json` and a path `HARNESS_CI_STANDARD_PATHS` names, and the file names each kind covers: `change-scope --help`. A kendex manifest change stays queue-only. Name a path in `HARNESS_CI_STANDARD_PATHS` to keep its changes on the full run.
 
 The shape has TWO checkouts, and that is the whole point of it. The verdict decides whether a required lane may be skipped, so the script that produces it comes from the default branch, where the pull request's author cannot change it, and the pull request's tree is what `--repo` points at.
 
@@ -353,7 +353,7 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 - **`lanes` is the action's answer to whether the diff runs the lanes.**
   - A proved render opens the gate for derived package readers, unread evidence or a matching legacy claim. See [§ Per-lane verdicts](#per-lane-verdicts).
-  - For non-render classes, it is also `false` on `trivial` or `docs_only=true`. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
+  - For non-render classes, it is also `false` on `trivial`, and on `docs_only=true` unless a changed path is one `HARNESS_CI_STANDARD_PATHS` names. Changed declared product text instead keeps `lanes=true` and selects its owning lanes under [Declared product text](#declared-product-text).
   - On `pull_request` and `push`, with `queue-only-default: true`, it is `false` wherever `change-class`'s per-push line names the queue-only default, under [§ Per-lane verdicts](#per-lane-verdicts).
   - On `schedule` and `workflow_dispatch` it is `true`.
   - It is `true` on every other diff.

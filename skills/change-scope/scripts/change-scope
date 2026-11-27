@@ -180,16 +180,18 @@
 # between the range's ends answers standard, cause=manifest-sources path=P,
 # measured: it names the catalogs a later install runs code from. A manifest
 # python3's tomllib cannot read at either end answers standard,
-# cause=manifest-sources-unreadable path=P, measured=false.
-# .gemini/settings.json refuses every narrow class, render included,
-# cause=configuration-source: Gemini's shim owns one key of it. harness-only
-# removes a byte-exact top-level kendex.toml schema step first.
-# A harness's own registry files refuse every narrow class but render,
-# cause=configuration-source, the files it executes as configuration: its
-# hooks, its permissions, and the MCP servers it may run, such as
+# cause=manifest-sources-unreadable path=P detail=D, measured=false, D one of
+# python3-absent, tomllib-absent, manifest-read-failed, manifest-parse-failed
+# or python3-failed.
+# .gemini/settings.json at any depth refuses every narrow class, render
+# included, cause=configuration-source: Gemini's shim owns one key of it.
+# harness-only removes a byte-exact top-level kendex.toml schema step first.
+# A harness's own registry files, at any depth, refuse every narrow class but
+# render, cause=configuration-source, the files it executes as configuration:
+# its hooks, its permissions, and the MCP servers it may run, such as
 # .claude/settings.json, .codex/hooks.json, .codex/config.toml,
 # .github/hooks/*.json, .pi/kendex/hooks.json, .mcp.json and opencode.json;
-# change_class_path in lib/change-scope.sh holds the whole list. kendex
+# CHANGE_CLASS_REGISTRY_GLOBS in lib/change-scope.sh holds the whole list. kendex
 # writes keys in those and never the file, so a re-rendered one reaches
 # render only where the row owning it says the rest of the file did not move. The paths trivial, micro and small all
 # refuse are this package's references/narrow-change.conf; the
@@ -250,10 +252,12 @@ BOT_INSTRUCTIONS_DIR="$SCRIPT_DIR/../../bot-instructions"
 NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
 # shellcheck source=lib/change-scope.sh
 . "$SCRIPT_DIR/lib/change-scope.sh"
-# The micro-tier measurement's boundary as this script reaches it: every file
-# it reads or runs whose edit changes the range measured, the settings the
-# measurement reads, or the ceilings it compares against. This package's
-# narrow-change.conf refuses the narrow classes on each, and
+# The micro-tier measurement's boundary as this script reaches it: its
+# non-Markdown inputs, every such file it reads or runs whose edit changes the
+# range measured, the settings the measurement reads, or the ceilings it
+# compares against. A Markdown input is not listed, since a Markdown file at
+# any path takes the cheapest class. This package's narrow-change.conf
+# refuses the narrow classes on each listed file, and
 # https://github.com/vanillagreencom/kendex/blob/main/skills/change-scope/tests/narrow-boundary.test.sh
 # holds that file's boundary group to this list and the source lines of every
 # file it names.
@@ -672,23 +676,38 @@ fi
 # route. Each changed manifest's `sources` value is compared at both ends
 # with Python's TOML reader; a manifest an end lacks holds none, and one
 # that cannot be read or parsed refuses the cheapest class.
+# The answer is one word on stdout with status 0: `changed` or `unchanged`.
+# Every other word, an empty stdout or another status is no answer, so an
+# interpreter that fails before the program runs, or a python3 older than
+# 3.11 with no tomllib, can never read as an unchanged value.
 manifest_sources_changed() { # PATH
+  command -v python3 >/dev/null 2>&1 || { echo python3-absent; return 0; }
   python3 -I -c '
-import subprocess, sys, tomllib
+import subprocess, sys
+try:
+    import tomllib
+except ImportError:
+    print("tomllib-absent")
+    sys.exit(2)
 repo, path, *revs = sys.argv[1:]
 def sources(rev):
-    listed = subprocess.run(["git", "-C", repo, "ls-tree", rev, "--", path],
-                            check=True, capture_output=True).stdout
-    if not listed:
-        return None
-    blob = subprocess.run(["git", "-C", repo, "cat-file", "blob", f"{rev}:{path}"],
-                          check=True, capture_output=True).stdout
-    return tomllib.loads(blob.decode()).get("sources")
-try:
-    sides = [sources(rev) for rev in revs]
-except Exception:
-    sys.exit(2)
-sys.exit(0 if sides[0] != sides[1] else 1)
+    try:
+        listed = subprocess.run(["git", "-C", repo, "ls-tree", rev, "--", path],
+                                check=True, capture_output=True).stdout
+        if not listed:
+            return None
+        blob = subprocess.run(["git", "-C", repo, "cat-file", "blob", f"{rev}:{path}"],
+                              check=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        print("manifest-read-failed")
+        sys.exit(2)
+    try:
+        return tomllib.loads(blob.decode()).get("sources")
+    except Exception:
+        print("manifest-parse-failed")
+        sys.exit(2)
+sides = [sources(rev) for rev in revs]
+print("changed" if sides[0] != sides[1] else "unchanged")
 ' "$repo" "$1" "$base_rev" "$head_rev" 2>/dev/null
 }
 
@@ -697,11 +716,13 @@ sys.exit(0 if sides[0] != sides[1] else 1)
 while IFS= read -r path; do
   case "$path" in kendex.toml | kendex-local.toml) ;; *) continue ;; esac
   status=0
-  manifest_sources_changed "$path" || status=$?
-  case "$status" in
-    0) answer standard "cause=manifest-sources path=$path" measured ;;
-    1) ;;
-    *) answer standard "cause=manifest-sources-unreadable path=$path" ;;
+  sources_answer="$(manifest_sources_changed "$path")" || status=$?
+  case "$status:$sources_answer" in
+    0:changed) answer standard "cause=manifest-sources path=$path" measured ;;
+    0:unchanged) ;;
+    *:python3-absent | *:tomllib-absent | *:manifest-read-failed | *:manifest-parse-failed)
+      answer standard "cause=manifest-sources-unreadable path=$path detail=$sources_answer" ;;
+    *) answer standard "cause=manifest-sources-unreadable path=$path detail=python3-failed" ;;
   esac
 done <<<"$changed"
 

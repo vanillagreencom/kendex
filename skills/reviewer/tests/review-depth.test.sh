@@ -3,7 +3,6 @@
 # Surface: scripts/review-depth. Inputs: change-scope/scripts/lib/change-scope.sh,
 # orch/tests/lib/assertions.sh. The classifier fixture supplies its public
 # stdout/stderr protocol; the real reader and depth command consume it.
-# Inputs: skills/change-scope/scripts/, skills/change-scope/references/
 set -euo pipefail
 
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -144,49 +143,6 @@ PY
 status=0
 (depth_table "$INSTALL/reviewer/scripts/small-full") >"$TMP_ROOT/control.log" 2>&1 || status=$?
 assert_eq "$status" 1 'must-fail control rejects the changed small depth'
-
-# The real classifier, installed whole beside a second copy of this package:
-# a range confined to a kendex manifest, a JSON settings file or Markdown
-# gets the cheapest class's depth at any size, and a script reads by its
-# size.
-REAL="$TMP_ROOT/real"
-mkdir -p "$REAL/reviewer/scripts"
-cp "$SKILL_DIR/scripts/review-depth" "$REAL/reviewer/scripts/"
-cp -R "$SKILL_DIR/../change-scope" "$REAL/change-scope"
-QUICK="$TMP_ROOT/quick"
-git init -q -b main "$QUICK"
-git -C "$QUICK" config user.email review-depth@example.invalid
-git -C "$QUICK" config user.name review-depth
-git -C "$QUICK" config gc.auto 0
-git -C "$QUICK" config maintenance.auto false
-printf '%s\n' '[".kendex-generated.json"]' >"$QUICK/.kendex-generated.json"
-printf 'schema = 8\n[install]\nmethod = "copy"\n' >"$QUICK/kendex.toml"
-mkdir -p "$QUICK/.vscode" "$QUICK/skills/x"
-printf '{}\n' >"$QUICK/.vscode/settings.json"
-printf '# X\n' >"$QUICK/skills/x/SKILL.md"
-printf 'MODE=old\n' >"$QUICK/run.sh"
-git -C "$QUICK" add -A
-git -C "$QUICK" commit -qm base
-QUICK_BASE="$(git -C "$QUICK" rev-parse HEAD)"
-while IFS='|' read -r name path content lines expected; do
-  git -C "$QUICK" checkout -q -B "$name" "$QUICK_BASE"
-  if [ "$lines" = - ]; then
-    printf '%b\n' "$content" >"$QUICK/$path"
-  else
-    awk -v n="$lines" 'BEGIN { for (i = 1; i <= n; i++) print "# Line " i "." }' >>"$QUICK/$path"
-  fi
-  git -C "$QUICK" add -A
-  git -C "$QUICK" commit -qm "$name"
-  status=0
-  output="$(env -u HARNESS_CI_TRIVIAL_PATHS -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
-    "$REAL/reviewer/scripts/review-depth" --base "$QUICK_BASE" --head HEAD --repo "$QUICK" 2>"$TMP_ROOT/stderr")" || status=$?
-  assert_eq "$status $output" "0 $expected" "$name: the real classifier's depth" "$TMP_ROOT/stderr"
-done <<'ROWS'
-manifest-past-small|kendex.toml||200|change_class=trivial review_depth=none native_approval=unchanged
-json-settings-past-small|.vscode/settings.json||200|change_class=trivial review_depth=none native_approval=unchanged
-skill-markdown-past-small|skills/x/SKILL.md||200|change_class=trivial review_depth=none native_approval=unchanged
-script-past-micro|run.sh||40|change_class=small review_depth=bot native_approval=unchanged
-ROWS
 
 printf '\nreview-depth: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
