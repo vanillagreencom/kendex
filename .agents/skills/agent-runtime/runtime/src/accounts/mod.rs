@@ -1342,10 +1342,12 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
 /// controller whose own account reaches its mark is moved.
 ///
 /// The selection score (`with_lane_selection_score`, `agent-runtime
-/// accounts pick`) is no charge: it is `headroom` weighted by the reset
-/// bonus `1 + 1 / (1 + hours to the deciding window's reset)`, bounded to
-/// twice the headroom, so among accounts with room the sooner reset is
-/// tried first and no reset time buys a launch past the bound.
+/// accounts pick`) is no charge: it is the least, over the projected
+/// windows, of each window's room weighted by its own reset bonus
+/// `1 + 1 / (1 + hours to that window's reset)`. It lies between the
+/// `headroom` and twice it, so among accounts with room the sooner reset is
+/// tried first and no reset time buys a launch past the bound, and it never
+/// rises as any window's usage does.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub headroom: f64,
@@ -2021,10 +2023,11 @@ fn judge(
             .collect(),
         None => Vec::new(),
     };
-    let projection = windows
+    let projections: Vec<Projection> = windows.iter().map(project).collect();
+    let projection = projections
         .iter()
-        .map(project)
-        .min_by(|a, b| a.headroom.total_cmp(&b.headroom));
+        .min_by(|a, b| a.headroom.total_cmp(&b.headroom))
+        .cloned();
     // A reading older than one lane at a window's burn takes to spend the
     // room it shows on that window below the bound vouches for no room
     // there, on every window that can stop the start: each plan window the
@@ -2093,13 +2096,22 @@ fn judge(
             .and_then(|c| c.get("balance"))
             .and_then(Value::as_f64)
     } else {
-        // The bonus is the deciding window's: the reset that frees the room
-        // the score counts.
-        projection.as_ref().map(|p| {
+        let weighted = |p: &Projection| {
             let hours = reset_epoch(p.window.resets_at.as_deref())
                 .map(|reset| (reset as f64 - now as f64).max(0.0) / 3600.0);
             p.headroom * reset_bonus(hours)
-        })
+        };
+        // Each window's room weighted by its own reset, the least ranking
+        // the account: weighting only the deciding window's room would let
+        // more spending on a window with a sooner reset raise the score as
+        // that window takes over the decision.
+        match &spent {
+            Some(_) => projection.as_ref().map(weighted),
+            None => projections
+                .iter()
+                .map(weighted)
+                .min_by(|a, b| a.total_cmp(b)),
+        }
     };
     let mut row = row.clone();
     row.state_end(today);
@@ -2894,7 +2906,8 @@ mod tests {
     }
 
     /// A launch is judged on its least projected room over every window
-    /// that can stop it, and ranked by that window's reset. Each row: the
+    /// that can stop it, and ranked by the least of each window's room
+    /// weighted by its own reset. Each row: the
     /// case, the rows, the request, the lanes charged per account, every
     /// one of them live at the reading, and the account the pick lands on,
     /// none where nothing qualifies.
@@ -2903,9 +2916,11 @@ mod tests {
     ///   15 sessions and leaves less room under a bound of 81.
     /// - Account a's 5-hour window decides its room and resets in half an
     ///   hour; account b's week decides with more room, a hundred hours to
-    ///   its reset.
+    ///   its reset, and outweighs a's week at that same reset.
+    /// - Two accounts differ only in the 5-hour usage under one reset: the
+    ///   one that spent less is chosen.
     #[test]
-    fn the_least_projected_room_decides_and_its_reset_ranks_the_account() {
+    fn the_least_projected_room_decides_and_the_least_weighted_room_ranks_the_account() {
         let now = 1_800_000_000;
         let at = |hours: f64| clock::iso_utc(now + (hours * 3600.0) as u64);
         let measured = row(json!({
@@ -2945,7 +2960,14 @@ mod tests {
                 vec![host("/h/.a", 50, 60, 0.5), host("/h/.b", 45, 10, 3.0)],
                 opus(None, None),
                 vec![],
-                Some("/h/.a"),
+                Some("/h/.b"),
+            ),
+            (
+                "one 5-hour reset, less of that window spent",
+                vec![host("/h/.less", 50, 30, 0.5), host("/h/.more", 50, 60, 0.5)],
+                opus(None, None),
+                vec![],
+                Some("/h/.less"),
             ),
         ];
         let tokens = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
