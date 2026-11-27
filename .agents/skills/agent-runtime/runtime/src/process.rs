@@ -1313,7 +1313,9 @@ mod tests {
             cause: "ps-failed".to_owned(),
             signalled,
         };
-        let table: [(Stop, fn() -> Reading<Vec<Row>>, Stop); 7] = [
+        // A verdict, the group read again, and the verdict that stands.
+        type Case = (Stop, fn() -> Reading<Vec<Row>>, Stop);
+        let table: [Case; 7] = [
             (stopped.clone(), || Reading::Gone, stopped.clone()),
             (Stop::AlreadyGone, || Reading::Gone, Stop::AlreadyGone),
             (stopped.clone(), member, Stop::Timeout { pid: 52 }),
