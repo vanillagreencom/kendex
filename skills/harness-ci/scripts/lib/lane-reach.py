@@ -18,7 +18,6 @@ class Unreadable(Exception):
     # run, from a read of the change itself or from inside the Cargo reader,
     # leaves the job's reads unknown.
     shape = False
-    executable_input = False
 
 
 class ShapeUnreadable(Unreadable):
@@ -66,19 +65,18 @@ def literal(value):
     return re.fullmatch(r"[A-Za-z0-9_./+-]+", value) and not value.startswith("/")
 
 
-def npm_run(args):
-    return (len(args) == 3 and args[:2] == ["npm", "run"]
-            and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:-]*", args[2]))
-
-
-def words(line):
+def shell_tokens(line):
     if line.lstrip().startswith("#"):
         return []
     try:
-        tokens = shlex.split(line)
+        return shlex.split(line)
     except ValueError as error:
         raise ComputedCommand(str(error)) from error
-    if not (npm_run(tokens) or all(literal(word) or word == ":" for word in tokens)):
+
+
+def words(line):
+    tokens = shell_tokens(line)
+    if not all(literal(word) or word == ":" for word in tokens):
         raise ComputedCommand("computed-command")
     return tokens
 
@@ -109,8 +107,13 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 # each ancestor: any(configFiles, { cwd: root }) in vitest/dist/node.js.
 VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
-NPM_CI_SCRIPTS = ("preinstall", "install", "postinstall", "prepublish",
-                  "preprepare", "prepare", "postprepare", "dependencies")
+NPM_CI_SCRIPTS = {"preinstall", "install", "postinstall", "prepublish",
+                  "preprepare", "prepare", "postprepare", "dependencies"}
+# npm's cmd-list.js names these commands and aliases.
+# https://github.com/npm/cli/blob/v11.19.1/lib/utils/cmd-list.js
+NPM_RUN = {"run", "run-script", "rum", "urn"}
+NPM_SCRIPT = {"start", "stop", "restart", "test", "t", "tst", "install-scripts", "rebuild", "rb"}
+NPM_CI = {"ci", "clean-install", "ic", "install-clean", "isntall-clean"}
 # NODE_OPTIONS accepts the CLI's preload flags, including the -r short form.
 # https://nodejs.org/api/cli.html#node_optionsoptions
 NODE_PRELOAD = re.compile(
@@ -423,28 +426,19 @@ class Evidence:
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         reject_vercel(args)
-        source = name in {"source", ".", "bash"} and len(operands) == 1
-        dispatch = lane_invocation(args)
-        executable = name.startswith("./") and not operands
-        if source or dispatch or executable:
-            try:
-                if source:
-                    require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
-                    script, passed = self.resolve(directory, operands[0])
-                    reads.update(passed)
-                    self.shell_reads(script, directory, reads, visited)
-                elif dispatch:
-                    require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
-                    self.lane_dispatch(args, directory, reads, visited)
-                else:
-                    script, passed = self.resolve(directory, name)
-                    reads.update({script} | passed)
-                    self.loaded_reads(script, directory, reads, visited)
-            except Unreadable as error:
-                error.executable_input = True
-                raise
-            return
-        if name == "cat" and operands and all(literal(path) for path in operands):
+        if name in {"source", ".", "bash"} and len(operands) == 1:
+            require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
+            script, passed = self.resolve(directory, operands[0])
+            reads.update(passed)
+            self.shell_reads(script, directory, reads, visited)
+        elif lane_invocation(args):
+            require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
+            self.lane_dispatch(args, directory, reads, visited)
+        elif name.startswith("./") and not operands:
+            script, passed = self.resolve(directory, name)
+            reads.update({script} | passed)
+            self.loaded_reads(script, directory, reads, visited)
+        elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 path, passed = self.resolve(directory, path)
                 reads.update({path} | passed)
@@ -1117,40 +1111,41 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
     job_words = env_words(job.get("env", {}), "job")
     inherited = workflow_words + job_words
     matrix = matrix_words(job) if "strategy" in job else []
+    default = job.get("defaults", {}).get("run", {})
     step_inputs = []
     for step in job["steps"]:
         condition = step.get("if", "true")
         require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
                 "opaque-step-condition")
         step_inputs.append(env_words(step.get("env", {}), "step"))
-        # One unproved step can end the normal reach scan before Vercel runs.
+        # A claim-backed refusal can end the regular scan before a script runs.
         for line in step.get("run", "").splitlines():
-            if "vercel" not in line:
-                continue
             try:
-                args = words(line)
+                args = shell_tokens(line)
             except ComputedCommand:
                 continue
-            reject_vercel(args)
+            if args[:1] == ["vercel"] and all(literal(word) or word == ":" for word in args):
+                reject_vercel(args)
+            if len(args) > 1 and args[0] == "npm":
+                named_run = args[1] in NPM_RUN and any(not word.startswith("-") for word in args[2:])
+                require(args[1] not in NPM_SCRIPT and not named_run,
+                        "opaque-npm-script")
+                if args[1] in NPM_CI:
+                    reject_npm_ci_scripts(evidence, step.get("working-directory",
+                                                             default.get("working-directory", ".")))
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                               "permissions", "steps", "defaults", "strategy", "env"}, "opaque-job")
     visited = set()
     opaque_action = None
     npm_shape = None
-    npm_installations = None
-    default = job.get("defaults", {}).get("run", {})
     require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
     for step, step_words in zip(job["steps"], step_inputs):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes", "if", "env"}, "opaque-step")
         if "uses" in step:
             input_reads(evidence, job_words + step_words, ".", ordinary, visited)
-            if checkout_reads_head(evidence, step):
-                if opaque_action is None and "if" not in step:
-                    npm_installations = {}
-            elif not setup_reads(evidence, step, ordinary):
+            if not (checkout_reads_head(evidence, step) or setup_reads(evidence, step, ordinary)):
                 opaque_action = step["uses"]
-                npm_installations = None
             continue
         require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
                       "unsupported-shell")
@@ -1171,7 +1166,6 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
             if not args:
                 continue
             if args[0] == "cargo":
-                npm_installations = None
                 readers.append(set())
                 try:
                     covered.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
@@ -1181,21 +1175,16 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                     raise Unreadable(str(error)) from error
             elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                           ["npx", "--no-install", "vitest", "run"]):
-                npm_installations = None
                 readers.append(set())
                 covered.append(evidence.vitest_reads(directory, readers[-1]))
             elif args[0] in {"npm", "pnpm"}:
                 env_keys = {key.upper() for _, key, _, _ in inherited + step_words}
-                if "if" in step:
-                    npm_installations = None
                 try:
-                    node_reads(evidence, args, directory, ordinary, visited, env_keys, npm_installations)
+                    node_reads(evidence, args, directory, ordinary, env_keys)
                 except Unreadable as error:
                     if args[0] == "pnpm" or not is_shape(error):
                         raise
-                    npm_installations = None
-                    # A later npm step can expose an install hook or computed
-                    # script that the claim cannot cover.
+                    # A later install can expose unproved lock inputs.
                     npm_shape = npm_shape or error
             else:
                 evidence.shell_command(args, directory, ordinary, visited)
@@ -1259,7 +1248,46 @@ def setup_reads(evidence, step, reads):
     return True
 
 
-def node_reads(evidence, args, directory, reads, visited, env_keys, installations):
+def npm_lock(evidence, folder):
+    return next((folder / name for name in ("npm-shrinkwrap.json", "package-lock.json")
+                 if (folder / name).as_posix() in evidence.files), None)
+
+
+def npm_dependency_scripts(locked):
+    packages = locked.get("packages")
+    return isinstance(packages, dict) and any(
+        name and isinstance(entry, dict) and entry.get("hasInstallScript")
+        for name, entry in packages.items()
+    )
+
+
+def reject_npm_ci_scripts(evidence, directory):
+    if directory != ".":
+        try:
+            directory, _ = evidence.resolve(".", directory)
+        except ShapeUnreadable:
+            return
+    folder = Path(directory)
+    for project in (folder, *folder.parents):
+        manifest = (project / "package.json").as_posix()
+        if manifest in evidence.files:
+            try:
+                scripts = npm_json(evidence, manifest).get("scripts", {})
+            except ShapeUnreadable:
+                scripts = {}
+            require(not isinstance(scripts, dict) or not (scripts.keys() & NPM_CI_SCRIPTS),
+                    "opaque-npm-script")
+        lock = npm_lock(evidence, project)
+        if lock:
+            try:
+                locked = npm_json(evidence, lock.as_posix())
+            except ShapeUnreadable:
+                continue
+            require(not npm_dependency_scripts(locked), "opaque-npm-dependency")
+        require((project / "binding.gyp").as_posix() not in evidence.files, "opaque-npm-binding")
+
+
+def node_reads(evidence, args, directory, reads, env_keys):
     folder = Path(directory)
     folders = {folder, *folder.parents}
     config_names = {*JS_PACKAGES, "pnpm-workspace.yaml", ".npmrc", "npm-shrinkwrap.json"}
@@ -1272,83 +1300,26 @@ def node_reads(evidence, args, directory, reads, visited, env_keys, installation
         # (verifyDepsBeforeRun defaults to install).
         raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path} reason=dependency-builds-unproved")
 
-    install = args == ["npm", "ci"]
-    require_shape(install or npm_run(args), "opaque-shell-command")
-    empty_install = False
-    if install:
-        lock = next((folder / name for name in ("npm-shrinkwrap.json", "package-lock.json")
-                     if (folder / name).as_posix() in evidence.files), None)
-        if lock:
-            empty_install = npm_install_reads(evidence, lock)
-        binding = (folder / "binding.gyp").as_posix()
-        reads.add(binding)
-        require(binding not in evidence.files, "opaque-npm-binding")
+    require_shape(args == ["npm", "ci"], "opaque-shell-command")
+    lock = npm_lock(evidence, folder)
+    if lock:
+        npm_install_reads(evidence, lock)
+    binding = (folder / "binding.gyp").as_posix()
+    reads.add(binding)
+    require(binding not in evidence.files, "opaque-npm-binding")
 
     manifest = npm_json(evidence, manifest_path)
-    scripts = manifest.get("scripts", {})
-    require_shape(isinstance(scripts, dict), "opaque-npm-config")
-    names = NPM_CI_SCRIPTS if install else ("pre" + args[2], args[2], "post" + args[2])
-    script_shape = None
-    uses_executable = False
-    for name in names:
-        if name not in scripts:
-            continue
-        body = scripts[name]
-        require(isinstance(body, str) and body.strip(), "opaque-node-script")
-        for line in body.split("\n"):
-            try:
-                command_words = words(line)
-                if command_words:
-                    evidence.shell_command(command_words, directory, reads, visited)
-                    uses_executable |= command_words[0] not in {":", "set", "test", "true", "false"}
-            except Unreadable as error:
-                # Claims cover unsupported commands, but a helper already
-                # reached by the package script can still read unknown inputs.
-                if isinstance(error, ComputedCommand) or error.executable_input:
-                    error.shape = False
-                if not is_shape(error):
-                    raise
-                script_shape = script_shape or error
-    if uses_executable:
-        npm_bin_reads(evidence, folder, reads, installations, empty_install if install else None)
-
-    # A known hazard stays eligible even when config or another command
-    # would otherwise let the lane's reasoned claims stand in for its reads.
-    check_config = require if uses_executable else require_shape
-    check_config("ENV" not in env_keys and not any(key.startswith("NPM_CONFIG_") for key in env_keys),
-                 "opaque-node-env")
-    check_config("workspaces" not in manifest
-                 and not any((parent / ".npmrc").as_posix() in evidence.files for parent in folders),
-                 "opaque-npm-config")
+    require_shape(isinstance(manifest.get("scripts", {}), dict), "opaque-npm-config")
+    require_shape("ENV" not in env_keys and not any(key.startswith("NPM_CONFIG_") for key in env_keys),
+                  "opaque-node-env")
+    require_shape("workspaces" not in manifest
+                  and not any((parent / ".npmrc").as_posix() in evidence.files for parent in folders),
+                  "opaque-npm-config")
     for parent in folder.parents:
         parent_manifest = (parent / "package.json").as_posix()
         if parent_manifest in evidence.files:
-            check_config("workspaces" not in npm_json(evidence, parent_manifest), "opaque-npm-config")
-    if install:
-        require_shape(lock, "opaque-npm-lock")
-    else:
-        require_shape(args[2] in scripts, "opaque-npm-script")
-    if script_shape:
-        raise script_shape
-    if install and installations is not None:
-        installations[folder] = empty_install
-
-
-def npm_bin_reads(evidence, folder, reads, installations, current_install):
-    # npm prepends node_modules/.bin for the project and each ancestor.
-    # https://github.com/npm/run-script/blob/v10.0.3/lib/set-path.js
-    require(installations is not None, "opaque-npm-bin")
-    empty = installations.get(folder) if current_install is None else current_install
-    require(empty and all(installations.get(parent, True) for parent in folder.parents),
-            "opaque-npm-bin")
-    for parent in (folder, *folder.parents):
-        modules = (parent / "node_modules").as_posix()
-        bins = modules + "/.bin"
-        # A tracked module link or bin can replace the command or an env
-        # shebang interpreter. A change that introduces one reaches the job.
-        require(modules not in evidence.files and not any(under(path, bins) for path in evidence.files),
-                "opaque-npm-bin")
-        reads.update(path for path in evidence.changed if path == modules or under(path, bins))
+            require_shape("workspaces" not in npm_json(evidence, parent_manifest), "opaque-npm-config")
+    require_shape(lock, "opaque-npm-lock")
 
 
 def npm_json(evidence, path):
@@ -1370,12 +1341,12 @@ def npm_install_reads(evidence, lock):
     packages = locked.get("packages")
     require(locked.get("lockfileVersion") in (2, 3) and isinstance(packages, dict) and "" in packages,
             "opaque-npm-lock")
+    require(not npm_dependency_scripts(locked), "opaque-npm-dependency")
     for name, entry in packages.items():
         if name:
             require(isinstance(entry, dict) and name.startswith("node_modules/") and not entry.get("link")
-                    and not entry.get("hasInstallScript") and isinstance(entry.get("resolved"), str)
-                    and entry["resolved"].startswith("https://"), "opaque-npm-dependency")
-    return len(packages) == 1
+                    and isinstance(entry.get("resolved"), str) and entry["resolved"].startswith("https://"),
+                    "opaque-npm-dependency")
 
 
 def derived(evidence, claimed, settings, declared):

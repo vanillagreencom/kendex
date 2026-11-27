@@ -458,70 +458,51 @@ literal-job-env-computed|    runs-on: ubuntu-latest\n|    env:\n      CI_CONFIG:
 literal-job-path|    runs-on: ubuntu-latest\n|    env:\n      PATH: tools/bin\n    runs-on: ubuntu-latest\n
 ROWS
 
-# HTIO-57's checkout ref, Node setup and npm wrapper, under a standard lane gate.
+# HTIO-57's checkout ref and Node setup, with a script-free install.
 git -C "$repo" checkout -qb fixture-npm "$literal_job_base"
 edit_workflow '      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n' \
-  '      - uses: actions/checkout@v7\n        with:\n          ref: ${{ github.sha }}\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n      - run: npm run check:vercel\n'
-printf '%s\n' '{"scripts":{"check:vercel":"bash ./tools/check-vercel.sh"}}' \
-  >"$repo/package.json"
+  '      - uses: actions/checkout@v7\n        with:\n          ref: ${{ github.sha }}\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n'
+printf '%s\n' '{"private":true}' >"$repo/package.json"
 printf '%s\n' '{"lockfileVersion":3,"packages":{"":{}}}' >"$repo/package-lock.json"
-printf '%s\n' 'cat ./tools/check.config' >"$repo/tools/check-vercel.sh"
 printf '%s\n' 'setting' >"$repo/tools/check.config"
 printf '%s\n' 'setting' >"$repo/tools/npm-input.config"
 git -C "$repo" add -A
-git -C "$repo" commit -qm 'the npm job has local build inputs'
+git -C "$repo" commit -qm 'a script-free npm install'
 npm_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-npm-computed "$npm_base"
-edit_file "$repo/package.json" 'bash ./tools/check-vercel.sh' 'bash $CHECK_SCRIPT'
-printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' >"$repo/.github/ci-lanes.conf"
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'a dependency of the npm step is computed'
 
 while IFS='|' read -r variant file old new; do
   git -C "$repo" checkout -qb "fixture-$variant" "$npm_base"
   touch "$repo/$file"
   edit_file "$repo/$file" "$old" "$new"
-  if [ "$variant" = npm-lifecycle ]; then
-    edit_file "$repo/package.json" '{"scripts":' '{"optionalDependencies":{"fsevents":"2.3.3"},"scripts":'
-    edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n'
-  elif [ "$variant" = npm-bin-shadow ]; then
-    edit_file "$repo/package.json" '{"scripts":' '{"dependencies":{"fixture-command":"1.0.0"},"scripts":'
-  elif [ "$variant" = npm-config-claim ] || [ "$variant" = npm-unsupported-invocation ]; then
-    edit_workflow '      - run: npm run check:vercel\n' ''
-  elif [ "$variant" = npm-dispatch-unread ]; then
-    printf '%s\n' '#!/usr/bin/env bash' 'echo Checking' 'cat "${CI_PROFILE:-./tools/npm-input.config}"' \
-      >"$repo/tools/npm-dispatch.sh"
-    chmod +x "$repo/tools/npm-dispatch.sh"
-  fi
+  case "$variant" in
+    npm-lifecycle)
+      printf '%s\n' '{"optionalDependencies":{"fsevents":"2.3.3"}}' >"$repo/package.json"
+      edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n' ;;
+    npm-preload)
+      printf '%s\n' 'require("node:fs").readFileSync("tools/npm-input.config")' >"$repo/tools/node-setup.js" ;;
+    npm-script-retained)
+      printf '%s\n' '{"scripts":{"check:vercel":"cat ./tools/check.config"}}' >"$repo/package.json" ;;
+    npm-project-lifecycle)
+      edit_workflow '      - run: npm ci\n' '      - run: echo Checking\n      - run: npm ci --no-audit\n' ;;
+  esac
   printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' \
     >"$repo/.github/ci-lanes.conf"
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$variant"
 done <<'ROWS'
 npm-config-claim|.npmrc||legacy-peer-deps=true\n
-npm-bin-shadow|package-lock.json|{"":{}}|{"":{"dependencies":{"fixture-command":"1.0.0"}},"node_modules/fixture-command":{"version":"1.0.0","resolved":"https://registry.npmjs.org/fixture-command/-/fixture-command-1.0.0.tgz","bin":{"cat":"cli.js"}}}
 npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
-npm-helper-computed|tools/check-vercel.sh|cat ./tools/check.config|echo Checking\ncat "${CI_PROFILE:-./tools/npm-input.config}"
-npm-dispatch-unread|package.json|bash ./tools/check-vercel.sh|./tools/npm-dispatch.sh --lane web
-npm-preload|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm run check:vercel\n
+npm-project-lifecycle|package.json|{"private":true}|{"scripts":{"postinstall":"cat ./tools/npm-input.config"}}
+npm-preload|.github/workflows/ci.yml|      - run: npm ci\n|      - env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm ci\n
 npm-unsupported-invocation|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --no-audit\n
-npm-vercel-command|package.json|bash ./tools/check-vercel.sh|vercel build
-vercel-retained|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: echo Checking\n      - run: vercel build\n
-vercel-after-pnpm|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: pnpm install --frozen-lockfile\n      - run: vercel build\n
+npm-script-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: npm run-script check:vercel\n
+vercel-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: vercel build\n
+vercel-after-pnpm|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: pnpm install --frozen-lockfile\n      - run: vercel build\n
 ROWS
-git -C "$repo" checkout -q fixture-npm-preload
-printf '%s\n' 'require("node:fs").readFileSync("tools/npm-input.config")' >"$repo/tools/node-setup.js"
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'Node resolves the extensionless preload to a tracked module'
-for variant in npm-helper-computed npm-lifecycle; do
-  git -C "$repo" checkout -qb "fixture-$variant-config" "fixture-$variant"
-  printf '%s\n' 'engine-strict=true' >"$repo/.npmrc"
-  git -C "$repo" add -A
-  git -C "$repo" commit -qm 'npm config and an executable input coexist'
-done
-git -C "$repo" checkout -qb fixture-npm-linked-lifecycle "$npm_base"
 # npm v3 records a file: dependency's hook on the link target.
-edit_file "$repo/package.json" '{"scripts":' '{"dependencies":{"shared":"file:./shared"},"scripts":'
+git -C "$repo" checkout -qb fixture-npm-linked-lifecycle "$npm_base"
+edit_workflow '      - run: npm ci\n' '      - run: echo Checking\n      - run: npm ci\n'
+printf '%s\n' '{"dependencies":{"shared":"file:./shared"}}' >"$repo/package.json"
 printf '%s\n' '{"lockfileVersion":3,"packages":{"":{"dependencies":{"shared":"file:./shared"}},"node_modules/shared":{"resolved":"shared","link":true},"shared":{"version":"1.0.0","hasInstallScript":true}}}' \
   >"$repo/package-lock.json"
 mkdir -p "$repo/shared"
@@ -1408,7 +1389,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
-    literal-*|npm-computed|npm-config-claim|npm-bin-shadow|npm-*lifecycle*|npm-helper-computed*|npm-dispatch-unread|npm-preload|npm-unsupported-invocation|npm-vercel-command|vercel-*)
+    literal-*|npm-config-claim|npm-*lifecycle|npm-preload|npm-unsupported-invocation|npm-script-retained|vercel-*)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
@@ -1645,15 +1626,13 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
     literal-job-env-computed) refused_jobs='job=web cause=opaque-job-env' ;;
     literal-job-path) refused_jobs='job=web cause=opaque-job-env' ;;
-    npm-computed) refused_jobs='job=web cause=computed-command' ;;
-    npm-dispatch-unread) refused_jobs='job=web cause=unresolved-lane-dispatch' ;;
-    npm-helper-computed*|npm-unsupported-invocation) refused_jobs='job=web cause=opaque-shell-command' ;;
+    npm-script-retained|npm-project-lifecycle) refused_jobs='job=web cause=opaque-npm-script' ;;
+    npm-unsupported-invocation) refused_jobs='job=web cause=opaque-shell-command' ;;
     npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
-    npm-bin-shadow) refused_jobs='job=web cause=opaque-npm-bin' ;;
-    npm-*lifecycle*) refused_jobs='job=web cause=opaque-npm-dependency' ;;
+    npm-lifecycle|npm-linked-lifecycle) refused_jobs='job=web cause=opaque-npm-dependency' ;;
     npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
     npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
-    vercel-*|npm-vercel-command) refused_jobs='job=web cause=opaque-vercel-command' ;;
+    vercel-*) refused_jobs='job=web cause=opaque-vercel-command' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1828,21 +1807,16 @@ literal-job-env|tools/unrelated.txt|||false|
 literal-job-env-read|tools/ci.config|||true|
 literal-job-env-computed|tools/unrelated.txt|||true|
 literal-job-path|tools/path-input.config|||true|
-npm-unrelated|tools/unrelated.txt|||false|
-npm-run-read|tools/check.config|||true|
-npm-computed|tools/unrelated.txt|||true|
-npm-helper-computed|tools/npm-input.config|||true|
-npm-helper-computed-config|tools/npm-input.config|||true|
-npm-dispatch-unread|tools/npm-input.config|||true|
+npm-ci-unrelated|tools/unrelated.txt|||false|
+npm-ci-config-input|.npmrc|||true|
+npm-script-retained|tools/unrelated.txt|||true|
 npm-config-claim|tools/unrelated.txt|||false|
-npm-bin-shadow|tools/npm-input.config|||true|
 npm-lifecycle|tools/unrelated.txt|||true|
-npm-lifecycle-config|tools/unrelated.txt|||true|
+npm-project-lifecycle|tools/npm-input.config|||true|
 npm-linked-lifecycle|tools/npm-input.config|||true|
 npm-preload|tools/npm-input.config|||true|
 npm-ref-mismatch|tools/unrelated.txt|||true||pull_request
 npm-unsupported-invocation|tools/unrelated.txt|||false|
-npm-vercel-command|tools/unrelated.txt|||true|
 vercel-retained|tools/unrelated.txt|||true|
 vercel-after-pnpm|tools/unrelated.txt|||true|
 ROWS
