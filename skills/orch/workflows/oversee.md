@@ -131,7 +131,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - Where the checkout did not follow, a resumed controller's line leads `sync-base-[REASON]` in place of `controller-resumed`, at exit 4. A failed or unconfirmed one carries `base=sync-base-[REASON]` after its `intent`.
      - `[REASON]` is the word `sync-base`'s own `sync-base: [REASON]` line leads with.
      - These keys come from no such line: `sync-base-timeout` for a fetch past the read bound, `sync-base-unstarted` where the script could not start and `sync-base-exit-[N]` where it printed no reason.
-     - Before the predecessor-gated start, the resume runtime also emitted `sync-base-controller-live` when the status read found a live controller, or `sync-base-[STATUS_ERROR_KEY]` when the status read refused, for example `sync-base-controller-unreadable`. These keys came from the status read.
+     - Older resume runtimes, before the predecessor-gated start, also reported `sync-base-controller-live` for a live controller and `sync-base-[STATUS_ERROR_KEY]` for a refused status read, such as `sync-base-controller-unreadable`. Those keys came from the old status read before the sync.
      - Nor does `sync-base-not-run`, for a start that never reached the sync: it ended before judging its predecessor gone, or it reconciled an earlier open start.
    - Where the checkout did not follow, what comes next depends on the controller's state, never on the key:
      - Exit 4 reports that the resume started the controller without a successful base sync. The checkout can already match the landed base, for example when `sync-base` refuses tracked changes.
