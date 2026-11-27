@@ -484,6 +484,10 @@ while IFS='|' read -r variant file old new; do
   if [ "$variant" = npm-lifecycle ]; then
     edit_file "$repo/package.json" '{"scripts":' '{"optionalDependencies":{"fsevents":"2.3.3"},"scripts":'
     edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n'
+  elif [ "$variant" = npm-bin-shadow ]; then
+    edit_file "$repo/package.json" '{"scripts":' '{"dependencies":{"fixture-command":"1.0.0"},"scripts":'
+  elif [ "$variant" = npm-config-claim ] || [ "$variant" = npm-unsupported-invocation ]; then
+    edit_workflow '      - run: npm run check:vercel\n' ''
   elif [ "$variant" = npm-dispatch-unread ]; then
     printf '%s\n' '#!/usr/bin/env bash' 'echo Checking' 'cat "${CI_PROFILE:-./tools/npm-input.config}"' \
       >"$repo/tools/npm-dispatch.sh"
@@ -495,6 +499,7 @@ while IFS='|' read -r variant file old new; do
   git -C "$repo" commit -qm "$variant"
 done <<'ROWS'
 npm-config-claim|.npmrc||legacy-peer-deps=true\n
+npm-bin-shadow|package-lock.json|{"":{}}|{"":{"dependencies":{"fixture-command":"1.0.0"}},"node_modules/fixture-command":{"version":"1.0.0","resolved":"https://registry.npmjs.org/fixture-command/-/fixture-command-1.0.0.tgz","bin":{"cat":"cli.js"}}}
 npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
 npm-helper-computed|tools/check-vercel.sh|cat ./tools/check.config|echo Checking\ncat "${CI_PROFILE:-./tools/npm-input.config}"
 npm-dispatch-unread|package.json|bash ./tools/check-vercel.sh|./tools/npm-dispatch.sh --lane web
@@ -1403,7 +1408,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
-    literal-*|npm-computed|npm-config-claim|npm-*lifecycle*|npm-helper-computed*|npm-dispatch-unread|npm-preload|npm-unsupported-invocation|npm-vercel-command|vercel-*)
+    literal-*|npm-computed|npm-config-claim|npm-bin-shadow|npm-*lifecycle*|npm-helper-computed*|npm-dispatch-unread|npm-preload|npm-unsupported-invocation|npm-vercel-command|vercel-*)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
@@ -1644,6 +1649,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     npm-dispatch-unread) refused_jobs='job=web cause=unresolved-lane-dispatch' ;;
     npm-helper-computed*|npm-unsupported-invocation) refused_jobs='job=web cause=opaque-shell-command' ;;
     npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
+    npm-bin-shadow) refused_jobs='job=web cause=opaque-npm-bin' ;;
     npm-*lifecycle*) refused_jobs='job=web cause=opaque-npm-dependency' ;;
     npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
     npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
@@ -1829,6 +1835,7 @@ npm-helper-computed|tools/npm-input.config|||true|
 npm-helper-computed-config|tools/npm-input.config|||true|
 npm-dispatch-unread|tools/npm-input.config|||true|
 npm-config-claim|tools/unrelated.txt|||false|
+npm-bin-shadow|tools/npm-input.config|||true|
 npm-lifecycle|tools/unrelated.txt|||true|
 npm-lifecycle-config|tools/unrelated.txt|||true|
 npm-linked-lifecycle|tools/npm-input.config|||true|
