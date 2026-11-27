@@ -7146,17 +7146,20 @@ fn a_unit_the_host_kept_after_its_hand_back_is_logged_and_removed_by_the_next_st
 
 /// A stop while the unit's runtime builds cold leaves the build its
 /// sources: the build ends built, and the next run of the same commit
-/// launches with it.
+/// launches with it. The unit the build still reads holds no stop lock: a
+/// later stop of the same run answers stopped at once while the claim
+/// stands.
 #[test]
 fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
     let skills = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .unwrap();
-    // The tree's orch setup holds its first answer's build for three
-    // seconds under a claim, as a detached build does, and records the key
-    // failed where its own tree is gone by then; every later setup answers
-    // that failure, or goes through the shipped setup.
+    // The tree's orch setup holds its first answer's build under a claim,
+    // as a detached build does, until the row writes the release mark (or
+    // for a minute), and records the key failed where its own tree is gone
+    // by then; every later setup answers that failure, or goes through the
+    // shipped setup.
     let marks = tempfile::tempdir().unwrap();
     let key = marks.path().join("cold");
     let mut lane = HostLane::with(LONG_COMMAND, "", |wt| {
@@ -7164,7 +7167,7 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
             wt,
             &skills,
             &format!(
-                "#!/bin/bash\nkey='{key}'\nif [ -e \"$key.failed\" ]; then echo \"orch-runtime-setup: runtime-unbuilt cause=build-failed key=cold log=$key.log\"; exit 0; fi\nif [ ! -e \"$key.asked\" ]; then : > \"$key.asked\"; ln -s claim \"$key.lock\"; me=\"$0\"; (sleep 3; [ -e \"$me\" ] || : > \"$key.failed\"; rm -f \"$key.lock\") < /dev/null > /dev/null 2>&1 & echo \"orch-runtime-setup: runtime-building key=cold log=$key.log\"; exit 0; fi\nexec '{setup}' \"$@\"\n",
+                "#!/bin/bash\nkey='{key}'\nif [ -e \"$key.failed\" ]; then echo \"orch-runtime-setup: runtime-unbuilt cause=build-failed key=cold log=$key.log\"; exit 0; fi\nif [ ! -e \"$key.asked\" ]; then : > \"$key.asked\"; ln -s claim \"$key.lock\"; me=\"$0\"; (i=0; while [ ! -e \"$key.release\" ] && [ \"$i\" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; [ -e \"$me\" ] || : > \"$key.failed\"; rm -f \"$key.lock\") < /dev/null > /dev/null 2>&1 & echo \"orch-runtime-setup: runtime-building key=cold log=$key.log\"; exit 0; fi\nexec '{setup}' \"$@\"\n",
                 key = key.display(),
                 setup = skills.join("orch/scripts/setup").display()
             ),
@@ -7174,6 +7177,35 @@ fn a_stop_during_a_cold_build_leaves_the_build_its_sources() {
     until(|| fs::symlink_metadata(key.with_extension("lock")).is_ok());
     let stop = lane.stop();
     assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+    assert!(lane.unit().exists(), "the claim keeps the unit");
+    let mut again = Owned(
+        program(lane.host.provider())
+            .args([
+                "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + JOB_BOUND;
+    while again.0.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "a stop waited on the lock the build's waiter holds"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut answer = String::new();
+    std::io::Read::read_to_string(&mut again.0.stdout.take().unwrap(), &mut answer).unwrap();
+    assert_eq!(again.0.wait().unwrap().code(), Some(0));
+    assert_eq!(
+        answer.trim(),
+        format!(
+            "host=lane.example stopped item={ITEM_ID} run-id={}",
+            lane.id
+        )
+    );
+    fs::write(key.with_extension("release"), "").unwrap();
     assert_eq!(holder.0.wait().unwrap().code(), Some(1));
     until(|| !lane.unit().exists());
     until(|| fs::symlink_metadata(key.with_extension("lock")).is_err());
@@ -7381,6 +7413,151 @@ fn a_stop_of_a_live_host_run_ends_it_on_its_host() {
         !lane.unit().exists(),
         "the host's run is stopped and its unit removed"
     );
+}
+
+/// Two stops of one unit that overlap, as the executor's own end and the
+/// stop that recorded it ask the host at once, both answer stopped and the
+/// unit is removed: the later stop waits for the earlier one and finds the
+/// unit gone. The host's `git` holds the first stop's removal of the tree
+/// until a second removal arrives, or for five seconds, then lets the
+/// second run only after the first ended, so a stop that does not wait
+/// removes a tree that is no longer a working tree.
+#[test]
+fn overlapping_stops_of_one_host_unit_both_answer_stopped() {
+    let lane = HostLane::new(HOST_COMMAND);
+    let provider = lane.host.provider();
+    let worktree = lane.w.worktree.display().to_string();
+    let into = lane.w.root.join("into").display().to_string();
+    let prepared = program(&provider)
+        .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id])
+        .args(["--commit", &lane.w.head(), "--source", &worktree])
+        .args(["--run-dir", &lane.dir, "--into", &into])
+        .output()
+        .unwrap();
+    assert_eq!(prepared.status.code(), Some(3), "{}", stderr(&prepared));
+    assert!(text(&prepared).ends_with("state=preparing step=tree"));
+    assert!(lane.unit().join("tree/.git").exists());
+    let gate = lane.w.root.join("remove-gate");
+    fs::create_dir_all(&gate).unwrap();
+    let found = program("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8_lossy(&found.stdout).trim().to_owned();
+    assert!(!real.is_empty(), "{}", stderr(&found));
+    support::write_executable(
+        &lane.host.tools.join("git"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in\n*' worktree remove '*)\n  if mkdir '{gate}/first' 2>/dev/null; then\n    i=0\n    while [ ! -e '{gate}/second' ] && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done\n    status=0\n    '{real}' \"$@\" || status=$?\n    : > '{gate}/done'\n    exit \"$status\"\n  fi\n  : > '{gate}/second'\n  while [ ! -e '{gate}/done' ]; do sleep 0.1; done ;;\nesac\nexec '{real}' \"$@\"\n",
+            gate = gate.display(),
+        ),
+    );
+    let stop = |which: &str| {
+        let file = |stream: &str| fs::File::create(gate.join(format!("{which}.{stream}"))).unwrap();
+        Owned(
+            program(&provider)
+                .args([
+                    "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+                ])
+                .stdout(file("out"))
+                .stderr(file("err"))
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let mut first = stop("first");
+    until(|| gate.join("first").exists());
+    let mut second = stop("second");
+    for (which, held) in [("first", &mut first), ("second", &mut second)] {
+        let deadline = Instant::now() + JOB_BOUND;
+        let status = loop {
+            if let Some(status) = held.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "the {which} stop did not end");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let out = Output {
+            status,
+            stdout: fs::read(gate.join(format!("{which}.out"))).unwrap(),
+            stderr: fs::read(gate.join(format!("{which}.err"))).unwrap(),
+        };
+        assert_eq!(out.status.code(), Some(0), "{which}: {}", stderr(&out));
+        assert_eq!(
+            text(&out),
+            format!(
+                "host=lane.example stopped item={ITEM_ID} run-id={}",
+                lane.id
+            ),
+            "{which}"
+        );
+    }
+    assert!(!lane.unit().exists(), "the unit is removed");
+}
+
+/// A host stop of a unit that is not there answers stopped and writes
+/// nothing, so a stop before the validation row's clone is made leaves its
+/// path for the clone. A stop whose lock stays held refuses
+/// validate-stop-failed with its own lock-timeout line as the cause and
+/// keeps the unit: the host's `flock` here times out at once and silently,
+/// as util-linux flock does.
+#[test]
+fn a_host_stop_with_no_unit_writes_nothing_and_a_held_lock_names_lock_timeout() {
+    let lane = HostLane::new(HOST_COMMAND);
+    let provider = lane.host.provider();
+    let stop = || {
+        program(&provider)
+            .args([
+                "validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop",
+            ])
+            .output()
+            .unwrap()
+    };
+    let clone = lane.host.clone();
+    let away = clone.with_extension("away");
+    fs::rename(&clone, &away).unwrap();
+    let out = stop();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        text(&out),
+        format!(
+            "host=lane.example stopped item={ITEM_ID} run-id={}",
+            lane.id
+        )
+    );
+    assert!(
+        fs::symlink_metadata(&clone).is_err(),
+        "the stop wrote under the clone's path"
+    );
+    fs::rename(&away, &clone).unwrap();
+    let worktree = lane.w.worktree.display().to_string();
+    let into = lane.w.root.join("into").display().to_string();
+    let prepared = program(&provider)
+        .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id])
+        .args(["--commit", &lane.w.head(), "--source", &worktree])
+        .args(["--run-dir", &lane.dir, "--into", &into])
+        .output()
+        .unwrap();
+    assert_eq!(prepared.status.code(), Some(3), "{}", stderr(&prepared));
+    let flock = lane.host.tools.join("flock");
+    support::write_executable(&flock, "#!/bin/sh\nexit 1\n");
+    let out = stop();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let line = stderr(&out);
+    let line = line.lines().last().unwrap_or_default();
+    assert!(
+        line.starts_with("lane-host-ssh: validate-stop-failed ")
+            && line.contains(" cause=lane-host-ssh: lock-timeout lock="),
+        "{line}"
+    );
+    assert!(
+        lane.unit().join("tree").exists(),
+        "the held stop kept the unit"
+    );
+    fs::remove_file(&flock).unwrap();
+    let out = stop();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!lane.unit().exists());
 }
 
 /// A host run is held by its caller, as a foreground run is: while the

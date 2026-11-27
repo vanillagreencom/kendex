@@ -120,6 +120,12 @@ def remote(row, script, *args, data=None, accept=(), capture_error=False):
     return result
 
 
+def file_lock_library():
+    """The mailbox package's one host lock, flock or else a mkdir mutex,
+    shipped as text so a host step need not find the host's own copy."""
+    return Path(__file__).parent.joinpath("../../mailbox/scripts/lib/file-lock.sh").read_text()
+
+
 class LifecycleSession:
     """One SSH channel owns the lock and executes every lifecycle step.
 
@@ -132,8 +138,7 @@ class LifecycleSession:
     def __init__(self, row):
         self.row = row
         self.output = bytearray()
-        library = Path(__file__).parent.joinpath("../../mailbox/scripts/lib/file-lock.sh").read_text()
-        script = library + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
+        script = file_lock_library() + '\n' + '''mkdir -p -- "$(dirname -- "$1")"
 exec 9>>"$1"
 orch_take_lock 9 "$1" 0 || exit 75
 umask 077
@@ -1147,7 +1152,18 @@ LANE_RUNNER = "runner"
 # loses its sources records its key failed for every later detached setup
 # (agent-runtime setup --help): while a claim UNIT/building names stands, the
 # unit is left to a detached waiter that removes it once no such claim does,
-# and the run counts as stopped.
+# and the run counts as stopped. Two stops of one unit overlap, as the
+# executor's own end and the stop that recorded it ask the host at once:
+# each stop holds the item's lock, beside the item's folder so the sweep of
+# its units never meets it, and a later stop finds the unit gone and answers
+# stopped. Without it one stop removes the tree the other still reads. A
+# unit that is not there is stopped already, so its stop takes no lock and
+# writes nothing, a clone not yet made included. The lock waits 120
+# seconds, half the runtime's bound on a host call, so a stop still held
+# refuses with its own lock-timeout line before its caller gives up on it:
+# util-linux flock times out with no message.
+# The runtime and the detached waiter do not inherit the lock: a process
+# either leaves behind would hold it past this stop.
 STOP_UNIT = '''remove_unit() {
   if test -d "$2/tree"; then git -C "$1" worktree remove --force "$2/tree" >&2; fi
   rm -rf -- "${2:?}"
@@ -1159,30 +1175,40 @@ claims_held() {
   done < "$1/building"
   return 1
 }
-stop_unit() {
+stop_unit() (
+  test -e "$2" || return 0
+  lock="${2%/*}.stop.lock"
+  exec 9>>"$lock"
+  if ! orch_take_lock 9 "$lock" 120; then
+    printf 'lane-host-ssh: lock-timeout lock=%s wait-s=120 fix=ask again once the stop of this item that holds the lock ends\n' "$lock" >&2
+    return 1
+  fi
   if test -e "$2/stopping"; then return 0; fi
   launched=
   for runner in "$2"/tree/tmp/*/runner; do
     if test -e "$runner"; then launched=1; fi
   done
   if test -n "$launched" && test -s "$2/runtime"; then
-    (cd -- "$2/tree" && ORCH_STATE_DIR="$2/tree/tmp" "$(cat -- "$2/runtime")" validate entry --stop --worktree "$2/tree" >&2) || return 1
+    (cd -- "$2/tree" && ORCH_STATE_DIR="$2/tree/tmp" "$(cat -- "$2/runtime")" validate entry --stop --worktree "$2/tree" >&2) 9>&- || return 1
   fi
   if claims_held "$2"; then
-    if ! test -e "$2/stopping"; then
-      : > "$2/stopping"
-      set -m
-      (
-        trap '' HUP
-        while claims_held "$2"; do sleep 5; done
-        remove_unit "$1" "$2"
-      ) < /dev/null > /dev/null 2>&1 &
-    fi
+    : > "$2/stopping"
+    set -m
+    (
+      trap '' HUP
+      while claims_held "$2"; do sleep 5; done
+      remove_unit "$1" "$2"
+    ) < /dev/null > /dev/null 2>&1 9>&- &
     return 0
   fi
   remove_unit "$1" "$2"
-}
+)
 '''
+
+
+def stop_unit_script():
+    """STOP_UNIT with the lock it takes."""
+    return file_lock_library() + '\n' + STOP_UNIT
 
 
 def unit_run(unit, args):
@@ -1200,7 +1226,7 @@ def preparing(row, step):
 
 def release_unit(row, unit):
     """Stop the unit's run and remove the unit from the clone."""
-    return remote(row, STOP_UNIT + 'stop_unit "$1" "$2"', row["clone"], unit, accept=None)
+    return remote(row, stop_unit_script() + 'stop_unit "$1" "$2"', row["clone"], unit, accept=None)
 
 
 def prepare_unit(row, args, unit):
@@ -1225,7 +1251,7 @@ def prepare_unit(row, args, unit):
     bundle = b""
     if int(source("rev-list", "--count", "HEAD", "--not", "--remotes=origin")) > 0:
         bundle = source("bundle", "create", "-", "HEAD", "--not", "--remotes=origin")
-    remote(row, STOP_UNIT + '''clone=$1 unit=$2 commit=$3
+    remote(row, stop_unit_script() + '''clone=$1 unit=$2 commit=$3
 for other in "${unit%/*}"/*; do
   if test -e "$other" && test "$other" != "$unit"; then stop_unit "$clone" "$other"; fi
 done
@@ -1562,7 +1588,10 @@ have launched, exiting 1 with validate-start-failed. validate --item ID
 (validate entry --stop --worktree UNIT/tree), removes the unit and prints
 stopped item=ID run-id=RUN, also where the host holds no unit; a unit whose
 tree a runtime build is still reading is removed by a detached waiter once the
-build releases its claim. validate-stop-failed names a stop that failed.
+build releases its claim. A stop waits up to 120 seconds for another stop of
+the same item to end, then fails validate-stop-failed with
+cause=lane-host-ssh: lock-timeout.
+validate-stop-failed names a stop that failed.
 validate-arguments refuses a step that names no --commit, --source, --run-dir
 or --into. validate-clone-missing, validate-commit-moved (DIR's
 HEAD or the unit's tree is not SHA), validate-into-exists and
