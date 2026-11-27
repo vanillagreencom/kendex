@@ -33,7 +33,7 @@ A line with `tracker=unread` comes first, even when the watch also prints `parke
 
 - `nothing`: nothing holds the lane.
   1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-  2. Where the relaunch refuses `launch-overlap`, a lane its `holder=` names holds a path the relaunch adds, one its item's Location names where the record holds no set, and the lane stands as it was. Relaunch it once that holder's lane ends.
+  2. Where the relaunch refuses `launch-overlap`, a lane its `holder=` names holds a path the relaunch adds ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)), and the lane stands as it was. Relaunch it once that holder's lane ends.
   3. Where it refuses `holder-unreadable` or `touched-unreadable`, a read the holder judgement needs failed, and the lane stands as it was. Resolve the failed read its `read=` names, then relaunch it again.
   4. Where it refuses otherwise, close it in this pass through § Lane close, and tell the owner the relaunch's refusal.
 - `merge` on `lane=parked`: follow its [`parked-merged`](oversee-events.md#parked-merged) line, which the watch repeats on every pass until the lane closes or relaunches.

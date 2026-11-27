@@ -1465,8 +1465,9 @@ pub(super) fn launch_lane(
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
     // judged when it was admitted, and meets the holders standing now only
-    // with the paths it adds: a record holding no set adds its item's
-    // Location paths.
+    // with the paths it adds: none for a record a no-landing close kept, its
+    // set for any other record, and its item's Location paths for a record
+    // holding no set.
     let candidate = Admission {
         item: &r.item,
         tracker: r.tracker.as_deref(),

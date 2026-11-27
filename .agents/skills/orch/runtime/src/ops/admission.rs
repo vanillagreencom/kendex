@@ -8,7 +8,7 @@
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
-//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
+//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, the recorded set of a relaunch whose record was not kept, and the Location paths a set-less relaunch adds, block: `launch-overlap holder=<item>` |
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | otherwise `stopped`, its latest confirmed close a no-landing one ([`retired_open`]), local or hosted | blocks, never joined: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a local holder in its review passes a first launch or a relaunch |
@@ -63,9 +63,10 @@
 //! as its own. A relaunch is bound the same way, on its request's checkout
 //! and its effective tracker and repository (the request's, else the
 //! record's). Its touched set, scope and Ancestor gate stand from its first
-//! admission. A recorded set adds no path and meets no holder; a record
-//! holding none adds its item's Location paths, which meet the holders
-//! standing now as a running lane's added path does ([`relaunch_held`]). A
+//! admission. A kept record's set adds no path and meets no holder; any
+//! other record's set, or, where the record holds none, its item's Location
+//! paths, are the paths it adds, which meet the holders standing now as a
+//! running lane's added path does ([`relaunch_held`]). A
 //! `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
@@ -1184,19 +1185,21 @@ pub(super) fn bound(
     bind(path, &a, checkout, reads, host.accounts)
 }
 
-/// A relaunch's holders (the module's binding paragraph): the paths it adds
-/// to its record's touched set, met against the lanes that hold paths now,
-/// as a running lane's added path is, never joined. A record's own set adds
-/// none: its paths were admitted when recorded, and a record stopped with
-/// no landing held them since ([`Holding::Kept`]), so a lane that holds one
-/// now co-held it before the record was kept, and the relaunch is admitted
-/// on its own set. A record no judgement wrote, a surface lane's, holds no
-/// set: its item's Location paths are the paths it adds, read as a first
-/// launch reads them, and refused where the item names no Location path,
-/// since a surface lane's item can keep its paths outside its description.
-/// `tracker` and `repo` are the relaunch's effective ones, the request's
-/// else the record's. A record naming no tracker is judged on no item, as a
-/// first launch naming none is.
+/// A relaunch's holders (the module's binding paragraph): the paths it adds,
+/// met against the lanes that hold paths now, as a running lane's added path
+/// is, never joined. A kept record ([`retired_open`]) adds none: it held its
+/// set since its no-landing close ([`Holding::Kept`]), so a lane that holds
+/// one of its paths now co-held it before the record was kept, and the
+/// relaunch is admitted on its own set. Any other record yielded its set
+/// while it stood, a parked one or one a failed launch stopped, so another
+/// lane may have taken a path of it since: its set is the paths it adds. A
+/// record no judgement wrote, a surface lane's, holds no set: its item's
+/// Location paths are the paths it adds, read as a first launch reads them,
+/// and refused where the item names no Location path, since a surface
+/// lane's item can keep its paths outside its description. `tracker` and
+/// `repo` are the relaunch's effective ones, the request's else the
+/// record's. A record naming no tracker is judged on no item, as a first
+/// launch naming none is.
 #[allow(
     clippy::too_many_arguments,
     reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
@@ -1218,7 +1221,8 @@ pub(super) fn relaunch_held(
     };
     let read;
     let paths = match (&record.touched, tracker) {
-        (Some(_), _) => return Ok(()),
+        (Some(_), _) if retired_open(path, record, intents)? => return Ok(()),
+        (Some(paths), _) => paths.as_slice(),
         (None, Some(tracker)) if !record.read_only => {
             let reads = host
                 .admission

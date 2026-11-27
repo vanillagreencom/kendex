@@ -739,7 +739,9 @@ fn no_landing() -> Value {
 /// joining it, nothing written; so does the record after its relaunch failed,
 /// and a hosted one. A record stopped by a failed launch with no close, or by
 /// a failed next-phase launch after a full close, and a `done` record hold
-/// nothing: both are admitted.
+/// nothing: both are admitted. Under `ORCH_DELIVERY=push-base` a first
+/// launch passes a local kept record in its review, the publication taking
+/// the order, and a hosted one, whose review is its host's, still refuses.
 #[test]
 fn a_record_a_no_landing_close_stopped_holds_its_set_against_another_lane() {
     let failed_launch = json!({
@@ -839,52 +841,111 @@ fn a_record_a_no_landing_close_stopped_holds_its_set_against_another_lane() {
         }
         assert!(live(harness.pid()), "{row}: the live lane is not signalled");
     }
+    for (row, host, passes) in [
+        ("a local kept record", None, true),
+        ("a hosted kept record", Some("/opt/provider"), false),
+    ] {
+        let fleet = Fleet::new();
+        fleet.init_fleet();
+        fleet.item("KEN-F", "`src/a.sh`", 0, &[]);
+        let mut kept = holder("KEN-R", "stopped", None, Some(&["src/a.sh"]));
+        if let Some(host) = host {
+            kept["host"] = json!(host);
+        }
+        fleet.write_lanes_and_intents(vec![kept], vec![closed("KEN-R", 1, no_landing())]);
+        fleet.review("KEN-R");
+        let before = fleet.fleet();
+        let out = fleet.op_with(
+            &launch("KEN-F", fleet.state_dir().as_path()),
+            &[("ORCH_DELIVERY", "push-base")],
+        );
+        if passes {
+            assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
+            assert_eq!(fleet.lane("KEN-F")["touched"], json!(["src/a.sh"]), "{row}");
+            assert_eq!(fleet.lane("KEN-R"), before["lanes"][0], "{row}: not joined");
+        } else {
+            let (key, fields) = refusal(&out);
+            assert_eq!(key, "launch-overlap", "{row}: {}", stderr(&out));
+            assert_eq!(
+                fields,
+                pairs(&[("item", "KEN-F"), ("file", "src/a.sh"), ("holder", "KEN-R")]),
+                "{row}"
+            );
+            assert_eq!(fleet.fleet(), before, "{row}: nothing written");
+        }
+    }
 }
 
 /// A relaunch is judged on the paths it adds to its record's touched set.
-/// Its record, stopped by a no-landing close, co-holds `src/a.sh` with a
-/// live lane, as records written before a stopped record held its set do.
-/// With its recorded set it adds no path: it is relaunched under `pr` with
-/// the holder in its review, over its kept sets, the holder not joined.
-/// With no recorded set its item's Location paths are the paths it adds,
-/// met with its record's scope and repository, the request naming none: it
-/// is refused `launch-overlap`, never joined, nothing written, under
+/// Its record co-holds `src/a.sh` with a live lane. A kept record, stopped
+/// by a no-landing close, co-held it as records written before a stopped
+/// record held its set do: with its recorded set it adds no path, and it is
+/// relaunched under `pr` with the holder in its review, over its kept sets,
+/// the holder not joined. A parked record and one a failed first launch
+/// stopped yielded the path, so their recorded set is the paths they add, and
+/// a kept record holding no set adds its item's Location paths: each is met
+/// with its record's scope and repository, the request naming none, and
+/// refused `launch-overlap`, never joined, nothing written, under
 /// `ORCH_DELIVERY=push-base` before the holder's review and under `pr` with
 /// the holder in its review; under `push-base` with the holder in its review
-/// it is relaunched, the publication taking the order. The recorded set's
-/// row plants no item, so its relaunch reads none.
+/// it is relaunched, the publication taking the order. Only the Location
+/// row plants an item, so the others read none.
 #[test]
 fn a_relaunch_meets_a_live_holder_only_on_the_paths_it_adds_and_is_never_joined() {
-    let rows: [(&str, Option<&[&str]>, Value); 2] = [
+    let set: &[&str] = &["docs/x.md", "src/a.sh"];
+    // The row, the record's status, its set, whether a no-landing close
+    // stands in its journal, and whether its relaunch adds no path.
+    type Row<'a> = (&'a str, &'a str, Option<&'a [&'a str]>, bool, bool);
+    let rows: [Row; 4] = [
         (
-            "its recorded set",
-            Some(&["docs/x.md", "src/a.sh"]),
-            json!(["docs/x.md", "src/a.sh"]),
+            "a kept record's recorded set",
+            "stopped",
+            Some(set),
+            true,
+            true,
         ),
-        ("its item's Location paths", None, Value::Null),
+        (
+            "a kept record's item's Location paths",
+            "stopped",
+            None,
+            true,
+            false,
+        ),
+        (
+            "a parked record's recorded set",
+            "parked",
+            Some(set),
+            true,
+            false,
+        ),
+        (
+            "a failed first launch's recorded set",
+            "stopped",
+            Some(set),
+            false,
+            false,
+        ),
     ];
-    for (row, touched, kept) in rows {
+    for (row, status, touched, closed_no_landing, adds_none) in rows {
         let fleet = Fleet::new();
         fleet.init_fleet();
         fleet.init_item("KEN-H", "ken-h");
         if touched.is_none() {
             fleet.item("KEN-R", "`docs/x.md`, `src/a.sh`", 0, &[]);
         }
+        let kept = touched.map_or(Value::Null, |paths| json!(paths));
         let harness = Owned::sleep();
-        let mut stopped = holder("KEN-R", "stopped", None, touched);
-        stopped["in_scope"] = json!(["docs/"]);
-        stopped["repo"] = json!("o/r");
-        let mut holding = holder(
-            "KEN-H",
-            "running",
-            Some(&harness),
-            Some(&["docs/x.md", "src/a.sh"]),
-        );
+        let mut record = holder("KEN-R", status, None, touched);
+        record["in_scope"] = json!(["docs/"]);
+        record["repo"] = json!("o/r");
+        let mut holding = holder("KEN-H", "running", Some(&harness), Some(set));
         holding["repo"] = json!("o/r");
-        fleet.write_lanes_and_intents(
-            vec![stopped, holding],
-            vec![closed("KEN-R", 1, no_landing())],
-        );
+        let intents = if closed_no_landing {
+            vec![closed("KEN-R", 1, no_landing())]
+        } else {
+            Vec::new()
+        };
+        fleet.write_lanes_and_intents(vec![record, holding], intents);
         let before = fleet.fleet();
         let relaunch = |delivery: &str| {
             fleet.op_with(
@@ -911,7 +972,7 @@ fn a_relaunch_meets_a_live_holder_only_on_the_paths_it_adds_and_is_never_joined(
                 "{row}: the holder is not joined"
             );
         };
-        if touched.is_some() {
+        if adds_none {
             fleet.review("KEN-H");
             relaunched("pr");
             continue;
