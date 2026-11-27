@@ -40,7 +40,7 @@ def check(text):
     actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
     assert actual == expected, actual
     permissions = text.split('  refresh:\n', 1)[1].split('    permissions:\n', 1)[1].split('    uses:', 1)[0]
-    assert dict(re.findall(r'^      ([a-z-]+): (.+)$', permissions, re.M)) == {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'}
+    assert dict(re.findall(r'^      ([a-z-]+): (.+)$', permissions, re.M)) == {'contents': 'read'}
 for path in sys.argv[1:]:
     text = Path(path).read_text()
     check(text)
