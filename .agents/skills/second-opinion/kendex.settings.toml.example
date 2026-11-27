@@ -41,6 +41,8 @@ SECOND_OPINION_COUNT = "1"
 # and say which model that command reaches. Its settings are this family,
 # NAME being its name as `second-opinion --help` spells it in one:
 # keys: SECOND_OPINION_<NAME>_CMD SECOND_OPINION_<NAME>_MODEL SECOND_OPINION_<NAME>_ROOM_CMD SECOND_OPINION_<NAME>_INLINE_DIFF
+# Use {model} in a custom _CMD or _ROOM_CMD to insert the target's raw _MODEL
+# value. Commands without {model} keep their configured arguments.
 # SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --no-session --no-extensions --model deepseek/deepseek-v4-pro --tools read,grep,find,ls"
 # SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
 
