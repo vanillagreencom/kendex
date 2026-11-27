@@ -10434,8 +10434,8 @@ fn plant_hooks_off(tools: &Path, answer: Value) {
 /// A Copilot stand-in at `path`: started as Copilot's SDK server
 /// (`--headless`) it writes its `HOME` and `COPILOT_HOME` to `probed`, one a
 /// line, and lists claude-opus-5.5 at one price at both tiers, so a launch's
-/// model-list read decides the long tier; started any other way it runs the
-/// `stub` fixture's `copilot`.
+/// model-list read decides the long tier for it, and gpt-6 dearer at the
+/// long tier; started any other way it runs the `stub` fixture's `copilot`.
 fn copilot_at_par(path: &Path, stub: &str, probed: &Path) {
     write_executable(
         path,
@@ -10444,7 +10444,8 @@ fn copilot_at_par(path: &Path, stub: &str, probed: &Path) {
 if [ "$1" = --headless ]; then
   printf '%s\n%s\n' "$HOME" "${{COPILOT_HOME-}}" > '{probed}'
   prices='{{"inputPrice":400,"outputPrice":2000}}'
-  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
+  dearer='{{"inputPrice":800,"outputPrice":4000}}'
+  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}},{{\"id\":\"gpt-6\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$dearer}}}}}}]}}}}"
   printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
   cat > /dev/null
   exit 0
@@ -11164,8 +11165,9 @@ fn a_hosted_pi_lane_is_gated_before_create_and_on_its_host_s_files() {
 /// whose flag is set false, refuse naming the host, with no window and
 /// nothing put. The lane's tier is its host's own model list: read on the
 /// host under the Copilot home the shipped provider names, it puts the long
-/// tier on the line for a model at par; a provider naming no read prefix
-/// gets no read, no tier and the cause on the launch.
+/// tier on the line for a model at par and none for a model it prices dearer
+/// at the long tier, with no cause on either; a provider naming no read
+/// prefix gets no read, no tier and the cause on the launch.
 #[test]
 fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hooks_stand() {
     const EXTENSION: &str =
@@ -11173,19 +11175,24 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
     let enabled = r#"{"enabledFeatureFlags": {"EXTENSIONS": true}}"#;
     let hooks = ["lane-mail-check", "lane-mail-compact", "lane-mail-start"];
     // The shipped provider names the inventory's account as the Copilot
-    // home; the default home is a provider's that names none, planted.
+    // home; the default home is a provider's that names none, planted. The
+    // host's list prices claude-opus-5.5 at par and gpt-6 dearer at the long
+    // tier (`copilot_at_par`).
     type Case<'a> = (
         &'a str,
         bool,
+        &'a str,
         Option<&'a str>,
         &'a str,
         bool,
         Result<Option<Value>, &'a str>,
     );
+    const AT_PAR: &str = "claude-opus-5.5";
     let cases: [Case; 5] = [
         (
             "installed",
             true,
+            AT_PAR,
             None,
             r#"{"theme": "dark"}"#,
             true,
@@ -11193,10 +11200,19 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                 json!({"theme": "dark", "enabledFeatureFlags": {"EXTENSIONS": true}}),
             )),
         ),
-        ("standing", true, Some(EXTENSION), enabled, true, Ok(None)),
+        (
+            "standing",
+            true,
+            "gpt-6",
+            Some(EXTENSION),
+            enabled,
+            true,
+            Ok(None),
+        ),
         (
             "default home",
             false,
+            AT_PAR,
             Some(EXTENSION),
             enabled,
             true,
@@ -11205,6 +11221,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         (
             "no hooks",
             true,
+            AT_PAR,
             Some(EXTENSION),
             enabled,
             false,
@@ -11213,13 +11230,14 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         (
             "disabled",
             true,
+            AT_PAR,
             Some(EXTENSION),
             r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
             true,
             Err("no-context-reader harness=copilot file={home}/settings.json detail=disabled"),
         ),
     ];
-    for (case, shipped, extension, settings, held, expected) in cases {
+    for (case, shipped, model, extension, settings, held, expected) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut world = if shipped {
@@ -11229,8 +11247,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
             HostedLaunch::new(&server, dir.path(), record)
         };
         world.runner.verify = Some(1);
-        // The one `copilot` the host runs, its list pricing the lane's model
-        // at par.
+        // The one `copilot` the host runs.
         let probed = dir.path().join("model-list-read");
         copilot_at_par(&world.tools.join("copilot"), "stub-record", &probed);
         let home = if shipped {
@@ -11287,7 +11304,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
         }
         let mut request = world.request();
         request["harness"] = json!("copilot");
-        request["model"] = json!("claude-opus-5.5");
+        request["model"] = json!(model);
         let panes_before = server.panes().len();
         let report = effect_report(&world.runner.op_fleet(&request));
         let calls = world.calls();
@@ -11318,16 +11335,17 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                     Some("copilot"),
                     "{case}: {launched}"
                 );
-                let long = launched["argv"]
-                    .as_array()
-                    .unwrap()
+                let argv = launched["argv"].as_array().unwrap();
+                let long = argv
                     .windows(2)
                     .any(|w| w == [json!("--context"), json!("long_context")]);
+                let tiered = argv.iter().any(|word| word == "--context");
                 let unread = &report["intent"]["observation"]["copilot_model_list_unavailable"];
                 if shipped {
-                    assert!(
-                        long,
-                        "{case}: the host's list prices the model at par: {launched}"
+                    assert_eq!(
+                        (long, tiered),
+                        (model == AT_PAR, model == AT_PAR),
+                        "{case}: the long tier only for the model the host's list prices at par: {launched}"
                     );
                     assert_eq!(
                         std::fs::read_to_string(&probed).ok(),
@@ -11336,14 +11354,7 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
                     );
                     assert!(unread.is_null(), "{case}: {report}");
                 } else {
-                    assert!(
-                        !launched["argv"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|word| word == "--context"),
-                        "{case}: no read prefix, no tier: {launched}"
-                    );
+                    assert!(!tiered, "{case}: no read prefix, no tier: {launched}");
                     assert!(!probed.exists(), "{case}: no model list was read");
                     assert!(unread.is_string(), "{case}: the cause recorded: {report}");
                 }

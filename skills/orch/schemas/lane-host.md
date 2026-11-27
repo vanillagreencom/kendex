@@ -266,7 +266,7 @@ A Copilot launch naming a model next reads the host's Copilot model list, throug
 ssh -T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'READ_PREFIX LINE'
 ```
 
-- `READ_PREFIX` is `read-prefix`, and `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment.
+- `READ_PREFIX` is `read-prefix`, and `LINE` starts `copilot --headless --stdio --no-auto-update` in the worktree with the session's environment, shell-quoted as one word.
 - The lane starts with `--context long_context` only where that list prices the model the same at both tiers.
 - A create with no `read-prefix`, or a read that fails, starts the lane with no `--context`, on the host's own `contextTier`, and records the cause on the launch as `copilot_model_list_unavailable`.
 

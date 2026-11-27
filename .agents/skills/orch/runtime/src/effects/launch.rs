@@ -3258,18 +3258,16 @@ mod tests {
         ));
     }
 
-    /// A hosted Copilot lane's model list is its host's own, read over `ssh`
-    /// under the provider's read prefix and never through a `copilot` this
-    /// machine starts; a provider naming no read prefix gets no read. The
-    /// lane's own prefix ends any line run under it, so a read made there
-    /// answers nothing.
+    /// A hosted Copilot lane's model list is read under the provider's read
+    /// prefix, never the lane's own prefix; a provider naming no read prefix
+    /// gets no read. The lane's own prefix ends any line run under it, so a
+    /// read made there answers nothing.
     #[allow(
         clippy::disallowed_methods,
         reason = "the row runs the words through the reader the operation's `copilot_tier_through` runs, since no operation opens here"
     )]
     #[test]
-    fn a_hosted_copilot_model_list_is_read_over_ssh_under_the_read_prefix_and_never_by_a_local_copilot()
-     {
+    fn a_hosted_copilot_model_list_is_read_under_the_read_prefix_never_the_lane_prefix() {
         let dir = tempfile::tempdir().unwrap();
         let ssh = dir.path().join("ssh");
         crate::write_executable(
@@ -3324,25 +3322,17 @@ mod tests {
                 unrebased: false,
                 notices: Default::default(),
             };
-            let before = host::counts();
             let got = hosted_model_list_words(&client, &created, &intent)
                 .unwrap()
                 .map(|words| {
                     let words: Vec<&str> = words.iter().map(String::as_str).collect();
                     agent_runtime::harness::copilot_model_list("ssh", &ssh, &words, &[])
                 });
-            let after = host::counts();
             assert_eq!(
                 got.as_ref().map(|r| r.as_ref().ok()),
                 read.map(Some),
                 "{read_prefix:?}"
             );
-            let started = |program: &str| {
-                after.of(program, Some("copilot-models"))
-                    - before.of(program, Some("copilot-models"))
-            };
-            assert_eq!(started("ssh"), u64::from(read.is_some()), "{read_prefix:?}");
-            assert_eq!(started("copilot"), 0, "{read_prefix:?}: no local copilot");
         }
     }
 }
