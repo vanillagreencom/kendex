@@ -824,6 +824,7 @@ done <<'ROWS'
 .kendex-lock.json||rest|false
 crates/core/src/lib.rs|rest|node|true
 pi-extensions/pi-agents-tmux/index.ts|node|linear|false
+docs/no-reader.md|review-gate||false
 ROWS
 saved_after="$PUSH_AFTER"
 PUSH_AFTER=0000000000000000000000000000000000000000
