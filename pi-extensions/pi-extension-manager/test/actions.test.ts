@@ -11,7 +11,11 @@ type InventoryModule = typeof import("../extensions/manager/inventory.ts");
 
 const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
 const bin = join(rootTmp, "bin");
-const nodePath = Bun.which("node");
+// The real node binary, read once while the caller's HOME holds. Each case pins
+// HOME to a temp directory, and a version-manager shim on PATH resolves its
+// node through HOME, so the shim fails under the pinned HOME.
+const nodeOnPath = Bun.which("node");
+const nodePath = nodeOnPath ? Bun.spawnSync([nodeOnPath, "-p", "process.execPath"]).stdout.toString().trim() : undefined;
 const originalEnv = { HOME: process.env.HOME, PATH: process.env.PATH, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
 // Processes a case started and its control may leave running.
 const leftovers: number[] = [];
@@ -49,7 +53,7 @@ function writeAppendSystemPackage(dir: string, name: string): void {
 }
 
 beforeEach(() => {
-	if (!nodePath) throw new Error("actions-test: node is not on PATH");
+	if (!nodePath) throw new Error("actions-test: node is not on PATH or did not print its executable");
 	rmSync(rootTmp, { recursive: true, force: true });
 	mkdirSync(bin, { recursive: true });
 	// Every command the manager starts inherits the live environment, so the
