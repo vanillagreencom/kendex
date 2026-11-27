@@ -402,12 +402,10 @@ pub(super) enum Launch<'r> {
     /// repository before anything is read: it may join a live holder.
     First(&'r Path),
     /// A recorded lane's relaunch, bound on its own ([`bound`]): it carries
-    /// its own record's work, so it never joins another lane. It names the
-    /// record's checkout ([`checkout_of`]).
-    Relaunch(Option<&'r Path>),
-    /// Paths a running lane adds, bound when it was admitted. It names the
-    /// lane's checkout ([`checkout_of`]), else the request's `repo_dir`.
-    Added(Option<&'r Path>),
+    /// its own record's work, so it never joins another lane.
+    Relaunch,
+    /// Paths a running lane adds, bound when it was admitted.
+    Added,
 }
 
 impl<'r> Admission<'r> {
@@ -415,16 +413,7 @@ impl<'r> Admission<'r> {
     fn checkout(&self) -> Option<&'r Path> {
         match self.launch {
             Launch::First(checkout) => Some(checkout),
-            Launch::Relaunch(_) | Launch::Added(_) => None,
-        }
-    }
-
-    /// The checkout the judged sets' folder entries are read in
-    /// ([`folders`]).
-    fn root(&self) -> Option<&'r Path> {
-        match self.launch {
-            Launch::First(checkout) => Some(checkout),
-            Launch::Relaunch(root) | Launch::Added(root) => root,
+            Launch::Relaunch | Launch::Added => None,
         }
     }
 }
@@ -756,10 +745,11 @@ fn is_path(token: &str) -> bool {
 }
 
 /// The touched set: the body's Location paths, the brief's paths, the
-/// range's changed paths and the paths added, `changelog.d/` left out,
-/// read in `root` ([`folders`]). The admission judges holders over it and
-/// the tier classifies it, so both read one set from the same inputs. A
-/// Location line naming no path is unread (`location`).
+/// range's changed paths and the paths added, `changelog.d/` left out in
+/// either spelling, read in `root`, the checkout it is recorded for
+/// ([`folders`]). The admission judges holders over it and the tier
+/// classifies it, so both read one set from the same inputs. A Location
+/// line naming no path is unread (`location`).
 pub(super) fn touched(
     root: Option<&Path>,
     body: Option<&str>,
@@ -775,29 +765,37 @@ pub(super) fn touched(
         touched.extend(named_paths(brief));
     }
     touched.extend(range.iter().chain(added).cloned());
-    touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
+    touched.retain(|p| !p.is_empty() && !covers(UNCOUNTED_PREFIX, p));
     let touched: Vec<String> = touched.into_iter().collect();
     Ok(folders(root, &touched))
 }
 
-/// Whether `a` and `b` name one file: equal, or one a directory (`/`) the
-/// other is under.
+/// Whether `a` and `b` name one file: the same path, or one a path under
+/// the other. The rule reads the strings alone, a trailing `/` aside, so a
+/// folder entry with or without its `/` holds the files under it wherever
+/// the folder stands: on a lane's host only, as a submodule's gitlink, or
+/// replacing a file another holder names.
 fn meets(a: &str, b: &str) -> bool {
-    a == b || (a.ends_with('/') && b.starts_with(a)) || (b.ends_with('/') && a.starts_with(b))
+    covers(a, b) || covers(b, a)
 }
 
-/// Whether an in-scope entry `scope` covers `file`.
+/// Whether an in-scope entry `scope` covers `file`: the same path, or
+/// `file` under it, by [`meets`]'s string rule.
 fn covers(scope: &str, file: &str) -> bool {
-    scope == file || (scope.ends_with('/') && file.starts_with(scope))
+    let (scope, file) = (scope.trim_end_matches('/'), file.trim_end_matches('/'));
+    file == scope
+        || file
+            .strip_prefix(scope)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// `entries` as an admitted set holds them, sorted and once each: an entry
-/// naming a folder in `root`, the checkout it is admitted in, ends in `/`,
-/// so [`meets`] and [`covers`] read it as that folder. A file, a symlink
-/// (a pull request's files name one at its own path, whatever it points
-/// at), or a path naming nothing there or whose metadata cannot be read,
-/// stays as written, as an entry did before. A set is read through this
-/// where it is judged and where a record's set is read.
+/// `entries` as an admitted set records them, sorted and once each: an
+/// entry naming a folder in `root`, the checkout it is recorded for, ends
+/// in `/`, the spelling a dev round reads as covering the paths under it
+/// and the tier classifies. A file, a symlink (a pull request's files name
+/// one at its own path, whatever it points at), or a path naming nothing
+/// there or whose metadata cannot be read, stays as written. Matching
+/// never needs it: [`meets`] reads either spelling as the folder.
 fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
     let is_folder =
         |root: &Path, e: &str| std::fs::symlink_metadata(root.join(e)).is_ok_and(|m| m.is_dir());
@@ -809,33 +807,13 @@ fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// The checkout on this machine holding a lane's files, where its folder
-/// entries are read ([`folders`]): a hosted lane's `mail_root` is its
-/// host's path, so its control checkout, the `checkout` its launch
-/// recorded; else its `mail_root`, a cloud lane's included, which is the
-/// item's worktree here. `None` where the record names neither.
-fn checkout_of(lane: &Lane) -> Option<&Path> {
-    match lane.mail_host() {
-        Some(_) => lane.extra.get("checkout").and_then(Value::as_str),
-        None => lane.mail_root.as_deref(),
-    }
-    .map(Path::new)
-}
-
-/// A lane record's touched set read in its own checkout ([`checkout_of`]).
-fn held(lane: &Lane) -> Option<Vec<String>> {
-    lane.touched
-        .as_deref()
-        .map(|t| folders(checkout_of(lane), t))
-}
-
 /// The paths `a` and `b` share that the scope leaves in, each the longer
 /// of its pair, sorted and unique.
 fn shared(a: &[String], b: &[String], scope: &[String]) -> Vec<String> {
     let mut files = BTreeSet::new();
     for x in a {
         for y in b {
-            if y.starts_with(UNCOUNTED_PREFIX) || !meets(x, y) {
+            if covers(UNCOUNTED_PREFIX, y) || !meets(x, y) {
                 continue;
             }
             let file = if y.len() > x.len() { y } else { x };
@@ -1249,7 +1227,7 @@ pub(super) fn relaunch_held(
         scope_range: None,
         in_scope: record.in_scope.as_deref().unwrap_or_default(),
         paths,
-        launch: Launch::Relaunch(checkout_of(record)),
+        launch: Launch::Relaunch,
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
@@ -1327,7 +1305,7 @@ pub(super) fn judge(
             .map_err(|c| unreadable("classification", c))?;
     }
     let classified = touched(
-        a.root(),
+        a.checkout(),
         body.as_deref(),
         brief.as_deref(),
         &range_paths,
@@ -1339,7 +1317,13 @@ pub(super) fn judge(
     } else {
         classified.clone()
     };
-    let in_scope = folders(a.root(), a.in_scope);
+    let in_scope: Vec<String> = a
+        .in_scope
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut join = None;
     if let Some((index, blockers)) = blocked {
         let holder = &lanes[index];
@@ -1373,11 +1357,8 @@ pub(super) fn judge(
             Holding::Unknown(cause) => Err(cause),
         };
         let read;
-        let held = match held(lane) {
-            Some(paths) => {
-                read = paths;
-                &read
-            }
+        let held = match &lane.touched {
+            Some(paths) => paths,
             None => {
                 let tracker = lane.tracker.as_deref().ok_or_else(|| {
                     holder_unreadable(&lane.item, "touched", "tracker-unnamed".to_owned())
@@ -1391,9 +1372,8 @@ pub(super) fn judge(
                 })?;
                 let item = (reads.item)(&reads.clis, tracker, &lane.item, lane.repo.as_deref())
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c))?;
-                let location = location_paths(&item.body)
+                read = location_paths(&item.body)
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c.to_owned()))?;
-                read = folders(checkout_of(lane), &location);
                 &read
             }
         };
@@ -1417,8 +1397,8 @@ pub(super) fn judge(
         let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
         let direct = match a.launch {
             Launch::First(_) => direct(host)?,
-            Launch::Relaunch(_) => unreachable(lane).is_none() && direct(host)?,
-            Launch::Added(_) => false,
+            Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
+            Launch::Added => false,
         };
         let before = if joinable || direct {
             Some(before_review(path, lane, a.item, &tie)?)
@@ -1665,7 +1645,10 @@ pub(super) fn join(
     host: &Host,
 ) -> Result<Lane> {
     let holder = lane_at(path, doc, index)?;
-    let touched = union(&held(&holder).unwrap_or_default(), &judged.touched);
+    let touched = union(
+        holder.touched.as_deref().unwrap_or_default(),
+        &judged.touched,
+    );
     if let Some(tier) = holder.extra.get("tier").and_then(Value::as_str) {
         let dir = a.checkout().unwrap_or(Path::new(""));
         if let Some(needs) = wider_cycle(a.item, tier, &touched, dir, host)? {
@@ -1828,11 +1811,7 @@ pub(super) fn admit_paths(
             scope_range: r.scope_range.as_ref(),
             in_scope: &in_scope,
             paths: &r.paths,
-            launch: Launch::Added(
-                position
-                    .and_then(|i| checkout_of(&lanes[i]))
-                    .or(r.repo_dir.as_deref()),
-            ),
+            launch: Launch::Added,
             read_only: position.is_some_and(|i| lanes[i].read_only),
         },
         env,
@@ -1847,7 +1826,13 @@ pub(super) fn admit_paths(
         });
     };
     let standing = &lanes[index];
-    let touched = union(&held(standing).unwrap_or_default(), &judged.touched);
+    // The paths added are recorded for the lane's checkout, as a first
+    // launch's are for the one it runs in ([`folders`]).
+    let added = folders(
+        standing.mail_root.as_deref().map(Path::new),
+        &judged.touched,
+    );
+    let touched = union(standing.touched.as_deref().unwrap_or_default(), &added);
     widen(path, doc, index, standing, &touched, &judged.in_scope)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
@@ -2398,7 +2383,7 @@ mod tests {
             scope_range: None,
             in_scope: &[],
             paths,
-            launch: Launch::Added(None),
+            launch: Launch::Added,
             read_only: false,
         }
     }
@@ -2539,6 +2524,20 @@ mod tests {
             (s(&["src/a.sh"]), s(&["src/"]), s(&[]), s(&["src/a.sh"])),
             (s(&["src/"]), s(&["src/a.sh"]), s(&[]), s(&["src/a.sh"])),
             (s(&["src/a.sh"]), s(&["src/b.sh"]), s(&[]), s(&[])),
+            // A folder entry meets by its string, with or without its `/`:
+            // a folder on a lane's host alone, a submodule's gitlink a pull
+            // request names bare, a file a branch replaced with a folder.
+            (s(&["src"]), s(&["src/a.sh"]), s(&[]), s(&["src/a.sh"])),
+            (
+                s(&["vendor/lib/"]),
+                s(&["vendor/lib"]),
+                s(&[]),
+                s(&["vendor/lib/"]),
+            ),
+            // A name that only begins another is no folder of it.
+            (s(&["src/a"]), s(&["src/ab.sh"]), s(&[]), s(&[])),
+            (s(&["src/a.sh"]), s(&["src/a.sh"]), s(&["src"]), s(&[])),
+            (s(&["changelog.d/"]), s(&["changelog.d"]), s(&[]), s(&[])),
             (
                 s(&["changelog.d/orch/", "src/b.sh"]),
                 s(&["changelog.d/orch/y.md"]),
@@ -2793,7 +2792,11 @@ mod tests {
                 }),
             )]
             .into(),
-            ranges: vec!["src/c.sh".to_owned(), "changelog.d/orch/x.md".to_owned()],
+            ranges: vec![
+                "src/c.sh".to_owned(),
+                "changelog.d/orch/x.md".to_owned(),
+                "changelog.d".to_owned(),
+            ],
             reads: RefCell::new(Vec::new()),
         };
         let range = ScopeRange {

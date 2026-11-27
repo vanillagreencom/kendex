@@ -1248,18 +1248,17 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(fleet.fleet(), before);
 }
 
-/// A folder entry without its `/`, read in the checkout on this machine
-/// that holds the lane's files, a hosted lane's recorded `checkout`: a
-/// launch's Location path and a running lane's added path that name a
-/// folder there record it with the `/`, so another lane's admit of a file
-/// under it meets the live lane and is refused `launch-overlap`; a path
-/// naming nothing there, or a symlink to a folder, is recorded as written.
-/// A record already holding the folder without its `/`, or holding no set
-/// while its item's Location names the folder, holds the files under it as
-/// that folder, and a stopped one's relaunch meets a live holder of a file
-/// under it. An in-scope folder without its `/` covers the files under it.
-/// The tier classifies the spelling the holders meet: a micro brief over a
-/// Location naming the workflows folder is refused `tier-narrower`.
+/// A folder entry without its `/`: a launch's Location path and a running
+/// lane's added path that name a folder in the lane's checkout record it
+/// with the `/`, and another lane's admit of a file under it meets the live
+/// lane and is refused `launch-overlap`; a path naming nothing there, or a
+/// symlink to a folder, is recorded as written. A record already holding
+/// the folder without its `/`, holding no set while its item's Location
+/// names the folder, or a hosted record holding a folder no checkout here
+/// has, holds the files under it, and a stopped one's relaunch meets a live
+/// holder of a file under it. An in-scope folder without its `/` covers the
+/// files under it. The tier classifies the recorded spelling: a micro brief
+/// over a Location naming the workflows folder is refused `tier-narrower`.
 #[test]
 fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
     let fleet = Fleet::new();
@@ -1285,30 +1284,18 @@ fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
             json!({"pane": "%7", "server": 41020, "pid": harness.pid(), "start": harness.start()});
         fleet.write_lanes(vec![lane, other.clone()]);
     };
-    // A lane on a provider: its root is the host's path, and the checkout
-    // here is the one its launch ran from.
-    let hosted = |mut lane: Value| {
-        lane["host"] = json!("/w/provider");
-        lane["kind"] = json!("ssh");
-        lane["mail_root"] = json!("/w/on-host");
-        lane["checkout"] = json!(checkout);
-        lane
-    };
-    let refused_under = |holder: &str| {
+    let refused_at = |holder: &str, file: &str| {
         let before = fleet.fleet();
-        let out = fleet.admit(&json!({"item": "KEN-O", "paths": ["src/sub/a.rs"]}));
+        let out = fleet.admit(&json!({"item": "KEN-O", "paths": [file]}));
         let (key, fields) = refusal(&out);
         assert_eq!(key, "launch-overlap", "{holder}: {}", stderr(&out));
         assert_eq!(
             fields,
-            pairs(&[
-                ("item", "KEN-O"),
-                ("file", "src/sub/a.rs"),
-                ("holder", holder)
-            ])
+            pairs(&[("item", "KEN-O"), ("file", file), ("holder", holder)])
         );
         assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
     };
+    let refused_under = |holder: &str| refused_at(holder, "src/sub/a.rs");
 
     fleet.item("KEN-W", "`.github/workflows`", 0, &[]);
     let brief = fleet.dir.path().join("brief.md");
@@ -1336,34 +1323,28 @@ fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
     live_beside_other(lane);
     refused_under("KEN-F");
 
-    for (item, on_host) in [("KEN-A", false), ("KEN-HA", true)] {
-        let mut lane = holder(item, "running", None, Some(&["docs/x.md"]));
-        lane["mail_root"] = json!(checkout);
-        if on_host {
-            lane = hosted(lane);
-        }
-        live_beside_other(lane);
-        let out = fleet.admit(&json!({"item": item, "paths": ["src/sub", "src/gone"]}));
-        assert_eq!(reply(&out)["ok"], true, "{item}: {}", stderr(&out));
-        assert_eq!(
-            fleet.lane(item)["touched"],
-            json!(["docs/x.md", "src/gone", "src/sub/"]),
-            "{item}"
-        );
-        refused_under(item);
-    }
+    let mut lane = holder("KEN-A", "running", None, Some(&["docs/x.md"]));
+    lane["mail_root"] = json!(checkout);
+    live_beside_other(lane);
+    let out = fleet.admit(&json!({"item": "KEN-A", "paths": ["src/sub", "src/gone"]}));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-A")["touched"],
+        json!(["docs/x.md", "src/gone", "src/sub/"])
+    );
+    refused_under("KEN-A");
 
     let mut lane = holder("KEN-R", "running", None, Some(&["src/sub"]));
     lane["mail_root"] = json!(checkout);
     live_beside_other(lane);
     refused_under("KEN-R");
-    live_beside_other(hosted(holder(
-        "KEN-HR",
-        "running",
-        None,
-        Some(&["src/sub"]),
-    )));
-    refused_under("KEN-HR");
+    // A lane on a provider, whose folder stands on its host alone.
+    let mut lane = holder("KEN-HR", "running", None, Some(&["src/new"]));
+    lane["host"] = json!("/w/provider");
+    lane["kind"] = json!("ssh");
+    lane["mail_root"] = json!("/w/on-host");
+    live_beside_other(lane);
+    refused_at("KEN-HR", "src/new/a.rs");
 
     fleet.item("KEN-S", "`src/sub`", 0, &[]);
     let mut lane = holder("KEN-S", "running", None, None);
