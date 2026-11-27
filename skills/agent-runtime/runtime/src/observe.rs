@@ -380,22 +380,21 @@ pub fn submit_refused(screen: &str, harness: Harness) -> bool {
     }
 }
 
-static CODEX_BANNER_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
-
-/// Codex uses the same square for API failures and operator interrupts.
-/// Match the observed API refusal forms at the start of the row so a wrapped
-/// detail body or account clause can still be read on a narrow pane.
-static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^■ (?:\{"detail":|The selected model is not supported\.|The '[^']+' model is not supported\b)"#)
-        .unwrap()
-});
+/// The Codex app-server's `turn/completed` distinguishes failed and
+/// interrupted turns (https://developers.openai.com/codex/app-server/#server-notifications).
+/// The judge receives a captured interactive pane without an app-server
+/// connection. Codex 0.172.0 uses the square for free-text errors and for
+/// its fixed interruption notice
+/// (https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/tui/src/history_cell/notices.rs).
+static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
 
 /// Whether a Codex slice judged idle sits at its composer after an API error
 /// ended its turn: the error line and the marker line are both drawn in it.
 pub fn codex_api_error(slice: &str) -> bool {
     let mut lines = slice.lines();
-    lines.any(|line| CODEX_API_ERROR.is_match(line))
-        && lines.any(|line| CODEX_MARKER.is_match(line))
+    lines.any(|line| {
+        CODEX_API_ERROR.is_match(line) && !line.starts_with("■ Conversation interrupted")
+    }) && lines.any(|line| CODEX_MARKER.is_match(line))
 }
 
 /// The evidence for a turn whose pane the observer found idle.
@@ -694,7 +693,7 @@ pub fn limit_banner(slice: &str) -> Option<String> {
             // Codex draws its error as one paragraph under `■`, and a pane
             // narrower than it wraps the rest, the reset clause among it, onto
             // the rows below (`fixtures/stops/codex-purchase-offer.txt`).
-            if CODEX_BANNER_START.is_match(row) {
+            if CODEX_API_ERROR.is_match(row) {
                 while let Some(&next) = rows.get(i + 1)
                     && !next.trim().is_empty()
                     && !MARKER.is_match(next)
@@ -1332,7 +1331,7 @@ mod tests {
         let rows = [
             (
                 Harness::Codex,
-                "› Continue the task.\n\n■ Conversation interrupted\n\n› Ask Codex to do anything",
+                "› Continue the task.\n\n■ Conversation interrupted - use /feedback if something went wrong\n\n› Ask Codex to do anything",
                 None,
             ),
             (
@@ -1348,6 +1347,17 @@ mod tests {
             (
                 Harness::Codex,
                 "› Continue the task.\n\n■ The selected model is not supported.\n\n› Ask Codex to do anything",
+                Some("api-error"),
+            ),
+            // The terminal messages recorded in codex-network.jsonl and codex-stream.jsonl.
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ stream disconnected before completion: error sending request\n\n› Ask Codex to do anything",
+                Some("api-error"),
+            ),
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ stream disconnected before completion: Transport error: network error: error decoding response body\n\n› Ask Codex to do anything",
                 Some("api-error"),
             ),
             (
