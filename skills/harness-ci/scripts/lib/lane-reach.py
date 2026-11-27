@@ -18,6 +18,7 @@ class Unreadable(Exception):
     # run, from a read of the change itself or from inside the Cargo reader,
     # leaves the job's reads unknown.
     shape = False
+    executable_input = False
 
 
 class ShapeUnreadable(Unreadable):
@@ -80,6 +81,10 @@ def words(line):
     if not (npm_run(tokens) or all(literal(word) or word == ":" for word in tokens)):
         raise ComputedCommand("computed-command")
     return tokens
+
+
+def reject_vercel(args):
+    require(args[:1] != ["vercel"], "opaque-vercel-command")
 
 
 def lane_invocation(args):
@@ -417,19 +422,29 @@ class Evidence:
 
     def shell_command(self, args, directory, reads, visited):
         name, *operands = args
-        if name in {"source", ".", "bash"} and len(operands) == 1:
-            require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
-            script, passed = self.resolve(directory, operands[0])
-            reads.update(passed)
-            self.shell_reads(script, directory, reads, visited)
-        elif lane_invocation(args):
-            require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
-            self.lane_dispatch(args, directory, reads, visited)
-        elif name.startswith("./") and not operands:
-            script, passed = self.resolve(directory, name)
-            reads.update({script} | passed)
-            self.loaded_reads(script, directory, reads, visited)
-        elif name == "cat" and operands and all(literal(path) for path in operands):
+        reject_vercel(args)
+        source = name in {"source", ".", "bash"} and len(operands) == 1
+        dispatch = lane_invocation(args)
+        executable = name.startswith("./") and not operands
+        if source or dispatch or executable:
+            try:
+                if source:
+                    require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
+                    script, passed = self.resolve(directory, operands[0])
+                    reads.update(passed)
+                    self.shell_reads(script, directory, reads, visited)
+                elif dispatch:
+                    require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
+                    self.lane_dispatch(args, directory, reads, visited)
+                else:
+                    script, passed = self.resolve(directory, name)
+                    reads.update({script} | passed)
+                    self.loaded_reads(script, directory, reads, visited)
+            except Unreadable as error:
+                error.executable_input = True
+                raise
+            return
+        if name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 path, passed = self.resolve(directory, path)
                 reads.update({path} | passed)
@@ -1108,6 +1123,15 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
         require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
                 "opaque-step-condition")
         step_inputs.append(env_words(step.get("env", {}), "step"))
+        # One unproved step can end the normal reach scan before Vercel runs.
+        for line in step.get("run", "").splitlines():
+            if "vercel" not in line:
+                continue
+            try:
+                args = words(line)
+            except ComputedCommand:
+                continue
+            reject_vercel(args)
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                               "permissions", "steps", "defaults", "strategy", "env"}, "opaque-job")
     visited = set()
@@ -1153,14 +1177,12 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())
                 covered.append(evidence.vitest_reads(directory, readers[-1]))
-            elif args[0] == "vercel":
-                raise Unreadable("opaque-vercel-command")
             elif args[0] in {"npm", "pnpm"}:
                 env_keys = {key.upper() for _, key, _, _ in inherited + step_words}
                 try:
                     node_reads(evidence, args, directory, ordinary, visited, env_keys)
-                except ShapeUnreadable as error:
-                    if args[0] == "pnpm":
+                except Unreadable as error:
+                    if args[0] == "pnpm" or not is_shape(error):
                         raise
                     # A later npm step can expose an install hook or computed
                     # script that the claim cannot cover.
@@ -1266,10 +1288,13 @@ def node_reads(evidence, args, directory, reads, visited, env_keys):
                 command_words = words(line)
                 if command_words:
                     evidence.shell_command(command_words, directory, reads, visited)
-            except ComputedCommand as error:
-                # This includes a tracked helper invoked by the package script.
-                raise Unreadable(str(error)) from error
-            except ShapeUnreadable as error:
+            except Unreadable as error:
+                # Claims cover unsupported commands, but a helper already
+                # reached by the package script can still read unknown inputs.
+                if isinstance(error, ComputedCommand) or error.executable_input:
+                    error.shape = False
+                if not is_shape(error):
+                    raise
                 script_shape = script_shape or error
 
     # A known hazard stays eligible even when config or another command

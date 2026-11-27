@@ -484,6 +484,10 @@ while IFS='|' read -r variant file old new; do
   if [ "$variant" = npm-lifecycle ]; then
     edit_file "$repo/package.json" '{"scripts":' '{"optionalDependencies":{"fsevents":"2.3.3"},"scripts":'
     edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n'
+  elif [ "$variant" = npm-dispatch-unread ]; then
+    printf '%s\n' '#!/usr/bin/env bash' 'echo Checking' 'cat "${CI_PROFILE:-./tools/npm-input.config}"' \
+      >"$repo/tools/npm-dispatch.sh"
+    chmod +x "$repo/tools/npm-dispatch.sh"
   fi
   printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' \
     >"$repo/.github/ci-lanes.conf"
@@ -492,9 +496,13 @@ while IFS='|' read -r variant file old new; do
 done <<'ROWS'
 npm-config-claim|.npmrc||legacy-peer-deps=true\n
 npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
-npm-helper-computed|tools/check-vercel.sh|cat ./tools/check.config|cat "$CI_PROFILE"
+npm-helper-computed|tools/check-vercel.sh|cat ./tools/check.config|echo Checking\ncat "${CI_PROFILE:-./tools/npm-input.config}"
+npm-dispatch-unread|package.json|bash ./tools/check-vercel.sh|./tools/npm-dispatch.sh --lane web
 npm-preload|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm run check:vercel\n
-vercel-retained|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: npm run check:vercel\n      - run: vercel build\n
+npm-unsupported-invocation|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --no-audit\n
+npm-vercel-command|package.json|bash ./tools/check-vercel.sh|vercel build
+vercel-retained|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: echo Checking\n      - run: vercel build\n
+vercel-after-pnpm|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: pnpm install --frozen-lockfile\n      - run: vercel build\n
 ROWS
 git -C "$repo" checkout -q fixture-npm-preload
 printf '%s\n' 'require("node:fs").readFileSync("tools/npm-input.config")' >"$repo/tools/node-setup.js"
@@ -1395,7 +1403,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
-    literal-*|npm-computed|npm-config-claim|npm-*lifecycle*|npm-helper-computed*|npm-preload|vercel-retained)
+    literal-*|npm-computed|npm-config-claim|npm-*lifecycle*|npm-helper-computed*|npm-dispatch-unread|npm-preload|npm-unsupported-invocation|npm-vercel-command|vercel-*)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
@@ -1632,12 +1640,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
     literal-job-env-computed) refused_jobs='job=web cause=opaque-job-env' ;;
     literal-job-path) refused_jobs='job=web cause=opaque-job-env' ;;
-    npm-computed|npm-helper-computed*) refused_jobs='job=web cause=computed-command' ;;
+    npm-computed) refused_jobs='job=web cause=computed-command' ;;
+    npm-dispatch-unread) refused_jobs='job=web cause=unresolved-lane-dispatch' ;;
+    npm-helper-computed*|npm-unsupported-invocation) refused_jobs='job=web cause=opaque-shell-command' ;;
     npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
     npm-*lifecycle*) refused_jobs='job=web cause=opaque-npm-dependency' ;;
     npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
     npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
-    vercel-retained) refused_jobs='job=web cause=opaque-vercel-command' ;;
+    vercel-*|npm-vercel-command) refused_jobs='job=web cause=opaque-vercel-command' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1817,13 +1827,17 @@ npm-run-read|tools/check.config|||true|
 npm-computed|tools/unrelated.txt|||true|
 npm-helper-computed|tools/npm-input.config|||true|
 npm-helper-computed-config|tools/npm-input.config|||true|
+npm-dispatch-unread|tools/npm-input.config|||true|
 npm-config-claim|tools/unrelated.txt|||false|
 npm-lifecycle|tools/unrelated.txt|||true|
 npm-lifecycle-config|tools/unrelated.txt|||true|
 npm-linked-lifecycle|tools/npm-input.config|||true|
 npm-preload|tools/npm-input.config|||true|
 npm-ref-mismatch|tools/unrelated.txt|||true||pull_request
+npm-unsupported-invocation|tools/unrelated.txt|||false|
+npm-vercel-command|tools/unrelated.txt|||true|
 vercel-retained|tools/unrelated.txt|||true|
+vercel-after-pnpm|tools/unrelated.txt|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
