@@ -211,9 +211,9 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
-    /// The unused limit resets the provider states for the account, on its
-    /// own reading ([`Roster::carry_limit_resets`]) and on the reading a
-    /// pick takes ([`resolve`]); `None` where it states none.
+    /// The unused limit resets the provider states for the account, on
+    /// each reading of it ([`Roster::carry_limit_resets`]) and on the
+    /// reading a pick takes ([`resolve`]); `None` where it states none.
     pub limit_resets: Option<u64>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
@@ -638,20 +638,21 @@ impl Roster {
         lines
     }
 
-    /// Carries onto each provider's reading the unused limit resets the
-    /// provider's `accounts --json --headroom` document `doc` states for its
-    /// account, matched on the harness and the directory name, never the
-    /// local alias, since the document names the provider's directory; the
-    /// cause where the document cannot be read, with no row changed. A
-    /// reading of this machine's carries none: a directory of the same name
-    /// here can be another account, and [`resolve`] carries the provider's
-    /// count onto the reading a pick takes.
+    /// Carries onto each reading, this machine's or the provider's, the
+    /// unused limit resets the provider's `accounts --json --headroom`
+    /// document `doc` states for its account, matched on the harness and
+    /// the directory name, never the local alias, since the document names
+    /// the account by its directory's name; the cause where the document
+    /// cannot be read, with no row changed. A Codex account reaches the
+    /// roster as this machine's reading alone, since the provider's plain
+    /// `accounts` answer lists no Codex row. The document states no full
+    /// directory, so two directories of one name in different parents both
+    /// carry the count.
     pub fn carry_limit_resets(&mut self, doc: &str) -> std::result::Result<(), String> {
         let stated = batch::limit_resets(doc)?;
         for row in &mut self.rows {
             row.limit_resets = stated
                 .iter()
-                .filter(|_| provider_reading(row))
                 .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
                 .map(|s| s.count);
         }
@@ -2558,7 +2559,7 @@ mod tests {
     ///   states;
     /// - a question of another harness takes no holder;
     /// - an account is configured on the reading the pick takes;
-    /// - a directory here that shares a name with the provider's carries no
+    /// - a Codex account this machine alone reads carries the provider's
     ///   count;
     /// - the provider's count reaches the reading of this machine that
     ///   stands where the provider read nothing.
@@ -2616,13 +2617,10 @@ mod tests {
                 vec!["/h/.7codex"],
             ),
             (
-                "two directories of one name, the provider's holding the reset",
-                vec![
-                    reading("/h/a/.1codex", "local", json!({})),
-                    reading("/h/b/.1codex", "host", json!({})),
-                ],
+                "a Codex account this machine alone reads",
+                vec![reading("/h/.1codex", "local", json!({}))],
                 &codex,
-                vec!["/h/b/.1codex"],
+                vec!["/h/.1codex"],
             ),
             (
                 "a provider reading that read nothing beside this machine's measured one",
