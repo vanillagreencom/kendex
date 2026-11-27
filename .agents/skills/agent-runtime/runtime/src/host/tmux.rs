@@ -394,30 +394,29 @@ pub(crate) fn socket_dir(socket: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Make `session` on `server`, one this process started with `tmux -D`,
-/// and set `exit-empty` on: `-D` turns it off, and a server tmux starts for
-/// a client ends with its last session.
-pub fn new_session(server: &Server, session: &str, cwd: &Path) -> Result<()> {
+/// Who started the server a session is made on, which decides whether the
+/// making sets the server's `exit-empty`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    /// This process, with `tmux -D`, which turns `exit-empty` off: the
+    /// making sets it on, so the server ends with its last session as one
+    /// tmux starts for a client does.
+    Here,
+    /// Something else, such as the user's own tmux service: its options
+    /// are its starter's, and the making leaves them as they stand.
+    Elsewhere,
+}
+
+/// Make `session` on `server`, its first window in `cwd`.
+pub fn new_session(server: &Server, session: &str, cwd: &Path, started: Started) -> Result<()> {
     let client = confirm(server)?;
     let cwd = cwd.display().to_string();
-    tmux(
-        &client,
-        &server.socket,
-        "new-session",
-        &[
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-c",
-            &cwd,
-            ";",
-            "set-option",
-            "-s",
-            "exit-empty",
-            "on",
-        ],
-    )?;
+    let mut args = vec!["new-session", "-d", "-s", session, "-c", &cwd];
+    match started {
+        Started::Here => args.extend([";", "set-option", "-s", "exit-empty", "on"]),
+        Started::Elsewhere => {}
+    }
+    tmux(&client, &server.socket, "new-session", &args)?;
     Ok(())
 }
 

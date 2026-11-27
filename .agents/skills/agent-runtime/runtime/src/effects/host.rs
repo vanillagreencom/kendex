@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
 use super::prepare::Kept;
 use super::{
-    Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
+    Close, Operation, POLL, Pane, Run, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
 };
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
@@ -545,45 +545,29 @@ fn is_pane_id(id: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-impl Operation<'_> {
-    /// The session a window opens in: the one the opener's request names,
-    /// else the one the settings name, else `fallback` (the opener's own:
-    /// a lane's fleet record's `tmux.session`, a controller's predecessor's
-    /// session), else `tmux-session-unresolved`.
-    pub fn fleet_session(&self, named: Option<&str>, fallback: Option<&str>) -> Result<String> {
-        session_of(named, self.run.settings.tmux_session.as_deref(), fallback)
-    }
-
-    /// The session the pane `id` stands in on the server the opener names;
-    /// none where none is named or that pane or server cannot be read.
-    pub fn pane_session(&self, id: &str) -> Option<String> {
-        let server = tmux::server(self.run.reach.socket.as_deref()?).ok()?;
-        match tmux::pane_state(&server, id) {
-            crate::reading::Reading::Live(tmux::PaneState::Running(fields)) => {
-                Some(fields.pane.session)
-            }
-            crate::reading::Reading::Live(tmux::PaneState::Dead(pane)) => Some(pane.session),
-            crate::reading::Reading::Gone | crate::reading::Reading::Unreadable { .. } => None,
-        }
-    }
-
+impl Run<'_> {
     /// The tmux server a window opens on and the session it opens in: the
-    /// socket the opener names, and the session [`fleet_session`] resolves.
-    /// Where no server listens on that socket, as after a restart, and the
-    /// socket is the controller record's own `server_socket`, one is started
-    /// there with that session ([`Operation::started_server`]): a socket the
-    /// record does not name is a caller's own, and a server started there
-    /// would split the fleet across two servers. A server that stands must
-    /// hold the session: one it lacks refuses `tmux-session-missing`, since
-    /// that server may hold another fleet's sessions under names this one
-    /// cannot judge.
+    /// socket the opener names, and the session [`Operation::fleet_session`]
+    /// resolves. Both are read from the run alone, so a caller that must
+    /// refuse before an earlier act, as a relaunch must before its close,
+    /// asks the very resolve its launch asks. The controller record's own
+    /// `server_socket` is the fleet's: where no server listens there, as
+    /// after a restart, one is started with the session
+    /// ([`Run::started_server`]), and where a server stands there without
+    /// the session, as a user's tmux service starts one at boot, the session
+    /// is made in it ([`Run::made_session`]), which changes no session the
+    /// server holds. A socket the record does not name is a caller's own: no
+    /// server is started there, since one would split the fleet across two
+    /// servers, and a server standing there without the session refuses
+    /// `tmux-session-missing`, since it may hold another fleet's sessions
+    /// under names this one cannot judge.
     pub fn fleet_server(
         &self,
         named: Option<&str>,
         fallback: Option<&str>,
     ) -> Result<(Server, String)> {
-        let socket = self.run.reach.socket()?.to_path_buf();
-        let session = self.fleet_session(named, fallback)?;
+        let socket = self.reach.socket()?.to_path_buf();
+        let session = session_of(named, self.settings.tmux_session.as_deref(), fallback)?;
         let server = match tmux::server(&socket) {
             Ok(server) => server,
             Err(e) => {
@@ -594,13 +578,16 @@ impl Operation<'_> {
             }
         };
         if !tmux::session_present(&server, &session)? {
-            return Err(crate::Error::refused(
-                "tmux-session-missing",
-                &[
-                    ("session", &session),
-                    ("socket", &socket.display().to_string()),
-                ],
-            ));
+            if !self.recorded_socket(&socket)? {
+                return Err(crate::Error::refused(
+                    "tmux-session-missing",
+                    &[
+                        ("session", &session),
+                        ("socket", &socket.display().to_string()),
+                    ],
+                ));
+            }
+            self.made_session(&server, &session)?;
         }
         Ok((server, session))
     }
@@ -608,11 +595,27 @@ impl Operation<'_> {
     /// Whether `socket` is the one the fleet's controller record names, the
     /// server its panes stood on; a fleet with no such record names none.
     fn recorded_socket(&self, socket: &Path) -> Result<bool> {
-        Ok(super::fleet_view(self.run.path)?
+        Ok(super::fleet_view(self.path)?
             .overseer
             .as_ref()
             .and_then(overseer_socket)
             .is_some_and(|recorded| recorded == socket))
+    }
+
+    /// `session` made on `server`, which stands on the recorded socket and
+    /// which this process did not start, so its `exit-empty` stays as its
+    /// starter set it. The making runs under the server record's lock with
+    /// the session read again once the lock is held, so two launches of one
+    /// fleet, such as a watch's recovery beside a person's resume, make it
+    /// once. Its first window opens in the fleet state's directory, as a
+    /// started server's does.
+    fn made_session(&self, server: &Server, session: &str) -> Result<()> {
+        crate::record::lock(&self.state_dir.join(SERVER_RECORD))?.with(|| {
+            if !tmux::session_present(server, session)? {
+                tmux::new_session(server, session, &self.state_dir, tmux::Started::Elsewhere)?;
+            }
+            Ok(())
+        })
     }
 
     /// A tmux server started on `socket` holding `session`: `tmux -D`, the
@@ -638,8 +641,8 @@ impl Operation<'_> {
     /// `cause` is the server's own last stderr line, else the last tmux
     /// error the wait read, else `unanswered`.
     fn started_server(&self, socket: &Path, session: &str) -> Result<Server> {
-        let record = self.run.state_dir.join(SERVER_RECORD);
-        let err = self.run.state_dir.join(SERVER_ERR);
+        let record = self.state_dir.join(SERVER_RECORD);
+        let err = self.state_dir.join(SERVER_ERR);
         crate::record::lock(&record)?.with(|| {
             match tmux::server(socket) {
                 Ok(server) => return Ok(server),
@@ -668,7 +671,7 @@ impl Operation<'_> {
             }
             let launch = super::job::launch_recorded(
                 "tmux-server",
-                &format!("{}-{}", self.wall_secs(), std::process::id()),
+                &format!("{}-{}", wall_secs(self.clock), std::process::id()),
                 &record,
                 &["tmux", "-S", &word, "-D"],
                 Some(&err),
@@ -691,7 +694,7 @@ impl Operation<'_> {
                 super::job::Launch::Started { line, .. } => ("started", line.as_str()),
                 super::job::Launch::Unanswered { cause } => ("unanswered", cause.as_str()),
             };
-            let bound = self.run.settings.verify.get()?;
+            let bound = self.settings.verify.get()?;
             let mut tmux_error = None;
             let answered = poll_until(self.clock, bound, POLL, || {
                 match tmux::server(socket) {
@@ -711,9 +714,50 @@ impl Operation<'_> {
             // The session's first window opens in the fleet state's
             // directory, which stands for every opener; a detached job's
             // own directory is whatever started it.
-            tmux::new_session(&server, session, &self.run.state_dir)?;
+            tmux::new_session(&server, session, &self.state_dir, tmux::Started::Here)?;
             Ok(server)
         })
+    }
+}
+
+/// The wall clock in seconds since the epoch.
+fn wall_secs(clock: &dyn crate::clock::Clock) -> u64 {
+    clock
+        .wall()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+impl Operation<'_> {
+    /// The session a window opens in: the one the opener's request names,
+    /// else the one the settings name, else `fallback` (the opener's own:
+    /// a lane's fleet record's `tmux.session`, a controller's predecessor's
+    /// session), else `tmux-session-unresolved`.
+    pub fn fleet_session(&self, named: Option<&str>, fallback: Option<&str>) -> Result<String> {
+        session_of(named, self.run.settings.tmux_session.as_deref(), fallback)
+    }
+
+    /// The session the pane `id` stands in on the server the opener names;
+    /// none where none is named or that pane or server cannot be read.
+    pub fn pane_session(&self, id: &str) -> Option<String> {
+        let server = tmux::server(self.run.reach.socket.as_deref()?).ok()?;
+        match tmux::pane_state(&server, id) {
+            crate::reading::Reading::Live(tmux::PaneState::Running(fields)) => {
+                Some(fields.pane.session)
+            }
+            crate::reading::Reading::Live(tmux::PaneState::Dead(pane)) => Some(pane.session),
+            crate::reading::Reading::Gone | crate::reading::Reading::Unreadable { .. } => None,
+        }
+    }
+
+    /// The tmux server a window opens on and the session it opens in, as
+    /// [`Run::fleet_server`] resolves them for this handle's run.
+    pub fn fleet_server(
+        &self,
+        named: Option<&str>,
+        fallback: Option<&str>,
+    ) -> Result<(Server, String)> {
+        self.run.fleet_server(named, fallback)
     }
 
     /// The server's own process identity, read live before a window opens on
@@ -803,10 +847,7 @@ impl Operation<'_> {
 
     /// The wall clock in seconds since the epoch.
     pub fn wall_secs(&self) -> u64 {
-        self.clock
-            .wall()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
+        wall_secs(self.clock)
     }
 
     pub fn sleep(&self, d: Duration) {
