@@ -12276,7 +12276,7 @@ fn copilot_stub(dir: &Path) -> PathBuf {
     write_executable(
         &path,
         format!(
-            "#!/bin/bash\nhome=\"${{COPILOT_HOME:-$HOME/.copilot}}\"\nid=\"s-$(basename \"$PWD\")\"\nmkdir -p \"$home/session-state/$id\"\nprintf 'id: %s\\ncwd: %s\\n' \"$id\" \"$(pwd -P)\" > \"$home/session-state/$id/workspace.yaml\"\nprintf '%s\\n' '{{\"type\":\"user.message\"}}' > \"$home/session-state/$id/events.jsonl\"\nprintf '%s\\n' ' ~/work [⎇ main]' '{rule}' '❯ ' '{rule}'\nwhile IFS= read -r _line; do :; done\n"
+            "#!/bin/bash\n[ \"$1\" = --headless ] && exit 1\nhome=\"${{COPILOT_HOME:-$HOME/.copilot}}\"\nid=\"s-$(basename \"$PWD\")\"\nmkdir -p \"$home/session-state/$id\"\nprintf 'id: %s\\ncwd: %s\\n' \"$id\" \"$(pwd -P)\" > \"$home/session-state/$id/workspace.yaml\"\nprintf '%s\\n' '{{\"type\":\"user.message\"}}' > \"$home/session-state/$id/events.jsonl\"\nprintf '%s\\n' ' ~/work [⎇ main]' '{rule}' '❯ ' '{rule}'\nwhile IFS= read -r _line; do :; done\n"
         ),
     );
     path

@@ -2229,16 +2229,10 @@ fn a_copilot_controller_start_binds_the_session_it_opened_and_delivers_the_brief
         &copilot,
         format!(
             r#"#!/bin/bash
-if [ "$1" = --headless ]; then
-  prices='{{"inputPrice":400,"outputPrice":2000}}'
-  body="{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"models\":[{{\"id\":\"claude-opus-5.5\",\"billing\":{{\"tokenPrices\":{{\"inputPrice\":400,\"outputPrice\":2000,\"longContext\":$prices}}}}}}]}}}}"
-  printf 'Content-Length: %s\r\n\r\n%s' "${{#body}}" "$body"
-  cat > /dev/null
-  exit 0
-fi
-printf '%s\n' "$@" > '{argv}'
+{model_list}printf '%s\n' "$@" > '{argv}'
 exec '{stub}' "$@"
 "#,
+            model_list = copilot_at_par_model_list(None),
             argv = argv.display(),
             stub = fixtures().join("stub-confirm/copilot").display(),
         ),
