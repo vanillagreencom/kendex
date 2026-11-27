@@ -95,6 +95,29 @@ JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
+# Each setup action's inputs the reader accepts, True where the input names
+# repository paths, one per line, and the paths it reads unasked. A uses:
+# step runs from the repository root. The inputs are the action.yml of
+# actions/setup-node v7.1.0, which reads package.json for its package
+# manager cache, and of pnpm/action-setup v6.1.1, whose package_json_file
+# and cache_dependency_path default to package.json and pnpm-lock.yaml.
+SETUP_ACTIONS = {
+    r"actions/setup-node@[^\s]+": ({"node-version": False, "node-version-file": True, "cache": False,
+                                    "cache-dependency-path": True, "check-latest": False,
+                                    "architecture": False}, ["package.json"]),
+    r"pnpm/action-setup@[^\s]+": ({"version": False, "package_json_file": True, "cache": False,
+                                   "cache_dependency_path": True, "standalone": False},
+                                  ["package.json", "pnpm-lock.yaml"]),
+}
+VITEST_RUNS = (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
+               ["npx", "--no-install", "vitest", "run"])
+# https://pnpm.io/scripts: the scripts pnpm install runs in the project itself.
+PNPM_LIFECYCLE = ("pnpm:devPreinstall", "preinstall", "install", "postinstall",
+                  "preprepare", "prepare", "postprepare")
+# pnpm-workspace.yaml settings that name a repository file as code or input:
+# workspace packages, a pnpmfile, a patch, the script shell.
+PNPM_FILE_SETTINGS = {"packages", "pnpmfile", "globalPnpmfile", "patchedDependencies", "scriptShell"}
+PNPM_DEPENDENCIES = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
 # A symlink or a submodule: git tracks no entry below either.
 LINK_MODES = {"120000", "160000"}
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
@@ -1008,8 +1031,9 @@ def job_reads(evidence, job, env_words, ordinary, readers):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes"}, "opaque-step")
         if "uses" in step:
-            if not (re.fullmatch(CHECKOUT, step["uses"]) and
-                    set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"}):
+            if not ((re.fullmatch(CHECKOUT, step["uses"]) and
+                     set(step.get("with", {})) <= {"persist-credentials", "fetch-depth"})
+                    or setup_reads(evidence, step, ordinary)):
                 opaque_action = step["uses"]
             continue
         require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
@@ -1041,24 +1065,133 @@ def job_reads(evidence, job, env_words, ordinary, readers):
                 ) from error
         for line in step["run"].splitlines():
             args = words(line)
-            if not args:
-                continue
-            if args[0] == "cargo":
-                readers.append(set())
-                try:
-                    covered.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
-                except Unreadable as error:
-                    # A refusal drops every read the Cargo reader made, so no
-                    # claim stands in for what it could not rule out.
-                    raise Unreadable(str(error)) from error
-            elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
-                          ["npx", "--no-install", "vitest", "run"]):
-                readers.append(set())
-                covered.append(evidence.vitest_reads(directory, readers[-1]))
-            else:
-                evidence.shell_command(args, directory, ordinary, visited)
+            if args:
+                run_command(evidence, args, directory, ordinary, readers, covered, visited)
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
     return covered
+
+
+def run_command(evidence, args, directory, ordinary, readers, covered, visited):
+    if args[0] == "cargo":
+        readers.append(set())
+        try:
+            covered.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
+        except Unreadable as error:
+            # A refusal drops every read the Cargo reader made, so no
+            # claim stands in for what it could not rule out.
+            raise Unreadable(str(error)) from error
+    elif args in VITEST_RUNS:
+        readers.append(set())
+        covered.append(evidence.vitest_reads(directory, readers[-1]))
+    elif args[0] == "pnpm":
+        pnpm_reads(evidence, args[1:], directory, ordinary, readers, covered, visited)
+    else:
+        evidence.shell_command(args, directory, ordinary, visited)
+
+
+def setup_reads(evidence, step, reads):
+    """Record the paths a setup action reads. False where the step is no
+    setup action the reader accepts."""
+    accepted = [value for pattern, value in SETUP_ACTIONS.items() if re.fullmatch(pattern, step["uses"])]
+    given = step.get("with", {})
+    if not accepted or not isinstance(given, dict) or not set(given) <= accepted[0][0].keys():
+        return False
+    inputs, paths = accepted[0]
+    if not all(isinstance(value, str) and "${{" not in value for value in given.values()):
+        return False
+    paths = paths + [line.strip() for key, value in given.items() if inputs[key]
+                     for line in value.splitlines() if line.strip()]
+    if not all(literal(path) and not path.startswith("-") for path in paths):
+        return False
+    for path in paths:
+        path, passed = evidence.checkout_path(".", path)
+        reads.update({path} | passed)
+        reads.update(name for name in evidence.changed if under(name, path))
+    return True
+
+
+def local_spec(value):
+    # A dependency or override spec that names a path on disk, not a registry
+    # package, or a setting value that names a repository file.
+    return bool(re.match(r"[./~]|(?:git\+)?file:|link:|portal:|workspace:", value)) or "./" in value
+
+
+def setting_values(value):
+    if isinstance(value, dict):
+        return [item for entry in value.values() for item in setting_values(entry)]
+    if isinstance(value, list):
+        return [item for entry in value for item in setting_values(entry)]
+    return [value]
+
+
+def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
+    """Follow a pnpm install or script run: the package and settings files
+    pnpm reads in the working directory and each ancestor, then each script
+    it runs, read as a run line."""
+    folders = {directory, *(parent.as_posix() for parent in Path(directory).parents)}
+
+    def settings_file(name):
+        return name in {*JS_PACKAGES, "pnpm-workspace.yaml", ".npmrc"} or name.startswith(".pnpmfile.")
+
+    ordinary.update(name for name in evidence.changed
+                    if Path(name).parent.as_posix() in folders and settings_file(Path(name).name))
+    for path in sorted(evidence.files):
+        name = Path(path).name
+        if Path(path).parent.as_posix() not in folders or not settings_file(name):
+            continue
+        # An .npmrc can set the script shell or node options in pnpm before
+        # 11, and a pnpmfile is code pnpm loads.
+        require_shape(name != ".npmrc" and not name.startswith(".pnpmfile."),
+                      f"pnpm-config-unread path={path}")
+        if name == "pnpm-workspace.yaml":
+            try:
+                settings = workflow_document(evidence.blob(path)) or {}
+            except Unreadable as error:
+                raise ShapeUnreadable(f"pnpm-config-unread path={path}") from error
+            require_shape(isinstance(settings, dict) and not PNPM_FILE_SETTINGS & settings.keys()
+                          and not any(isinstance(value, str) and local_spec(value)
+                                      for value in setting_values(settings)),
+                          f"pnpm-config-unread path={path}")
+    manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
+    ordinary.add(manifest_path)
+    try:
+        manifest = json.loads(evidence.blob(manifest_path))
+    except ValueError as error:
+        raise ShapeUnreadable(f"pnpm-config-unread path={manifest_path}") from error
+    scripts = manifest.get("scripts", {}) if isinstance(manifest, dict) else None
+    # pnpm before 11 reads overrides and patches from the pnpm field.
+    require_shape(isinstance(scripts, dict) and "pnpm" not in manifest and all(
+        isinstance(specs, dict) and not any(isinstance(spec, str) and local_spec(spec) for spec in specs.values())
+        for specs in (manifest.get(field, {}) for field in PNPM_DEPENDENCIES)
+    ), f"pnpm-config-unread path={manifest_path}")
+    if args == ["install", "--frozen-lockfile"]:
+        names = [name for name in PNPM_LIFECYCLE if name in scripts]
+    elif args == ["test"] or (len(args) == 2 and args[0] == "run"):
+        # https://pnpm.io/cli/test: pnpm test is pnpm run test. The pnpm NAME
+        # shorthand runs a built-in command where one has that name, and the
+        # set differs by pnpm version, so it stays unread. enablePrePostScripts
+        # defaults to true (https://pnpm.io/cli/run).
+        script = args[-1]
+        require_shape(script in scripts, f"pnpm-script-unresolved script={script}")
+        names = [name for name in ("pre" + script, script, "post" + script) if name in scripts]
+    else:
+        raise ShapeUnreadable(f"opaque-pnpm-command command={shlex.join(['pnpm', *args])}")
+    for name in names:
+        invocation = ("pnpm", directory, name)
+        if invocation in visited:
+            continue
+        visited.add(invocation)
+        try:
+            # pnpm runs the body with sh in the package directory, with
+            # node_modules/.bin on PATH.
+            body = scripts[name]
+            require_shape(isinstance(body, str), "computed-command")
+            command = words(body)
+            require_shape(command and command[0] not in SHELL_KEYWORDS, "computed-command")
+            run_command(evidence, command, directory, ordinary, readers, covered, visited)
+        except UNAVAILABLE as error:
+            raise NamedUnreadable(f"unresolved-pnpm-script script={name} reason={error}",
+                                  is_shape(error)) from error
 
 
 def derived(evidence, claimed, settings, declared):

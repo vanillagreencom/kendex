@@ -368,6 +368,45 @@ chmod +x "$repo/tools/wrap.sh"
 printf 'true\n' >"$repo/tools/wrap-lib.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a workflow env wrapper sources a helper'
+# Talk's app job at talk a0ba803ae, with its root package files and scripts.
+# Its tool scripts are unread, so its claim stands in for what they read.
+git -C "$repo" checkout -qb fixture-pnpm "$static_base"
+write_workflow web-only >"$repo/.github/workflows/ci.yml"
+edit_workflow '      - uses: actions/checkout@v7\n      - working-directory: web\n        run: ./node_modules/.bin/vitest run\n' \
+  '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version-file: .nvmrc\n      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1\n      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n      - run: pnpm test\n'
+printf '%s\n' '{"private":true,"packageManager":"pnpm@12.3.4","scripts":{"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"},"devDependencies":{"eslint":"^9.0.0","jest":"^30.0.0","typescript":"^5.9.0"}}' >"$repo/package.json"
+printf 'allowBuilds:\n  esbuild: true\noverrides:\n  semver: ^7.6.0\n' >"$repo/pnpm-workspace.yaml"
+printf "lockfileVersion: '9.0'\n" >"$repo/pnpm-lock.yaml"
+printf '24\n' >"$repo/.nvmrc"
+printf 'export default []\n' >"$repo/eslint.config.js"
+printf '{}\n' >"$repo/tsconfig.json"
+mkdir -p "$repo/src"
+printf 'export const app = 42\n' >"$repo/src/app.ts"
+printf '%s\n' 'web src/* eslint.config.js # reason: eslint, tsc and jest read the sources' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm "Talk's pnpm app job"
+pnpm_base="$(git -C "$repo" rev-parse HEAD)"
+# The same job with scripts the reader follows and no claim.
+git -C "$repo" checkout -qb fixture-pnpm-followed "$pnpm_base"
+edit_workflow '      - run: pnpm lint\n      - run: pnpm typecheck\n' ''
+edit_file "$repo/package.json" '"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"' \
+  '"postinstall":"bash ./tools/setup.sh","pretest":"cat ./tools/fixture.txt","test":"bash ./tools/test.sh"'
+printf 'true\n' | tee "$repo/tools/setup.sh" "$repo/tools/test.sh" "$repo/tools/fixture.txt" >/dev/null
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a pnpm job whose scripts the reader follows'
+pnpm_followed_base="$(git -C "$repo" rev-parse HEAD)"
+# Each followed-job input the reader refuses, as branch fixture-LABEL.
+while IFS='|' read -r refusal file old new; do
+  git -C "$repo" checkout -qb "fixture-$refusal" "$pnpm_followed_base"
+  edit_file "$repo/$file" "$old" "$new"
+  git -C "$repo" commit -qam "$refusal"
+done <<'ROWS'
+pnpm-refused-patch|pnpm-workspace.yaml|overrides:|patchedDependencies:\n  semver: patches/semver.patch\noverrides:
+pnpm-refused-local|package.json|"eslint":"^9.0.0"|"eslint":"^9.0.0","lib":"file:./lib"
+pnpm-refused-body|package.json|"test":"bash ./tools/test.sh"|"test":"jest"
+pnpm-refused-setup|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-url: https://npm.pkg.github.com
+ROWS
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
 for shape in event-gate event-gate-unguarded; do
@@ -1240,6 +1279,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     dispatch-fleet-queue-*) base="$dispatch_fleet_queue_base" ;;
     dispatch-fleet-*) base="$dispatch_fleet_base" ;;
     queued-render-push) base="$queue_base" ;;
+    pnpm-talk-*) base="$pnpm_base" ;;
+    pnpm-followed-*) base="$pnpm_followed_base" ;;
+    pnpm-refused-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
   event="${event:-merge_group}"
@@ -1467,6 +1509,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
+    pnpm-talk-*) refused_jobs='job=web cause=opaque-pnpm-command' ;;
+    pnpm-refused-patch|pnpm-refused-local) refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-refused-body) refused_jobs='job=web cause=unresolved-pnpm-script' ;;
+    pnpm-refused-setup) refused_jobs='job=web cause=opaque-action' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1622,6 +1668,17 @@ dispatch-fleet-newline|run.sh|||||||false|false|true|derived-reach
 dispatch-fleet-queue-claimed|skills/review-gate/standard.json|||||pull_request||false|false|false|derived-reach
 dispatch-fleet-queue-derived|bin/host.txt|||||pull_request||false|false|false|derived-reach
 dispatch-fleet-queue-unproved|skills/review-gate/scripts/x.txt|||||pull_request||false|true|false|derived-reach
+pnpm-talk-gitignore|.gitignore|||false|
+pnpm-talk-node-version|.nvmrc|||true|
+pnpm-talk-workspace|pnpm-workspace.yaml|||true|
+pnpm-followed-gitignore|.gitignore|||false|
+pnpm-followed-script|tools/test.sh|||true|
+pnpm-followed-lifecycle|tools/setup.sh|||true|
+pnpm-followed-pre|tools/fixture.txt|||true|
+pnpm-refused-patch|.gitignore|||true|
+pnpm-refused-local|.gitignore|||true|
+pnpm-refused-body|.gitignore|||true|
+pnpm-refused-setup|.gitignore|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
