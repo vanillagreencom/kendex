@@ -30,7 +30,7 @@
    - Record the incoming request's source, full message or request id, recorded time and a retrievable reference to its original content.
    - Preserve the original request when a later message changes the outcome.
    - Add the later message and its authorized decision to the same item.
-   - Distinct requested outcomes can have distinct items; a reply, attempt or delivery does not itself require another item.
+   - Several outcomes of one matter stay on one item. Make a child item only for a step that needs its own actor or its own wait at the same time as another step, and key it to its matter, request and outcome.
 2. When no item retains the outcome, create one in the selected project through the tracker's existing creation route.
    - Put the original request reference, outcome, acceptance check and acceptance owner in its description.
    - Follow the installed Linear skill's Issue Creation Routing when using Linear.
@@ -42,7 +42,7 @@
    - While capture fails, record the outcome as a State entry under [State retention](../references/long-session.md#state-retention).
    - Remove that entry once a retried capture reads back.
 4. Before treating an owner thread as handled, read every request in the thread.
-   - For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item and read back the binding.
+   - For each distinct outcome the owner requested or a reply promised, answer it in full or write its own outcome line on its matter's item under [Retain the next action](#5-retain-the-next-action).
 
 ## 3. Reconcile decisions and attempts
 
@@ -78,27 +78,36 @@
 ## 5. Retain the next action
 
 1. Before settling an owner thread, follow [Bind the request](#2-bind-the-request).
-2. On the same tracker item, record the current decision, evidence or explicit unknown, existing attempt reference, unresolved next action and responsible actor.
+2. On the outcome's line on its item, keep its next action, the responsible actor, what it waits for, and its evidence or an explicit unknown.
+   - Record a decision, an instruction, a hold, an attempt reference, a check verdict or a receipt as a comment on the item. Never keep current state in a comment.
+   - A line for a result owed to the user closes on its delivery to the user, never on the finished work.
    - Exclude the work's next action from the handoff's State.
    - Apply [State retention](../references/long-session.md#state-retention) to the handoff.
    - For an external wait, retain its condition, evidence source and trigger or review date.
    - For an answer or result awaiting acceptance, retain the acceptance action.
    - Preserve the original criterion when another owner's item completes.
    - Update only changed facts; write no periodic timestamp comment to keep work open.
-3. When setting aside Linear work, use `progress-log --operation TEXT --result TEXT --decision TEXT --next-action TEXT --item ID`.
-   - Give the next action and responsible actor as one line.
+3. When setting aside Linear work, use `progress-log --operation TEXT --result TEXT --decision TEXT --next-action TEXT --source REF --ask N --item ID`.
+   - REF is the request's id and N the outcome's place in it. A later message that revises the outcome keeps the original REF and N.
+   - Give the next action, its actor, what it waits for, and its evidence or an explicit unknown as one line.
+   - Each write replaces the line and its indented lines.
+   - Add `--delivered REF` with the delivery's message id once the result reaches the user.
    - Add `--state-key KEY` when the local entry uses a different key.
+   - An item can still hold an old `Jarvis next action:` comment. Write a line for each outcome it names: the first line that reads back deletes the comment, and its progress record keeps the text.
+   - If the command refuses `tracker-body-changed`, run its `resume=` command after reading the item.
+   - If it refuses `tracker-opening-invalid` or `tracker-box-outside`, repair the item's opening or move the named box under Done when through the tracker's update route, then run the command again.
+   - If it refuses `tracker-item-synced` or `tracker-item-cross-team`, write the line on a check item in the session's own task project that links the item, under [Homes](../references/long-session.md#homes), and name that check item with `--item`.
    - For work outside the selected project, read back the open linked check under [Homes](../references/long-session.md#homes) before clearing State.
    - For terminal or archived work, follow [Check the outcome](#4-check-the-outcome) first.
 4. Before using the command without an item, follow [Read the scope](#1-read-the-scope) for this request, including terminal and archived bindings.
    - If a match is terminal or archived, follow [Check the outcome](#4-check-the-outcome).
    - Keep its State entry until the restored item or the surviving open item reads back as the work's destination.
    - Then name that item with `--item ID`.
-5. For authorized capture with no terminal or archived binding to resolve, replace `--item ID` with `--task-project UUID --source REF --outcome TEXT`.
+5. For authorized capture with no terminal or archived binding to resolve, replace `--item ID` with `--task-project UUID --outcome TEXT`.
    - Use the original request reference and the same outcome text on repeat calls.
    - If discovery reports ambiguity, read the named candidates.
    - Use `--item` once the binding is clear.
-   - A tracker refusal leaves the handoff intact. Read the tracker result before retrying.
+   - A tracker refusal leaves the handoff intact, except a refusal while deleting an old `Jarvis next action:` comment, which comes after the record that keeps its text. Read the tracker result before retrying.
 6. Read back changed items and any surviving-item links before waiting or handing over.
    - Use the [Handoff](../references/long-session.md#handoff) contract for the compact tracker ids and session state.
    - At succession, reconcile every retained open item and next action with the current tracker before replacement.

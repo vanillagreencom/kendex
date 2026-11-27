@@ -9,6 +9,7 @@ Write a record to its home, never to the handoff.
 | Standing rule | The skill or reference that owns it. |
 | Durable fact, ruling, preference or lesson | A memory note under [memory.md:Notes](memory.md#notes). |
 | Work, task or check | The tracker: an item, or a Done-when box on an item. |
+| Next action of an outcome the user asked for | Its own acceptance line on its matter's item, under [5. Retain the next action](../workflows/tasks.md#5-retain-the-next-action). |
 | Open exchange | Its mailbox, read live: the user channel and each agent's channel. |
 | Session state | The handoff. |
 
@@ -212,7 +213,8 @@ Write and replay records by these rules:
 
 In Harm and condition, state likelihood only when the source establishes it; otherwise mark it unknown.
 
-- The parent records each final disposition and its evidence on the owning tracker item.
+- The parent records each final disposition and its evidence as a comment on the owning tracker item.
+- The parent then updates the line of each outcome the disposition changes.
 - Link that record from the lane result and the progress record that acts on it.
 - For a durable ruling, follow [memory.md:Notes](memory.md#notes).
   - Link its tracker item to the affected standing rule.
