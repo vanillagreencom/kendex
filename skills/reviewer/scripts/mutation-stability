@@ -17,7 +17,7 @@
 #
 # Exit: 0 killed and stable; 1 mutant survived or a stability run failed;
 # 2 instrument failure (control, empty selection, invalid mutant, timed-out run,
-# bad input).
+# bad input, a workspace volume too small for the two copies).
 set -euo pipefail
 
 usage() {
@@ -41,6 +41,12 @@ usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
                    given it in TEST, e.g. --test 'cargo test -- --test-threads $THREADS'
   --timeout S      deadline for each build or test command (default 300)
   --keep           print the temp dirs instead of deleting them
+
+  Before extracting, the workspace volume must hold two copies of SHA's
+  tracked files, two copies of the worktree's Git-ignored files and 1 GiB of
+  headroom; otherwise it refuses disk-space-short. The ignored files count
+  BUILD's output only where the worktree already holds it: before the
+  worktree has built, allow for a fresh build in each copy yourself.
 
   MUTATION_STABILITY_SETTLE  seconds each write to a copy waits so a shared
                    mtime-keyed build cache cannot answer it with the previous
@@ -415,6 +421,77 @@ cargo_selection_nonempty() {
     }
   ' "$1"
 }
+
+# Two copies of SHA, each building its own output beside its source, must fit
+# the workspace's volume before either is taken: a probe that fills a lane disk
+# stops the lane's own build and its mailbox watch with no cause named.
+# Each read that fails refuses by name; an unread size never counts as zero.
+copy_size_kib() {
+  listing_status=0
+  listing=$(git -C "$WORKTREE" ls-tree -r -l "$SHA" 2>"$ROOT/size.log") || listing_status=$?
+  [ "$listing_status" -eq 0 ] ||
+    refuse_with_log revision-unreadable sha "$SHA" "could not list the tracked files of the revision" "$ROOT/size.log"
+  # A file takes whole blocks; 4 KiB is the default block of ext4 and APFS, so
+  # a tree of small files is not read as smaller than the copy it becomes.
+  # ls-tree exits 0 and prints BAD as the size of a blob it cannot read, such
+  # as one a partial clone has not fetched; that row ends the sum with its path.
+  sum_status=0
+  sum=$(awk -F '\t' '
+    { split($1, meta, " ") }
+    meta[2] == "blob" && meta[4] !~ /^[0-9]+$/ { print $2; unread = 1; exit 1 }
+    meta[2] == "blob" { kib += int((meta[4] + 4095) / 4096) * 4 }
+    END { if (unread) exit 1; printf "%d\n", kib }
+  ' <<<"$listing") || sum_status=$?
+  [ "$sum_status" -eq 0 ] ||
+    refuse revision-unreadable sha "$SHA" "ls-tree reported no readable size for the tracked file $sum"
+  echo "$sum"
+}
+
+# The copy's build writes what the worktree's build already wrote. That output
+# is among the files Git ignores, so counting every ignored file over-counts
+# it; a worktree that has not built yet holds none of it to count.
+build_output_kib() {
+  # The NUL-separated list goes to a file: a command substitution drops NULs.
+  ignored_status=0
+  git -C "$WORKTREE" ls-files -z --others --ignored --exclude-standard --directory \
+    >"$ROOT/ignored.list" 2>"$ROOT/size.log" || ignored_status=$?
+  [ "$ignored_status" -eq 0 ] ||
+    refuse_with_log build-output-unreadable path "$WORKTREE" "could not list the worktree's ignored files" "$ROOT/size.log"
+  entries=()
+  while IFS= read -r -d '' entry; do entries+=("$entry"); done <"$ROOT/ignored.list"
+  [ "${#entries[@]}" -gt 0 ] || { echo 0; return 0; }
+  sizes_status=0
+  sizes=$(cd -- "$WORKTREE" && du -sk -- "${entries[@]}" 2>"$ROOT/size.log") || sizes_status=$?
+  [ "$sizes_status" -eq 0 ] ||
+    refuse_with_log build-output-unreadable path "$WORKTREE" "could not size the worktree's ignored files" "$ROOT/size.log"
+  awk '{ kib += $1 } END { printf "%d\n", kib }' <<<"$sizes"
+}
+
+# Headroom for the lane's own writes while the probe runs, its build and its
+# mailbox watch among them, which are what a full disk stops.
+DISK_MARGIN_KIB=1048576
+
+free_kib() {
+  df_status=0
+  df_out=$(df -Pk -- "$ROOT" 2>"$ROOT/size.log") || df_status=$?
+  [ "$df_status" -eq 0 ] ||
+    refuse_with_log disk-space-unreadable path "$ROOT" "could not read the workspace's free space" "$ROOT/size.log"
+  # POSIX df -P prints a header and one line per volume. The source name may
+  # hold spaces, so Available is read as the field before Capacity, the first
+  # whole-percent field past the four a line holds before it.
+  available=$(awk 'NR == 2 { for (i = 5; i <= NF; i++) if ($i ~ /^[0-9]+%$/) { print $(i - 1); exit } }' <<<"$df_out")
+  [[ "$available" =~ ^[0-9]{1,18}$ ]] ||
+    refuse disk-space-unreadable path "$ROOT" "df reported no free-space figure for the workspace"
+  echo "$available"
+}
+
+copy_kib=$(copy_size_kib) || exit 2
+build_kib=$(build_output_kib) || exit 2
+available_kib=$(free_kib) || exit 2
+need_kib=$((2 * (copy_kib + build_kib) + DISK_MARGIN_KIB))
+[ "$available_kib" -ge "$need_kib" ] ||
+  refuse disk-space-short kib "need:$need_kib/free:$available_kib" \
+    "two copies of $SHA and of the worktree's ignored files with ${DISK_MARGIN_KIB} KiB headroom need ${need_kib} KiB; the workspace volume has ${available_kib} KiB free"
 
 extract_status=0
 extract "$ROOT/mutant" >"$ROOT/control-archive.log" 2>&1 || extract_status=$?

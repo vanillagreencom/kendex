@@ -15,7 +15,7 @@ Read [Mutation-Stability Pairing](../SKILL.md#mutation-stability-pairing) before
 
 `mutation-stability` takes the worktree itself as `--worktree`. It extracts a clean and a mutant copy of `--sha` under its own `mktemp -d` on the base above, runs the test in each, and removes them on exit unless `--keep` or a cleanup that reports `workspace kept`.
 
-Before the call, check that two copies fit, each with its build output.
+The script makes the size check itself before it extracts either copy. It refuses `disk-space-short`, naming the need and the free space, when two copies and headroom do not fit. Its build-output term counts only output already in the worktree: where the worktree has not yet built what `--build` writes, allow for a fresh build in each copy yourself. See `mutation-stability --help` for what it counts.
 
 ## 2. Run the probe
 
