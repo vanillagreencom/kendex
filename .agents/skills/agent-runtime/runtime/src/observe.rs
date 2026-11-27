@@ -380,17 +380,21 @@ pub fn submit_refused(screen: &str, harness: Harness) -> bool {
     }
 }
 
-/// Codex's line for a turn its provider's API refused, as a real pane drew
-/// it: the error glyph at the line's start, then the harness's error text.
-/// An answer quoting the words draws them indented.
+/// The Codex app-server's `turn/completed` distinguishes failed and
+/// interrupted turns (https://developers.openai.com/codex/app-server/#server-notifications).
+/// The judge receives a captured interactive pane without an app-server
+/// connection. Codex 0.172.0 uses the square for free-text errors and for
+/// its fixed interruption notice
+/// (https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/tui/src/history_cell/notices.rs).
 static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
 
 /// Whether a Codex slice judged idle sits at its composer after an API error
 /// ended its turn: the error line and the marker line are both drawn in it.
 pub fn codex_api_error(slice: &str) -> bool {
     let mut lines = slice.lines();
-    lines.any(|line| CODEX_API_ERROR.is_match(line))
-        && lines.any(|line| CODEX_MARKER.is_match(line))
+    lines.any(|line| {
+        CODEX_API_ERROR.is_match(line) && !line.starts_with("■ Conversation interrupted")
+    }) && lines.any(|line| CODEX_MARKER.is_match(line))
 }
 
 /// The evidence for a turn whose pane the observer found idle.
@@ -1327,12 +1331,33 @@ mod tests {
         let rows = [
             (
                 Harness::Codex,
+                "› Continue the task.\n\n■ Conversation interrupted - use /feedback if something went wrong\n\n› Ask Codex to do anything",
+                None,
+            ),
+            (
+                Harness::Codex,
                 "› Continue the task.\n\n▲ Selected model is at capacity. Try again later.\n\n› Ask Codex to do anything",
                 Some("capacity"),
             ),
             (
                 Harness::Codex,
                 "■ {\"detail\":\"Bad Request\"}\n1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view",
+                Some("api-error"),
+            ),
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ The selected model is not supported.\n\n› Ask Codex to do anything",
+                Some("api-error"),
+            ),
+            // The terminal messages recorded in codex-network.jsonl and codex-stream.jsonl.
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ stream disconnected before completion: error sending request\n\n› Ask Codex to do anything",
+                Some("api-error"),
+            ),
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ stream disconnected before completion: Transport error: network error: error decoding response body\n\n› Ask Codex to do anything",
                 Some("api-error"),
             ),
             (
@@ -1352,7 +1377,7 @@ mod tests {
             assert_eq!(
                 reply.get("turn").and_then(serde_json::Value::as_str),
                 turn,
-                "{harness:?}: {reply}"
+                "{harness:?} {screen:?}: {reply}"
             );
         }
     }
