@@ -745,11 +745,13 @@ fn is_path(token: &str) -> bool {
 }
 
 /// The touched set: the body's Location paths, the brief's paths, the
-/// range's changed paths and the paths added, `changelog.d/` left out,
-/// sorted and once each. The admission judges holders over it and the tier
-/// classifies it, so both read one set from the same inputs. A Location line
-/// naming no path is unread (`location`).
+/// range's changed paths and the paths added, `changelog.d/` left out in
+/// either spelling, read in `root`, the checkout it is recorded for
+/// ([`folders`]). The admission judges holders over it and the tier
+/// classifies it, so both read one set from the same inputs. A Location
+/// line naming no path is unread (`location`).
 pub(super) fn touched(
+    root: Option<&Path>,
     body: Option<&str>,
     brief: Option<&str>,
     range: &[String],
@@ -763,19 +765,46 @@ pub(super) fn touched(
         touched.extend(named_paths(brief));
     }
     touched.extend(range.iter().chain(added).cloned());
-    touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
-    Ok(touched.into_iter().collect())
+    touched.retain(|p| !p.is_empty() && !covers(UNCOUNTED_PREFIX, p));
+    let touched: Vec<String> = touched.into_iter().collect();
+    Ok(folders(root, &touched))
 }
 
-/// Whether `a` and `b` name one file: equal, or one a directory (`/`) the
-/// other is under.
+/// Whether `a` and `b` name one file: the same path, or one a path under
+/// the other. The rule reads the strings alone, a trailing `/` aside, so a
+/// folder entry with or without its `/` holds the files under it wherever
+/// the folder stands: on a lane's host only, as a submodule's gitlink, or
+/// replacing a file another holder names.
 fn meets(a: &str, b: &str) -> bool {
-    a == b || (a.ends_with('/') && b.starts_with(a)) || (b.ends_with('/') && a.starts_with(b))
+    covers(a, b) || covers(b, a)
 }
 
-/// Whether an in-scope entry `scope` covers `file`.
+/// Whether an in-scope entry `scope` covers `file`: the same path, or
+/// `file` under it, by [`meets`]'s string rule.
 fn covers(scope: &str, file: &str) -> bool {
-    scope == file || (scope.ends_with('/') && file.starts_with(scope))
+    let (scope, file) = (scope.trim_end_matches('/'), file.trim_end_matches('/'));
+    file == scope
+        || file
+            .strip_prefix(scope)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// `entries` as an admitted set records them, sorted and once each: an
+/// entry naming a folder in `root`, the checkout it is recorded for, ends
+/// in `/`, the spelling a dev round reads as covering the paths under it
+/// and the tier classifies. A file, a symlink (a pull request's files name
+/// one at its own path, whatever it points at), or a path naming nothing
+/// there or whose metadata cannot be read, stays as written. Matching
+/// never needs it: [`meets`] reads either spelling as the folder.
+fn folders(root: Option<&Path>, entries: &[String]) -> Vec<String> {
+    let is_folder =
+        |root: &Path, e: &str| std::fs::symlink_metadata(root.join(e)).is_ok_and(|m| m.is_dir());
+    let folder = |e: &String| match root {
+        Some(root) if !e.is_empty() && !e.ends_with('/') && is_folder(root, e) => format!("{e}/"),
+        _ => e.clone(),
+    };
+    let set: BTreeSet<String> = entries.iter().map(folder).collect();
+    set.into_iter().collect()
 }
 
 /// The paths `a` and `b` share that the scope leaves in, each the longer
@@ -784,7 +813,7 @@ fn shared(a: &[String], b: &[String], scope: &[String]) -> Vec<String> {
     let mut files = BTreeSet::new();
     for x in a {
         for y in b {
-            if y.starts_with(UNCOUNTED_PREFIX) || !meets(x, y) {
+            if covers(UNCOUNTED_PREFIX, y) || !meets(x, y) {
                 continue;
             }
             let file = if y.len() > x.len() { y } else { x };
@@ -1275,8 +1304,14 @@ pub(super) fn judge(
         range_paths = (reads.range_paths)(&reads.clis, dir, range)
             .map_err(|c| unreadable("classification", c))?;
     }
-    let classified = touched(body.as_deref(), brief.as_deref(), &range_paths, a.paths)
-        .map_err(|c| unreadable("location", c.into()))?;
+    let classified = touched(
+        a.checkout(),
+        body.as_deref(),
+        brief.as_deref(),
+        &range_paths,
+        a.paths,
+    )
+    .map_err(|c| unreadable("location", c.into()))?;
     let touched = if a.read_only {
         Vec::new()
     } else {
@@ -1791,10 +1826,13 @@ pub(super) fn admit_paths(
         });
     };
     let standing = &lanes[index];
-    let touched = union(
-        standing.touched.as_deref().unwrap_or_default(),
+    // The paths added are recorded for the lane's checkout, as a first
+    // launch's are for the one it runs in ([`folders`]).
+    let added = folders(
+        standing.mail_root.as_deref().map(Path::new),
         &judged.touched,
     );
+    let touched = union(standing.touched.as_deref().unwrap_or_default(), &added);
     widen(path, doc, index, standing, &touched, &judged.in_scope)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
@@ -2486,6 +2524,20 @@ mod tests {
             (s(&["src/a.sh"]), s(&["src/"]), s(&[]), s(&["src/a.sh"])),
             (s(&["src/"]), s(&["src/a.sh"]), s(&[]), s(&["src/a.sh"])),
             (s(&["src/a.sh"]), s(&["src/b.sh"]), s(&[]), s(&[])),
+            // A folder entry meets by its string, with or without its `/`:
+            // a folder on a lane's host alone, a submodule's gitlink a pull
+            // request names bare, a file a branch replaced with a folder.
+            (s(&["src"]), s(&["src/a.sh"]), s(&[]), s(&["src/a.sh"])),
+            (
+                s(&["vendor/lib/"]),
+                s(&["vendor/lib"]),
+                s(&[]),
+                s(&["vendor/lib/"]),
+            ),
+            // A name that only begins another is no folder of it.
+            (s(&["src/a"]), s(&["src/ab.sh"]), s(&[]), s(&[])),
+            (s(&["src/a.sh"]), s(&["src/a.sh"]), s(&["src"]), s(&[])),
+            (s(&["changelog.d/"]), s(&["changelog.d"]), s(&[]), s(&[])),
             (
                 s(&["changelog.d/orch/", "src/b.sh"]),
                 s(&["changelog.d/orch/y.md"]),
@@ -2740,7 +2792,11 @@ mod tests {
                 }),
             )]
             .into(),
-            ranges: vec!["src/c.sh".to_owned(), "changelog.d/orch/x.md".to_owned()],
+            ranges: vec![
+                "src/c.sh".to_owned(),
+                "changelog.d/orch/x.md".to_owned(),
+                "changelog.d".to_owned(),
+            ],
             reads: RefCell::new(Vec::new()),
         };
         let range = ScopeRange {
