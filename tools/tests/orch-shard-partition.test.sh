@@ -1578,8 +1578,8 @@ check "must-fail: a failed list that ends without exit 1 leaves a failed target'
 
 # The runtimes' lockfiles against their dependency policy: which legs install
 # cargo-deny, on which events, and that the check runs exactly where it was
-# installed. A merge group's Linux leg holds it under CI, and the night, which
-# runs no Linux shard, holds it on its macOS leg.
+# installed. The orch-rest Linux leg holds it on every event: under CI on a
+# merge group, and on the night's and a manual dispatch's Linux leg.
 DENY_INSTALL_STEP="cargo-deny, the pinned release"
 DENY_STEP="the package runtimes' lockfiles, held to their dependency policy"
 deny_installs() { # WORKFLOW SHARD OS EVENT RUST_TARGETS ; whether the install step runs on that leg

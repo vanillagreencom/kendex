@@ -37,7 +37,7 @@
 #                   the whole selection.
 #
 #   --night-faults  report each failed check of this night's run that the
-#                   same-head merge group left out, as THE NIGHT'S FAULT
+#                   head's merge group did not run, as THE NIGHT'S FAULT
 #                   REPORT below states. The night-faults job runs it last.
 #
 #   --event-parity  also derive the selection at every other event and refuse
@@ -113,7 +113,8 @@
 # THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
 # successful scheduled main run of this workflow has GITHUB_SHA. Otherwise
 # nightly=true selects the full night: every job a selection can leave out,
-# each with its whole matrix, and the night's fault report. An unread
+# each with its whole matrix, less the merge-group-only steps the LANES
+# comment names, and the night's fault report. An unread
 # history retains the night. A manual dispatch runs the full night without
 # a selection and without the report.
 #
@@ -304,7 +305,11 @@ die() { # CAUSE MESSAGE
 # Preflight and Markdown start before the classifier, so their `if:` names
 # the merge group alone; their `on` cell lists them for CI to hold.
 # A selected night runs every job a selection can leave out, each with its
-# whole matrix, so a check the selector wrongly skipped fails there. Every
+# whole matrix, so a check the selector wrongly skipped and the night runs
+# fails there. Two steps run on a merge group alone, so a skip of what they
+# check fails no night check: the cargo-linux `test` step, which leaves a
+# night's Linux cargo legs compiling their tests and running none, and the
+# released-package suites catalog's suite-command runs. Every
 # class row selects bot-instructions, so no selection leaves it out, and its
 # diff checks judge a merge group's range a night does not have: it has no
 # night cell. night-faults judges the night's failed checks, under THE
@@ -650,6 +655,12 @@ group_proved() { # JOB JOBS_FILE
   [ "$seen" = true ]
 }
 
+# Whether a held Rust target pattern, `.`, covers the runtime target $t: the
+# target itself, or `<package>/*` for every target of that package. The push
+# proof and the night's fault report each prepend it to their jq program, so
+# both read a selection's targets alike.
+TARGET_COVERS='def covers($t): . as $e | $e == $t or (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))));'
+
 # The same-head merge groups' record at GITHUB_SHA, read into WORK for the
 # push route's proof and the night's fault report: jobs.json, each group
 # run's latest jobs as {name, status, conclusion}; selections.json, each
@@ -733,12 +744,11 @@ main_proof() {
       --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
       --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
       --argjson replacements "$replacements" \
-      --arg listless "$LISTLESS_SHARDS" '
+      --arg listless "$LISTLESS_SHARDS" "$TARGET_COVERS"'
       $jobs[0] as $jobs | $sels[0] as $sels
       | [$map[0][] | select(.[2] as $s | $selected_skip | index($s) | not)] as $map
       | $targets[0] as $universe_targets
-      | [$universe_targets[] | select(. as $t | any($selected_targets[]; . as $e | $e == $t or
-          (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))] as $targets
+      | [$universe_targets[] | select(. as $t | any($selected_targets[]; covers($t)))] as $targets
       | ($listless | split(" ")) as $whole
       | ($sels | length > 0) as $read
       | ([$sels[].skipped_suites[]] | map({(.): true}) | add // {}) as $left
@@ -754,9 +764,7 @@ main_proof() {
           | [$roster | split(" ")[] | select(. as $shard
               | if any($whole[]; . == $shard) then (green($jobs; $shard; $os) | not)
                 else any($need[]; . == $shard) end)];
-        def expand: . as $list
-          | [$targets[] | select(. as $t
-              | any($list[]; . as $e | $e == $t or (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))];
+        def expand: . as $list | [$targets[] | select(. as $t | any($list[]; covers($t)))];
       (if $read and green($jobs; "orch-rest"; "ubuntu-latest")
         then [$sels[] | .rust_targets | expand] as $sets
           | [$targets[] | select(. as $t | all($sets[]; any(.[]; . == $t)))]
@@ -819,31 +827,39 @@ main_proof() {
 }
 
 # THE NIGHT'S FAULT REPORT, --night-faults: each failed check of this
-# night's run, GITHUB_RUN_ID at GITHUB_SHA, judged against the same-head
-# merge groups' record. A check is a selector fault where the groups'
-# selection left it out of that commit:
+# night's run, GITHUB_RUN_ID at GITHUB_SHA, judged against the record of the
+# merge groups at that head alone. A failed check is a completed leg that
+# neither passed nor was skipped: failure, timed_out, cancelled and
+# startup_failure among them. It is a selector fault where the head's merge
+# groups did not run it:
 #   skipped=job     no group ran a leg of the check's LANES job;
 #   skipped=leg     the groups ran that job's legs, every one under a name
 #                   this night also ran, and none under this check's name;
-#   skipped=suites  the check is a shell shard leg, and every group's
-#                   selection skipped a suite suite_map places on that leg;
-#   skipped=targets the check is the orch-rest Linux leg, and no group's
-#                   selection held a skill runtime Rust target.
+#   skipped=suites  the check is a shell shard leg, and a suite suite_map
+#                   places on that leg is one every group's selection skipped;
+#   skipped=targets the check is the orch-rest Linux leg, and a skill runtime
+#                   Rust target is one no group's selection held.
+# A fault means the head's merge group did not run the check, not that the
+# head's own selection was wrong: a check an earlier commit's group skipped
+# and broke, or one that fails with no selector cause, such as an advisory
+# against an unchanged lockfile, reads as a fault at the night's head
+# wherever that head's group did not run it.
 # A failed check the groups ran whole is an ordinary red night. Where the
 # groups' legs carry names this night does not, as catalog's parts do, the
 # legs are not compared by name. The report reads which leg failed, not
 # which suite or cargo target inside it: a suite suite_map places on the
-# leg counts whichever suite failed, and a cargo-linux leg the groups ran
-# with fewer test targets reads as ordinary.
+# leg counts whichever suite failed.
 # One stdout line per failed check, its key first:
 #   selector-fault commit=SHA check=NAME skipped=job|leg|suites|targets[ count=N]
 #   night-red commit=SHA check=NAME selector=ran|unread|none
-# beside an `::error` annotation for each fault. A check no LANES row names,
-# such as the classifier's, takes no line. On stderr,
-# `ci-job-set: night-faults=read|none|unread failed=N faults=N runs=IDS`,
-# with ` cause=` where the groups' record could not be read or no group ran
-# the head. The report is advisory: an unread record is a warning and judges
-# no check a fault, and the report exits 0.
+# beside an `::error` annotation for each fault, its message the fault
+# line's fields. A check no LANES row names, such as the classifier's,
+# takes no line. On stderr,
+# `ci-job-set: night-faults=read|none|unread failed=N|unknown faults=N runs=IDS`,
+# `failed=unknown` where the night's own jobs could not be read, with
+# ` cause=` where a record could not be read or no group ran the head. The
+# report is advisory: an unread record is an `::warning` and judges no check
+# a fault, and the report exits 0.
 night_faults() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" work night failed state cause ids
   local name status conclusion row job glob legs comparable shard runner verdict faults=0 count
@@ -856,11 +872,15 @@ night_faults() {
     printf '::warning title=selector faults unavailable::ci-job-set: night-faults=unread cause=night-jobs-unread run=%s\n' "$GITHUB_RUN_ID"
     return 0
   fi
-  # The failed checks a LANES row names, and every name this night ran.
+  # The failed checks a LANES row names, and every name this night ran. A
+  # completed leg that neither passed nor was skipped is red: a leg past its
+  # timeout-minutes ends `cancelled`, and a leg that never started ends
+  # `startup_failure`.
   while IFS=$'\t' read -r name status conclusion; do
     [ -n "$name" ] || continue
     night_names+="$name"$'\n'
-    case "$conclusion" in failure | timed_out) ;; *) continue ;; esac
+    [ "$status" = completed ] || continue
+    case "$conclusion" in success | skipped | neutral) continue ;; esac
     while IFS='|' read -r job glob _; do
       [ "$glob" != - ] || continue
       # shellcheck disable=SC2254 # the check column is a glob
@@ -916,10 +936,9 @@ night_faults() {
           verdict=suites
         elif [ "$count" != unread ] && [ "$shard/$runner" = orch-rest/ubuntu-latest ]; then
           # The runtime targets no group's selection held.
-          count="$(jq -rn --slurpfile sels "$work/selections.json" --slurpfile targets "$work/targets.json" '
+          count="$(jq -rn --slurpfile sels "$work/selections.json" --slurpfile targets "$work/targets.json" "$TARGET_COVERS"'
             [$sels[0][].rust_targets[]] as $held
-            | [$targets[0][] | select(. as $t | any($held[]; . == $t or
-                (endswith("/*") and ($t | startswith(rtrimstr("*"))))) | not)] | length')" || count=unread
+            | [$targets[0][] | select(. as $t | any($held[]; covers($t)) | not)] | length')" || count=unread
           [ "$count" = unread ] || [ "$count" -eq 0 ] || verdict=targets
         fi
         [ "$count" != unread ] || verdict=unread
@@ -935,7 +954,7 @@ night_faults() {
         row="commit=$sha check=$name skipped=$verdict"
         [ "$verdict" = job ] || [ "$verdict" = leg ] || row="$row count=$count"
         printf 'selector-fault %s\n' "$row"
-        printf '::error title=selector fault::%s\n' "$row" ;;
+        printf "::error title=selector fault (the head's merge group did not run this check)::%s\n" "$row" ;;
     esac
   done
   rm -rf -- "${work:?}"

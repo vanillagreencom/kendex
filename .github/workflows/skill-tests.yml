@@ -35,9 +35,12 @@ name: Skill Tests
 # where its head is the latest successful scheduled head; every selected
 # night and manual dispatch runs, with no selection, the native macOS night
 # roster and every job a selection can leave out: the whole Linux shell
-# roster, the UI, the cargo lints and every cargo, catalog and smoke leg. A
-# night's last job reports each of its failed checks that the same-head
-# merge group left out as a selector fault, naming the commit and the check.
+# roster, the UI, the cargo lints and every cargo, catalog and smoke leg.
+# Two steps run on a merge group alone: the cargo-linux `test` step, so a
+# night's Linux cargo legs compile their tests and run none, and catalog's
+# released-package suites. A night's last job reports each of its failed
+# checks that the head's merge group did not run as a selector fault,
+# naming the commit and the check.
 # Every gated job's `if:` reads its own id in the changes job's `jobs`
 # output; tools/ci-job-set's LANES row for the job says on which events and
 # selections it runs. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
@@ -617,9 +620,8 @@ jobs:
       # fact, on the legs whose suites run the package runtimes: the build
       # step's own `if:`. The trial is the lane line's head with no grant. It
       # installs nothing, changes no setting and never fails the leg.
-      # cargo-linux runs the same name and text, through the anchors, because
-      # a manual run starts no Linux shard leg and does start that job on
-      # this image; its matrix has no `shard`, so the `if:` stays here.
+      # cargo-linux runs the same name and text, through the anchors; its
+      # matrix has no `shard`, so the `if:` stays here.
       - name: &confine-read-name Read what the runner gives the lane confinement
         if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack' || matrix.shard == 'worktree' || matrix.shard == 'worktree-restack'
         continue-on-error: true
@@ -2711,9 +2713,10 @@ jobs:
         run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
 
   # THE NIGHT'S FAULT REPORT: after every other job of a selected night,
-  # each failed check that the same-head merge group's selection left out
-  # is a selector fault, an `::error` annotation naming the commit and the
-  # check; tools/ci-job-set's header gives the judgement and its limits. A
+  # each failed check that the head's merge group did not run is a selector
+  # fault, an `::error` annotation naming the commit and the check; THE
+  # NIGHT'S FAULT REPORT in tools/ci-job-set gives the judgement and its
+  # limits. A
   # night failure the group ran whole stays an ordinary red night. Its needs
   # are every job a night runs; tools/tests/ci-aggregate.test.sh holds them
   # to LANES. A report that cannot read the group's record warns and
@@ -2733,7 +2736,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: the failed checks the same-head merge group left out
+      - name: the failed checks the head's merge group did not run
         env:
           GH_TOKEN: ${{ github.token }}
         run: tools/ci-job-set --night-faults
