@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# pi-update-check: whether npm holds a Pi release newer than the one the
+# pi-update audit last covered, and if so, that one GitHub issue asks for the
+# audit. .github/workflows/pi-update-check.yml runs it weekly; Linear's GitHub
+# sync mirrors the issue into the team's tracker.
+#
+# The audited release is `lastVersion` in pi-extensions/pi-update.state.json,
+# the marker the pi-update skill writes. The newest release is npm's `latest`
+# dist-tag of @earendil-works/pi-coding-agent; Pi releases every package in
+# lockstep, so that one version covers the release. An open issue whose title
+# starts with TITLE_PREFIX below is the open audit item. The audit targets
+# npm's `latest` when it runs, so one open item covers every release that
+# lands while it is open.
+#
+# Run from a checkout of the repository: gh resolves {owner}/{repo} and the
+# issue's repository from it, or from GH_REPO.
+#
+# Outcome, one line on stdout, appended also to $GITHUB_STEP_SUMMARY when set:
+#   pi-update-check: current marker=<v> latest=<v>         npm holds nothing newer (exit 0)
+#   pi-update-check: open issue=<n> marker=<v> latest=<v>  an audit item is already open (exit 0)
+#   pi-update-check: opened issue=<url> marker=<v> latest=<v>  this run opened one (exit 0)
+#
+# A refusal is one line on stderr, `pi-update-check: <key>=<value>`, exit 2,
+# and opens nothing:
+#   marker=unreadable|invalid  the marker file or its lastVersion
+#   npm=failed|invalid         the npm read, or a latest that is not x.y.z
+#   issues=failed|invalid      the open-issue listing
+#   create=failed              gh refused the new issue
+set -euo pipefail
+
+PACKAGE=@earendil-works/pi-coding-agent
+TITLE_PREFIX='pi-update: audit the kendex Pi extensions against Pi '
+# A component of nine digits or fewer keeps the comparison inside shell
+# arithmetic.
+VERSION_RE='^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$'
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MARKER="$ROOT/pi-extensions/pi-update.state.json"
+
+refuse() { # KEY VALUE
+  printf 'pi-update-check: %s=%s\n' "$1" "$2" >&2
+  exit 2
+}
+
+outcome() { # LINE
+  printf '%s\n' "$1"
+  if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+    printf '%s\n' "$1" >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
+
+# Exit 0 when version $1 is newer than version $2; both match VERSION_RE.
+newer() {
+  local a b i
+  [[ $1 =~ $VERSION_RE ]]
+  a=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ $2 =~ $VERSION_RE ]]
+  b=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  for i in 0 1 2; do
+    if ((a[i] != b[i])); then
+      ((a[i] > b[i]))
+      return
+    fi
+  done
+  return 1
+}
+
+if ! marker=$(jq -er '.lastVersion | strings' -- "$MARKER"); then
+  refuse marker unreadable
+fi
+[[ $marker =~ $VERSION_RE ]] || refuse marker invalid
+
+if ! latest=$(npm view "$PACKAGE" dist-tags.latest); then
+  refuse npm failed
+fi
+[[ $latest =~ $VERSION_RE ]] || refuse npm invalid
+
+if ! newer "$latest" "$marker"; then
+  outcome "pi-update-check: current marker=$marker latest=$latest"
+  exit 0
+fi
+
+# Every page, so an open item past the first hundred issues still counts.
+if ! pages=$(gh api --paginate --slurp 'repos/{owner}/{repo}/issues?state=open&per_page=100'); then
+  refuse issues failed
+fi
+# The listing holds pull requests too; only an issue lacks `pull_request`.
+if ! open=$(jq -er --arg prefix "$TITLE_PREFIX" '
+  [.[][] | select(has("pull_request") | not)
+   | select(.title | startswith($prefix)) | .number]
+  | min // "none"
+' <<<"$pages"); then
+  refuse issues invalid
+fi
+if [[ $open != none ]]; then
+  outcome "pi-update-check: open issue=$open marker=$marker latest=$latest"
+  exit 0
+fi
+
+body="> **Story:** npm has Pi $latest, and the kendex Pi extensions were last audited against Pi $marker. The pi-update audit checks every release in between against the extensions, fixes what breaks and records the verdict.
+
+> **Why this matters:** A Pi release that breaks an extension reaches users before anyone checks it.
+
+## Done when
+
+- [ ] The pi-update skill (\`.agents/skills/pi-update/SKILL.md\`) has audited npm's \`latest\` of \`$PACKAGE\`, and \`pi-extensions/pi-update.state.json\` records the run.
+
+## Context
+
+**Location**: \`pi-extensions/\`
+
+The weekly \`pi-update-check\` workflow opened this item. The audit targets npm's \`latest\` when it runs, so a release that lands while this item is open is covered by the same run, and the workflow opens no second item meanwhile. The pi-update skill makes this item priority High (2)."
+
+if ! url=$(gh issue create --title "$TITLE_PREFIX$latest" --label harness --body "$body"); then
+  refuse create failed
+fi
+outcome "pi-update-check: opened issue=$url marker=$marker latest=$latest"
