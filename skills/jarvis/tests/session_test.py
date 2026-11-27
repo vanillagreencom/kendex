@@ -1271,10 +1271,12 @@ print(json.dumps(session.terminal(status)))
             answer, _ = self.call("start", origin="boot", duplicate_boot=True)
             self.assertEqual((answer["state"], len(self.started())), ("stopped", 2), "the same boot launched again")
 
-    def test_resume_brings_back_the_delegate_then_each_overseer_then_each_lane(self):
+    def test_resume_brings_back_the_delegate_then_each_lane_then_each_overseer(self):
         # The failures it stops: a delegate started fresh in place of its
-        # recorded conversation, two sessions launching at once, one refusal
-        # ending the run, and a session that was not running brought back.
+        # recorded conversation, two sessions launching at once, an overseer
+        # opening before its lanes are back, one refusal ending the run, a
+        # fresh lane read as resumed, and a session that was not running
+        # brought back.
         # The skills tree runs this package with orch-runtime behind a
         # recorder: each call passes to the real one unless an answer stands
         # for its folder and words, as KEN-5605's verbs print them
@@ -1385,12 +1387,13 @@ print(json.dumps(session.terminal(status)))
         lane_line = lambda outcome, root, item, **more: (outcome, dict(kind="lane", checkout=str(root), item=item, **more))
         self.assertEqual(lines, [
             delegate("resumed"),
+            lane_line("resumed", a, "KEN-1", route="resume"), lane_line("resumed", a, "KEN-2", route="fresh"),
+            lane_line("refused", b, "KEN-3", cause="harness-unrecorded"),
+            lane_line("resumed", b, "KEN-4", route="resume"),
+            lane_line("refused", c, "KEN-6", cause="launch-failed", close="i8", refusal="account-walled"),
             ("resumed", {"kind": "overseer", "checkout": str(a)}),
             ("refused", {"kind": "overseer", "checkout": str(b), "cause": "session-unrecorded",
-                         "field": "session_id", "pane": "%1"}),
-            lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"),
-            lane_line("refused", b, "KEN-3", cause="harness-unrecorded"), lane_line("resumed", b, "KEN-4"),
-            lane_line("refused", c, "KEN-6", cause="launch-failed", close="i8", refusal="account-walled")],
+                         "field": "session_id", "pane": "%1"})],
             err + self.diagnostics())
         self.assertEqual(code, 1)
         resumed = self.started()[-1]["argv"]
@@ -1398,9 +1401,9 @@ print(json.dumps(session.terminal(status)))
         steps = [row for row in map(json.loads, calls.read_text().splitlines())
                  if row["key"].split(" ", 1)[1].startswith(("resume-controller", "lane relaunch"))]
         self.assertEqual([row["key"] for row in steps], [
-            str(a) + " resume-controller --fleet", str(b) + " resume-controller --fleet",
             *(str(root) + " lane relaunch --fleet " + item for root, item in
-              ((a, "KEN-1"), (a, "KEN-2"), (a, "KEN-5"), (b, "KEN-3"), (b, "KEN-4"), (c, "KEN-6")))])
+              ((a, "KEN-1"), (a, "KEN-2"), (a, "KEN-5"), (b, "KEN-3"), (b, "KEN-4"), (c, "KEN-6"))),
+            str(a) + " resume-controller --fleet", str(b) + " resume-controller --fleet"])
         # Each step began once the delegate's start had settled and the step
         # before it had ended.
         self.assertTrue(all(row["open"] == [] and row["resumed"] for row in steps), steps)
@@ -1423,18 +1426,19 @@ print(json.dumps(session.terminal(status)))
             "key": "lane-live", "fields": [["item", item], ["status", "running"]]}}) + "\n"}
         resume_failed = lambda intent, note: {"code": 3, "stdout": "controller-resume-failed intent=" + intent + " note="
                                                                    + note + " cause=x\n"}
-        live = [delegate("resumed"), ("resumed", {"kind": "overseer", "checkout": str(a)}),
-                lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"), lane_line("resumed", c, "KEN-6")]
+        lanes = [lane_line("resumed", a, "KEN-1"), lane_line("resumed", a, "KEN-2"),
+                 lane_line("resumed", c, "KEN-6", route="resume")]
+        live = [delegate("resumed"), *lanes, ("resumed", {"kind": "overseer", "checkout": str(a)})]
         unmounted = self.root / "unmounted"
         for listed, overseer_answer, expected, exit in (
                 ([{"folder": str(self.root / "a-linked"), "state": "ok", "worktree": {"main": str(a)}}],
                  resume_failed("i2", "overseer-live"), live, 0),
                 ([{"folder": str(unmounted), "state": "folder-not-found", "worktree": None}],
                  resume_failed("i3", "tmux-server-unstarted"),
-                 live[:1] + [("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"}),
-                             ("refused", {"kind": "overseer", "checkout": str(a), "cause": "controller-resume-failed",
-                                          "intent": "i3", "note": "tmux-server-unstarted", "orch_cause": "x"})]
-                 + live[2:], 1)):
+                 [delegate("resumed"),
+                  ("refused", {"kind": "fleet", "checkout": str(unmounted), "cause": "folder-not-found"}), *lanes,
+                  ("refused", {"kind": "overseer", "checkout": str(a), "cause": "controller-resume-failed",
+                               "intent": "i3", "note": "tmux-server-unstarted", "orch_cause": "x"})], 1)):
             answers.write_text(json.dumps({
                 str(a) + " resume-controller --fleet": overseer_answer,
                 str(a) + " lane relaunch --fleet KEN-1": lane_live("KEN-1"),
