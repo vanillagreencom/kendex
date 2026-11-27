@@ -1,9 +1,9 @@
 //! The selection stage: which members of the validated `Evidence` the
 //! verdict considers and which runs its correlation reads. `select` is a
-//! pure function `(Evidence, Caller) → Selection`: the rollup's reduction,
-//! the required-definition walk and bound required-job membership, and a
-//! failed required workflow's placeholders; the classification stage
-//! (`judge`) reads the selected members only.
+//! pure function `(Evidence, Caller) → (Selection, non-required lines)`:
+//! the rollup's reduction, the required-definition walk and bound
+//! required-job membership, and a failed required workflow's placeholders;
+//! the classification stage (`judge`) reads the selected members only.
 //!
 //! The stage, in order:
 //!
@@ -42,14 +42,19 @@
 //!    name; a linked entry with none is a run status; an unlinked entry is
 //!    run-less. The association the evidence read (`Association`) travels
 //!    with the member and is read by the classification alone. Under
-//!    `verify-pr` with a required set that names anything, a check run
-//!    whose suite's run GitHub does not evaluate for a pull request
-//!    (`PULL_REQUEST_EVENTS`) is set aside here unless step 7 bound its
-//!    run: it joins no run group and matches no required context, and one
+//!    `verify-pr` with a required set that names anything, a workflow
+//!    job's check (a check run whose suite has a run) that step 7 did not
+//!    bind counts only from a run GitHub evaluates for a pull request
+//!    (`Replacements::PullRequestRuns`): one of another run is set aside
+//!    here, joins no run group and matches no required context, and one
 //!    bearing a required context's name is reported as a non-required
-//!    line. The correlation's runs leave such runs out too (step 8).
-//!    `verify-head` sets nothing aside: a head pushed to the base has no
-//!    pull request, and its only CI run can be a schedule or a dispatch.
+//!    line, whichever arm step 8 takes. Such a member's failure is held or
+//!    replaced only by such a run (`judge::correlate`). A commit status
+//!    and a check whose suite has no run keep every run, since GitHub's
+//!    event rule covers workflow job checks alone: a status's publisher
+//!    can be a run of any event. `verify-head` sets nothing aside: a head
+//!    pushed to the base has no pull request, and its only CI run can be a
+//!    schedule or a dispatch.
 //! 3. Run rank per workflow name: a run's jobs grouped by run under the
 //!    workflow name the rollup showed, so two workflow files sharing a name
 //!    are one group; ranked by `[last job start, run id]` when every run of
@@ -89,9 +94,9 @@
 //!    `html_url`, unequal where GitHub's two URLs differ), each bound job
 //!    whose link the scoped rollup lacks as `expected`
 //!    (`missing_required`); the runs are the bound runs and the runs of
-//!    every workflow a named context's member ran in, under `verify-pr`
-//!    only those GitHub evaluates for a pull request. Otherwise every
-//!    member and every run.
+//!    every workflow a named context's member ran in, whatever their
+//!    event, each failure reading those its `Replacements` admits.
+//!    Otherwise every member and every run.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -119,12 +124,28 @@ const PULL_REQUEST_EVENTS: [&str; 7] = [
     "merge_group",
 ];
 
-/// Whether GitHub evaluates a check of a run dispatched by `event` for a
-/// pull request. The restriction "applies only to checks created by
-/// workflow jobs, not to checks created by an external GitHub App" (the
-/// same page): a check whose suite has no run carries no event and counts.
-fn evaluated_for_pull_request(event: &str) -> bool {
-    event.is_empty() || PULL_REQUEST_EVENTS.contains(&event)
+/// The runs that count for a member: whose check counts toward its
+/// required context, and which can hold or replace its failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Replacements {
+    /// Every run on the head.
+    AnyRun,
+    /// Only a run of `PULL_REQUEST_EVENTS`: a workflow job's check under
+    /// `verify-pr` with a required set (step 2). The restriction "applies
+    /// only to checks created by workflow jobs, not to checks created by
+    /// an external GitHub App" (the same page), and a commit status is no
+    /// check, so neither takes it.
+    PullRequestRuns,
+}
+
+impl Replacements {
+    /// Whether a check or run of a run dispatched by `event` counts.
+    pub(super) fn admits(self, event: &str) -> bool {
+        match self {
+            Self::AnyRun => true,
+            Self::PullRequestRuns => PULL_REQUEST_EVENTS.contains(&event),
+        }
+    }
 }
 
 /// One check the verdict considers, with its association to a run.
@@ -134,6 +155,7 @@ pub(super) struct Member {
     pub(super) association: Association,
     /// The run the member's link names, held or not.
     pub(super) linked: Option<u64>,
+    pub(super) replacements: Replacements,
 }
 
 impl Member {
@@ -172,9 +194,6 @@ pub(super) struct Selection<'a> {
     pub(super) required_only: bool,
     /// The absence probe's facts, present under `required_only`.
     pub(super) absence: Option<AbsenceFacts>,
-    /// The set-aside checks bearing a required context's name (step 2):
-    /// reported beside the verdict, never judged.
-    pub(super) non_required: Vec<CheckReport>,
 }
 
 /// The current execution among one workflow's runs. The newest run by id is
@@ -235,6 +254,7 @@ struct Entry<'a> {
     /// target, matched by equality against a bound job's `html_url`.
     link: Option<&'a str>,
     association: Association,
+    replacements: Replacements,
 }
 
 impl Entry<'_> {
@@ -255,6 +275,7 @@ impl Entry<'_> {
             },
             association: self.association,
             linked: self.linked(),
+            replacements: self.replacements,
         }
     }
 }
@@ -547,38 +568,10 @@ fn bind<'a>(
     }
 }
 
-/// The selection over validated evidence for `caller`; see the module
-/// header for the steps.
-pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
-    // 1. The rollup, in gh's order; 2. placement.
-    let mut entries: Vec<Entry<'_>> = Vec::new();
-    for context in eliminate_duplicates(evidence) {
-        entries.push(match context {
-            Context::Check(check) => Entry {
-                name: check.name(),
-                source: Source::CheckRun,
-                state: check.outcome().word(),
-                bucket: check.outcome().check_bucket(),
-                started: check.started().unwrap_or_default(),
-                event: check.event(),
-                place: place(check.linked(), check.workflow(), check.run_level()),
-                link: check.link(),
-                association: check.association(),
-            },
-            Context::Status(status) => Entry {
-                name: status.context(),
-                source: Source::CommitStatus,
-                state: status.state().word(),
-                bucket: status.state().bucket(),
-                started: "",
-                event: "",
-                place: place(status.linked(), "", status.run_level()),
-                link: status.target(),
-                association: status.association(),
-            },
-        });
-    }
-
+/// The selection over validated evidence for `caller`, with the set-aside
+/// checks bearing a required context's name (step 2), which the verdict
+/// reports and never judges; see the module header for the steps.
+pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec<CheckReport>) {
     // 7. The required-definition walk, first: its bound runs are kept in
     // step 4 whatever their rank, and step 2 sets none of them aside.
     let walked = evidence
@@ -605,19 +598,60 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
         bound.iter().flat_map(|b| b.jobs.iter().copied()).collect();
     let bound_links: BTreeSet<&str> = bound_jobs.iter().map(|(_, link)| *link).collect();
 
-    // 2. The pull request's required set: the checks GitHub does not
-    // evaluate for a pull request are set aside.
+    // 1. The rollup, in gh's order; 2. placement, with the pull request's
+    // rule for a workflow job's check.
     let pull_request_rule = match caller {
         Caller::VerifyPr => evidence
             .required()
             .is_some_and(RequiredEvidence::names_anything),
         Caller::VerifyHead => false,
     };
-    let evaluated = |event: &str| !pull_request_rule || evaluated_for_pull_request(event);
-    let (entries, set_aside): (Vec<Entry<'_>>, Vec<Entry<'_>>) =
-        entries.into_iter().partition(|entry| {
-            evaluated(entry.event) || entry.linked().is_some_and(|run| bound_ids.contains(&run))
+    let mut entries: Vec<Entry<'_>> = Vec::new();
+    for context in eliminate_duplicates(evidence) {
+        entries.push(match context {
+            Context::Check(check) => Entry {
+                name: check.name(),
+                source: Source::CheckRun,
+                state: check.outcome().word(),
+                bucket: check.outcome().check_bucket(),
+                started: check.started().unwrap_or_default(),
+                event: check.event(),
+                place: place(check.linked(), check.workflow(), check.run_level()),
+                link: check.link(),
+                association: check.association(),
+                replacements: if pull_request_rule
+                    && !check.event().is_empty()
+                    && !check.linked().is_some_and(|run| bound_ids.contains(&run))
+                {
+                    Replacements::PullRequestRuns
+                } else {
+                    Replacements::AnyRun
+                },
+            },
+            Context::Status(status) => Entry {
+                name: status.context(),
+                source: Source::CommitStatus,
+                state: status.state().word(),
+                bucket: status.state().bucket(),
+                started: "",
+                event: "",
+                place: place(status.linked(), "", status.run_level()),
+                link: status.target(),
+                association: status.association(),
+                replacements: Replacements::AnyRun,
+            },
         });
+    }
+    let (entries, set_aside): (Vec<Entry<'_>>, Vec<Entry<'_>>) = entries
+        .into_iter()
+        .partition(|entry| entry.replacements.admits(entry.event));
+    let non_required: Vec<CheckReport> = evidence.required().map_or_else(Vec::new, |req| {
+        set_aside
+            .iter()
+            .filter(|entry| req.contexts().iter().any(|context| context == entry.name))
+            .map(|entry| entry.member().report)
+            .collect()
+    });
 
     // 3. Run rank per workflow name.
     let mut workflows: BTreeMap<&str, Vec<RunGroup>> = BTreeMap::new();
@@ -762,11 +796,13 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
         report: expected(name),
         association: Association::None,
         linked: None,
+        replacements: Replacements::AnyRun,
     };
     let expected_workflow = |name: &str| Member {
         report: expected(name),
         association: Association::None,
         linked: None,
+        replacements: Replacements::AnyRun,
     };
     let run_member = |run: &RunEvidence| Member {
         report: CheckReport {
@@ -777,6 +813,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
         },
         association: Association::Run(run.id()),
         linked: Some(run.id()),
+        replacements: Replacements::AnyRun,
     };
     let absence = |req: &RequiredEvidence| {
         Some(AbsenceFacts {
@@ -786,7 +823,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
             runs: evidence.runs().len(),
         })
     };
-    match evidence.required() {
+    let selection = match evidence.required() {
         Some(req) if unresolved.is_some() => Selection {
             members: unresolved
                 .map(|workflow| expected_workflow(workflow.path()))
@@ -796,7 +833,6 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
             scope: Scope::RequiredSet,
             required_only: true,
             absence: absence(req),
-            non_required: Vec::new(),
         },
         Some(req) if !failed_runs.is_empty() => {
             // The placeholders are run statuses named alike; the scoping
@@ -814,7 +850,6 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
                 scope: Scope::RequiredSet,
                 required_only: true,
                 absence: absence(req),
-                non_required: Vec::new(),
             }
         }
         Some(req) if req.names_anything() => {
@@ -854,14 +889,8 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
                 .runs()
                 .iter()
                 .filter(|r| {
-                    bound_ids.contains(&r.id())
-                        || (classic_workflows.contains(&r.workflow_id()) && evaluated(r.event()))
+                    bound_ids.contains(&r.id()) || classic_workflows.contains(&r.workflow_id())
                 })
-                .collect();
-            let non_required = set_aside
-                .iter()
-                .filter(|entry| req.contexts().iter().any(|context| context == entry.name))
-                .map(|entry| entry.member().report)
                 .collect();
             Selection {
                 members,
@@ -869,7 +898,6 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
                 scope: Scope::RequiredSet,
                 required_only: true,
                 absence: absence(req),
-                non_required,
             }
         }
         Some(req) => Selection {
@@ -878,7 +906,6 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
             scope: Scope::AllChecks,
             required_only: true,
             absence: absence(req),
-            non_required: Vec::new(),
         },
         None => Selection {
             members: scoped.iter().map(Entry::member).collect(),
@@ -886,7 +913,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> Selection<'_> {
             scope: Scope::AllChecks,
             required_only: false,
             absence: None,
-            non_required: Vec::new(),
         },
-    }
+    };
+    (selection, non_required)
 }

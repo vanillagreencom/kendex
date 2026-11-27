@@ -3882,6 +3882,8 @@ struct DispatchRow {
 /// `workflow_dispatch` run's `CI` neither fails nor passes the required
 /// `CI`, nor supersedes the pull request's own failure; it is reported as
 /// a non-required line, and a dispatch-only job (`miri`) is not reported.
+/// The rule covers workflow job checks alone, so a required commit status
+/// (`lint`) and a check whose suite has no run (`app`) count under it.
 /// Each run concludes as its jobs did.
 /// `verify-head` judges a head that may have no pull request, so it keeps
 /// judging the newer run.
@@ -3894,7 +3896,11 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
             pr_ci: "success",
             dispatch_ci: "failure",
             verdict: "pass",
-            checks: vec![row("CI", "check-run", "success", "pass")],
+            checks: vec![
+                row("CI", "check-run", "success", "pass"),
+                row("app", "check-run", "success", "pass"),
+                row("lint", "commit-status", "success", "pass"),
+            ],
             non_required: vec![row("CI", "check-run", "failure", "fail")],
         },
         DispatchRow {
@@ -3903,7 +3909,11 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
             pr_ci: "failure",
             dispatch_ci: "success",
             verdict: "fail",
-            checks: vec![row("CI", "check-run", "failure", "fail")],
+            checks: vec![
+                row("CI", "check-run", "failure", "fail"),
+                row("app", "check-run", "success", "pass"),
+                row("lint", "commit-status", "success", "pass"),
+            ],
             non_required: vec![row("CI", "check-run", "success", "pass")],
         },
         DispatchRow {
@@ -3912,7 +3922,11 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
             pr_ci: "success",
             dispatch_ci: "failure",
             verdict: "fail",
-            checks: vec![row("CI", "check-run", "failure", "fail")],
+            checks: vec![
+                row("CI", "check-run", "failure", "fail"),
+                row("app", "check-run", "success", "pass"),
+                row("lint", "commit-status", "success", "pass"),
+            ],
             non_required: vec![],
         },
     ];
@@ -3942,6 +3956,7 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
                 "started_at",
                 json!(dispatched),
             ),
+            check_run_in(None, 12, json!("app"), "completed", json!("success")),
         ];
         let executions = vec![
             with(
@@ -3973,9 +3988,16 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
         gh.pull(PR, HEAD, BASE, "OPEN")
             .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
             .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
-            .answer(&check_runs(HEAD, 1), check_runs_page(3, jobs))
+            .answer(&check_runs(HEAD, 1), check_runs_page(4, jobs))
+            .answer(
+                &statuses(HEAD, 1),
+                statuses_page(vec![status("lint", "success")]),
+            )
             .answer(&runs(HEAD, 1), runs_page(executions))
-            .answer(&rules(1), json!([status_checks_rule(&["CI"])]));
+            .answer(
+                &rules(1),
+                json!([status_checks_rule(&["CI", "lint", "app"])]),
+            );
         let result = if r.pull_request {
             ok_result(&gh.verify_pr(PR, true))
         } else {
@@ -4002,6 +4024,31 @@ fn the_pull_requests_required_set_counts_only_the_runs_github_evaluates_for_it()
             assert_pinned(&gh.log(), HEAD);
         }
     }
+}
+
+/// GitHub's event rule covers workflow job checks alone, so a required
+/// commit status's failure under `verify-pr` is held while any run of its
+/// publisher's workflow is in flight, whatever that run's event. The
+/// recorded `newer-sibling-active` witness: a cancelled
+/// `pull_request_review` run failed `CI Required`, and the
+/// `pull_request_review_comment` run that publishes it again is in
+/// progress.
+#[test]
+fn a_required_status_is_held_while_a_run_of_its_publisher_is_active() {
+    let mut gh = Github::recorded("newer-sibling-active");
+    gh.pull(PR, HEAD, BASE, "OPEN")
+        .answer(&rules(1), json!([status_checks_rule(&["CI Required"])]));
+    let result = ok_result(&gh.verify_pr(PR, true));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(key(&result), "failed-run-active", "{result}");
+    assert_eq!(
+        checks(&result),
+        vec![row("CI Required", "commit-status", "expected", "pending")],
+        "{result}"
+    );
+    assert_eq!(non_required(&result), vec![], "{result}");
+    assert!(gh.state().get("verification").is_none());
+    assert_pull_then_pinned(&gh.log(), PR, HEAD);
 }
 
 // --- verify-review: the review gate --------------------------------------------

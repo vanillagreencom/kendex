@@ -33,8 +33,12 @@
 //!
 //! The `verify-pr` operation (`ops::verify_pr`) is the one caller that
 //! names a pull request: [`pull_request`] reads its current head, base and
-//! state through `gh pr view`, by number, and [`run`] then judges that
-//! head exactly as above, recording under its own `source`. The review
+//! state through `gh pr view`, by number, and [`run`] then reads that head
+//! as above, recording under its own `source`. Its judgement of the same
+//! pinned evidence differs in one rule: under a required set, a workflow
+//! job's check counts only from a run GitHub evaluates for a pull request
+//! (`selection`, step 2), so the same head can take another verdict than
+//! `verify-head` gives it. The review
 //! gate's reads (`review`) name the pull request too: its verdict is the
 //! reviewers' state on the head the pull request answers.
 

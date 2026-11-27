@@ -35,8 +35,7 @@ pub(super) struct Judged {
 
 /// The judgement's entry: `Evidence → Selection → Classification`.
 pub(super) fn judge(evidence: Evidence, caller: Caller) -> Judged {
-    let mut selection = select(&evidence, caller);
-    let non_required = std::mem::take(&mut selection.non_required);
+    let (selection, non_required) = select(&evidence, caller);
     Judged {
         judgement: classify(selection),
         non_required,
@@ -86,8 +85,8 @@ enum Correlation {
 }
 
 /// The correlation of settled failures with the head's runs: per
-/// failure, no run of its own among the scoped
-/// runs is `terminal`; its own run unfinished is `active`; any substantive
+/// failure, over the scoped runs its `Replacements` admits, no run of its
+/// own is `terminal`; its own run unfinished is `active`; any substantive
 /// run in flight is `active`; else the newest substantive execution of its
 /// workflow (a newer id, or a later attempt of an older run whose activity
 /// postdates the failing run's) decides: none or not a success is
@@ -100,12 +99,17 @@ enum Correlation {
 /// run is in flight, since a run the read could not find is no proof of an
 /// external failure, and `terminal` otherwise. A member with no association
 /// is `terminal`.
-fn correlate(failed: &[&Member], runs: &[&RunEvidence]) -> Correlation {
-    let head_in_flight = runs
-        .iter()
-        .any(|r| substantive(r) && r.outcome().unfinished());
+fn correlate(failed: &[&Member], scoped: &[&RunEvidence]) -> Correlation {
     let mut active = false;
     for member in failed {
+        let runs: Vec<&RunEvidence> = scoped
+            .iter()
+            .filter(|r| member.replacements.admits(r.event()))
+            .copied()
+            .collect();
+        let head_in_flight = runs
+            .iter()
+            .any(|r| substantive(r) && r.outcome().unfinished());
         let (own_id, unresolved) = match member.association {
             Association::Run(id) => (Some(id), false),
             Association::Unresolved { linked } => (linked, true),
