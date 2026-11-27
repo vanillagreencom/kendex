@@ -327,7 +327,7 @@ impl Hosts<'_> {
         Ok(answered.err())
     }
 
-    /// Where a walk's entry is judged: a lane's own host, else the fleet's,
+    /// Where a walk's entry is judged: the host [`judged_host`] names,
     /// whose launch kind may take no lane of the entry (a cloud task; a
     /// cloud session for any harness but Claude, or for a relaunch, which
     /// the cloud cannot resume); an overseer runs here, so only a provider
@@ -350,7 +350,7 @@ impl Hosts<'_> {
         };
         match scope {
             Scope::Lane => {
-                let host = entry_host.or(fleet_host).filter(|h| *h != LOCAL);
+                let host = judged_host(entry_host, fleet_host);
                 let launch = match host {
                     Some(h) => match self.capabilities(h) {
                         Ok(line) => line.launch,
@@ -393,7 +393,7 @@ impl Hosts<'_> {
                 })
             }
             Scope::Overseer => {
-                let Some(h) = fleet_host.filter(|h| *h != LOCAL && !h.is_empty()) else {
+                let Some(h) = judged_host(None, fleet_host) else {
                     return Ok(Hosted::Judge {
                         host: None,
                         launch: None,
@@ -413,6 +413,20 @@ impl Hosts<'_> {
             }
         }
     }
+}
+
+/// The host a walk's entry is judged under: the entry's own, else the
+/// fleet's `ORCH_LANE_HOST` `fleet`, `None` this machine. An empty name at
+/// either source is no name and falls through to the next, as the settings
+/// reader drops an empty value and the preference grammar refuses an empty
+/// `@host`; an entry naming `local` stays on this machine whatever host the
+/// fleet names.
+pub(crate) fn judged_host<'a>(entry: Option<&'a str>, fleet: Option<&'a str>) -> Option<&'a str> {
+    let named = |host: &&str| !host.is_empty();
+    entry
+        .filter(named)
+        .or(fleet.filter(named))
+        .filter(|host| *host != LOCAL)
 }
 
 /// The walk under the fleet's provider: the lane preference where the
@@ -721,4 +735,29 @@ fn pick_read(
         &settings.controller.account_tokens,
         now,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::judged_host;
+
+    #[test]
+    fn a_walk_entry_is_judged_on_its_own_host_else_the_fleet_s_else_here() {
+        // (entry host, ORCH_LANE_HOST, judged host)
+        let rows = [
+            (None, None, None),
+            (None, Some("/opt/box"), Some("/opt/box")),
+            (Some("/opt/a"), None, Some("/opt/a")),
+            (Some("/opt/a"), Some("/opt/b"), Some("/opt/a")),
+            (Some("local"), Some("/opt/box"), None),
+            (None, Some("local"), None),
+            (Some(""), Some("/opt/box"), Some("/opt/box")),
+            (Some(""), None, None),
+            (None, Some(""), None),
+            (Some(""), Some(""), None),
+        ];
+        for (entry, fleet, judged) in rows {
+            assert_eq!(judged_host(entry, fleet), judged, "{entry:?} {fleet:?}");
+        }
+    }
 }

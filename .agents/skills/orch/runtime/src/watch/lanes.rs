@@ -1898,8 +1898,9 @@ fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
         ["dead", _] => return,
         _ => None,
     };
-    let refused = |out: &mut Produced, reason: &str| {
-        let (news, said) = said_once(told, reason);
+    // A refusal told under `reason`, said once while its `mark` stands.
+    let refused_as = |out: &mut Produced, mark: &str, reason: &str| {
+        let (news, said) = said_once(told, mark);
         if news {
             out.events.push(Event::Tail(format!(
                 "relaunch-refused lane={lane} reason={reason}"
@@ -1908,8 +1909,9 @@ fn restart_exited(obs: &Observed, pass: &Pass, out: &mut Produced) {
         out.changes
             .push(set(RESTART_ROW, lane, format!("owed|{attempt}|{said}")));
     };
-    if let Some(reason) = halt_reason(obs, pass) {
-        return refused(out, &reason);
+    let refused = |out: &mut Produced, reason: &str| refused_as(out, reason, reason);
+    if let Some(halt) = halt_reason(obs, pass) {
+        return refused_as(out, &halt.mark, &halt.reason);
     }
     let RecordRelaunch {
         close,
@@ -2201,7 +2203,18 @@ fn wall(
         && prior.get(3).is_some_and(|r| {
             *r == reported || (r == "lane-relaunched" && (!passed || relaunched_after))
         });
-    let held = same_wall && prior.get(5).is_some_and(|r| r == "held");
+    // The halt refusal that held this wall, by its mark (`held:MARK`): a
+    // pass under the same refusal says nothing, and a changed one is told
+    // as the first was. A bare `held`, as a watch before the mark wrote it,
+    // is a held wall whose refusal no mark names: its next refusal is told
+    // once, and a cleared halt still takes the passed reset's resume.
+    let held = prior
+        .get(5)
+        .filter(|_| same_wall)
+        .and_then(|r| match r.as_str() {
+            "held" => Some(""),
+            r => r.strip_prefix("held:"),
+        });
     // A resume asked for this wall whose screen has since moved under the
     // same banner: the resumed turn ended at the wall again, told once.
     let screen = hash_of(slice).to_string();
@@ -2253,7 +2266,7 @@ fn wall(
     if auth {
         line.push_str(" wall_kind=auth");
     }
-    if quiet && !rewalled && !held {
+    if quiet && !rewalled && held.is_none() {
         // A wall no relaunch took is walked again on each later pass under
         // the same banner, before its reset and after it while the lane
         // still sits at it, so an account that gains room takes the lane
@@ -2262,7 +2275,7 @@ fn wall(
             && prior.get(3).is_some_and(|r| r != "lane-relaunched")
         {
             let mut notes = Vec::new();
-            match route(obs, kind, reset_at.is_some(), pass, out, &mut notes) {
+            let said = match route(obs, kind, reset_at.is_some(), pass, out, &mut notes) {
                 Routed::Relaunched { .. } => {
                     let mut row = format!("{first_seen}|{hash}|{identity}|lane-relaunched");
                     // The passed wall's own-account resume goes with it.
@@ -2271,20 +2284,22 @@ fn wall(
                         out.changes.push(clear(wake::RESUME_KIND, lane));
                     }
                     out.changes.push(set("usage-limit", lane, row));
+                    None
                 }
                 Routed::Opening => return unjudged("auth-recovery-opening"),
-                Routed::Waiting => {}
-                Routed::Held | Routed::Left => {
-                    let (news, said) =
-                        said_once(prior.get(6).map(String::as_str), &notes.join("\n"));
-                    if news {
-                        out.events.push(Event::UsageLimit { passed, line });
-                        out.events.extend(notes.into_iter().map(Event::Tail));
-                        let mut row = prior.clone();
-                        row.resize(7, String::new());
-                        row[6] = said;
-                        out.changes.push(set("usage-limit", lane, row.join("|")));
-                    }
+                Routed::Waiting => None,
+                Routed::Held { mark } => Some(mark),
+                Routed::Left => Some(notes.join("\n")),
+            };
+            if let Some(said) = said {
+                let (news, said) = said_once(prior.get(6).map(String::as_str), &said);
+                if news {
+                    out.events.push(Event::UsageLimit { passed, line });
+                    out.events.extend(notes.into_iter().map(Event::Tail));
+                    let mut row = prior.clone();
+                    row.resize(7, String::new());
+                    row[6] = said;
+                    out.changes.push(set("usage-limit", lane, row.join("|")));
                 }
             }
         }
@@ -2300,7 +2315,7 @@ fn wall(
         },
     };
     let mut notes = Vec::new();
-    let mut retry = "";
+    let mut retry = String::new();
     let told_at = out.events.len();
     match reset_at.filter(|_| passed) {
         None => match route(obs, kind, reset_at.is_some(), pass, out, &mut notes) {
@@ -2319,8 +2334,13 @@ fn wall(
                 return (walled, observed);
             }
             Routed::Opening => return unjudged("auth-recovery-opening"),
-            Routed::Held if held => return (walled, observed),
-            Routed::Held => retry = "held",
+            Routed::Held { mark } => {
+                let (news, mark) = said_once(held, &mark);
+                if !news {
+                    return (walled, observed);
+                }
+                retry = format!("held:{mark}");
+            }
             Routed::Left | Routed::Waiting => {}
         },
         // A passed reset: the wake resumes the lane it reaches, once per
@@ -2331,14 +2351,15 @@ fn wall(
         }
         Some(at) => {
             let resumable = wake::resumable(obs.lane);
-            if (held || resumable)
-                && let Some(reason) = halt_reason(obs, pass)
+            if (held.is_some() || resumable)
+                && let Some(halt) = halt_reason(obs, pass)
             {
-                if held {
+                let (news, mark) = said_once(held, &halt.mark);
+                if !news {
                     return (walled, observed);
                 }
-                notes.push(format!("resume held reason={reason}"));
-                retry = "held";
+                notes.push(format!("resume held reason={}", halt.reason));
+                retry = format!("held:{mark}");
             } else if resumable {
                 notes.push("resume wake".to_owned());
                 out.changes.push(set(
@@ -2385,8 +2406,9 @@ enum Routed {
     Relaunched { tell: bool },
     /// A replacement's open launch still owns the outcome.
     Opening,
-    /// The mailbox holds the relaunch. Check it again even if the wall passes.
-    Held,
+    /// The mailbox holds the relaunch, under the halt's `mark`
+    /// ([`Halt`]). Check it again even if the wall passes.
+    Held { mark: String },
     /// The wall is left to the overseer; `notes` carry the walk's answer
     /// and any refusal, or that nothing recovers the lane.
     Left,
@@ -2469,14 +2491,54 @@ fn completed_turn_since_launch(lane: &Lane) -> Result<bool, String> {
     }))
 }
 
-fn halt_reason(obs: &Observed, pass: &Pass) -> Option<String> {
+/// A standing halt, or a halt read the mailbox refused: `reason` is the
+/// told text, and `mark` what a later pass compares to say it once while it
+/// stands. A refusal's cause text, stderr or reply line can carry a
+/// timestamp, pid or path that changes from pass to pass, so the mark keeps
+/// only what stays fixed under one refusal: its verb and kind, and an
+/// exit's status and keyed line's key and value, which names the repair
+/// (`command-missing=jq`, then `command-missing=date` once jq is back).
+struct Halt {
+    mark: String,
+    reason: String,
+}
+
+fn halt_reason(obs: &Observed, pass: &Pass) -> Option<Halt> {
     if pass.route.relaunch != WallRelaunch::Auto {
         return None;
     }
     match (pass.route.halted)(obs.lane) {
         Ok(false) => None,
-        Ok(true) => Some("halted".to_owned()),
-        Err(cause) => Some(format!("halt-unread cause={cause}")),
+        Ok(true) => Some(Halt {
+            mark: "halted".to_owned(),
+            reason: "halted".to_owned(),
+        }),
+        Err(cause) => {
+            let kind = match &cause {
+                Refusal::NotStarted { .. } => "not-started".to_owned(),
+                Refusal::Unanswered { .. } => "unanswered".to_owned(),
+                Refusal::Exit { status, keyed, .. } => {
+                    let status = status.map_or_else(|| "signal".to_owned(), |c| c.to_string());
+                    // `lane-mail --help`'s keyed line: `<key>=<value>`, or a
+                    // key whose value follows its own ` field=`, closed by
+                    // trailing fields that may change from pass to pass.
+                    let pair = keyed
+                        .as_deref()
+                        .and_then(|line| {
+                            let (key, rest) = line.split_once('=')?;
+                            let value = rest.split_whitespace().next().unwrap_or_default();
+                            Some(format!("{key}={value}"))
+                        })
+                        .unwrap_or_else(|| "unkeyed".to_owned());
+                    format!("exit status={status} key={pair}")
+                }
+                Refusal::Reply { cause, .. } => format!("reply-{cause}"),
+            };
+            Some(Halt {
+                mark: format!("halt-unread verb={} {kind}", cause.verb()),
+                reason: format!("halt-unread cause={cause}"),
+            })
+        }
     }
 }
 
@@ -2509,9 +2571,12 @@ fn route(
     let (Some(harness), false) = (harness, model.is_empty()) else {
         return refused(notes, "record-unnamed");
     };
-    if let Some(reason) = halt_reason(obs, pass) {
-        notes.push(format!("wall-relaunch-refused lane={lane} reason={reason}"));
-        return Routed::Held;
+    if let Some(halt) = halt_reason(obs, pass) {
+        notes.push(format!(
+            "wall-relaunch-refused lane={lane} reason={}",
+            halt.reason
+        ));
+        return Routed::Held { mark: halt.mark };
     }
     let Some(spent) = spent_account(obs.lane) else {
         return refused(notes, "account-unknown");
@@ -2540,14 +2605,17 @@ fn route(
             return Routed::Left;
         }
     };
-    let request = account_walk(
+    let Some(request) = account_walk(
         obs.lane,
         harness,
         model,
         spent,
         pass.route.preference,
         fleet,
-    );
+    ) else {
+        notes.push("pick unjudged walk-empty".to_owned());
+        return Routed::Left;
+    };
     let to = match walked(&obs.lane.item, &request, pass) {
         Found::Destination(to) => {
             notes.push(to.note(harness, model));
@@ -2716,23 +2784,22 @@ fn source_of(lane: &Lane, harness: Harness) -> lane_walk::Source {
 }
 
 /// Where the walk judges an entry naming `entry` as its host, under the
-/// fleet's `ORCH_LANE_HOST` `fleet`: the entry's host, else the fleet's,
-/// else this machine, as `ops::accounts` `Hosts::hosted` judges it.
+/// fleet's `ORCH_LANE_HOST` `fleet`: the account walk's own judgement, with
+/// this machine named `local`, as [`hosted::host_of`] names a lane's.
 fn judged_host<'a>(entry: Option<&'a str>, fleet: Option<&'a str>) -> &'a str {
-    entry
-        .or(fleet)
-        .filter(|host| !host.is_empty())
-        .unwrap_or("local")
+    crate::ops::accounts::judged_host(entry, fleet).unwrap_or("local")
 }
 
 /// The walk a walled lane leaves its account by: the lane preference, then
 /// the lane's own harness and model on any other account, the spent one
 /// left out. A lane moves only within its own host, whose store holds its
 /// session and transcript, so the walk keeps the entries it judges there,
-/// and the caller step only where `fleet` (`ORCH_LANE_HOST`) is that host.
-/// A hosted lane's transcript stands on its host, where no brief composed
-/// here can name it, so its walk keeps the entries of its own harness
-/// alone.
+/// and the caller step only where the fleet's host (`fleet`,
+/// `ORCH_LANE_HOST`, else this machine) is that host. A hosted lane's
+/// transcript stands on its host, where no brief composed here can name
+/// it, so its walk keeps the entries of its own harness alone. `None` where
+/// that leaves the walk no step: a walk of nothing answers `none`, which
+/// would read as no account having room.
 fn account_walk(
     lane: &Lane,
     harness: Harness,
@@ -2740,9 +2807,11 @@ fn account_walk(
     spent: &str,
     preference: Option<&str>,
     fleet: Option<&str>,
-) -> WalkRequest {
+) -> Option<WalkRequest> {
     let host = hosted::host_of(lane);
     let local = host == "local";
+    // A preference the filter empties stays an empty one: a request naming
+    // none takes the whole `ORCH_LANE_PREFERENCE` again in the walk.
     let preference = preference.map(|text| {
         entries_where(text, |entry| {
             judged_host(entry.host.as_deref(), fleet) == host && (local || entry.harness == harness)
@@ -2756,7 +2825,10 @@ fn account_walk(
         pick_model: Some(model.to_owned()),
         keep: false,
     });
-    WalkRequest {
+    if preference.as_deref().is_none_or(str::is_empty) && caller.is_none() {
+        return None;
+    }
+    Some(WalkRequest {
         scope: lane_walk::Scope::Lane,
         preference,
         lane: None,
@@ -2766,7 +2838,7 @@ fn account_walk(
         source: Some(source_of(lane, harness)),
         caller,
         keep_unmeasured: false,
-    }
+    })
 }
 
 /// The walk a lane its provider stopped for the whole patience leaves that
@@ -4270,23 +4342,23 @@ mod tests {
         value.to_string()
     }
 
-    /// The rows hold the counts on the states
-    /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
-    /// index each case plants): each row's five words, and `None` for the
-    /// shape the count refuses.
     /// A lane's recovery walks stay on its own host: the wall walk keeps the
     /// entries judged there (the entry's `@host`, else `ORCH_LANE_HOST`,
-    /// else this machine) and the caller step only where `ORCH_LANE_HOST`
-    /// is that host, a hosted lane's walk its own harness's entries alone;
+    /// else this machine) and the caller step only where the fleet's host
+    /// (`ORCH_LANE_HOST`, else this machine) is that host, a hosted lane's
+    /// walk its own harness's entries alone, and a preference the filter
+    /// empties stays empty beside a kept caller step, so the walk never
+    /// takes the whole `ORCH_LANE_PREFERENCE` back;
     /// the provider walk keeps a local lane's entries judged here, and a
     /// hosted lane takes none.
     #[test]
     fn a_lane_s_recovery_walks_keep_the_entries_judged_on_its_own_host() {
-        let preference = "codex:gpt-5:high,claude@/opt/box:opus:high,claude@local:opus:high,claude:opus:high:last";
-        // (lane host, ORCH_LANE_HOST, wall walk entries, caller step kept,
-        // provider walk entries)
+        let mixed = "codex:gpt-5:high,claude@/opt/box:opus:high,claude@local:opus:high,claude:opus:high:last";
+        // (ORCH_LANE_PREFERENCE, lane host, ORCH_LANE_HOST, wall walk
+        // entries, caller step kept, provider walk entries)
         let rows = [
             (
+                mixed,
                 None,
                 None,
                 Some("codex:gpt-5:high,claude@local:opus:high,claude:opus:high:last"),
@@ -4294,6 +4366,7 @@ mod tests {
                 Some("codex:gpt-5:high"),
             ),
             (
+                mixed,
                 None,
                 Some("/opt/box"),
                 Some("claude@local:opus:high"),
@@ -4301,6 +4374,7 @@ mod tests {
                 None,
             ),
             (
+                mixed,
                 Some("/opt/box"),
                 None,
                 Some("claude@/opt/box:opus:high"),
@@ -4308,14 +4382,31 @@ mod tests {
                 None,
             ),
             (
+                mixed,
                 Some("/opt/box"),
                 Some("/opt/box"),
                 Some("claude@/opt/box:opus:high,claude:opus:high:last"),
                 true,
                 None,
             ),
+            (
+                "claude@/opt/box:opus:high",
+                None,
+                None,
+                Some(""),
+                true,
+                None,
+            ),
+            (
+                "codex:gpt-5:high",
+                Some("/opt/box"),
+                Some("/opt/box"),
+                Some(""),
+                true,
+                None,
+            ),
         ];
-        for (host, fleet, wall, caller, provider) in rows {
+        for (preference, host, fleet, wall, caller, provider) in rows {
             let lane: Lane = serde_json::from_value(json!({
                 "item": "KEN-1",
                 "harness": "claude",
@@ -4324,6 +4415,7 @@ mod tests {
                 "host": host,
             }))
             .unwrap();
+            let at = format!("{preference} {host:?} {fleet:?}");
             let request = account_walk(
                 &lane,
                 Harness::Claude,
@@ -4331,15 +4423,427 @@ mod tests {
                 "/a",
                 Some(preference),
                 fleet,
-            );
-            assert_eq!(request.preference.as_deref(), wall, "{host:?} {fleet:?}");
-            assert_eq!(request.caller.is_some(), caller, "{host:?} {fleet:?}");
+            )
+            .unwrap();
+            assert_eq!(request.preference.as_deref(), wall, "{at}");
+            assert_eq!(request.caller.is_some(), caller, "{at}");
             let moved = provider_walk(&lane, Harness::Claude, Some(preference), fleet);
             assert_eq!(
                 moved.and_then(|r| r.preference).as_deref(),
                 provider,
-                "{host:?} {fleet:?}"
+                "{at}"
             );
+        }
+    }
+
+    /// The wall walk and the account walk's `Hosts::hosted` judge an entry
+    /// by one rule: an empty entry host is no host, so the fleet's
+    /// `ORCH_LANE_HOST` judges it on both.
+    #[test]
+    fn the_wall_walk_judges_an_entry_s_host_as_the_account_walk_does() {
+        assert_eq!(judged_host(Some(""), Some("/opt/box")), "/opt/box");
+        assert_eq!(
+            crate::ops::accounts::judged_host(Some(""), Some("/opt/box")),
+            Some("/opt/box")
+        );
+    }
+
+    /// One pass per `now` over a neutral world under `route`, from the
+    /// rows `seed` holds: `each` runs the pass, and its rows are applied as
+    /// the runner commits a pass.
+    fn route_passes(
+        route: &WallRoute<'_>,
+        seed: Baseline,
+        nows: &[u64],
+        mut each: impl FnMut(&Pass<'_>) -> Produced,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let roots = agent_runtime::settings::Roots {
+            project: root.clone(),
+            common: root.clone(),
+        };
+        let environment = [(
+            std::ffi::OsString::from("AGENT_RUNTIME_ACCOUNT_STATE_DIR"),
+            root.join("accounts").into_os_string(),
+        )];
+        let settings = settings::load(
+            &roots,
+            &environment,
+            &settings::Flags {
+                state_dir: Some(root.clone()),
+                private_env: false,
+            },
+        )
+        .unwrap();
+        let watch = settings.watch.get().unwrap();
+        let fleet = FleetState {
+            lanes: Vec::new(),
+            overseer: None,
+            fleet_log: Vec::new(),
+            triaged: Vec::new(),
+            launch_queue: Vec::new(),
+            intents: Vec::new(),
+        };
+        let readers = Readers::kernel();
+        let roster = || Err("unasked".to_owned());
+        let reads = hosted::Reads {
+            gh: Path::new("/nonexistent/gh"),
+            roster: &roster,
+            project: &settings.roots.project,
+            reads: &settings.reads,
+        };
+        let wall_pauses = |_: RecordWallPauses| Ok(());
+        let mut baseline = seed;
+        for &now in nows {
+            let pass = Pass {
+                fleet: &fleet,
+                fleet_path: &root.join("fleet.json"),
+                readers: &readers,
+                baseline: &baseline,
+                settings: &watch,
+                now,
+                session: None,
+                own_panes: &[],
+                state_dir: &root,
+                claim_store: &settings.claim_store,
+                account_state: &settings.account_state,
+                scripts: Path::new("/nonexistent"),
+                route,
+                wall_pauses: &wall_pauses,
+                hosted: &reads,
+                copilot_home: None,
+                server: None,
+            };
+            let out = each(&pass);
+            assert_eq!(out.failed, None, "{now}");
+            for change in out.changes {
+                baseline.apply(change);
+            }
+        }
+    }
+
+    fn walled_lane() -> Lane {
+        serde_json::from_value(json!({
+            "item": "KEN-1",
+            "harness": "claude",
+            "model": "opus",
+            "account": "/a",
+            "status": "running",
+            "window": "gh-1",
+        }))
+        .unwrap()
+    }
+
+    fn observed<'a>(lane: &'a Lane, message: &str) -> Observed<'a> {
+        Observed {
+            lane,
+            name: "gh-1".to_owned(),
+            pane_key: Some("1 %1".to_owned()),
+            identity: None,
+            screen: Some(message.to_owned()),
+            row: Some(rows::Row {
+                position: 3,
+                message: Some(message.to_owned()),
+                ..rows::Row::default()
+            }),
+            provider_running: false,
+            state: LaneState::Working,
+        }
+    }
+
+    /// A wall walk the own-host filter leaves no entry and no caller step
+    /// judged no account: the watch says so, never asking the walk, where
+    /// a walk of nothing would answer `none` and stop the recovery as if no
+    /// account had room. A walk with a step on the lane's host keeps its
+    /// answer. The lines are the ones the overseer reads under
+    /// `usage-limit` (`oversee-events.md`).
+    #[test]
+    fn a_wall_walk_with_no_entry_on_the_lane_s_host_judges_no_account() {
+        let off_host: &[&str] = &["pick unjudged walk-empty"];
+        let no_room: &[&str] = &["pick none", "recovery-stopped cause=no-room-no-reset"];
+        // (case, ORCH_LANE_PREFERENCE, ORCH_LANE_HOST, lines, walk asked)
+        let rows = [
+            (
+                "entries_off_host",
+                Some("claude:opus:high"),
+                Some("/opt/box"),
+                off_host,
+                false,
+            ),
+            (
+                "no_preference_off_host",
+                None,
+                Some("/opt/box"),
+                off_host,
+                false,
+            ),
+            (
+                "caller_on_host",
+                Some("claude:opus:high"),
+                None,
+                no_room,
+                true,
+            ),
+        ];
+        for (case, preference, fleet, want, asked) in rows {
+            let lane = walled_lane();
+            let obs = observed(&lane, "429 Usage limit reached for this model");
+            let walks = std::cell::Cell::new(0);
+            let walk = |_: &str, request: &WalkRequest| {
+                walks.set(walks.get() + 1);
+                Ok(Walked {
+                    answer: WalkAnswer::None,
+                    walk: request.preference.clone().unwrap_or_default(),
+                    entries: 0,
+                    skipped: Vec::new(),
+                    walled: 0,
+                    unmeasured: 0,
+                    unread: Vec::new(),
+                    deprecated: Vec::new(),
+                })
+            };
+            let halted = |_: &Lane| Ok::<_, Refusal>(false);
+            let exited = |_: &Lane| Err("unasked".to_owned());
+            let start = |_: &Relaunch| Err("unasked".to_owned());
+            let wall_route = WallRoute {
+                relaunch: WallRelaunch::Auto,
+                walk: &walk,
+                preference,
+                host: Ok(fleet.map(str::to_owned)),
+                halted: &halted,
+                exited: &exited,
+                start: &start,
+            };
+            route_passes(&wall_route, Baseline::default(), &[1_800_000_000], |pass| {
+                let mut out = Produced::default();
+                let mut notes = Vec::new();
+                let routed = route(&obs, WallKind::Usage, false, pass, &mut out, &mut notes);
+                assert!(matches!(routed, Routed::Left), "{case}");
+                assert_eq!(notes, want, "{case}");
+                out
+            });
+            assert_eq!(walks.get() > 0, asked, "{case}");
+        }
+    }
+
+    /// A wall held by a halt tells each refusal once while it stands and a
+    /// changed one again, before its reset and after it: a halt the mailbox
+    /// could not read (`halt-unread`) after a standing halt is told, never
+    /// hidden under the first, and the same refusal whose cause text moves
+    /// from pass to pass is told once. A wall told and left, then walked
+    /// again on each quiet pass, tells its halt refusal once the same way.
+    /// An exit is the same refusal while its keyed line stands, whatever
+    /// its stderr says, and another one when the keyed value names another
+    /// repair. A wall a watch before the refusal mark held (a bare `held`)
+    /// is still held: once its halt clears after the reset, the wake's
+    /// resume is queued. The lines are the ones the overseer reads under
+    /// `usage-limit` (`oversee-events.md`).
+    #[test]
+    fn a_held_wall_tells_each_changed_halt_refusal_once() {
+        #[derive(Clone, Copy)]
+        enum Read {
+            Halted,
+            Unread(&'static str),
+            /// `lane-mail events`' exit 2: its keyed line, and its stderr.
+            Exit(&'static str, &'static str),
+            Clear,
+        }
+        const BEFORE: u64 = 1_800_000_000;
+        // Past the 2027-10-04T18:00:00Z reset the message names.
+        const PASSED: u64 = 1_822_672_800 + 60;
+        let message = "You've hit your weekly limit · resets Oct 4, 2027, 6pm (UTC)";
+        const HALTED: &str = "wall-relaunch-refused lane=gh-1 reason=halted";
+        const UNREAD: &str =
+            "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=inbox: timeout pid=1";
+        const JQ: &str = "command-missing=jq";
+        const DATE: &str = "command-missing=date";
+        const NO_JQ: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=jq";
+        const NO_DATE: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=date";
+        // The row a watch before the refusal mark wrote at a passed reset
+        // it held: `first_seen|banner|identity|reported|screen|held|said`.
+        let legacy = format!(
+            "{BEFORE}|{banner}|none|usage-limit-passed|{banner}|held|",
+            banner = hash_of(message)
+        );
+        // (case, the seeded row, whether the wake reaches the lane, per
+        // pass: (now, the halt read, lines told, the wake's resume queued))
+        type Step = (u64, Read, &'static [&'static str], bool);
+        let scenarios: [(&str, Option<String>, bool, &[Step]); 4] = [
+            (
+                "halt_then_unread",
+                None,
+                false,
+                &[
+                    (BEFORE, Read::Halted, &[HALTED], false),
+                    (BEFORE + 240, Read::Halted, &[], false),
+                    (
+                        BEFORE + 480,
+                        Read::Unread("timeout pid=1"),
+                        &[UNREAD],
+                        false,
+                    ),
+                    (BEFORE + 720, Read::Unread("timeout pid=2"), &[], false),
+                    (PASSED, Read::Unread("timeout pid=3"), &[], false),
+                    (
+                        PASSED + 240,
+                        Read::Halted,
+                        &["resume held reason=halted"],
+                        false,
+                    ),
+                ],
+            ),
+            (
+                "left_then_unread",
+                None,
+                false,
+                &[
+                    (BEFORE, Read::Clear, &["pick none"], false),
+                    (
+                        BEFORE + 240,
+                        Read::Unread("timeout pid=1"),
+                        &[UNREAD],
+                        false,
+                    ),
+                    (BEFORE + 480, Read::Unread("timeout pid=2"), &[], false),
+                    (BEFORE + 720, Read::Unread("timeout pid=3"), &[], false),
+                ],
+            ),
+            (
+                "exit_by_keyed_value",
+                None,
+                false,
+                &[
+                    (
+                        BEFORE,
+                        Read::Exit(JQ, "lane-mail: command-missing=jq\nat 1"),
+                        &[NO_JQ],
+                        false,
+                    ),
+                    (
+                        BEFORE + 240,
+                        Read::Exit(JQ, "lane-mail: command-missing=jq\nat 2"),
+                        &[],
+                        false,
+                    ),
+                    (
+                        BEFORE + 480,
+                        Read::Exit(DATE, "lane-mail: command-missing=date\nat 3"),
+                        &[NO_DATE],
+                        false,
+                    ),
+                    (
+                        BEFORE + 720,
+                        Read::Exit(DATE, "lane-mail: command-missing=date\nat 4"),
+                        &[],
+                        false,
+                    ),
+                ],
+            ),
+            (
+                "legacy_held_cleared",
+                Some(legacy),
+                true,
+                &[(PASSED + 480, Read::Clear, &["resume wake"], true)],
+            ),
+        ];
+        for (case, seed, resumable, steps) in scenarios {
+            let mut lane = walled_lane();
+            if resumable {
+                lane.launch = serde_json::from_value(json!({"pane": "%1", "server": 1})).unwrap();
+                lane.mail_root = Some("/w".to_owned());
+            }
+            let obs = observed(&lane, message);
+            let read = std::cell::Cell::new(Read::Clear);
+            // No account has room, and the wall names its reset: the lane
+            // waits, told once.
+            let walk = |_: &str, request: &WalkRequest| {
+                Ok(Walked {
+                    answer: WalkAnswer::None,
+                    walk: request.preference.clone().unwrap_or_default(),
+                    entries: 0,
+                    skipped: Vec::new(),
+                    walled: 0,
+                    unmeasured: 0,
+                    unread: Vec::new(),
+                    deprecated: Vec::new(),
+                })
+            };
+            let halted_at = |_: &Lane| match read.get() {
+                Read::Halted => Ok(true),
+                Read::Unread(cause) => Err(Refusal::Unanswered {
+                    verb: "inbox",
+                    cause: cause.to_owned(),
+                }),
+                Read::Exit(keyed, stderr) => Err(Refusal::Exit {
+                    verb: "events",
+                    status: Some(2),
+                    keyed: Some(keyed.to_owned()),
+                    stderr: stderr.to_owned(),
+                }),
+                Read::Clear => Ok(false),
+            };
+            let exited = |_: &Lane| Err("unasked".to_owned());
+            let start = |_: &Relaunch| Err("unasked".to_owned());
+            let wall_route = WallRoute {
+                relaunch: WallRelaunch::Auto,
+                walk: &walk,
+                preference: None,
+                host: Ok(None),
+                halted: &halted_at,
+                exited: &exited,
+                start: &start,
+            };
+            let mut baseline = Baseline::default();
+            if let Some(row) = seed {
+                baseline.apply(set("usage-limit", "gh-1", row));
+            }
+            let nows: Vec<u64> = steps.iter().map(|(now, ..)| *now).collect();
+            let mut step = steps.iter();
+            route_passes(&wall_route, baseline, &nows, |pass| {
+                let &(now, halt, want, queued) = step.next().unwrap();
+                read.set(halt);
+                let mut out = Produced::default();
+                wall(
+                    &obs,
+                    WallKind::Usage,
+                    "",
+                    WallSource::Rows,
+                    message,
+                    pass,
+                    20,
+                    &mut out,
+                );
+                let told: Vec<&str> = out
+                    .events
+                    .iter()
+                    .filter_map(|e| {
+                        if let Event::Tail(line) = e {
+                            Some(line.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|line| {
+                        ["wall-relaunch-refused", "resume ", "pick "]
+                            .iter()
+                            .any(|told| line.starts_with(told))
+                    })
+                    .collect();
+                assert_eq!(told, want, "{case} {now}");
+                let lines = out
+                    .events
+                    .iter()
+                    .filter(|e| matches!(e, Event::UsageLimit { .. }))
+                    .count();
+                assert_eq!(lines, usize::from(!want.is_empty()), "{case} {now}");
+                let resumed = out.changes.iter().any(|change| {
+                    matches!(change, Change::Set { kind, identity, .. }
+                        if kind == wake::RESUME_KIND && identity == "gh-1")
+                });
+                assert_eq!(resumed, queued, "{case} {now}");
+                out
+            });
         }
     }
 
@@ -4397,6 +4901,10 @@ mod tests {
         assert!(launch_current(&lane, &refusal(3)));
     }
 
+    /// The rows hold the counts on the states
+    /// (`NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
+    /// index each case plants): each row's five words, and `None` for the
+    /// shape the count refuses.
     #[test]
     fn the_counts_read_from_each_state() {
         let four = Some(4);

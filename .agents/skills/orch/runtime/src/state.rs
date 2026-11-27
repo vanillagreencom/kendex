@@ -1062,12 +1062,13 @@ pub struct ClassMiss {
     pub at: String,
 }
 
-/// The harness, account, model, effort and class a launch was asked for.
-/// The lane takes them when it records `running`, not `preparing`, so a
-/// launch intent carries them until
+/// The harness, account, model, effort, permission word and class a
+/// launch was asked for. The lane takes them when it records `running`, not
+/// `preparing`, so a launch intent carries them until
 /// its outcome confirms. `account`, `model` and `effort` left out keep the
-/// record's values; the class and its reason are the launch's own or, on
-/// a relaunch naming neither, the record's.
+/// record's values, and `permission` left out keeps the record's word where
+/// the confirmed harness carries it; the class and its reason are the
+/// launch's own or, on a relaunch naming neither, the record's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
     pub harness: String,
@@ -1077,6 +1078,8 @@ pub struct Selection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
     pub class: ModelClass,
     pub class_reason: String,
     /// Whether the launch re-enters a standing record, so a provider reuses
