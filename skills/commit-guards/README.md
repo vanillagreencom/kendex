@@ -6,7 +6,7 @@ Repository checks installed as Git hooks. Maintainers use them to check source f
 
 - Check conflict markers and binary file growth.
 - Check changelog fragments and required change entries.
-- Check markdown shape against its docs-writing file type, and its references.
+- Check that markdown files parse to their end, and their references.
 - Check Python files for undefined names.
 - Check added lines for credentials with gitleaks.
 - Reflow markdown paragraphs with md-reflow.

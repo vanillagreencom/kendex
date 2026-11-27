@@ -256,10 +256,11 @@ class Report(World):
         result = self.audit(extra=("--top", "1"))
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         report = rows(result.stdout)
-        shapes = [(r["path"], r["md_type"].split()[1]) for r in report if "md_type" in r and r["md_type"].startswith("md-type: finding=")]
-        self.assertEqual(shapes, [("README.md", "finding=value-table")])
-        unended = [r["path"] for r in report if "md_type" in r and r["md_type"].startswith("md-type: fence-unclosed=")]
-        self.assertEqual(unended, ["docs/plan.md"])
+        # A README with a defaults table is no finding: only the unended
+        # document carries a shape row.
+        shapes = [(r["path"], r["md_type"].split()[1].split("=")[0]) for r in report
+                  if "md_type" in r and not r["md_type"].startswith("md-type: signal=")]
+        self.assertEqual(shapes, [("docs/plan.md", "fence-unclosed")])
         # --top bounds the size rows, ranked by words over the example's words.
         sized = [r["path"] for r in report if "md_type" in r and r["md_type"].startswith("md-type: signal=size")]
         self.assertEqual(len(sized), 1)
@@ -293,7 +294,7 @@ class Report(World):
                                 env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("AssertionError", result.stderr)
-        self.assertIn("finding=value-table", result.stderr)
+        self.assertIn("fence-unclosed", result.stderr)
 
 
 if __name__ == "__main__":
