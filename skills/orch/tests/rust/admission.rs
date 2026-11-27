@@ -1253,7 +1253,8 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
 /// with the `/`, so another lane's admit of a file under it meets the live
 /// lane and is refused `launch-overlap`; a path naming nothing there is
 /// recorded as written; a record already holding the folder without its
-/// `/` holds the files under it as that folder.
+/// `/`, or holding no set while its item's Location names the folder,
+/// holds the files under it as that folder.
 #[test]
 fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
     let fleet = Fleet::new();
@@ -1315,6 +1316,12 @@ fn an_admitted_folder_entry_without_its_slash_holds_the_files_under_it() {
     lane["mail_root"] = json!(mail_root);
     live_beside_other(lane);
     refused_under("KEN-R");
+
+    fleet.item("KEN-S", "`src/sub`", 0, &[]);
+    let mut lane = holder("KEN-S", "running", None, None);
+    lane["mail_root"] = json!(mail_root);
+    live_beside_other(lane);
+    refused_under("KEN-S");
 }
 
 /// A running lane's added path is judged in its own lane's repository, so

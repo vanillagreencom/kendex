@@ -1368,8 +1368,9 @@ pub(super) fn judge(
                 })?;
                 let item = (reads.item)(&reads.clis, tracker, &lane.item, lane.repo.as_deref())
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c))?;
-                read = location_paths(&item.body)
+                let location = location_paths(&item.body)
                     .map_err(|c| holder_unreadable(&lane.item, "touched", c.to_owned()))?;
+                read = folders(lane.mail_root.as_deref().map(Path::new), &location);
                 &read
             }
         };
