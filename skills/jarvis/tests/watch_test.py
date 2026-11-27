@@ -2794,17 +2794,26 @@ with open(sys.argv[1], "ab") as out:
                 if path.exists() else []
         return plant, calls
 
-    def exited_passes(self, watch, now):
+    def exited_passes(self, watch, now, late=False):
         """One wall pass through the loop: the wall read, the status read an
-        unbound one starts, the restart and the succeed after a refused resume."""
+        unbound one starts, the restart and the succeed after a refused resume.
+        LATE holds the first status read open across the next wall read."""
+        held = []
         class Inline:
             def submit(self, work, *args):
                 future = Future()
-                if work.__name__ in ("wall", "exited", "restart"):
+                if late and work.__name__ == "exited" and not held:
+                    held.append((future, work))
+                elif work.__name__ in ("wall", "exited", "restart"):
                     future.set_result(work(*args))
                 return future
         for offset in range(4):
             watch._poll(Inline(), Future(), now + offset)
+        if held:
+            watch._poll(Inline(), Future(), now + 30)
+            watch._poll(Inline(), Future(), now + 31)
+            held[0][0].set_result(held[0][1]())
+            watch._poll(Inline(), Future(), now + 32)
 
     def test_an_exited_controller_is_started_again_and_reported_once(self):
         # The failure it stops: a controller whose CLI exited writes no rows,
@@ -2993,6 +3002,10 @@ with open(sys.argv[1], "ab") as out:
         # of what happened, never the success the hours held before it.
         again = ([(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 200, 1, 0, 2), (morning, 1, 1, 2), (morning + 30, 1, 1, 2)],
                  (at,))
+        # A restart just before the hours end that exits again in the first
+        # pass after them: the held success never reaches the owner.
+        boundary = ([(morning - 60, 1, 0, 1), (morning - 30, 1, 0, 1), (morning, 1, 1, 1), (morning + 30, 1, 1, 1)],
+                    (morning - 60,))
         # Each row: the stop, the quiet hours in UTC, and how orch reads them
         # at the stop's pass. Hours outside the form leave the answer unread:
         # the notice stays held and the owner-quiet read reports once.
@@ -3000,8 +3013,9 @@ with open(sys.argv[1], "ab") as out:
                                     ("usage", "07-23", "unread"),
                                     ("sign-in", "0-7", "quiet"), ("sign-in", "8-12", "waking"), ("sign-in", "", "waking"),
                                     ("exit", "0-7", "quiet"), ("exit", "8-12", "waking"), ("exit", "", "waking"),
-                                    ("exit again", "0-7", "quiet")):
-            passes, reads = again if stop == "exit again" else twice
+                                    ("exit again", "0-7", "quiet"), ("exit at the end", "0-7", "quiet"),
+                                    ("exit at the end read late", "0-7", "quiet")):
+            passes, reads = {"exit again": again}.get(stop, boundary if stop.startswith("exit at") else twice)
             with self.subTest(stop=stop, hours=hours), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.home = self.project("quiet-" + stop.replace(" ", "-") + "-" + (hours or "none"))
@@ -3010,7 +3024,7 @@ with open(sys.argv[1], "ab") as out:
                 # The log keeps every event: no batch settles and takes it.
                 self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-" + self.home.name)),
                                      JARVIS_WAKE_SETTLE_SECS="86400")
-                if stop in ("exit", "exit again"):
+                if stop.startswith("exit"):
                     plant, calls = self.exited_session()
                     plant("start", running)
                     # A bound controller that is not live leaves the exit to the status read.
@@ -3020,7 +3034,8 @@ with open(sys.argv[1], "ab") as out:
                     self.root.joinpath("status.json").write_text(json.dumps(gone))
                     plants = [lambda: plant("status", ended), lambda: plant("status", running)] * 2
                     recoveries = lambda: len([call for call in calls() if call.startswith("start ")])
-                    run, outcome = self.exited_passes, "started again" if stop == "exit" else "exited again"
+                    run = lambda watch, now, late=stop.endswith("late"): self.exited_passes(watch, now, late and now == morning)
+                    outcome = "started again" if stop == "exit" else "exited again"
                 else:
                     log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
                     # The walled controller, its successor, the successor walled, and its own successor.
