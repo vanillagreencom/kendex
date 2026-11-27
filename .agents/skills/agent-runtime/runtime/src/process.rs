@@ -970,8 +970,8 @@ pub enum Stop {
     AlreadyGone,
     /// The identity no longer matches: the pid now holds another process.
     IdentityStale,
-    /// A signaled process, or a group member the stop read after its signals
-    /// ([`stop_group`]), still runs after the grace.
+    /// A signaled process, or a group member the stop's confirming read
+    /// found ([`stop_group`]), still runs after the grace.
     Timeout { pid: u32 },
     /// A read the stop depends on failed at `pid`, so whether that process
     /// runs is not known; nothing was signalled past that read. `signalled`
@@ -1173,11 +1173,8 @@ pub(crate) fn group_table(leader: &Identity) -> Reading<Vec<Row>> {
 /// End every member of the group `leader` leads ([`group_members`]), each by
 /// its own identity: TERM, the grace, then KILL. `AlreadyGone` where the
 /// group reads gone; refused `stop-unreadable` where the group or a member's
-/// identity cannot be read, nothing signalled. `Stopped` only where the
-/// group reads gone after the members it read ended: a member that joined
-/// after that read, as one a TERM handler forks, was never signalled, so the
-/// group still live answers `Timeout` with that member's pid, and a group
-/// that cannot be read again answers `Unreadable`.
+/// identity cannot be read, nothing signalled. The members' verdict stands
+/// for the group only as [`confirmed`] judges it.
 pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
     let unreadable = |cause: &str| Error::refused("stop-unreadable", &[("cause", cause)]);
     let rows = match group_members(leader) {
@@ -1194,21 +1191,33 @@ pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
         }
     }
     let stop = stop_identities(&members, grace)?;
-    if !matches!(stop, Stop::Stopped { .. }) {
-        return Ok(stop);
-    }
-    Ok(match group_members(leader) {
+    Ok(confirmed(stop, leader.pid, || group_members(leader)))
+}
+
+/// `stop`, the verdict on the members a group read named, as the group's own:
+/// `Stopped` or `AlreadyGone` holds only where `after`, the group read once
+/// more, reads it gone. A member that joined after the first read was never
+/// named, as one a TERM handler forks or one the members fork as they exit
+/// before the first signal, so a group still live answers `Timeout` with that
+/// member's pid, and one that cannot be read answers `Unreadable`.
+fn confirmed(stop: Stop, leader: u32, after: impl FnOnce() -> Reading<Vec<Row>>) -> Stop {
+    let signalled = match stop {
+        Stop::Stopped { .. } => true,
+        Stop::AlreadyGone => false,
+        Stop::IdentityStale | Stop::Timeout { .. } | Stop::Unreadable { .. } => return stop,
+    };
+    match after() {
         Reading::Gone => stop,
         // A live group with no member row is one whose leader still runs.
         Reading::Live(rows) => Stop::Timeout {
-            pid: rows.first().map_or(leader.pid, |row| row.pid),
+            pid: rows.first().map_or(leader, |row| row.pid),
         },
         Reading::Unreadable { cause } => Stop::Unreadable {
-            pid: leader.pid,
+            pid: leader,
             cause: cause.to_owned(),
-            signalled: true,
+            signalled,
         },
-    })
+    }
 }
 
 #[cfg(test)]
@@ -1287,6 +1296,47 @@ mod tests {
         while identity(pid) != Reading::Gone {
             assert!(Instant::now() < deadline, "the child never read gone");
             std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A members' verdict stands for the group only where the group reads
+    /// gone once more; a member the first read never named, as one a TERM
+    /// handler forks or one forked by members that exit before the first
+    /// signal, keeps it live. The pids are synthetic.
+    #[test]
+    fn an_ended_verdict_stands_only_where_the_group_reads_gone_again() {
+        let member = || Reading::Live(rows(&[(52, 41, "sleep")]));
+        let unread = || Reading::Unreadable { cause: "ps-failed" };
+        let stopped = Stop::Stopped { signaled: 2 };
+        let unreadable = |signalled| Stop::Unreadable {
+            pid: 41,
+            cause: "ps-failed".to_owned(),
+            signalled,
+        };
+        let table: [(Stop, fn() -> Reading<Vec<Row>>, Stop); 7] = [
+            (stopped.clone(), || Reading::Gone, stopped.clone()),
+            (Stop::AlreadyGone, || Reading::Gone, Stop::AlreadyGone),
+            (stopped.clone(), member, Stop::Timeout { pid: 52 }),
+            (Stop::AlreadyGone, member, Stop::Timeout { pid: 52 }),
+            // The leader still runs outside its own group.
+            (
+                Stop::AlreadyGone,
+                || Reading::Live(Vec::new()),
+                Stop::Timeout { pid: 41 },
+            ),
+            (stopped.clone(), unread, unreadable(true)),
+            (Stop::AlreadyGone, unread, unreadable(false)),
+        ];
+        for (stop, after, expected) in table {
+            assert_eq!(confirmed(stop.clone(), 41, after), expected, "{stop:?}");
+        }
+        for stop in [
+            Stop::Timeout { pid: 41 },
+            Stop::IdentityStale,
+            unreadable(true),
+        ] {
+            let unread = || -> Reading<Vec<Row>> { panic!("{stop:?} is read again") };
+            assert_eq!(confirmed(stop.clone(), 41, unread), stop);
         }
     }
 
