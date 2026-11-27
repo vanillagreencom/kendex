@@ -1300,7 +1300,7 @@ class Watch:
             self.state["exited"] = memory
             self.save()
             return memory
-        if memory.get("ran") and reading == ("stopped", "ended"):
+        if memory.get("ran") and reading in DOWN_READINGS:
             # The owner's one notice names this outcome, never a success
             # still owed from before it.
             memory.update(ran=False, noticed=False, outcome=(

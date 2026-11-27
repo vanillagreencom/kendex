@@ -2714,6 +2714,12 @@ with open(sys.argv[1], "ab") as out:
                 ("exits again", (running, 0), (None, 1), {},
                  [(ended, [resume], [["/accounts/a", "resumed"]], 0), (running, [], [], 0),
                   (ended, [], [["/accounts/a", "exited again", "not started again"]], 0), (ended, [], [], 0)]),
+                # A stored Start failure read inside those 300 seconds fails
+                # the restart as an exit does, and the window's end starts nothing.
+                ("fails again", (running, 0), (None, 1), dict(at={3: 400}),
+                 [(ended, [resume], [["/accounts/a", "resumed"]], 0), (running, [], [], 0),
+                  (launch_failed, [], [["/accounts/a", "exited again", "not started again"]], 0),
+                  (launch_failed, [], [], 0)]),
                 # Once the restarted controller runs, the wall read binds it.
                 ("in flight", (starting, 0), (None, 1), dict(bound={1, 2, 3}),
                  [(ended, [resume], [], 0), (starting, [], [], 0), (running, [], [["/accounts/a", "resumed"]], 0),
@@ -2754,15 +2760,15 @@ with open(sys.argv[1], "ab") as out:
                  [(dict(ended, reason="never-started", harness=None, account=None), [], [], 0)]),
                 # A record holding a stored Start failure is down as an exit
                 # is: one route, one notice naming the failure, and a second
-                # pass over the same record starts and sends nothing.
-                ("launch failed", (launch_failed, 1), (moved, 0), {},
+                # pass over the record the route left starts and sends nothing.
+                ("launch failed", (launch_failed, 1), (spent, 1), {},
                  [(launch_failed, [resume, succeed], [["failed to start, launch-failed", "did not answer",
-                                                       "started again", "/accounts/b"]], 0),
+                                                       "resume launch-failed", "succeed handover-failed"]], 0),
                   (launch_failed, [], [], 0)]),
-                ("sign-in required", (stored_sign_in, 1), (spent, 1), {},
+                ("sign-in required", (stored_sign_in, 1), (moved, 0), {},
                  [(stored_sign_in, [resume, succeed], [["failed to start, sign-in-required", "Sign in to the chosen",
-                                                        "resume sign-in-required", "succeed handover-failed"]], 0),
-                  (stored_sign_in, [], [], 0)]),
+                                                        "started again", "/accounts/b"]], 0),
+                  (moved, [], [], 0)]),
                 # A first Start that failed before any controller launched is
                 # a status read that worked.
                 ("first start failed", (running, 0), (moved, 0), {},
