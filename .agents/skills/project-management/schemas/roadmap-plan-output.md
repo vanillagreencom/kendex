@@ -84,7 +84,7 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 
 ## removal_review
 
-Written by [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 2.1: one entry per scope team, and one item per active row of that team. Empty when the input named no removed term.
+Written by [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 2.1: one entry per removal-scope team (§ 1.1), and one item per active row of that team. Empty when the input named no removed term.
 
 ```json
 {"team": "[TEAM_KEY]", "checked": 2, "items": [

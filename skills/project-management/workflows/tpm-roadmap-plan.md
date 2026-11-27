@@ -33,15 +33,10 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision.
 
 ### 1.1 Team Scope
 
-Resolve the scope before any Linear read:
-
-- With `TEAMS` set, the scope is every listed team. Resolve each with `.agents/skills/linear/scripts/linear.sh teams get [TEAM]` and keep its `name` and `key`. Halt when one resolves none.
-- With `TEAMS` null, the scope is the one `TEAM` and `TEAM_PREFIX` that [tpm-audit](tpm-audit.md) § 1.1.1 resolves.
-
-Then:
-
-1. Pass `--team` on every comparison `issues list` to filter on the server, one read per scope team.
-2. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison. A row is in scope when its `id` starts with a scope team's key and `-`. A project row is in scope when its `teams[]` holds a scope team's `name`.
+1. Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. That one team is the scope of § 1.4 placement and the § 2 comparison, and roadmap-create files into it.
+2. Pass `--team` on every comparison `issues list` to filter on the server.
+3. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison.
+4. The removal scope is `TEAM`, plus each `TEAMS` entry that is not `TEAM` when `REMOVED_TERMS[]` is nonempty. Resolve each added entry with `.agents/skills/linear/scripts/linear.sh teams get [ENTRY]` and keep its `name` and `key`. Halt when one resolves none. Only § 2.1 reads an added team's rows.
 
 - § 2 proposes changes only to active rows. Closed rows remain historical comparison evidence per tpm-audit § 1.1.
 - roadmap-create executes the recommendations.
@@ -85,15 +80,15 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 
 ### 1.5 Issues
 
-Fetch each scope team's active comparison rows in one command; never loop `--project` per project:
+Fetch each removal-scope team's active rows in one command; never loop `--project` per project:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Triage,Backlog,Todo,In Progress,In Review,Verifying" --max
 ```
 
-Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
+Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for each row whose `id` starts with its team's key and `-`. `TEAM`'s rows are the active comparison set.
 
-For each proposed issue, read closed comparison evidence with its title, target, or component terms, once per scope team:
+For each proposed issue, read closed comparison evidence with its title, target, or component terms:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Done,Canceled" --search "[TERMS]"
@@ -158,16 +153,17 @@ Then place the roadmap:
 
 **Skip if** `REMOVED_TERMS[]` is null or empty.
 
-Review every active row of every scope team from § 1.5 against `REMOVED_TERMS[]`. A row rests on a term when its title, its description or the comments § 1.5 read name the term, or its work needs the removed thing to exist. Give each row one action:
+Review every active row of every removal-scope team from § 1.5 against `REMOVED_TERMS[]`. A row rests on a term when its title, its description or the comments § 1.5 read name the term, or its work needs the removed thing to exist. Give each row one action:
 
 - `cancel`: its whole need rests on a removed term, or the term's replacement covers it.
 - `rewrite`: its need stands, but its text or approach rests on a removed or replaced term. The reason names the `replaced_by` it is rewritten against.
 - `keep`: it rests on no removed term. The reason says why.
 
-One row takes one action:
+Where a § 2 `cross_project_findings` action already names the row, its action here follows that action, and its reason names that finding:
 
-- A row § 2 cancels or supersedes takes `cancel` here, and its reason names that § 2 finding.
-- A row § 2 expands or descopes takes `rewrite` here, and its reason names that § 2 finding.
+- A cancel or supersede gives `cancel`.
+- An expand gives `rewrite`.
+- A descoped proposal leaves the row to the term test above.
 
 Store each team's rows in `removal_review[]` per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § removal_review. Its `checked` count is that team's § 1.5 active row count. Write no tracker disposition here.
 

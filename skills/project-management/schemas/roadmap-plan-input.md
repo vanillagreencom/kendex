@@ -72,8 +72,9 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
   - `replaced_by` names its replacement, or is null for a removal.
   - The list is empty when the spec removes and replaces nothing, and null when no spec was read.
 - `teams[]`:
-  - The TPM's team scope: it reads every open item of each listed team (tpm-roadmap-plan § 1.1).
-  - Null when no spec was read or the spec names no team. The TPM then resolves one team under tpm-audit § 1.1.1.
+  - Widens only the TPM's removal review: with `removed_terms[]` nonempty, it reads every open item of each listed team beside the one team tpm-audit § 1.1.1 resolves (tpm-roadmap-plan § 1.1).
+  - That resolved team stays the scope of placement and comparison.
+  - Null when no spec was read or the spec names no team.
 
 ### Proposed Issue Fields
 
