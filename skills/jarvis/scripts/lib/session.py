@@ -35,6 +35,8 @@ START_BRIEF = (
     "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md 'Start'`. "
     "Read each other named section with `jarvis-section` when its step comes, using its owning file and exact heading."
 )
+# The line a provider-stopped session resumes on.
+PROVIDER_RESUME = "Continue your work: your last turn ended on a provider error."
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
@@ -855,7 +857,8 @@ class Session:
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
-    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None, exited=False):
+    def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None, exited=False,
+                provider_stop=None, episode=None):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
@@ -881,6 +884,10 @@ class Session:
                 raise Refusal("record-unreadable")
             recorded = status["recorded"]
             self.env = environment(recorded.get("harness"), policy=True)
+            if provider_stop:
+                if provider_stop != [recorded.get("session_id"), f'{recorded["server"]} {recorded["pane"]}']:
+                    raise Refusal("record-unreadable")
+                return self.provider_stop(record, status, episode)
             choice = None
             if usage_wall:
                 if usage_wall != [recorded.get("session_id"), f'{recorded["server"]} {recorded["pane"]}']:
@@ -930,6 +937,68 @@ class Session:
             return None
         return room
 
+    @staticmethod
+    def session_facts(recorded):
+        """`agent-runtime deliver`'s facts of the RECORDED controller's session."""
+        args = []
+        for flag, field in (("harness", "harness"), ("socket", "server_socket"), ("server-pid", "server"),
+                            ("server-start", "server_start"), ("pane", "pane"), ("cwd", "cwd"),
+                            ("pid", "harness_pid"), ("start", "harness_start"), ("session-id", "session_id")):
+            if not recorded.get(field):
+                raise Refusal("record-unreadable")
+            args.extend(("--" + flag, recorded[field]))
+        if recorded.get("home"):
+            args.extend(("--home", recorded["home"]))
+        return args
+
+    def provider_stop(self, record, status, episode):
+        """agent-runtime's decision for a provider stop of the recorded
+        controller, taken: a resume types the continue line into its pane, a
+        move hands it over to the entry on another provider the decision
+        chose. EPISODE is the start and latest failure an earlier answer
+        named. The decision is asked only of a pane that sits idle: a pane
+        still busy, as with the turn the last resume started, decides
+        nothing, so a turn that runs never ages the episode."""
+        recorded = status["recorded"]
+        facts = self.session_facts(recorded)
+        answer = self.answer(record, status)
+        _, code, refusal, errors = self.runtime("deliver", "--no-paste", *facts)
+        if code:
+            if refusal == "deliver-refused":
+                return {**answer, "provider_recovery": "busy"}, 0
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The session's pane could not be read: " + str(refusal) + ".", "failed")
+        handoff = Path(self.home) / "state/handoff.md"
+        since = ["--since", episode[0], "--last", episode[1]] if episode else []
+
+        def decide(recorded):
+            decision, code, refusal, errors = self.ready_successor(
+                "controller", "successor", "--record", self.fleet(), "--cwd", self.home, "--predecessor",
+                recorded["pane"], "--stop", "provider", *since, "--handoff", handoff, recorded=recorded)
+            if code:
+                sys.stderr.write(errors)
+                raise Refusal("handover-failed", "The provider stop was not decided: " + str(refusal) + ".", "failed")
+            return decision
+
+        decision = decide(recorded)
+        action = decision["action"]["action"]
+        if action == "move-provider":
+            record.update(intent="succeed", failure=None, reason="new-requested")
+            self.write(record)
+            # A provider-stopped session is retired as a walled one is: its
+            # harness runs and takes no turn.
+            moved, code = self._hand_over(record, "headroom", recorded["server_socket"], choice=decision, choose=decide)
+            return {**moved, "provider_recovery": "moved", "episode": decision["episode"]}, code
+        if action != "resume":
+            raise Refusal("handover-failed", "agent-runtime answered " + str(action) + " for a provider stop.", "failed")
+        result, code, refusal, errors = self.runtime("deliver", "--line", PROVIDER_RESUME, *facts)
+        if code or result.get("delivery") not in ("confirmed", "unconfirmed"):
+            sys.stderr.write(errors)
+            raise Refusal("handover-failed", "The session could not resume: " +
+                          str(refusal or (result or {}).get("cause")) + ".", "failed")
+        return {**answer, "provider_recovery": "resumed" if result["delivery"] == "confirmed" else "unconfirmed",
+                "episode": decision["episode"]}, 0
+
     def resume_wall(self, recorded, cursor=None):
         if cursor is None:
             if not recorded.get("account"):
@@ -944,14 +1013,7 @@ class Session:
             args.append("--account-room")
         else:
             args.extend(("--no-paste", "--turns-before", cursor, "--bound-secs", "0"))
-        for flag, field in (("harness", "harness"), ("socket", "server_socket"), ("server-pid", "server"),
-                            ("server-start", "server_start"), ("pane", "pane"), ("cwd", "cwd"),
-                            ("pid", "harness_pid"), ("start", "harness_start"), ("session-id", "session_id")):
-            if not recorded.get(field):
-                raise Refusal("record-unreadable")
-            args.extend(("--" + flag, recorded[field]))
-        if recorded.get("home"):
-            args.extend(("--home", recorded["home"]))
+        args.extend(self.session_facts(recorded))
         try:
             result, code, refusal, errors = self.runtime(*args, track_launch=True)
         except CommandNotStarted as failure:
@@ -973,13 +1035,14 @@ class Session:
                     "wall_resume": {"cause": result["cause"], "turns_before": result["turns_before"]}}
         return {"wall_recovery": "confirmed"}
 
-    def _hand_over(self, record, mark, socket, posture=None, choice=None, cause=None):
+    def _hand_over(self, record, mark, socket, posture=None, choice=None, cause=None, choose=None):
         # Save the handoff, write its generation header, then choose and
         # transfer until an attempt is proved, no account is left, or the
         # outcome is not a failure on a named account. The caller holds the
         # lock. Every successor takes the record's stored private brief, and
         # `posture` over the one the walk carried from its predecessor. A
         # `dead` CAUSE hands over from a controller whose process is gone.
+        # CHOOSE asks again after a failed attempt, the MARK walk by default.
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
         if not contents.strip():
@@ -1016,7 +1079,7 @@ class Session:
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
-                choice = choice or self.wall_choice(recorded, mark, handoff)
+                choice = choice or (choose(recorded) if choose else self.wall_choice(recorded, mark, handoff))
                 if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
@@ -1475,6 +1538,10 @@ def main():
             command.add_argument("--reset-passed", action="store_true")
             command.add_argument("--resume-cursor", type=int)
             command.add_argument("--exited", action="store_true")
+            command.add_argument("--provider-stop", nargs=2, metavar=("SESSION", "PANE"))
+            # The episode an earlier provider-stop answer named.
+            command.add_argument("--since", type=int)
+            command.add_argument("--last", type=int)
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
     for action in ("list", "reply", "done", "later"):
@@ -1552,8 +1619,13 @@ def main():
                 parser.error("resume-cursor")
             if args.exited and (args.account_walled or args.usage_wall):
                 parser.error("exited")
+            if args.provider_stop and (args.account_walled or args.usage_wall or args.exited):
+                parser.error("provider-stop")
+            if (args.since is None) != (args.last is None) or args.since is not None and not args.provider_stop:
+                parser.error("episode")
+            episode = None if args.since is None else (args.since, args.last)
             answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed, args.resume_cursor,
-                                           args.exited)
+                                           args.exited, args.provider_stop, episode)
         elif args.verb == "update-brief":
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":

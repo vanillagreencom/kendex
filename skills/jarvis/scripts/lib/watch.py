@@ -485,6 +485,15 @@ def orch_runtime():
     return LIB.parents[2] / "orch/scripts/orch-runtime"
 
 
+def agent_runtime():
+    return LIB.parents[2] / "agent-runtime/scripts/agent-runtime"
+
+
+# The harnesses whose failed turn is read from their own session record:
+# they write no failure row of their own.
+SESSION_RECORDED = ("codex", "copilot")
+
+
 def wall_time(at):
     return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -1179,18 +1188,35 @@ class Watch:
             return False
 
     def wall(self):
-        """The recorded controller's wall: session, pane, account, kind and row.
-        Kind is None for a session its rows do not read walled; None with no bound
-        controller; a Failure where the controller or its rows were not read:
-        a missing package, or the runtime's refusal of the status or the
-        verdict read."""
+        """The recorded controller's wall: session, pane, account, kind, the
+        verdict's fields, whose `stop` names the stop's kind, and whether a
+        session record was read in place of the hook rows. Kind is None for a
+        session its rows do not read walled; None with no bound controller; a
+        Failure where the controller or its rows were not read: a missing
+        package, or the runtime's refusal of the status, record or verdict read."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
             if result.returncode:
                 error = child_failure("controller-wall", result)
                 return error if error.record["key"][1:] == ["refusal", "dependency"] else None
             bound = json.loads(result.stdout)
-            verdict = run([self.bash, orch_runtime(), "watch", "wall", "--file", bound["rows"]],
+            file, harness = bound["rows"], []
+            recorded = bound["harness"] in SESSION_RECORDED
+            if recorded:
+                # The account is that harness's home, as orch's overseer watch reads it.
+                home = bound["account"] or bound["home"]
+                if not home or not bound["cwd"]:
+                    raise Failure("controller-wall", "record", "home-unknown", "harness=" + bound["harness"])
+                found = json.loads(checked([agent_runtime(), "session-file", "--harness", bound["harness"],
+                                            "--home", home, "--cwd", bound["cwd"], "--id", bound["session"]],
+                                           operation="controller-wall"))["result"]
+                if found["reading"] == "unreadable":
+                    raise Failure("controller-wall", "record", "unreadable", found["cause"])
+                if found["reading"] == "gone":
+                    # No turn has been written: none failed.
+                    return bound["session"], bound["pane"], bound["account"], None, found, recorded
+                file, harness = found["file"], ["--harness", bound["harness"]]
+            verdict = run([self.bash, orch_runtime(), "watch", "wall", "--file", file, *harness],
                           operation="controller-wall")
             if verdict.returncode:
                 raise child_failure("controller-wall", verdict)
@@ -1198,7 +1224,7 @@ class Watch:
             if rows["reading"] == "unreadable":
                 raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
             walled = rows["reading"] == "live" and rows["verdict"] == "walled"
-            return bound["session"], bound["pane"], bound["account"], rows["kind"] if walled else None, rows
+            return bound["session"], bound["pane"], bound["account"], rows["kind"] if walled else None, rows, recorded
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("controller-wall", error)
 
@@ -1215,7 +1241,7 @@ class Watch:
             return None
         self.state.pop("wall_failure", None)
         memory = self.state.get("wall")
-        session, pane, account, kind, rows = reading or (None, None, None, None, {})
+        session, pane, account, kind, rows, _ = reading or (None, None, None, None, {}, False)
         if (memory is not None and "row_at" not in memory and memory["kind"] == kind == "usage"
                 and session == memory["session"] and pane == memory["pane"]
                 and (rows.get("at") is None or rows["at"] <= memory["at"])):
@@ -1287,6 +1313,47 @@ class Watch:
 
         Either wall kind is the account's own, so the successor leaves it."""
         return self.session("succeed", "succeed", "--account-walled", *usage)
+
+    def provider_stop(self, reading):
+        """The `succeed --provider-stop` arguments READING asks for, or None.
+
+        agent-runtime's decision holds the policy: the watch asks it on each
+        check that reads the provider stop, and keeps only the episode the
+        last answer named, passed back so the decision ages it. The episode
+        is one controller's, and a hook row that names no stop is a turn that
+        ended without one, which ends it. A session record reads no stop
+        while a resumed turn runs too, so there the episode stands until the
+        decision lapses it."""
+        if reading is None or isinstance(reading, Failure):
+            return None
+        session, pane, _, _, rows, recorded = reading
+        memory = self.state.get("provider")
+        stop = rows.get("stop")
+        if memory is not None and ([memory["session"], memory["pane"]] != [session, pane]
+                                   or stop not in ("provider", None) or stop is None and not recorded):
+            del self.state["provider"]
+            self.save()
+            memory = None
+        if stop != "provider":
+            return None
+        episode = ["--since", str(memory["since"]), "--last", str(memory["last"])] if memory else []
+        return ["--provider-stop", session, pane, *episode]
+
+    def recover_provider(self, args):
+        """jarvis-session's answer to the provider stop ARGS name, or a Failure."""
+        return self.session("provider-recovery", "succeed", *args)
+
+    def accept_provider(self, answer, args):
+        """The provider stop's answer: the episode it names is kept for the
+        next ask; a recovery that failed reports once and is asked again."""
+        if isinstance(answer, Failure) or answer.get("state") not in ("running", "handing-over"):
+            self.failed_pass("provider-recovery", answer.record if isinstance(answer, Failure) else Failure(
+                "provider-recovery", "succeed", answer.get("reason"), answer.get("detail") or "").record)
+            return
+        self.state.pop("provider-recovery_failure", None)
+        if answer.get("episode"):
+            self.state["provider"] = {"session": args[1], "pane": args[2], **answer["episode"]}
+        self.save()
 
     def exited(self):
         """The home's controller as jarvis-session status answers it, or a Failure."""
@@ -1909,6 +1976,8 @@ class Watch:
             self.wall_pending = None
             if wall[0] == "succession":
                 self.accept_succession(wall[1].result(), wall[2], now)
+            elif wall[0] == "provider":
+                self.accept_provider(wall[1].result(), wall[2])
             else:
                 reading = wall[1].result()
                 # A wall read that binds no live controller, or an exit's
@@ -1940,6 +2009,8 @@ class Watch:
                                 requested = True
                                 usage.append("--reset-passed")
                     self.wall_pending = ("succession", passes.submit(self.succeed, usage), requested)
+                elif (provider := self.provider_stop(reading)) is not None:
+                    self.wall_pending = ("provider", passes.submit(self.recover_provider, provider), provider)
         exited = self.exited_pending
         if exited is not None and exited[1].done():
             self.exited_pending = None

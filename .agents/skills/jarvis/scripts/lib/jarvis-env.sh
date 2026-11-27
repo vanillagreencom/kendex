@@ -82,6 +82,8 @@ jarvis_live() {
 # The recorded session with its pane, account and the rows file its hooks
 # write for that pane: the one
 # the stop-failure-row hook names, the pane number without its `%`. The
+# harness, home and directory name a Codex or Copilot session's own record,
+# which holds the failed turn those harnesses write no row for. The
 # caller reads the rows' verdict itself, so a refused verdict read is never
 # taken for an unbound session.
 jarvis_wall() {
@@ -89,8 +91,9 @@ jarvis_wall() {
   jarvis_bound "$1" || return 1
   jq -nc --argjson status "$status" --arg pane "$server $pane" \
     --arg rows "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl" \
-    '{session: $status.result.recorded.session_id, pane: $pane,
-      account: $status.result.recorded.account, rows: $rows}'
+    '$status.result.recorded as $recorded
+     | {session: $recorded.session_id, pane: $pane, account: $recorded.account, rows: $rows,
+        harness: $recorded.harness, home: $recorded.home, cwd: $recorded.cwd}'
 }
 
 case "${1:-}" in
