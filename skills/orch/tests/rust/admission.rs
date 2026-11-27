@@ -719,286 +719,60 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
 }
 
-/// A confirmed `close-resources` intent on `item` on the close `ground`, as
-/// a confirmed close leaves it in the fleet's journal.
-fn closed(item: &str, n: u32, ground: Value) -> Value {
-    json!({
-        "id": format!("close-resources:{item}:{n}-1"), "op": "close-resources", "target": item,
-        "created_at": "2026-01-29T15:30:00Z", "lane_since": "2026-01-29T15:00:00Z",
-        "outcome": "confirmed", "close": ground,
-    })
-}
-
-fn no_landing() -> Value {
-    json!({"ground": "no-landing", "reason": "usage-limit", "source": "overseer"})
-}
-
-/// A lane record a no-landing close keeps, its item still open, holds its
-/// touched set from the close's ask: an `admit` of another running lane and a
-/// first launch of another item for one of its paths refuse `launch-overlap`
-/// naming it, never joining it, nothing written. It holds while the close
-/// stands open, over a record whose charge yields (parked, or stopped by a
-/// failed launch), and once it is confirmed; so does the record after its
-/// relaunch failed, a hosted one, and a kept record under a later full close
-/// that is open or failed. A record stopped by a failed launch with no
-/// close, or by a failed next-phase launch after a full close, a `done`
-/// record, and a parked record whose no-landing close failed or was
-/// superseded hold nothing: each is admitted. Under `ORCH_DELIVERY=push-base`
-/// a first launch passes a local kept record in its review, the publication
-/// taking the order, and a hosted one, whose review is its host's, still
-/// refuses.
-#[test]
-fn a_record_a_no_landing_close_keeps_holds_its_set_against_another_lane() {
-    let failed_launch = json!({
-        "id": "launch-session:KEN-R:2-1", "op": "launch-session", "target": "KEN-R",
-        "created_at": "2026-01-29T15:40:00Z", "lane_since": "2026-01-29T15:40:00Z",
-        "outcome": "failed",
-    });
-    // The item's close `n` on `ground`, as `outcome` left it.
-    let close = |n: u32, ground: Value, outcome: &str| {
-        let mut close = closed("KEN-R", n, ground);
-        close["outcome"] = json!(outcome);
-        close
-    };
-    let mut superseded = close(1, no_landing(), "unconfirmed");
-    superseded["reconciled"] = json!("intent-stale");
-    let exited = || json!({"ground": "exited"});
-    // The row, the record's status and host, its item's journal, and
-    // whether it holds.
-    type Row = (
-        &'static str,
-        &'static str,
-        Option<&'static str>,
-        Vec<Value>,
-        bool,
-    );
-    let rows: [Row; 12] = [
-        (
-            "a no-landing close",
-            "stopped",
-            None,
-            vec![closed("KEN-R", 1, no_landing())],
-            true,
-        ),
-        (
-            "a parked record under an open no-landing close",
-            "parked",
-            None,
-            vec![close(1, no_landing(), "unconfirmed")],
-            true,
-        ),
-        (
-            "a failed launch's record under a not-started no-landing close",
-            "stopped",
-            None,
-            vec![close(1, no_landing(), "not-started")],
-            true,
-        ),
-        (
-            "a parked record whose no-landing close failed",
-            "parked",
-            None,
-            vec![close(1, no_landing(), "failed")],
-            false,
-        ),
-        (
-            "a parked record whose no-landing close was superseded",
-            "parked",
-            None,
-            vec![superseded],
-            false,
-        ),
-        (
-            "a kept record under an open full close",
-            "stopped",
-            None,
-            vec![
-                closed("KEN-R", 1, no_landing()),
-                close(2, exited(), "unconfirmed"),
-            ],
-            true,
-        ),
-        (
-            "a kept record whose full close failed",
-            "stopped",
-            None,
-            vec![
-                closed("KEN-R", 1, no_landing()),
-                close(2, exited(), "failed"),
-            ],
-            true,
-        ),
-        (
-            "a no-landing close, then a failed relaunch",
-            "stopped",
-            None,
-            vec![closed("KEN-R", 1, no_landing()), failed_launch],
-            true,
-        ),
-        (
-            "a hosted lane's no-landing close",
-            "stopped",
-            Some("/opt/provider"),
-            vec![closed("KEN-R", 1, no_landing())],
-            true,
-        ),
-        ("a failed first launch", "stopped", None, Vec::new(), false),
-        (
-            "a failed next phase after a full close",
-            "stopped",
-            None,
-            vec![
-                closed("KEN-R", 1, no_landing()),
-                closed("KEN-R", 2, exited()),
-            ],
-            false,
-        ),
-        (
-            "a done record",
-            "done",
-            None,
-            vec![closed("KEN-R", 1, no_landing())],
-            false,
-        ),
-    ];
-    for (row, status, host, intents, holds) in rows {
-        let fleet = Fleet::new();
-        fleet.init_fleet();
-        fleet.item("KEN-F", "`src/a.sh`", 0, &[]);
-        let harness = Owned::sleep();
-        let mut stopped = holder("KEN-R", status, None, Some(&["src/a.sh"]));
-        if let Some(host) = host {
-            stopped["host"] = json!(host);
-        }
-        fleet.write_lanes_and_intents(
-            vec![
-                stopped,
-                holder("KEN-H", "running", Some(&harness), Some(&["docs/x.md"])),
-            ],
-            intents,
-        );
-        let before = fleet.fleet();
-        let first = fleet.op(&launch("KEN-F", fleet.state_dir().as_path()));
-        let admit = fleet.admit(&json!({"item": "KEN-H", "paths": ["src/a.sh"]}));
-        if holds {
-            for (item, out) in [("KEN-F", &first), ("KEN-H", &admit)] {
-                let (key, fields) = refusal(out);
-                assert_eq!(key, "launch-overlap", "{row}, {item}: {}", stderr(out));
-                assert_eq!(
-                    fields,
-                    pairs(&[("item", item), ("file", "src/a.sh"), ("holder", "KEN-R")]),
-                    "{row}, {item}"
-                );
-            }
-            assert_eq!(fleet.fleet(), before, "{row}: nothing written, no join");
-        } else {
-            assert_eq!(reply(&first)["ok"], true, "{row}: {}", stderr(&first));
-            assert_eq!(fleet.lane("KEN-F")["touched"], json!(["src/a.sh"]), "{row}");
-            assert_eq!(reply(&admit)["ok"], true, "{row}: {}", stderr(&admit));
-            assert_eq!(
-                fleet.lane("KEN-H")["touched"],
-                json!(["docs/x.md", "src/a.sh"]),
-                "{row}"
-            );
-        }
-        assert!(live(harness.pid()), "{row}: the live lane is not signalled");
-    }
-    for (row, host, passes) in [
-        ("a local kept record", None, true),
-        ("a hosted kept record", Some("/opt/provider"), false),
-    ] {
-        let fleet = Fleet::new();
-        fleet.init_fleet();
-        fleet.item("KEN-F", "`src/a.sh`", 0, &[]);
-        let mut kept = holder("KEN-R", "stopped", None, Some(&["src/a.sh"]));
-        if let Some(host) = host {
-            kept["host"] = json!(host);
-        }
-        fleet.write_lanes_and_intents(vec![kept], vec![closed("KEN-R", 1, no_landing())]);
-        fleet.review("KEN-R");
-        let before = fleet.fleet();
-        let out = fleet.op_with(
-            &launch("KEN-F", fleet.state_dir().as_path()),
-            &[("ORCH_DELIVERY", "push-base")],
-        );
-        if passes {
-            assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
-            assert_eq!(fleet.lane("KEN-F")["touched"], json!(["src/a.sh"]), "{row}");
-            assert_eq!(fleet.lane("KEN-R"), before["lanes"][0], "{row}: not joined");
-        } else {
-            let (key, fields) = refusal(&out);
-            assert_eq!(key, "launch-overlap", "{row}: {}", stderr(&out));
-            assert_eq!(
-                fields,
-                pairs(&[("item", "KEN-F"), ("file", "src/a.sh"), ("holder", "KEN-R")]),
-                "{row}"
-            );
-            assert_eq!(fleet.fleet(), before, "{row}: nothing written");
-        }
-    }
-}
-
-/// A relaunch meets a live lane holding a path its record's set names, or
-/// its item's Location paths where the record holds none, as a running
-/// lane's added path does: a record a no-landing close keeps, co-holding
-/// `src/a.sh` with the live lane; a stopped record holding no set; and a
-/// kept record of another repository relaunched into the live lane's, met
-/// with its recorded set in the relaunch's repository. Each keeps its
-/// record's scope, the request naming none, and is refused `launch-overlap`,
-/// never joined, nothing written: under `ORCH_DELIVERY=push-base` before the
-/// holder's review, and under `pr` with the holder in its review. Under
-/// `push-base` with the holder in its review it is relaunched, the
-/// publication taking the order, over its kept sets. Only the Location row
-/// plants an item, so the others read none.
+/// A stopped record holds nothing, so a running lane is admitted a path it
+/// recorded; the stopped lane's relaunch then meets that holder, as a
+/// running lane's added path does, with its record's set, or its item's
+/// Location paths where the record holds none, and its record's scope, in
+/// the repository the request names, else its record's. It is refused
+/// `launch-overlap`, never joined, nothing written: under
+/// `ORCH_DELIVERY=push-base` before the holder's review, and under `pr`
+/// with the holder in its review. Under `push-base` with the holder in its
+/// review it is relaunched, the publication taking the order, over its kept
+/// sets. Only the Location row plants an item, so the others read none.
 #[test]
 fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
     let set: &[&str] = &["docs/x.md", "src/a.sh"];
-    // The row, the record's repository, the one the relaunch names, its
-    // set, and whether a no-landing close keeps it.
-    type Row<'a> = (
-        &'a str,
-        &'a str,
-        Option<&'a str>,
-        Option<&'a [&'a str]>,
-        bool,
-    );
+    // The row, the record's repository, the one the relaunch names, and
+    // the record's set.
+    type Row<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a [&'a str]>);
     let rows: [Row; 3] = [
-        ("a kept record's recorded set", "o/r", None, Some(set), true),
-        ("its item's Location paths", "o/r", None, None, false),
+        ("its recorded set", "o/r", None, Some(set)),
+        ("its item's Location paths", "o/r", None, None),
         (
-            "a kept record relaunched into another repository",
+            "a record of another repository relaunched into the holder's",
             "o/a",
             Some("o/r"),
             Some(set),
-            true,
         ),
     ];
-    for (row, record_repo, repo, touched, kept) in rows {
+    for (row, record_repo, repo, touched) in rows {
         let fleet = Fleet::new();
         fleet.init_fleet();
         fleet.init_item("KEN-H", "ken-h");
         if touched.is_none() {
             fleet.item("KEN-R", "`docs/x.md`, `src/a.sh`", 0, &[]);
         }
-        let recorded = touched.map_or(Value::Null, |paths| json!(paths));
         let harness = Owned::sleep();
-        let mut record = holder("KEN-R", "stopped", None, touched);
-        record["in_scope"] = json!(["docs/"]);
-        record["repo"] = json!(record_repo);
-        let mut holding = holder("KEN-H", "running", Some(&harness), Some(set));
+        let mut stopped = holder("KEN-R", "stopped", None, touched);
+        stopped["in_scope"] = json!(["docs/"]);
+        stopped["repo"] = json!(record_repo);
+        let mut holding = holder("KEN-H", "running", Some(&harness), Some(&["docs/x.md"]));
         holding["repo"] = json!("o/r");
-        let intents = if kept {
-            vec![closed("KEN-R", 1, no_landing())]
-        } else {
-            Vec::new()
-        };
-        fleet.write_lanes_and_intents(vec![record, holding], intents);
+        fleet.write_lanes(vec![stopped, holding]);
+        let out = fleet.admit(&json!({"item": "KEN-H", "paths": ["src/a.sh"]}));
+        assert_eq!(
+            reply(&out)["ok"],
+            true,
+            "{row}: a stopped record yields: {}",
+            stderr(&out)
+        );
         let before = fleet.fleet();
         let mut request = launch("KEN-R", fleet.state_dir().as_path());
         if let Some(repo) = repo {
             request["repo"] = json!(repo);
         }
         let relaunch = |delivery: &str| fleet.op_with(&request, &[("ORCH_DELIVERY", delivery)]);
+
         let refused = |delivery: &str, stage: &str| {
             let out = relaunch(delivery);
             let (key, fields) = refusal(&out);
@@ -1026,7 +800,8 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
         assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
         let lane = fleet.lane("KEN-R");
         assert_eq!(
-            lane["touched"], recorded,
+            lane["touched"],
+            touched.map_or(Value::Null, |paths| json!(paths)),
             "{row}: the relaunch records no set"
         );
         assert_eq!(lane["in_scope"], json!(["docs/"]));
@@ -1037,112 +812,6 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
             before["lanes"][1],
             "{row}: the holder is not joined"
         );
-    }
-}
-
-/// Through the real `close-owned-resources` op, beside a live lane that
-/// holds `src/a.sh`, a `keep-sandbox` close meets that holder wherever its
-/// record does not hold its set, since the close keeps the record: one a
-/// failed first launch stopped, and a running one whose session cannot be
-/// read, are refused `launch-overlap` naming the holder, nothing written. A
-/// record holding its set, kept or running with a live session, co-holds
-/// the path, and a record holding no set is never kept: each close is
-/// recorded. A `usage-limit` close retires the record for its relaunch, so
-/// it meets the holder whatever the record holds, with its item's Location
-/// path where the record holds no set.
-#[test]
-fn a_no_landing_close_meets_the_holders_wherever_its_record_does_not_hold_its_set() {
-    // The row, the record's status, whether a live session runs it, its
-    // set, whether a no-landing close stands in its journal, and whether
-    // its `keep-sandbox` close is refused.
-    type Row<'a> = (&'a str, &'a str, bool, Option<&'a [&'a str]>, bool, bool);
-    let set: &[&str] = &["src/a.sh"];
-    let rows: [Row; 5] = [
-        (
-            "a failed first launch",
-            "stopped",
-            false,
-            Some(set),
-            false,
-            true,
-        ),
-        (
-            "a running record with no session read",
-            "running",
-            false,
-            Some(set),
-            false,
-            true,
-        ),
-        ("a kept record", "stopped", false, Some(set), true, false),
-        (
-            "a running record with a live session",
-            "running",
-            true,
-            Some(set),
-            false,
-            false,
-        ),
-        (
-            "a running record holding no set",
-            "running",
-            true,
-            None,
-            false,
-            false,
-        ),
-    ];
-    for (row, status, session, touched, kept, keep_refused) in rows {
-        for (reason, refused) in [("keep-sandbox", keep_refused), ("usage-limit", true)] {
-            let fleet = Fleet::new();
-            fleet.init_fleet();
-            fleet.item("KEN-R", "`src/a.sh`", 0, &[]);
-            let harness = Owned::sleep();
-            let own = Owned::sleep();
-            let record = holder("KEN-R", status, session.then_some(&own), touched);
-            let holding = holder("KEN-H", "running", Some(&harness), Some(set));
-            let intents = if kept {
-                vec![closed("KEN-R", 1, no_landing())]
-            } else {
-                Vec::new()
-            };
-            fleet.write_lanes_and_intents(vec![record, holding], intents);
-            let before = fleet.fleet();
-            let closes = |fleet: &Value| {
-                fleet["intents"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-R")
-                    .count()
-            };
-            let out = fleet.op(&json!({
-                "op": "close-owned-resources",
-                "item": "KEN-R",
-                "no_landing": {"reason": reason, "source": "overseer"},
-            }));
-            if refused {
-                let (key, fields) = refusal(&out);
-                assert_eq!(key, "launch-overlap", "{row}, {reason}: {}", stderr(&out));
-                assert_eq!(
-                    fields,
-                    pairs(&[("item", "KEN-R"), ("file", "src/a.sh"), ("holder", "KEN-H")]),
-                    "{row}, {reason}"
-                );
-                assert_eq!(fleet.fleet(), before, "{row}, {reason}: nothing written");
-            } else {
-                assert_eq!(
-                    closes(&fleet.fleet()),
-                    closes(&before) + 1,
-                    "{row}, {reason}: the close is recorded: {}",
-                    stderr(&out)
-                );
-            }
-            assert!(
-                live(harness.pid()),
-                "{row}, {reason}: the holder is not signalled"
-            );
-        }
     }
 }
 

@@ -85,15 +85,15 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
-- `launch-overlap`: launch once that lane releases the file. A first launch may instead name the file in `in_scope` where the brief adds to it append-only; a relaunch, and the `no_landing` close before it, keep the record's scope, so retry them once the holder releases the file (§ Recovery relaunch). [lane-launch.md § Shared files](lane-launch.md#shared-files) says which lanes hold. A lane a no-landing close keeps holds its files from that close's ask (§ Recovery relaunch).
-- `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Launch once that lane releases the tie, as `launch-overlap` states.
+- `launch-overlap`: launch once that lane stops. A first launch may instead name the file in `in_scope` where the brief adds to it append-only; a relaunch, and the recovery close before it, keep the record's scope (§ Recovery relaunch).
+- `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Launch once that lane stops.
   - A hosted lane that carries the launch's blockers refuses with no branch read, naming them as `blockers`.
   - A hosted lane that holds a shared path always refuses, naming the held path as `file`. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
   - A head that changes a shared path refuses with `item`, `file`, `holder` and `route`.
   - Any other refusal adds `branch`, `unknown` where the head itself was unread, and `cause`. `worktree-unproved` is a head that changes none of the launch's paths. A cloud session's head is never read.
 - `read-only-unconfined`: nothing can hold the lane to changing no file, as `cause` names: a cloud session (`cloud`), or a harness this machine cannot confine. Launch it here on a harness the confinement holds, or on an ssh host. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
-- `join-confined`: the holder's confinement bars the join. For a shared-file tie, retry once the holder releases the file, as `launch-overlap` states. For a launch-blocker tie, retry a standalone launch once Linear clears the launch blockers. Retry the join if the holder becomes eligible under [§ A joined launch](#a-joined-launch). For `confinement-unproved`, wait for the holder's launch to report its confinement before retrying the join.
-- `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder releases the tie, as `launch-overlap` states.
+- `join-confined`: the holder's confinement bars the join. For a shared-file tie, retry once the holder stops. For a launch-blocker tie, retry a standalone launch once Linear clears the launch blockers. Retry the join if the holder becomes eligible under [§ A joined launch](#a-joined-launch). For `confinement-unproved`, wait for the holder's launch to report its confinement before retrying the join.
+- `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
 - `tier-narrower`: brief the judged cycle.
 - `lane-repo-conflict`: leave `repo` out of the `admit-paths` request; the lane's own is judged.
 - `launch-class-missing`: name both `class` and `class_reason`, under [skill-rules.md § Model class](skill-rules.md#model-class). A relaunch naming neither keeps the record's.
@@ -294,9 +294,7 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 - A relaunch keeps the record's touched set, scope, [Ancestor gate](skill-rules.md#ancestor-gate) and tier.
-- A record a `no_landing` close keeps holds its set against other lanes from that close's ask, while the close stands open and then while the record reads `stopped` ([lane-launch.md § Shared files](lane-launch.md#shared-files)). A close that fails or is superseded holds nothing of its own. A close that records it `done`, or a park, ends the hold.
-- The set, or the item's Location paths where the record holds none, meets the holders standing now as a running lane's added path does, a kept record's too. It is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
-- A `no_landing` close on any other reason, of a record that does not hold its set when it is asked, meets the holders standing now with that set first: a parked record, one a failed launch stopped, or a running lane whose session cannot be read. A held path refuses the close `launch-overlap`, `holder-unreadable` or `touched-unreadable`, and the record stands as it was. A running lane whose session reads, a kept record, or a record holding no set meets no holder at that close.
+- The set, or the item's Location paths where the record holds none, meets the holders standing now as a running lane's added path does. It is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
 ### Watch recovery
