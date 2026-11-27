@@ -343,7 +343,7 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 | `credit-remaining`, `credit-available`, `credit-overage-limit-reached`, `credit-spend-control-reached` | A Codex credit. |
 
 - A `harness=claude` row with no `session-5h-pct` whose `model-pct` has no `model-label` states its 5-hour window there, with `model-resets` its reset. Fleet's line takes that form until it names the window.
-- A Claude row with no window scoped to the pick's model is judged on its shared windows for every pick, its record marked `scope: unread`, unless this machine holds a fresh reading of that window.
+- A Claude row with no window scoped to the pick's model is judged on its shared windows for every pick, its record marked `scope: unread`, unless this machine measured the account and holds any model window for it, whatever its label, which then stands unmarked.
 - Only `ok` and `rate_limited` rows are measured. A row whose usage read backs off says `rate_limited`, with its last reading's percentages while that reading is fresh. Any other `status` word leaves the account unmeasured.
 - A `detail` starting `api-credit-` marks a Pi row as an API grant.
 - A Pi API grant sits on a `harness=pi` row with no `monthly-pct`: all four fields together, dollars as non-negative decimals with at most two places, a limit above zero, the expiry a timestamp.

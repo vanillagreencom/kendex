@@ -751,13 +751,15 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// read the pool, else this machine's reading stands where it holds a
 /// figure, measured or stated; a
 /// Claude row the provider measured with no window scoped to `model` is
-/// judged on this machine's fresh reading of that window where it has one,
-/// and otherwise on the provider's shared windows, its buckets as read,
+/// judged on this machine's reading where it measured the account and holds
+/// any model window, whatever its label, unmarked; and otherwise on the
+/// provider's shared windows, its buckets as read,
 /// marked `scope: unread`, for every pick, a worker's and a controller's
 /// alike: the provider's line states no model window, so a pick that held
 /// out for one would find no Claude account it measures. The provider's words
-/// (`reserved`, `plan-ends`, `unified-status`) and its count of unused
-/// limit resets stand whichever reading does, a row with no reading
+/// (`reserved`, `plan-ends`, `unified-status`), its count of unused limit
+/// resets and its 5-hour window, where that window is the fuller and its
+/// reset ahead, stand whichever reading does, a row with no reading
 /// included. An account with one reading keeps it. The roster is never resolved: it reports both
 /// readings.
 ///
@@ -819,6 +821,8 @@ fn resolve(
                     provider.rejected,
                 );
                 let admission = provider.raw.get("unified_status").cloned();
+                let session = session_window(&provider)
+                    .filter(|w| reset_epoch(w.resets_at.as_deref()).is_some_and(|at| at > now));
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model)
                 } else {
@@ -833,6 +837,20 @@ fn resolve(
                     stands.plan_ends = plan_ends;
                 }
                 stands.limit_resets = stands.limit_resets.or(limit_resets);
+                // The provider's 5-hour window walls the account until its
+                // reset whichever reading stands, and this machine's reading
+                // of a model window can stand over it (`prefer`).
+                if let Some(window) = session
+                    .filter(|w| number(&stands.raw, SESSION.field).is_none_or(|pct| w.pct > pct))
+                    && let Value::Object(raw) = &mut stands.raw
+                {
+                    raw.insert(SESSION.field.to_owned(), figure(window.pct));
+                    let resets = raw.entry("resets").or_insert_with(|| json!({}));
+                    if !resets.is_object() {
+                        *resets = json!({});
+                    }
+                    resets[SESSION.bucket] = window.resets_at.map_or(Value::Null, Value::from);
+                }
                 out[i] = stands;
             }
             None => out.push(row.clone()),
@@ -888,8 +906,8 @@ fn prefer(own: AccountRow, provider: AccountRow, billed: Harness, model: &str) -
         }
         return admitted;
     }
-    // This machine's reading carries no fresh window scoped to the model,
-    // or its own read failed: the account is unmeasured for it, with the
+    // This machine's reading holds no measured model window, or its own
+    // read failed: the account is unmeasured for it, with the
     // cause in its status and detail.
     let mut unmeasured = own;
     if unmeasured.measured() {
@@ -2917,8 +2935,9 @@ mod tests {
     /// - Account a's 5-hour window decides its room and resets in half an
     ///   hour; account b's week decides with more room, a hundred hours to
     ///   its reset, and outweighs a's week at that same reset.
-    /// - Two accounts differ only in the 5-hour usage under one reset: the
-    ///   one that spent less is chosen.
+    /// - Account p's 5-hour window resets in half an hour, so its smaller
+    ///   room there outweighs account q's, whose 5-hour window resets in
+    ///   nearly five hours; p's week, with less room than q's, ranks it.
     #[test]
     fn the_least_projected_room_decides_and_the_least_weighted_room_ranks_the_account() {
         let now = 1_800_000_000;
@@ -2963,11 +2982,11 @@ mod tests {
                 Some("/h/.b"),
             ),
             (
-                "one 5-hour reset, less of that window spent",
-                vec![host("/h/.less", 50, 30, 0.5), host("/h/.more", 50, 60, 0.5)],
+                "the 5-hour window weighted by its own reset",
+                vec![host("/h/.q", 30, 50, 4.9), host("/h/.p", 40, 55, 0.5)],
                 opus(None, None),
                 vec![],
-                Some("/h/.less"),
+                Some("/h/.p"),
             ),
         ];
         let tokens = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));

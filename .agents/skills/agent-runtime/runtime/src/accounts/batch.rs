@@ -747,8 +747,8 @@ mod tests {
     /// shared windows of a row that states no model window, a controller's
     /// question about its own account reads the 5-hour window, a figure
     /// the provider read too long ago vouches for no room, and Anthropic's
-    /// refusal the provider states walls the account whichever reading
-    /// stands. Each row: the
+    /// refusal and a spent 5-hour window the provider states wall the
+    /// account whichever reading stands. Each row: the
     /// case, the provider's lines, this machine's readings beside them, the
     /// request, the lanes charged and the other controllers seated per
     /// account, then the answer and the accounts it may name.
@@ -877,6 +877,21 @@ mod tests {
                 worker("claude-opus-5-5", Some("/h/.6claude")),
                 (&[], &[]),
                 ("walled", &["/h/.6claude"]),
+            ),
+            (
+                "a spent 5-hour window on an account this machine reads with room on the model",
+                format!(
+                    "account=/h/.7claude\tharness=claude\tweekly-pct=20\tsession-5h-pct=100\tsession-resets={}",
+                    at(2.0)
+                ),
+                vec![local(
+                    "/h/.7claude",
+                    20,
+                    json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                )],
+                worker("claude-opus-5-5", Some("/h/.7claude")),
+                (&[], &[]),
+                ("walled", &["/h/.7claude"]),
             ),
         ];
         let mut wrong = Vec::new();
