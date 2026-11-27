@@ -1,72 +1,40 @@
-# md-type.awk — md-type's readings: docs-writing's route table and numbered
-# section lists as data, an example's document, and the structure of a
-# judged file. POSIX awk, loaded after md-shapes.awk. Parsed only by
-# scripts/md-type; every record is tab-separated with a one-letter kind.
+# md-type.awk — md-type's readings: docs-writing's route table as data, an
+# example's document, and a file's word count. POSIX awk, loaded after
+# md-shapes.awk. Parsed only by scripts/md-type.
 #
-# The rules, order and judge modes read md-blocks.awk's lines stream, the
-# one reading of a file's block structure, so a fence or front matter is
-# skipped by the grammar md-reflow and md-refs use.
+# The rules and words modes read md-blocks.awk's lines stream, the one
+# reading of a file's block structure, so a fence or front matter is skipped
+# by the grammar md-reflow and md-refs use.
 #
 #   -v mode=rules    SKILL.md's lines stream -> "R line type globs reference
-#                    example checks" per route row, "-" for an empty cell;
-#                    "U detector line" when the table breaks the contract
-#                    (one Path|Section|Example|Shape table, four cells a row,
-#                    known shape names)
-#   -v mode=order    a reference's lines stream -> "O index line names" per
-#                    item of its first numbered list; names are lowercased,
-#                    joined by "|": the item's name, and each side of an
-#                    "X or Y" name
+#                    example" per route row, tab-separated, "-" for an empty
+#                    cell; "U detector line" when the table breaks the
+#                    contract (one Path|Section|Example table, three cells a
+#                    row); "W line" for the retired table with a fourth
+#                    Shape column, whose rows of four cells read with that
+#                    cell ignored
 #   -v mode=example  an example file -> its document's lines: the content of
 #                    its first `markdown` fence before any thematic break,
 #                    else the file up to its first thematic break, front
 #                    matter excluded. A raw read, because the lines stream
 #                    emits no fence content.
-#   -v mode=judge    two files, the judged file then md-blocks' lines stream
-#                    for it -> "F finding line rule-line section" per finding
-#                    (rule-line 0 where the route row is the rule), then
-#                    "W count" of the stream's words. -v checks names the
-#                    shapes to judge and -v order_file the order records. The
-#                    judged file is read only for a heading's level, which
-#                    the stream's H record does not carry.
-#
-# The judge reads structure only: heading levels and order, the content
-# between the title and the first H2, and a table's header cells. It matches
-# no prose.
+#   -v mode=words    two files, the sized file then md-blocks' lines stream
+#                    for it -> the stream's word count. The sized file is read
+#                    only to tell an ATX heading, whose text the stream's H
+#                    record alone carries, from a Setext one, whose text
+#                    arrived as T records.
 
 BEGIN {
   FS = "\n"
-  if (mode != "rules" && mode != "order" && mode != "example" && mode != "judge") {
-    printf "md-type: mode=%s\n  Expected rules, order, example or judge.\n", mode > "/dev/stderr"
+  if (mode != "rules" && mode != "example" && mode != "words") {
+    printf "md-type: mode=%s\n  Expected rules, example or words.\n", mode > "/dev/stderr"
     exit 2
   }
-  # Header cells naming a value a table hands out: defaults, budgets and
-  # limits. Lowercased; a README or architecture doc points to the code that
-  # owns these instead (docs-writing's value-table shape).
-  split("default defaults budget budgets limit limits ceiling ceilings threshold thresholds", vt, " ")
-  for (i in vt) VALUE_HEADERS[vt[i]] = 1
-  SHAPES["order"] = 1
-  SHAPES["value-table"] = 1
   in_front = 0
   headers = 0
   in_table = 0
   words = 0
   ndoc = 0
-  if (mode == "judge") {
-    nitems = 0
-    while ((status = getline rec < order_file) > 0) {
-      split(rec, of, "\t")
-      nitems++
-      item_line[nitems] = of[3]
-      item_names[nitems] = of[4]
-    }
-    if (status < 0) {
-      printf "md-type: order-read=%s\n", order_file > "/dev/stderr"
-      exit 2
-    }
-    close(order_file)
-    judge_order = index(" " checks " ", " order ") > 0
-    judge_values = index(" " checks " ", " value-table ") > 0
-  }
 }
 
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
@@ -122,7 +90,7 @@ mode == "rules" {
     if (CONTENT !~ /^[ \t]*\|/) { in_table = 0; next }
     if (is_delim_row(trim(CONTENT))) next
     cells(CONTENT)
-    if (NCELLS != 4) { printf "U\tcells\t%d\n", LINE; next }
+    if (NCELLS != table_cells) { printf "U\tcells\t%d\n", LINE; next }
     globs = spans(CELL[1])
     reference = link_target(CELL[2])
     if (reference != "") {
@@ -136,43 +104,19 @@ mode == "rules" {
       gsub(/^-+|-+$/, "", type)
     }
     if (type == "") { printf "U\ttype\t%d\n", LINE; next }
-    checks = spans(CELL[4])
-    if (checks == "") {
-      if (tolower(CELL[4]) != "none") { printf "U\tshape\t%d\n", LINE; next }
-    } else {
-      n = split(checks, names, " ")
-      for (i = 1; i <= n; i++) if (!(names[i] in SHAPES)) { printf "U\tshape\t%d\n", LINE; next }
-    }
     # md-type reads these with a tab IFS, which merges adjacent tabs: an
     # empty cell is written "-" so no field shifts into its neighbour.
-    printf "R\t%d\t%s\t%s\t%s\t%s\t%s\n", LINE, type, dash(globs), dash(reference), dash(link_target(CELL[3])), dash(checks)
+    printf "R\t%d\t%s\t%s\t%s\t%s\n", LINE, type, dash(globs), dash(reference), dash(link_target(CELL[3]))
     next
   }
   cells(CONTENT)
-  if (CONTENT ~ /^[ \t]*\|/ && NCELLS == 4 && CELL[1] == "Path" && CELL[2] == "Section" && CELL[3] == "Example" && CELL[4] == "Shape") {
+  if (CONTENT ~ /^[ \t]*\|/ && CELL[1] == "Path" && CELL[2] == "Section" && CELL[3] == "Example" &&
+      (NCELLS == 3 || (NCELLS == 4 && CELL[4] == "Shape"))) {
     headers++
     in_table = 1
+    table_cells = NCELLS
+    if (NCELLS == 4) printf "W\t%d\n", LINE
   }
-  next
-}
-
-mode == "order" {
-  record()
-  if (done) next
-  if (KIND == "T" && match(CONTENT, /^[0-9]+\.[ \t]+/)) {
-    name = substr(CONTENT, RLENGTH + 1)
-    if (match(name, /[:,.]/)) name = substr(name, 1, RSTART - 1)
-    name = tolower(trim(name))
-    # Not "alts", the judge's array: mawk refuses one name used both ways.
-    joined = name
-    if (index(name, " or ") > 0) {
-      n = split(name, sides, / or /)
-      for (i = 1; i <= n; i++) joined = joined "|" trim(sides[i])
-    }
-    printf "O\t%d\t%d\t%s\n", ++items, LINE, joined
-    next
-  }
-  if (items > 0 && !(KIND == "T" && CONTENT ~ /^[ \t]*$/)) done = 1
   next
 }
 
@@ -221,62 +165,15 @@ mode == "example" {
   next
 }
 
-mode == "judge" && NR == FNR { raw[FNR] = $0; next }
+mode == "words" && NR == FNR { raw[FNR] = $0; next }
 
-mode == "judge" {
+mode == "words" {
   record()
   if (KIND == "T" || KIND == "X") words += count_words(CONTENT)
-  if (KIND == "H") {
+  else if (KIND == "H") {
     lead_cols(strip_bq(raw[LINE], -1))
-    level = 0
-    start = LINE
-    if (is_atx(BODY)) {
-      while (substr(BODY, level + 1, 1) == "#") level++
-      words += count_words(CONTENT)
-    } else {
-      level = (substr(BODY, 1, 1) == "=") ? 1 : 2
-      # A Setext heading's text arrived as T records before its underline:
-      # those lines are the heading, never content beside it.
-      if (run_start) start = run_start
-    }
-    while (ncontent > 0 && content_at[ncontent] >= start) ncontent--
-    section = CONTENT
-    # The title is the file's first heading, whatever its level: a README
-    # titled with an H2 still has its description under that title.
-    if (!title_line) title_line = LINE
-    if (level == 1 && !h1_line) h1_line = LINE
-    if (level == 2 && LINE != title_line) {
-      if (!h2_line) { h2_line = LINE; h2_start = start }
-      nh2++
-      h2_at[nh2] = LINE
-      h2_text[nh2] = CONTENT
-    }
-    prev_t = 0
-    run_start = 0
-    next
+    if (is_atx(BODY)) words += count_words(CONTENT)
   }
-  lead_cols(CONTENT)
-  body = BODY
-  if (KIND == "T" && body != "") { if (!run_start) run_start = LINE }
-  else run_start = 0
-  if (body != "") { ncontent++; content_at[ncontent] = LINE }
-  if (KIND != "T") { prev_t = 0; next }
-  if (prev_t == LINE - 1 && index(prev_body, "|") > 0 && is_delim_row(body)) {
-    cells(prev_body)
-    for (i = 1; i <= NCELLS; i++) {
-      cell = tolower(CELL[i])
-      gsub(/[*_`]/, "", cell)
-      if (cell in VALUE_HEADERS) {
-        nvalue++
-        value_at[nvalue] = prev_t
-        value_section[nvalue] = prev_section
-        break
-      }
-    }
-  }
-  prev_t = LINE
-  prev_body = body
-  prev_section = (section == "") ? "top" : section
   next
 }
 
@@ -289,27 +186,5 @@ END {
     for (i = 1; i <= ndoc; i++) print doc[i]
     exit 0
   }
-  if (mode != "judge") exit 0
-  if (judge_values) for (i = 1; i <= nvalue; i++) printf "F\tvalue-table\t%d\t0\t%s\n", value_at[i], value_section[i]
-  if (judge_order && nitems > 0) {
-    # The description is content after the title and before the first
-    # section; content above the title is not under it.
-    lead = 0
-    for (k = 1; k <= ncontent && !lead; k++)
-      if (content_at[k] > title_line && (!h2_start || content_at[k] < h2_start)) lead = 1
-    if (!lead) printf "F\tdescription-missing\t%d\t%d\ttop\n", (h2_line ? h2_line : (h1_line ? h1_line : 1)), item_line[1]
-    highest = 0
-    for (h = 1; h <= nh2; h++) {
-      name = tolower(trim(h2_text[h]))
-      matched = 0
-      for (k = 1; k <= nitems && !matched; k++) {
-        n = split(item_names[k], alts, "|")
-        for (a = 1; a <= n; a++) if (alts[a] == name) { matched = k; break }
-      }
-      if (!matched) continue
-      if (matched < highest) printf "F\tsection-order\t%d\t%d\t%s\n", h2_at[h], item_line[matched], h2_text[h]
-      else highest = matched
-    }
-  }
-  printf "W\t%d\n", words
+  print words
 }

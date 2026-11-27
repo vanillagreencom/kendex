@@ -275,17 +275,14 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
 #            read whole. At any lower similarity a renamed file that also
 #            changed would be one R record the filter drops, and the change
 #            would arrive unjudged. GG_WALK_SRC stays empty.
-#   detect   renames are found at git's default similarity and every one is
-#            selected, an exact move included, with its earlier path in
-#            GG_WALK_SRC for the callback: for a lane whose verdict depends on
-#            the path or compares a file with its earlier self. Copies are
-#            found too, from the paths the same change modifies, so a move
-#            whose old path the change fills with a new file, which git
-#            records as a modification and an addition, still pairs with its
-#            source. A copy of a file the change leaves alone is no record
-#            and arrives as an addition; a new file copied from one the change
-#            edits pairs with that file, which git cannot tell from that move.
-#            md-type sets it through lib/md-scope.sh's GG_MD_RENAMES.
+#   off      renames are not paired, so every move arrives as an addition
+#            at its new path, an unchanged move included: for a lane whose
+#            verdict depends on the path, so a file moved unedited from
+#            outside the lane's globs is judged where it arrives. No
+#            similarity is computed, so the walk reads no blob outside the
+#            lane's globs, which a partial clone may not hold. GG_WALK_SRC
+#            stays empty. md-type sets it through lib/md-scope.sh's
+#            GG_MD_RENAMES.
 GG_WALK_RENAMES=exact
 GG_WALK_SRC=""
 GG_WALK_META=""
@@ -295,8 +292,8 @@ GG_WALK_PATH=""
 gg_walk_diff_flags() {
   case "$GG_WALK_RENAMES" in
     exact) GG_WALK_DIFF=(--find-renames=100% --diff-filter=AMT) ;;
-    detect) GG_WALK_DIFF=(--find-copies --diff-filter=AMTRC) ;;
-    *) gg_fail walk-renames "$GG_WALK_RENAMES" "GG_WALK_RENAMES is exact or detect." ;;
+    off) GG_WALK_DIFF=(--no-renames --diff-filter=AMT) ;;
+    *) gg_fail walk-renames "$GG_WALK_RENAMES" "GG_WALK_RENAMES is exact or off." ;;
   esac
 }
 

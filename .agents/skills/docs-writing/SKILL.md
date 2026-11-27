@@ -98,21 +98,21 @@ Before writing a file:
 - Find its type in this table.
 - Then read its section and its example.
 
-The first row whose path matches wins. `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table. The commit-guards `md-type` lane checks them.
+The first row whose path matches wins. `*` matches across `/`.
 
-| Path | Section | Example | Shape |
-|---|---|---|---|
-| `docs/decisions/*.md` | § Decision records | [decision.md](examples/decision.md) | none |
-| `docs/architecture/*.md` | [architecture.md](references/architecture.md) | [architecture-plugins.md](examples/architecture-plugins.md) | `value-table` |
-| `docs/runbook.md` | § Runbooks | [runbook.md](examples/runbook.md) | none |
-| `AGENTS.md` | [agents.md](references/agents.md) | [root-agents.md](examples/root-agents.md) | none |
-| `*/AGENTS.md` | [agents.md](references/agents.md) | [nested-agents-plugins.md](examples/nested-agents-plugins.md) | none |
-| `SKILL.md`, `*/SKILL.md`, `*/workflows/*.md`, `agents/*.md`, `*/agents/*.md` | [skill-files.md](references/skill-files.md) | [skill-entry.md](examples/skill-entry.md) | none |
-| `*/documentation/*.md` | [human-page.md](references/human-page.md) | [HIW-tasks.md](examples/HIW-tasks.md) | none |
-| `*/references/*.md`, `*/schemas/*.md`, `*/patterns/*.md`, `CHECKS.md`, `*/CHECKS.md` | [reference-docs.md](references/reference-docs.md) | [reference.md](examples/reference.md) | none |
-| `DEVELOPMENT.md`, `*/DEVELOPMENT.md` | [development.md](references/development.md) | [development.md](examples/development.md) | none |
-| `README.md`, `*/README.md` | [readme.md](references/readme.md) | [readme.md](examples/readme.md) | `order`, `value-table` |
-| none: the product content directory a repository names | [human-page.md](references/human-page.md) | [human-page.md](examples/human-page.md) | none |
+| Path | Section | Example |
+|---|---|---|
+| `docs/decisions/*.md` | § Decision records | [decision.md](examples/decision.md) |
+| `docs/architecture/*.md` | [architecture.md](references/architecture.md) | [architecture-plugins.md](examples/architecture-plugins.md) |
+| `docs/runbook.md` | § Runbooks | [runbook.md](examples/runbook.md) |
+| `AGENTS.md` | [agents.md](references/agents.md) | [root-agents.md](examples/root-agents.md) |
+| `*/AGENTS.md` | [agents.md](references/agents.md) | [nested-agents-plugins.md](examples/nested-agents-plugins.md) |
+| `SKILL.md`, `*/SKILL.md`, `*/workflows/*.md`, `agents/*.md`, `*/agents/*.md` | [skill-files.md](references/skill-files.md) | [skill-entry.md](examples/skill-entry.md) |
+| `*/documentation/*.md` | [human-page.md](references/human-page.md) | [HIW-tasks.md](examples/HIW-tasks.md) |
+| `*/references/*.md`, `*/schemas/*.md`, `*/patterns/*.md`, `CHECKS.md`, `*/CHECKS.md` | [reference-docs.md](references/reference-docs.md) | [reference.md](examples/reference.md) |
+| `DEVELOPMENT.md`, `*/DEVELOPMENT.md` | [development.md](references/development.md) | [development.md](examples/development.md) |
+| `README.md`, `*/README.md` | [readme.md](references/readme.md) | [readme.md](examples/readme.md) |
+| none: the product content directory a repository names | [human-page.md](references/human-page.md) | [human-page.md](examples/human-page.md) |
 
 ### One home per fact
 
@@ -170,7 +170,7 @@ Read by a person reading a release. The `changelog-entries` lane owns the shape.
 
 - Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
 - A claim that a checker enforces something names the checker. A constraint without an enforcer names review, an operator step, or the gap.
-- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else. The commit-guards `md-type` lane checks the shapes the route table names. Review holds every other rule. A rewrite's check by use also holds its cuts.
+- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else. Review holds every other rule. A rewrite's check by use also holds its cuts.
 
 ## Plans and research
 

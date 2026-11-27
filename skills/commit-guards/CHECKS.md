@@ -95,41 +95,40 @@ A repository that releases chooses each version by this rule. Where `COMMIT_GUAR
 
 ## md-type
 
-A Markdown file's structure, judged against its docs-writing file type. The rules are docs-writing's own files, read as data; the lane holds no rule list and matches no prose. docs-writing is found the way the pre-commit chain finds a sibling gate: the judged tree's install first, then the copy beside this package.
+Fails a Markdown file the block parser cannot end. Every selected file is parsed by `scripts/lib/md-blocks.awk`, the grammar md-refs and md-reflow read by. A fence, front matter, an HTML block or a prompt-section block left open fails, keyed by md-blocks' refusal (`fence-unclosed=<path>:<line>`). No reader can read such a file past that line:
 
-- **Classification.** The route table under docs-writing's `## Per file type`, the one table whose header is `Path | Section | Example | Shape`. The first row with a code-span glob matching the repo-relative path wins; `*` crosses `/`. A path no row matches is unclassified and only parsed.
-- **Shapes.** The row's Shape cell names the checks: `value-table` and `order`, or `none`.
-- `value-table`: a pipe table whose header row has a cell `Default`, `Budget`, `Limit`, `Ceiling` or `Threshold`, singular or plural, any case, emphasis ignored. The finding cites the route row.
-- `order`: the routed reference's first numbered list. An item's name is its text before the first `:`, `,` or `.`; an `X or Y` name accepts either side. An H2 equal to an item's name, any case, must follow the list's order; other headings are not ordered. The first item is the description slot, whatever it names: content between the title and the first H2, whose absence is `description-missing`. Each finding cites the list item.
-- **Size.** The file's words outside front matter and code blocks, beside the words of the row's example document counted the same way: the content of the example's first `markdown` fence before any thematic break, else the example up to its first thematic break. A signal only; it never changes the exit status, and a sweep prints it only beside a finding.
+- [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/) § 4.5 and § 4.6 run an unclosed fence or HTML block to the end of the document. A renderer shows the rest as code, and a browser hides the rest behind an unclosed `<!--`.
+- md-refs judges no reference in the file and names it `unjudged=`, so a dead reference past the construct goes unreported. md-type is that construct's gate (§ md-refs).
 
-Each finding prints one line, which docs-audit relays:
+CRLF line ends are normalized, not judged. The lane reads no docs-writing file.
+
+`--route` and `--as` read docs-writing's route table as data:
+
+- The table is the one under docs-writing's `## Per file type` whose header is `Path | Section | Example`.
+- A table with a fourth `Shape` column, the retired form, is read with that column ignored until the next major release, and prints one `warning=route-table-shape path=<file>:<line>` on stderr.
+- docs-writing is found the way the pre-commit chain finds a sibling gate: the judged tree's install first, then the copy beside this package.
+- The first row with a code-span glob matching the repo-relative path wins; `*` crosses `/`.
+- `--as` prints one size line for a classified path whose row names an example, which docs-audit relays. Size is the file's words outside front matter and code blocks, beside the words of the row's example document counted the same way. The example document is the content of the example's first `markdown` fence before any thematic break, else the example up to its first thematic break. Size is a signal only and never changes the exit status.
 
 ```
-md-type: finding=<value-table|section-order|description-missing> path=<p> type=<t> line=<n> rule=<docs-writing file>:<line> count=<n> baseline=<n|none> introduced=<yes|no> section=<heading|top>
 md-type: signal=size path=<p> type=<t> words=<n> example_words=<n> example=<file>
 ```
 
-A finding is `(finding, type)` in one file with a count. It is introduced when the count exceeds the baseline's: the file's earlier self in the HEAD commit under `--staged` and `--all`, on the range's base side under `--base` and `--against` (the merge base for three dots, the ref for two), none for a new path or `--as`. A renamed file's earlier self is the path git's rename detection says it moved from, also when the change writes a new file at that path (`git mv README.md docs/README.md` and a new `README.md`), which git records as a copy from a modified file. A new file copied from a file the change also edits is judged against that file too, because git records it the same way; a copy of a file the change leaves alone is a new path. One that moved from another type, or from an unclassified path, has a count of 0, so a reference moved into a README brings every value table in as new. Every line of an introduced pair fails the lane; an inherited pair warns. Renaming the heading over an inherited table keeps the count; a second table raises it. CRLF line ends are normalized, not judged.
-
-Every selected file is parsed, classified or not. A fence, front matter, HTML comment or prompt-section block left open fails, keyed by md-blocks' refusal (`fence-unclosed=<path>:<line>`), since nothing past it can be judged.
-
 Exits:
 
-- An introduced finding, or an unended file, exits 1 in the lane scopes. Under `--as`, any finding exits 1.
-- Only inherited findings exit 0 in the lane scopes, with a warning.
-- With no docs-writing, the lane scopes print `gap=docs-writing-missing` and exit 0. `--as` and `--route` exit 2.
-- Where docs-writing breaks the route-table contract, the lane scopes print `rules=unreadable detector=<d> path=<file>` and exit 0. `--as` and `--route` exit 2, so the audit never reports an unread rule set clean.
+- An unended file exits 1 in the lane scopes and under `--as`.
+- With no docs-writing, `--as` and `--route` print `gap=docs-writing-missing` and exit 2.
+- Where docs-writing breaks the route-table contract, `--as` and `--route` print `rules=unreadable detector=<d> path=<file>` and exit 2, so the audit never reports an unread rule set clean.
 
-The detectors are `unended` (a SKILL.md the block parser cannot end), `route-table` (no such table, or more than one), `cells`, `type` and `shape` (a row the table contract cannot read), `link` (a linked reference or example missing), `order` (an `order` row whose reference has no numbered list or cannot be ended), `example` (an example document the block parser cannot end), and `floor` (no row classifies `README.md`, or none routes to both a reference and an example).
+The detectors are `unended` (a SKILL.md the block parser cannot end), `route-table` (no such table, or more than one), `cells` and `type` (a row the table contract cannot read), `link` (a linked reference or example missing), `example` (an example document the block parser cannot end), and `floor` (no row classifies `README.md`, or none routes to both a reference and an example).
 
 Scopes and modes:
 
 - md-type's scopes, from `scripts/lib/md-scope.sh`, are `--staged`, `--base REF`, `--against REF` and `--all` over `COMMIT_GUARDS_MD_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, renders excluded as [hooks and settings § Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions) states. With no flag, `COMMIT_GUARDS_MD_SCOPE` decides.
-- md-type alone detects renames at git's default similarity, and copies from the files the change modifies, in every scope. Every moved file is judged at its new path against the path it moved from, an unchanged move included: the bare `touched` run counts a staged move as staged, and `--all` measures a staged move against the HEAD path it left.
+- Under `--staged`, `--base` and `--against`, md-type alone parses every moved file at its new path, an unchanged move included, so a file moved into `COMMIT_GUARDS_MD_PATHS` is parsed where it arrives. `--all` parses every matching tracked file.
 - The batch hands it `--staged` at commit and the range a caller hands under either `COMMIT_GUARDS_MD_SCOPE`, or `--against` the ref a `--history REF` caller names. Push withholding is defined in [hooks and settings § Pre-push scope](references/hooks-and-settings.md#pre-push-scope).
 - `--route PATH` prints `type=`, `reference=` and `example=` lines, or `route=ignored`, `route=outside-repo`, or `route=unclassified` with `skill=`. It runs only `git rev-parse` and `git check-ignore` in the path's repository. A path under a `.git` entry that git cannot read, or where git cannot run, is exit 2 `route-repo=<dir>` with git's message.
-- `[--root REPO] --as PATH FILE` judges FILE, `-` for stdin, as PATH with docs-writing read from REPO's install first. Repeated pairs are judged in order with the rules read once, each followed by `judged=<n>`.
+- `[--root REPO] --as PATH FILE` parses and sizes FILE, `-` for stdin, as PATH with docs-writing read from REPO's install first. Repeated pairs are read in order with the route table read once, each followed by `judged=<n>`.
 
 ## md-reflow
 

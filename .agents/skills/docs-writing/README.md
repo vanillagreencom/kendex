@@ -24,7 +24,7 @@ kendex also installs decider, which supplies the decision-record format, and the
 
 The author finds the document type in the table in [SKILL.md](SKILL.md), then reads that type's rules and its example. The author checks existing claims against the code. A focused change edits only the affected text. A rewrite names each file's readers, keeps a rule only where it prevents a real, costly mistake nothing else stops, and has a model from another provider do the readers' tasks with the new files.
 
-On the first Markdown edit of a session, the docs-writing-note hook names that file's type, rules and example once, where commit-guards is installed in the same scope. Without commit-guards, the hook sends the session to the route table in SKILL.md. It never blocks the edit. When the change is committed or pushed, the commit-guards md-type check refuses a shape the table rules out for that type, such as a settings table in a README, and md-refs checks references. Refresh delivers the skill and the hook, so a repository needs no `AGENTS.md` line that sends Markdown edits here.
+On the first Markdown edit of a session, the docs-writing-note hook names that file's type, rules and example once, where commit-guards is installed in the same scope. Without commit-guards, the hook sends the session to the route table in SKILL.md. It never blocks the edit. When the change is committed, and again over the range in CI, the commit-guards md-type check refuses a file that leaves a fence or block open, and md-refs checks references. Refresh delivers the skill and the hook, so a repository needs no `AGENTS.md` line that sends Markdown edits here.
 
 ## Setup
 

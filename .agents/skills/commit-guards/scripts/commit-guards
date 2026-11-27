@@ -64,10 +64,10 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # a range there would answer a smaller question under the setting's name.
 # md-type takes the range under every setting: CHANGE_SCOPED_CHECKS below.
 RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names secrets"
-# The markdown lanes whose verdict compares a change with its base: a
-# finding blocks only where the change raised its count. Their bare run
-# compares the index with HEAD, so these take the range a caller hands under
-# every COMMIT_GUARDS_MD_SCOPE, as byte-ceiling does.
+# The markdown lanes that judge only the files a change writes, so a file the
+# change never touched cannot fail it: these take the range a caller hands
+# under every COMMIT_GUARDS_MD_SCOPE, as byte-ceiling does, never the sweep
+# that setting names.
 CHANGE_SCOPED_CHECKS="md-type"
 # Checks this package no longer ships, read until its next major release: a
 # setting or a call naming one is dropped with one retired-check warning,
@@ -76,7 +76,7 @@ CHANGE_SCOPED_CHECKS="md-type"
 RETIRED_CHECKS="md-format todo-ban prose comments suppression-ban"
 # The range lanes whose baseline is the branch's base rather than the tree
 # the range lands on: changelog-entries asks which version increases the
-# branch made, md-type which shape findings it introduced. A caller that
+# branch made, md-type which files it wrote. A caller that
 # knows that base hands it as --history, and these lanes take --against it in
 # place of the range: a destination can predate base commits the branch
 # carries, which it never authored.
@@ -118,7 +118,7 @@ EOF
 
 retired_notice() { # CHECK
   case "$1" in
-    md-format) gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type judges a file's shape. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
+    md-format) gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type fails a Markdown file its parser cannot end. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
     *) gg_message retired-check "$1" "$1 was removed from commit-guards and nothing replaces it. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
   esac
 }

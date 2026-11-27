@@ -21,9 +21,10 @@
    - Counts and bytes cover all eligible paths, including those outside the displayed list.
    - String values use JSON quoting. `repo_path` distinguishes equal repository names.
    - Paths retain their Git bytes through selection; JSON escapes preserve unusual names in the report.
-7. Read `shape repo=` rows as the commit-guards md-type verdict on each eligible end document, judged against that repository's installed docs-writing, else the copy beside this package.
-   - `md_type` carries md-type's own line: a `finding=` with its section and rule line, or a fence or block the parser cannot end.
-   - `shape-size repo=` rows list the documents with the most words for each word of their type's example, largest first, up to `--top`; they are signals, not findings.
+7. Read `shape repo=` rows as the commit-guards md-type verdict on each eligible end document.
+   - `md_type` carries md-type's own line, which names a fence or block the parser cannot end.
+   - A `shape-warning repo=` row carries an md-type warning about that repository's installed docs-writing, once per repository. Report it with the audit; it changes no verdict.
+   - `shape-size repo=` rows list the documents with the most words for each word of their type's example, largest first, up to `--top`; they are signals, not findings. The type is the one that repository's installed docs-writing routes, else the copy beside this package.
    - A `status=unjudged` shape row means md-type was missing or refused to judge, and the run exits 1. Report its cause, never a clean shape result.
 8. Retain the command output with the audit evidence.
    - The report uses each revision's committed generated-file inventory. Pending files do not affect it.
