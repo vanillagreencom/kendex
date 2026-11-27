@@ -229,7 +229,7 @@ load_rules() { # DOCS-WRITING-DIR, or empty when none was found
   [ "$readme" -eq 1 ] && [ "$linked" -eq 1 ] || { rules_gap floor SKILL.md; return 0; }
   RULES=ok
   # The retired route table with a Shape column still reads until the next
-  # major release (changelog.d/README.md § Release standard): a repository
+  # major release, under kendex's release compatibility standard: a repository
   # whose docs-writing render predates the three-column table keeps its route
   # and its size signal. On stderr, so --route's stdout carries only the
   # route lines CHECKS.md documents.
