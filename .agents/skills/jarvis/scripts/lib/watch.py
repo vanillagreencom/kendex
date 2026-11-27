@@ -1911,15 +1911,18 @@ class Watch:
                 self.accept_succession(wall[1].result(), wall[2], now)
             else:
                 reading = wall[1].result()
-                self.release(now)
-                kind = self.accept_wall(reading, now)
                 # A wall read that binds no live controller, or an exit's
                 # episode still open, reads the recorded one's status. A
                 # wall read whose status read was refused, or found no
                 # package that read needs, already reported this pass's
                 # controller status failure: the exit read would report it again.
                 unread = isinstance(reading, Failure) and reading.record["key"][1:] == ["refusal", "dependency"]
-                if self.exited_pending is None and (reading is None or "exited" in self.state and not unread):
+                status = self.exited_pending is None and (reading is None or "exited" in self.state and not unread)
+                if not status:
+                    # Held notices wait for the pass's status read: a second exit replaces a held success.
+                    self.release(now)
+                kind = self.accept_wall(reading, now)
+                if status:
                     self.exited_pending = ("read", passes.submit(self.exited))
                 if kind is not None:
                     usage = []
@@ -1940,8 +1943,11 @@ class Watch:
         exited = self.exited_pending
         if exited is not None and exited[1].done():
             self.exited_pending = None
-            memory = (self.accept_exited(exited[1].result(), now) if exited[0] == "read"
-                      else self.accept_restart(exited[1].result(), now))
+            if exited[0] == "read":
+                memory = self.accept_exited(exited[1].result(), now)
+                self.release(now)
+            else:
+                memory = self.accept_restart(exited[1].result(), now)
             if memory is not None:
                 self.exited_pending = ("restart", passes.submit(self.restart, dict(memory)))
         if self.wall_pending is None and now >= self.next_wall:

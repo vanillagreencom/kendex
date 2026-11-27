@@ -2993,6 +2993,10 @@ with open(sys.argv[1], "ab") as out:
         # of what happened, never the success the hours held before it.
         again = ([(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 200, 1, 0, 2), (morning, 1, 1, 2), (morning + 30, 1, 1, 2)],
                  (at,))
+        # A restart just before the hours end that exits again in the first
+        # pass after them: the held success never reaches the owner.
+        boundary = ([(morning - 60, 1, 0, 1), (morning - 30, 1, 0, 1), (morning, 1, 1, 1), (morning + 30, 1, 1, 1)],
+                    (morning - 60,))
         # Each row: the stop, the quiet hours in UTC, and how orch reads them
         # at the stop's pass. Hours outside the form leave the answer unread:
         # the notice stays held and the owner-quiet read reports once.
@@ -3000,8 +3004,8 @@ with open(sys.argv[1], "ab") as out:
                                     ("usage", "07-23", "unread"),
                                     ("sign-in", "0-7", "quiet"), ("sign-in", "8-12", "waking"), ("sign-in", "", "waking"),
                                     ("exit", "0-7", "quiet"), ("exit", "8-12", "waking"), ("exit", "", "waking"),
-                                    ("exit again", "0-7", "quiet")):
-            passes, reads = again if stop == "exit again" else twice
+                                    ("exit again", "0-7", "quiet"), ("exit at the end", "0-7", "quiet")):
+            passes, reads = {"exit again": again, "exit at the end": boundary}.get(stop, twice)
             with self.subTest(stop=stop, hours=hours), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.home = self.project("quiet-" + stop.replace(" ", "-") + "-" + (hours or "none"))
@@ -3010,7 +3014,7 @@ with open(sys.argv[1], "ab") as out:
                 # The log keeps every event: no batch settles and takes it.
                 self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-" + self.home.name)),
                                      JARVIS_WAKE_SETTLE_SECS="86400")
-                if stop in ("exit", "exit again"):
+                if stop in ("exit", "exit again", "exit at the end"):
                     plant, calls = self.exited_session()
                     plant("start", running)
                     # A bound controller that is not live leaves the exit to the status read.
