@@ -7547,6 +7547,52 @@ impl Fleet {
     }
 }
 
+#[test]
+fn an_exited_merged_lane_completes_open_branch_boxes_through_both_close_operations() {
+    let body = "## Done-when evidence\n1: first row\n2: second row\n";
+    let post_merge_box = "- [ ] Post-merge: Read the deployed build";
+    let cases = [
+        ("close-lane", "close", "done", false, "Done"),
+        ("close-lane", "keep-sandbox", "stopped", true, "Verifying"),
+        ("close-owned-resources", "close", "done", false, "Done"),
+    ];
+    let mut states = Vec::new();
+    for (op, mode, lane_state, post_merge, _) in cases {
+        let mut description = done_when(false);
+        if post_merge {
+            description.push_str(post_merge_box);
+            description.push_str("; Where: service; Why after merge: deployment; Deadline: +24h\n");
+        }
+        let mut fleet = Fleet::boxes_world("Verifying", &description, body);
+        fleet.answer("HARNESS_STATE", "exited");
+        let answer = fleet.close(if op == "close-lane" {
+            json!({"op": op, "item": "KEN-1", "mode": mode})
+        } else {
+            let mut lane = hosted_lane("KEN-1");
+            lane["viewer"] = json!(true);
+            fleet.write_lanes(vec![lane]);
+            json!({"op": op, "item": "KEN-1"})
+        });
+        assert_eq!(
+            fleet.lane("KEN-1")["status"],
+            lane_state,
+            "{op} {mode}: {answer}"
+        );
+        let issue = fleet.issue();
+        let description = issue["description"].as_str().unwrap();
+        states.push((
+            issue["state"]["name"].as_str().unwrap().to_owned(),
+            description.contains("- [x] first\n  Evidence: first row"),
+            description.contains("- [x] second\n  Evidence: second row"),
+            description.contains(post_merge_box),
+            fleet.sent("issueUpdate").len(),
+        ));
+    }
+    let expected =
+        cases.map(|(_, _, _, post_merge, state)| (state.to_owned(), true, true, post_merge, 1));
+    assert_eq!(states, expected);
+}
+
 /// A merged item its lane left with branch-provable boxes open, its
 /// sandbox gone or its lane ended over a Done item, has the boxes the
 /// merged pull request's `## Done-when evidence` section proves ticked by

@@ -32,7 +32,7 @@ const BOUND: Duration = Duration::from_secs(120);
 pub enum Cause {
     /// The lane's worktree or sandbox is gone.
     SandboxGone,
-    /// The lane ended with its item Done and its sandbox standing.
+    /// The lane ended, with no worktree or sandbox loss observed.
     LaneEnded,
 }
 
@@ -251,6 +251,9 @@ fn settle(
     let Some(Got { issue }) = got else {
         return unsettled("boxes-unticked cause=item-unread");
     };
+    if crate::watch::tracker::dropped(&issue.state.kind) {
+        return None;
+    }
     let description = issue.description.unwrap_or_default();
     let open = match crate::watch::verifying::open_branch_boxes(settings, &description) {
         Ok(open) => open,

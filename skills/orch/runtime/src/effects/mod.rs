@@ -353,7 +353,11 @@ pub fn run(
         return Ok(None);
     };
     let run = Run::new(path, settings, env, locking, clock)?;
-    run_effect(&run, request, effect).map(Some)
+    let effected = run_effect(&run, request, effect)?;
+    if let Request::CloseOwnedResources(close) = request {
+        close::finish_owned(settings, close, &effected);
+    }
+    Ok(Some(effected))
 }
 
 /// The intent a persisted request's report names, where its operation has

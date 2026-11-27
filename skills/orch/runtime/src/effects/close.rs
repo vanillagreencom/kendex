@@ -483,24 +483,65 @@ struct Landing {
     comment: Option<String>,
 }
 
-/// Why the close completes a merged item's boxes on `ground`, and whether
-/// its tracker read the item Done, or `None` where it completes none: its
-/// worktree or sandbox gone (`gone`, or the merged ground, which the close
-/// takes once the lane's work is over, [`Close::merged_and_done`]), or its
-/// item Done with the lane ended.
-fn boxes_cause(ground: &Ground, gone: bool) -> Option<(boxes::Cause, bool)> {
-    match ground {
-        Ground::Ended("merged") => Some((boxes::Cause::SandboxGone, false)),
-        Ground::Terminal(Terminal {
-            verdict: state::TerminalVerdict::Completed,
-            ..
-        }) if gone => Some((boxes::Cause::SandboxGone, true)),
-        Ground::Terminal(Terminal {
-            verdict: state::TerminalVerdict::Completed,
-            ..
-        }) => Some((boxes::Cause::LaneEnded, true)),
-        Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep(_) => None,
+struct BoxLanding<'a> {
+    settings: &'a Settings,
+    item: &'a str,
+    who: &'a Identity,
+    cause: boxes::Cause,
+    done: bool,
+}
+
+/// Finish a direct close's landing after its admitted stop confirms. Its
+/// effect can reconcile independently, so box failures are reported with
+/// the close's result.
+pub(super) fn finish_owned(settings: &Settings, close: &CloseOwnedResources, effected: &Effected) {
+    // A retirement for relaunch keeps the lane's work for its successor.
+    if close
+        .no_landing
+        .as_ref()
+        .is_some_and(|keep| keep.reason != "keep-sandbox")
+    {
+        return;
     }
+    let Effected::Recorded(applied) = effected else {
+        return;
+    };
+    let Report::RecordOutcome(outcome) = &applied.report else {
+        return;
+    };
+    let Some(lane) = outcome
+        .lane
+        .as_ref()
+        .filter(|_| outcome.intent.outcome == agent_runtime::protocol::Outcome::Confirmed)
+    else {
+        return;
+    };
+    let who =
+        Identity::of(lane, &CloseIdentity::default()).expect("nothing fills the lane identity");
+    let mut notes = Vec::new();
+    if let Some(completion) = (BoxLanding {
+        settings,
+        item: &close.item,
+        who: &who,
+        cause: boxes::Cause::LaneEnded,
+        done: completed_terminal(close.terminal.as_ref()),
+    })
+    .landing(None, lane.extra.get("cycle"), &mut notes)
+    {
+        match completion {
+            boxes::Completion::Settled(note) => notes.extend(note),
+            boxes::Completion::Unsettled { note, .. } => notes.push(note),
+        }
+    }
+    use std::io::Write;
+    let mut stderr = std::io::stderr();
+    for note in notes {
+        let _ = writeln!(stderr, "{note} item={}", close.item);
+    }
+}
+
+fn completed_terminal(terminal: Option<&Terminal>) -> bool {
+    terminal.is_some_and(|t| t.verdict == state::TerminalVerdict::Completed)
 }
 
 impl Close<'_> {
@@ -750,7 +791,7 @@ impl Close<'_> {
         };
         let acts = !matches!(judged, LaneState::Exited) && self.hosted();
         let host_absent = acts && self.refuse_ask_unless_gone(&mut notes)?;
-        let landing = self.landing(&ground, boxes_cause(&ground, host_absent))?;
+        let landing = self.record_landing(&ground, host_absent)?;
         // A sandbox gone asks no provider stop. An ended item's asks the
         // provider nothing more; an open item's keeps its ground, the
         // provider's close answering its sandbox absent and the item's files
@@ -772,22 +813,22 @@ impl Close<'_> {
 
     /// The close on `ground` with the landing its delivery names recorded.
     fn close_on(&self, ground: Ground) -> Result<Closed> {
-        let landing = self.landing(&ground, None)?;
+        let landing = self.record_landing(&ground, false)?;
         self.persist(ground, landing)
     }
 
     /// The landing the close records, read before it acts: the merge cycle
-    /// the request's delivery names, and on a ground that completes a
-    /// merged item's boxes (`boxes`), their completion. Both are read here
+    /// the request's delivery names, and the merged item's box completion.
+    /// Both are read here
     /// because the close is the last reader of their inputs: the record's
     /// confirm deletes the pull request it parked and the item's files leave
     /// with it, and a done record answers a later close at once. So a cycle
     /// the recorder refuses, or boxes left open, refuse the close with
     /// nothing moved, unless the request's disposal gives that part up.
-    fn landing(&self, ground: &Ground, boxes: Option<(boxes::Cause, bool)>) -> Result<Landing> {
+    fn record_landing(&self, ground: &Ground, host_absent: bool) -> Result<Landing> {
         let disposal = self.r.landing.as_ref().map(|l| &l.disposed);
         let mut landing = Landing::default();
-        let (mut record, mut open) = (false, false);
+        let mut record = false;
         if let Some(delivery) = &self.r.delivery
             && !matches!(ground, Ground::Keep(_))
         {
@@ -817,8 +858,28 @@ impl Close<'_> {
                 }
             }
         }
-        if let Some((cause, done)) = boxes
-            && let Some(completion) = self.boxes(cause, done, &mut landing.notes)
+        let terminal = match ground {
+            Ground::Terminal(terminal) => Some(terminal),
+            Ground::Exited | Ground::Ended(_) | Ground::Keep(_) => None,
+        };
+        let mut open = false;
+        if self.park().is_none()
+            && let Some(completion) = (BoxLanding {
+                settings: self.settings,
+                item: self.item(),
+                who: &self.who,
+                cause: if host_absent || matches!(ground, Ground::Ended("merged")) {
+                    boxes::Cause::SandboxGone
+                } else {
+                    boxes::Cause::LaneEnded
+                },
+                done: completed_terminal(terminal),
+            })
+            .landing(
+                self.r.delivery.as_ref(),
+                self.lane.extra.get("cycle"),
+                &mut landing.notes,
+            )
         {
             match completion {
                 boxes::Completion::Settled(note) => landing.notes.extend(note),
@@ -854,54 +915,53 @@ impl Close<'_> {
             });
         Ok(landing)
     }
+}
 
-    /// A merged item's branch-provable boxes completed from its merged pull
-    /// request's evidence where the close ends a lane that did not complete
-    /// them; `None` where the close completes none: an item no Linear
-    /// tracker holds (the completion is the linear package's), or a
-    /// delivery no pull request names. A direct delivery has no evidence
-    /// section to read, which its note says.
-    fn boxes(
+impl BoxLanding<'_> {
+    /// The delivery identifies the pull request. The box completion reads
+    /// its merge stamp before it can write to the tracker.
+    fn landing(
         &self,
-        cause: boxes::Cause,
-        done: bool,
+        delivery: Option<&ops::Delivery>,
+        cycle: Option<&Value>,
         notes: &mut Vec<String>,
     ) -> Option<boxes::Completion> {
         if self.who.tracker != "linear" {
             return None;
         }
-        let (pr, repo) = match &self.r.delivery {
-            Some(ops::Delivery::Pr { pr, repo }) => (*pr, repo.clone()),
+        let (pr, repo) = match delivery {
+            Some(ops::Delivery::Pr { pr, repo }) => (*pr, repo.as_deref()),
             Some(ops::Delivery::Commit { .. }) => {
                 notes.push("boxes-unread cause=direct-delivery".to_owned());
                 return None;
             }
-            None => (
-                self.lane
-                    .extra
-                    .get("cycle")
-                    .and_then(|c| c.get("pr"))
-                    .and_then(Value::as_u64)?,
-                None,
-            ),
+            None => {
+                let cycle = cycle?;
+                (
+                    cycle.get("pr")?.as_u64()?,
+                    cycle.get("repo").and_then(Value::as_str),
+                )
+            }
         };
-        let Some(repo) = repo.or_else(|| self.who.repo.clone()) else {
+        let Some(repo) = repo.or(self.who.repo.as_deref()) else {
             return Some(boxes::Completion::Unsettled {
                 note: "boxes-unticked cause=repo-missing".to_owned(),
                 comment: None,
             });
         };
-        let merged = boxes::Merged { repo: &repo, pr };
+        let merged = boxes::Merged { repo, pr };
         Some(boxes::complete(
             self.settings,
             Path::new("gh"),
-            self.item(),
+            self.item,
             &merged,
-            cause,
-            done,
+            self.cause,
+            self.done,
         ))
     }
+}
 
+impl Close<'_> {
     /// The ground a lane whose work may be over closes on: its item ended
     /// by its tracker, else its merge landed with its work over
     /// ([`Self::merged_and_done`]); `None` is a lane still at work on an
@@ -1321,18 +1381,14 @@ impl Close<'_> {
         });
         let applied =
             super::lane_operation::apply_request(self.path, &request, self.env, self.locking)?;
-        let effected = super::run(
-            self.path,
-            &request,
-            &applied.report,
-            self.settings,
-            self.env,
-            self.locking,
-            self.clock,
-        )?;
+        let run = super::Run::new(self.path, self.settings, self.env, self.locking, self.clock)?;
+        let Report::CloseOwnedResources(requested) = &applied.report else {
+            unreachable!("a close request reports a close");
+        };
+        let effected = super::run_effect(&run, &request, &requested.effect)?;
         let mut closed = self.word(Word::Unconfirmed, Some(self.lane.status));
         closed.notes = notes;
-        if let Some(Effected::Recorded(recorded)) = &effected
+        if let Effected::Recorded(recorded) = &effected
             && let Report::RecordOutcome(outcome) = &recorded.report
         {
             let intent = &outcome.intent;
@@ -1360,7 +1416,7 @@ impl Close<'_> {
             let posted = boxes::post(self.settings, self.item(), &text);
             closed.notes.push(format!("boxes-comment={posted}"));
         }
-        closed.effect = effected;
+        closed.effect = Some(effected);
         Ok(closed)
     }
 
