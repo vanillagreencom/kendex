@@ -369,7 +369,7 @@ printf 'true\n' >"$repo/tools/wrap-lib.sh"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a workflow env wrapper sources a helper'
 # Talk's app job at talk a0ba803ae, with its root package files and scripts.
-# Its tool scripts are unread, so its claim stands in for what they read.
+# The reader refuses it at pnpm install, so its claim stands in for what it reads.
 git -C "$repo" checkout -qb fixture-pnpm "$static_base"
 write_workflow web-only >"$repo/.github/workflows/ci.yml"
 edit_workflow '      - uses: actions/checkout@v7\n      - working-directory: web\n        run: ./node_modules/.bin/vitest run\n' \
@@ -386,14 +386,12 @@ printf '%s\n' 'web src/* eslint.config.js # reason: eslint, tsc and jest read th
 git -C "$repo" add -A
 git -C "$repo" commit -qm "Talk's pnpm app job"
 pnpm_base="$(git -C "$repo" rev-parse HEAD)"
-# The same job with scripts the reader follows and no claim.
+# The same job with no install, scripts the reader follows and no claim.
 git -C "$repo" checkout -qb fixture-pnpm-followed "$pnpm_base"
-edit_workflow '      - run: pnpm lint\n      - run: pnpm typecheck\n' ''
+edit_workflow '      - run: pnpm install --frozen-lockfile\n      - run: pnpm lint\n      - run: pnpm typecheck\n' ''
 edit_file "$repo/package.json" '"lint":"eslint .","typecheck":"tsc --noEmit","test":"jest"' \
-  '"postinstall":"bash ./tools/setup.sh","pretest":"cat ./tools/fixture.txt","test":"bash ./tools/test.sh"'
-printf 'true\n' | tee "$repo/tools/setup.sh" "$repo/tools/test.sh" "$repo/tools/fixture.txt" >/dev/null
-# No dependency build is allowed, so no dependency hook can run.
-edit_file "$repo/pnpm-workspace.yaml" 'allowBuilds:\n  esbuild: true\n' ''
+  '"pretest":"cat ./tools/fixture.txt","test":"bash ./tools/test.sh"'
+printf 'true\n' | tee "$repo/tools/test.sh" "$repo/tools/fixture.txt" >/dev/null
 git -C "$repo" rm -q -- .github/ci-lanes.conf
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a pnpm job whose scripts the reader follows'
@@ -418,14 +416,12 @@ pnpm-refused-setup|.github/workflows/ci.yml|node-version-file: .nvmrc|registry-u
 pnpm-refused-npmrc|.npmrc||node-options=--require ./tools/preload.cjs\n
 pnpm-refused-override|pnpm-workspace.yaml|semver: ^7.6.0|semver: link:./vendor/semver
 pnpm-refused-pnpmfile|.pnpmfile.cjs||module.exports = {}\n
-pnpm-refused-builds|pnpm-workspace.yaml|overrides:|allowBuilds:\n  prisma: true\noverrides:
-pnpm-refused-builds|prisma/schema.prisma||model User {}\n
-pnpm-refused-onlybuilt|pnpm-workspace.yaml|overrides:|onlyBuiltDependencies:\n  - prisma\noverrides:
-pnpm-refused-neverbuilt|pnpm-workspace.yaml|overrides:|neverBuiltDependencies:\n  - fsevents\noverrides:
-pnpm-refused-pnpm9|package.json|"packageManager":"pnpm@12.3.4"|"packageManager":"pnpm@9.15.0"
-pnpm-refused-unpinned|package.json|"packageManager":"pnpm@12.3.4",|
+pnpm-refused-install|.github/workflows/ci.yml|      - run: pnpm test\n|      - run: pnpm install --frozen-lockfile\n      - run: pnpm test\n
+pnpm-refused-install|.github/workflows/ci.yml|\njobs:\n|\nenv:\n  pnpm_config_dangerously_allow_all_builds: "true"\njobs:\n
+pnpm-refused-install|pnpm-workspace.yaml|allowBuilds:\n  esbuild: true\n|
+pnpm-refused-shorthand|.github/workflows/ci.yml|      - run: pnpm test\n|      - run: pnpm test\n      - run: pnpm lint\n
 pnpm-refused-lockfile|pnpm-workspace.yaml|overrides:|lockfileDir: locks\noverrides:
-pnpm-refused-ancestor|.github/workflows/ci.yml|      - run: pnpm install --frozen-lockfile\n      - run: pnpm test\n|      - working-directory: app\n        run: pnpm install --frozen-lockfile\n      - working-directory: app\n        run: pnpm test\n
+pnpm-refused-ancestor|.github/workflows/ci.yml|      - run: pnpm test\n|      - working-directory: app\n        run: pnpm test\n
 pnpm-refused-ancestor|app/package.json||{"private":true,"scripts":{"test":"bash ../tools/test.sh"}}\n
 pnpm-refused-ancestor|package.json|"private":true|"private":true,"pnpm":{"overrides":{}}
 pnpm-refused-volta|.github/workflows/ci.yml|node-version-file: .nvmrc|node-version-file: tools/node.json
@@ -1552,9 +1548,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     pnpm-talk-*) refused_jobs='job=web cause=pnpm-config-unread' ;;
     pnpm-followed-git-failure) refused_jobs='job=web cause=git-exit-128' ;;
     pnpm-refused-local|pnpm-refused-npmrc|pnpm-refused-pnpmfile|pnpm-refused-override|pnpm-refused-lockfile|\
-      pnpm-refused-ancestor|pnpm-refused-builds|pnpm-refused-onlybuilt|pnpm-refused-neverbuilt|pnpm-refused-pnpm9|\
-      pnpm-refused-unpinned)
+      pnpm-refused-ancestor|pnpm-refused-install)
       refused_jobs='job=web cause=pnpm-config-unread' ;;
+    pnpm-refused-shorthand) refused_jobs='job=web cause=opaque-pnpm-command' ;;
     pnpm-refused-body) refused_jobs='job=web cause=unresolved-pnpm-script' ;;
     pnpm-refused-setup|pnpm-refused-volta|pnpm-refused-newline) refused_jobs='job=web cause=opaque-action' ;;
   esac
@@ -1717,7 +1713,6 @@ pnpm-talk-node-version|.nvmrc|||true|
 pnpm-talk-workspace|pnpm-workspace.yaml|||true|
 pnpm-followed-gitignore|.gitignore|||false|
 pnpm-followed-script|tools/test.sh|||true|
-pnpm-followed-lifecycle|tools/setup.sh|||true|
 pnpm-followed-pre|tools/fixture.txt|||true|
 pnpm-refused-local|.gitignore|||true|
 pnpm-refused-body|.gitignore|||true|
@@ -1725,11 +1720,8 @@ pnpm-refused-setup|.gitignore|||true|
 pnpm-refused-npmrc|.gitignore|||true|
 pnpm-refused-override|.gitignore|||true|
 pnpm-refused-pnpmfile|.gitignore|||true|
-pnpm-refused-builds|prisma/schema.prisma|||true|
-pnpm-refused-onlybuilt|.gitignore|||true|
-pnpm-refused-neverbuilt|.gitignore|||true|
-pnpm-refused-pnpm9|.gitignore|||true|
-pnpm-refused-unpinned|.gitignore|||true|
+pnpm-refused-install|.gitignore|||true|
+pnpm-refused-shorthand|.gitignore|||true|
 pnpm-followed-git-failure|.gitignore|||true|
 pnpm-refused-lockfile|.gitignore|||true|
 pnpm-refused-ancestor|.gitignore|||true|

@@ -113,9 +113,6 @@ SETUP_ACTIONS = {
 }
 VITEST_RUNS = (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                ["npx", "--no-install", "vitest", "run"])
-# https://pnpm.io/scripts: the scripts pnpm install runs in the project itself.
-PNPM_LIFECYCLE = ("pnpm:devPreinstall", "preinstall", "install", "postinstall",
-                  "preprepare", "prepare", "postprepare")
 # The pnpm-workspace.yaml settings that name no repository file, given
 # values that are no local path. Any other setting can name one, as code or
 # as an input: workspace packages, a pnpmfile, a patch, the script shell, a
@@ -1145,9 +1142,9 @@ def setting_values(value):
 
 
 def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
-    """Follow a pnpm install or script run: the package and settings files
-    pnpm reads in the working directory and each ancestor, then each script
-    it runs, read as a run line."""
+    """Follow a pnpm script run: the package and settings files pnpm reads in
+    the working directory and each ancestor, then each script it runs, read
+    as a run line."""
     folders = {directory, *(parent.as_posix() for parent in Path(directory).parents)}
 
     def settings_file(name):
@@ -1158,7 +1155,6 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
     manifest_path = (Path(directory) / "package.json").as_posix() if directory != "." else "package.json"
     ordinary.add(manifest_path)
     scripts = None
-    workspaces, pins = [], []
     for path in sorted({*evidence.files, manifest_path}):
         name = Path(path).name
         if Path(path).parent.as_posix() not in folders or not settings_file(name):
@@ -1177,7 +1173,6 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
                           and not any(isinstance(value, str) and local_spec(value)
                                       for value in setting_values(settings)),
                           f"pnpm-config-unread path={path}")
-            workspaces.append((path, settings))
         elif name == "package.json":
             source = evidence.blob(path)
             try:
@@ -1192,28 +1187,13 @@ def pnpm_reads(evidence, args, directory, ordinary, readers, covered, visited):
             ), f"pnpm-config-unread path={path}")
             if path == manifest_path:
                 scripts = manifest.get("scripts", {})
-            if "packageManager" in manifest:
-                pins.append((path, manifest["packageManager"]))
     require_shape(isinstance(scripts, dict), f"pnpm-config-unread path={manifest_path}")
-    # A dependency's install script reads repository files no reader follows.
-    # Since v10 pnpm runs one only where a setting allows it, and a
-    # neverBuiltDependencies list without onlyBuiltDependencies allows every
-    # other (pnpm.io settings, v10.x). Any pnpm command can install: pnpm run
-    # installs first where node_modules is stale, as verifyDepsBeforeRun
-    # defaults to install in pnpm 12.
-    for path, settings in workspaces:
-        builds = settings.get("allowBuilds", {})
-        require_shape(isinstance(builds, dict) and set(builds.values()) <= {"false", "False", "FALSE"}
-                      and not settings.get("onlyBuiltDependencies")
-                      and not settings.get("neverBuiltDependencies"),
-                      f"pnpm-config-unread path={path} reason=dependency-builds")
-    for path, pin in pins or [(manifest_path, None)]:
-        version = re.fullmatch(r"pnpm@(\d+)\..*", pin) if isinstance(pin, str) else None
-        require_shape(version and int(version[1]) >= 10,
-                      f"pnpm-config-unread path={path} reason=pnpm-version-unpinned")
-    if args == ["install", "--frozen-lockfile"]:
-        names = [name for name in PNPM_LIFECYCLE if name in scripts]
-    elif args == ["test"] or (len(args) == 2 and args[0] == "run"):
+    # A dependency's install script reads repository files no reader follows,
+    # and pnpm takes the settings that allow one from sources beyond the
+    # repository, such as the environment. No reader proves that none runs.
+    require_shape(args[:1] != ["install"],
+                  f"pnpm-config-unread path={manifest_path} reason=dependency-builds-unproved")
+    if args == ["test"] or (len(args) == 2 and args[0] == "run"):
         # https://pnpm.io/cli/test: pnpm test is pnpm run test. The pnpm NAME
         # shorthand runs a built-in command where one has that name, and the
         # set differs by pnpm version, so it stays unread. enablePrePostScripts
