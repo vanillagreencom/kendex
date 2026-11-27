@@ -74,10 +74,12 @@ fn report(run: &RunEvidence, bucket: Bucket) -> CheckReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Correlation {
     /// A failing member's own run is unfinished, or a substantive run on
-    /// the head is; the failure is provisional.
+    /// the head is (of its own run's workflow, for a commit status); the
+    /// failure is provisional.
     Active,
-    /// Every failure's workflow has a newer substantive execution that
-    /// ended in success; the frozen failures will never update.
+    /// No failure is a commit status, and every failure's workflow has a
+    /// newer substantive execution that ended in success; the frozen
+    /// failures will never update.
     Superseded,
     /// No such newer execution, the newest one did not succeed, or a
     /// failure cannot be attributed to a run.
@@ -99,6 +101,13 @@ enum Correlation {
 /// run is in flight, since a run the read could not find is no proof of an
 /// external failure, and `terminal` otherwise. A member with no association
 /// is `terminal`.
+///
+/// A commit status with its own run is replaced by no run: the combined
+/// status already carries GitHub's latest status for its context, so a
+/// newer run that published none leaves GitHub blocking on the failure.
+/// It is `active` while its own run or a substantive run of its own run's
+/// workflow, the one that can publish the context again, is unfinished,
+/// and `terminal` otherwise; another workflow's run holds it nowhere.
 fn correlate(failed: &[&Member], scoped: &[&RunEvidence]) -> Correlation {
     let mut active = false;
     for member in failed {
@@ -122,6 +131,16 @@ fn correlate(failed: &[&Member], scoped: &[&RunEvidence]) -> Correlation {
             }
             return Correlation::Terminal;
         };
+        if member.report.source == Source::CommitStatus {
+            let publisher_in_flight = runs.iter().any(|r| {
+                substantive(r) && r.workflow_id() == own.workflow_id() && r.outcome().unfinished()
+            });
+            if own.outcome().unfinished() || publisher_in_flight {
+                active = true;
+                continue;
+            }
+            return Correlation::Terminal;
+        }
         if own.outcome().unfinished() || head_in_flight {
             active = true;
             continue;

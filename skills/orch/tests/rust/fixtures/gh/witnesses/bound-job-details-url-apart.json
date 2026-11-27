@@ -53,7 +53,7 @@
           "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
           "status": "completed",
           "conclusion": "success",
-          "event": "push",
+          "event": "pull_request",
           "workflow_id": 3,
           "updated_at": "2026-07-26T10:00:00Z",
           "repository": {
@@ -148,7 +148,7 @@
             "databaseId": 5000300,
             "workflowRun": {
               "databaseId": 300,
-              "event": "push",
+              "event": "pull_request",
               "workflow": {
                 "name": "Required"
               }

@@ -43,9 +43,11 @@
 //!    run-less. The association the evidence read (`Association`) travels
 //!    with the member and is read by the classification alone. Under
 //!    `verify-pr` with a required set that names anything, a workflow
-//!    job's check (a check run whose suite has a run) that step 7 did not
-//!    bind counts only from a run GitHub evaluates for a pull request
-//!    (`Replacements::PullRequestRuns`): one of another run is set aside
+//!    job's check (a check run whose suite has a run) counts only from a
+//!    run GitHub evaluates for a pull request
+//!    (`Replacements::PullRequestRuns`), a run step 7 binds included, since
+//!    every event a ruleset workflow runs on is one of them
+//!    (`evidence::RULESET_EVENTS`): one of another run is set aside
 //!    here, joins no run group the pick reads and matches no required
 //!    context, and one bearing a required context's name is reported as a
 //!    non-required line, whichever arm step 8 takes. Such a member's failure is held or
@@ -692,7 +694,7 @@ fn bind<'a>(
 /// reports and never judges; see the module header for the steps.
 pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec<CheckReport>) {
     // 7. The required-definition walk, first: its bound runs are kept in
-    // step 4 whatever their rank, and step 2 sets none of them aside.
+    // step 4 whatever their rank.
     let walked = evidence
         .required()
         .filter(|req| !req.workflows().is_empty())
@@ -738,10 +740,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
                 place: place(check.linked(), check.workflow(), check.run_level()),
                 link: check.link(),
                 association: check.association(),
-                replacements: if pull_request_rule
-                    && !check.event().is_empty()
-                    && !check.linked().is_some_and(|run| bound_ids.contains(&run))
-                {
+                replacements: if pull_request_rule && !check.event().is_empty() {
                     Replacements::PullRequestRuns
                 } else {
                     Replacements::AnyRun

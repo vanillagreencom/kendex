@@ -290,16 +290,21 @@ fn suite_node_id(run: u64) -> String {
 
 /// A run of the required workflow's own file (`WORKFLOW_PATH`), the
 /// candidate a `workflows` rule may bind; its proof is the node
-/// `required_node` gives.
+/// `required_node` gives. A `pull_request` dispatch, one of the events a
+/// ruleset workflow runs on.
 fn required_run(id: u64, attempt: u64, started: &str, status: &str, conclusion: Value) -> Value {
     with(
         with(
-            execution(id, attempt, started, HEAD, status, conclusion),
-            "path",
-            json!(WORKFLOW_PATH),
+            with(
+                execution(id, attempt, started, HEAD, status, conclusion),
+                "path",
+                json!(WORKFLOW_PATH),
+            ),
+            "workflow_id",
+            json!(REQUIRED_WORKFLOW_ID),
         ),
-        "workflow_id",
-        json!(REQUIRED_WORKFLOW_ID),
+        "event",
+        json!("pull_request"),
     )
 }
 
@@ -852,14 +857,16 @@ fn a_passing_head_is_complete_pass_and_recorded() {
 /// (`the_recorded_witnesses_keep_their_verdicts`).
 #[test]
 fn verdicts_follow_the_check_and_run_states() {
-    let aggregate = |context: &str, state: &str, run_id: u64| {
+    let event = |run: Value, event: &str| with(run, "event", json!(event));
+    // A check of no Actions suite whose details URL names a run: a run
+    // status the correlation reads by that run.
+    let linked_check = |name: &str, id: u64, run_id: u64| {
         with(
-            status(context, state),
-            "target_url",
+            check_run_in(None, id, json!(name), "completed", json!("failure")),
+            "details_url",
             json!(format!("https://github.com/{REPO}/actions/runs/{run_id}")),
         )
     };
-    let event = |run: Value, event: &str| with(run, "event", json!(event));
     let rows = [
         Verdict {
             name: "a neutral check run is skipping beside a green sibling, which passes",
@@ -970,15 +977,12 @@ fn verdicts_follow_the_check_and_run_states() {
             checks: vec![row("build", "check-run", "skipped", "skipping")],
         },
         Verdict {
-            name: "a newer successful push run on the pinned head supersedes an earlier failure of the same workflow",
-            check_runs: vec![check_run_in(
-                Some(701),
-                10,
-                json!("lint"),
-                "completed",
-                json!("success"),
-            )],
-            statuses: vec![aggregate("CI Required", "failure", 700)],
+            name: "a newer successful push run on the pinned head supersedes an earlier check failure of the same workflow",
+            check_runs: vec![
+                check_run_in(Some(701), 10, json!("lint"), "completed", json!("success")),
+                linked_check("CI Required", 11, 700),
+            ],
+            statuses: vec![],
             runs: vec![
                 event(run(700, HEAD, "completed", json!("failure")), "push"),
                 event(
@@ -1000,15 +1004,12 @@ fn verdicts_follow_the_check_and_run_states() {
             checks: vec![row("lint", "check-run", "success", "pass")],
         },
         Verdict {
-            name: "a failure whose newer same-workflow execution is not substantive stays terminal",
-            check_runs: vec![check_run_in(
-                Some(701),
-                10,
-                json!("lint"),
-                "completed",
-                json!("success"),
-            )],
-            statuses: vec![aggregate("CI Required", "failure", 700)],
+            name: "a check failure whose newer same-workflow execution is not substantive stays terminal",
+            check_runs: vec![
+                check_run_in(Some(701), 10, json!("lint"), "completed", json!("success")),
+                linked_check("CI Required", 11, 700),
+            ],
+            statuses: vec![],
             runs: vec![
                 event(run(700, HEAD, "completed", json!("failure")), "schedule"),
                 event(
@@ -1029,7 +1030,7 @@ fn verdicts_follow_the_check_and_run_states() {
             cause: None,
             checks: vec![
                 row("lint", "check-run", "success", "pass"),
-                row("CI Required", "commit-status", "failure", "fail"),
+                row("CI Required", "check-run", "failure", "fail"),
             ],
         },
         Verdict {
@@ -4123,6 +4124,270 @@ fn a_required_status_is_held_while_a_run_of_its_publisher_is_active() {
     assert_eq!(non_required(&result), vec![], "{result}");
     assert!(gh.state().get("verification").is_none());
     assert_pull_then_pinned(&gh.log(), PR, HEAD);
+}
+
+/// One row of a required commit status that a pull-request run of its
+/// publisher's workflow failed, beside a later `workflow_dispatch` run:
+/// that run's workflow and state, its one job, and the answer.
+struct FailedStatusRow {
+    name: &'static str,
+    later_workflow: u64,
+    later_status: &'static str,
+    later_conclusion: Value,
+    later_job: &'static str,
+    later_job_conclusion: Value,
+    checks: Vec<Reported>,
+    non_required: Vec<Reported>,
+}
+
+/// GitHub's combined status carries the latest status per context, so a
+/// failed required commit status is replaced only by a newer status for
+/// that context, and a run that published none replaces nothing: a later
+/// green dispatch of the publisher's workflow whose publishing job was
+/// skipped leaves the failure failed. A run in flight of another workflow
+/// will publish nothing for the context either, so it holds no settled
+/// failure pending. `lint` targets the job of run 800 (`Lint`) that
+/// published it; `CI` passes on the pull request's run 700.
+#[test]
+fn a_failed_required_status_stands_until_its_context_reports_again() {
+    const LINT_WORKFLOW_ID: u64 = REQUIRED_WORKFLOW_ID;
+    let rows = [
+        FailedStatusRow {
+            name: "a green dispatch of the publisher's workflow that skipped the publishing job",
+            later_workflow: LINT_WORKFLOW_ID,
+            later_status: "completed",
+            later_conclusion: json!("success"),
+            later_job: "publish",
+            later_job_conclusion: json!("skipped"),
+            checks: vec![
+                row("CI", "check-run", "success", "pass"),
+                row("lint", "commit-status", "failure", "fail"),
+            ],
+            non_required: vec![],
+        },
+        FailedStatusRow {
+            name: "another workflow's dispatch in flight",
+            later_workflow: WORKFLOW_ID,
+            later_status: "in_progress",
+            later_conclusion: Value::Null,
+            later_job: "CI",
+            later_job_conclusion: Value::Null,
+            checks: vec![
+                row("CI", "check-run", "success", "pass"),
+                row("lint", "commit-status", "failure", "fail"),
+            ],
+            non_required: vec![row("CI", "check-run", "in_progress", "pending")],
+        },
+    ];
+    for r in rows {
+        let later_started = "2026-01-29T15:21:00Z";
+        let later_check = with(
+            check_run_in(
+                Some(801),
+                21,
+                json!(r.later_job),
+                if r.later_job_conclusion.is_null() {
+                    "in_progress"
+                } else {
+                    "completed"
+                },
+                r.later_job_conclusion.clone(),
+            ),
+            "started_at",
+            json!(later_started),
+        );
+        let jobs = vec![
+            check_run_in(Some(700), 9, json!("CI"), "completed", json!("success")),
+            check_run_in(
+                Some(800),
+                20,
+                json!("publish"),
+                "completed",
+                json!("success"),
+            ),
+            later_check,
+        ];
+        let in_workflow = |run: Value, workflow: u64, event: &str| {
+            with(
+                with(run, "workflow_id", json!(workflow)),
+                "event",
+                json!(event),
+            )
+        };
+        let executions = vec![
+            in_workflow(
+                run(700, HEAD, "completed", json!("success")),
+                WORKFLOW_ID,
+                "pull_request",
+            ),
+            in_workflow(
+                run(800, HEAD, "completed", json!("success")),
+                LINT_WORKFLOW_ID,
+                "pull_request",
+            ),
+            in_workflow(
+                execution(
+                    801,
+                    1,
+                    later_started,
+                    HEAD,
+                    r.later_status,
+                    r.later_conclusion.clone(),
+                ),
+                r.later_workflow,
+                "workflow_dispatch",
+            ),
+        ];
+        let lint = with(
+            status("lint", "failure"),
+            "target_url",
+            json!(format!("https://github.com/{REPO}/actions/runs/800/job/20")),
+        );
+        let mut gh = Github::green();
+        gh.pull(PR, HEAD, BASE, "OPEN")
+            .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
+            .answer(GRAPHQL, nodes(&external_nodes(&jobs, &executions)))
+            .answer(&check_runs(HEAD, 1), check_runs_page(3, jobs))
+            .answer(&statuses(HEAD, 1), statuses_page(vec![lint]))
+            .answer(&runs(HEAD, 1), runs_page(executions))
+            .answer(&workflows(1), workflows_page(2, &["active", "active"]))
+            .answer(&rules(1), json!([status_checks_rule(&["CI", "lint"])]));
+        let result = ok_result(&gh.verify_pr(PR, true));
+        assert_eq!(result["status"], "complete", "{}: {result}", r.name);
+        assert_eq!(result["verdict"], "fail", "{}: {result}", r.name);
+        assert_eq!(checks(&result), r.checks, "{}: {result}", r.name);
+        assert_eq!(
+            non_required(&result),
+            r.non_required,
+            "{}: {result}",
+            r.name
+        );
+        assert_eq!(gh.state()["verification"]["verdict"], "fail", "{}", r.name);
+        assert_pull_then_pinned(&gh.log(), PR, HEAD);
+    }
+}
+
+/// One row of a `workflows` rule beside a `workflow_dispatch` run of its
+/// workflow file: whether the rule's own `pull_request` run is on the head,
+/// the dispatch run's one job, the status rule's contexts, and the answer.
+struct DispatchedRequiredRow {
+    name: &'static str,
+    pull_request_run: bool,
+    dispatch_job: &'static str,
+    contexts: &'static [&'static str],
+    key: &'static str,
+    checks: Vec<Reported>,
+    non_required: Vec<Reported>,
+}
+
+/// A ruleset workflow runs on the `pull_request`, `pull_request_target`
+/// and `merge_group` events alone ("Ruleset workflows support using the
+/// pull_request, pull_request_target and merge_group events", docs.github.com,
+/// available-rules-for-rulesets, "Supported event triggers"), so a
+/// `workflow_dispatch` run of the rule's file at its pinned source is no
+/// run of the rule: it neither binds the definition nor displaces the
+/// rule's own `pull_request` run, and its job, a check of a run GitHub does
+/// not evaluate for a pull request, satisfies no `required_status_checks`
+/// context either. The dispatch run is the later one, so it would be the
+/// definition's current execution if it bound.
+#[test]
+fn a_dispatch_of_a_required_workflow_satisfies_no_rule() {
+    let rows = [
+        DispatchedRequiredRow {
+            name: "beside the rule's own run, a status rule naming the dispatch's job",
+            pull_request_run: true,
+            dispatch_job: "CI",
+            contexts: &["CI"],
+            key: "checks-pending",
+            checks: vec![
+                row("CI", "required", "expected", "pending"),
+                row("request", "check-run", "success", "pass"),
+            ],
+            non_required: vec![row("CI", "check-run", "success", "pass")],
+        },
+        DispatchedRequiredRow {
+            name: "alone, under the workflows rule alone",
+            pull_request_run: false,
+            dispatch_job: "request",
+            contexts: &[],
+            key: "checks-pending",
+            checks: vec![row(WORKFLOW_PATH, "required", "expected", "pending")],
+            non_required: vec![],
+        },
+    ];
+    for r in rows {
+        let dispatched = "2026-01-29T15:21:00Z";
+        let dispatch_check = with(
+            check_run_in(
+                Some(701),
+                10,
+                json!(r.dispatch_job),
+                "completed",
+                json!("success"),
+            ),
+            "started_at",
+            json!(dispatched),
+        );
+        let request = check_run_in(
+            Some(700),
+            9,
+            json!("request"),
+            "completed",
+            json!("success"),
+        );
+        let event = |run: Value, event: &str| with(run, "event", json!(event));
+        let mut jobs = vec![dispatch_check.clone()];
+        let mut executions = vec![event(
+            required_run(701, 1, dispatched, "completed", json!("success")),
+            "workflow_dispatch",
+        )];
+        let mut suites = vec![suite_node(701, 1, source_file(SOURCE_REPO, WORKFLOW_SHA))];
+        if r.pull_request_run {
+            jobs.insert(0, request.clone());
+            executions.insert(
+                0,
+                required_run(
+                    700,
+                    1,
+                    "2026-01-29T15:09:00Z",
+                    "completed",
+                    json!("success"),
+                ),
+            );
+            suites.push(suite_node(700, 1, source_file(SOURCE_REPO, WORKFLOW_SHA)));
+        }
+        let mut rule_set = vec![workflows_rule(Some(WORKFLOW_SHA))];
+        if !r.contexts.is_empty() {
+            rule_set.push(status_checks_rule(r.contexts));
+        }
+        let mut gh = bound_world();
+        gh.pull(PR, HEAD, BASE, "OPEN")
+            .answer(
+                &check_runs(HEAD, 1),
+                check_runs_page(jobs.len(), jobs.clone()),
+            )
+            .answer(&check_suites(HEAD, 1), check_suites_for(&jobs))
+            .answer(&suite_check_runs(700, 1), check_runs_page(1, vec![request]))
+            .answer(
+                &suite_check_runs(701, 1),
+                check_runs_page(1, vec![dispatch_check]),
+            )
+            .answer(&runs(HEAD, 1), runs_page(executions))
+            .answer(&rules(1), json!(rule_set))
+            .answer(GRAPHQL, nodes(&suites));
+        let result = ok_result(&gh.verify_pr(PR, true));
+        assert_eq!(result["status"], "pending", "{}: {result}", r.name);
+        assert_eq!(key(&result), r.key, "{}: {result}", r.name);
+        assert_eq!(checks(&result), r.checks, "{}: {result}", r.name);
+        assert_eq!(
+            non_required(&result),
+            r.non_required,
+            "{}: {result}",
+            r.name
+        );
+        assert!(gh.state().get("verification").is_none(), "{}", r.name);
+        assert_pull_then_pinned(&gh.log(), PR, HEAD);
+    }
 }
 
 // --- verify-review: the review gate --------------------------------------------

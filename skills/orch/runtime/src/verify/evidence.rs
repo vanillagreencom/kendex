@@ -25,7 +25,7 @@
 //! | `check-suites/{id}/check-runs` | every page; totals compared as above | One read per check suite of a required definition's candidate run, under the endpoint's default `filter`, `latest` ("Filters check runs by their completed_at timestamp. latest returns the most recent check runs.", rest/checks/runs): the bound-job list, which names no `filter`. The server's selection is consumed as it answers (`suite_jobs`); each member decodes through `wire::CheckRun` and an empty name is `suite-check-runs-response-invalid`. |
 //! | `rules/branches/{base}` | bare array pages until a short page | No total is documented; a page shorter than the page size is the last. |
 //! | `branches/{base}` | one object | A single object; absent or null protection refuses it. |
-//! | graphql `nodes(ids:)` over the candidate runs' check-suite nodes | one query | One node per id (docs.github.com/en/graphql, `nodes`); a null node, error-free or named by a field error at its path `["nodes", i]` (`nodes_of`, the same reading as the check-run nodes above), is an id the viewer cannot resolve and leaves its candidate unproven, the definition pending `expected` with no record, an unreadable required set being no verdict; a reply carrying any other error is a failed query. Read only when a `workflows` rule names a definition some run on the head executed by path. |
+//! | graphql `nodes(ids:)` over the candidate runs' check-suite nodes | one query | One node per id (docs.github.com/en/graphql, `nodes`); a null node, error-free or named by a field error at its path `["nodes", i]` (`nodes_of`, the same reading as the check-run nodes above), is an id the viewer cannot resolve and leaves its candidate unproven, the definition pending `expected` with no record, an unreadable required set being no verdict; a reply carrying any other error is a failed query. Read only when a `workflows` rule's definition has a candidate: a run on the head of an event a ruleset workflow runs on that executed the definition's path. |
 //! | `repos/{owner}/{name}` per source repository a proof names | one object | A single object whose `full_name` must be the name asked for; read only for the names the proofs of a fully proven definition carry. |
 //!
 //! Per-member validation, over every member of every reply: a check run
@@ -53,7 +53,8 @@
 //! The required-definition binding proof: a definition is the complete
 //! rule, `repository_id`, `path` and the pinned `sha` (its `ref`
 //! orders the walk and binds nothing). Its candidates are the head's runs
-//! whose own workflow file is the definition's path (the head and
+//! of an event a ruleset workflow runs on (`RULESET_EVENTS`) whose own
+//! workflow file is the definition's path (the head and
 //! the consumer repository are pinned by the runs endpoint). Each
 //! candidate's proof is the workflow file its check suite's run executed,
 //! read through the suite node: the node must name the
@@ -385,6 +386,15 @@ impl RequiredEvidence {
     }
 }
 
+/// The events a ruleset workflow runs on: "Ruleset workflows support using
+/// the `pull_request`, `pull_request_target` and `merge_group` events", and
+/// "The workflow is only triggered, and is always triggered, by the default
+/// activity types of the supported events" (docs.github.com,
+/// available-rules-for-rulesets, "Supported event triggers"). A run of the
+/// rule's file on any other event, such as a `workflow_dispatch`, is no run
+/// of the rule, so it is no candidate.
+const RULESET_EVENTS: [&str; 3] = ["pull_request", "pull_request_target", "merge_group"];
+
 /// A required workflow definition with its candidate executions.
 #[derive(Debug)]
 pub(super) struct RequiredWorkflowEvidence {
@@ -394,7 +404,8 @@ pub(super) struct RequiredWorkflowEvidence {
     sha: String,
     /// The rule's `ref`, kept for the walk order alone.
     reference: Option<String>,
-    /// The head's runs whose own workflow file is the definition's path.
+    /// The head's runs of `RULESET_EVENTS` whose own workflow file is the
+    /// definition's path.
     candidates: Vec<Candidate>,
 }
 
@@ -1044,7 +1055,7 @@ fn required_set(
     for workflow in &mut workflows {
         workflow.candidates = runs
             .iter()
-            .filter(|run| run.file() == workflow.path)
+            .filter(|run| run.file() == workflow.path && RULESET_EVENTS.contains(&run.event()))
             .map(|run| Candidate {
                 run: run.id,
                 proof: None,
