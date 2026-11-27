@@ -434,8 +434,9 @@ fn stopped(path: &Path, grace: Duration) -> Result<Stop> {
 
 /// Remove the worker record at `path` once `stop` reads its group ended.
 /// A group still live after the stop refuses `group-live`, and one the stop
-/// could not read refuses `stop-unreadable`: each keeps its record, since
-/// [`charges`] counts the account against a leader that is live or unread.
+/// could not read refuses `stop-unreadable`: each keeps its record, the one
+/// handle a later stop or group read reaches the group by, its leader
+/// exited or not.
 fn retire(path: &Path, stop: Stop) -> Result<Value> {
     let file = path.display().to_string();
     match &stop {

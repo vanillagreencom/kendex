@@ -970,8 +970,10 @@ pub enum Stop {
     AlreadyGone,
     /// The identity no longer matches: the pid now holds another process.
     IdentityStale,
-    /// A signaled process, or a group member a group stop's later read found
-    /// ([`stop_group`]), still runs after the grace.
+    /// A signaled process still runs after the grace, or a group stop's
+    /// group ([`stop_group`]) still reads live past the grace its confirming
+    /// read began, as one whose leader runs outside it and was never
+    /// signalled.
     Timeout { pid: u32 },
     /// A read the stop depends on failed at `pid`, so whether that process
     /// runs is not known; nothing was signalled past that read. `signalled`
@@ -1171,27 +1173,30 @@ pub(crate) fn group_table(leader: &Identity) -> Reading<Vec<Row>> {
 }
 
 /// End every member of the group `leader` leads ([`group_members`]), each by
-/// its own identity: TERM, the grace, then KILL. `AlreadyGone` where the
-/// group reads gone; refused `stop-unreadable` where the group or a member's
-/// identity cannot be read, nothing signalled. The members' verdict stands
-/// for the group only as [`confirmed`] judges it.
+/// its own identity: TERM, the grace, then KILL, as [`group_stop`] judges
+/// the group's reads.
 pub fn stop_group(leader: &Identity, grace: Duration) -> Result<Stop> {
-    let unreadable = |cause: &str| Error::refused("stop-unreadable", &[("cause", cause)]);
-    let rows = match group_members(leader) {
-        Reading::Live(rows) => rows,
+    group_stop(leader.pid, grace, || group_members(leader), stop_rows)
+}
+
+/// The stop of the group `read` reads, through `more`, the stop of the
+/// members one read names. `AlreadyGone` where the first read finds the
+/// group gone. `Unreadable` with `signalled: false` where that read or a
+/// member's identity cannot be read, and with `signalled: true` where a
+/// confirming read fails after a signal. The members' verdict stands for the
+/// group only as [`confirmed`] judges it.
+fn group_stop(
+    leader: u32,
+    grace: Duration,
+    mut read: impl FnMut() -> Reading<Vec<Row>>,
+    mut more: impl FnMut(&[Row], Duration) -> Result<Stop>,
+) -> Result<Stop> {
+    let stop = match read() {
+        Reading::Live(rows) => more(&rows, grace)?,
         Reading::Gone => return Ok(Stop::AlreadyGone),
-        Reading::Unreadable { cause } => return Err(unreadable(cause)),
+        Reading::Unreadable { cause } => return Ok(unreadable(leader, cause, false)),
     };
-    let mut members = Vec::new();
-    for row in rows {
-        match identity(row.pid) {
-            Reading::Live(id) => members.push(id),
-            Reading::Gone => {}
-            Reading::Unreadable { cause } => return Err(unreadable(cause)),
-        }
-    }
-    let stop = stop_identities(&members, grace)?;
-    confirmed(stop, leader.pid, grace, || group_members(leader), stop_rows)
+    confirmed(stop, leader, grace, read, more)
 }
 
 /// `stop`, the verdict on the members a group read named, as the group's own.
@@ -1348,20 +1353,21 @@ mod tests {
         }
     }
 
-    /// A members' verdict stands for the group only once the group reads
+    /// A group stop's verdict stands for the group only once the group reads
     /// gone; a member the first read never named, as one a TERM handler forks
     /// or one forked by members that exit before the first signal, is ended
-    /// in turn within the grace. The pids are synthetic.
+    /// in turn within the grace. The first read's members are stopped with
+    /// the whole grace. The pids are synthetic.
     #[test]
-    fn an_ended_verdict_stands_only_once_the_group_reads_gone() {
+    fn a_group_stop_ends_what_each_read_finds_and_stands_once_the_group_reads_gone() {
         struct Case {
-            stop: Stop,
             grace: Duration,
             reads: Vec<Reading<Vec<Row>>>,
             more: Vec<Stop>,
             expected: Stop,
         }
-        let member = || Reading::Live(rows(&[(52, 41, "sleep")]));
+        let group = || Reading::Live(rows(&[(41, 1, "sh"), (52, 41, "sleep")]));
+        let member = || Reading::Live(rows(&[(53, 41, "sleep")]));
         let unread = || Reading::Unreadable { cause: "ps-failed" };
         let unreadable = |pid, signalled| Stop::Unreadable {
             pid,
@@ -1370,127 +1376,134 @@ mod tests {
         };
         let stopped = |signaled| Stop::Stopped { signaled };
         let grace = Duration::from_secs(5);
-        let case = |stop, reads, more, expected| Case {
-            stop,
+        let case = |reads, more, expected| Case {
             grace,
             reads,
             more,
             expected,
         };
         let table = [
-            case(stopped(2), vec![Reading::Gone], vec![], stopped(2)),
+            case(vec![Reading::Gone], vec![], Stop::AlreadyGone),
+            // An unread group or member is answered, never refused, and
+            // nothing was signalled.
+            case(vec![unread()], vec![], unreadable(41, false)),
             case(
-                Stop::AlreadyGone,
-                vec![Reading::Gone],
-                vec![],
+                vec![group()],
+                vec![unreadable(52, false)],
+                unreadable(52, false),
+            ),
+            case(vec![group(), Reading::Gone], vec![stopped(2)], stopped(2)),
+            case(
+                vec![group(), Reading::Gone],
+                vec![Stop::AlreadyGone],
                 Stop::AlreadyGone,
             ),
-            // A TERM handler's fork, ended in turn.
+            // The leader ignores TERM and forks a member during the grace:
+            // KILL ends it, and the member the confirming read finds is ended
+            // in turn.
             case(
-                stopped(2),
-                vec![member(), Reading::Gone],
-                vec![stopped(1)],
+                vec![group(), member(), Reading::Gone],
+                vec![stopped(2), stopped(1)],
                 stopped(3),
             ),
             // Members that forked and exited before the first signal.
             case(
-                Stop::AlreadyGone,
-                vec![member(), Reading::Gone],
-                vec![stopped(1)],
+                vec![group(), member(), Reading::Gone],
+                vec![Stop::AlreadyGone, stopped(1)],
                 stopped(1),
             ),
             // A member still leaving the table is read again, not signalled.
             case(
-                Stop::AlreadyGone,
-                vec![member(), Reading::Gone],
-                vec![Stop::AlreadyGone],
+                vec![group(), member(), Reading::Gone],
+                vec![Stop::AlreadyGone, Stop::AlreadyGone],
                 Stop::AlreadyGone,
             ),
             case(
-                stopped(2),
-                vec![member()],
-                vec![Stop::Timeout { pid: 52 }],
-                Stop::Timeout { pid: 52 },
-            ),
-            case(stopped(2), vec![unread()], vec![], unreadable(41, true)),
-            case(
-                Stop::AlreadyGone,
-                vec![unread()],
-                vec![],
-                unreadable(41, false),
+                vec![group(), member()],
+                vec![stopped(2), Stop::Timeout { pid: 53 }],
+                Stop::Timeout { pid: 53 },
             ),
             case(
-                Stop::AlreadyGone,
-                vec![member(), unread()],
-                vec![stopped(1)],
+                vec![group(), unread()],
+                vec![stopped(2)],
                 unreadable(41, true),
             ),
             case(
-                Stop::AlreadyGone,
-                vec![member()],
-                vec![unreadable(52, false)],
-                unreadable(52, false),
+                vec![group(), member(), unread()],
+                vec![Stop::AlreadyGone, stopped(1)],
+                unreadable(41, true),
             ),
             case(
-                stopped(2),
-                vec![member()],
-                vec![unreadable(52, false)],
+                vec![group(), member()],
+                vec![Stop::AlreadyGone, unreadable(53, false)],
+                unreadable(53, false),
+            ),
+            case(
+                vec![group(), member()],
+                vec![stopped(2), unreadable(53, false)],
+                unreadable(53, true),
+            ),
+            // The first stop's own failures stand, the group not read again.
+            case(
+                vec![group()],
+                vec![Stop::Timeout { pid: 41 }],
+                Stop::Timeout { pid: 41 },
+            ),
+            case(
+                vec![group()],
+                vec![Stop::IdentityStale],
+                Stop::IdentityStale,
+            ),
+            case(
+                vec![group()],
+                vec![unreadable(52, true)],
                 unreadable(52, true),
             ),
             // No grace left: a live group is not stopped again.
             Case {
                 grace: Duration::ZERO,
                 ..case(
-                    stopped(2),
-                    vec![member()],
-                    vec![],
-                    Stop::Timeout { pid: 52 },
+                    vec![group(), member()],
+                    vec![stopped(2)],
+                    Stop::Timeout { pid: 53 },
                 )
             },
             // The leader still runs outside its own group.
             Case {
                 grace: Duration::ZERO,
                 ..case(
-                    Stop::AlreadyGone,
-                    vec![Reading::Live(Vec::new())],
-                    vec![],
+                    vec![Reading::Live(Vec::new()), Reading::Live(Vec::new())],
+                    vec![Stop::AlreadyGone],
                     Stop::Timeout { pid: 41 },
                 )
             },
         ];
         for Case {
-            stop,
             grace,
             reads,
             more,
             expected,
         } in table
         {
+            let label = format!("{reads:?} {more:?}");
             let mut reads = reads.into_iter();
             let mut more = more.into_iter();
+            let mut first = true;
             let read = || reads.next().expect("the group is read past the case");
             let stop_more = |rows: &[Row], left: Duration| {
-                assert!(!rows.is_empty() && left <= grace, "{rows:?} {left:?}");
+                assert!(
+                    if first { left == grace } else { left <= grace },
+                    "{rows:?} {left:?}"
+                );
+                first = false;
                 Ok(more.next().expect("the group is stopped past the case"))
             };
             assert_eq!(
-                confirmed(stop.clone(), 41, grace, read, stop_more).unwrap(),
+                group_stop(41, grace, read, stop_more).unwrap(),
                 expected,
-                "{stop:?}"
+                "{label}"
             );
-            assert!(reads.next().is_none() && more.next().is_none(), "{stop:?}");
-        }
-        for stop in [
-            Stop::Timeout { pid: 41 },
-            Stop::IdentityStale,
-            unreadable(41, true),
-        ] {
-            let read = || -> Reading<Vec<Row>> { panic!("{stop:?} is read again") };
-            let stop_more = |_: &[Row], _| -> Result<Stop> { panic!("{stop:?} is stopped again") };
-            assert_eq!(
-                confirmed(stop.clone(), 41, grace, read, stop_more).unwrap(),
-                stop
-            );
+            assert!(reads.next().is_none() && more.next().is_none(), "{label}");
         }
     }
 
