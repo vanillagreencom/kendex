@@ -755,12 +755,11 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// and otherwise on the provider's shared windows, its buckets as read,
 /// marked `scope: unread`, for every pick, a worker's and a controller's
 /// alike: the provider's line states no model window, so a pick that held
-/// out for one would find no Claude account it measures; and a local copy
-/// with no credential file is no reading, so the provider's measured one
-/// stands as an account's one reading does. The provider's words
-/// (`reserved`, `plan-ends`) and its count of unused limit resets stand
-/// whichever reading does, a row with no reading included. An account with one reading keeps it. The roster is
-/// never resolved: it reports both readings.
+/// out for one would find no Claude account it measures. The provider's words
+/// (`reserved`, `plan-ends`, `unified-status`) and its count of unused
+/// limit resets stand whichever reading does, a row with no reading
+/// included. An account with one reading keeps it. The roster is never resolved: it reports both
+/// readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
 /// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
@@ -813,17 +812,23 @@ fn resolve(
                         sign(&own),
                         Some(usage::SignIn::StoredLogin | usage::SignIn::TokenFile(_))
                     );
-                let (reserved, plan_ends, limit_resets) = (
+                let (reserved, plan_ends, limit_resets, rejected) = (
                     provider.reserved,
                     provider.plan_ends.clone(),
                     provider.limit_resets,
+                    provider.rejected,
                 );
+                let admission = provider.raw.get("unified_status").cloned();
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model)
                 } else {
                     own
                 };
                 stands.reserved |= reserved;
+                stands.rejected |= rejected;
+                if let (Some(word), Value::Object(raw)) = (admission, &mut stands.raw) {
+                    raw.entry("unified_status").or_insert(word);
+                }
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }

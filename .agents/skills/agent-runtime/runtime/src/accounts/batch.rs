@@ -144,7 +144,7 @@ fn words_line(text: &str) -> Option<Line> {
 /// on a `harness=pi` row with no `monthly-pct`, the Codex credit's four on a
 /// `harness=codex` row, none on any other.
 ///
-/// A line with no `session-5h-pct` whose `model-pct` carries no
+/// A Claude line with no `session-5h-pct` whose `model-pct` carries no
 /// `model-label` states its 5-hour window there, with `model-resets` its
 /// reset: Fleet's line before it names the window (FLT-1876 moves it).
 fn line(text: &str) -> std::result::Result<Line, Unreadable> {
@@ -731,13 +731,13 @@ mod tests {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
-    /// One account as this machine reads it: Claude's weekly window measured
-    /// and no window scoped to a model.
-    fn local(dir: &str, weekly: u64) -> AccountRow {
+    /// One account as this machine reads it: Claude's weekly window and its
+    /// model windows `buckets` measured.
+    fn local(dir: &str, weekly: u64, buckets: Value) -> AccountRow {
         let raw = json!({"alias": dir, "harness": "claude", "config_dir": dir,
             "measured_through": "local", "status": "ok", "verdict": "room",
             "headroom_pct": 100 - weekly, "binding_bucket": "weekly",
-            "binding_resets_at": null, "weekly_pct": weekly, "model_buckets": []});
+            "binding_resets_at": null, "weekly_pct": weekly, "model_buckets": buckets});
         AccountRow::parse(&raw, &super::super::tests::settings()).unwrap()
     }
 
@@ -745,8 +745,10 @@ mod tests {
     /// replays: a launch is judged on the projected 5-hour window at five
     /// points a session hour, a worker on a named model is judged on the
     /// shared windows of a row that states no model window, a controller's
-    /// question about its own account reads the 5-hour window, and a figure
-    /// the provider read too long ago vouches for no room. Each row: the
+    /// question about its own account reads the 5-hour window, a figure
+    /// the provider read too long ago vouches for no room, and Anthropic's
+    /// refusal the provider states walls the account whichever reading
+    /// stands. Each row: the
     /// case, the provider's lines, this machine's readings beside them, the
     /// request, the lanes charged and the other controllers seated per
     /// account, then the answer and the accounts it may name.
@@ -828,7 +830,7 @@ mod tests {
                     "account=/h/.5claude\tharness=claude\tweekly-pct=30\tsession-5h-pct=20\tsession-resets={}",
                     at(2.0)
                 ),
-                vec![local("/h/.5claude", 40)],
+                vec![local("/h/.5claude", 40, json!([]))],
                 worker("claude-fable-5-2", None),
                 (&[], &[]),
                 ("lane", &["/h/.5claude"]),
@@ -862,6 +864,19 @@ mod tests {
                 worker("claude-opus-5-5", Some("/h/.2claude")),
                 (&[], &[]),
                 ("unmeasured", &["/h/.2claude"]),
+            ),
+            (
+                "Anthropic refusing an account this machine reads with room on the model",
+                "account=/h/.6claude\tharness=claude\tweekly-pct=20\tunified-status=rejected"
+                    .to_owned(),
+                vec![local(
+                    "/h/.6claude",
+                    20,
+                    json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                )],
+                worker("claude-opus-5-5", Some("/h/.6claude")),
+                (&[], &[]),
+                ("walled", &["/h/.6claude"]),
             ),
         ];
         let mut wrong = Vec::new();
