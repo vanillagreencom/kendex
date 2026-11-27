@@ -43,9 +43,11 @@
 //!    run-less. The association the evidence read (`Association`) travels
 //!    with the member and is read by the classification alone. Under
 //!    `verify-pr` with a required set that names anything, a workflow
-//!    job's check (a check run whose suite has a run) that step 7 did not
-//!    bind counts only from a run GitHub evaluates for a pull request
-//!    (`Replacements::PullRequestRuns`): one of another run is set aside
+//!    job's check (a check run whose suite has a run) counts only from a
+//!    run GitHub evaluates for a pull request
+//!    (`Replacements::PullRequestRuns`), a run step 7 binds included, since
+//!    every event a ruleset workflow runs on is one of them
+//!    (`evidence::RULESET_EVENTS`): one of another run is set aside
 //!    here, joins no run group the pick reads and matches no required
 //!    context, and one bearing a required context's name is reported as a
 //!    non-required line, whichever arm step 8 takes. Such a member's failure is held or
@@ -67,7 +69,10 @@
 //!    later entry of step 1's order wins: the earlier-listed member among
 //!    equal starts); an aggregate (run-level link) whose run ranks below a
 //!    selected run of its source group with no failed job is rewritten
-//!    `expected`, pending, while that newer run publishes its own. A run
+//!    `expected`, pending, while that newer run publishes its own; a
+//!    commit status only while that run is unfinished, after which the
+//!    status stands as GitHub reports it and `judge::correlate` reads it
+//!    (`Runs::holds`). A run
 //!    status keeps every run (step 2), so its groups and their pick are
 //!    those of steps 3 and 4 over every job, the set-aside checks included:
 //!    the runs `judge::correlate` reads for it.
@@ -403,8 +408,15 @@ impl<'a> Runs<'a> {
     /// Step 5's hold of a run-level aggregate of `run`, which is not
     /// selected: the first selected run of its source group (the workflow
     /// name `run`'s jobs are grouped under) that ranks above it, when that
-    /// run has no failed job.
-    fn holds(&self, run: u64) -> bool {
+    /// run has no failed job. A commit status is held only while that run
+    /// is also unfinished, so it can still publish the status's context: a
+    /// concluded one that did not publish it left the status GitHub's
+    /// latest for the context, and `judge::correlate` replaces a status by
+    /// no run. A run the evidence lacks is read unfinished, since nothing
+    /// shows it ended. A check aggregate keeps the hold once that run
+    /// concludes, since `judge::correlate` would read the newer green run
+    /// as replacing the check's failure and pass it.
+    fn holds(&self, run: u64, source: Source, evidence: &Evidence) -> bool {
         if self.selected().any(|g| g.run == run) {
             return false;
         }
@@ -415,7 +427,13 @@ impl<'a> Runs<'a> {
                 self.selected_in(workflow)
                     .find(|g| g.rank > status_run.rank)
             })
-            .is_some_and(|g| g.failed == 0)
+            .is_some_and(|g| {
+                g.failed == 0
+                    && (source != Source::CommitStatus
+                        || evidence
+                            .run(g.run)
+                            .is_none_or(|newer| newer.outcome().unfinished()))
+            })
     }
 }
 
@@ -692,7 +710,7 @@ fn bind<'a>(
 /// reports and never judges; see the module header for the steps.
 pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec<CheckReport>) {
     // 7. The required-definition walk, first: its bound runs are kept in
-    // step 4 whatever their rank, and step 2 sets none of them aside.
+    // step 4 whatever their rank.
     let walked = evidence
         .required()
         .filter(|req| !req.workflows().is_empty())
@@ -738,10 +756,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
                 place: place(check.linked(), check.workflow(), check.run_level()),
                 link: check.link(),
                 association: check.association(),
-                replacements: if pull_request_rule
-                    && !check.event().is_empty()
-                    && !check.linked().is_some_and(|run| bound_ids.contains(&run))
-                {
+                replacements: if pull_request_rule && !check.event().is_empty() {
                     Replacements::PullRequestRuns
                 } else {
                     Replacements::AnyRun
@@ -804,7 +819,7 @@ pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec
             run,
             run_level: true,
         } = entry.place
-            && every_run.holds(run)
+            && every_run.holds(run, entry.source, evidence)
         {
             entry.state = "expected";
             entry.bucket = Bucket::Pending;
