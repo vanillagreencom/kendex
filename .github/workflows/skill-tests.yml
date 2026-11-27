@@ -25,7 +25,9 @@ name: Skill Tests
 # successful main push tested, so pushes replaced while pending keep their
 # catch-up coverage. The selector subtracts per-suite and per-Rust-target
 # proof from the same-head group, and stands catalog, smoke and the Windows
-# check down where every leg of the group's job succeeded. Missing range
+# check down where every leg of the group's job succeeded; catalog, which
+# checks the upgrade from the event's prior commit, also needs the group's
+# base to be the push's before. Missing range
 # evidence selects the full roster; missing group evidence subtracts
 # nothing. Build inputs select cache compilation, which also keeps smoke and
 # the Windows check, since each saves a compile cache no merge group saves.

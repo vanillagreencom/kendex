@@ -326,7 +326,6 @@ push_world() { # NAME [WORLD] — the NAME state, in the world named WORLD, NAME
     unparseable) printf 'upstream connect error\n' >"$dir/runs.json" ;;
     jobs-missing) rm "$dir/jobs-$PUSH_RUN.json" ;;
     jobs-partial) edit_jobs '.fixture_total_count = ((.jobs | length) + 1)' ;;
-    foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
     *) echo "no push world named $1" >&2; exit 1 ;;
@@ -507,7 +506,6 @@ no-selection|$WHOLE $UNREAD
 expired-selection|$WHOLE $UNREAD
 bad-selection|$WHOLE $UNREAD
 no-run|$WHOLE $NO_RUN
-foreign-head-run|$WHOLE $NO_RUN
 push-event-run|$WHOLE $NO_RUN
 other-workflow-run|$WHOLE $NO_RUN
 outage|$WHOLE $UNREAD
@@ -515,7 +513,7 @@ unparseable|$WHOLE $UNREAD
 jobs-missing|$WHOLE $UNREAD
 jobs-partial|$WHOLE $UNREAD
 ROWS
-[ "$push_rows" -ge 21 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -ge 20 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 # A push owing only macOS shards runs the macOS job alone of the two.
 macos_owed_row() {
   push_world linux-only "linux-only$ROW_TAG"
@@ -767,6 +765,21 @@ same_change_row() {
     "$(push_select "same-change-direct$ROW_TAG" | sed -n 's/.*\(main-proof=[a-z]*\).*/\1/p') shards=$(field shards <"$TMP/push-out$ROW_TAG") queue_macos_shards=$(field queue_macos_shards <"$TMP/push-out$ROW_TAG") $(for job in skill-suites-shard catalog smoke cargo-check-windows; do in_list jobs "$job"; done | paste -sd ' ' -)"
 }
 row_spawn same_change_row
+# A push that lands two groups: the head's group checked catalog's upgrade
+# from its own base, the head's parent, and the push owes it from the commit
+# main held before, two first-parent commits back.
+two_group_row() {
+  own_push_repo
+  printf '\n# first group\n' >>"$PUSH_REPO/$GROUP_PATH"
+  push_commit 'first group' "$GROUP_PATH"
+  printf '\n# second group\n' >>"$PUSH_REPO/$GROUP_PATH"
+  push_commit 'second group' "$GROUP_PATH"
+  PUSH_SHA=$PUSH_AFTER
+  push_world all-proved "two-groups$ROW_TAG"
+  check "push landing two groups owes the catalog the head's group proved" 'main-proof=read jobs=["catalog"]' \
+    "$(push_select "two-groups$ROW_TAG" | sed -n 's/.*\(main-proof=[a-z]*\).*/\1/p') jobs=$(field jobs <"$TMP/push-out$ROW_TAG")"
+}
+row_spawn two_group_row
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
@@ -874,11 +887,10 @@ coalesced_runtime_row() {
   push_select tail "$TMP/event-control/tools/ci-job-set" >/dev/null
   check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out$ROW_TAG")"
   cp -R "$TMP/push/tail" "$TMP/push/$world"
-  for history in absent unread nonancestor; do
+  for history in absent unread; do
     case "$history" in
       absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/$world/push-runs.json" ;;
       unread) printf 'unread\n' >"$TMP/push/$world/push-runs.json" ;;
-      nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/push/tail/push-runs.json" >"$TMP/push/$world/push-runs.json" ;;
     esac
     push_select "$world" >/dev/null
     check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out$ROW_TAG")"

@@ -93,7 +93,9 @@
 # jobs down only where every leg of that job's check in the same-head groups
 # succeeded; smoke and cargo_windows_check also run where cache_compile is
 # true, since each saves a compile cache entry on main that no merge group
-# saves.
+# saves. catalog checks the upgrade from the event's prior commit, so it
+# stands down only where the head's one parent, the group's base, is
+# PUSH_BEFORE: a push that lands more than one group owes it.
 # runtime_publish names the package runtime builds the head has no published
 # artifact for, and adds the leg that publishes them; no proof subtracts it.
 # The merge group at the head published them already: its publishing leg is
@@ -742,8 +744,16 @@ main_proof() {
       # The group's catalog, smoke and Windows check jobs prove this head's.
       # Smoke and the Windows check also save a compile cache no merge group
       # saves, keyed on the build inputs, so a push that moved them still
-      # owes the job to publish that entry.
-      ! group_proved catalog "$work/jobs.json" || catalog_owed=false
+      # owes the job to publish that entry. catalog also checks the upgrade
+      # from the event's prior commit to the head: a group's base, which is
+      # the head's one parent (merge group run 45916657728 at c2a116045
+      # checked from 372addaf6, its parent and the base its head_branch
+      # names), and a push's event before (push run 45918338303 at the same
+      # head checked from e6b7569fa). Only an equal prior proves the push's.
+      if [ "$(git rev-list --parents --max-count=1 "$sha")" = "$sha $PUSH_BEFORE" ] &&
+        group_proved catalog "$work/jobs.json"; then
+        catalog_owed=false
+      fi
       [ "$main_build" = true ] || ! group_proved smoke "$work/jobs.json" || smoke_owed=false
       [ "$main_build" = true ] || ! group_proved cargo-check-windows "$work/jobs.json" || windows_owed=false
       emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" \
