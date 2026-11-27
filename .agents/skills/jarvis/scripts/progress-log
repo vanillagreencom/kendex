@@ -37,11 +37,19 @@ it back; every other line must be byte for byte unchanged. A body another
 writer changed meanwhile is read and the line applied again once; a second
 mismatch refuses tracker-body-changed with `resume=COMMAND`. --delivered REF
 closes the box with the delivery to the user as its Evidence line; nothing
-else closes it. Once the line reads back, the writer deletes an older
-`Jarvis next action:` comment on the item and records its text. Discovery
-matches an item that holds the line, and otherwise creates in the named
-project with the configured Linear team. A tracker refusal leaves the handoff
-intact. See workflows/tasks.md.
+else closes it. Each write replaces the box and its indented lines. An update
+the tracker refuses for the item's opening, for a box outside Done when, for
+a body synced with GitHub or for an item on another team refuses
+tracker-opening-invalid, tracker-box-outside, tracker-item-synced or
+tracker-item-cross-team.
+Discovery matches the item that holds a line of request REF. Otherwise it
+matches an item bound to REF and the outcome. Lines of REF on two items, or an
+uncertain or second binding, refuse tracker-item-ambiguous. Otherwise it
+creates the item in the named project with the configured Linear team. A
+tracker refusal leaves the handoff intact, except one while deleting an older
+`Jarvis next action:` comment: once the line reads back, the record keeps that
+comment's text and is written before the deletion, and a rerun finishes it.
+See workflows/tasks.md.
 
 --archived FILE, an absolute or home-relative path inside the archive beside
 the selected handoff, adds or enriches FILE's line in that archive's INDEX.md in the
@@ -105,6 +113,14 @@ BINDING_SOURCE = re.compile(BINDING_FIELD % r"Jarvis request source|Original req
 BINDING_OUTCOME = re.compile(BINDING_FIELD % r"Jarvis requested outcome|Requested outcome|Outcome",
                              re.MULTILINE | re.IGNORECASE)
 MARKDOWN_REF = re.compile(r"\[[^]\n]+\]\((\S+)\)|<([^<>\s]+)>|`([^`\s]+)`")
+# skills/linear issues update refuses these before any write: lib/issue-validation.sh
+# require_issue_header_shape prints a JSON line with its rule, and
+# commands/issues.sh require_unsynced_description and lib/common.sh
+# linear_cross_team_refusal print `linear: refused=RULE`.
+UPDATE_REFUSALS = {"issue-header-opening": "tracker-opening-invalid",
+                   "checkbox-outside-done-when": "tracker-box-outside",
+                   "synced-description": "tracker-item-synced",
+                   "cross-team": "tracker-item-cross-team"}
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
 
@@ -174,8 +190,9 @@ def append(handoff, values, *, home=None, action=None):
             key = (binding_source(action.source), action.ask)
             write_outcome(home, item, key, outcome_box(key, action.next_action, action.delivered))
             values["Observed result and source"] += "\nTracker next action: %s outcome=%s ask=%s" % (item, *key)
-            for row in retire_actions(home, item):
-                values["Observed result and source"] += "\nRetired comment=%s %s" % (row["id"], row["body"].strip())
+            retiring = [row for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
+            for row in retiring:
+                values["Observed result and source"] += "\nRetiring comment=%s %s" % (row["id"], row["body"].strip())
         start, end = progress_section(lines, "Progress log")
         last = next((index for index in range(end - 1, start, -1) if lines[index].strip()), start)
         prefix = "".join(lines[:last + 1])
@@ -192,6 +209,10 @@ def append(handoff, values, *, home=None, action=None):
             os.fsync(out.fileno())
         except OSError as error:
             raise Refusal("handoff-unwritable", handoff) from error
+        if action is not None:
+            # The record above keeps each old comment's text, so a deletion
+            # whose receipt is lost loses nothing a rerun cannot read.
+            retire_actions(home, item, retiring)
     return identity, stamp
 
 
@@ -210,11 +231,31 @@ def linear_call(home, *args, data=None):
                 if (isinstance(receipt, dict) and receipt.get("ok") is True
                         and receipt.get("writes_enabled") is False and receipt.get("team_source") == "unset"):
                     raise Refusal("tracker-team-missing", "LINEAR_TEAM")
+            refused = update_refusal(result.stderr) if args[:2] == ("issues", "update") else None
+            if refused is not None:
+                raise Refusal(refused, args[2])
             raise watch.child_failure(operation, result)
         return result.stdout
     except (watch.Failure, UnicodeError) as error:
         detail = str(error).splitlines()
         raise Refusal("tracker-unavailable", "%s (%s)" % (operation, detail[0] if detail else "unread")) from error
+
+
+def update_refusal(stderr):
+    """The progress-log key of an issues update refusal UPDATE_REFUSALS names, or None."""
+    for line in stderr.splitlines():
+        keyed = re.match(r"linear: refused=(\S+)", line)
+        if keyed:
+            rule = keyed[1]
+        else:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            rule = row.get("rule") if isinstance(row, dict) else None
+        if rule in UPDATE_REFUSALS:
+            return UPDATE_REFUSALS[rule]
+    return None
 
 
 def linear_json(home, *args, data=None):
@@ -292,21 +333,22 @@ def issue_binding(title, description, comments, source, outcome, source_token):
     return True if not outcomes and title == outcome else None
 
 
-def outcome_keys(body):
-    return [match.groups() for match in map(OUTCOME_LINE.match, body.splitlines()) if match]
+def outcome_requests(body):
+    return {match[1] for match in map(OUTCOME_LINE.match, body.splitlines()) if match}
 
 
-def project_matches(home, project, source, outcome, key):
+def project_matches(home, project, source, outcome):
     rows = tracker_rows(linear_json(home, "issues", "list", "--project-id", project, "--include-archived", "--max",
                                     "--format=safe"), "issues list " + project, "id", "title", "description", "project_id")
     if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
         raise Refusal("tracker-unread", "issues list " + project)
-    held = [row["id"] for row in rows if key in outcome_keys(row["description"])]
+    source, outcome = binding_source(source), outcome.strip()
+    # Every ask of one request stays on the item that holds its first line.
+    held = [row["id"] for row in rows if source in outcome_requests(row["description"])]
     if len(held) > 1:
         raise Refusal("tracker-item-ambiguous", ",".join(held) + " (resolve with --item)")
     if held:
         return held[0]
-    source, outcome = binding_source(source), outcome.strip()
     source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
     # Either description form may have been followed by a binding comment.
     retained = project_comments(home, [row["id"] for row in rows])
@@ -327,7 +369,7 @@ def resolve_item(home, action):
     if action.item is not None:
         return read_issue(home, action.item)["id"]
     project, source, outcome = action.task_project, action.source, action.outcome
-    existing = project_matches(home, project, source, outcome, (binding_source(source), action.ask))
+    existing = project_matches(home, project, source, outcome)
     if existing is not None:
         return existing
     linear_call(home, "auth-check", "--strict")
@@ -373,13 +415,17 @@ def place_outcome(item, body, key, box):
         while end < len(lines) and lines[end][:1] in (" ", "\t") and lines[end].strip():
             end += 1
     else:
-        try:
-            heading, end = section(lines, "Done when")
-            start = end = next(index for index in range(end, heading, -1) if lines[index - 1].strip())
-        except LookupError as error:
-            if error.args[0] != "unknown-heading":
-                raise Refusal("tracker-section-ambiguous", item) from error
-            # skills/linear issues update refuses a checkbox outside "## Done when".
+        # skills/linear lib/issue-validation.sh done_when_parse reads boxes only
+        # from a `## Done when` line to the next `## ` line, and issues update
+        # refuses a box outside them.
+        starts = [index for index, line in enumerate(lines) if re.fullmatch(r"## Done when\s*", line)]
+        if len(starts) > 1:
+            raise Refusal("tracker-section-ambiguous", item)
+        if starts:
+            end = next((index for index in range(starts[0] + 1, len(lines)) if lines[index].startswith("## ")),
+                       len(lines))
+            start = end = next(index for index in range(end, starts[0], -1) if lines[index - 1].strip())
+        else:
             lines += (["\n"] if lines else []) + ["## Done when\n", "\n"]
             start = end = len(lines)
     placed = "".join(lines[:start]) + box + "".join(lines[end:])
@@ -411,16 +457,14 @@ def write_outcome(home, item, key, box):
     raise Refusal("tracker-body-changed", item, shlex.join(sys.argv))
 
 
-def retire_actions(home, item):
+def retire_actions(home, item, retiring):
     """Delete the item's old next-action comments once its outcome line has read back."""
-    retired = [row for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
-    for row in retired:
+    for row in retiring:
         receipt = linear_json(home, "comments", "delete", row["id"])
         if not isinstance(receipt, dict) or receipt.get("success") is not True:
             raise Refusal("tracker-comment-rejected", item)
-    if retired and any(row["body"].startswith(ACTION_PREFIX) for row in comments(home, item)):
+    if retiring and any(row["body"].startswith(ACTION_PREFIX) for row in comments(home, item)):
         raise Refusal("tracker-comment-unconfirmed", item)
-    return retired
 
 
 def index(handoff, archived):

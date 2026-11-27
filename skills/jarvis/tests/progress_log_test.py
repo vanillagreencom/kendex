@@ -36,7 +36,8 @@ OTHER_COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04249"
 DELIVERY = "C0123ABC:1793515999.000100"
 NAMED_WRITE = [("issues", "get"), ("issues", "get"), ("issues", "update")]
 NAMED_READBACK = NAMED_WRITE + [("issues", "get"), ("comments", "list")]
-OPENING = "> **Story:** " + OUTCOME + "\n\n> **Why this matters:** The user asked for it.\n\n## Done when\n\n"
+STORY = "> **Story:** " + OUTCOME + "\n\n> **Why this matters:** The user asked for it.\n\n"
+OPENING = STORY + "## Done when\n\n"
 FILING = "\n## Filing record\n\nJarvis request source: " + OTHER_REQUEST
 SIBLING = "- [ ] Jarvis outcome " + OTHER_REQUEST + " ask 1: The vendor sends the invoice; Jarvis waits for it.\n"
 OLDER = [{"id": "decision", "body": "Decision: the user approved the receipt check.\n"}]
@@ -153,6 +154,24 @@ elif verb == ("issues", "update"):
     assert args[3] == "--description" and args[5:] == ["--format=ids"]
     if mode == "update-unavailable":
         sys.exit(5)
+    # The refusal lines of commands/issues.sh require_unsynced_description and
+    # lib/common.sh linear_cross_team_refusal.
+    if mode == "synced":
+        print("linear: refused=synced-description issue=%s github=acme/app#7 override=--synced-description" % args[2],
+              file=sys.stderr)
+        sys.exit(1)
+    if mode == "cross-team":
+        print("linear: refused=cross-team action=update issue=%s team=APP own-team=JAR route=peer-mail" % args[2],
+              file=sys.stderr)
+        sys.exit(1)
+    # update judges the new body against the stored one with the shipped guard.
+    if world.get("bash"):
+        judged = subprocess.run([world["bash"], "-c", 'source "$1"; LINEAR_REQUIRE_REACH=1; require_issue_header_shape "$2" "$3"',
+                                 "validate-update", world["validator"], args[4], issues[args[2]].get("description", "")],
+                                capture_output=True, text=True)
+        if judged.returncode:
+            sys.stderr.write(judged.stderr)
+            sys.exit(1)
     # wrong-body stands for another writer that changes this line each time.
     issues[args[2]]["description"] = args[4].replace("Jarvis outcome", "Jarvis outcome edited") if mode == "wrong-body" else args[4]
     world["written"] = True
@@ -169,6 +188,8 @@ elif verb == ("comments", "delete"):
     for rows in comments.values():
         rows[:] = [row for row in rows if row["id"] != args[2]]
     store.write_text(json.dumps(world))
+    if mode == "lost-delete":
+        sys.exit(5)
     print(json.dumps({"success": True, "identifier": None, "url": None, "data": {"success": True}}))
 elif verb == ("comments", "bulk-list"):
     assert args[2:] == ["--stdin", "--format=safe"] and refs
@@ -282,8 +303,11 @@ class ProgressLog(ProgressLogCommands):
                                                  "issues": issues if issues is not None else {"KEN-1": self.issue()},
                                                  "comments": comments or {}, "mode": mode}))
 
-    def issue(self, item="KEN-1", title=OUTCOME, description=""):
-        return {"id": item, "title": title, "description": description, "project_id": PROJECT}
+    def issue(self, item="KEN-1", title=OUTCOME, description="", body=None):
+        """An item with the opening linear's update requires, and description under a heading, or body as given."""
+        if body is None:
+            body = STORY + ("## Filing record\n\n" + description if description else "")
+        return {"id": item, "title": title, "description": body, "project_id": PROJECT}
 
     def action_calls(self, full=False):
         return [tuple(args + refs if full else args[:2])
@@ -334,20 +358,20 @@ class ProgressLog(ProgressLogCommands):
         second = self.next_action(discover=True, action="Ask the vendor to verify the receipt.")
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assert_action("KEN-2", "Ask the vendor to verify the receipt.", "none")
-        # A second ask of the request stays on its matter's item: a repeat
-        # discovery with that ask's own outcome finds the item by its line.
-        later = {"action": "Jarvis sends the receipt to the user.", "ask": 2}
-        third = self.next_action(item="KEN-2", **later)
-        self.assertEqual(third.returncode, 0, third.stderr)
-        fourth = self.next_action(discover=True, outcome="Send the receipt to the user", **later)
-        self.assertEqual(fourth.returncode, 0, fourth.stderr)
+        # A second ask of the request, with its own outcome and no line yet,
+        # stays on the item that holds the request's first line.
+        later = {"discover": True, "outcome": "Send the receipt to the user", "ask": 2,
+                 "action": "Jarvis sends the receipt to the user."}
+        for repeat in range(2):
+            result = self.next_action(**later)
+            self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_action("KEN-2", later["action"], "none", ask=2)
         self.assertEqual(sorted(self.world()["issues"]), ["KEN-1", "KEN-2", "KEN-3"])
         self.assertEqual(self.action_calls(), [
             ("issues", "list"), ("comments", "bulk-list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
             *NAMED_READBACK[1:],
             ("issues", "list"), *NAMED_READBACK[1:],
-            *NAMED_READBACK,
+            ("issues", "list"), *NAMED_READBACK[1:],
             ("issues", "list"), ("issues", "get"), ("comments", "list")])
 
     def test_issue_guards_run_under_linear_bash(self):
@@ -497,8 +521,11 @@ class ProgressLog(ProgressLogCommands):
              {"KEN-1": [{"id": "source", "body": "Original request: " + REQUEST},
                         {"id": "result", "body": "Outcome: " + OUTCOME}]}, True,
              before, "tracker-item-ambiguous=KEN-1"),
-            ({"KEN-1": self.issue(description=OPENING + box(REQUEST, 1, "first") + box(REQUEST, 1, "second"))}, {},
+            ({"KEN-1": self.issue(body=OPENING + box(REQUEST, 1, "first") + box(REQUEST, 1, "second"))}, {},
              False, before, "tracker-line-ambiguous=KEN-1"),
+            ({"KEN-1": self.issue(body=OPENING + box(REQUEST, 1, "first")),
+              "KEN-2": self.issue("KEN-2", body=OPENING + box(REQUEST, 2, "second"))}, {},
+             True, before, "tracker-item-ambiguous=KEN-1,KEN-2"),
             (None, {}, False, state_handoff("- KEN-1: retry\n- `KEN-1`: retry\n").encode(), "state-entry-ambiguous=KEN-1"),
         ):
             with self.subTest(reason=reason):
@@ -553,7 +580,7 @@ class ProgressLog(ProgressLogCommands):
         for name, writes in self.outcome_cases():
             with self.subTest(case=name):
                 self.handoff.write_text(before)
-                self.action_world(issues={"KEN-1": self.issue(description=OPENING + SIBLING + FILING)},
+                self.action_world(issues={"KEN-1": self.issue(body=OPENING + SIBLING + FILING)},
                                   comments={"KEN-1": OLDER})
                 for write, mode, lines in writes:
                     world = self.world()
@@ -572,7 +599,7 @@ class ProgressLog(ProgressLogCommands):
                 self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True)), [])
 
     def test_two_writers_keep_both_lines(self):
-        self.action_world(issues={"KEN-1": self.issue(description=OPENING + SIBLING + FILING)},
+        self.action_world(issues={"KEN-1": self.issue(body=OPENING + SIBLING + FILING)},
                           comments={"KEN-1": OLDER})
         writes = {"A": {"action": "Jarvis asks the vendor for the receipt."},
                   "B": {"ask": 2, "action": "Jarvis sends the receipt to the user."}}
@@ -596,17 +623,59 @@ class ProgressLog(ProgressLogCommands):
 
     def test_legacy_next_action_retires_after_readback(self):
         legacy = {"id": OTHER_COMMENT, "body": "Jarvis next action: Jarvis reads the vendor reply.\n"}
-        for mode, kept in (("wrong-body", OLDER + [legacy]), ("", OLDER)):
+        retiring = "Retiring comment=%s %s" % (OTHER_COMMENT, legacy["body"].strip())
+        # (mode, exit, comments after, whether the handoff holds the old text)
+        for mode, code, kept, recorded in (("wrong-body", 2, OLDER + [legacy], False), ("", 0, OLDER, True),
+                                           ("lost-delete", 2, OLDER, True)):
             with self.subTest(mode=mode or "reads back"):
-                self.handoff.write_text(state_handoff("- KEN-1: retry\n"))
-                self.action_world(issues={"KEN-1": self.issue(description=OPENING + SIBLING + FILING)},
+                before = state_handoff("- KEN-1: retry\n")
+                self.handoff.write_text(before)
+                self.action_world(issues={"KEN-1": self.issue(body=OPENING + SIBLING + FILING)},
                                   comments={"KEN-1": OLDER + [legacy]}, mode=mode)
                 result = self.next_action()
-                self.assertEqual(result.returncode, 2 if mode else 0, result.stderr)
+                self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(self.world()["comments"], {"KEN-1": kept})
-        self.assertEqual(self.action_calls()[-3:], [("comments", "list"), ("comments", "delete"), ("comments", "list")])
-        self.assertIn("Retired comment=%s %s" % (OTHER_COMMENT, legacy["body"].strip()),
-                      records(self.handoff.read_text())[-1]["Observed result and source"])
+                saved = records(self.handoff.read_text())
+                self.assertEqual(bool(saved) and retiring in saved[-1]["Observed result and source"], recorded)
+                if not recorded:
+                    self.assertEqual(self.handoff.read_text(), before)
+        # The rerun after a lost deletion receipt finds nothing left to retire.
+        world = self.world()
+        world["mode"] = ""
+        self.action_store.write_text(json.dumps(world))
+        result = self.next_action()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Retiring", records(self.handoff.read_text())[-1]["Observed result and source"])
+        self.assertEqual(self.world()["comments"], {"KEN-1": OLDER})
+
+    def test_update_refusals_name_their_route(self):
+        notes = STORY + "## Notes\n\n- [ ] Call the vendor.\n"
+        deeper = STORY + "## Context\n\n### Done when\n\nThe vendor answers.\n"
+        # (case, item body, stub mode, refusal key or None, whether the shipped guard decides it)
+        for name, body, mode, key, guarded in (
+            ("no opening", "", "", "tracker-opening-invalid", True),
+            ("box under another heading", notes, "", "tracker-box-outside", True),
+            ("synced with GitHub", None, "synced", "tracker-item-synced", False),
+            ("another team", None, "cross-team", "tracker-item-cross-team", False),
+            ("Done when below level 2", deeper, "", None, True),
+        ):
+            with self.subTest(case=name):
+                if guarded and LINEAR_BASH is None:
+                    self.skipTest(NO_LINEAR_BASH)
+                before = state_handoff("- KEN-1: retry\n")
+                self.handoff.write_text(before)
+                self.action_world(issues={"KEN-1": self.issue(body=body)}, mode=mode)
+                stored = self.world()["issues"]["KEN-1"]["description"]
+                result = self.next_action()
+                if key is None:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.world()["issues"]["KEN-1"]["description"],
+                                     deeper + "\n## Done when\n\n" + box(REQUEST, 1, ACTION))
+                    continue
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith("progress-log: %s=KEN-1 " % key), result.stderr)
+                self.assertEqual(self.handoff.read_text(), before)
+                self.assertEqual(self.world()["issues"]["KEN-1"]["description"], stored)
 
     def assert_home_check(self, expected, handoff=None):
         args = [] if handoff is None else ["--handoff", str(handoff)]

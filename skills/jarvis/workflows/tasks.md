@@ -89,11 +89,14 @@
    - Update only changed facts; write no periodic timestamp comment to keep work open.
 3. When setting aside Linear work, use `progress-log --operation TEXT --result TEXT --decision TEXT --next-action TEXT --source REF --ask N --item ID`.
    - REF is the request's id and N the outcome's place in it. A later message that revises the outcome keeps the original REF and N.
-   - Give the next action, its actor and what it waits for as one line.
+   - Give the next action, its actor, what it waits for, and its evidence or an explicit unknown as one line.
+   - Each write replaces the line and its indented lines.
    - Add `--delivered REF` with the delivery's message id once the result reaches the user.
    - Add `--state-key KEY` when the local entry uses a different key.
    - An item can still hold an old `Jarvis next action:` comment. Write a line for each outcome it names: the first line that reads back deletes the comment, and its progress record keeps the text.
    - If the command refuses `tracker-body-changed`, run its `resume=` command after reading the item.
+   - If it refuses `tracker-opening-invalid` or `tracker-box-outside`, repair the item's opening or move the named box under Done when through the tracker's update route, then run the command again.
+   - If it refuses `tracker-item-synced` or `tracker-item-cross-team`, write the line on a check item in the session's own task project that links the item, under [Homes](../references/long-session.md#homes), and name that check item with `--item`.
    - For work outside the selected project, read back the open linked check under [Homes](../references/long-session.md#homes) before clearing State.
    - For terminal or archived work, follow [Check the outcome](#4-check-the-outcome) first.
 4. Before using the command without an item, follow [Read the scope](#1-read-the-scope) for this request, including terminal and archived bindings.
@@ -104,7 +107,7 @@
    - Use the original request reference and the same outcome text on repeat calls.
    - If discovery reports ambiguity, read the named candidates.
    - Use `--item` once the binding is clear.
-   - A tracker refusal leaves the handoff intact. Read the tracker result before retrying.
+   - A tracker refusal leaves the handoff intact, except a refusal while deleting an old `Jarvis next action:` comment, which comes after the record that keeps its text. Read the tracker result before retrying.
 6. Read back changed items and any surviving-item links before waiting or handing over.
    - Use the [Handoff](../references/long-session.md#handoff) contract for the compact tracker ids and session state.
    - At succession, reconcile every retained open item and next action with the current tracker before replacement.
