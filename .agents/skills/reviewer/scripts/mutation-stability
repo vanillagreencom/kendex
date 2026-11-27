@@ -43,8 +43,10 @@ usage: mutation-stability --worktree PATH --sha SHA --test CMD --build CMD
   --keep           print the temp dirs instead of deleting them
 
   Before extracting, the workspace volume must hold two copies of SHA's
-  tracked files, two copies of the worktree's Git-ignored files (its build
-  output) and 1 GiB of headroom; otherwise it refuses disk-space-short.
+  tracked files, two copies of the worktree's Git-ignored files and 1 GiB of
+  headroom; otherwise it refuses disk-space-short. The ignored files count
+  BUILD's output only where the worktree already holds it: before the
+  worktree has built, allow for a fresh build in each copy yourself.
 
   MUTATION_STABILITY_SETTLE  seconds each write to a copy waits so a shared
                    mtime-keyed build cache cannot answer it with the previous
@@ -438,8 +440,9 @@ copy_size_kib() {
   ' <<<"$listing"
 }
 
-# The copy's build writes what the worktree's build already wrote, and a build
-# writes only files Git ignores, so every ignored file in the worktree counts.
+# The copy's build writes what the worktree's build already wrote. That output
+# is among the files Git ignores, so counting every ignored file over-counts
+# it; a worktree that has not built yet holds none of it to count.
 build_output_kib() {
   # The NUL-separated list goes to a file: a command substitution drops NULs.
   ignored_status=0
@@ -466,8 +469,10 @@ free_kib() {
   df_out=$(df -Pk -- "$ROOT" 2>"$ROOT/size.log") || df_status=$?
   [ "$df_status" -eq 0 ] ||
     refuse_with_log disk-space-unreadable path "$ROOT" "could not read the workspace's free space" "$ROOT/size.log"
-  # POSIX df -P prints a header and one line per volume, Available in field 4.
-  available=$(awk 'NR == 2 { print $4 }' <<<"$df_out")
+  # POSIX df -P prints a header and one line per volume. The source name may
+  # hold spaces, so Available is read as the field before Capacity, the first
+  # whole-percent field past the four a line holds before it.
+  available=$(awk 'NR == 2 { for (i = 5; i <= NF; i++) if ($i ~ /^[0-9]+%$/) { print $(i - 1); exit } }' <<<"$df_out")
   [[ "$available" =~ ^[0-9]{1,18}$ ]] ||
     refuse disk-space-unreadable path "$ROOT" "df reported no free-space figure for the workspace"
   echo "$available"
@@ -479,7 +484,7 @@ available_kib=$(free_kib) || exit 2
 need_kib=$((2 * (copy_kib + build_kib) + DISK_MARGIN_KIB))
 [ "$available_kib" -ge "$need_kib" ] ||
   refuse disk-space-short kib "need:$need_kib/free:$available_kib" \
-    "two copies of $SHA with their build output and ${DISK_MARGIN_KIB} KiB headroom need ${need_kib} KiB; the workspace volume has ${available_kib} KiB free"
+    "two copies of $SHA and of the worktree's ignored files with ${DISK_MARGIN_KIB} KiB headroom need ${need_kib} KiB; the workspace volume has ${available_kib} KiB free"
 
 extract_status=0
 extract "$ROOT/mutant" >"$ROOT/control-archive.log" 2>&1 || extract_status=$?
