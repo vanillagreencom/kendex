@@ -89,6 +89,7 @@ case "$1:$2" in
       *) echo '{"issue":{"description":"","assignee":{"name":"Maya Owner"},"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}' ;;
     esac ;;
   issues:update) echo '{}' ;;
+  comments:owner-questions) echo '"question-id"' ;;
   comments:create) echo '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}' ;;
   issues:bulk-get) echo '[{"id":"KEN-1","uuid":"00000001-0000-4000-8000-000000000001"}]' ;;
   *) exit 1 ;;

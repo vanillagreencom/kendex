@@ -49,6 +49,16 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
         "assignee": {"name": item["assignee"]} if item["assignee"] else None,
         "labels": {"pageInfo": {"hasNextPage": False},
                    "nodes": [{"name": label} for label in item["labels"]]}}}))
+elif args[:3] == ["comments", "owner-questions", "--id"]:
+    # The real package reserves the ID; the case keeps it to build the
+    # description the ask writes.
+    sent = subprocess.run([os.environ["TRACKER_BASH"], os.environ["TRACKER_LINEAR"], *args],
+                          capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": str(root)})
+    if sent.returncode == 0:
+        (root / "reserved-id").write_text(json.loads(sent.stdout))
+    sys.stdout.write(sent.stdout)
+    sys.stderr.write(sent.stderr)
+    sys.exit(sent.returncode)
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
@@ -185,7 +195,6 @@ def run(source, scratch, bash):
             # A previous ask can own the opening formatted action.
             body = "The issue keeps its purpose.\r\n\r\nOriginal body.\n\n"
             original = "**Outcome, what you do:** Preserve the original purpose\n\n" + body if not posted else body
-            written = "**Owner, what you do:** Approve change\n\n" + body
             later = "A later edit keeps its own purpose.\r\n\r\nKeep these bytes.\n\n"
             (root / "later-description.json").write_text(json.dumps(later))
             labels = ["owner-gated", "skills"] if row in ("label-failed", "comment-preexisting") else ["skills"]
@@ -214,6 +223,9 @@ def run(source, scratch, bash):
                          "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
                          "--recommend", "approve", "--effect", "none", "--file", str(message))
             ask_id = ask.stdout.strip().split("=", 1)[1]
+            reserved = (root / "reserved-id").read_text()
+            written = ("**Owner, what you do:** Approve change `Owner question: " + reserved + "`\n\n"
+                       + body)
             pending = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
             after_ask = json.loads(state.read_text())
             after_comments = json.loads(comments_path.read_text())
@@ -292,7 +304,9 @@ def run(source, scratch, bash):
                     facts["unposted"] &= after_ask == item
                 facts["notice"] &= "tracker-unwritten issue=KEN-7 cause=" in ask.stderr
             else:
-                facts["posted"] &= pending["tracker_posted"] is True
+                # The action line names the question the ask posted under.
+                facts["posted"] &= (pending["tracker_posted"] is True and after_ask["description"] == written
+                    and pending["tracker_comment"] == reserved)
             if row == "label-failed":
                 error_path = ask.stderr.partition("error-file=")[2].strip()
                 error_file = Path(error_path) if error_path else None

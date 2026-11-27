@@ -78,6 +78,9 @@ case "$1:$2" in
         else cat "$FIXTURE/repair"; fi ;;
       *) exit 1 ;;
     esac ;;
+  comments:owner-questions)
+    if [[ -e "$FIXTURE/question-id" ]]; then jq -cn --rawfile id "$FIXTURE/question-id" '$id | rtrimstr("\\n")'
+    else printf '"question"\\n'; fi ;;
   comments:create)
     if [[ -e "$FIXTURE/question-id" ]]; then jq -cn --rawfile id "$FIXTURE/question-id" '{success:true,data:{comment:{id:($id | rtrimstr("\\n"))}}}'
     else printf '{"success":true,"data":{"comment":{"id":"question"}}}\\n'; fi ;;
@@ -122,7 +125,8 @@ esac
     assert sum(line.startswith('comments bulk-list ') for line in calls) == len(root_cases) + 1
     # The answer's first delivery marks it; every later pass delivers nothing new and marks nothing.
     assert [line for line in calls if line.startswith('comments react ')] == ['comments react answer --emoji eyes'], calls
-    assert any(line.startswith('issues update KEN-7 --description **Owner, what you do:** Approve change') for line in calls)
+    # The repaired line names the question its ask posted, the line the watch removes on the close.
+    assert 'issues update KEN-7 --description **Owner, what you do:** Approve change `Owner question: question`' in calls, calls
     for name, malformed in [('non-string-id', [dict(id=42, description='Body', assignee='Owner')]),
                              ('non-string-description', [dict(id='KEN-7', uuid='uuid-KEN-7', description=42, assignee='Owner')]),
                              ('false-description', [dict(id='KEN-7', uuid='uuid-KEN-7', description=False, assignee='Owner')]),

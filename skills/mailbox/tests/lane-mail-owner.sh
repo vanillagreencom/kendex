@@ -1145,6 +1145,7 @@ case "$1:$2" in
       'query OwnerTracker('*) printf '{"issue":{"description":"Body","assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}\n' ;;
       *) exit 1 ;;
     esac ;;
+  comments:owner-questions) printf '"question"\n' ;;
   comments:create) printf '{"success":true,"data":{"comment":{"id":"question"}}}\n' ;;
   comments:react) printf '{"success":true,"data":{"reaction":{"emoji":"eyes"}}}\n' ;;
   comments:bulk-list) cat "$FIXTURE/comments" ;;

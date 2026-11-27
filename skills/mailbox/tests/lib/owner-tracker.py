@@ -36,7 +36,7 @@ if [[ "$1:$2" == users:list ]]; then
   read -r release < "$TRACKER_CASE/release"
 fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*|question-id:comments:owner-questions:*) exit 1 ;;
 esac
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
@@ -49,6 +49,7 @@ case "$1:$2" in
     [[ "$3" == "query OwnerTracker("* ]] || exit 1
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
+  comments:owner-questions) printf '"question-id"\n' ;;
   comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\n' "$3" "$3" ;;
@@ -60,7 +61,7 @@ esac
 def run(source, scratch, bash):
     facts = {"pending": True, "terminal": True, "projection": True, "outcome": True, "delivery": True, "bound": True}
     os.environ["SLACK_ORCH_DIR"] = str(REPO / "skills/orch")
-    for row in ("posted", "owner-read", "workspace-read", "assign", "labels-read", "label", "comment", "prepare", "missing"):
+    for row in ("posted", "owner-read", "workspace-read", "question-id", "assign", "labels-read", "label", "comment", "prepare", "missing"):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"

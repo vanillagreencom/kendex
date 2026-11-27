@@ -6697,6 +6697,114 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
     );
 }
 
+/// A closing ask's watch removes the action line its question marks, under
+/// any name, and only that line: while another mailbox's question awaits
+/// a ruling, the write is that line alone, and a line naming the other
+/// question, the same action or a longer one, is left as it stands.
+#[test]
+fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
+    const NAME: &str = "a_closing_ask_removes_only_the_action_line_its_question_marks";
+    const UUID: &str = "00000007-0000-4000-8000-000000000007";
+    const FIRST: &str = "a54c6f77-50d1-4001-8000-000000000001";
+    const SECOND: &str = "a54c6f77-50d1-4002-8000-000000000002";
+    if !isolated_row(NAME) {
+        return;
+    }
+    let line = |name: &str, action: &str, question: &str| {
+        format!("**{name}, what you do:** {action} `Owner question: {question}`\n\nBody.")
+    };
+    let open = json!([{"id": SECOND, "reserved": true, "ruled": false, "legacy_asks": []}]);
+    let ruled = json!([]);
+    let rows: [(&str, String, &Value, &[&str]); 6] = [
+        (
+            "the other question's identical action",
+            line("Maya", "Approve.", SECOND),
+            &open,
+            &[],
+        ),
+        (
+            "the other question's action that starts with this one",
+            line("Maya", "Approve. Then merge.", SECOND),
+            &open,
+            &[],
+        ),
+        (
+            "its own line while the other question is open",
+            line("Maya", "Approve.", FIRST),
+            &open,
+            &["issues update KEN-7 --description Body."],
+        ),
+        (
+            "its own line under another name",
+            line("Ann", "Approve.", FIRST),
+            &open,
+            &["issues update KEN-7 --description Body."],
+        ),
+        (
+            "its own line once every question is ruled",
+            line("Maya", "Approve.", FIRST),
+            &ruled,
+            &["issues update KEN-7 --labels skills --clear-assignee --description Body."],
+        ),
+        (
+            "the ruled other question's identical action",
+            line("Maya", "Approve.", SECOND),
+            &ruled,
+            &["issues update KEN-7 --labels skills --clear-assignee"],
+        ),
+    ];
+    let clock = FakeClock::new();
+    for (case, description, questions, expected) in rows {
+        let mut world = World::new();
+        let (mut settings, events) = posted_owner_ask(
+            &world,
+            "ask-a",
+            ("KEN-7", Some(UUID)),
+            Some(FIRST),
+            "2099-01-01T00:00:00Z",
+        );
+        let outward = events.with_file_name("to-overseer.jsonl");
+        let mut envelopes: Vec<Value> = std::fs::read_to_string(&outward)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        envelopes[0]["do"] = json!("Approve.");
+        let staged: String = envelopes.iter().map(|event| format!("{event}\n")).collect();
+        std::fs::write(outward, staged).unwrap();
+        settings.linear_team = None;
+        world
+            .linear("issues list --assignee", json!({"body": []}))
+            .linear("comments bulk-list", comments(&["KEN-7"], &[]))
+            .linear("comments create", json!({"body": {"success": true}}))
+            .linear("comments owner-questions", json!({"body": questions}))
+            .linear("issues update", json!({"body": {}}))
+            .linear(
+                "graphql OwnerAskItem",
+                json!({"body": {"issue": {
+                    "description": description, "assignee": {"name": "Maya Owner"},
+                    "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+                }}}),
+            );
+        let mut body = tracker::body(world.context(settings, None));
+        let mut baseline = Baseline::default();
+        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        let out = program(lane_mail())
+            .args(["resolve", "--item", "overseer", "--id", "ask-a"])
+            .current_dir(world.dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{case}: {}", stderr(&out));
+        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        let updates: Vec<String> = world
+            .linear_calls()
+            .into_iter()
+            .filter(|call| call.starts_with("issues update "))
+            .collect();
+        assert_eq!(updates, expected, "{case}");
+    }
+}
+
 /// This test process's own identity, the one a runner in it claims with.
 fn me() -> Identity {
     let pid = std::process::id();
