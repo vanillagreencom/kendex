@@ -1013,11 +1013,11 @@ rc=0
 
     def test_control_prefix_without_state_export_fails_the_state_contract(self):
         original = self.script.read_text()
-        export = 'shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names,'
+        export = 'account_env = ["ORCH_STATE_DIR=" + path + "/tmp", *names]'
         self.assertEqual(original.count(export), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(export, 'shlex.join([*names,'))
+            self.executable(self.script, original.replace(export, 'account_env = [*names]'))
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
                 self.assert_hosted_state(fields, path, run)
