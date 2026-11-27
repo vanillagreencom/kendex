@@ -10,14 +10,13 @@ The workflow for a dev agent receiving a review-fix delegation. Run it first lin
 
 Confirm the shell's real working directory is the delegation's `Worktree:` path before any repo-relative command, by the check at the top of [dev-implement.md](./dev-implement.md).
 
-**Skip if** the delegation is ad-hoc: it carries no `Issue:` line, or its `Artifact Key:` is a `pr-N` or `local-` key, which names no issue whatever `Issue:` repeats. In such a round, `[ISSUE_ID]` in the commit header and the proposed-rule path below takes the `Artifact Key:` value. Otherwise read prior work, decisions, and handoff notes before evaluating any item.
+**Skip if** the delegation is ad-hoc: it carries no `Issue:` line, or its `Artifact Key:` is a `pr-N` or `local-` key, which names no issue whatever `Issue:` repeats. In such a round, `[ISSUE_ID]` in the commit header and the proposed-rule path below takes the `Artifact Key:` value. Otherwise read the item before evaluating any review item. Read no comment thread.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh comments list [ISSUE_ID]
 ```
 
-GitHub: `gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,url`
+GitHub: `gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels,url`
 
 ---
 

@@ -63,9 +63,9 @@ Linear only: activate the issue, or the parent alone if bundled (sub-issues acti
 ```bash
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT_TYPE]
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh comments list [ISSUE_ID]
 ```
 
+- Read the comment thread, `linear.sh comments list [ISSUE_ID]`, only when the description has no `## Done when` section or `.blocked_by` names an item. A blocker posts its `Handoff from` comment to that thread (§ 9.2).
 - Every read is live.
 - A failed read or activation stops the round with its exact diagnostic, an auth, API or configuration failure.
 - A rate-limited activation is held under the linear skill's `patterns/workflow-actions.md` § Quota Holds.
@@ -74,8 +74,10 @@ Linear only: activate the issue, or the parent alone if bundled (sub-issues acti
 GitHub only:
 
 ```bash
-gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments,labels,url
+gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels,url
 ```
+
+Add `comments` to the fields only when the body has no `## Done when` section.
 
 Ad-hoc: no tracker reads.
 
