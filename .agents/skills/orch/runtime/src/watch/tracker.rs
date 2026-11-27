@@ -1972,11 +1972,11 @@ fn settle_mark<T>(
     }
 }
 
-/// The closed `ask`'s item write: its owner label and assignee from the
-/// mailbox's owner gate, given the `open` asks on the same item and the
-/// `legacy_closes` there whose unreserved questions it answers for, and its
-/// action line removed, or replaced by the latest open ask's, only where the
-/// description still opens with it. While another mailbox's question awaits
+/// The closed `ask`'s item write: its owner label and assignee taken off by
+/// the mailbox's owner gate once no owner ask stands, given the `open` asks
+/// on the same item and the `legacy_closes` there whose unreserved
+/// questions it answers for, and its action line removed, or replaced by
+/// the latest open ask's, only where the description still opens with it. While another mailbox's question awaits
 /// a ruling there, as the gate reads the item's questions, the close stays
 /// unmarked.
 fn clear_owner_item(

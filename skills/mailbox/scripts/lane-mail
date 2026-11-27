@@ -72,10 +72,10 @@ unread or disabled). A quota refusal prints its original JSON on stderr and
 the EVENT tracker-quota line on stdout in place of the final read state. The
 caller owns fleet scheduling, quota persistence and every other tracker mark.
 
-owner-gate sets the owner label and the owner assignee on the item of the
-closed owner ask MSGID from the item's open owner asks, the one rule the ask
-post and its rollback take them by: both are on the item while an owner ask
-stands there, and off it once none stands. The asks the caller judged to be
+owner-gate takes the owner label and the owner assignee off the item of the
+closed owner ask MSGID once no owner ask stands there, by the one rule the
+ask post and its rollback take them by. It never adds either: while an ask
+stands, the item keeps the assignee and labels it has. The asks the caller judged to be
 this mailbox's on that item are --open-ask, each still standing, and
 --closed-ask, each closed; MSGID is closed. --named-ask is a closed ask
 recorded under another item whose question comment id can still name one of
@@ -84,8 +84,9 @@ The item's question comments are read as `comments owner-questions` reads
 them, every mailbox's: one that no open ask names stands for another
 mailbox's ask until its ruling, unless it is unreserved and a closed or named
 ask names it. The label is ORCH_OWNER_ASK_LABEL, each ask's own where its
-post recorded one, and the owner the ORCH_OWNER_EMAIL account; OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only
-where the item differs. It prints `owner-gate: held=<true|false>`, true where
+post recorded one, and the owner the ORCH_OWNER_EMAIL account;
+OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only where the
+item differs. It prints `owner-gate: held=<true|false>`, true where
 another mailbox's question stands. A failed step exits 2 with the tracker's
 own stderr, then `lane-mail: owner-gate-unwritten=<item> cause=<step>`
 (owner-read, questions-read, labels-read, prepare, assign, label or
@@ -1988,7 +1989,7 @@ if [ "$VERB" = owner-gate ]; then
     REFUSE_EXTRA="cause=tracker-absent"
     refuse owner-gate-unwritten "$GATE_ISSUE"
   fi
-  if ! owner_tracker_gate need "$TRACKER" "$WORK_DIR" "$GATE_ISSUE" "$GATE_REF" "$GATE_ASKS" </dev/null; then
+  if ! owner_tracker_gate remove "$TRACKER" "$WORK_DIR" "$GATE_ISSUE" "$GATE_REF" "$GATE_ASKS" </dev/null; then
     cat -- "$WORK_DIR/tracker.err" >&2
     REFUSE_EXTRA="cause=$OWNER_TRACKER_GATE_CAUSE"
     refuse owner-gate-unwritten "$GATE_ISSUE"

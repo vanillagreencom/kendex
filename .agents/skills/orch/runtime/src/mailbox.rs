@@ -1029,8 +1029,9 @@ impl Mailbox {
     }
 
     /// `owner-gate --item overseer --id ASK` at the main checkout `root`:
-    /// the owner label and assignee on the closed `ask`'s item, set by the
-    /// mailbox's one rule for them from the item's open owner asks. The
+    /// the owner label and assignee taken off the closed `ask`'s item once
+    /// no owner ask stands there, by the mailbox's one rule for them, which
+    /// never adds either. The
     /// asks are `(open, closed, named)`: the open and closed ones the caller
     /// judged to be this mailbox's on that item, and the closed ones
     /// recorded under another item whose comment id can still name a

@@ -346,7 +346,11 @@ owner_tracker_owner() { # TRACKER WORK
 # open owner asks: present while one stands there, absent once none stands.
 # The ask post, its rollback and the asking watch's close (`lane-mail
 # owner-gate`) each take the pair from here, so no pass writes it back once
-# the last ask closes. ASKS is this mailbox's asks on the item, each
+# the last ask closes. MODE `post` is the ask post alone: it assigns the
+# owner and adds the owner label for the asks that stand. MODE `remove` is
+# the close and the rollback: it only takes the pair off where nothing
+# stands, and keeps what a person changed, an assignee who is not the owner
+# or a removed label, while an ask stands. ASKS is this mailbox's asks on the item, each
 # {id, state, tracker_comment, tracker_label}: an `open` ask stands; a
 # `closed` one no longer does; a `named` one is a closed ask recorded under
 # another item, which names questions here by its comment id alone, its
@@ -358,21 +362,21 @@ owner_tracker_owner() { # TRACKER WORK
 # named ask names it (a question posted before reserved ids, closed with no
 # ruling). The labels the gate takes off are the configured one and those
 # the item's own asks recorded.
-# HELD `need` reads them always and sets OWNER_TRACKER_HELD to whether such
-# a question stands; `none` reads them only where no open ask decides the
+# `remove` reads them always and sets OWNER_TRACKER_HELD to whether such a
+# question stands; `post` reads them only where no open ask decides the
 # pair. OWNER and ITEM, the owner account and the item as the caller read
 # them, spare the reads. Each write lands only where the item differs: the
 # assignee first, then the labels, the label write `--labels` with each
 # label the item keeps. Returns 1 with OWNER_TRACKER_GATE_CAUSE naming the
 # failed step and its tracker stderr in WORK/tracker.err.
-owner_tracker_gate() { # HELD TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM]
-  local need="$1" tracker="$2" work="$3" issue="$4" ref="$5" asks="$6" owner="${7:-}" item="${8:-}"
+owner_tracker_gate() { # MODE TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM]
+  local mode="$1" tracker="$2" work="$3" issue="$4" ref="$5" asks="$6" owner="${7:-}" item="${8:-}"
   local questions='[]' plan assignee labels
   OWNER_TRACKER_HELD=false
   if [[ -z "$owner" ]]; then
     owner="$(owner_tracker_owner "$tracker" "$work")" || { OWNER_TRACKER_GATE_CAUSE=owner-read; return 1; }
   fi
-  if [[ "$need" == need ]] || ! jq -e 'any(.[]; .state == "open")' <<<"$asks" >/dev/null; then
+  if [[ "$mode" == remove ]] || ! jq -e 'any(.[]; .state == "open")' <<<"$asks" >/dev/null; then
     questions="$("$tracker" comments owner-questions "$ref" --email "$OWNER_TRACKER_EMAIL" 2>"$work/tracker.err" |
       jq -ce 'if type == "array" and all(.[]; (.id | type) == "string" and (.reserved | type) == "boolean")
         then . else error("owner-questions-invalid") end' 2>>"$work/tracker.err")" ||
@@ -382,7 +386,7 @@ owner_tracker_gate() { # HELD TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM
     item="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || { OWNER_TRACKER_GATE_CAUSE=labels-read; return 1; }
   fi
   plan="$(jq -cn --argjson asks "$asks" --argjson questions "$questions" --argjson item "$item" \
-    --argjson owner "$owner" --arg label "$OWNER_TRACKER_LABEL" '
+    --argjson owner "$owner" --arg label "$OWNER_TRACKER_LABEL" --arg mode "$mode" '
     def names($q): . as $ask
       | if ($ask.tracker_comment | type) == "string" then $ask.tracker_comment == $q.id
         else any($q.legacy_asks[]?; . == $ask.id) end;
@@ -392,9 +396,11 @@ owner_tracker_gate() { # HELD TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM
     | ([$asks[] | select(.state == "open") | .tracker_label // $label]
        + (if $held then [$label] else [] end) | unique) as $standing
     | ([$label] + [$asks[] | select(.state != "named") | .tracker_label // $label]) as $owned
-    | ((($item.labels - $owned) + $standing) | unique) as $labels
+    | (if $mode == "post" then ($item.labels - $owned) + $standing
+       else $item.labels - ($owned - $standing) end | unique) as $labels
     | {held: $held,
-       assignee: (if ($standing | length) > 0 then (if $item.assignee_id == $owner.id then null else $owner.id end)
+       assignee: (if ($standing | length) > 0 then
+                    (if $mode == "post" and $item.assignee_id != $owner.id then $owner.id else null end)
                   elif $item.assignee_id == $owner.id then "" else null end),
        labels: (if $labels == ($item.labels | unique) then null else $labels end)}')" ||
     { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
@@ -541,7 +547,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   asks="$(jq -cn --arg id "$ask_id" --arg question "$question" --arg label "$OWNER_TRACKER_LABEL" \
     '[{id: $id, state: "open", tracker_comment: $question, tracker_label: $label}]')" || return 1
   OWNER_TRACKER_DESCRIBED=0
-  if ! owner_tracker_gate none "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" "$current"; then
+  if ! owner_tracker_gate post "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" "$current"; then
     OWNER_TRACKER_CAUSE="$OWNER_TRACKER_GATE_CAUSE"
     owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"
   elif owner_tracker_post "$tracker" "$work" "$issue" "$comment_issue" "$ask_id" "$description" \
@@ -566,7 +572,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     fi
   fi
   asks="$(jq -c '.[].state = "withdrawn"' <<<"$asks")" || return 1
-  owner_tracker_gate none "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" ||
+  owner_tracker_gate remove "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" ||
     owner_tracker_unwritten "$issue" "rollback-$OWNER_TRACKER_GATE_CAUSE" "$work/tracker.err"
   return 0
 }

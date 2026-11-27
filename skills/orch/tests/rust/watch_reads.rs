@@ -6815,26 +6815,29 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
     let owner = json!({"id": "maya", "name": "Maya Owner"});
     let teammate = json!({"id": "ann", "name": "Ann"});
     let gated: &[&str] = &["owner-gated", "skills"];
+    let held =
+        json!([{"id": "human-comment-1", "reserved": false, "ruled": false, "legacy_asks": []}]);
     // Each row: the item's description, its open questions, its assignee
-    // and labels, whether a close recorded under another item is in the
-    // mailbox, and the updates the close writes.
+    // and labels, the other ask in the mailbox (none, a close recorded under
+    // another item, or an ask still open on this item), and the updates the
+    // close writes.
     type Row<'a> = (
         &'a str,
         String,
         &'a Value,
         &'a Value,
         &'a [&'a str],
-        bool,
+        &'a str,
         &'a [&'a str],
     );
-    let rows: [Row; 9] = [
+    let rows: [Row; 11] = [
         (
             "the other question's identical action",
             line("Maya", "Approve.", SECOND),
             &open,
             &owner,
             gated,
-            false,
+            "",
             &[],
         ),
         (
@@ -6843,7 +6846,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &open,
             &owner,
             gated,
-            false,
+            "",
             &[],
         ),
         (
@@ -6852,7 +6855,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &open,
             &owner,
             gated,
-            false,
+            "",
             &["issues update KEN-7 --description Body."],
         ),
         (
@@ -6861,7 +6864,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &open,
             &owner,
             gated,
-            false,
+            "",
             &["issues update KEN-7 --description Body."],
         ),
         (
@@ -6870,7 +6873,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &ruled,
             &owner,
             gated,
-            false,
+            "",
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --labels skills",
@@ -6883,7 +6886,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &ruled,
             &owner,
             gated,
-            false,
+            "",
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --labels skills",
@@ -6895,7 +6898,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &ruled,
             &owner,
             &["skills"],
-            false,
+            "",
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --description Body.",
@@ -6907,7 +6910,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &ruled,
             &teammate,
             gated,
-            false,
+            "",
             &[
                 "issues update KEN-7 --labels skills",
                 "issues update KEN-7 --description Body.",
@@ -6919,16 +6922,34 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &ruled,
             &owner,
             &["owner-gated", "release-review", "skills"],
-            true,
+            "other-item-close",
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --labels release-review,skills",
                 "issues update KEN-7 --description Body.",
             ],
         ),
+        (
+            "an owner mention that holds the close, with the pair a person removed",
+            line("Maya", "Approve.", FIRST),
+            &held,
+            &Value::Null,
+            &["skills"],
+            "",
+            &["issues update KEN-7 --description Body."],
+        ),
+        (
+            "another open ask, with a teammate the item was reassigned to",
+            line("Maya", "Approve.", FIRST),
+            &open,
+            &teammate,
+            gated,
+            "open-ask",
+            &["issues update KEN-7 --description Body."],
+        ),
     ];
     let clock = FakeClock::new();
-    for (case, description, questions, assignee, labels, other_close, expected) in rows {
+    for (case, description, questions, assignee, labels, other, expected) in rows {
         let mut world = World::new();
         let (mut settings, events) = posted_owner_ask(
             &world,
@@ -6944,7 +6965,18 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         envelopes[0]["do"] = json!("Approve.");
-        if other_close {
+        if other == "open-ask" {
+            // An ask still open on this item, posted under the other question.
+            let mut open_ask = envelopes[0].clone();
+            open_ask["id"] = json!("ask-b");
+            open_ask.as_object_mut().unwrap().remove("do");
+            let mut posted = envelopes[1].clone();
+            posted["id"] = json!("ask-b-tracker");
+            posted["re"] = json!("ask-b");
+            posted["tracker_comment"] = json!(SECOND);
+            envelopes.extend([open_ask, posted]);
+        }
+        if other == "other-item-close" {
             // A close recorded under KEN-8, with no identity, whose post
             // used `release-review` as its owner label.
             envelopes.push(
@@ -6969,7 +7001,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
                 .unwrap();
             assert!(out.status.success(), "{case}: {}", stderr(&out));
         };
-        if other_close {
+        if other == "other-item-close" {
             resolve("ask-8");
         }
         settings.linear_team = None;
@@ -6983,7 +7015,8 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             .linear(
                 "graphql OwnerAskItem",
                 json!({"body": {"issue": {
-                    "description": description, "assignee": {"name": assignee["name"]},
+                    "description": description,
+                    "assignee": if assignee.is_null() { Value::Null } else { json!({"name": assignee["name"]}) },
                     "labels": {"nodes": nodes}
                 }}}),
             )
