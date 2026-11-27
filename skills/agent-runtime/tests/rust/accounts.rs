@@ -179,7 +179,7 @@ impl World {
     }
 
     /// The body the usage fixture answers for `token` at `endpoint`
-    /// (`usage`, `profile` or `copilot`), and the status line beside it.
+    /// (`usage`, `usage-grants`, `profile` or `copilot`), and its status.
     fn plant_answer(&self, token: &str, endpoint: &str, body: &Value, status: Option<&str>) {
         let fixtures = self.path().join("fixtures");
         std::fs::create_dir_all(&fixtures).unwrap();
@@ -2275,7 +2275,10 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     let first = world.roster();
     assert_eq!(first["rows"][0]["status"], json!("ok"), "{first}");
     assert_eq!(first["rows"][0]["record"]["headroom_pct"], json!(80));
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
     let record = world.record_path("claude", "aclaude");
     let mut value: Value =
         serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
@@ -2298,7 +2301,7 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     );
     let age = row["usage_age_s"].as_u64().unwrap();
     assert!((45..=60).contains(&age), "the figure's own age: {refused}");
-    assert_eq!(world.curl_log().len(), 2);
+    assert_eq!(world.curl_log().len(), 3);
     let value: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
     assert_eq!(value["refusal"]["code"], json!("429"));
     assert_eq!(
@@ -2309,7 +2312,7 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     let again = world.roster();
     assert_eq!(again["rows"][0]["status"], json!("rate_limited"), "{again}");
     assert_eq!(again["rows"][0]["record"]["headroom_pct"], json!(80));
-    assert_eq!(world.curl_log().len(), 2, "nothing posts inside the window");
+    assert_eq!(world.curl_log().len(), 3, "nothing posts inside the window");
     assert_eq!(
         chosen(&world.pick(&claude(None))).as_deref(),
         Some(world.dir("aclaude").as_str()),
@@ -2331,8 +2334,141 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
         json!("usage"),
         "{old}"
     );
-    assert_eq!(world.curl_log().len(), 2);
+    assert_eq!(world.curl_log().len(), 3);
     assert_eq!(world.pick(&claude(None))["answer"], json!("none"));
+}
+
+#[test]
+fn a_cached_claude_fable_grant_is_named_before_wait_and_stop() {
+    use agent_runtime::stop::{self, Ground, Kind, Session};
+
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("aclaude", 100, 10)]);
+    std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+    let token = "token-aclaude";
+    world.plant_answer(
+        token,
+        "usage",
+        &claude_body(json!(10), json!(100), &[]),
+        None,
+    );
+    world.plant_answer(
+        token,
+        "usage-grants",
+        &json!({"cedar_ember": {"eligible": true,
+        "grants": [{"type": "full", "resets_left": 1, "ends_at": stamp(now() + 3600),
+                    "gives_back_weekly": true}]}}),
+        None,
+    );
+
+    let first = listed_row(&world, "aclaude");
+    let cached = listed_row(&world, "aclaude");
+    let grants = json!([{"kind":"fable","left":1}]);
+    for row in [&first, &cached] {
+        assert_eq!(row["weekly_pct"], json!(100), "{row}");
+        assert_eq!(row["limit_resets"], grants, "{row}");
+    }
+    assert_eq!(
+        world.curl_log(),
+        ["usage token-aclaude", "usage-grants token-aclaude"]
+    );
+    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    let requests: Vec<_> = argv
+        .lines()
+        .filter(|line| line.contains("/usage "))
+        .collect();
+    let [plain, query] = requests.as_slice() else {
+        panic!("expected two usage requests: {argv}");
+    };
+    assert!(!plain.contains("cedar_ember"), "{argv}");
+    for arg in [
+        "--get",
+        "cedar_ember=1",
+        "skip_spend=1",
+        "x-app: cli",
+        "anthropic-beta: oauth-2025-04-20",
+        "-A claude-cli/",
+        "-K -",
+    ] {
+        assert!(query.contains(arg), "{arg}: {argv}");
+    }
+    assert!(!argv.contains(token), "{argv}");
+
+    // The host's usage row can win the pick, while the grant remains local.
+    let mut host = cached.clone();
+    host["measured_through"] = json!("host");
+    host.as_object_mut().unwrap().remove("limit_resets");
+    let mut roster = roster_of(rows(&[cached, host], &world.settings));
+    roster.carry_limit_resets(r#"{"accounts":[]}"#).unwrap();
+    let tokens = Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+    let holders = roster.reset_holders(&claude(None), &tokens, now()).unwrap();
+    for (reset, then) in [(true, "wait-for-reset"), (false, "notify")] {
+        let action = stop::action(
+            Kind::Usage,
+            std::time::Duration::ZERO,
+            Session::Worker,
+            Ground {
+                own_room: false,
+                room: false,
+                reset,
+                resets: &holders,
+            },
+        );
+        let notice = json!(action);
+        assert_eq!(notice["action"], json!("notify-reset"));
+        assert_eq!(notice["then"]["action"], json!(then));
+        assert_eq!(
+            notice["accounts"],
+            json!([{"config_dir": world.dir("aclaude"),
+            "alias": "aclaude", "limit_resets": grants}])
+        );
+    }
+}
+
+#[test]
+fn a_claude_grant_refusal_leaves_usage_readable_and_defers_the_grant_get() {
+    let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    let token = "token-aclaude";
+    world.plant_answer(token, "usage-grants", &json!({}), Some("429 300"));
+    for (weekly, status, read_status, read_weekly) in [
+        (20, None, "ok", 20),
+        (40, Some("429 1"), "rate_limited", 20),
+    ] {
+        world.plant_answer(
+            token,
+            "usage",
+            &claude_body(json!(10), json!(weekly), &[]),
+            status,
+        );
+        let row = listed_row(&world, "aclaude");
+        assert_eq!(row["status"], json!(read_status), "{row}");
+        assert_eq!(row["weekly_pct"], json!(read_weekly), "{row}");
+        assert_eq!(row["limit_resets"], Value::Null, "{row}");
+    }
+    // Expire the ordinary refusal without waiting out the grant refusal.
+    let path = world.record_path("claude", "aclaude");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["refusal"]["expires_at"] = json!(now());
+    std::fs::write(&path, record.to_string()).unwrap();
+    world.plant_answer(
+        token,
+        "usage",
+        &claude_body(json!(10), json!(40), &[]),
+        None,
+    );
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("ok"), "{row}");
+    assert_eq!(row["weekly_pct"], json!(40), "{row}");
+    assert_eq!(
+        world.curl_log(),
+        [
+            "usage token-aclaude",
+            "usage-grants token-aclaude",
+            "usage token-aclaude",
+            "usage token-aclaude"
+        ]
+    );
 }
 
 /// The week every wall row's account is walled in, as `measured` plants it.
@@ -2466,7 +2602,7 @@ fn two_refreshers_under_the_lock_fetch_once() {
     }
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude"],
+        vec!["usage token-aclaude", "usage-grants token-aclaude"],
         "the second reader took the first's figure inside the lock"
     );
 }
@@ -3917,7 +4053,8 @@ fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing()
         vec![
             "token refresh-aclaude",
             "token refresh-aclaude",
-            "usage renewed-token"
+            "usage renewed-token",
+            "usage-grants renewed-token"
         ],
         "the next listing posts again and reads usage through the new token"
     );
@@ -4002,7 +4139,10 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     let row = listed_row(&world, "aclaude");
     assert_eq!(row["status"], json!("ok"), "{row}");
     assert_eq!(row["refreshable"], json!(false), "{row}");
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
 
     write_claude_login(
         &world,
@@ -4014,7 +4154,7 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     assert_eq!(row["status"], json!("expired"), "{row}");
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude"],
+        vec!["usage token-aclaude", "usage-grants token-aclaude"],
         "an expired token under an ended login is not renewed"
     );
 
@@ -4025,7 +4165,11 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     assert_eq!(row["headroom_pct"], json!(80), "{row}");
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude", "token refresh-aclaude"],
+        vec![
+            "usage token-aclaude",
+            "usage-grants token-aclaude",
+            "token refresh-aclaude"
+        ],
         "a login this listing renewed is the same account: its record is served"
     );
 }
@@ -4061,9 +4205,12 @@ fn two_renewers_under_the_credentials_lock_rotate_the_refresh_token_once() {
         "one grant for two renewers: {log:?}"
     );
     assert_eq!(
-        log.iter().filter(|l| l.starts_with("usage ")).count(),
-        1,
-        "one usage request, the waiter served from the record: {log:?}"
+        log.iter()
+            .filter(|l| l.starts_with("usage"))
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["usage renewed-token", "usage-grants renewed-token"],
+        "one usage refresh, the waiter served from the record"
     );
     let file: Value = serde_json::from_str(
         &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
@@ -4334,7 +4481,11 @@ fn a_private_file_setting_reaches_the_account_readers_as_it_reached_the_released
     assert_eq!(row["refreshable"], json!(true), "{roster}");
     assert_eq!(
         world.curl_log(),
-        vec!["token refresh-aclaude", "usage renewed-token"]
+        vec![
+            "token refresh-aclaude",
+            "usage renewed-token",
+            "usage-grants renewed-token"
+        ]
     );
 }
 
@@ -4612,7 +4763,10 @@ fn without_flock_the_renewal_waits_out_a_shell_renewers_mkdir_mutex_and_takes_it
     let row = &reply["result"]["rows"][0]["record"];
     assert_eq!(row["status"], json!("ok"), "{reply}");
     assert_eq!(row["headroom_pct"], json!(70), "{reply}");
-    assert_eq!(world.curl_log(), vec!["usage peer-token"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage peer-token", "usage-grants peer-token"]
+    );
     let login: Value = serde_json::from_str(
         &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
     )
@@ -4664,6 +4818,7 @@ fn a_cold_429_is_asked_once_more_by_the_first_cold_account_of_a_listing_alone() 
         vec![
             "usage token-aclaude",
             "usage token-aclaude",
+            "usage-grants token-aclaude",
             "usage token-bclaude"
         ],
         "one retry per listing, spent on the first cold account"
@@ -4749,7 +4904,10 @@ fn two_readers_of_a_changed_login_fetch_its_usage_once() {
             "{reply}"
         );
     }
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
 }
 
 #[test]
