@@ -315,6 +315,14 @@ finally:
     slack_mailbox.MAILBOX_READ_FILES = installed
 older_defs = older_rows[0]["defs"]
 assert "def overseer_mail_class" in older_defs and "mailbox_line_invalid" not in older_defs, older_defs[:200]
+# A Slack package from before that rule hands this store those same
+# definitions: the read refuses naming the one it lacks.
+try:
+    mail.reader(box, older_defs, {})
+except ValueError as error:
+    assert (error.key, error.path) == ("definition-unavailable", "mailbox_line_invalid"), error
+else:
+    raise AssertionError("a read handed no mailbox_line_invalid must refuse by name")
 
 if linked:
     assert mail.box == box

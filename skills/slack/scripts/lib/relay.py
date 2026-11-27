@@ -53,17 +53,15 @@ mark on delivery and later polls, so a stop between the delivery and its
 mark leaves the mark to the next poll. Each delivery attempts eyes once,
 without retrying a new refusal later in the same poll.
 
-A start whose journal holds no `start` line seeds Slack's position from the
-binding moment before it delivers anything, so a channel's earlier history is
-never delivered, and its poll seeds the mailbox's from its newest envelope
-before it posts, so notices and answers already there are never re-posted.
-A delivery reads no mailbox, so a mailbox read that refuses holds that seed
-and every post, never an owner's message; neither a message delivered before
-the seed nor the overseer's reply to it counts as already there. Open asks
+A start whose journal holds no `start` line seeds both positions before it
+reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
+and the mailbox from the clock then, so notices and answers already there
+are never re-posted. That seed reads no mailbox, so a mailbox read that
+refuses holds posts alone, never an owner's message or the seed. Open asks
 are posted whatever their age inside SLACK_THREAD_DAYS, since they still want
-an answer. A reserved ask, which no default closes, is posted once more in its
-thread, naming the owner, on the first poll past its deadline while it stays open; the journal's `overdue`
-line keeps that post from ever repeating.
+an answer. A reserved ask, which no default closes, is posted once more in
+its thread, naming the owner, on the first poll past its deadline while it
+stays open; the journal's `overdue` line keeps that post from ever repeating.
 
 Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
@@ -298,20 +296,6 @@ def resolve_owner_ids(api: Slack, owners: List[str]) -> Dict[str, str]:
             raise
         ids[email] = str(answer["user"]["id"])
     return ids
-
-
-def newest(events: List[Dict]) -> Tuple[str, List[str]]:
-    """The mailbox's newest `at` and the ids stamped in that second: `at` is a
-    whole second, so one written later in that second is named apart."""
-    at_newest = ""
-    ids: List[str] = []
-    for envelope in events:
-        at = str(envelope["at"])
-        if at_newest == "" or at_epoch(at) > at_epoch(at_newest):
-            at_newest, ids = at, [str(envelope["id"])]
-        elif at == at_newest:
-            ids.append(str(envelope["id"]))
-    return at_newest, ids
 
 
 def before(floor_at: str, floor_ids: Set[str], at: float, env_id: str) -> bool:
@@ -552,34 +536,26 @@ class RootRelay:
             write_binding(self.path, self.binding)
 
     def seed(self) -> None:
-        """The mailbox position a start with no seeds posts from, past its
-        newest envelope, journaled after the `seen` seed so a restart keeps
-        both."""
-        at, ids = newest(self.mail.events())
-        self.journal.append(t="start", at=at, ids=ids)
-
-    def before_start(self, envelope: Dict, delivered: Set[str]) -> bool:
-        """Whether an envelope is at or before the `start` seed. An owner
-        message this relay delivered, and a reply to one, never is: a
-        delivery reads no mailbox, so it and its reply can land before a
-        seed that a refused mailbox read holds back."""
-        env_id = str(envelope["id"])
-        if env_id in delivered or envelope.get("ref") in delivered:
-            return False
-        return before(self.state.start_at, self.state.start_ids, at_epoch(str(envelope["at"])), env_id)
+        """The positions a start with no seeds begins from, journaled so a
+        restart keeps them: Slack's history past the binding moment, and the
+        mailbox past this moment, before any delivery. The clock seeds the
+        mailbox, never a read of it, so a refused read defers no seed while
+        owner messages land. `start` goes last, so a stop between the two
+        lines seeds again. Its `ids` stay empty: an envelope stamped in this
+        second posts, so none written after the seed is passed over."""
+        self.journal.append(t="seen", ts=self.binding.bound_at)
+        self.journal.append(t="start", at=format_at(self.clock()), ids=[])
 
     # -- inbound: Slack to the mailbox --------------------------------------
 
     def ready(self) -> None:
         """What every delivery needs first: the owners as the setting names
-        them, and Slack's history past the binding moment on a start whose
-        journal holds no `start` line: a journal of connection lines alone,
-        which a connect writes before the first poll, is not seeded. A
-        catch-up before `start` lands moves `seen` past that moment, and a
-        later start keeps its position."""
+        them, and the seeds of a start whose journal holds none: a journal
+        of connection lines alone, which a connect writes before the first
+        poll, is not seeded."""
         self.owners_current()
-        if not self.state.seeded and float(self.state.seen_ts) < float(self.binding.bound_at):
-            self.journal.append(t="seen", ts=self.binding.bound_at)
+        if not self.state.seeded:
+            self.seed()
 
     def poll(self, bot_user: str) -> None:
         self.post_failed = None
@@ -605,8 +581,6 @@ class RootRelay:
         self.mark_read()
         if self.post_failed is not None:
             raise self.post_failed
-        if not self.state.seeded:
-            self.seed()
         touched = self.refresh_hold()
         now = self.clock()
         if presence_fresh(touched, self.presence, now):
@@ -924,7 +898,6 @@ class RootRelay:
         """
         originals = {e["id"]: e for e in events if e.get("box") == "to-lane"
                      and e.get("mail_class") in ("owner-note", "resolution")}
-        delivered = set(self.state.delivered.values())
         for batch in events:
             if (batch.get("box") != "to-lane" or batch.get("kind") != "directive"
                     or not re.fullmatch(r"jarvis-[0-9a-f]{64}", batch.get("delivery_id", ""))):
@@ -949,7 +922,7 @@ class RootRelay:
                 page = dict(original, id="owner-unread:" + original["id"])
                 if (page["id"] in self.state.carried or page["id"] in self.state.unknown
                         or at_epoch(original["at"]) < self.settings.horizon(self.clock())
-                        or self.before_start(original, delivered)):
+                        or before(self.state.start_at, self.state.start_ids, at_epoch(original["at"]), original["id"])):
                     continue
                 if original.get("line") is None:
                     self.post_failed = Refusal("lane-mail-failed", f"id={original['id']} field=line unavailable")
@@ -1090,7 +1063,6 @@ class RootRelay:
         by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
-        delivered = set(state.delivered.values())
         owner_notices = {str(e["id"]): e for e in events
                          if e.get("box") == "to-overseer" and e.get("kind") == "notice"
                          and e.get("from") == "overseer" and e.get("to") == "owner"}
@@ -1100,7 +1072,7 @@ class RootRelay:
                           if e.get("ref") in owner_notices and env_id not in state.carried
                           and env_id not in self.skipped and (e["line"] is None or e["line"] > seen)
                           and at_epoch(str(e["at"])) >= horizon
-                          and not self.before_start(e, delivered)}
+                          and not before(state.start_at, state.start_ids, at_epoch(str(e["at"])), env_id)}
         pending_files = set(state.pending_files.values())
 
         routed = []
@@ -1154,7 +1126,7 @@ class RootRelay:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
-            elif self.before_start(envelope, delivered):
+            elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
             elif reply:
                 route = "reply"

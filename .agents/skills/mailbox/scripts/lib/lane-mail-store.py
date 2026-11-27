@@ -187,6 +187,11 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_recei
     """
     import fcntl
     validate_mailbox(box)
+    # The caller's package supplies jq_defs and installs apart from this
+    # one: a caller from before the damaged-line rule hands no
+    # mailbox_line_invalid over, and jq's compile error would not name it.
+    if "def mailbox_line_invalid:" not in jq_defs:
+        raise StoreRefusal("definition-unavailable", "mailbox_line_invalid")
     paths = [box / name for name in ("to-overseer.jsonl", "to-lane.jsonl")]
     deadline = time.monotonic() + timeout
 
