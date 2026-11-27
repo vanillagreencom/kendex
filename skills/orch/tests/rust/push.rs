@@ -1889,16 +1889,17 @@ mod push {
             base,
             "an unclassified range publishes nothing"
         );
+        fs::create_dir_all(repo.wt.join(".github/workflows")).unwrap();
         commit(
             &repo.wt,
-            "AGENTS.md",
-            "# Instructions\n",
-            "feat(KEN-1): instructions",
+            ".github/workflows/ci.yml",
+            "name: ci\n",
+            "feat(KEN-1): workflow",
         );
         let receipt = prepared(&repo);
         assert_eq!(
             refusal(&publish(&receipt, &[])),
-            "orch-runtime: delivery-tier result=tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=2"
+            "orch-runtime: delivery-tier result=tier=standard brief=start cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/* estimate=- delta=- paths=2"
         );
         assert_eq!(repo.remote("main"), base, "a wider cycle publishes nothing");
     }
