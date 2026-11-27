@@ -325,9 +325,12 @@ printf 'MODE="old"\n' >"$SETTINGS_REPO/script.sh"
 git -C "$SETTINGS_REPO" add -A
 git -C "$SETTINGS_REPO" commit -qm base
 SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
+# A row's render columns, where set, are the SKILL.md the base inventory
+# lists for the project-management key at each end.
+SETTINGS_RENDER=.agents/skills/project-management/SKILL.md
 assert_settings_ranges() {
-  local row file before after want raw base count ci_class ci_note checker
-  while IFS='|' read -r row file before after want raw; do
+  local row file before after want raw render_before render_after base count ci_class ci_note checker
+  while IFS='|' read -r row file before after want raw render_before render_after; do
     [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
     case "$row" in
       at-ceiling | over-ceiling)
@@ -339,6 +342,13 @@ assert_settings_ranges() {
     git -C "$SETTINGS_REPO" checkout -q -f -B "$row" "$SETTINGS_BASE"
     printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
     git -C "$SETTINGS_REPO" add -- "$file"
+    if [ -n "$render_before" ]; then
+      mkdir -p "$SETTINGS_REPO/${SETTINGS_RENDER%/*}"
+      printf '%b\n' "$render_before" >"$SETTINGS_REPO/$SETTINGS_RENDER"
+      jq --arg path "$SETTINGS_RENDER" '. + [$path]' "$SETTINGS_REPO/.kendex-generated.json" >"$SANDBOX/inventory"
+      cp "$SANDBOX/inventory" "$SETTINGS_REPO/.kendex-generated.json"
+      git -C "$SETTINGS_REPO" add -- "$SETTINGS_RENDER" .kendex-generated.json
+    fi
     if [ "$file" = kendex-local.toml ]; then
       printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
       git -C "$SETTINGS_REPO" add -- kendex.toml
@@ -356,8 +366,9 @@ assert_settings_ranges() {
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
+    [ -z "$render_after" ] || printf '%b\n' "$render_after" >"$SETTINGS_REPO/$SETTINGS_RENDER"
     case "$row" in
-      mixed) printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh" ;;
+      mixed | rendered-map-beside-script) printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh" ;;
       mixed-manifest | mixed-local-manifest)
         printf '[env]\nORDINARY = "new"\n' >"$SETTINGS_REPO/kendex.settings.toml" ;;
     esac
@@ -405,8 +416,14 @@ installed-map|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|
 checker-unusable|kendex.toml|schema = 8\n[skill-instructions]\nall = "Be concise."|schema = 8\n[skill-instructions]\nall = "Use plain language."|change_class=standard class=standard measured=false delta=- cause=bot-instructions-unread side=base detail=checker-unusable|true
 checker-refuses|kendex.toml|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Be concise."|schema = 8\n[bot-instructions]\n[skill-instructions]\nall = "Use plain language."|standard cause=bot-instructions-render
 source-catalog-map|kendex.toml|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Be concise."|schema = 8\nis_source_catalog = true\n[skill-instructions]\nall = "Use plain language."|standard cause=source-catalog
-multiline-heading|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React conventions\n'''|standard cause=configuration-source
-multiline-assignment|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "old"\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "new"\n'''|standard cause=configuration-source
+multiline-heading|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\n### React conventions\n'''|micro cause=settings-only
+multiline-assignment|kendex-local.toml|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "old"\n'''|schema = 8\n[skill-instructions]\ncode-quality = '''\nORDINARY = "new"\n'''|micro cause=settings-only
+rendered-map|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Upkeep"}\n]}\n```\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n  {"name": "Upkeep"}\n]}\n```\n'''|micro cause=settings-only||---\nname: project-management\n---\n\n<!-- kendex:project-instructions:start -->\n## Project Instructions\n\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Upkeep"}\n]}\n```\n<!-- kendex:project-instructions:end -->|---\nname: project-management\n---\n\n<!-- kendex:project-instructions:start -->\n## Project Instructions\n\n### Project map\n\n```json\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n  {"name": "Upkeep"}\n]}\n```\n<!-- kendex:project-instructions:end -->
+rendered-map-unrendered|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n]}
+rendered-map-drift|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n  {"name": "Other"},\n]}
+rendered-map-beside-script|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n]}\n'''|schema = 8\n[skill-instructions]\nproject-management = '''\n{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}\n'''|standard cause=configuration-source||{"projects": [\n  {"name": "Docs"},\n]}|{"projects": [\n  {"name": "Docs"},\n  {"name": "Herdr"},\n]}
+plain-unrendered|kendex-local.toml|schema = 8\n[skill-instructions]\nproject-management = 'Use the project map.'|schema = 8\n[skill-instructions]\nproject-management = 'Use the updated project map.'|standard cause=configuration-source||Use the project map.|Use the project map.
+sources|kendex-local.toml|schema = 8\n[sources.extra]\nurl = "https://example.invalid/a.git"|schema = 8\n[sources.extra]\nurl = "https://example.invalid/b.git"|standard cause=configuration-source
 multiline-array|kendex.toml|schema = 8\n[install]\nharnesses = [\n  "codex",\n]|schema = 8\n[install]\nharnesses = [\n  "claude",\n]|standard cause=configuration-source
 unplaced-header|kendex.toml|schema = 8\n["skill-instructions"]\nall = "Be concise."|schema = 8\n["skill-instructions"]\nall = "Use plain language."|standard cause=configuration-source
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
