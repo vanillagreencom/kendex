@@ -16,7 +16,7 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
    - A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`.
    - With no source issue, a local plan still loads as before.
 
-From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
+From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `removal_review[]`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`. A plan with no `removal_review` field carries an empty one.
 
 For a cited research/spec input:
 
@@ -44,7 +44,10 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 ## 2. Resolve Existing Work
 
-**Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries.
+**Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries, and `removal_review[]` has no `cancel` or `rewrite` item.
+
+- Each `removal_review[]` `cancel` or `rewrite` item is an action here. `keep` items take none.
+- A removal item whose row a `cross_project_findings` action also names executes once, as that action, with both reasons in its comment.
 
 - Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking, only under the same provenance as `approved_at_plan_gate`: this wrapper collected that answer in this session on this identical presented set.
 - A plan loaded in a later session, or edited since, presents every action.
@@ -56,7 +59,7 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 | # | Issue | Action | Why |
 |---|-------|--------|-----|
-| 1 | [ISSUE_ID] | cancel \| expand \| descope | [REASON] |
+| 1 | [ISSUE_ID] | cancel \| expand \| descope \| rewrite | [REASON] |
 
 **Conflicts** ([N])
 
@@ -66,7 +69,8 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 - `Review each` asks per action (`Execute` | `Skip` | `Modify` with free text).
 - Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb), with the plan's reason named in the comment.
-- Execute modifications per § Descriptions.
+- Execute modifications and rewrites per § Descriptions. A rewrite builds the row's text on the replacement its reason names.
+- An action on an issue outside `LINEAR_TEAM` meets the linear skill's cross-team refusal, which writes nothing. Route that action as its `fix=` line names, with the plan's reason, and list it in the § 5 report as routed.
 
 For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
 
@@ -267,6 +271,8 @@ This section is the run's one publisher under [publish-artifacts.md](publish-art
 |--------|-------|
 | Issues created | N |
 | Existing issues cancelled | M |
+| Existing issues rewritten | W |
+| Actions routed to another team | T |
 | Bundles | B |
 | Relations added | R |
 

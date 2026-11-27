@@ -42,9 +42,9 @@ The paths:
 - **tpm-audit `project-order`.** Resolves the scope.
   - § 11 initiatives and projects are filtered to it.
   - Per-project issue lists pass `--team`.
-- **tpm-roadmap-plan.** Resolves the scope, in § 1.1.
+- **tpm-roadmap-plan.** Resolves the scope, in § 1.1: every team the input's `teams[]` lists, or the one team tpm-audit § 1.1.1 resolves when it lists none.
   - § 1.4 projects are filtered to it.
-  - § 1.5 active/closed issue lists pass `--team`.
+  - § 1.5 active/closed issue lists pass `--team`, one read per scope team.
   - § 1.5 comments cover inputs and candidates.
 - **tpm-cycle-plan.** **Does not** resolve the scope, and **does not** filter.
   - § 1 picks the active project from `session-status`'s workspace-wide started projects.

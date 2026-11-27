@@ -86,6 +86,7 @@ Read the linked workflow or reference for the task before acting.
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
+| Make the work items of a design the user accepted | The project-management skill's `roadmap plan` command, by the steps below the table |
 | Use Jarvis Voice on a Jarvis satellite, or forward a request to Jarvis main | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |
 | List shared owner asks or send Reply, Done or Later from a console | [Owner asks](references/owner-asks.md) |
 
@@ -94,3 +95,8 @@ To draft product videos, posts or outreach:
 - Launch `publicist` with a task file or an attached prompt.
 - Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). The setup task reads [workflows/setup-publishers.md](workflows/setup-publishers.md).
 - Carry the approval record and named publisher selections in the setup task file.
+
+To make the work items of a design the user accepted:
+
+- Run `roadmap plan [feature] @[design-path]` where the project-management skill is installed. Never file the items one at a time.
+- For a design whose items another repository tracks, send that request to its agent through [Agent reach: Instruct](references/agent-reach.md#instruct).

@@ -17,6 +17,7 @@ When the caller asks for a technical implementation plan:
 - Never plan in the primary session.
 - Pass any TPM handoff through the caller.
 - The project-management `roadmap plan` command consumes a finished plan and launches no planner.
+- When the owner accepts a design, make its items with `roadmap plan [feature] @[design-path]`, never one filing per item. That run also reviews the open items of each team the design names against what the design removes or replaces.
 
 ### Claude Code reviewer names
 
