@@ -766,12 +766,26 @@ pub enum Entry {
 /// never ran, such as a hook's block or the user's refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failed {
-    /// The result shows the shell's exit status, so the shell ran: the
-    /// text the result sent, each part on its own line. A Claude Code
-    /// shell a timeout or an interrupt cut short also shows one.
+    /// The result shows the shell ran to its own exit status: the text
+    /// the result sent, each part on its own line. Claude Code 2.1.332
+    /// writes the note of a timeout or an output check that killed the
+    /// shell into the result only where its shell runner keeps the output
+    /// in a file, so a shell it killed with no such file reads as exited.
     Exited(String),
-    /// The result shows no shell's exit status.
+    /// The result shows no exit status the shell reached itself.
     Unshown,
+}
+
+/// The second line of a Claude Code 2.1.332 shell error that shows its
+/// shell was cut short: the interrupt line the error adds where an abort
+/// stopped the shell, and the note the shell runner opens the output with
+/// where its timeout or an output check killed the shell.
+fn claude_cut_short(text: &str) -> bool {
+    text.lines().nth(1).is_some_and(|line| {
+        line == "[Request interrupted by user for tool use]"
+            || line.starts_with("Command timed out after ")
+            || line.starts_with("Command killed: ")
+    })
 }
 
 /// What a failed result's `text` shows: [`Failed::Exited`] where its
@@ -833,9 +847,11 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 ///   blocks, by `tool_use_id`, failed where `is_error`, and its text
 ///   blocks; a `user` row of string content marked `isMeta`, as no item's
 ///   text. A failed result whose first line is `Exit code N` is a shell's
-///   that ran (2.1.332's shell error text, and a recorded transcript); a
-///   hook's block (`PreToolUse:Bash hook error:`, recorded) and a refusal
-///   (`The user doesn't want to proceed`, 2.1.332) show no exit status.
+///   that ran (2.1.332's shell error text, and a recorded transcript),
+///   except where its second line shows the shell was cut short
+///   ([`claude_cut_short`]); a hook's block (`PreToolUse:Bash hook
+///   error:`, recorded) and a refusal (`The user doesn't want to proceed`,
+///   2.1.332) show no exit status.
 /// - Codex (rust-v0.171.0, `codex-rs/protocol/src/{models,items,protocol}.rs`
 ///   and `core/src/tools/handlers/shell_spec.rs`): a turn's `turn_id`; a
 ///   `function_call` or `custom_tool_call` by `call_id`, the shell being
@@ -918,11 +934,16 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         loaded: None,
                         failed: (block.get("is_error").and_then(Value::as_bool) == Some(true))
                             .then(|| {
-                                exit_shown(
+                                match exit_shown(
                                     content_text(block.get("content"), "text"),
                                     |text| text.lines().next(),
                                     "Exit code ",
-                                )
+                                ) {
+                                    Failed::Exited(text) if claude_cut_short(&text) => {
+                                        Failed::Unshown
+                                    }
+                                    shown => shown,
+                                }
                             }),
                     }),
                     ("user", "text") => found.push(Entry::Text {
@@ -1418,7 +1439,10 @@ mod tests {
 
     /// Each row: a failed result's row and what it shows. The texts are
     /// recorded: Claude Code's from a transcript, its refusal from
-    /// 2.1.332's text, Pi's status lines from 1.1.0's `bash.js`.
+    /// 2.1.332's text and its cut-short shells from 2.1.332's shell error
+    /// (`Exit code N`, then the interrupt line) and shell runner (the code
+    /// 143 its timeout kills with, and its kill notes), Pi's status lines
+    /// from 1.1.0's `bash.js`.
     #[test]
     fn a_failed_result_shows_an_exit_status_only_by_its_harness_line() {
         let claude = |text: &str| {
@@ -1449,6 +1473,21 @@ mod tests {
                 claude(
                     "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
                 ),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 143\nCommand timed out after 2m 0s\n# Rules"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 137\n[Request interrupted by user for tool use]\n# Rules"),
+                Failed::Unshown,
+            ),
+            (
+                Harness::Claude,
+                claude("Exit code 137\nCommand killed: output file exceeded 5GB\n# Rules"),
                 Failed::Unshown,
             ),
             (

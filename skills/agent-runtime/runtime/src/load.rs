@@ -22,15 +22,19 @@
 //! stands unless the result shows it printed nothing ([`stood`]): a Bash
 //! command that exits nonzero still returns what it printed on Claude Code
 //! and Pi, so a read before the part that failed may stand, and one the
-//! shell never ran does not. No read stands where the result shows no
-//! exit status of the shell ([`Failed::Unshown`]), as a hook's block or a
-//! refusal leaves it. Otherwise a read is dropped where its program's own
-//! error line names its operand, where the result shows the shell skipped
-//! its command ([`skipped`]), and, for a `jarvis-section` read, where the
-//! result holds its heading line fewer times than the call has reads of
-//! that heading. A command shows it failed by an error line of its own,
-//! and that it succeeded by the lack of one only where no redirection of
-//! its own moves its standard error; any other command shows neither. The
+//! shell never ran does not. No read stands where the result does not show
+//! the shell ran to its exit status ([`Failed::Unshown`]), as a hook's
+//! block, a refusal, or a timeout or an abort that cut the shell short
+//! leaves it, nor in a call that turns on errexit or pipefail through
+//! `set`, whose shell stops or fails where these rules do not follow it.
+//! Otherwise a read is dropped where its program's own error line names
+//! its operand, where the result shows the shell skipped its command
+//! ([`skipped`]), and, for a `jarvis-section` read, where the result holds
+//! its heading line fewer times than the call has reads of that heading.
+//! A command shows it failed by an error line of its own, and that it
+//! succeeded by the lack of one only where its standard error reaches the
+//! result as its own redirections leave it ([`words`]); any other command
+//! shows neither. The
 //! shell skipped a command after `&&` whose command before shows it
 //! failed, and after `||` one that shows it succeeded; where the command
 //! before shows neither, whether the shell ran it is open. Since the call
@@ -591,9 +595,11 @@ fn item_tokens(share: Share) -> Figure {
 }
 
 /// The reads of a failed call that its result does not show printed
-/// nothing: none where it shows no shell's exit status, since the shell may
-/// never have run. A shell read is dropped where its command's own error
-/// line names its operand, or where the shell skipped that command
+/// nothing: none where it does not show the shell ran to its exit status,
+/// nor where the call turns on errexit or pipefail ([`Rules::options`]),
+/// under which a failed command stops the shell, or fails a pipeline its
+/// last command does not. A shell read is dropped where its command's own
+/// error line names its operand, or where the shell skipped that command
 /// ([`skipped`]). A `jarvis-section` read is also dropped where its
 /// command failed, and stands only where `text` holds its heading line on
 /// at least as many lines as the call has standing reads of that heading,
@@ -601,8 +607,8 @@ fn item_tokens(share: Share) -> Figure {
 /// a child heading another read printed is no line of its own.
 fn stood(rules: Rules, failed: &Failed) -> Vec<Read> {
     let text = match failed {
-        Failed::Exited(text) => text.as_str(),
-        Failed::Unshown => return Vec::new(),
+        Failed::Exited(text) if !rules.options => text.as_str(),
+        Failed::Exited(_) | Failed::Unshown => return Vec::new(),
     };
     let skipped = skipped(&rules.commands, text);
     let shown: Vec<Rule> = rules
@@ -680,7 +686,7 @@ struct Pipeline {
 /// a skipped pipeline leaves that status as it was. The call's status is
 /// the status of the last pipeline its last list ran, so a pipeline of
 /// that list that would end `Ok`, with nothing after it run, did not run
-/// either. A command that `set -e` or `exit` stops is not seen.
+/// either. A command that `exit` stops is not seen.
 fn skipped(commands: &[Command], text: &str) -> Vec<bool> {
     let mut pipelines: Vec<Pipeline> = Vec::new();
     for (i, command) in commands.iter().enumerate() {
@@ -787,6 +793,9 @@ struct Rules {
     reads: Vec<Rule>,
     more: bool,
     commands: Vec<Command>,
+    /// Whether a `set` command of the call turns on errexit or pipefail
+    /// ([`sets_failure_options`]), which [`skipped`] does not follow.
+    options: bool,
 }
 
 /// One rule read, and the index in [`Rules::commands`] of the shell
@@ -824,8 +833,8 @@ struct Reader {
     /// `jarvis-section` begins each of its own with its name.
     prefix: String,
     operands: Vec<String>,
-    /// Whether no redirection of its own ([`redirects_stderr`]) moves its
-    /// standard error, so that an error line it wrote reaches the result.
+    /// Whether its standard error reaches the result ([`words`]), so that
+    /// an error line it wrote is there.
     stderr: bool,
 }
 
@@ -871,30 +880,145 @@ impl Command {
     }
 }
 
-/// Whether a word of a command moves its standard error: `2>F`, `2>>F`,
-/// `2>&N`, `&>F`, `&>>F`, and `>&F` to a file, not a descriptor.
-fn redirects_stderr(word: &str) -> bool {
-    let Some((fd, rest)) = word.split_once('>') else {
-        return false;
-    };
-    match fd {
-        "2" | "&" => true,
-        "" | "1" => rest.strip_prefix('&').is_some_and(|to| {
-            !to.is_empty() && to != "-" && !to.bytes().all(|b| b.is_ascii_digit())
-        }),
-        _ => false,
+/// Where a command's standard output or standard error goes, a pipe
+/// after it aside: only a pipeline's last command shows the pipeline's
+/// status, and a printer that writes into a pipe still reads its file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sink {
+    /// The call's result.
+    Result,
+    /// A file, a descriptor this reader does not follow, or nowhere
+    /// (`>&-`).
+    Away,
+}
+
+/// A command's words, less its redirections and a heredoc's or
+/// here-string's word, an input redirection's file being one of them, and
+/// where its standard output and standard error go.
+struct Words<'a> {
+    words: Vec<&'a str>,
+    stdout: Sink,
+    stderr: Sink,
+}
+
+/// The words of `segment`, with each redirection applied in order as the
+/// shell applies it: `N>F`, `N>>F` and `N>|F` send descriptor N (1 where
+/// none is written) to a file, `&>F`, `&>>F` and `>&F` send both, `N>&M`
+/// sends N where M goes at that point, and `N>&-` closes N. A `>` inside a
+/// word that opens no redirection, as in a quoted script, makes no word.
+fn words(segment: &str) -> Words<'_> {
+    let (mut stdout, mut stderr) = (Sink::Result, Sink::Result);
+    let digits = |word: &str| !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit());
+    let mut words = Vec::new();
+    let mut all = segment
+        .split_whitespace()
+        .map(|word| word.trim_matches(['\'', '"']));
+    while let Some(word) = all.next() {
+        if let Some((fd, rest)) = word.split_once('>') {
+            let (out, err) = match fd {
+                "" | "1" => (true, false),
+                "2" => (false, true),
+                "&" => (true, true),
+                fd if digits(fd) => (false, false),
+                _ => continue,
+            };
+            let rest = rest.strip_prefix(['>', '|']).unwrap_or(rest);
+            let (dup, rest) = rest
+                .strip_prefix('&')
+                .map_or((false, rest), |rest| (true, rest));
+            let target = if rest.is_empty() {
+                all.next().unwrap_or_default()
+            } else {
+                rest
+            };
+            let (sink, out, err) = match (dup, target) {
+                (true, "1") => (stdout, out, err),
+                (true, "2") => (stderr, out, err),
+                (true, target) if fd.is_empty() && !digits(target) && target != "-" => {
+                    (Sink::Away, true, true)
+                }
+                _ => (Sink::Away, out, err),
+            };
+            if out {
+                stdout = sink;
+            }
+            if err {
+                stderr = sink;
+            }
+            continue;
+        }
+        if word.contains("<<") {
+            if word.ends_with('<') {
+                all.next();
+            }
+            continue;
+        }
+        let word = word.strip_prefix('<').unwrap_or(word);
+        if !word.is_empty() {
+            words.push(word);
+        }
     }
+    Words {
+        words,
+        stdout,
+        stderr,
+    }
+}
+
+/// Whether the words after `set` turn on errexit (`-e`, `-o errexit`) or
+/// pipefail (`-o pipefail`), alone or in a cluster such as `-euo
+/// pipefail`, before `--` or the first positional word.
+fn sets_failure_options(words: &[&str]) -> bool {
+    // Some(on) while the next word names the option a `-o` or `+o` sets.
+    let mut named: Option<bool> = None;
+    for word in words {
+        if let Some(on) = named.take() {
+            if on && matches!(*word, "errexit" | "pipefail") {
+                return true;
+            }
+            continue;
+        }
+        let (on, flags) = match (word.strip_prefix('-'), word.strip_prefix('+')) {
+            (Some("" | "-"), _) | (None, None) => return false,
+            (Some(flags), _) => (true, flags),
+            (None, Some(flags)) => (false, flags),
+        };
+        if on && flags.contains('e') {
+            return true;
+        }
+        if flags.contains('o') {
+            named = Some(on);
+        }
+    }
+    false
 }
 
 /// The segments of a shell command, each with the operator before it: a
 /// `;`, `&`, `&&`, `|`, `||`, `|&` or newline outside quotes and not
 /// escaped, the `&` of a redirection (`2>&1`, `>&2`, `&>F`) being none. A
 /// newline right after `&&`, `||` or `|` continues the list, as the shell
-/// reads it.
+/// reads it. A comment, from a `#` that opens a word to the end of its
+/// line, and a heredoc's body, from the newline after `<<WORD` or
+/// `<<-WORD` to the line that is its word, are in no segment; a `<<` with
+/// no such line after it opens no body. Where a quote is still open at the
+/// end, as a stray apostrophe leaves it, quotes hide no operator.
 fn segments(command: &str) -> Vec<(Join, &str)> {
+    split(command, true)
+        .or_else(|| split(command, false))
+        .unwrap_or_default()
+}
+
+/// [`segments`], with `quotes` whether a quote hides what it holds: `None`
+/// where a quote is still open at the end.
+fn split(command: &str, quotes: bool) -> Option<Vec<(Join, &str)>> {
     let bytes = command.as_bytes();
     let (mut out, mut join, mut start, mut i) = (Vec::new(), Join::List, 0, 0);
     let mut quote: Option<u8> = None;
+    // Where a comment ends the current segment.
+    let mut cut: Option<usize> = None;
+    // The words of the heredocs whose bodies open at the next newline, each
+    // with whether `<<-` strips its lines' leading tabs.
+    let mut heredocs: Vec<(Vec<u8>, bool)> = Vec::new();
     while i < bytes.len() {
         let byte = bytes[i];
         if let Some(open) = quote {
@@ -907,10 +1031,27 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
             continue;
         }
         let after = bytes.get(i + 1).copied();
+        if byte == b'#' && (i == 0 || breaks(bytes[i - 1])) {
+            cut = Some(i);
+            i = command[i..].find('\n').map_or(bytes.len(), |n| i + n);
+            continue;
+        }
+        if byte == b'<' && after == Some(b'<') {
+            if bytes.get(i + 2) == Some(&b'<') {
+                i += 3;
+                continue;
+            }
+            let (word, end, strip) = heredoc_word(bytes, i + 2);
+            if !word.is_empty() {
+                heredocs.push((word, strip));
+            }
+            i = end;
+            continue;
+        }
         let redirect =
             byte == b'&' && (after == Some(b'>') || (i > 0 && matches!(bytes[i - 1], b'>' | b'<')));
         let (next, width) = match (byte, after) {
-            (b'\'' | b'"', _) => {
+            (b'\'' | b'"', _) if quotes => {
                 quote = Some(byte);
                 i += 1;
                 continue;
@@ -933,20 +1074,90 @@ fn segments(command: &str) -> Vec<(Join, &str)> {
                 continue;
             }
         };
-        let segment = &command[start..i];
+        let segment = &command[start..cut.take().unwrap_or(i)];
         if !segment.trim().is_empty() {
             out.push((join, segment));
             join = next;
-        } else if bytes[i] != b'\n' {
+        } else if byte != b'\n' {
             join = next;
         }
         i += width;
+        if byte == b'\n' {
+            for (word, strip) in std::mem::take(&mut heredocs) {
+                i = body_end(command, i, &word, strip).unwrap_or(i);
+            }
+        }
         start = i;
     }
-    if !command[start..].trim().is_empty() {
-        out.push((join, &command[start..]));
+    if quote.is_some() {
+        return None;
     }
-    out
+    let rest = &command[start..cut.unwrap_or(bytes.len())];
+    if !rest.trim().is_empty() {
+        out.push((join, rest));
+    }
+    Some(out)
+}
+
+/// Whether `byte` is a shell metacharacter, which ends a word.
+fn breaks(byte: u8) -> bool {
+    matches!(
+        byte,
+        b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>'
+    )
+}
+
+/// The word of a heredoc whose `<<` ends before `at`, its quotes and
+/// escapes removed, the index after it, and whether it is `<<-`'s.
+fn heredoc_word(bytes: &[u8], at: usize) -> (Vec<u8>, usize, bool) {
+    let strip = bytes.get(at) == Some(&b'-');
+    let mut i = at + usize::from(strip);
+    while matches!(bytes.get(i), Some(b' ' | b'\t')) {
+        i += 1;
+    }
+    let mut word = Vec::new();
+    while let Some(&byte) = bytes.get(i) {
+        match byte {
+            byte if breaks(byte) => break,
+            b'\'' | b'"' => {
+                let close = bytes[i + 1..]
+                    .iter()
+                    .position(|&b| b == byte)
+                    .map_or(bytes.len(), |n| i + 1 + n);
+                word.extend_from_slice(&bytes[i + 1..close]);
+                i = close + 1;
+            }
+            b'\\' => {
+                word.extend(bytes.get(i + 1));
+                i += 2;
+            }
+            _ => {
+                word.push(byte);
+                i += 1;
+            }
+        }
+    }
+    (word, i.min(bytes.len()), strip)
+}
+
+/// The index after the line from `at` on that is the heredoc word `word`,
+/// its leading tabs stripped where `strip`: `None` where no line is.
+fn body_end(command: &str, at: usize, word: &[u8], strip: bool) -> Option<usize> {
+    let mut i = at;
+    while i < command.len() {
+        let end = command[i..].find('\n').map_or(command.len(), |n| i + n);
+        let line = &command[i..end];
+        let line = if strip {
+            line.trim_start_matches('\t')
+        } else {
+            line
+        };
+        i = (end + 1).min(command.len());
+        if line.as_bytes() == word {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// How a `head` or `tail` option word sets the count: its value, or the
@@ -978,16 +1189,14 @@ fn count(word: &str) -> Option<Count<'_>> {
 /// The one table of what a call reads as rules: a read of a Markdown file,
 /// a skill load, and in a shell command each `jarvis-section` and each
 /// Markdown operand of a [`PRINTERS`] program. A command splits where
-/// [`segments`] splits it. An output redirection's target and a heredoc's
-/// or here-string's word are no operand; an input redirection's file is
-/// one. A printer whose
+/// [`segments`] splits it, into the words [`words`] reads. A printer whose
 /// standard output goes to a file reads nothing into the result, nor does
 /// a `sed` that edits its files in place, nor a `head` or `tail` of zero
 /// lines or bytes, which prints at most a file's header (GNU coreutils
-/// 9.4, measured); one whose output goes to another descriptor (`>&2`)
-/// still does. A segment that reads no rule, and a `cat` operand that is
-/// not Markdown, is more output; another printer's other operands are taken
-/// for its script or count.
+/// 9.4, measured); one whose output goes where its standard error goes
+/// (`>&2`) still does, unless that is a file. A segment that reads no
+/// rule, and a `cat` operand that is not Markdown, is more output; another
+/// printer's other operands are taken for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
@@ -1013,11 +1222,11 @@ fn rule_reads(action: &Action) -> Rules {
     };
     let mut rules = Rules::default();
     for (join, segment) in segments(command) {
-        let mut words = segment.split_whitespace();
-        let Some(program) = words.next() else {
+        let shape = words(segment);
+        let Some((&program, args)) = shape.words.split_first() else {
             continue;
         };
-        let stderr = !segment.split_whitespace().any(redirects_stderr);
+        let stderr = shape.stderr == Sink::Result;
         let by = rules.commands.len();
         let before = rules.reads.len();
         let reader = match program.rsplit('/').next().unwrap_or(program) {
@@ -1045,23 +1254,17 @@ fn rule_reads(action: &Action) -> Rules {
                 rules.reads.push(Rule { read, by: Some(by) });
                 reader
             }
+            "set" => {
+                rules.options |= sets_failure_options(args);
+                None
+            }
             name if PRINTERS.contains(&name) => {
-                // A file, not a descriptor (`>&2`), that the printer's
-                // standard output goes to.
-                let away = |stdout: bool, target: &str| {
-                    stdout && !target.bytes().all(|b| b.is_ascii_digit())
-                };
                 let counted = matches!(name, "head" | "tail");
                 let (mut reads, mut operands) = (Vec::new(), Vec::new());
-                let (mut moved, mut zero, mut count_next) = (false, false, false);
-                // Some(stdout) while the next word is a redirection's target.
-                let mut target: Option<bool> = None;
+                let mut moved = shape.stdout == Sink::Away;
+                let (mut zero, mut count_next) = (false, false);
                 let is_zero = |value: &str| !value.is_empty() && value.bytes().all(|b| b == b'0');
-                for word in words.map(|word| word.trim_matches(['\'', '"'])) {
-                    if let Some(stdout) = target.take() {
-                        moved |= away(stdout, word);
-                        continue;
-                    }
+                for &word in args {
                     if std::mem::take(&mut count_next) {
                         zero = is_zero(word);
                         continue;
@@ -1073,22 +1276,6 @@ fn rule_reads(action: &Action) -> Rules {
                             Some(Count::Next) => count_next = true,
                             None => {}
                         }
-                        continue;
-                    }
-                    if let Some((fd, rest)) = word.split_once('>') {
-                        let stdout = matches!(fd, "" | "1" | "&");
-                        match rest.trim_start_matches(['>', '&']) {
-                            "" => target = Some(stdout),
-                            rest => moved |= away(stdout, rest),
-                        }
-                        continue;
-                    }
-                    if word.contains("<<") {
-                        target = word.ends_with('<').then_some(false);
-                        continue;
-                    }
-                    let word = word.strip_prefix('<').unwrap_or(word);
-                    if word.is_empty() {
                         continue;
                     }
                     operands.push(word.to_owned());
@@ -1217,6 +1404,35 @@ mod tests {
             (shell("head --lines=0 a.md"), vec![], true),
             (shell("head -0 a.md"), vec![], true),
             (shell("tail -n +0 a.md"), vec![file("a.md")], false),
+            // A comment and a heredoc's body hold no operator, no quote
+            // and no operand.
+            (
+                shell("# Check the skill's header\nhead -20 SKILL.md"),
+                vec![file("SKILL.md")],
+                false,
+            ),
+            (
+                shell("printf '%s\\n' begin # don't include rules in this line\nhead -1 AGENTS.md"),
+                vec![file("AGENTS.md")],
+                true,
+            ),
+            (shell("cat a.md # then b.md"), vec![file("a.md")], false),
+            // A `#` inside a word opens no comment.
+            (shell("echo ${#x}; cat a.md"), vec![file("a.md")], true),
+            (
+                shell("gh pr comment 1 -F - <<'EOF'\nDon't ship\nEOF\ncat AGENTS.md"),
+                vec![file("AGENTS.md")],
+                true,
+            ),
+            (
+                shell("cat <<-EOF > notes.txt\n\tit's b.md\n\tEOF\ncat a.md"),
+                vec![file("a.md")],
+                true,
+            ),
+            // A `<<` with no line of its word after it opens no body.
+            (shell("echo $((1<<2))\ncat a.md"), vec![file("a.md")], true),
+            // A quote still open at the end hides no operator.
+            (shell("echo it's done\ncat a.md"), vec![file("a.md")], true),
         ];
         for (action, reads, more) in rows {
             let rules = rule_reads(&action);
@@ -1326,6 +1542,53 @@ mod tests {
                     "cat: missing.md: No such file or directory\nls: cannot access 'gone': No such file or directory\n",
                 ),
                 vec![],
+            ),
+            // `2>&1` keeps an error line in the result, so the read that
+            // shows none succeeded and, last in a failed call, never ran;
+            // `>& F` moves it, so the `&&` after it stays open.
+            (
+                shell("cd sub && cat AGENTS.md 2>&1"),
+                exited("/bin/bash: line 1: cd: sub: No such file or directory\n"),
+                vec![],
+            ),
+            (
+                shell("test -f x && head -40 SKILL.md 2>&1"),
+                exited(""),
+                vec![],
+            ),
+            (
+                shell("cat AGENTS.md 2>&1 || cat skills/AGENTS.md; false"),
+                exited("# Rules\n\nThe rules.\n"),
+                vec![file("AGENTS.md")],
+            ),
+            (
+                shell("cat missing.md >& log && cat AGENTS.md"),
+                exited(""),
+                vec![],
+            ),
+            // Under errexit or pipefail no shell rule holds, so no read
+            // stands; another option leaves the rules.
+            (
+                shell("set -e; cat missing.md; cat AGENTS.md"),
+                exited("cat: missing.md: No such file or directory\n"),
+                vec![],
+            ),
+            (
+                shell("set -euo pipefail\ncat missing.md\ncat AGENTS.md"),
+                exited("cat: missing.md: No such file or directory\n"),
+                vec![],
+            ),
+            (
+                shell(
+                    "set -o pipefail; cat AGENTS.md missing.md | head -n 1 && cat NEVER.md; false",
+                ),
+                exited("# Rules\ncat: missing.md: No such file or directory\n"),
+                vec![],
+            ),
+            (
+                shell("set -u; cat README.md && cat missing.md"),
+                exited("# Readme\n\nThe readme.\ncat: missing.md: No such file or directory\n"),
+                vec![file("README.md")],
             ),
             // With no exit status shown, the shell may never have run.
             (
