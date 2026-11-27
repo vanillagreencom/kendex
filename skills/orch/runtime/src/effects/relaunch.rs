@@ -5,7 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
+use agent_runtime::clock::SystemClock;
 use agent_runtime::harness::Harness;
+use agent_runtime::journal::Env;
+use agent_runtime::record::Locking;
 
 use super::refused;
 use crate::error::Result;
@@ -129,4 +132,22 @@ pub fn composed(
         launch,
         account,
     })
+}
+
+/// The tmux server and session the relaunch's launch opens on, asked of the
+/// launch's own resolve over the same run before the close is sent, so a
+/// launch that would refuse there refuses with nothing closed. That resolve
+/// acts as the launch's would: it starts a server gone from the recorded
+/// socket and makes the fleet's session in one standing there without it,
+/// which the launch then finds.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a relaunch has no launch intent before its close, so it asks the engine run's fleet server, the very resolve its launch's operation handle asks"
+)]
+pub fn launch_server(settings: &Settings, path: &Path, locking: Locking) -> Result<()> {
+    let env = Env::system()?;
+    let run = super::Run::new(path, settings, &env, locking, &SystemClock)?;
+    run.engine
+        .fleet_server(None, super::fleet_tmux_session(path)?.as_deref())?;
+    Ok(())
 }

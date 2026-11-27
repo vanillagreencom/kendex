@@ -678,10 +678,13 @@ fn a_relaunch_brief_says_the_session_ended_without_a_handoff_only_where_none_sta
 /// record names no server, so the caller's own server is never reached, an
 /// item with no lane, a hosted lane, whose server is its host's, a lane
 /// whose own account the launch's judge reads walled, a recorded path a
-/// live lane holds now, and a launch its admission refuses, here on a
-/// setting only a launch reads. The lane stands running after each.
+/// live lane holds now, a launch its admission refuses, here on a setting
+/// only a launch reads, and a launch whose tmux server would refuse, here a
+/// recorded socket whose directory its server may not bind in. The lane
+/// stands running after each, with no close sent.
 #[test]
 fn lane_relaunch_refuses_by_key_with_nothing_closed() {
+    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = relaunch_world(dir.path(), &server, 99, CLASS);
@@ -735,6 +738,12 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
         "touched": ["src/a.sh"],
     }));
     let unadmitted = [("ORCH_LANE_OUTPUT", "bogus")];
+    let shut = dir.path().join("shut");
+    std::fs::create_dir(&shut).unwrap();
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let unbindable = shut.join("tmux.sock").display().to_string();
+    let mut unserved = accountless.clone();
+    unserved["controller"] = json!({"server_socket": unbindable});
     // The item, the fleet record, the run's extra environment, the key and
     // a field the refusal carries.
     type Row<'a> = (
@@ -744,7 +753,7 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
         &'a str,
         Option<Value>,
     );
-    let rows: [Row; 6] = [
+    let rows: [Row; 7] = [
         (
             "KEN-1",
             &unrecorded,
@@ -775,6 +784,13 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
             "setting-invalid",
             Some(json!(["key", "ORCH_LANE_OUTPUT"])),
         ),
+        (
+            "KEN-1",
+            &unserved,
+            &[],
+            "tmux-server-unstarted",
+            Some(json!(["socket", unbindable])),
+        ),
     ];
     for (item, record, extra, key, field) in rows {
         runner.write_fleet(record);
@@ -787,20 +803,31 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
                 "{fields}"
             );
         }
+        let after = runner.fleet();
         assert_eq!(
-            runner.fleet()["lanes"][0]["status"],
-            "running",
+            after["lanes"][0]["status"], "running",
             "{key}: nothing closed"
         );
+        assert!(
+            !after["intents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["op"] == "close-resources"),
+            "{key}: no close sent: {after}"
+        );
     }
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-/// A relaunch whose launch fails after a confirmed close, here on a
-/// recorded socket whose directory its server may not bind in, answers
-/// `launch-failed` at exit 3 naming the close's intent and the server's own
-/// line, and leaves the lane stopped and marked with that close. The next
-/// relaunch, once the server can bind, sends the launch alone and runs the
-/// lane, with no second close.
+/// A relaunch whose launch fails after a confirmed close, here on a harness
+/// that exits at once, answers `launch-failed` at exit 3 naming the close's
+/// intent, and leaves the lane stopped and marked with that close. A rerun
+/// whose server cannot start, here on a recorded socket whose directory its
+/// server may not bind in, sends no close and answers `launch-failed`
+/// naming that same close. The next relaunch, once the server binds and
+/// the harness comes up, sends the launch alone and runs the lane, with no
+/// second close.
 #[test]
 fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     use std::os::unix::fs::PermissionsExt;
@@ -808,11 +835,10 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
     let sockets = dir.path().join("sockets");
     std::fs::create_dir(&sockets).unwrap();
     let server = Server::start(&sockets, "fleet");
-    let runner = relaunch_world(dir.path(), &server, 5, CLASS);
+    let mut runner = relaunch_world(dir.path(), &server, 5, CLASS);
     end_server(&server, harness_pid(&runner, "KEN-1"));
-    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o500)).unwrap();
+    runner.stub = stub("stub-fail");
     let out = relaunch(&runner, dir.path(), "KEN-1", &[]);
-    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o700)).unwrap();
     let text = stderr(&out);
     assert_eq!(out.status.code(), Some(3), "{text}");
     let line = text
@@ -832,20 +858,54 @@ fn lane_relaunch_whose_launch_fails_after_the_close_names_the_close() {
         line.split(' ').any(|w| w == format!("close={}", closes[0])),
         "{line}"
     );
+    let lane = &fleet["lanes"][0];
+    assert_eq!(lane["status"], "stopped", "{lane}");
+    assert_eq!(lane["restart_closed"], closes[0], "{lane}");
+    let close = closes[0].to_owned();
+    // The server the failed launch started, if it still stands, ended, so
+    // the rerun must start one on the shut directory.
+    let standing = tmux(&server.socket, &["display-message", "-p", "#{pid}"]);
+    if let Ok(pid) = String::from_utf8_lossy(&standing.stdout)
+        .trim()
+        .parse::<u32>()
+    {
+        let killed = tmux(&server.socket, &["kill-server"]);
+        assert!(killed.status.success(), "{}", stderr(&killed));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while live(pid) {
+            assert!(Instant::now() < deadline, "the started server never ended");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let unserved = relaunch(&runner, dir.path(), "KEN-1", &[]);
+    std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let text = stderr(&unserved);
+    assert_eq!(unserved.status.code(), Some(3), "{text}");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("orch-runtime: launch-failed item=KEN-1 "))
+        .unwrap_or_else(|| panic!("no launch-failed line: {text}"));
+    assert!(
+        line.split(' ').any(|w| w == format!("close={close}")),
+        "{line}"
+    );
     assert!(
         line.split(' ').any(|w| w == "cause=tmux-server-unstarted"),
         "{line}"
     );
-    let said = std::fs::read_to_string(runner.state_dir().join("tmux-server.err")).unwrap();
-    let said = said
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or_else(|| panic!("the server said nothing: {line}"));
-    assert!(line.ends_with(&format!(" detail={said}")), "{line}");
+    let fleet = runner.fleet();
+    let closes = fleet["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-1")
+        .count();
+    assert_eq!(closes, 1, "the unserved rerun sends no second close");
     let lane = &fleet["lanes"][0];
     assert_eq!(lane["status"], "stopped", "{lane}");
-    assert_eq!(lane["restart_closed"], closes[0], "{lane}");
+    assert_eq!(lane["restart_closed"], close, "{lane}");
+    runner.stub = stub("stub-confirm");
     let again = relaunch(&runner, dir.path(), "KEN-1", &[]);
     let line = String::from_utf8_lossy(&again.stdout).trim().to_owned();
     assert_eq!(again.status.code(), Some(0), "{line} {}", stderr(&again));
@@ -1027,35 +1087,98 @@ fn a_fleet_server_that_exits_at_once_refuses_at_once_with_its_own_line() {
     assert!(elapsed < bound / 2, "{elapsed:?}: {observation}");
 }
 
+/// A server that stands without the fleet's session, as a user's tmux
+/// service starts one at boot, holding a session of its own or, started
+/// with `tmux -D`, none at all: on the socket the controller record names,
+/// the launch makes the fleet's session beside any other and opens its
+/// window there; on a socket the record does not name it refuses
+/// `tmux-session-missing` and makes nothing, a `failed` launch naming the
+/// session and socket to repair, never a bare error that wedges the intent
+/// at not-started. Either way the server's `exit-empty` stays as its
+/// starter set it.
 #[test]
-fn a_launch_with_no_tmux_session_records_failed() {
-    // A refusal the effect knows before any window opens records `failed`,
-    // never a bare error that wedges the intent at not-started.
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
-    runner.init_fleet();
-    let out = runner.op_fleet_env(
-        &launch_request("KEN-10", runner.state_dir()),
-        &[("AGENT_RUNTIME_TMUX_SESSION", "nosuch")],
-    );
-    let report = effect_report(&out);
-    assert_eq!(report["intent"]["outcome"], "failed");
-    assert_eq!(report["lane"]["status"], "stopped");
-    // The session the launch looked for and the socket it looked on ride
-    // the observation, so the record names what to repair.
-    let observation = &report["intent"]["observation"];
-    assert_eq!(
-        observation["cause"], "tmux-session-missing",
-        "{observation}"
-    );
-    assert_eq!(observation["session"], "nosuch", "{observation}");
-    assert_eq!(
-        observation["socket"],
-        server.socket.display().to_string(),
-        "{observation}"
-    );
-    assert_eq!(server.panes().len(), 1, "no window ever opened");
+fn a_standing_server_without_the_fleet_session_has_it_made_only_on_the_recorded_socket() {
+    let rows: [(bool, &[&str]); 4] = [
+        (true, &["dot"]),
+        (false, &["dot"]),
+        (true, &[]),
+        (false, &[]),
+    ];
+    for (recorded, held) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "dot");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let off = tmux(&server.socket, &["set-option", "-s", "exit-empty", "off"]);
+        assert!(off.status.success(), "{}", stderr(&off));
+        if held.is_empty() {
+            // The server then stands as `tmux -D` starts one: no session,
+            // `exit-empty` off.
+            let ended = tmux(&server.socket, &["kill-session", "-t", "=dot"]);
+            assert!(ended.status.success(), "{}", stderr(&ended));
+        }
+        if recorded {
+            let mut fleet = runner.fleet();
+            fleet["controller"] = json!({"server_socket": server.socket.display().to_string()});
+            runner.write_fleet(&fleet);
+        }
+        let report = effect_report(&runner.op_fleet_env(
+            &launch_request("KEN-14", runner.state_dir()),
+            &[("AGENT_RUNTIME_TMUX_SESSION", "fleet")],
+        ));
+        let listed = tmux(&server.socket, &["list-sessions", "-F", "#{session_name}"]);
+        let mut sessions: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        sessions.sort();
+        let row = format!("recorded={recorded} held={held:?}");
+        let intent = &report["intent"];
+        if recorded {
+            assert_eq!(intent["outcome"], "confirmed", "{row}: {report}");
+            let mut made: Vec<&str> = held.to_vec();
+            made.push("fleet");
+            assert_eq!(sessions, made, "{row}: {report}");
+            let pane = report["lane"]["launch"]["pane"]
+                .as_str()
+                .unwrap_or_default();
+            let opened_in = tmux(
+                &server.socket,
+                &["display-message", "-p", "-t", pane, "#{session_name}"],
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&opened_in.stdout).trim(),
+                "fleet",
+                "{row}: the window opened in the made session: {report}"
+            );
+        } else {
+            assert_eq!(intent["outcome"], "failed", "{row}: {report}");
+            assert_eq!(report["lane"]["status"], "stopped", "{row}: {report}");
+            let observation = &intent["observation"];
+            assert_eq!(
+                observation["cause"], "tmux-session-missing",
+                "{row}: {observation}"
+            );
+            assert_eq!(observation["session"], "fleet", "{row}: {observation}");
+            assert_eq!(
+                observation["socket"],
+                server.socket.display().to_string(),
+                "{row}: {observation}"
+            );
+            assert_eq!(sessions, held, "{row}: {report}");
+            assert_eq!(
+                server.panes().len(),
+                held.len(),
+                "{row}: no window ever opened"
+            );
+        }
+        let exit_empty = tmux(&server.socket, &["show-options", "-s", "-v", "exit-empty"]);
+        assert_eq!(
+            String::from_utf8_lossy(&exit_empty.stdout).trim(),
+            "off",
+            "{row}"
+        );
+    }
 }
 
 #[test]

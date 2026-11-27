@@ -394,30 +394,29 @@ pub(crate) fn socket_dir(socket: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Make `session` on `server`, one this process started with `tmux -D`,
-/// and set `exit-empty` on: `-D` turns it off, and a server tmux starts for
-/// a client ends with its last session.
-pub fn new_session(server: &Server, session: &str, cwd: &Path) -> Result<()> {
+/// Who started the server a session is made on, which decides whether the
+/// making sets the server's `exit-empty`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    /// This process, with `tmux -D`, which turns `exit-empty` off: the
+    /// making sets it on, so the server ends with its last session as one
+    /// tmux starts for a client does.
+    Here,
+    /// Something else, such as the user's own tmux service: its options
+    /// are its starter's, and the making leaves them as they stand.
+    Elsewhere,
+}
+
+/// Make `session` on `server`, its first window in `cwd`.
+pub fn new_session(server: &Server, session: &str, cwd: &Path, started: Started) -> Result<()> {
     let client = confirm(server)?;
     let cwd = cwd.display().to_string();
-    tmux(
-        &client,
-        &server.socket,
-        "new-session",
-        &[
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-c",
-            &cwd,
-            ";",
-            "set-option",
-            "-s",
-            "exit-empty",
-            "on",
-        ],
-    )?;
+    let mut args = vec!["new-session", "-d", "-s", session, "-c", &cwd];
+    match started {
+        Started::Here => args.extend([";", "set-option", "-s", "exit-empty", "on"]),
+        Started::Elsewhere => {}
+    }
+    tmux(&client, &server.socket, "new-session", &args)?;
     Ok(())
 }
 
@@ -496,7 +495,12 @@ fn confirm(server: &Server) -> Result<Client> {
     Ok(client)
 }
 
-/// Whether the session named exists on the server.
+/// Whether the session named exists on the server. A server holding no
+/// session at all, as `tmux -D` starts one, refuses every target before it
+/// reads one, so a refused `has-session` that names no missing session is
+/// read as an absence only where tmux's documented `list-sessions -F`
+/// listing on the confirmed server answers empty; any other answer keeps
+/// the refusal.
 pub fn session_present(server: &Server, session: &str) -> Result<bool> {
     let client = confirm(server)?;
     let target = format!("={session}");
@@ -516,7 +520,16 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
         return Ok(true);
     }
     let err = stderr_text(&output);
-    if err.starts_with("can't find session") {
+    if names_missing_session(&err) {
+        return Ok(false);
+    }
+    let listed = tmux(
+        &client,
+        &server.socket,
+        "list-sessions",
+        &["list-sessions", "-F", "#{session_name}"],
+    );
+    if listed.is_ok_and(|names| names.trim().is_empty()) {
         return Ok(false);
     }
     Err(Error::External {
@@ -673,9 +686,7 @@ pub fn new_window(
 /// `Unreadable`.
 pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
     let target = format!("={session}");
-    lone_idle_shell(server, &["-s", "-t", &target], |stderr| {
-        stderr.starts_with("can't find session")
-    })
+    lone_idle_shell(server, &["-s", "-t", &target], names_missing_session)
 }
 
 /// The pane `id` where it stands alone in its window as an idle shell, read
@@ -805,6 +816,12 @@ fn printed_pane(server: &Server, line: &str) -> Option<Pane> {
         window: window.to_owned(),
         session: session.to_owned(),
     })
+}
+
+/// tmux's answer to a command on a missing session, the one failure that is
+/// its absence.
+fn names_missing_session(stderr: &str) -> bool {
+    stderr.starts_with("can't find session")
 }
 
 /// tmux's answer to a command on a missing target, the one failure that is
@@ -953,7 +970,7 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
         }
     };
     if !output.status.success() {
-        return if stderr_text(&output).starts_with("can't find session") {
+        return if names_missing_session(&stderr_text(&output)) {
             Reading::Gone
         } else {
             Reading::Unreadable {
@@ -1764,6 +1781,20 @@ mod tests {
             "the sibling stands"
         );
         assert_eq!(kill_pane(&sibling.pane), Close::AlreadyGone);
+    }
+
+    /// A server that stands holding no session, its `exit-empty` off as
+    /// `tmux -D` leaves it: the session it lacks reads absent, never a tmux
+    /// failure.
+    #[test]
+    fn a_server_holding_no_session_reads_the_session_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        private.ask(&["set-option", "-s", "exit-empty", "off"]);
+        private.ask(&["kill-session", "-t", "=t"]);
+        assert_eq!(private.ask(&["list-sessions"]), "", "no session stands");
+        assert_eq!(session_present(server, "t").ok(), Some(false));
     }
 
     /// A close of its session's one pane, by window or by pane, gives the

@@ -16,7 +16,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::tmux::kill_pane", reason = "a pane is closed only through the operation handle's token or the session command's own stop" },
     { path = "agent_runtime::host::tmux::kill_window", reason = "a window is closed only through the operation handle's token or the session command's own stop" },
     { path = "agent_runtime::host::tmux::kill_server", reason = "no effect ends a tmux server" },
-    { path = "agent_runtime::host::tmux::new_session", reason = "a tmux session is made only by the operation handle's fleet server, on the server it started" },
+    { path = "agent_runtime::host::tmux::new_session", reason = "a tmux session is made only by the engine run's fleet server, on the socket the controller record names" },
     { path = "agent_runtime::host::tmux::keep_on_exit", reason = "a pane is kept past its process only through the operation handle's token" },
     { path = "agent_runtime::host::tmux::new_window", reason = "a window is opened only through the operation handle, its acquisition written first, or the session command's own launch" },
     { path = "agent_runtime::host::tmux::send_line", reason = "a pane is typed into only through the operation handle's token or the session command's own delivery" },

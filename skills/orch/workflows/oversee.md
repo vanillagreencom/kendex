@@ -34,7 +34,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 - `[DIR]` is the absolute checkout directory.
 - `[OVERSEE_STATE]` is the path `state path` prints; `[OVERSEE_STATE_DIR]` is its directory.
 - A controller opens in the first tmux session of: the request's `session`, `AGENT_RUNTIME_TMUX_SESSION`, the opener's own session, the session the fleet's lanes open in.
-- Where a tmux server answers on the fleet's socket, it must hold that session. Where none answers on the controller record's `server_socket`, the start starts one holding it, as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
+- On the controller record's `server_socket`, the start starts a gone server with that session, or makes the session in a server that stands there without it. On any other socket, a standing server must already hold the session. [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states both cases.
 
 1. Resolve the fleet state. Initialize it where `.result.exists` is false.
 

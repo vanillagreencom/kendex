@@ -832,9 +832,11 @@ enum LaneOp {
     /// judge with the lane's charge left out, and both the close and the
     /// `launch-lane` request a recovery relaunch composes from the record,
     /// on the start brief, closed by the interrupted sentence where no
-    /// handoff stands, admitted before the close; then both applied in
+    /// handoff stands, admitted before the close, with the tmux server and
+    /// session the launch opens on resolved there too; then both applied in
     /// order on the controller record's `server_socket`, where a server gone
-    /// from it is started again. Exit 0 prints `resumed item=ITEM
+    /// from it is started again and one standing without the fleet's
+    /// session has it made. Exit 0 prints `resumed item=ITEM
     /// route=resume|fresh account=DIR|-`. A close that failed is
     /// `close-failed` on stderr at exit 3, one still open `close-unconfirmed`
     /// at 75, with nothing launched; a launch that failed or was refused
@@ -849,7 +851,9 @@ enum LaneOp {
     /// `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared
     /// cause=CAUSE`, the launch's account refusals (`account-walled`,
     /// `account-reserved`, `account-retired`, `account-unmeasured`,
-    /// `account-unjudged`) and its admission refusals.
+    /// `account-unjudged`), its admission refusals and, where its close is
+    /// still to send, its tmux server and session refusals (the lane
+    /// directive's § Tmux session).
     Relaunch {
         #[command(flatten)]
         target: Target,
@@ -3956,11 +3960,13 @@ fn applied_live(
 }
 
 /// The local lane `item` relaunched from its record on the controller
-/// record's server: both requests composed and admitted before the close,
-/// so every refusal at exit 1 leaves the lane as it stood; then the close,
+/// record's server: both requests composed and admitted, and the tmux
+/// server and session the launch opens on resolved, before the close, so
+/// every refusal at exit 1 leaves the lane as it stood; then the close,
 /// and only after a confirmed close the launch. A lane an earlier
-/// relaunch's close left stopped takes the launch alone, its lines naming
-/// that close. Every answer after the close names its outcome, the line
+/// relaunch's close left stopped takes the launch alone, its server and
+/// session resolved by that launch, so every line, a refusal there
+/// included, names that close. Every answer after the close names its outcome, the line
 /// printed and the process ended by its status.
 fn relaunch_lane(
     path: &Path,
@@ -3981,7 +3987,12 @@ fn relaunch_lane(
     };
     let launch = admitted(path, read_request(&relaunch.launch)?, &settings)?;
     let close_id = match close {
-        Retire::Send(close) => relaunch_closed(path, item, *close, &settings, locking)?,
+        Retire::Send(close) => {
+            effects::relaunch::launch_server(&settings, path, locking)?;
+            relaunch_closed(path, item, *close, &settings, locking)?
+        }
+        // The lane is already closed: the launch resolves its own server and
+        // session, so a refusal there is a failed launch naming that close.
         Retire::Sent(id) => id,
     };
     // The lane is closed: a refusal of its launch from here on is a failed
