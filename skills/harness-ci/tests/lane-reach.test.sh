@@ -466,6 +466,22 @@ git -C "$repo" checkout -qb fixture-cargo-registry "$opted_base"
 printf 'itoa = "1"\n' >>"$repo/cargo/bridge/Cargo.toml"
 git -C "$repo" commit -qam 'a scanned package has a registry dependency'
 cargo_registry_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-cargo-suite "$opted_base"
+# An integration suite outside Cargo's target directories, which a tests link
+# can expose.
+mkdir -p "$repo/cargo/primary/suite"
+printf '#[test]\nfn linked() {}\n' >"$repo/cargo/primary/suite/linked.rs"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a package holds a suite outside its target directories'
+cargo_suite_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-root-config "$static_base"
+# Vitest run from web/ loads this ancestor config, which widens discovery to
+# the repository.
+printf '%s\n' "export default { test: { dir: '..', include: ['**/*.test.mjs'] } }" \
+  >"$repo/vitest.config.mjs"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'an ancestor Vitest config widens discovery past the root'
+vitest_root_config_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-vitest-refused-import "$static_base"
 # The Vitest reader refuses an import it has resolved, and no shell lane reads it.
 printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
@@ -1153,6 +1169,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     refused-import-package|refused-import-tsconfig) base="$refused_import_package_base" ;;
     refused-runner) base="$refused_runner_base" ;;
     cargo-registry-dependency) base="$cargo_registry_base" ;;
+    cargo-tests-link) base="$cargo_suite_base" ;;
+    vitest-root-config) base="$vitest_root_config_base" ;;
     refused-executable) base="$refused_executable_base" ;;
     linked-workdir-*) base="$linked_workdir_base" ;;
     vitest-refused-import) base="$vitest_refused_import_base" ;;
@@ -1208,6 +1226,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     restored-workdir) mkdir -p "$repo/${path%/*}"; printf 'restored\n' >"$repo/$path" ;;
     refused-added-target|cargo-added-target) mkdir -p "$repo/${path%/*}"; printf '\n' >"$repo/$path" ;;
     symlink-workdir) ln -s cargo "$repo/$path" ;;
+    cargo-tests-link) ln -s suite "$repo/$path" ;;
+    vitest-root-config) mkdir -p "$repo/${path%/*}"; printf '\n' >"$repo/$path" ;;
     linked-workdir-swap)
       git -C "$repo" rm -q -- "$path"; mkdir "$repo/$path"; printf 'restored\n' >"$repo/$path/restored.txt" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
@@ -1227,6 +1247,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     [ "$head_status" = 1 ] || cat "$SANDBOX/head-vitest-log" >&2
     assert_eq "$label passes actual Vitest at base" 0 "$base_status"
     assert_eq "$label fails actual Vitest after the change" 1 "$head_status" ;;
+  vitest-root-config)
+    assert_eq "$label actual Vitest lists the test outside its root" ../lib/new.test.mjs \
+      "$(cd "$repo/web" && ./node_modules/.bin/vitest list --filesOnly --json |
+        python3 -c 'import json, os, sys; print(*sorted(os.path.relpath(row["file"]) for row in json.load(sys.stdin)
+          if "lib/" in row["file"]))')" ;;
   shell-symlink)
     assert_eq "$label follows the link before its parent component" physical \
       "$(cd "$repo" && bash ./tools/check.sh)" ;;
@@ -1401,6 +1426,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
       refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
     linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-shell-command' ;;
     vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
+    vitest-root-config) refused_jobs='job=web cause=vitest-loaded-config' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
@@ -1471,6 +1497,7 @@ cargo-passed-dependency|cargo/bridge/src/lib.rs|true|true|true|true
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 cargo-registry-dependency|tools/input.sh|true|true|true|true
 cargo-added-target|cargo/primary/tests/added.rs|false|true|false|false
+cargo-tests-link|cargo/primary/tests|false|true|false|false
 refused-claim-hit|cargo/spare/src/lib.rs|false|true|false|false
 refused-claim-miss|tools/input.sh|true|false|false|false
 refused-unclaimed|ops/notes.txt|false|false|true|false
@@ -1482,7 +1509,7 @@ refused-vitest-package|web/package-lock.json|false|false|true|false
 refused-build-script|cargo/primary/build.rs|false|true|false|false
 refused-added-target|cargo/primary/tests/added.rs|false|true|false|false
 refused-added-test|web/added.test.mjs|false|false|true|false
-refused-vitest-config|web/tsconfig.json|false|false|true|false
+refused-vitest-config|web/added.test.mjs|false|false|true|false
 refused-import-package|lib/package.json|false|false|true|false
 refused-import-tsconfig|lib/tsconfig.json|false|false|true|false
 refused-runner|bin/run|true|false|false|false
@@ -1502,6 +1529,7 @@ vitest-disabled-sibling|.github/skills/math/sibling.mjs|||true|
 vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
 vitest-ancestor-config|vite.config.mjs|false||true|false
+vitest-root-config|lib/new.test.mjs|false||true|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
 vitest-refused-import|shared.mjs|false||true|false

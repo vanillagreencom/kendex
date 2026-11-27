@@ -612,9 +612,14 @@ class Evidence:
             # A build.rs is discovered when the manifest sets no build key, and
             # a manifest the change adds in the tree can join the workspace.
             # https://doc.rust-lang.org/cargo/reference/manifest.html#the-build-field
+            # Cargo follows a link at a target directory and finds targets
+            # below it, so a path there is an input whatever its type.
+            target_dirs = {(Path(scope) / name).as_posix()
+                           for name in ("tests", "examples", "benches", "src/bin")}
             discovered.update(path for path in self.changed | self.files.keys() if (
                 path == (Path(scope) / "build.rs").as_posix()
                 or (Path(path).name == "Cargo.toml" and under(path, scope))
+                or any(under(path, root) for root in target_dirs)
                 or (path.endswith(".rs") and any(under(path, root) for root in module_roots))))
         reads.update(discovered)
         covered = {path for path in self.changed if any(
@@ -627,6 +632,13 @@ class Evidence:
         changed paths the reader judged."""
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
+        # Vitest loads the first config it finds in its root or an ancestor,
+        # which can move the root or widen discovery past it, and the reader
+        # cannot rule out a test that config discovers.
+        require(not any(
+            Path(path).parent in {Path(directory), *Path(directory).parents}
+            and Path(path).name.startswith((*VITEST_CONFIG, "vitest.workspace."))
+            for path in self.files), "vitest-loaded-config")
         paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
         config_dirs = set()
 
