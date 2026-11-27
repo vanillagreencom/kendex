@@ -63,13 +63,16 @@
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff
 #   CHANGED_PATHS  the changed paths, one per line
+#   CHANGE_BASE    the commit CHANGED_PATHS were measured from, where read;
+#                  only a path edited in place since it can be skill text
+#                  (SKILL_TEXT below). Unset or unreadable, no path is.
 #   EVENT          pull_request|merge_group|push|schedule, the event the selection is
 #                  for. The first two select the same lanes and shards for
 #                  the same class, docs verdict and paths, which
 #                  --event-parity checks. The workflow classifies on
 #                  merge_group alone; tools/guard --full asks at
 #                  pull_request. `push` takes the push route and `schedule`
-#                  the night route, which read none of the three variables
+#                  the night route, which read none of the four variables
 #                  above. --fallback also takes workflow_dispatch.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
 #   CI_SELECTION   the file a class selection writes its skips and targets
@@ -1015,6 +1018,70 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # The release check runs a downloaded engine whose catalog and Git inputs
 # cannot be inspected by the source reach.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
+# Skill text selects no catalog job. It is Markdown a skill ships beside its
+# SKILL.md, as catalog_reads places it, edited in place since CHANGE_BASE,
+# whose diff PROSE_EDIT reads as prose. The install changes such a file only
+# to rebase its relative links, and a link it cannot represent is a warning,
+# never an error. Of the released check's passes only links can fail on it;
+# the safety pass scores it and fails nothing. A link or heading edit is not
+# prose, so the links pass keeps its merge-group proof. An added, removed or
+# renamed file changes the layout and keeps the job too, as does a diff that
+# cannot be read.
+SKILL_TEXT=$'\n'
+# Over one file's `git diff -U1`: exit 0 where the edit is prose. A changed
+# line keeps the job when it holds any Markdown syntax character, one of
+# [ ] ( ) < > # ` ~, or a URL (`http`, or the bare `github.com` the links
+# pass also reads). A changed or context line keeps it when it ends in `(`
+# or `]:`, which can open a wrapped link destination on the next line, or
+# when it is only `=` or `-` once leading quote markers, list markers and
+# blanks are off, which can underline a line into a heading. No hunk, or a
+# binary diff, keeps it.
+PROSE_EDIT='
+  function doubt() { found = 1; exit }
+  function underline(s) {
+    while (1) {
+      if (s ~ /^[ \t]*[=-]+[ \t]*$/) return 1
+      if (!match(s, /^([ \t]+|>|[-*+]([ \t]|$)|[0-9]+[.)]([ \t]|$))/)) return 0
+      s = substr(s, RLENGTH + 1)
+    }
+  }
+  /^@@/ { hunk = 1; next }
+  !hunk { if (/^Binary files /) doubt(); next }
+  /^\\/ { next }
+  { mark = substr($0, 1, 1); line = substr($0, 2) }
+  line ~ /(\(|\]:)[ \t]*$/ { doubt() }
+  underline(line) { doubt() }
+  mark == " " { next }
+  line ~ /[][()<>#`~]/ { doubt() }
+  tolower(line) ~ /http|github\.com/ { doubt() }
+  END { exit found || !hunk }
+'
+skill_text() { # CANDIDATES — catalog_reads' `text` paths, one per line
+  local edited path hunks
+  [ -n "${CHANGE_BASE:-}" ] && [ -n "$1" ] || return 0
+  if ! edited="$(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=M "$CHANGE_BASE" HEAD --)"; then
+    printf 'ci-job-set: skill-text=unread base=%s coverage=catalog\n' "$CHANGE_BASE" >&2
+    return 0
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] && [[ $'\n'$edited$'\n' == *$'\n'"$path"$'\n'* ]] || continue
+    if ! hunks="$(git --literal-pathspecs diff -U1 --no-renames --no-color --no-ext-diff --no-textconv \
+      "$CHANGE_BASE" HEAD -- "$path")"; then
+      printf 'ci-job-set: skill-text=unread path=%s coverage=catalog\n' "$path" >&2
+      continue
+    fi
+    awk "$PROSE_EDIT" <<<"$hunks" || continue
+    SKILL_TEXT="$SKILL_TEXT$path"$'\n'
+  done <<<"$1"
+}
+catalog_input() { # is some changed path a catalog input that is not skill text?
+  local path inputs="$CATALOG_INPUTS|$LANE_SOURCES"
+  while IFS= read -r path; do
+    [[ $path =~ $inputs ]] || continue
+    [[ $SKILL_TEXT == *$'\n'"$path"$'\n'* ]] || return 0
+  done <<<"$paths"
+  return 1
+}
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
@@ -1134,7 +1201,7 @@ cargo_job_reads() {
 # Read the install kinds, layout and exclusions where Rust declares them.
 # An unknown declaration or catalog layout authorizes no narrower matrix.
 catalog_reads() {
-  PATHS="$paths" python3 -I -c '
+  PATHS="$paths" PROSE="$PROSE" python3 -I -c '
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -1199,11 +1266,17 @@ def select():
                     inputs.add(name)
     for name in changes:
         path = PurePosixPath(name)
-        if name in inputs or any(
+        shipped = any(
             root in skill_dirs and path.parts[len(root)] not in excluded
             for root in (path.parts[:2], path.parts[:3]) if len(root) < len(path.parts)
-        ):
+        )
+        if name in inputs or shipped:
             print("read", name, sep="\t")
+            # Markdown a skill ships beside its marker: the skill text
+            # candidates SKILL_TEXT judges.
+            if shipped and name not in inputs and name in tracked and path.name != marker \
+                    and re.search(os.environ["PROSE"], name):
+                print("text", name, sep="\t")
         elif path.name == ".gitattributes" and any(path.parent in PurePosixPath(item).parents for item in inputs):
             print("read", name, sep="\t")
         elif name in tracked:
@@ -1251,7 +1324,8 @@ reads() {
       n = split(ENVIRON["CATALOG_READS"], entries, "\n")
       for (i = 1; i <= n; i++) {
         split(entries[i], entry, "\t")
-        catalog_input[entry[2]] = entry[1]
+        if (entry[1] == "text") skill_text[entry[2]] = 1
+        else catalog_input[entry[2]] = entry[1]
       }
     }
     $1 == "complete" { next }
@@ -1308,6 +1382,7 @@ reads() {
       printf "linux-full=%d\nworkflow-lint=%d\nworkflow-smoke=%d\n", linux_full, lint, smoke
       printf "unplaced=%d\nsuites-unplaced=%d\n", unplaced, suites_unplaced
       for (test in selected) print "target " test
+      for (path in skill_text) print "skill-text\t" path
     }
   ' <<<"$rows"
 }
@@ -1512,8 +1587,17 @@ read_selection() {
       fi
     fi
   fi
+  local line text="" rest=""
   if read_lines="$(reads)"; then
     CARGO_READ=true
+    while IFS= read -r line; do
+      case "$line" in
+        skill-text$'\t'*) text="$text${line#*$'\t'}"$'\n' ;;
+        *) rest="$rest$line"$'\n' ;;
+      esac
+    done <<<"$read_lines"
+    read_lines=$rest
+    skill_text "$text"
     if [[ $read_lines == *suites-unplaced=1* ]]; then REACH_READ=false; fi
   else
     printf 'ci-job-set: cargo-inputs=unread coverage=full\n' >&2
@@ -1709,7 +1793,8 @@ macos_shard() { # SHARDS
 # and PATHS select at EVENT. Every rule on those four inputs is here, the
 # refusals included. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard projection starts empty each
-# time. The reach it projects is read once, before any selection.
+# time. The reach it projects, and SKILL_TEXT, are read once, before any
+# selection.
 select_row() { # CLASS DOCS PATHS EVENT
   local class="$1" docs="$2" event="$4" platform=false uitree=false build=false
   local shards skipped macos=false catalog=false smoke=false linux=false rust matrix="" each known=false
@@ -1736,7 +1821,7 @@ select_row() { # CLASS DOCS PATHS EVENT
     printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] skipped_suites=[] rust_targets=[] cargo_linux_matrix=null"
     return
   fi
-  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
+  catalog_input && catalog=true
   any "$UI_INPUTS" && uitree=true
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *workflow-smoke=1*) smoke=true ;; esac

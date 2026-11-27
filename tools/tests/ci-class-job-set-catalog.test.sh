@@ -73,8 +73,8 @@ cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/catalog/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
-needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'
-replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false'
+needle='  catalog_input && catalog=true'
+replacement='  catalog_input && catalog=false'
 [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
 NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
 ! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
@@ -84,6 +84,139 @@ if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-inputs"; 
 else
   ok "must-fail: inputs inverse fails catalog selection"
 fi
+
+# Skill text: a world where catalog_reads runs, from the checkout's layout
+# sources and its catalog_render_lint target, whose head commit edits each
+# file below in place since its base, adds one skill Markdown file and
+# removes another. BASE|HEAD per file, `\n` a line break.
+TEXT_WORLD="$TMP/text-world"
+cp -R "$READ_WORLD" "$TEXT_WORLD"
+for file in crates/core/src/source/layout.rs crates/core/src/source/config.rs crates/core/src/engine/ops/add.rs \
+  crates/core/src/source_read.rs crates/core/src/source/plugin_registry.rs crates/cli/tests/catalog_render_lint.rs; do
+  mkdir -p "$TEXT_WORLD/$(dirname "$file")"
+  cp "$ROOT/$file" "$TEXT_WORLD/$file"
+done
+printf '[[test]]\nname = "catalog_render_lint"\npath = "tests/catalog_render_lint.rs"\n' >>"$TEXT_WORLD/crates/cli/Cargo.toml"
+text_git() { git -C "$TEXT_WORLD" -c user.email=ci-job-set@example.invalid -c user.name=ci-job-set "$@"; }
+text_files() { # FIELD — 1 the base text, 2 the head text
+  local file base head text
+  while IFS='|' read -r file base head; do
+    [ "$1" = 1 ] && text=$base || text=$head
+    mkdir -p "$TEXT_WORLD/$(dirname "$file")"
+    printf '%b' "$text" >"$TEXT_WORLD/$file"
+  done <<'FILES'
+kendex.toml|schema = 8\n|schema = 8\n# head\n
+skills/notes.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/SKILL.md|---\nname: orch\ndescription: a\nsummary: b\n---\nBody.\n|---\nname: orch\ndescription: c\nsummary: b\n---\nBody.\n
+skills/orch/README.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/references/r.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/workflows/w.md|Base prose.\n|Base prose.\nMore prose.\n
+skills/orch/references/link.md|Prose.\n\nSee [doc](a.md).\n|Prose.\n\nSee [doc](b.md).\n
+skills/orch/references/url.md|Prose.\n\nSee https://example.com/a.\n|Prose.\n\nSee https://example.com/b.\n
+skills/orch/references/heading.md|# Title\n\nBody.\n|# New title\n\nBody.\n
+skills/orch/references/setext.md|Title\n=====\n\nBody.\n|New title\n=====\n\nBody.\n
+skills/orch/references/wrapped.md|Prose.\n\nSee [doc](\n../a.md)\n|Prose.\n\nSee [doc](\n../b.md)\n
+skills/orch/references/quote-heading.md|Prose.\n\n> ## Layout\n|Prose.\n\n> ## New layout\n
+skills/orch/references/list-heading.md|Prose.\n\n- ## Step\n|Prose.\n\n- ## New step\n
+skills/orch/references/quote-setext.md|Prose.\n\n> Title\n> =====\n|Prose.\n\n> New title\n> =====\n
+skills/orch/references/fence.md|Prose.\n\n```\ncode\n```\n\n## Usage\n|Prose.\n\n```\ncode\n\n## Usage\n
+skills/orch/references/destination.md|Prose.\n\nSee the [guide](\n../SKILL.md\n) for more.\n|Prose.\n\nSee the [guide](\n../DEVELOPMENT.md\n) for more.\n
+skills/orch/references/close.md|Intro.\n\nSee [doc](\n../a.md\n"Title"\nTail.\n|Intro.\n\nSee [doc](\n../a.md\n"Title")\nTail.\n
+skills/orch/gone.md|Base prose.\n|Base prose.\n
+skills/group/nested/SKILL.md|---\nname: nested\n---\n|---\nname: nested\n---\n
+skills/group/nested/README.md|Base prose.\n|Base prose.\nMore prose.\n
+FILES
+}
+text_files 1
+text_git add -A
+text_git commit -q -m base
+TEXT_BASE="$(text_git rev-parse HEAD)"
+text_files 2
+printf 'New prose.\n' >"$TEXT_WORLD/skills/orch/references/new.md"
+text_git rm -q skills/orch/gone.md
+text_git add -A
+text_git commit -q -m head
+
+# BASE|PATHS|CATALOG, every row micro at the merge group; BASE `base` is
+# TEXT_BASE, `-` unset and `unread` a commit the world does not hold. Smoke
+# stays false throughout: no row reaches its fixture. A ROW argument runs
+# only the rows whose paths hold it.
+text_rows() { # SCRIPT [ROW]
+  local base path selected change_base
+  while IFS='|' read -r base path selected; do
+    case "$path" in *"${2-}"*) ;; *) continue ;; esac
+    case "$base" in base) change_base=$TEXT_BASE ;; unread) change_base=0123456789abcdef0123456789abcdef01234567 ;; *) change_base="" ;; esac
+    check "skill text: $base $path" "catalog=$selected
+smoke=false" "$(catalog_bits "$(CHANGE_BASE="$change_base" SELECT_IN="$TEXT_WORLD" SELECT_WITH="$1" SELECT_EVENT=merge_group selection micro false "$(printf '%s\n' $path)")")"
+  done <<'ROWS'
+base|skills/orch/README.md|false
+base|skills/orch/references/r.md|false
+base|skills/orch/workflows/w.md|false
+base|skills/group/nested/README.md|false
+base|skills/orch/README.md skills/orch/references/r.md|false
+base|skills/orch/SKILL.md|true
+base|skills/orch/README.md skills/orch/SKILL.md|true
+base|kendex.toml|true
+base|skills/orch/README.md kendex.toml|true
+base|skills/orch/references/link.md|true
+base|skills/orch/references/url.md|true
+base|skills/orch/references/heading.md|true
+base|skills/orch/references/setext.md|true
+base|skills/orch/references/wrapped.md|true
+base|skills/orch/references/quote-heading.md|true
+base|skills/orch/references/list-heading.md|true
+base|skills/orch/references/quote-setext.md|true
+base|skills/orch/references/fence.md|true
+base|skills/orch/references/close.md|true
+base|skills/orch/references/destination.md|true
+base|skills/orch/references/new.md|true
+base|skills/orch/gone.md|true
+base|skills/notes.md|true
+-|skills/orch/README.md|true
+unread|skills/orch/README.md|true
+ROWS
+}
+text_rows "$JOB_SET"
+# Each planted fault turns the rows it names red:
+# LABEL@LINE@REPLACEMENT@ROW[@LINE@REPLACEMENT], the second pair planted too.
+plant() { # SOURCE LINE REPLACEMENT — the copy, or 1 where LINE is not one line of SOURCE
+  [ "$(grep -cxF -- "$2" "$1")" -eq 1 ] || return 1
+  NEEDLE="$2" REPLACEMENT="$3" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$1"
+}
+syntax='  line ~ /[][()<>#`~]/ { doubt() }'
+while IFS='@' read -r label needle replacement row needle2 replacement2; do
+  if ! plant "$JOB_SET" "$needle" "$replacement" >"$catalog_copy.next" ||
+    { [ -n "$needle2" ] && ! plant "$catalog_copy.next" "$needle2" "$replacement2" >"$catalog_copy"; }; then
+    bad "must-fail $label: no single edit site"
+    continue
+  fi
+  [ -n "$needle2" ] || mv "$catalog_copy.next" "$catalog_copy"
+  if cmp -s "$JOB_SET" "$catalog_copy"; then
+    bad "must-fail $label: the copy changed nothing"
+    continue
+  fi
+  chmod +x "$catalog_copy"
+  if (PASS=0 FAIL=0; text_rows "$catalog_copy" "$row" >"$TMP/text-control"; [ "$FAIL" -eq 0 ]); then
+    bad "must-fail: $label leaves skill text selection green"
+  else
+    ok "must-fail: $label fails skill text selection"
+  fi
+done <<ROWS
+narrowing removed@  catalog_input && catalog=true@  any "\$CATALOG_INPUTS|\$LANE_SOURCES" && catalog=true@README.md
+SKILL.md as text@            if shipped and name not in inputs and name in tracked and path.name != marker \\@            if shipped and name in tracked \\@SKILL.md
+text excuses others@    [[ \$SKILL_TEXT == *\$'\n'"\$path"\$'\n'* ]] || return 0@    [[ \$SKILL_TEXT == *\$'\n'?* ]] || return 0@kendex.toml
+link syntax unread@$syntax@  # syntax control@references/link.md
+heading unread@$syntax@  # syntax control@references/heading.md
+wrapped destination unread@$syntax@  # syntax control@references/wrapped.md@  line ~ /(\\(|\\]:)[ \\t]*\$/ { doubt() }@  # opener control
+block-quote heading unread@$syntax@  # syntax control@references/quote-heading.md
+list-item heading unread@$syntax@  # syntax control@references/list-heading.md
+deleted closing fence unread@$syntax@  # syntax control@references/fence.md
+added closing parenthesis unread@$syntax@  # syntax control@references/close.md
+URL unread@  tolower(line) ~ /http|github\\.com/ { doubt() }@  # URL control@references/url.md
+wrapped opener unread@  line ~ /(\\(|\\]:)[ \\t]*\$/ { doubt() }@  # opener control@references/destination.md
+setext underline unread@  underline(line) { doubt() }@  # underline control@references/setext.md
+block-quote setext unread@$syntax@  # syntax control@references/quote-setext.md@      if (!match(s, /^([ \\t]+|>|[-*+]([ \\t]|\$)|[0-9]+[.)]([ \\t]|\$))/)) return 0@      if (!match(s, /^([ \\t]+|[-*+]([ \\t]|\$)|[0-9]+[.)]([ \\t]|\$))/)) return 0
+ROWS
 
 # The shard selection in a fixture world, where every reader is planted, so
 # each list is the projection of the whole reach:
