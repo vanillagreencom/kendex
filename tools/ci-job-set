@@ -74,11 +74,12 @@
 #                  --runtime-publish reads GITHUB_REPOSITORY alone
 #
 # THE PUSH ROUTE, for EVENT=push on main: read PUSH_BEFORE/PUSH_AFTER,
-# then select the range since the latest successful main push of this workflow.
+# then select the range since the nearest first-parent ancestor of
+# PUSH_AFTER that a successful main push of this workflow tested.
 # Pending pushes may be replaced, so the event before head alone cannot
-# bound catch-up work. An absent, unread or non-ancestor successful head
-# selects every suite, shard and target and cache compilation. An unread
-# event range refuses selection, leaving the workflow full fallback.
+# bound catch-up work. An unread listing, or no tested commit within
+# PUSH_WALK, selects every suite, shard and target and cache compilation. An
+# unread event range refuses selection, leaving the workflow full fallback.
 #
 # tools/guard --suite-reach owns the selected suites and Rust targets.
 # Per runner, subtract only suites the same-head merge groups selections
@@ -88,7 +89,11 @@
 # nothing. A proved native replacement stays owed on macOS wherever its
 # original does. Lists of suites outside the reach and suites proved by the
 # group become skipped_suites and skipped_suites_macos. cache_compile
-# selects build inputs.
+# selects build inputs. catalog, smoke and cargo_windows_check stand their
+# jobs down only where every leg of that job's check in the same-head groups
+# succeeded; smoke and cargo_windows_check also run where cache_compile is
+# true, since each saves a compile cache entry on main that no merge group
+# saves.
 # runtime_publish names the package runtime builds the head has no published
 # artifact for, and adds the leg that publishes them; no proof subtracts it.
 # The merge group at the head published them already: its publishing leg is
@@ -302,9 +307,9 @@ cargo-linux|Cargo * (Linux)|cargo_linux|cache_compile|nightly|on
 cargo-macos|macOS cargo *|cargo_macos|cache_compile|nightly|on
 cargo-lint|Cargo lints (clippy, fmt, doc)|cargo_lint|-|-|-
 cargo-tests-windows|Windows cargo (workspace tests)|cargo_windows|cache_compile|nightly|on
-cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|on|nightly|on
-catalog|catalog (*|catalog|on|nightly|on
-smoke|real-CLI round trip|smoke|on|nightly|on'
+cargo-check-windows|Windows cargo (core and CLI targets compile)|cargo_windows_check|cargo_windows_check|nightly|on
+catalog|catalog (*|catalog|catalog|nightly|on
+smoke|real-CLI round trip|smoke|smoke|nightly|on'
 
 # The LANES column an event reads: 3 class, 4 push, 5 schedule, 6 dispatch.
 lane_column() { # EVENT
@@ -570,11 +575,64 @@ runtime_targets() {
   done <<<"$manifests"
 }
 
+# The push range's start, in PREVIOUS_PUSH: the nearest first-parent
+# ancestor of PUSH_AFTER, itself included, that a successful main push run of
+# this workflow other than this one tested. Each commit is one head_sha
+# listing, a few rows. A listing of every successful push grows past the 1000
+# rows GitHub serves of a filtered run listing (10 full pages and total_count
+# 2500 on 2026-11-26), which api_list reads as unread. PUSH_WALK bounds the
+# walk: the longest first-parent gap between consecutive successful pushes
+# among the latest 100, read 2026-11-27, was 13 commits, and each step costs
+# one request of the GITHUB_TOKEN's 1,000 per hour per repository. A walk
+# that ends with no tested commit, or a listing that cannot be read, sets
+# RANGE_CAUSE and returns 1; the caller then selects the full roster.
+PUSH_WALK=25
+previous_push() {
+  local commits sha runs status
+  commits="$(git rev-list --first-parent --max-count="$PUSH_WALK" "$PUSH_AFTER")" ||
+    { RANGE_CAUSE=ancestry-unread; return 1; }
+  for sha in $commits; do
+    runs="$(api_list "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&head_sha=$sha&per_page=100" workflow_runs)" ||
+      { RANGE_CAUSE="push-runs-unread head=$sha"; return 1; }
+    status=0
+    jq -e --arg sha "$sha" --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      any(.[]; .event == "push" and .head_branch == "main" and .path == $path and .head_sha == $sha
+        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)' \
+      <<<"$runs" >/dev/null || status=$?
+    # jq -e exits 1 on a false test and above 1 on input it cannot read.
+    case "$status" in
+      0) PREVIOUS_PUSH=$sha; return 0 ;;
+      1) ;;
+      *) RANGE_CAUSE="push-runs-unparseable head=$sha"; return 1 ;;
+    esac
+  done
+  RANGE_CAUSE="no-tested-ancestor walked=$PUSH_WALK"
+  return 1
+}
+
+# Whether the same-head groups ran JOB, its LANES row's check, and every leg
+# of that check in JOBS_FILE, the groups' latest jobs, completed
+# successfully. A job a group skipped proves nothing.
+group_proved() { # JOB JOBS_FILE
+  local check rows name status conclusion seen=false
+  check="$(printf '%s\n' "$LANES" | awk -F '|' -v job="$1" '$1 == job { print $2 }')" || return 1
+  [ -n "$check" ] && [ "$check" != - ] || return 1
+  rows="$(jq -r '.[] | [.name, .status, (.conclusion // "none")] | @tsv' "$2")" || return 1
+  while IFS=$'\t' read -r name status conclusion; do
+    # shellcheck disable=SC2254 # the check column is a glob
+    case "$name" in $check) ;; *) continue ;; esac
+    [ "$status/$conclusion" = completed/success ] || return 1
+    seen=true
+  done <<<"$rows"
+  [ "$seen" = true ]
+}
+
 # A failed proof read subtracts nothing from the selected work.
 main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
   local runs ids="" id page jobs="" sels="" listing artifact sel work owed replacements
   local linux macos skipped skipped_macos rust linux_n macos_n targets_n
+  local catalog_owed=true smoke_owed=true windows_owed=true
   if [ "$SUITE_INPUTS_READ" = false ]; then
     state=unread cause=checkout-inventory-unread
   elif ! runs="$(api_list "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100" workflow_runs)"; then
@@ -681,8 +739,16 @@ main_proof() {
       | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" &&
       read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed" && [ -n "$targets_n" ]; then
       linux="$(with_publisher "$linux")" || die publisher-unadded "jq could not add the publishing leg"
+      # The group's catalog, smoke and Windows check jobs prove this head's.
+      # Smoke and the Windows check also save a compile cache no merge group
+      # saves, keyed on the build inputs, so a push that moved them still
+      # owes the job to publish that entry.
+      ! group_proved catalog "$work/jobs.json" || catalog_owed=false
+      [ "$main_build" = true ] || ! group_proved smoke "$work/jobs.json" || smoke_owed=false
+      [ "$main_build" = true ] || ! group_proved cargo-check-windows "$work/jobs.json" || windows_owed=false
       emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" \
-        "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
+        "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH" \
+        "catalog=$catalog_owed" "smoke=$smoke_owed" "cargo_windows_check=$windows_owed"
     else
       state=unread cause=proof-subtraction-unread
     fi
@@ -691,7 +757,8 @@ main_proof() {
   if [ "$state" != read ]; then
     main_linux="$(with_publisher "$main_linux")" || die publisher-unadded "jq could not add the publishing leg"
     emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" \
-      "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
+      "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH" \
+      catalog=true smoke=true cargo_windows_check=true
   fi
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
   ids="${ids#,}"
@@ -1558,15 +1625,9 @@ if [ "${EVENT:-}" = push ]; then
   # cannot prove that its preceding head was tested.
   range_read=false
   if paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" &&
-    runs="$(api_list "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&per_page=100" workflow_runs)"; then
-    if previous="$(jq -er --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
-      [.[] | select(.event == "push" and .head_branch == "main" and .path == $path
-        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
-      | sort_by(.created_at) | last | .head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$runs")" &&
-      git merge-base --is-ancestor "$previous" "$PUSH_AFTER" &&
-      paths="$(git diff --name-only --no-renames "$previous" "$PUSH_AFTER" --)"; then
-      range_read=true
-    fi
+    previous_push &&
+    paths="$(git diff --name-only --no-renames "$PREVIOUS_PUSH" "$PUSH_AFTER" --)"; then
+    range_read=true
   fi
   main_build=true
   main_checkout=true
@@ -1583,7 +1644,7 @@ if [ "${EVENT:-}" = push ]; then
       main_checkout=true
     fi
   else
-    printf 'ci-job-set: main-range=unread coverage=full\n' >&2
+    printf 'ci-job-set: main-range=unread coverage=full cause=%s\n' "${RANGE_CAUSE:-push-diff-unread}" >&2
   fi
   choose_shards "$main_checkout"
   main_linux=$SHELL_SHARDS

@@ -21,14 +21,17 @@ name: Skill Tests
 # macOS skill suites. GitHub enforces approval and thread resolution
 # independently of CI job selection.
 #
-# A PUSH TO MAIN selects inputs since the latest successful main push, so
-# pushes replaced while pending keep their catch-up coverage. The selector
-# subtracts per-suite and per-Rust-target proof from the same-head group.
-# Missing range evidence selects the full roster; missing group evidence
-# subtracts nothing. Build inputs select cache compilation. Dedicated work
-# retains its own reporting. A schedule stands down only where its head is
-# the latest successful scheduled head; every selected night and manual
-# dispatch runs the full native night roster.
+# A PUSH TO MAIN selects inputs since the nearest first-parent ancestor a
+# successful main push tested, so pushes replaced while pending keep their
+# catch-up coverage. The selector subtracts per-suite and per-Rust-target
+# proof from the same-head group, and stands catalog, smoke and the Windows
+# check down where every leg of the group's job succeeded. Missing range
+# evidence selects the full roster; missing group evidence subtracts
+# nothing. Build inputs select cache compilation, which also keeps smoke and
+# the Windows check, since each saves a compile cache no merge group saves.
+# Dedicated work retains its own reporting. A schedule stands down only
+# where its head is the latest successful scheduled head; every selected
+# night and manual dispatch runs the full native night roster.
 # Every gated job's `if:` reads its own id in the changes job's `jobs`
 # output; tools/ci-job-set's LANES row for the job says on which events and
 # selections it runs. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
@@ -148,7 +151,8 @@ jobs:
   # reads the same-head merge group's jobs and published selection, which
   # `actions: read` admits, and publishes the suites, shards and targets
   # that group left unproved, selected across the coalesced push range,
-  # and the package runtime builds no run has published yet.
+  # the catalog, smoke and Windows check jobs it did not prove, and the
+  # package runtime builds no run has published yet.
   # A schedule publishes the decision to run the full night. The root
   # checkout there is main itself.
   changes:
@@ -2158,6 +2162,8 @@ jobs:
   # (`--no-run`) so a compile failure reads as one, and on the push to main
   # that step is the whole job on every platform: it saves the compile cache
   # under the merged lockfile, the entry the next group and night restore.
+  # A push runs these legs only where build inputs moved, and no group
+  # proof stands them down, since a merge group saves no cache.
   # A selected night compiles on every platform and tests on macOS and
   # Windows. The selector stands it down only at the latest successful
   # scheduled head. Splitting a lane adds legs under `CI` and changes
