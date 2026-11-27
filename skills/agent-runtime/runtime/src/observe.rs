@@ -380,10 +380,15 @@ pub fn submit_refused(screen: &str, harness: Harness) -> bool {
     }
 }
 
-/// Codex's line for a turn its provider's API refused, as a real pane drew
-/// it: the error glyph at the line's start, then the harness's error text.
-/// An answer quoting the words draws them indented.
-static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
+static CODEX_BANNER_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^■ \S").unwrap());
+
+/// Codex uses the same square for API failures and operator interrupts.
+/// Match the observed API refusal forms at the start of the row so a wrapped
+/// detail body or account clause can still be read on a narrow pane.
+static CODEX_API_ERROR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^■ (?:\{"detail":|The selected model is not supported\.|The '[^']+' model is not supported\b)"#)
+        .unwrap()
+});
 
 /// Whether a Codex slice judged idle sits at its composer after an API error
 /// ended its turn: the error line and the marker line are both drawn in it.
@@ -689,7 +694,7 @@ pub fn limit_banner(slice: &str) -> Option<String> {
             // Codex draws its error as one paragraph under `■`, and a pane
             // narrower than it wraps the rest, the reset clause among it, onto
             // the rows below (`fixtures/stops/codex-purchase-offer.txt`).
-            if CODEX_API_ERROR.is_match(row) {
+            if CODEX_BANNER_START.is_match(row) {
                 while let Some(&next) = rows.get(i + 1)
                     && !next.trim().is_empty()
                     && !MARKER.is_match(next)
@@ -1327,12 +1332,22 @@ mod tests {
         let rows = [
             (
                 Harness::Codex,
+                "› Continue the task.\n\n■ Conversation interrupted\n\n› Ask Codex to do anything",
+                None,
+            ),
+            (
+                Harness::Codex,
                 "› Continue the task.\n\n▲ Selected model is at capacity. Try again later.\n\n› Ask Codex to do anything",
                 Some("capacity"),
             ),
             (
                 Harness::Codex,
                 "■ {\"detail\":\"Bad Request\"}\n1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view",
+                Some("api-error"),
+            ),
+            (
+                Harness::Codex,
+                "› Continue the task.\n\n■ The selected model is not supported.\n\n› Ask Codex to do anything",
                 Some("api-error"),
             ),
             (
@@ -1352,7 +1367,7 @@ mod tests {
             assert_eq!(
                 reply.get("turn").and_then(serde_json::Value::as_str),
                 turn,
-                "{harness:?}: {reply}"
+                "{harness:?} {screen:?}: {reply}"
             );
         }
     }
