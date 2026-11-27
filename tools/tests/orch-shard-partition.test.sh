@@ -1283,15 +1283,8 @@ for os in ubuntu-latest macos-latest; do
   for event in merge_group push schedule workflow_dispatch; do
     event_claims "$WORKFLOW" "$event" "$os" "$major" > "$TMP/event-claims" ||
       { bad "event claims could not evaluate $event on $os"; continue; }
-    expected="$(cat "$TMP/os-universe")"
-    if [[ "$os" == ubuntu-latest ]]; then
-      case "$event" in
-        merge_group | push) ;;
-        *) expected='' ;;
-      esac
-    fi
     check "$event covers its eligible shell roster exactly once on $os" \
-      "$expected" "$(cat "$TMP/event-claims")"
+      "$(cat "$TMP/os-universe")" "$(cat "$TMP/event-claims")"
   done
   if [[ "$os" == ubuntu-latest ]]; then
     event_claims "$TMP/linear-unskipped.yml" merge_group "$os" "$major" > "$TMP/linear-unskipped"
@@ -1585,8 +1578,8 @@ check "must-fail: a failed list that ends without exit 1 leaves a failed target'
 
 # The runtimes' lockfiles against their dependency policy: which legs install
 # cargo-deny, on which events, and that the check runs exactly where it was
-# installed. A merge group's Linux leg holds it under CI, and the night, which
-# runs no Linux shard, holds it on its macOS leg.
+# installed. The orch-rest Linux leg holds it on every event: under CI on a
+# merge group, and on the night's and a manual dispatch's Linux leg.
 DENY_INSTALL_STEP="cargo-deny, the pinned release"
 DENY_STEP="the package runtimes' lockfiles, held to their dependency policy"
 deny_installs() { # WORKFLOW SHARD OS EVENT RUST_TARGETS ; whether the install step runs on that leg
@@ -1602,8 +1595,9 @@ a merge group whose changes job published no list|orch-rest|Linux|merge_group||t
 a main push owing a target|orch-rest|Linux|push|["agent-runtime/lib"]|true
 a merge group whose reach holds no target|orch-rest|Linux|merge_group|[]|false
 a merge group's macOS orch-rest leg, which the Linux leg covers|orch-rest|macOS|merge_group|["orch/lib"]|false
-the night, on its macOS orch-rest leg|orch-rest|macOS|schedule||true
-a manual dispatch, on its macOS orch-rest leg|orch-rest|macOS|workflow_dispatch||true
+the night, on its Linux orch-rest leg|orch-rest|Linux|schedule||true
+the night's macOS orch-rest leg, which its Linux leg covers|orch-rest|macOS|schedule||false
+a manual dispatch, on its Linux orch-rest leg|orch-rest|Linux|workflow_dispatch||true
 another shard|orch-state|Linux|merge_group|["orch/lib"]|false
 DENY_LEGS
 for outcome in success skipped failure; do
@@ -1611,9 +1605,6 @@ for outcome in success skipped failure; do
     "$([[ $outcome == success ]] && echo true || echo false)" \
     "$(gh_eval value "{\"steps\":{\"cargo-deny\":{\"outcome\":\"$outcome\"}}}" "$(step_if "$WORKFLOW" "$DENY_STEP")")"
 done
-plant "$WORKFLOW" " || github.event_name == 'schedule'" "" "$TMP/deny-no-night.yml" "skill-suites-shard/$DENY_INSTALL_STEP"
-check "must-fail: an install condition without the schedule leaves the night unchecked" false \
-  "$(deny_installs "$TMP/deny-no-night.yml" orch-rest macOS schedule '')"
 # The check step's own body, over the selection step and a stub cargo that
 # answers `cargo deny` for each manifest: which packages it holds to which
 # policy, and whether the step ends red.

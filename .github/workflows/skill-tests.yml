@@ -18,8 +18,8 @@ name: Skill Tests
 # local validation (`tools/guard --full`) reads, equal to the group's. The required
 # checks retain their names. The last job, `CI`, accepts only the skips the
 # selection authorized. Every other job reports into it except the nightly
-# macOS skill suites. GitHub enforces approval and thread resolution
-# independently of CI job selection.
+# macOS skill suites and the night's fault report. GitHub enforces approval
+# and thread resolution independently of CI job selection.
 #
 # A PUSH TO MAIN selects inputs since the nearest first-parent ancestor a
 # successful main push tested, so pushes replaced while pending keep their
@@ -33,7 +33,14 @@ name: Skill Tests
 # the Windows check, since each saves a compile cache no merge group saves.
 # Dedicated work retains its own reporting. A schedule stands down only
 # where its head is the latest successful scheduled head; every selected
-# night and manual dispatch runs the full native night roster.
+# night and manual dispatch runs, with no selection, the native macOS night
+# roster and every job a selection can leave out: the whole Linux shell
+# roster, the UI, the cargo lints and every cargo, catalog and smoke leg.
+# Two steps run on a merge group alone: the cargo-linux `test` step, so a
+# night's Linux cargo legs compile their tests and run none, and catalog's
+# released-package suites. A night's last job reports each of its failed
+# checks that the head's merge group did not run as a selector fault,
+# naming the commit and the check.
 # Every gated job's `if:` reads its own id in the changes job's `jobs`
 # output; tools/ci-job-set's LANES row for the job says on which events and
 # selections it runs. Selected macOS shell shards test Bash 3.2 and BSD tools in merge
@@ -91,7 +98,7 @@ name: Skill Tests
 # leg 15. The per-shard figures behind each budget are in the
 # comment above it.
 # Every merge group runs its selected Linux and macOS shards. A selected
-# night runs every macOS-capable shard.
+# night runs every Linux shard and every macOS-capable shard.
 
 "on":
   # Kept for the required `CI` context alone: a pull request runs no lane.
@@ -528,10 +535,10 @@ jobs:
       matrix:
         # The shards the diff's packages select, as tools/ci-job-set lists
         # them; the literal is the whole roster, in the order that script's
-        # SHARDS spells it, and runs where the classifier published nothing.
-        # The job stands down where the list is empty, so no empty matrix
-        # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        # SHARDS spells it, and runs where the classifier published nothing:
+        # a failed changes job, a night and a manual dispatch. The job stands
+        # down where the list is empty, so no empty matrix expands.
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result == 'success' && needs.changes.outputs.shards || '["review-gate", "refresh", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]') }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: guards 9m09s
@@ -613,9 +620,8 @@ jobs:
       # fact, on the legs whose suites run the package runtimes: the build
       # step's own `if:`. The trial is the lane line's head with no grant. It
       # installs nothing, changes no setting and never fails the leg.
-      # cargo-linux runs the same name and text, through the anchors, because
-      # a manual run starts no Linux shard leg and does start that job on
-      # this image; its matrix has no `shard`, so the `if:` stays here.
+      # cargo-linux runs the same name and text, through the anchors; its
+      # matrix has no `shard`, so the `if:` stays here.
       - name: &confine-read-name Read what the runner gives the lane confinement
         if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack' || matrix.shard == 'worktree' || matrix.shard == 'worktree-restack'
         continue-on-error: true
@@ -1072,18 +1078,16 @@ jobs:
 
       # The package runtimes' lockfiles, held by cargo-deny to the one policy
       # skills/agent-runtime/runtime/deny.toml names: advisories, licenses,
-      # bans and sources, for each package the selection above holds. A
-      # merge group and a main push run it on the orch-rest Linux leg, and a
-      # night or a manual dispatch, which run no Linux shard, on the macOS
-      # orch-rest leg. So an advisory published against an unchanged
-      # lockfile reaches the next night that runs; a night whose head is the
-      # latest successful night's stands down and runs no check. The action
-      # installs the pinned release's prebuilt binary, checked against the
-      # release's own SHA-256, with no fallback to a source build; the
-      # release runs on both runners.
+      # bans and sources, for each package the selection above holds, on
+      # the orch-rest Linux leg of every event. So an advisory published
+      # against an unchanged lockfile reaches the next night that runs; a
+      # night whose head is the latest successful night's stands down and
+      # runs no check. The action installs the pinned release's prebuilt
+      # binary, checked against the release's own SHA-256, with no fallback
+      # to a source build.
       - name: cargo-deny, the pinned release
         id: cargo-deny
-        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && needs.changes.outputs.rust_targets != '[]' && (runner.os == 'Linux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-deny@0.20.2
@@ -2707,6 +2711,35 @@ jobs:
         env:
           KENDEX_CLI_SMOKE: "1"
         run: cargo test -p kendex-cli --test cli_smoke -- --nocapture
+
+  # THE NIGHT'S FAULT REPORT: after every other job of a selected night,
+  # each failed check that the head's merge group did not run is a selector
+  # fault, an `::error` annotation naming the commit and the check; THE
+  # NIGHT'S FAULT REPORT in tools/ci-job-set gives the judgement and its
+  # limits. A
+  # night failure the group ran whole stays an ordinary red night. Its needs
+  # are every job a night runs; tools/tests/ci-aggregate.test.sh holds them
+  # to LANES. A report that cannot read the group's record warns and
+  # judges nothing.
+  night-faults:
+    name: Selector faults (night)
+    needs: [changes, skill-suites-shard, skill-suites-macos, ui-tests, cargo-linux, cargo-macos, cargo-lint, cargo-check-windows, cargo-tests-windows, catalog, smoke]
+    if: ${{ !cancelled() && contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'night-faults') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    # Unmeasured: the read is the push route's group proof, which the
+    # changes job's ceiling holds, plus one listing of this run's jobs.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the failed checks the head's merge group did not run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/ci-job-set --night-faults
 
   # GitHub accepts a skipped required context. always() prevents a failed need
   # from skipping the context that must report that failure.

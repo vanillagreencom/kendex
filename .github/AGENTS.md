@@ -19,7 +19,9 @@ This repository's own continuous integration and the instruction files its revie
   - The diff checks among them, Preflight, Markdown, the secrets scan and `changelog-entries`, judge the range from the group's base.
   - The secrets scan also judges each commit of the pull request the group squashed.
   - doc-limits and the bot-instructions check judge the whole tree.
-- A selected night runs the macOS and Windows tests and the surviving macOS shell roster.
+- A selected night runs, with no selection, every job a merge-group selection can leave out, and the surviving macOS shell roster.
+  - The cargo-linux `test` step and catalog's released-package suites run on a merge group alone, so a night's Linux cargo legs only compile.
+  - Its last job reports each failed check the head's merge group did not run as a selector fault, naming the commit and the check.
 - Before changing `actions/change-class` or classifier wiring, read [CI and merge rail](../docs/architecture/merge-rail.md) and [the harness-ci wiring contract](../skills/harness-ci/references/wiring.md).
   - Consumers reference `vanillagreencom/kendex/.github/actions/change-class@main`.
 - `refresh-consumer.yml` is the reusable workflow consumers call through [`../refresh/kendex-refresh.yml`](../refresh/kendex-refresh.yml) at a major tag such as `v1`.
