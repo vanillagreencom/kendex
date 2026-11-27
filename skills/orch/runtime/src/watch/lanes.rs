@@ -1720,8 +1720,7 @@ fn observe_one(
 /// resumed still. A move refused, or a walk that could not judge, is told
 /// once while its reason stands as `idle-after-return` with the refusal
 /// under it ([`said_once`]). The episode
-/// stands while each stopped turn follows the last one read within the
-/// patience; the first finished turn ends it.
+/// stands as [`stop::standing`] judges it; the first finished turn ends it.
 fn continue_lane(
     obs: &Observed,
     cause: &str,
@@ -1744,12 +1743,14 @@ fn continue_lane(
             return;
         }
     }
-    let patience = stop::PROVIDER_PATIENCE.as_secs();
     let episode = pass.baseline.get(PROVIDER_ROW, lane).and_then(|value| {
         let mut fields = value.split('|');
-        let since = fields.next()?.parse::<u64>().ok()?;
-        let last = fields.next()?.parse::<u64>().ok()?;
-        (pass.now.saturating_sub(last) <= patience).then_some((since, fields.next()))
+        let recorded = stop::Episode {
+            since: fields.next()?.parse().ok()?,
+            last: fields.next()?.parse().ok()?,
+        };
+        let since = stop::standing(Some(recorded), pass.now)?;
+        Some((since, fields.next()))
     });
     let (since, told) = episode.unwrap_or((pass.now, None));
     let row = |said: Option<&str>| match said {
