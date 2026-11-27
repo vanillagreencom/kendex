@@ -1840,10 +1840,32 @@ mod dev_artifacts {
 
     #[test]
     fn a_docs_only_pass_proves_its_snapshot_for_a_fix_whether_recorded_or_read_from_its_run() {
-        let w = World::new();
-        git(&w.wt, &["update-ref", "refs/remotes/origin/main", "main"]);
-        w.stamp("r1");
-        w.commit("note.md");
+        // The round's base is the branch's head at delegation, never the
+        // base the docs run classified against: a fix round adds the note,
+        // adds nothing, or merges a moved main into the docs-only branch.
+        for shape in ["adds-note", "unmoved", "merges-main"] {
+            let w = World::new();
+            git(&w.wt, &["update-ref", "refs/remotes/origin/main", "main"]);
+            if shape != "adds-note" {
+                w.commit("note.md");
+            }
+            w.stamp("r1");
+            match shape {
+                "adds-note" => w.commit("note.md"),
+                "unmoved" => {}
+                _ => {
+                    git(&w.wt, &["switch", "-q", "main"]);
+                    w.commit("app.txt");
+                    git(&w.wt, &["update-ref", "refs/remotes/origin/main", "main"]);
+                    git(&w.wt, &["switch", "-q", "work"]);
+                    git(&w.wt, &["merge", "-q", "--no-edit", "main"]);
+                }
+            }
+            fix_round_docs_pass(&w, shape);
+        }
+    }
+
+    fn fix_round_docs_pass(w: &World, shape: &str) {
         let text_cmd = "printf 'validate: lanes=text selection=subset\\n'";
         let started = result(
             &w.command()
@@ -1864,7 +1886,7 @@ mod dev_artifacts {
                 .output()
                 .unwrap(),
         );
-        assert_eq!(started["mode"], "docs", "{started}");
+        assert_eq!(started["mode"], "docs", "{shape}: {started}");
         let dir = started["run_dir"].as_str().unwrap().to_owned();
         let write = || {
             let head = w.head();
@@ -1893,8 +1915,8 @@ mod dev_artifacts {
         };
         let path = result(&write())["path"].as_str().unwrap().to_owned();
         let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(v["validate_mode"], "docs");
-        assert_eq!(w.check("r1")["verdict"], "accept");
+        assert_eq!(v["validate_mode"], "docs", "{shape}");
+        assert_eq!(w.check("r1")["verdict"], "accept", "{shape}");
         // The same run with no stage recording it: its run file is the proof.
         let mut doc = w.doc();
         doc["stages"]
@@ -1904,7 +1926,7 @@ mod dev_artifacts {
         fs::write(w.item(), doc.to_string()).unwrap();
         fs::remove_file(&path).unwrap();
         result(&write());
-        assert_eq!(w.check("r1")["verdict"], "accept");
+        assert_eq!(w.check("r1")["verdict"], "accept", "{shape}");
     }
 
     #[test]

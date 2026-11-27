@@ -827,7 +827,7 @@ fn merge_base_pass(
         base: Some(merge_base.to_owned()),
         ..request.clone()
     };
-    let answer = proof::read(rows, &[], &request, declared, &mut |_| None);
+    let answer = proof::read(rows, &[], &request, declared, &mut |_| None, &mut |_| None);
     answer.proof == proof::Verdict::Complete
         && matches!(answer.rows.as_slice(), [row]
             if row.index == cited && row.mode == ValidateMode::Range && row.base == merge_base)
@@ -927,12 +927,30 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     };
     let mut cause = if carried {
         let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
+        // The round's base is the branch's head at delegation, which no docs
+        // run classified against: a docs run reads the branch from its merge
+        // base with the base branch, so its pass is judged from there.
+        let docs_rows = rows.iter().any(|s| {
+            s.proof
+                .as_ref()
+                .is_some_and(|p| p.mode == ValidateMode::Docs)
+        });
+        let docs_base = if docs_rows {
+            merge_base(settings, &r.id.worktree, commit)?
+        } else {
+            None
+        };
+        let mut docs_only = |head: &str| {
+            let base = docs_base.as_deref()?;
+            crate::validate::docs_only(settings, &r.id.worktree, head, base)
+        };
         let (answer, unproved_range_base) = proof::read_with_bound_run(
             &rows,
             &[],
             &request,
             &declared,
             &mut tree_of,
+            &mut docs_only,
             Some(bound_run),
         );
         match (r.validate.as_str(), answer.proof) {

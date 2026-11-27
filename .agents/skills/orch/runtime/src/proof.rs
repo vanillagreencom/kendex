@@ -2,7 +2,9 @@
 //! and recorded restack skips read through `ops::proof`, the one reader,
 //! under the project's declaration from the settings. The read records
 //! nothing. It reads committed bases and an open round's current HEAD tree
-//! with `git rev-parse`. An unreadable tree supplies no coverage.
+//! with `git rev-parse`, and judges a docs pass under a read with a base by
+//! the validation start's docs reader. An unreadable tree or docs verdict
+//! supplies no coverage.
 use agent_runtime::record;
 use std::path::Path;
 use std::time::Duration;
@@ -35,12 +37,20 @@ pub fn run(settings: &Settings, item: &str, request: &ReadProof) -> Result<Proof
             .as_deref()
             .and_then(|worktree| committed_tree(Path::new(worktree), commit))
     };
+    // Submit and restack name the head's merge base with the base branch,
+    // the base a docs run classifies against.
+    let docs_base = request.base.as_deref();
+    let mut docs_only = |commit: &str| {
+        let (worktree, base) = (worktree.as_deref()?, docs_base?);
+        validate::docs_only(settings, Path::new(worktree), commit, base)
+    };
     Ok(crate::ops::proof::read(
         &stages,
         &skips,
         request,
         &declaration,
         &mut tree_of,
+        &mut docs_only,
     ))
 }
 

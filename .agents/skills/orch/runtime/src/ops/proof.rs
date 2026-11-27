@@ -292,9 +292,7 @@ fn own_pass(stage: &Stage, declaration: &Declaration, excused_rounds: &[&Stage])
 /// A `full` row that covers its tree whole: its command reported the whole
 /// battery, or its class was read over the whole branch.
 fn whole(row: &ProofRow) -> bool {
-    row.mode == ValidateMode::Docs
-        || (row.mode == ValidateMode::Full
-            && (row.selection == "battery" || row.class_base.is_none()))
+    row.mode == ValidateMode::Full && (row.selection == "battery" || row.class_base.is_none())
 }
 
 /// The base a partial row covers from: a range row's base, a full row's
@@ -308,17 +306,26 @@ fn partial_base(row: &ProofRow) -> Option<&str> {
     (!base.is_empty()).then_some(base)
 }
 
+/// Whether a commit's committed tree is docs-only against the base the
+/// need lands on, the base a docs run classifies against; `None` where that
+/// cannot be read. The caller names that base: a read's own base can be one
+/// that partial rows chain to and no docs run ever classified against, such
+/// as a fix round's head at delegation.
+pub type DocsOnly<'a> = dyn FnMut(&str) -> Option<bool> + 'a;
+
 /// The reader. `tree_of` reads a base commit's committed tree, the one
 /// read a chain across rounds needs; `None` is a base that cannot be read,
-/// which is never coverage.
+/// which is never coverage. `docs_only` judges a docs pass under a read
+/// with a base.
 pub fn read(
     stages: &[Stage],
     skips: &[RestackSkip],
     r: &ReadProof,
     declaration: &Declaration,
     tree_of: &mut dyn FnMut(&str) -> Option<String>,
+    docs_only: &mut DocsOnly,
 ) -> ProofRead {
-    read_with_bound_run(stages, skips, r, declaration, tree_of, None).0
+    read_with_bound_run(stages, skips, r, declaration, tree_of, docs_only, None).0
 }
 
 /// Also report an uncovered range base for the bound stage when it passed
@@ -329,6 +336,7 @@ pub(super) fn read_with_bound_run(
     r: &ReadProof,
     declaration: &Declaration,
     tree_of: &mut dyn FnMut(&str) -> Option<String>,
+    docs_only: &mut DocsOnly,
     bound_run: Option<usize>,
 ) -> (ProofRead, Option<String>) {
     let current = if r.need == Need::Round && r.round.is_some() && r.exception.is_some() {
@@ -347,6 +355,7 @@ pub(super) fn read_with_bound_run(
         excused: excused_runs(stages, r, current.as_deref()),
         exception: r.exception.as_ref(),
         tree_of,
+        docs_only,
         bound_run,
         unproved_range_base: None,
     };
@@ -364,7 +373,12 @@ pub(super) fn read_with_bound_run(
         },
         skip,
     };
-    if let Some(rows) = reader.covers(&r.tree, r.base.as_deref(), &mut vec![r.tree.clone()]) {
+    if let Some(rows) = reader.covers(
+        &r.tree,
+        r.head.as_deref(),
+        r.base.as_deref(),
+        &mut vec![r.tree.clone()],
+    ) {
         return (answer(Verdict::Complete, rows, None), None);
     }
     if r.need == Need::Restack
@@ -380,7 +394,7 @@ pub(super) fn read_with_bound_run(
             .map(|row| row.tree)
             .collect();
         for tree in trees {
-            if let Some(rows) = reader.covers(&tree, None, &mut vec![tree.clone()]) {
+            if let Some(rows) = reader.covers(&tree, None, None, &mut vec![tree.clone()]) {
                 return (answer(Verdict::Complete, rows, Some(skip.clone())), None);
             }
         }
@@ -406,6 +420,7 @@ struct Reader<'a> {
     excused: Vec<&'a Stage>,
     exception: Option<&'a Exception>,
     tree_of: &'a mut dyn FnMut(&str) -> Option<String>,
+    docs_only: &'a mut DocsOnly<'a>,
     bound_run: Option<usize>,
     unproved_range_base: Option<String>,
 }
@@ -444,14 +459,16 @@ impl Reader<'_> {
         rows.into_iter()
     }
 
-    /// The rows that prove `tree` for a need judged from `base`: a whole
-    /// row at the tree, a partial row over the need's base, or a partial
-    /// row whose base's committed tree is itself proven (`visited` holds
-    /// the trees on the chain, so a base whose tree is already being read
-    /// ends it). `None` where nothing does.
+    /// The rows that prove `tree`, committed at `commit`, for a need judged
+    /// from `base`: a whole row at the tree, a docs row while the tree is
+    /// still docs-only against that base, a partial row over the need's
+    /// base, or a partial row whose base's committed tree is itself proven
+    /// (`visited` holds the trees on the chain, so a base whose tree is
+    /// already being read ends it). `None` where nothing does.
     fn covers(
         &mut self,
         tree: &str,
+        commit: Option<&str>,
         base: Option<&str>,
         visited: &mut Vec<String>,
     ) -> Option<Vec<ProofRow>> {
@@ -461,6 +478,20 @@ impl Reader<'_> {
         let rows: Vec<ProofRow> = self.rows().filter(|row| row.tree == tree).collect();
         for row in rows {
             if voided(self.stages, tree, &row, &self.excused) {
+                continue;
+            }
+            if row.mode == ValidateMode::Docs {
+                // The docs pass read its tree against the base its run
+                // classified with; a base that moved can turn the same tree
+                // into a code change.
+                let still_docs = match (base, commit) {
+                    (None, _) => true,
+                    (Some(_), Some(commit)) => (self.docs_only)(commit) == Some(true),
+                    (Some(_), None) => false,
+                };
+                if still_docs {
+                    return Some(vec![row]);
+                }
                 continue;
             }
             if whole(&row) {
@@ -477,7 +508,7 @@ impl Reader<'_> {
                 && !visited.contains(&next)
             {
                 visited.push(next.clone());
-                if let Some(mut chain) = self.covers(&next, base, visited) {
+                if let Some(mut chain) = self.covers(&next, Some(from), base, visited) {
                     chain.insert(0, row);
                     return Some(chain);
                 }
@@ -1093,7 +1124,66 @@ mod tests {
             &ask(Need::Submit, "t1", Some("mb")),
             &range_declared(),
             &mut tree_of,
+            &mut |_| None,
         );
         assert_eq!(read.proof, Verdict::Missing);
+    }
+
+    #[test]
+    fn a_docs_pass_proves_its_tree_under_a_base_only_where_the_tree_is_still_docs_only() {
+        let mut docs = proof(ValidateMode::Docs, "t1", "");
+        docs.docs_only = true;
+        let stages = [
+            stage(10, Some(StageOutcome::Pass), docs),
+            stage(
+                20,
+                Some(StageOutcome::Pass),
+                proof(ValidateMode::Range, "t2", "h1"),
+            ),
+        ];
+        let declaration = Declaration {
+            docs_cmd: Some("docs".into()),
+            ..range_declared()
+        };
+        use Verdict::{Complete, Missing};
+        // The tree, its head, the read's base, the judge's answer, the
+        // verdict, and whether the judge was asked about `h1`, the commit
+        // whose tree is the docs row's.
+        let rows = [
+            ("t1", Some("h1"), None, Some(false), Complete, false),
+            ("t1", Some("h1"), Some("b"), Some(true), Complete, true),
+            ("t1", Some("h1"), Some("b"), Some(false), Missing, true),
+            ("t1", Some("h1"), Some("b"), None, Missing, true),
+            ("t1", None, Some("b"), Some(true), Missing, false),
+            ("t2", Some("h2"), Some("b"), Some(true), Complete, true),
+            ("t2", Some("h2"), Some("b"), Some(false), Missing, true),
+        ];
+        for (tree, head, base, answer, verdict, judged) in rows {
+            let mut asked = Vec::new();
+            let mut docs_only = |commit: &str| {
+                asked.push(commit.to_owned());
+                answer
+            };
+            let mut tree_of = |commit: &str| (commit == "h1").then(|| "t1".to_owned());
+            let read = read(
+                &stages,
+                &[],
+                &ReadProof {
+                    head: head.map(str::to_owned),
+                    ..ask(Need::Submit, tree, base)
+                },
+                &declaration,
+                &mut tree_of,
+                &mut docs_only,
+            );
+            let row = (tree, head, base, answer);
+            assert_eq!(read.proof, verdict, "{row:?}");
+            let judged = if judged {
+                vec!["h1".to_owned()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(asked, judged, "{row:?}");
+        }
     }
 }

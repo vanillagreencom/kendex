@@ -1124,7 +1124,19 @@ fn standing_validation(
         return Ok(false);
     };
     let declaration = proof::Declaration::of(&settings.validate);
-    Ok(validate::reusable_run(&stages, &tree, base, &declaration, &mut tree_of).is_some())
+    // The prepared base is the base branch's commit the prepared head was
+    // rebased onto: the base a docs run classifies against.
+    let mut docs_only = |head: &str| crate::validate::docs_only(settings, worktree, head, base);
+    Ok(validate::reusable_run(
+        &stages,
+        &tree,
+        Some(commit),
+        base,
+        &declaration,
+        &mut tree_of,
+        &mut docs_only,
+    )
+    .is_some())
 }
 
 /// The publication's validation of the exact prepared head: the runtime's

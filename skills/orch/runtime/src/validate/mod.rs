@@ -527,45 +527,20 @@ fn classify(
     // The docs verdict and the paths for the same range.
     let paths_file = scratch.0.join("paths");
     let paths_text = paths_file.display().to_string();
-    let docs = run_in(
-        "harness-only",
-        &settings.scope_paths_cli,
-        "docs",
-        &[
-            "--mode",
-            "docs",
-            "--event",
-            "pull_request",
-            "--base",
-            &base,
-            "--head",
-            &head,
-            "--repo",
-            &wt,
-            "--paths-output",
-            &paths_text,
-            "--output",
-            "/dev/null",
-        ],
-        at(worktree, &store),
-        READ_TIMEOUT,
-        log,
-    );
-    let docs_only = match docs {
-        Ok(Some(answer)) => match answer.trim() {
-            "docs_only=true" => true,
-            "docs_only=false" => false,
-            _ => {
-                out.fallback = Some("docs-reader-unreadable".to_owned());
-                return Ok(out);
-            }
-        },
-        Ok(None) => {
-            out.fallback = Some("docs-reader-exit".to_owned());
-            return Ok(out);
-        }
-        Err(e) => {
-            out.fallback = Some(format!("docs-reader-absent:{e}"));
+    let range = [
+        "--event",
+        "pull_request",
+        "--base",
+        &base,
+        "--head",
+        &head,
+        "--paths-output",
+        &paths_text,
+    ];
+    let docs_only = match docs_verdict(settings, worktree, &store, &range, log) {
+        Ok(docs_only) => docs_only,
+        Err(cause) => {
+            out.fallback = Some(cause);
             return Ok(out);
         }
     };
@@ -590,6 +565,57 @@ fn classify(
             _ => None,
         });
     Ok(out)
+}
+
+/// harness-only's docs verdict over `range`, its event, endpoints and any
+/// paths file: the one docs reading a validation start classifies with and
+/// a proof read judges a docs pass by. `Err` is the class fallback's cause
+/// where no verdict was read.
+fn docs_verdict(
+    settings: &Settings,
+    worktree: &Path,
+    env: &[(&str, &OsStr)],
+    range: &[&str],
+    log: &mut String,
+) -> std::result::Result<bool, String> {
+    let wt = worktree.display().to_string();
+    let mut args = vec!["--mode", "docs"];
+    args.extend(range);
+    args.extend(["--repo", &wt, "--output", "/dev/null"]);
+    let answer = run_in(
+        "harness-only",
+        &settings.scope_paths_cli,
+        "docs",
+        &args,
+        at(worktree, env),
+        READ_TIMEOUT,
+        log,
+    );
+    match answer {
+        Ok(Some(answer)) => match answer.trim() {
+            "docs_only=true" => Ok(true),
+            "docs_only=false" => Ok(false),
+            _ => Err("docs-reader-unreadable".to_owned()),
+        },
+        Ok(None) => Err("docs-reader-exit".to_owned()),
+        Err(e) => Err(format!("docs-reader-absent:{e}")),
+    }
+}
+
+/// Whether `head`'s committed tree, compared with `base`'s, is docs-only by
+/// the docs reading a validation start classifies with; `None` where no
+/// verdict was read. The endpoints are compared directly, never through
+/// their merge base: a head that does not descend from `base`, such as a
+/// commit from before a restack, would otherwise be measured from a merge
+/// base that lacks the base's own code changes.
+pub(crate) fn docs_only(
+    settings: &Settings,
+    worktree: &Path,
+    head: &str,
+    base: &str,
+) -> Option<bool> {
+    let range = ["--event", "push", "--base", base, "--head", head];
+    docs_verdict(settings, worktree, &[], &range, &mut String::new()).ok()
 }
 
 /// The selector's preview: its `selection=` and `expected-secs=` lines.

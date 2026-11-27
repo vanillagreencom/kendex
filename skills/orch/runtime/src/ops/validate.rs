@@ -715,23 +715,36 @@ fn run_sentinel(run_dir: &str) -> Option<String> {
 /// mode running that mode's declared command, covering the tree whole or
 /// from the start's own base, not voided by a later or same-second row at
 /// that tree that did not pass; the start's own need chains through no
-/// other base. A `ci` row is never evidence.
+/// other base. A `ci` row is never evidence. The start's snapshot has no
+/// commit to judge, so a docs row answers only a start with no base.
 pub fn reuse(
     stages: &[Stage],
     tree: &str,
     base: &str,
     declaration: &proof::Declaration,
 ) -> Option<String> {
-    reusable_run(stages, tree, base, declaration, &mut |_| None)
+    reusable_run(
+        stages,
+        tree,
+        None,
+        base,
+        declaration,
+        &mut |_| None,
+        &mut |_| None,
+    )
 }
 
-/// Publication can also follow a chain through committed base trees.
+/// Publication can also follow a chain through committed base trees, and
+/// judge a docs row by the head `tree` is committed at against the base
+/// `docs_only` names.
 pub(super) fn reusable_run(
     stages: &[Stage],
     tree: &str,
+    head: Option<&str>,
     base: &str,
     declaration: &proof::Declaration,
     tree_of: &mut dyn FnMut(&str) -> Option<String>,
+    docs_only: &mut proof::DocsOnly,
 ) -> Option<String> {
     let read = proof::read(
         stages,
@@ -739,13 +752,14 @@ pub(super) fn reusable_run(
         &proof::ReadProof {
             need: proof::Need::Round,
             tree: tree.to_owned(),
-            head: None,
+            head: head.map(str::to_owned),
             base: (!base.is_empty()).then(|| base.to_owned()),
             round: None,
             exception: None,
         },
         declaration,
         tree_of,
+        docs_only,
     );
     if read.proof != proof::Verdict::Complete {
         return None;
