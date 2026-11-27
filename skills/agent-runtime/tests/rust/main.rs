@@ -2708,7 +2708,9 @@ fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other()
 /// A worker led by its name lands in the folder the account picks count
 /// under the root the runtime resolves, here named only in the private env
 /// file so a caller's own default (`~/.local/state`) would miss it; the
-/// group and stop verbs read the same record by the same name.
+/// group and stop verbs read the same record by the same name, and the stop
+/// removes it once the group ended, whether the stop ended it or found it
+/// already gone.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
@@ -2734,37 +2736,48 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
             .stdin(std::process::Stdio::null());
         command
     };
-    let mut lead = in_world(Command::new("setsid"));
-    let leader = lead
-        .arg(binary())
-        .args([
-            "process",
-            "lead",
-            "--worker",
-            "w",
-            "--account",
-            "/srv/.wclaude",
-        ])
-        .args(["--", "sleep", "300"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let _world = GroupWorld {
-        record: state.join("workers").join("w"),
-        session: None,
-        children: vec![leader],
+    let record = |name: &str| state.join("workers").join(name);
+    let led = |name: &str, program: &[&str]| {
+        let mut lead = in_world(Command::new("setsid"));
+        let leader = lead
+            .arg(binary())
+            .args([
+                "process",
+                "lead",
+                "--worker",
+                name,
+                "--account",
+                "/srv/.wclaude",
+            ])
+            .arg("--")
+            .args(program)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        GroupWorld {
+            record: record(name),
+            session: None,
+            children: vec![leader],
+        }
     };
     let reply = |args: &[&str]| -> serde_json::Value {
         let mut verb = in_world(Command::new(binary()));
         let out = verb.args(args).output().unwrap();
         serde_json::from_slice(&out.stdout).unwrap()
     };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while reply(&["process", "group", "--worker", "w"])["result"]["reading"] != "live" {
-        assert!(std::time::Instant::now() < deadline, "the worker never led");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    let await_reading = |name: &str, reading: &str| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while reply(&["process", "group", "--worker", name])["result"]["reading"] != reading {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{name} never read {reading}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    let _world = led("w", &["sleep", "300"]);
+    await_reading("w", "live");
     let charges = || {
         agent_runtime::group::charges(
             &agent_runtime::group::workers_dir(&state),
@@ -2779,6 +2792,45 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
     let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "w"]);
     assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
     assert_eq!(charges(), std::collections::BTreeMap::new());
+    assert!(!record("w").exists());
+    // A leader this row killed and still holds unreaped: its group reads
+    // gone and its pid stays this row's.
+    let mut gone = led("g", &["sleep", "300"]);
+    await_reading("g", "live");
+    gone.children[0].kill().unwrap();
+    await_reading("g", "gone");
+    assert!(record("g").exists());
+    let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "g"]);
+    assert_eq!(
+        stopped["result"]["stop"]["outcome"], "already-gone",
+        "{stopped}"
+    );
+    assert!(!record("g").exists());
+    // A leader whose TERM handler forks a member into its group and exits:
+    // the stop ends that member too, so one stop leaves the group gone and
+    // its record removed.
+    let _forked = led(
+        "t",
+        &[
+            "sh",
+            "-c",
+            r#"trap 'sleep 300 >/dev/null 2>&1 & exit 0' TERM; : > trapped; while :; do sleep 1; done"#,
+        ],
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !project.join("trapped").exists() {
+        assert!(std::time::Instant::now() < deadline, "t never set its trap");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    await_reading("t", "live");
+    let leader = agent_runtime::group::read(&record("t")).unwrap().unwrap();
+    let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "t"]);
+    assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
+    assert!(!record("t").exists());
+    assert_eq!(
+        agent_runtime::process::group_members(&leader),
+        agent_runtime::reading::Reading::Gone
+    );
 }
 
 /// The recorded group, read and stopped: a member whose parent exited still
@@ -2866,6 +2918,7 @@ exec sleep 600"#,
         reply["result"]["stop"],
         serde_json::json!({"outcome": "stopped", "signaled": 3})
     );
+    assert!(record.exists(), "a --file record is its caller's to remove");
     for pid in [leader, member, orphan] {
         assert_eq!(identity_reading(pid)["reading"], "gone", "{pid}");
     }

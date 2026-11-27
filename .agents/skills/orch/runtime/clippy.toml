@@ -42,6 +42,7 @@ disallowed-methods = [
     { path = "agent_runtime::process::table", reason = "the process table is read only inside the operation handle" },
     { path = "agent_runtime::process::stop_tree", reason = "a process is signalled only through the operation handle's token, `signalled` written first" },
     { path = "agent_runtime::process::stop_identities", reason = "a process is signalled only through the operation handle's token, `signalled` written first" },
+    { path = "agent_runtime::group::stop_worker", reason = "a worker's group is stopped and its record removed only by agent-runtime's `process stop --worker`; no effect reaches it" },
     { path = "agent_runtime::observe::foreground", reason = "who holds a pane is judged only inside the operation handle or the occupancy host" },
     # the runner, the raw command and the harness probe
     { path = "agent_runtime::host::run", reason = "a program is run only by the operation handle or a named non-effect module for its own work" },

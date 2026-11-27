@@ -1252,7 +1252,11 @@ enum ProcessOp {
         member: Option<u32>,
     },
     /// Stop the recorded group, every member by its own identity: TERM, the
-    /// grace, then KILL; no record is a group already gone.
+    /// grace, then KILL; no record is a group already gone. With `--worker`,
+    /// the record is removed once the stop reads the group stopped or
+    /// already gone; a group still live after the grace refuses `group-live`
+    /// and one the stop could not read refuses `stop-unreadable`, each
+    /// keeping the record. A `--file` record is never removed.
     Stop {
         #[command(flatten)]
         record: GroupRecord,
@@ -2499,7 +2503,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 agent_runtime::group::reading(&record.path()?, member)
             }
             ProcessOp::Stop { record, grace_secs } => {
-                agent_runtime::group::stop(&record.path()?, Duration::from_secs(grace_secs))
+                let grace = Duration::from_secs(grace_secs);
+                let named = record.worker.is_some();
+                let path = record.path()?;
+                if named {
+                    agent_runtime::group::stop_worker(&path, grace)
+                } else {
+                    agent_runtime::group::stop(&path, grace)
+                }
             }
         },
         Verb::Accounts { op } => accounts_verb(op),

@@ -411,15 +411,64 @@ fn with_member(mut value: Value, member: Option<bool>) -> Value {
 
 /// Stop the recorded group alone, every member by its own identity: TERM,
 /// `grace`, then KILL. No record is a group already gone.
+pub fn stop(path: &Path, grace: Duration) -> Result<Value> {
+    Ok(json!({"stop": stopped(path, grace)?}))
+}
+
+/// Stop the worker whose [`worker_file`] is `path` as [`stop`] does, then
+/// remove its record by that stop's own verdict ([`retire`]).
+pub fn stop_worker(path: &Path, grace: Duration) -> Result<Value> {
+    retire(path, stopped(path, grace)?)
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the session command's exact stop of the one group its record names"
 )]
-pub fn stop(path: &Path, grace: Duration) -> Result<Value> {
-    let stop = match read(path)? {
-        Some(leader) => process::stop_group(&leader, grace)?,
-        None => Stop::AlreadyGone,
-    };
+fn stopped(path: &Path, grace: Duration) -> Result<Stop> {
+    match read(path)? {
+        Some(leader) => process::stop_group(&leader, grace),
+        None => Ok(Stop::AlreadyGone),
+    }
+}
+
+/// Remove the worker record at `path` once `stop` reads its group ended.
+/// A group still live after the stop refuses `group-live`, and one the stop
+/// could not read refuses `stop-unreadable`: each keeps its record, since
+/// [`charges`] counts the account against a leader that is live or unread.
+fn retire(path: &Path, stop: Stop) -> Result<Value> {
+    let file = path.display().to_string();
+    match &stop {
+        Stop::Stopped { .. } | Stop::AlreadyGone => match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io("remove", path, e)),
+        },
+        Stop::Timeout { pid } => {
+            return Err(Error::refused(
+                "group-live",
+                &[("pid", &pid.to_string()), ("file", &file)],
+            ));
+        }
+        Stop::Unreadable {
+            pid,
+            cause,
+            signalled,
+        } => {
+            return Err(Error::refused(
+                "stop-unreadable",
+                &[
+                    ("cause", cause),
+                    ("pid", &pid.to_string()),
+                    ("signalled", &signalled.to_string()),
+                    ("file", &file),
+                ],
+            ));
+        }
+        Stop::IdentityStale => {
+            unreachable!("a group stop reads each member by its own identity, never one stale")
+        }
+    }
     Ok(json!({"stop": stop}))
 }
 
@@ -472,6 +521,46 @@ mod tests {
                 (answer, _) => panic!("{name:?}: {answer:?}"),
             }
         }
+    }
+
+    /// A worker's record goes once its stop reads the group ended, and stays
+    /// with the stop's refusal while the group may still run; the pids are
+    /// synthetic.
+    #[test]
+    fn a_worker_record_is_removed_only_by_a_stop_that_read_its_group_ended() {
+        let rows = [
+            (Stop::Stopped { signaled: 2 }, None),
+            (Stop::AlreadyGone, None),
+            (Stop::Timeout { pid: 41 }, Some("group-live")),
+            (
+                Stop::Unreadable {
+                    pid: 41,
+                    cause: "stat-read".to_owned(),
+                    signalled: true,
+                },
+                Some("stop-unreadable"),
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("w");
+        for (stop, refused) in rows {
+            std::fs::write(&path, r#"{"pid":41,"start":"ticks:9"}"#).unwrap();
+            let answer = retire(&path, stop.clone());
+            match refused {
+                None => {
+                    assert_eq!(answer.unwrap(), json!({"stop": stop}), "{stop:?}");
+                    assert!(!path.exists(), "{stop:?}");
+                }
+                Some(key) => {
+                    assert_eq!(answer.unwrap_err().key(), key, "{stop:?}");
+                    assert!(path.exists(), "{stop:?}");
+                }
+            }
+        }
+        assert_eq!(
+            retire(&path.with_file_name("absent"), Stop::AlreadyGone).unwrap(),
+            json!({"stop": Stop::AlreadyGone})
+        );
     }
 
     #[test]
