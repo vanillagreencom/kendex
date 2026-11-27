@@ -344,7 +344,7 @@ mod tests {
             config_dir: "/h/.1codex".to_owned(),
             alias: "1codex".to_owned(),
             limit_resets: vec![crate::accounts::LimitReset {
-                kind: crate::accounts::LimitResetKind::Full,
+                kind: None,
                 left: 1,
             }],
         }];

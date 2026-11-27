@@ -437,7 +437,10 @@ pub(super) fn claude_limit_resets(body: &Value, now: u64) -> Vec<super::LimitRes
                 true => LimitResetKind::Fable,
                 false => LimitResetKind::Full,
             };
-            Some(LimitReset { kind, left })
+            Some(LimitReset {
+                kind: Some(kind),
+                left,
+            })
         })
         .collect()
 }

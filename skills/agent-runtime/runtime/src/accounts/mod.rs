@@ -215,7 +215,8 @@ pub struct AccountRow {
     /// (`unified-status=rejected`): walled whatever its figures read
     /// ([`Reads::of`]).
     pub rejected: bool,
-    /// Claude's locally measured grants or Codex's provider-stated resets.
+    /// Claude's locally measured grants with their kind, or Codex's
+    /// provider-stated count.
     pub limit_resets: Vec<LimitReset>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
@@ -570,7 +571,8 @@ pub enum LimitResetKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LimitReset {
-    pub kind: LimitResetKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<LimitResetKind>,
     pub left: u64,
 }
 
@@ -661,8 +663,8 @@ impl Roster {
         lines
     }
 
-    /// Carries onto each reading, this machine's or the provider's, the
-    /// unused limit resets the provider's `accounts --json --headroom`
+    /// Carries onto each Codex reading, this machine's or the provider's,
+    /// the count the provider's `accounts --json --headroom`
     /// document `doc` states for its account, matched on the harness and
     /// the directory name, never the local alias, since the document names
     /// the account by its directory's name; the cause where the document
@@ -678,7 +680,7 @@ impl Roster {
                 .iter()
                 .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
                 .map(|s| LimitReset {
-                    kind: LimitResetKind::Full,
+                    kind: None,
                     left: s.count,
                 })
                 .into_iter()
@@ -781,11 +783,11 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// marked `scope: unread`, for every pick, a worker's and a controller's
 /// alike: the provider's line states no model window, so a pick that held
 /// out for one would find no Claude account it measures. The provider's words
-/// (`reserved`, `plan-ends`, `unified-status`), its count of unused limit
-/// resets and its 5-hour window, where that window is the fuller and its
+/// (`reserved`, `plan-ends`, `unified-status`), its Codex reset count, and
+/// its 5-hour window, where that window is the fuller and its
 /// reset ahead, stand whichever reading does, a row with no reading
-/// included. An account with one reading keeps it. The roster is never resolved: it reports both
-/// readings.
+/// included. A Claude account keeps its local limit resets. An account with
+/// one reading keeps it. The roster reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
 /// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
@@ -2624,6 +2626,7 @@ mod tests {
         };
         roster.carry_limit_resets(HEADROOM).unwrap();
         assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
+        assert_eq!(json!(roster.rows[0].limit_resets), json!([{"left": 1}]));
         assert!(
             roster
                 .carry_limit_resets("account=/h/.1codex\tharness=codex\n")
