@@ -819,6 +819,9 @@ enum Holding {
     Yields,
 }
 
+/// The one rule of whether a record holds its set: `Live` or `Kept` holds
+/// it, against another lane's launch or added path ([`judge`]), and at a
+/// no-landing close's ask ([`no_landing_held`]).
 fn holding(
     path: &Path,
     lane: &Lane,
@@ -860,9 +863,10 @@ fn holding(
 
 /// Whether a no-landing close keeps the record's set held: the close
 /// retires the attempt and keeps the item's work. The hold starts at the
-/// close's ask and lasts through its outcome, since the record's status
-/// moves only then: an open close holds whatever the record's charge reads.
-/// A failed or superseded close, and an open full one, hold nothing of
+/// close's ask ([`no_landing_held`]) and lasts through its outcome, since
+/// the record's status moves only then: an open close holds whatever the
+/// record's charge reads, so the repeat that settles it owes no second
+/// judgement. A failed or superseded close, and an open full one, hold nothing of
 /// their own. Past those, the item's latest confirmed close holds on that
 /// ground while the record reads `stopped`, so a park ends the hold and a
 /// failed relaunch keeps it; a launch that failed after no close, or after
@@ -1251,6 +1255,47 @@ pub(super) fn relaunch_held(
         read_only: record.read_only,
     };
     judge(path, lanes, intents, &a, env, host).map(drop)
+}
+
+/// The holder judgement a no-landing close owes at its ask: the close keeps
+/// `record` holding its set ([`retired_open`]), so a set the record does
+/// not hold now ([`holding`]), one a failed launch, a park or an exited
+/// harness yielded, meets the holders standing now as [`relaunch_held`]
+/// judges it, and a refusal leaves the record as it stood: kept beside
+/// another lane's holder of its path, each one's relaunch would meet the
+/// other. A record holding its set has every lane that holds one of its
+/// paths now as a co-holder, and a record holding no set is never kept, so
+/// neither close meets a holder. A close that `relaunches` the record, a
+/// recovery reason, meets the holders whatever the record holds, so the
+/// relaunch it is closed for is not refused after the close.
+pub(super) fn no_landing_held(
+    path: &Path,
+    lanes: &[Lane],
+    intents: &[Intent],
+    record: &Lane,
+    relaunches: bool,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
+    if !relaunches
+        && (record.touched.is_none()
+            || matches!(
+                holding(path, record, intents, env, host)?,
+                Holding::Live | Holding::Kept
+            ))
+    {
+        return Ok(());
+    }
+    relaunch_held(
+        path,
+        lanes,
+        intents,
+        record,
+        record.tracker.as_deref(),
+        record.repo.as_deref(),
+        env,
+        host,
+    )
 }
 
 /// The judgement (the module's table). `lanes` and `intents` are the

@@ -159,6 +159,7 @@ Before it acts on the merged ground, or on an item its tracker completed, the cl
 The close stops a hosted lane's harness through its provider. An exited lane needs no stop.
 
 - On `host-busy step=stop`, ask again.
+- On `launch-overlap` from a `keep-sandbox` or park close, the record does not hold its set and the lane `holder=` names holds one of its paths ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)). The lane stands as it was: ask again once that holder releases the file, as [lane-directive.md § Before anything is written](lane-directive.md#before-anything-is-written) states for `launch-overlap`, or close it in full.
 - On `harness-unsupported harness=unknown`, pass `harness` (§ Records with no identity).
 
 ### What the close does

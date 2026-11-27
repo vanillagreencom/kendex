@@ -1040,6 +1040,112 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
     }
 }
 
+/// Through the real `close-owned-resources` op, beside a live lane that
+/// holds `src/a.sh`, a `keep-sandbox` close meets that holder wherever its
+/// record does not hold its set, since the close keeps the record: one a
+/// failed first launch stopped, and a running one whose session cannot be
+/// read, are refused `launch-overlap` naming the holder, nothing written. A
+/// record holding its set, kept or running with a live session, co-holds
+/// the path, and a record holding no set is never kept: each close is
+/// recorded. A `usage-limit` close retires the record for its relaunch, so
+/// it meets the holder whatever the record holds, with its item's Location
+/// path where the record holds no set.
+#[test]
+fn a_no_landing_close_meets_the_holders_wherever_its_record_does_not_hold_its_set() {
+    // The row, the record's status, whether a live session runs it, its
+    // set, whether a no-landing close stands in its journal, and whether
+    // its `keep-sandbox` close is refused.
+    type Row<'a> = (&'a str, &'a str, bool, Option<&'a [&'a str]>, bool, bool);
+    let set: &[&str] = &["src/a.sh"];
+    let rows: [Row; 5] = [
+        (
+            "a failed first launch",
+            "stopped",
+            false,
+            Some(set),
+            false,
+            true,
+        ),
+        (
+            "a running record with no session read",
+            "running",
+            false,
+            Some(set),
+            false,
+            true,
+        ),
+        ("a kept record", "stopped", false, Some(set), true, false),
+        (
+            "a running record with a live session",
+            "running",
+            true,
+            Some(set),
+            false,
+            false,
+        ),
+        (
+            "a running record holding no set",
+            "running",
+            true,
+            None,
+            false,
+            false,
+        ),
+    ];
+    for (row, status, session, touched, kept, keep_refused) in rows {
+        for (reason, refused) in [("keep-sandbox", keep_refused), ("usage-limit", true)] {
+            let fleet = Fleet::new();
+            fleet.init_fleet();
+            fleet.item("KEN-R", "`src/a.sh`", 0, &[]);
+            let harness = Owned::sleep();
+            let own = Owned::sleep();
+            let record = holder("KEN-R", status, session.then_some(&own), touched);
+            let holding = holder("KEN-H", "running", Some(&harness), Some(set));
+            let intents = if kept {
+                vec![closed("KEN-R", 1, no_landing())]
+            } else {
+                Vec::new()
+            };
+            fleet.write_lanes_and_intents(vec![record, holding], intents);
+            let before = fleet.fleet();
+            let closes = |fleet: &Value| {
+                fleet["intents"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|i| i["op"] == "close-resources" && i["target"] == "KEN-R")
+                    .count()
+            };
+            let out = fleet.op(&json!({
+                "op": "close-owned-resources",
+                "item": "KEN-R",
+                "no_landing": {"reason": reason, "source": "overseer"},
+            }));
+            if refused {
+                let (key, fields) = refusal(&out);
+                assert_eq!(key, "launch-overlap", "{row}, {reason}: {}", stderr(&out));
+                assert_eq!(
+                    fields,
+                    pairs(&[("item", "KEN-R"), ("file", "src/a.sh"), ("holder", "KEN-H")]),
+                    "{row}, {reason}"
+                );
+                assert_eq!(fleet.fleet(), before, "{row}, {reason}: nothing written");
+            } else {
+                assert_eq!(
+                    closes(&fleet.fleet()),
+                    closes(&before) + 1,
+                    "{row}, {reason}: the close is recorded: {}",
+                    stderr(&out)
+                );
+            }
+            assert!(
+                live(harness.pid()),
+                "{row}, {reason}: the holder is not signalled"
+            );
+        }
+    }
+}
+
 /// A stopped record no judgement wrote, whose item names no Location path,
 /// holds no set its relaunch could meet a holder with: the relaunch is
 /// refused `touched-unreadable read=location` beside a live holder, nothing
