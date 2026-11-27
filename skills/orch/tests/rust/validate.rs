@@ -7383,6 +7383,78 @@ fn a_stop_of_a_live_host_run_ends_it_on_its_host() {
     );
 }
 
+/// Two stops of one unit that overlap, as the executor's own end and the
+/// stop that recorded it ask the host at once, both answer stopped and the
+/// unit is removed: the later stop waits for the earlier one and finds the
+/// unit gone. The host's `git` holds the first stop's removal of the tree
+/// until a second removal arrives, or for five seconds, then lets the
+/// second run only after the first ended, so a stop that does not wait
+/// removes a tree that is no longer a working tree.
+#[test]
+fn overlapping_stops_of_one_host_unit_both_answer_stopped() {
+    let lane = HostLane::new(HOST_COMMAND);
+    let provider = lane.host.provider();
+    let worktree = lane.w.worktree.display().to_string();
+    let into = lane.w.root.join("into").display().to_string();
+    let prepared = program(&provider)
+        .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id])
+        .args(["--commit", &lane.w.head(), "--source", &worktree])
+        .args(["--run-dir", &lane.dir, "--into", &into])
+        .output()
+        .unwrap();
+    assert_eq!(prepared.status.code(), Some(3), "{}", stderr(&prepared));
+    assert!(text(&prepared).ends_with("state=preparing step=tree"));
+    assert!(lane.unit().join("tree/.git").exists());
+    let gate = lane.w.root.join("remove-gate");
+    fs::create_dir_all(&gate).unwrap();
+    let found = program("sh").args(["-c", "command -v git"]).output().unwrap();
+    let real = String::from_utf8_lossy(&found.stdout).trim().to_owned();
+    assert!(!real.is_empty(), "{}", stderr(&found));
+    support::write_executable(
+        &lane.host.tools.join("git"),
+        format!(
+            "#!/bin/sh\ncase \" $* \" in\n*' worktree remove '*)\n  if mkdir '{gate}/first' 2>/dev/null; then\n    i=0\n    while [ ! -e '{gate}/second' ] && [ \"$i\" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done\n    status=0\n    '{real}' \"$@\" || status=$?\n    : > '{gate}/done'\n    exit \"$status\"\n  fi\n  : > '{gate}/second'\n  while [ ! -e '{gate}/done' ]; do sleep 0.1; done ;;\nesac\nexec '{real}' \"$@\"\n",
+            gate = gate.display(),
+        ),
+    );
+    let stop = |which: &str| {
+        let file = |stream: &str| fs::File::create(gate.join(format!("{which}.{stream}"))).unwrap();
+        Owned(
+            program(&provider)
+                .args(["validate", "--item", ITEM_ID, "--run-id", &lane.id, "--stop"])
+                .stdout(file("out"))
+                .stderr(file("err"))
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let mut first = stop("first");
+    until(|| gate.join("first").exists());
+    let mut second = stop("second");
+    for (which, held) in [("first", &mut first), ("second", &mut second)] {
+        let deadline = Instant::now() + JOB_BOUND;
+        let status = loop {
+            if let Some(status) = held.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "the {which} stop did not end");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let out = Output {
+            status,
+            stdout: fs::read(gate.join(format!("{which}.out"))).unwrap(),
+            stderr: fs::read(gate.join(format!("{which}.err"))).unwrap(),
+        };
+        assert_eq!(out.status.code(), Some(0), "{which}: {}", stderr(&out));
+        assert_eq!(
+            text(&out),
+            format!("host=lane.example stopped item={ITEM_ID} run-id={}", lane.id),
+            "{which}"
+        );
+    }
+    assert!(!lane.unit().exists(), "the unit is removed");
+}
+
 /// A host run is held by its caller, as a foreground run is: while the
 /// caller follows it, the round's reconcile keeps its stage open and a wait
 /// by its id reads it running; once the caller is gone, the wait reads it
