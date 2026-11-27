@@ -40,7 +40,6 @@ jobs:
       # GitHub gives a pull_request run from a fork a read-only token, so a
       # fork head is skipped before a request that would fail. Dependabot
       # heads keep the request: the permissions key above raises their token.
-      # A proved quick change skips the request on the literal true alone.
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           QUICK: ${{ steps.classify.outputs.quick }}
@@ -52,7 +51,9 @@ jobs:
                 core.info(`copilot-request: skipped=${pr.number} reason=fork-read-only-token`);
                 return;
               }
-              if (process.env.QUICK === 'true') {
+              // Copilot supplies the separate approval for the overseer app's own PRs.
+              const overseerAuthored = pr.user?.login === 'vanillagreen-overseer[bot]' && pr.user.type === 'Bot';
+              if (process.env.QUICK === 'true' && !overseerAuthored) {
                 core.info(`copilot-request: skipped=${pr.number} reason=quick-proof`);
                 return;
               }

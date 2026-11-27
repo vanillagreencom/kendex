@@ -16,6 +16,8 @@ Read when an owner note asks for a small change that has no tracker item.
 
 A note from the owner or Jarvis that says "quick change" takes this directive route for Markdown or settings that run nothing themselves. On any host, the overseer makes the edit in a throwaway worktree or scratch clone. Keep edits out of the main checkout. Only the commit hooks' light checks run locally for the edit. If the request needs a script, workflow, hook, test or source file, or needs a separate local check, file it as a tracker item by the two steps below. If a later step would need a path outside that scope, a separate local check or a worker, take [§ Escape](#escape).
 
+When the overseer app authors a proved quick change's pull request, follow [micro.md § 4](../workflows/micro.md#4-arm-and-wait) for Copilot approval and the repository's merge route.
+
 For an ordinary directive, the overseer makes the change in its own checkout, on the control host or local. The cost of the change's check decides whether the overseer or a lane makes it. The kind of file never decides for an ordinary directive.
 
 - If the commit chain checks the change in its diff-scoped pass, the overseer makes it through micro.md.

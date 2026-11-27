@@ -217,6 +217,8 @@ git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]
 
 ## 4. Arm And Wait
 
+For a proved quick change whose pull request the overseer app authors, use Copilot's approval on the current head. The request comes from review-gate's references/adoption.md § Central Copilot request workflow. Skip the overseer's [fallback approval](../references/copilot-head-notices.md#fallback-approval) and follow the repository's existing merge route below.
+
 This entry skips [merge-pr.md](merge-pr.md) § 1 and § 3. So bind here what those sections bind once per run and its § 4-7 read. `[MAIN_REPO_ROOT]` is § 1's, `[WORKTREE_PATH]` is `[WT_PATH]`, and `[ALREADY_MERGED]` is unset.
 
 Read the decision mode:

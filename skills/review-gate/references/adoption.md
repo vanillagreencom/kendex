@@ -30,8 +30,10 @@ The workflow decides its request this way:
 
 - The job is skipped with no runner for the exact `kendex/refresh` head authored by `vanillagreen-fleet-lanes[bot]` with account type `Bot`.
 - For other non-draft pull requests, the job runs on the repository's `vars.CI_RUNNER_2V` where it resolves, and on `ubuntu-latest` otherwise.
-- For a head in the base repository, it requests `copilot-pull-request-reviewer[bot]` through GitHub's REST review-request endpoint, unless the pull request is a proved quick change.
-- The job classifies a full-history checkout with `vanillagreencom/kendex/.github/actions/change-class@main`. It skips the request, with a `reason=quick-proof` log line, only where that step's `quick` output is the literal `true`: a trivial change whose every path is a kendex manifest, a JSON settings file or a Markdown file, under no repository `HARNESS_CI_TRIVIAL_PATHS`, as change-scope's `quick-proof:` record states.
+- For a head in the base repository, the job requests `copilot-pull-request-reviewer[bot]` through GitHub's REST review-request endpoint unless the quick-proof skip applies.
+- The job classifies a full-history checkout with `vanillagreencom/kendex/.github/actions/change-class@main`. The literal `true` in the `quick` output proves a trivial change confined to kendex manifests, JSON settings files or Markdown files, under no repository `HARNESS_CI_TRIVIAL_PATHS`, as change-scope's `quick-proof:` record states.
+- A proved quick change keeps its request when GitHub reports the pull request author as `vanillagreen-overseer[bot]` with account type `Bot`. Copilot supplies the required approval on the current head because GitHub requires an approver separate from the author. Kendex and queue-only consumers merge through the queue. Other consumers use their existing merge route.
+- For any other proved quick change, the job skips the request and logs `reason=quick-proof`.
 - The classify step continues on error, so a classifier failure leaves the output empty and the request in place.
 - A failed request emits a warning and passes. GitHub's approval, stale-approval dismissal and thread-resolution rules still enforce review.
 - The workflow still triggers on merge groups, but its job skips there without allocating a runner.
