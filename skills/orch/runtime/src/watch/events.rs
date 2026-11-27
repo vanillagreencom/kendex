@@ -317,9 +317,9 @@ pub enum Event {
         step: OwnerMark,
         cause: String,
     },
-    /// The owner's tracker answers did not read, `cause` the read's word,
-    /// so no tracker answer reached the mailbox and no due tracker ask
-    /// closed. Said once per standing cause: the cause is kept as the
+    /// The owner's tracker answers did not read, `cause` the read's word:
+    /// owner comments may not have reached the mailbox, and no due tracker
+    /// ask closed. Said once per standing cause: the cause is kept as the
     /// watch's `owner-tracker-unread` row, a changed cause is said again,
     /// and a whole read clears the row with no line.
     OwnerTrackerUnread {

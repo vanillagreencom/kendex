@@ -796,13 +796,16 @@ The watch prints each message line at least once. A stop between the print and i
 
 ### `owner-tracker-unread`
 
-`EVENT owner-tracker-unread cause=[CAUSE]`: the watch's read of the owner's tracker answers did not finish. No owner comment on a tracker item reaches the mailbox, and no due tracker ask closes on its recommendation. The line prints once while the cause stands, and again when the cause changes. A whole read ends it with no line. `cause=mailbox` is the watch's own call to `lane-mail owner-answers` failing. Every other cause is the word `owner-answers` names for its failed read step.
+`EVENT owner-tracker-unread cause=[CAUSE]`: the watch's read of the owner's tracker answers did not finish. Owner comments on tracker items may not have reached the mailbox, and no due tracker ask closes on its recommendation. The line prints once while the cause stands, and again when the cause changes. A whole read ends it with no line. `cause=mailbox` is the watch's own call to `lane-mail owner-answers` failing. Every other cause is the word `owner-answers` names for its failed read step.
 
 Until the read is fixed, read the owner's asks by hand:
 
-1. List the open asks and their items with `.agents/skills/mailbox/scripts/lane-mail pending --item overseer --to owner`.
-2. Read each item's comments after its question with `.agents/skills/linear/scripts/linear.sh comments bulk-list [ITEM] [ITEM]...`.
-3. Act on each owner comment as [communication-modes.md § Answers](communication-modes.md#answers) says. Once the read is whole, the watch delivers each such comment as `owner-ask-resolved`: a repeat of an answer already acted on.
+1. List the open asks with `.agents/skills/mailbox/scripts/lane-mail pending --item overseer --to owner`.
+2. Read the comments of each item that holds an open question with `.agents/skills/linear/scripts/linear.sh comments bulk-list [ITEM] [ITEM]...`.
+3. Give each owner comment the ask the `owner-answers` rules in `lane-mail --help` give it: which questions are open, replaced ones included, and which ask a reply or a top-level comment answers. A comment those rules give no ask answers none.
+4. Act on each answer as [communication-modes.md § Answers](communication-modes.md#answers) says.
+
+Once the read is whole, the watch may deliver a comment already acted on by hand as `owner-ask-resolved`. Check it against what was already done before acting again.
 
 Correct the cause. The watch writes the same `owner-tracker-unread cause=[CAUSE]` words to `oversee-watch.err` beside the fleet state on every unread pass.
 
