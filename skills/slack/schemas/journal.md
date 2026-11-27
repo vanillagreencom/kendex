@@ -86,13 +86,14 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`seen`**
 
 - `compact` keeps the last one.
-- A message event never writes it: a history read does, and so does a start whose journal holds no `start` line, which writes the binding moment.
+- A message event never writes it: a history read does, and so does a start whose journal holds no `seen` line, which writes the binding moment.
 
 **`start`**
 
 - It is written after its `seen`, so connection lines alone never count as seeded.
 - `position` is the mailbox store's committed position when it is written, before the first post: for `to-overseer` and `to-lane`, the `count` of complete lines, compacted rows included, and the `first` id.
 - A notice or answer on a line at or below its box's `count` is never posted. An open ask still posts. Mail appended later posts, whatever second it is stamped in. A replaced box, one that opens with another `first`, is not passed over.
+- Each poll reads the position once, before its deliveries, while `start` is unwritten. An owner message's delivery never reads it.
 - The position read validates no envelope. A read that refuses leaves `start` unwritten: owner messages are still delivered, mailbox posts wait, and the first poll whose read succeeds writes it.
 - A journal written before positions holds `at` and `ids` instead. It keeps that clock floor: a notice or answer stamped before `at`, or in that second and named in `ids`, is never posted.
 

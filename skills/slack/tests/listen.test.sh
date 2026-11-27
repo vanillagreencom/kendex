@@ -32,8 +32,9 @@
 # start reading Slack from the binding moment and posting nothing from the
 # mailbox's past but open asks, the start's mailbox floor passing over a
 # notice stamped in its own second and posting one stamped before it but
-# appended after, a damaged line and a refused position read each holding
-# back no owner message, daily compaction retaining aged posts in live
+# appended after, a damaged line, a refused position read and a timed-out
+# mailbox initialization each holding back no owner message, a live owner
+# message reading no position, a clock start from before positions kept, daily compaction retaining aged posts in live
 # threads and removing inactive ones, aged unposted envelopes skipped,
 # a journal reset re-posting open asks alone,
 # owners re-resolved from the setting, a report whose file matches the pattern
@@ -585,30 +586,70 @@ assert_eq "$(directives "$DAMAGE")|$(jq -c 'select(.t == "start") | .position["t
   "a damaged line refuses no seed: the owner message lands and the start counts the damaged line"
 
 # --- a refused position read delivers owner messages and leaves the seed to a later poll ---------
-sk_store_mutant "" '    validate_mailbox(box)
+# Each mode refuses the position read while tmp/position-refused stands, and
+# counts each attempt in tmp/position-reads: the store's own read refused, or
+# the mailbox's initialization timing out. A live delivery attempts none.
+while IFS='|' read -r mode reason; do
+  case "$mode" in
+    store)
+      sk_store_mutant "" '    validate_mailbox(box)
     _, snapshots = stable_snapshots(box, time.monotonic() + timeout)' '    validate_mailbox(box)
+    with open(box.parent.parent / "position-reads", "a") as reads:
+        reads.write("read\n")
     if (box.parent.parent / "position-refused").exists():
         raise OSError("position-refused")
-    _, snapshots = stable_snapshots(box, time.monotonic() + timeout)'
-HELD="$(sk_new_root cutoff-held)"
-sk_bind "$HELD"
-HELD_CH="$(sk_channel "$HELD")"
-touch "$HELD/tmp/position-refused"
-HELD_TS="$(sk_inject "$HELD_CH" U001 'Delivered while unseeded.')"
-sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text cut4 'Before the seed.')" >/dev/null
-sk_poll "$HELD"
-assert_eq "$RC|$ERR1|$(directives "$HELD")|$(jq -c 'select(.t == "start")' "$(sk_journal "$HELD")")" \
-  "1|slack: lane-mail-failed=position-refused root=$HELD|$HELD_CH:$HELD_TS Delivered while unseeded.|" \
-  "a refused position read fails the poll, delivers the owner message and writes no start"
-rm -- "${HELD:?}/tmp/position-refused"
-sk_poll "$HELD"
-sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text cut5 'After the seed.')" >/dev/null
-sk_poll "$HELD"
-HELD_BOUND="$(jq -r .bound_at "$HELD/tmp/slack/binding.json")" || exit 1
-assert_eq "$RC|$(asks "$HELD_CH" 'Before the seed.')|$(asks "$HELD_CH" 'After the seed.')|$(jq -c 'select(.t == "start") | .position["to-overseer"].count' "$(sk_journal "$HELD")")|$(jq -r --arg bound "$HELD_BOUND" 'select(.t == "seen" and .ts == $bound) | .t' "$(sk_journal "$HELD")" | wc -l | tr -d ' ')" \
-  "0|0|1|1|1" \
-  "the next poll's seed passes over the mail already there and posts later mail, and the history seed is written once"
-sk_bin_reset
+    _, snapshots = stable_snapshots(box, time.monotonic() + timeout)' ;;
+    init)
+      sk_mutant init-timeout mailbox.py '                definitions = subprocess\.run\(' \
+        '                with open(self.root / "tmp/position-reads", "a") as reads:\n                    reads.write("read\\n")\n                if (self.root / "tmp/position-refused").exists():\n                    raise subprocess.TimeoutExpired("mailbox-definitions", 0)\n                definitions = subprocess.run(' ;;
+  esac
+  HELD="$(sk_new_root "cutoff-held-$mode")"
+  sk_bind "$HELD"
+  HELD_CH="$(sk_channel "$HELD")"
+  touch "$HELD/tmp/position-refused"
+  HELD_TS="$(sk_inject "$HELD_CH" U001 "Delivered while unseeded $mode.")"
+  sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text "cut4-$mode" "Before the seed $mode.")" >/dev/null
+  sk_poll "$HELD"
+  case "$ERR" in *"lane-mail-failed=$reason"*) REFUSED=yes ;; *) REFUSED=no ;; esac
+  assert_eq "$RC|$REFUSED|$(directives "$HELD")|$(jq -c 'select(.t == "start")' "$(sk_journal "$HELD")")" \
+    "1|yes|$HELD_CH:$HELD_TS Delivered while unseeded $mode.|" \
+    "$mode: a refused position read fails the poll, delivers the owner message and writes no start"
+  READS="$(wc -l < "$HELD/tmp/position-reads" | tr -d ' ')"
+  LIVE_TS="$(sk_inject "$HELD_CH" U001 "Live while unseeded $mode.")"
+  sk_event "$HELD" "$HELD_CH" "$LIVE_TS"
+  assert_eq "$RC|$(directives "$HELD" | tail -n 1)|$(( $(wc -l < "$HELD/tmp/position-reads") - READS ))" \
+    "0|$HELD_CH:$LIVE_TS Live while unseeded $mode.|0" \
+    "$mode: a live owner message while unseeded lands without a position read"
+  rm -- "${HELD:?}/tmp/position-refused"
+  sk_poll "$HELD"
+  sk_lm "$HELD" notice --item overseer --to owner --file "$(sk_text "cut5-$mode" "After the seed $mode.")" >/dev/null
+  sk_poll "$HELD"
+  HELD_BOUND="$(jq -r .bound_at "$HELD/tmp/slack/binding.json")" || exit 1
+  assert_eq "$RC|$(asks "$HELD_CH" "Before the seed $mode.")|$(asks "$HELD_CH" "After the seed $mode.")|$(jq -c 'select(.t == "start") | .position["to-overseer"].count' "$(sk_journal "$HELD")")|$(jq -r --arg bound "$HELD_BOUND" 'select(.t == "seen" and .ts == $bound) | .t' "$(sk_journal "$HELD")" | wc -l | tr -d ' ')" \
+    "0|0|1|1|1" \
+    "$mode: the next poll's seed passes over the mail already there and posts later mail, and the history seed is written once"
+  sk_bin_reset
+done <<'ROWS'
+store|position-refused
+init|timeout=30 command=mailbox-definitions
+ROWS
+
+# --- a journal seeded before positions keeps its clock floor -------------------------------------
+CLOCK="$(sk_new_root cutoff-clock)"
+sk_bind "$CLOCK"
+CLOCK_CH="$(sk_channel "$CLOCK")"
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut6 'Aged before the floor.')" >/dev/null
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut7 'Named in the floor second.')" >/dev/null
+sk_age_envelope "$CLOCK" "$(notice_id "$CLOCK" 'Aged before the floor.')" 60
+CLOCK_ID="$(notice_id "$CLOCK" 'Named in the floor second.')"
+CLOCK_AT="$(jq -r --arg id "$CLOCK_ID" 'select(.id == $id) | .at' "$(sk_box "$CLOCK")/to-overseer.jsonl")" || exit 1
+jq -cn --arg ts "$(jq -r .bound_at "$CLOCK/tmp/slack/binding.json")" --arg at "$CLOCK_AT" --arg id "$CLOCK_ID" \
+  '{t: "seen", ts: $ts}, {t: "start", at: $at, ids: [$id]}' > "$(sk_journal "$CLOCK")" || exit 1
+sk_lm "$CLOCK" notice --item overseer --to owner --file "$(sk_text cut8 'Written after the floor.')" >/dev/null
+sk_poll "$CLOCK"
+assert_eq "$RC|$(asks "$CLOCK_CH" 'Aged before the floor.')|$(asks "$CLOCK_CH" 'Named in the floor second.')|$(asks "$CLOCK_CH" 'Written after the floor.')" \
+  "0|0|0|1" \
+  "a clock start from before positions passes over mail before its second and named in it, and posts later mail"
 
 # --- an external parent missed during disconnect is discovered by catch-up ------
 for mode in production control; do

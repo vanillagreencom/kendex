@@ -241,8 +241,9 @@ for label, over_bytes, lane_bytes, seen, lane_cursor, refused in DAMAGE:
         assert mail.snapshots["stamp"] == warm, "the raised count must be judged on the cached snapshot"
 (box / "to-overseer.seen").unlink(missing_ok=True)
 
-# The committed position counts compacted rows and a damaged line, reads no
-# envelope, and keeps each box's first id. passed() takes no row past its
+# The committed position counts compacted rows and a damaged line, validates
+# no envelope, and keeps each box's first id: the numbering record's, or
+# else the first line's. passed() takes no row past its
 # box's count and no row of a replacement box.
 over.write_text(json.dumps(dict(rows[0], id="notice-e")) + "\n" + "bad-json\n")
 Path(str(over) + ".numbering").write_text(json.dumps({"dropped": 2, "first": "notice-first", "lines": [3, 4]}) + "\n")

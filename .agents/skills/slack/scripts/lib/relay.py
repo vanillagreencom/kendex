@@ -53,17 +53,18 @@ mark on delivery and later polls, so a stop between the delivery and its
 mark leaves the mark to the next poll. Each delivery attempts eyes once,
 without retrying a new refusal later in the same poll.
 
-A start whose journal holds no `start` line seeds both positions before it
-reads anything: Slack from the binding moment, so a channel's earlier history is never delivered,
-and the mailbox from the store's committed position then, each box's count
-of complete lines and its first id. A notice or answer on a line at or
-below that count is never posted, and one appended after it posts whatever
-second it is stamped in. The position read validates no envelope, so a
-damaged line defers no seed, and a mailbox read that refuses holds posts
-alone, never an owner's message. A position read that refuses all the same
-leaves the mailbox seed to the first poll it succeeds on, and mail appended
-before that poll is not posted. A journal seeded before positions keeps
-its clock floor. Open asks
+A first start seeds Slack once, from the binding moment, before its first
+delivery, so a channel's earlier history is never delivered. It seeds the
+mailbox before its first mailbox post, from the store's committed position:
+each box's count of complete lines and its first id. A notice or answer on
+a line at or below that count is never posted, and one appended after it
+posts whatever second it is stamped in. A poll reads that position once,
+before its deliveries; an owner message's delivery never reads it. The
+position read validates no envelope, so a damaged line defers no seed, and
+a mailbox read that refuses holds posts alone, never an owner's message. A
+position read that refuses all the same leaves the mailbox seed to the
+first poll it succeeds on, and mail appended before that poll is not
+posted. A journal seeded before positions keeps its clock floor. Open asks
 are posted whatever their age inside SLACK_THREAD_DAYS, since they still want
 an answer. A reserved ask, which no default closes, is posted once more in
 its thread, naming the owner, on the first poll past its deadline while it
@@ -542,18 +543,21 @@ class RootRelay:
             )
             write_binding(self.path, self.binding)
 
-    def seed(self) -> None:
-        """The positions a start with no seeds begins from, journaled so a
-        restart keeps them: Slack's history past the binding moment, and the
-        mailbox past the store's committed position now, before any delivery.
-        Mail on a line at or below that position never posts; mail appended
-        after it does, whatever its stamp. The position read validates no
-        envelope, so a damaged line defers no seed. A read that refuses all
-        the same leaves `start` to a later poll and holds posts alone, since
-        owner messages need only `seen`. `start` goes last, so a stop
-        between the two lines seeds the mailbox again."""
+    def seed_history(self) -> None:
+        """Slack's history past the binding moment, journaled once, before
+        the first delivery, so a restart keeps it."""
         if not self.state.history_seeded:
             self.journal.append(t="seen", ts=self.binding.bound_at)
+
+    def seed_mailbox(self) -> None:
+        """The mailbox past the store's committed position now, journaled
+        before the first post, so a restart keeps it. Mail on a line at or
+        below that position never posts; mail appended after it does,
+        whatever its stamp. The position read validates no envelope, so a
+        damaged line defers no seed. A read that refuses all the same holds
+        posts alone and leaves `start` to the next poll, since owner messages
+        need only `seen`. `start` goes after `seen`, so a stop between the
+        two lines seeds the mailbox again."""
         try:
             position = self.mail.position()
         except Refusal as err:
@@ -574,17 +578,20 @@ class RootRelay:
 
     def ready(self) -> None:
         """What every delivery needs first: the owners as the setting names
-        them, and the seeds of a start whose journal holds none: a journal
-        of connection lines alone, which a connect writes before the first
-        poll, is not seeded."""
+        them, and the history seed of a start whose journal holds none: a
+        journal of connection lines alone, which a connect writes before the
+        first poll, is not seeded. A delivery reads no mailbox position, so
+        a held mailbox lock never delays an owner message."""
         self.owners_current()
         if not self.state.seeded:
-            self.seed()
+            self.seed_history()
 
     def poll(self, bot_user: str) -> None:
         self.post_failed = None
         self.prepare_hold()
         self.ready()
+        if not self.state.seeded:
+            self.seed_mailbox()
         self.mark_seen(self.state.delivered)
         for message in list(self.pending_live.values()):
             try:

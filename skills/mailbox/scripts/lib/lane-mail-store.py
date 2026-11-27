@@ -235,10 +235,11 @@ def stable_snapshots(box, deadline, cached=lambda stamp: False):
 
 def committed(box, timeout=30):
     """Each box's committed position: its `count` of complete logical lines,
-    compacted rows included, and the `first` id its header carries.
+    compacted rows included, and its `first` id: the one its `.numbering`
+    record carries, or else the id on its first line.
 
-    No envelope is parsed, so a damaged line that refuses read_events never
-    refuses this read. A writer's unterminated fragment is not committed:
+    No envelope is validated, so a damaged line that refuses read_events
+    never refuses this read. A writer's unterminated fragment is not committed:
     its line is past the count once the writer completes it. Slack's relay
     journals this reading as its first start's mailbox floor.
     """
