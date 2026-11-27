@@ -211,8 +211,9 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
-    /// The unused limit resets the provider states for the account
-    /// ([`Roster::carry_limit_resets`]); `None` where it states none.
+    /// The unused limit resets the provider states for the account, on its
+    /// own reading ([`Roster::carry_limit_resets`]) and on the reading a
+    /// pick takes ([`resolve`]); `None` where it states none.
     pub limit_resets: Option<u64>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
@@ -637,54 +638,53 @@ impl Roster {
         lines
     }
 
-    /// Carries onto each row the unused limit resets the provider's
-    /// `accounts --json --headroom` document `doc` states for its account,
-    /// matched on the harness and the directory name, never the local
-    /// alias, since the document names the provider's directory; the cause
-    /// where the document cannot be read, with no row changed.
+    /// Carries onto each provider's reading the unused limit resets the
+    /// provider's `accounts --json --headroom` document `doc` states for its
+    /// account, matched on the harness and the directory name, never the
+    /// local alias, since the document names the provider's directory; the
+    /// cause where the document cannot be read, with no row changed. A
+    /// reading of this machine's carries none: a directory of the same name
+    /// here can be another account, and [`resolve`] carries the provider's
+    /// count onto the reading a pick takes.
     pub fn carry_limit_resets(&mut self, doc: &str) -> std::result::Result<(), String> {
         let stated = batch::limit_resets(doc)?;
         for row in &mut self.rows {
             row.limit_resets = stated
                 .iter()
+                .filter(|_| provider_reading(row))
                 .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
                 .map(|s| s.count);
         }
         Ok(())
     }
 
-    /// Each account that lists at least one unused limit reset and that a
-    /// choice among accounts could take `today`, once though the roster
-    /// holds two readings of it, the account at the directory `leave_out`
-    /// excepted: the stop decision's [`crate::stop::Ground::resets`]. A
-    /// reset pressed on an account the pick then refuses buys nothing, so
-    /// the pick's own rules judge each account over both readings, as
-    /// [`resolve`] merges them: configured on some reading, a provider's
-    /// reading being configured, and on no reading left out or refused by
-    /// its word, since a provider's reservation and stated end carry onto
-    /// the reading a pick takes.
-    pub fn reset_holders(&self, leave_out: Option<&str>, today: &str) -> Vec<ResetHolder> {
-        let exclude: Vec<String> = leave_out.into_iter().map(str::to_owned).collect();
-        let same = |a: &AccountRow, b: &AccountRow| a.harness == b.harness && a.canon == b.canon;
-        self.rows
-            .iter()
-            .enumerate()
-            .filter(|(i, row)| !self.rows[..*i].iter().any(|r| same(r, row)))
-            .filter(|(_, row)| {
-                let mut readings = self.rows.iter().filter(|r| same(r, row));
-                readings
-                    .clone()
-                    .any(|r| r.limit_resets.is_some_and(|n| n > 0))
-                    && readings.clone().any(|r| r.configured)
-                    && readings.all(|r| {
-                        !left_out(r, &exclude, false) && r.standing(today) == Standing::Open
-                    })
+    /// Each account holding at least one unused limit reset that a choice
+    /// among accounts for `req` could take, `req` being the question the
+    /// stopped session's walk asks: the pick's own candidates
+    /// ([`choosable`]) whose word stands open; none where the request's
+    /// model bills no harness; the cause where the pick could not read the
+    /// token files it signs in by. The stop decision's
+    /// [`crate::stop::Ground::resets`].
+    pub fn reset_holders(
+        &self,
+        req: &PickRequest,
+        tokens: &settings::Judged<Vec<(String, PathBuf)>>,
+        now: u64,
+    ) -> std::result::Result<Vec<ResetHolder>, String> {
+        let Some((billed, rows)) = resolved(&self.rows, req, tokens, now)? else {
+            return Ok(Vec::new());
+        };
+        let today = today(now);
+        Ok(choosable(&rows, billed, req)
+            .filter(|r| {
+                r.limit_resets.is_some_and(|n| n > 0)
+                    && standing_for(r, req, &today) == Standing::Open
             })
-            .map(|(_, row)| ResetHolder {
-                config_dir: row.config_dir.clone(),
-                alias: row.alias.clone(),
+            .map(|r| ResetHolder {
+                config_dir: r.config_dir.clone(),
+                alias: r.alias.clone(),
             })
-            .collect()
+            .collect())
     }
 
     /// Whether an account bills the harness and pool a pick would judge
@@ -752,8 +752,8 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// windows, its buckets as read, marked `scope: unread`; and a local copy
 /// with no credential file is no reading, so the provider's measured one
 /// stands as an account's one reading does. The provider's words
-/// (`reserved`, `plan-ends`) stand whichever reading does, a row with no
-/// reading included. An account with one reading keeps it. The roster is
+/// (`reserved`, `plan-ends`) and its count of unused limit resets stand
+/// whichever reading does, a row with no reading included. An account with one reading keeps it. The roster is
 /// never resolved: it reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
@@ -807,7 +807,11 @@ fn resolve(
                         sign(&own),
                         Some(usage::SignIn::StoredLogin | usage::SignIn::TokenFile(_))
                     );
-                let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
+                let (reserved, plan_ends, limit_resets) = (
+                    provider.reserved,
+                    provider.plan_ends.clone(),
+                    provider.limit_resets,
+                );
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
                 } else {
@@ -817,6 +821,7 @@ fn resolve(
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
+                stands.limit_resets = stands.limit_resets.or(limit_resets);
                 out[i] = stands;
             }
             None => out.push(row.clone()),
@@ -2121,12 +2126,60 @@ fn own_question(req: &PickRequest) -> bool {
     req.for_overseer && req.lane.is_some()
 }
 
-/// Whether the account is left out by name: the directories `exclude`
-/// names (`--exclude-lane`), and the owner's exclusion, which keeps an
-/// account from every pick but a controller's question about its own
-/// account (`own`, [`own_question`]).
-fn left_out(row: &AccountRow, exclude: &[String], own: bool) -> bool {
-    exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own)
+/// Whether `req` leaves the account out by name: `--exclude-lane`'s
+/// directories, and the owner's exclusion, which keeps an account from
+/// every pick but a controller's question about its own account.
+fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
+    req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own_question(req))
+}
+
+/// What a pick for `req` reads of `rows` before it judges any account: the
+/// harness the request's model bills, and the rows resolved to the one
+/// reading per account a pick judges ([`resolve`]). `None` where the model
+/// bills no harness; the cause where the token files a session opening
+/// here on a Claude account signs in by do not read, since they are read
+/// whole before any account and a setting that does not read judges none,
+/// as the transfer refuses it.
+fn resolved(
+    rows: &[AccountRow],
+    req: &PickRequest,
+    tokens: &settings::Judged<Vec<(String, PathBuf)>>,
+    now: u64,
+) -> std::result::Result<Option<(Harness, Vec<AccountRow>)>, String> {
+    let model = req.model.as_deref().unwrap_or("");
+    let Some(billed) = req.harness.billed(model) else {
+        return Ok(None);
+    };
+    let files = match (req.opens_here, billed) {
+        (true, Harness::Claude) => usage::token_files(tokens).map_err(|e| e.to_string())?,
+        (true, Harness::Codex | Harness::Copilot | Harness::Pi) | (false, _) => {
+            usage::TokenFiles::none()
+        }
+    };
+    Ok(Some((
+        billed,
+        resolve(rows, billed, model, req, &files, now),
+    )))
+}
+
+/// Whether a resolved row is billed under the launch's harness `billed`
+/// and spends the request's pool.
+fn candidate(row: &AccountRow, billed: Harness, req: &PickRequest) -> bool {
+    let api_credit = req.harness.pool(req.model.as_deref().unwrap_or("")) == "api-credit";
+    row.harness == billed && ((row.pool == "api-credit") == api_credit)
+}
+
+/// The resolved rows a choice among accounts for `req` judges: the
+/// candidates the owner configured that the request leaves in by name. The
+/// pick judges each, and the reset holders are drawn from the same set
+/// ([`Roster::reset_holders`]).
+fn choosable<'a>(
+    rows: &'a [AccountRow],
+    billed: Harness,
+    req: &'a PickRequest,
+) -> impl Iterator<Item = &'a AccountRow> + 'a {
+    rows.iter()
+        .filter(move |r| candidate(r, billed, req) && r.configured && !left_out(r, req))
 }
 
 /// The account's standing for `req`: its word's, except that a
@@ -2149,7 +2202,7 @@ pub fn judge_one(
     now: u64,
 ) -> Judged {
     let mut judged = judge(row, req, facts, settings, &today(now), now);
-    if left_out(row, &req.exclude, own_question(req)) {
+    if left_out(row, req) {
         judged.verdict = EXCLUDED.to_owned();
     }
     judged
@@ -2181,49 +2234,38 @@ pub fn pick(
 ) -> PickAnswer {
     let today = today(now);
     let model = req.model.as_deref().unwrap_or("");
-    let Some(billed) = req.harness.billed(model) else {
-        return match (&req.lane, &req.provider_key) {
-            (Some(lane), Some(key)) => keyed(
-                named(
-                    &unmeasured_row(lane, req.harness.pool(model), settings),
-                    req,
-                    facts,
-                    settings,
-                    now,
+    let (billed, rows) = match resolved(rows, req, tokens, now) {
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => {
+            return match (&req.lane, &req.provider_key) {
+                (Some(lane), Some(key)) => keyed(
+                    named(
+                        &unmeasured_row(lane, req.harness.pool(model), settings),
+                        req,
+                        facts,
+                        settings,
+                        now,
+                    ),
+                    key,
                 ),
-                key,
-            ),
-            (Some(_), None) | (None, _) => unbilled_answer(req),
-        };
+                (Some(_), None) | (None, _) => unbilled_answer(req),
+            };
+        }
+        Err(cause) => return PickAnswer::Unjudged { cause },
     };
+    let rows = &rows;
     let pool = req.harness.pool(model);
     let api_credit = pool == "api-credit";
     // A pool nobody measured is a read to repair, never a window to wait
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    // A session opening here on a Claude account signs in as the token
-    // files say, read whole before any account: a setting that does not
-    // read judges none, as the transfer refuses it.
-    let files = match (req.opens_here, billed) {
-        (true, Harness::Claude) => match usage::token_files(tokens) {
-            Ok(files) => files,
-            Err(e) => {
-                return PickAnswer::Unjudged {
-                    cause: e.to_string(),
-                };
-            }
-        },
-        (true, Harness::Codex | Harness::Copilot | Harness::Pi) | (false, _) => {
-            usage::TokenFiles::none()
-        }
-    };
-    let rows = &resolve(rows, billed, model, req, &files, now);
-    let candidate =
-        |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
-        return match rows.iter().find(|r| r.canon == canon && candidate(r)) {
+        return match rows
+            .iter()
+            .find(|r| r.canon == canon && candidate(r, billed, req))
+        {
             Some(row) => named(row, req, facts, settings, now),
             None if grant_pool => named(
                 &unmeasured_row(lane, pool, settings),
@@ -2235,10 +2277,8 @@ pub fn pick(
             None => PickAnswer::NoRecord,
         };
     }
-    let candidates = rows.iter().filter(|r| candidate(r)).count();
-    let judged: Vec<Judged> = rows
-        .iter()
-        .filter(|r| candidate(r) && r.configured && !left_out(r, &req.exclude, own_question(req)))
+    let candidates = rows.iter().filter(|r| candidate(r, billed, req)).count();
+    let judged: Vec<Judged> = choosable(rows, billed, req)
         .map(|r| judge(r, req, facts, settings, &today, now))
         .collect();
     let mut room: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "room").collect();
@@ -2472,15 +2512,16 @@ mod tests {
         {"name":"3codex","harness":"codex","meters":{"windows":[{"wall":"weekly","used_pct":0,"resets":"2026-12-03T07:24:18Z"}],"credits":0.0,"credit_flags":{"has_credits":false,"overage_limit_reached":false,"spend_control_reached":false},"limit_resets":0}}
     ],"notes":[]}"#;
 
-    /// Each row carries the count the provider states for its account's
-    /// directory, on its harness alone, whatever alias the machine gives
-    /// it, and none where the provider states none. A provider that answers
-    /// its rows in place of the document changes no row.
+    /// Each provider's reading carries the count the provider states for
+    /// its account's directory, on its harness alone, whatever alias the
+    /// machine gives it, and none where the provider states none. A
+    /// provider that answers its rows in place of the document changes no
+    /// row.
     #[test]
     fn each_row_carries_the_limit_resets_the_provider_states_for_its_account() {
         let codex = |dir: &str, alias: &str| {
             row(
-                json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
+                json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"host","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null}),
             )
         };
         let claude = row(
@@ -2510,67 +2551,112 @@ mod tests {
         assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
     }
 
-    /// The holders are the accounts listing a reset that a choice among
-    /// accounts could take, each named once by its directory: two
-    /// directories sharing one alias stay two holders, two readings of one
-    /// account one, and an account the pick refuses by the owner's
-    /// exclusion, its stated end, a provider's reservation or as
-    /// unconfigured is none. A left-out account is none on either reading.
+    /// A reset holder is an account the stopped session's pick could take,
+    /// read through the pick's own candidate step, that lists at least one
+    /// unused reset, named by its directory. Each row is one case:
+    /// - the provider's later end overrides a past retirement this machine
+    ///   states;
+    /// - a question of another harness takes no holder;
+    /// - an account is configured on the reading the pick takes;
+    /// - a directory here that shares a name with the provider's carries no
+    ///   count;
+    /// - the provider's count reaches the reading of this machine that
+    ///   stands where the provider read nothing.
     #[test]
-    fn the_reset_holders_are_the_accounts_a_pick_could_take_named_by_directory() {
+    fn the_reset_holders_are_the_pick_candidates_that_list_a_reset() {
         let settings = AccountSettings {
             retire: vec![Retirement {
                 name: "5codex".to_owned(),
                 date: "2026-10-20".to_owned(),
             }],
-            exclude: vec!["4codex".to_owned()],
             ..settings()
         };
-        let reading = |dir: &str, alias: &str, extra: Value, resets: Option<u64>| {
-            let mut raw = json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":"local","status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null});
+        let reading = |dir: &str, through: &str, extra: Value| {
+            let alias = base(dir).trim_start_matches('.').to_owned();
+            let mut raw = json!({"alias":alias,"harness":"codex","config_dir":dir,"measured_through":through,"status":"ok","verdict":"room","headroom_pct":50,"binding_bucket":"weekly","binding_resets_at":null});
             if let (Value::Object(raw), Value::Object(extra)) = (&mut raw, extra) {
                 raw.extend(extra);
             }
-            let mut row = AccountRow::parse(&raw, &settings).expect("a row");
-            row.limit_resets = resets;
-            row
+            AccountRow::parse(&raw, &settings).expect("a row")
         };
-        let host = || json!({"measured_through":"host"});
-        let roster = Roster {
-            rows: vec![
-                reading("/h/.1codex", "1codex", json!({}), Some(1)),
-                reading("/h/.1codex", "1codex", host(), Some(1)),
-                // `AGENT_RUNTIME_ACCOUNT_ALIASES="3codex=1codex"`.
-                reading("/h/.3codex", "1codex", json!({}), Some(1)),
-                reading("/h/.4codex", "4codex", json!({}), Some(1)),
-                reading("/h/.5codex", "5codex", json!({}), Some(1)),
-                reading("/h/.6codex", "6codex", json!({}), Some(1)),
-                reading(
-                    "/h/.6codex",
-                    "6codex",
-                    json!({"measured_through":"host","reserved":1}),
-                    Some(1),
-                ),
-                reading("/h/.7codex", "7codex", json!({"configured":false}), Some(1)),
-                reading("/h/.8codex", "8codex", json!({}), Some(0)),
-                reading("/h/.9codex", "9codex", json!({}), None),
-            ],
-            provider_failure: None,
-            notes: Vec::new(),
-        };
-        let holder = |dir: &str| ResetHolder {
-            config_dir: dir.to_owned(),
-            alias: "1codex".to_owned(),
-        };
-        let today = "2026-11-26";
-        assert_eq!(
-            roster.reset_holders(None, today),
-            vec![holder("/h/.1codex"), holder("/h/.3codex")]
-        );
-        assert_eq!(
-            roster.reset_holders(Some("/h/.1codex"), today),
-            vec![holder("/h/.3codex")]
-        );
+        let doc = r#"{"accounts":[
+            {"name":"1codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"5codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"6codex","harness":"codex","meters":{"limit_resets":1}},
+            {"name":"7codex","harness":"codex","meters":{"limit_resets":1}}
+        ]}"#;
+        let tokens = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+        // 2026-11-26T12:00:00Z.
+        let now = 1_795_694_400;
+        let codex = PickRequest::new(Harness::Codex);
+        let claude = PickRequest::new(Harness::Claude);
+        let cases = [
+            (
+                "a past machine retirement under a later provider end",
+                vec![
+                    reading("/h/.5codex", "local", json!({})),
+                    reading("/h/.5codex", "host", json!({"plan_ends":"2026-12-31"})),
+                ],
+                &codex,
+                vec!["/h/.5codex"],
+            ),
+            (
+                "a Codex holder under a Claude question",
+                vec![reading("/h/.1codex", "host", json!({}))],
+                &claude,
+                vec![],
+            ),
+            (
+                "an account configured on its provider's reading alone",
+                vec![
+                    reading("/h/.7codex", "local", json!({"configured":false})),
+                    reading("/h/.7codex", "host", json!({})),
+                ],
+                &codex,
+                vec!["/h/.7codex"],
+            ),
+            (
+                "two directories of one name, the provider's holding the reset",
+                vec![
+                    reading("/h/a/.1codex", "local", json!({})),
+                    reading("/h/b/.1codex", "host", json!({})),
+                ],
+                &codex,
+                vec!["/h/b/.1codex"],
+            ),
+            (
+                "a provider reading that read nothing beside this machine's measured one",
+                vec![
+                    reading("/h/.6codex", "local", json!({})),
+                    reading(
+                        "/h/.6codex",
+                        "host",
+                        json!({"status":"unreachable","headroom_pct":null}),
+                    ),
+                ],
+                &codex,
+                vec!["/h/.6codex"],
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(case, rows, req, want)| {
+                let mut roster = Roster {
+                    rows,
+                    provider_failure: None,
+                    notes: Vec::new(),
+                };
+                roster.carry_limit_resets(doc).unwrap();
+                let got: Vec<String> = roster
+                    .reset_holders(req, &tokens, now)
+                    .unwrap()
+                    .into_iter()
+                    .map(|h| h.config_dir)
+                    .collect();
+                (got != want).then(|| format!("{case}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     /// The machine's stated end is matched on the alias, the directory name

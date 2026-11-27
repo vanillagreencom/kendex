@@ -230,9 +230,9 @@ pub struct Ground<'a> {
     pub room: bool,
     /// No entry has room, and the soonest reset among them is known.
     pub reset: bool,
-    /// The accounts holding an unused limit reset that a pick could take
-    /// ([`crate::accounts::Roster::reset_holders`]), the stopped session's
-    /// own left out for an ended sign-in.
+    /// The accounts holding an unused limit reset that the stopped
+    /// session's pick could take: [`crate::accounts::Roster::reset_holders`]
+    /// over the question its walk asks.
     pub resets: &'a [ResetHolder],
 }
 
