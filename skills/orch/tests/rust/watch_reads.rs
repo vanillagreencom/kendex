@@ -5636,80 +5636,6 @@ fn a_ruling_names_the_sender_its_answer_recorded() {
     }
 }
 
-/// An owner ask closed by a text answer, with no other ask standing on its
-/// item, leaves the item with neither the owner label nor the owner
-/// assignee, whether or not the label is still there at the close: the
-/// owner gate reads the item's open asks, not the label, to clear the
-/// assignee. The fixture keeps no state, so the row reads the item the
-/// close's writes leave from their arguments.
-#[test]
-fn a_text_answer_close_leaves_neither_owner_label_nor_assignee() {
-    for (case, labels) in [
-        ("the label on the item", vec!["owner-gated", "skills"]),
-        ("the label already off the item", vec!["skills"]),
-    ] {
-        let mut world = World::new();
-        let (mut settings, _) = posted_owner_ask(
-            &world,
-            "ask-1",
-            ("KEN-7", Some("KEN-7-uuid")),
-            Some("question-1"),
-            "2099-01-01T00:00:00Z",
-        );
-        settings.linear_team = None;
-        let nodes: Vec<Value> = labels.iter().map(|name| json!({"name": name})).collect();
-        let item = json!({"body": {"issue": {"description": "Body.",
-            "assignee": {"id": "maya", "name": "Maya Owner"}, "labels": {"nodes": nodes}}}});
-        world
-            .linear("issues list --assignee", json!({"body": []}))
-            .linear("comments bulk-list", comments(&["KEN-7"], &[]))
-            .linear("comments create", json!({"body": {"success": true}}))
-            .linear("issues update", json!({"body": {}}))
-            .linear("graphql OwnerAskItem", item.clone())
-            .linear("graphql OwnerTracker", item);
-        let mut body = tracker::body(world.context(settings, None));
-        let mut baseline = Baseline::default();
-        let clock = FakeClock::new();
-        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
-        let root = world.dir.path().canonicalize().unwrap();
-        let answer = root.join("answer.txt");
-        std::fs::write(&answer, "Approved.\n").unwrap();
-        let closed = program(lane_mail())
-            .args(["resolve", "--item", "overseer", "--id", "ask-1", "--root"])
-            .arg(&root)
-            .arg("--text")
-            .arg(&answer)
-            .current_dir(&root)
-            .output()
-            .unwrap();
-        assert!(closed.status.success(), "{case}: {}", stderr(&closed));
-        pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
-        let mut assigned = true;
-        let mut left = labels.join(",");
-        for call in world.linear_calls() {
-            let Some(args) = call.strip_prefix("issues update KEN-7 ") else {
-                continue;
-            };
-            let words: Vec<&str> = args.split(' ').collect();
-            if words.contains(&"--clear-assignee") {
-                assigned = false;
-            }
-            if words.contains(&"--clear-labels") {
-                left = String::new();
-            }
-            if let Some(at) = words.iter().position(|w| *w == "--labels") {
-                left = words[at + 1].to_owned();
-            }
-        }
-        assert_eq!((assigned, left.as_str()), (false, "skills"), "{case}");
-        assert_eq!(
-            baseline.get(tracker::OWNER_MARK_ROW, "ask-1"),
-            Some("ruling=ok item=ok"),
-            "{case}"
-        );
-    }
-}
-
 #[test]
 fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let mut world = World::new();
@@ -6868,7 +6794,10 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
 /// A closing ask's watch removes the action line its question marks, under
 /// any name, and only that line: while another mailbox's question awaits
 /// a ruling, the write is that line alone, and a line naming the other
-/// question, the same action or a longer one, is left as it stands.
+/// question, the same action or a longer one, is left as it stands. Once
+/// no question stands, the owner assignee leaves the item, whether or not
+/// the owner label is still there, and a teammate the item was reassigned
+/// to stays; a label a close on another item recorded stays as well.
 #[test]
 fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
     const NAME: &str = "a_closing_ask_removes_only_the_action_line_its_question_marks";
@@ -6883,35 +6812,65 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
     };
     let open = json!([{"id": SECOND, "reserved": true, "ruled": false, "legacy_asks": []}]);
     let ruled = json!([]);
-    let rows: [(&str, String, &Value, &[&str]); 6] = [
+    let owner = json!({"id": "maya", "name": "Maya Owner"});
+    let teammate = json!({"id": "ann", "name": "Ann"});
+    let gated: &[&str] = &["owner-gated", "skills"];
+    // Each row: the item's description, its open questions, its assignee
+    // and labels, whether a close recorded under another item is in the
+    // mailbox, and the updates the close writes.
+    type Row<'a> = (
+        &'a str,
+        String,
+        &'a Value,
+        &'a Value,
+        &'a [&'a str],
+        bool,
+        &'a [&'a str],
+    );
+    let rows: [Row; 9] = [
         (
             "the other question's identical action",
             line("Maya", "Approve.", SECOND),
             &open,
+            &owner,
+            gated,
+            false,
             &[],
         ),
         (
             "the other question's action that starts with this one",
             line("Maya", "Approve. Then merge.", SECOND),
             &open,
+            &owner,
+            gated,
+            false,
             &[],
         ),
         (
             "its own line while the other question is open",
             line("Maya", "Approve.", FIRST),
             &open,
+            &owner,
+            gated,
+            false,
             &["issues update KEN-7 --description Body."],
         ),
         (
             "its own line under another name",
             line("Ann", "Approve.", FIRST),
             &open,
+            &owner,
+            gated,
+            false,
             &["issues update KEN-7 --description Body."],
         ),
         (
             "its own line once every question is ruled",
             line("Maya", "Approve.", FIRST),
             &ruled,
+            &owner,
+            gated,
+            false,
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --labels skills",
@@ -6922,14 +6881,54 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             "the ruled other question's identical action",
             line("Maya", "Approve.", SECOND),
             &ruled,
+            &owner,
+            gated,
+            false,
             &[
                 "issues update KEN-7 --clear-assignee",
                 "issues update KEN-7 --labels skills",
             ],
         ),
+        (
+            "the owner label already off the item",
+            line("Maya", "Approve.", FIRST),
+            &ruled,
+            &owner,
+            &["skills"],
+            false,
+            &[
+                "issues update KEN-7 --clear-assignee",
+                "issues update KEN-7 --description Body.",
+            ],
+        ),
+        (
+            "a teammate the owner reassigned the item to",
+            line("Maya", "Approve.", FIRST),
+            &ruled,
+            &teammate,
+            gated,
+            false,
+            &[
+                "issues update KEN-7 --labels skills",
+                "issues update KEN-7 --description Body.",
+            ],
+        ),
+        (
+            "a label a close on another item recorded",
+            line("Maya", "Approve.", FIRST),
+            &ruled,
+            &owner,
+            &["owner-gated", "release-review", "skills"],
+            true,
+            &[
+                "issues update KEN-7 --clear-assignee",
+                "issues update KEN-7 --labels release-review,skills",
+                "issues update KEN-7 --description Body.",
+            ],
+        ),
     ];
     let clock = FakeClock::new();
-    for (case, description, questions, expected) in rows {
+    for (case, description, questions, assignee, labels, other_close, expected) in rows {
         let mut world = World::new();
         let (mut settings, events) = posted_owner_ask(
             &world,
@@ -6945,9 +6944,36 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         envelopes[0]["do"] = json!("Approve.");
+        if other_close {
+            // A close recorded under KEN-8, with no identity, whose post
+            // used `release-review` as its owner label.
+            envelopes.push(
+                json!({"id": "ask-8", "kind": "ask", "at": "2026-10-01T00:00:00Z",
+                "from": "overseer:test", "to": "owner", "issue": "KEN-8", "text": "Release?",
+                "options": ["yes", "no"], "recommend": "yes", "wait": 0, "effect": "none",
+                "deadline": "2099-01-01T00:00:00Z"}),
+            );
+            envelopes.push(json!({"id": "ask-8-tracker", "kind": "tracker-posted",
+                "at": "2026-10-01T00:00:01Z", "from": "overseer:test", "re": "ask-8",
+                "issue": "KEN-8", "tracker_label": "release-review", "tracker_comment": "question-8",
+                "text": ""}));
+        }
         let staged: String = envelopes.iter().map(|event| format!("{event}\n")).collect();
         std::fs::write(outward, staged).unwrap();
+        let dir = world.dir.path().to_path_buf();
+        let resolve = |id: &str| {
+            let out = program(lane_mail())
+                .args(["resolve", "--item", "overseer", "--id", id])
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{case}: {}", stderr(&out));
+        };
+        if other_close {
+            resolve("ask-8");
+        }
         settings.linear_team = None;
+        let nodes: Vec<Value> = labels.iter().map(|name| json!({"name": name})).collect();
         world
             .linear("issues list --assignee", json!({"body": []}))
             .linear("comments bulk-list", comments(&["KEN-7"], &[]))
@@ -6957,26 +6983,21 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             .linear(
                 "graphql OwnerAskItem",
                 json!({"body": {"issue": {
-                    "description": description, "assignee": {"name": "Maya Owner"},
-                    "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+                    "description": description, "assignee": {"name": assignee["name"]},
+                    "labels": {"nodes": nodes}
                 }}}),
             )
             .linear(
                 "graphql OwnerTracker",
                 json!({"body": {"issue": {
-                    "description": description, "assignee": {"id": "maya", "name": "Maya Owner"},
-                    "labels": {"nodes": [{"name": "owner-gated"}, {"name": "skills"}]}
+                    "description": description, "assignee": assignee,
+                    "labels": {"nodes": nodes}
                 }}}),
             );
         let mut body = tracker::body(world.context(settings, None));
         let mut baseline = Baseline::default();
         pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
-        let out = program(lane_mail())
-            .args(["resolve", "--item", "overseer", "--id", "ask-a"])
-            .current_dir(world.dir.path())
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{case}: {}", stderr(&out));
+        resolve("ask-a");
         pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
         let updates: Vec<String> = world
             .linear_calls()

@@ -301,9 +301,13 @@ def run(source, scratch, bash):
                         category = line.split("cause=", 1)[1].split(" ", 1)[0]
                         retained[category] = Path(line.split("error-file=", 1)[1]).read_bytes()
                 cause = "rollback-read" if row == "rollback-read" else "rollback-update"
+                # The owner gate's refused rollback is the one notice that the
+                # item still carries the owner label and assignee.
+                gate = "rollback-labels-read" if row == "rollback-read" else "rollback-assign"
                 facts["rollback_notice"] &= (after_ask["description"] == written
                     and retained.get("comment") == b"tracker: refused=comment\n"
-                    and retained.get(cause) == ("tracker: refused=" + cause + "\n").encode())
+                    and retained.get(cause) == ("tracker: refused=" + cause + "\n").encode()
+                    and retained.get(gate) == ("tracker: refused=" + cause + "\n").encode())
             # A failed post whose rollback the tracker takes leaves the item
             # with neither the owner label nor the owner assignee, a question
             # comment it could not delete included.

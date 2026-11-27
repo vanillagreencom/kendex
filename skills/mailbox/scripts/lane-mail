@@ -37,7 +37,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
        lane-mail drain-many --file REQUEST
        lane-mail owner-answers --item ITEM [--root ROOT]
-       lane-mail owner-gate --item overseer --id MSGID [--open-ask ID]... [--closed-ask ID]... [--root ROOT]
+       lane-mail owner-gate --item overseer --id MSGID [--open-ask ID]... [--closed-ask ID]... [--named-ask ID]... [--root ROOT]
        lane-mail compact --item ITEM [--root ROOT] [--set-aside]
        lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [options]
@@ -77,12 +77,14 @@ closed owner ask MSGID from the item's open owner asks, the one rule the ask
 post and its rollback take them by: both are on the item while an owner ask
 stands there, and off it once none stands. The asks the caller judged to be
 this mailbox's on that item are --open-ask, each still standing, and
---closed-ask, each closed; MSGID is closed. The item's question comments are
-read as `comments owner-questions` reads them, every mailbox's: one that no
-open ask names stands for another mailbox's ask until its ruling, unless it
-is unreserved and a closed ask names it. The label is ORCH_OWNER_ASK_LABEL,
-each ask's own where its post recorded one, and the owner the ORCH_OWNER_EMAIL
-account; OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only
+--closed-ask, each closed; MSGID is closed. --named-ask is a closed ask
+recorded under another item whose question comment id can still name one of
+this item's questions: it names questions, and its label is not taken off.
+The item's question comments are read as `comments owner-questions` reads
+them, every mailbox's: one that no open ask names stands for another
+mailbox's ask until its ruling, unless it is unreserved and a closed or named
+ask names it. The label is ORCH_OWNER_ASK_LABEL, each ask's own where its
+post recorded one, and the owner the ORCH_OWNER_EMAIL account; OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only
 where the item differs. It prints `owner-gate: held=<true|false>`, true where
 another mailbox's question stands. A failed step exits 2 with the tracker's
 own stderr, then `lane-mail: owner-gate-unwritten=<item> cause=<step>`
@@ -1016,6 +1018,7 @@ IDENTITY_FIELD='null'
 POSTED_LINE=""
 GATE_OPEN=""
 GATE_CLOSED=""
+GATE_NAMED=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -1030,6 +1033,7 @@ while [ "$#" -gt 0 ]; do
     --replaces) need_val "$@"; REPLACES="$2"; shift 2 ;;
     --open-ask) need_val "$@"; GATE_OPEN="$GATE_OPEN$2$NL"; shift 2 ;;
     --closed-ask) need_val "$@"; GATE_CLOSED="$GATE_CLOSED$2$NL"; shift 2 ;;
+    --named-ask) need_val "$@"; GATE_NAMED="$GATE_NAMED$2$NL"; shift 2 ;;
     --file | --text)
       need_val "$@"; FILE_GIVEN="$2"; FILE="$2"
       case "$FILE" in
@@ -1094,11 +1098,12 @@ if [ "$VERB" = compact ] || [ "$VERB" = owner-answers ]; then
 fi
 if [ "$VERB" = owner-gate ]; then
   for given in $OPTS_GIVEN; do
-    case "$given" in --item | --id | --root | --open-ask | --closed-ask) ;; *) refuse option-unknown "$given" ;; esac
+    case "$given" in --item | --id | --root | --open-ask | --closed-ask | --named-ask) ;; *) refuse option-unknown "$given" ;; esac
   done
-elif [ -n "$GATE_OPEN$GATE_CLOSED" ]; then
+elif [ -n "$GATE_OPEN$GATE_CLOSED$GATE_NAMED" ]; then
   [ -z "$GATE_OPEN" ] || refuse option-unknown --open-ask
-  refuse option-unknown --closed-ask
+  [ -z "$GATE_CLOSED" ] || refuse option-unknown --closed-ask
+  refuse option-unknown --named-ask
 fi
 if [ "$VERB" = reserve ]; then
   for given in $OPTS_GIVEN; do
@@ -1958,11 +1963,12 @@ if [ "$VERB" = owner-gate ]; then
   [ -n "$MSGID" ] || refuse option-required --id
   "$SCRIPT_DIR/lane-mail" events --item overseer --root "$ROOT" >"$WORK_DIR/gate-events" 2>"$WORK_DIR/gate.err" ||
     refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/gate.err")"
-  GATE_ASKS="$(jq -cs --arg id "$MSGID" --arg open "$GATE_OPEN" --arg closed "$GATE_CLOSED" '
+  GATE_ASKS="$(jq -cs --arg id "$MSGID" --arg open "$GATE_OPEN" --arg closed "$GATE_CLOSED" --arg named "$GATE_NAMED" '
     (map(select(.box == "to-overseer" and .kind == "ask" and .to == "owner")) | INDEX(.id)) as $asks
     | [{id: $id, state: "closed"}]
       + [$open | splits("\n") | select(length > 0) | {id: ., state: "open"}]
       + [$closed | splits("\n") | select(length > 0) | {id: ., state: "closed"}]
+      + [$named | splits("\n") | select(length > 0) | {id: ., state: "named"}]
     | map(. as $entry | $asks[$entry.id] as $ask
       | if $ask == null then {id, unknown: true}
         else {id, state, tracker_comment: $ask.tracker_comment, tracker_label: $ask.tracker_label,

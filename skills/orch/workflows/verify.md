@@ -158,7 +158,7 @@ For a Linear owner-only box or § 2's ask with no overseer, ask directly through
      .agents/skills/linear/scripts/linear.sh issues update [ITEM] --labels [FULL_LABEL_SET] --clear-assignee
      ```
 
-     Keep another open owner ask's assignment and label until that ask closes, as the watch's `../runtime/src/watch/tracker.rs::clear_owner_item` does.
+     Keep another open owner ask's assignment and label until that ask closes, as the mailbox's owner gate does (`lane-mail --help`, owner-gate).
 
 ## 4. Record the pass
 

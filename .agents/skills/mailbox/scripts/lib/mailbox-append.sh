@@ -348,12 +348,16 @@ owner_tracker_owner() { # TRACKER WORK
 # owner-gate`) each take the pair from here, so no pass writes it back once
 # the last ask closes. ASKS is this mailbox's asks on the item, each
 # {id, state, tracker_comment, tracker_label}: an `open` ask stands; a
-# `closed` one no longer does; a `withdrawn` one is an ask whose post
+# `closed` one no longer does; a `named` one is a closed ask recorded under
+# another item, which names questions here by its comment id alone, its
+# label no label of this item's; a `withdrawn` one is an ask whose post
 # failed, whose question comment, if one is left, is no question. The
 # item's question comments, every mailbox's, are `comments owner-questions`
 # on COMMENTS_REF: one no open or withdrawn ask names stands for another
-# mailbox's ask until its ruling, unless it is unreserved and a closed ask
-# names it (a question posted before reserved ids, closed with no ruling).
+# mailbox's ask until its ruling, unless it is unreserved and a closed or
+# named ask names it (a question posted before reserved ids, closed with no
+# ruling). The labels the gate takes off are the configured one and those
+# the item's own asks recorded.
 # HELD `need` reads them always and sets OWNER_TRACKER_HELD to whether such
 # a question stands; `none` reads them only where no open ask decides the
 # pair. OWNER and ITEM, the owner account and the item as the caller read
@@ -384,10 +388,10 @@ owner_tracker_gate() { # HELD TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM
         else any($q.legacy_asks[]?; . == $ask.id) end;
     def named($q; $states): any($asks[] | select(.state as $state | $states | index($state)); names($q));
     any($questions[]; . as $q | (named($q; ["open", "withdrawn"]) | not)
-      and ($q.reserved or (named($q; ["closed"]) | not))) as $held
+      and ($q.reserved or (named($q; ["closed", "named"]) | not))) as $held
     | ([$asks[] | select(.state == "open") | .tracker_label // $label]
        + (if $held then [$label] else [] end) | unique) as $standing
-    | ([$label] + [$asks[] | .tracker_label // $label]) as $owned
+    | ([$label] + [$asks[] | select(.state != "named") | .tracker_label // $label]) as $owned
     | ((($item.labels - $owned) + $standing) | unique) as $labels
     | {held: $held,
        assignee: (if ($standing | length) > 0 then (if $item.assignee_id == $owner.id then null else $owner.id end)
@@ -429,9 +433,67 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
   return 2
 }
 
+# The post itself, once the item carries the owner label and assignee: the
+# action line, then the question comment, kept only once the saved comment
+# shows the owner's mention. Returns 0 on a posted ask and 1 on any failure,
+# with OWNER_TRACKER_CAUSE naming it and OWNER_TRACKER_DESCRIBED saying
+# whether the action line was written, which the rollback restores.
+owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWNER_ID
+  local tracker="$1" work="$2" issue="$3" comment_issue="$4" ask_id="$5" description="$6" owner_id="$7"
+  local comment_file="$work/tracker-comment-lined" comment_error comment_id mentioned
+  OWNER_TRACKER_DESCRIBED=0
+  # The Linear package refuses, before any write, a description write to an
+  # item Linear's GitHub sync links (issues.sh require_unsynced_description),
+  # so there the item carries no action line.
+  if "$tracker" issues update "$issue" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err"; then
+    OWNER_TRACKER_DESCRIBED=1
+  elif grep -q '^linear: refused=synced-description ' "$work/tracker.err"; then
+    OWNER_TRACKER_LINED=0
+    comment_file="$work/tracker-comment-unlined"
+  else
+    OWNER_TRACKER_CAUSE=description
+    owner_tracker_unwritten "$issue" description "$work/tracker.err"
+    return 1
+  fi
+  OWNER_TRACKER_CAUSE=comment
+  comment_error="$work/tracker-comment.err"
+  comment_id=""
+  # No attribution line, so the comment opens with the owner's mention.
+  if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$comment_file" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
+    if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
+      # The ask is posted only once the saved comment shows the mention that
+      # tells the owner it is there.
+      mentioned=0
+      owner_tracker_mentioned "$tracker" "$comment_id" "$owner_id" 2>"$work/tracker-mention.err" || mentioned=$?
+      case "$mentioned" in
+        0) OWNER_TRACKER_POSTED=1; OWNER_TRACKER_COMMENT="$comment_id"; return 0 ;;
+        1) OWNER_TRACKER_CAUSE=mention; comment_error="" ;;
+        *) OWNER_TRACKER_CAUSE=mention-read; comment_error="$work/tracker-mention.err" ;;
+      esac
+    else
+      comment_id=""
+      comment_error="$work/tracker.out"
+    fi
+  fi
+  owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
+  # An unposted ask leaves no question comment: the chat carries it, and no
+  # reader follows a reply to a comment the ask does not record.
+  # `comments delete` exits 0 on a refused delete too, so its answer is judged
+  # as the create's is.
+  if [[ -n "$comment_id" ]]; then
+    if "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err"; then
+      jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 ||
+        owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.out"
+    else
+      owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
+    fi
+  fi
+  return 1
+}
+
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue current owner description latest owns_description original_description
-  local comment_error comment_id workspace mentioned ask_id comment_issue question comment_file form asks described=0
+  local workspace ask_id comment_issue question form asks
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
   OWNER_TRACKER_LINED=1
@@ -473,70 +535,23 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     "", "Requested by " + $asker' \
       <<<"$envelope" >"$work/tracker-comment-$form" || return 1
   done
-  comment_file="$work/tracker-comment-lined"
   # This ask stands from here: the item takes the owner label and assignee
   # before the question posts, so it is in the owner's view by the time the
   # mention reaches them.
   asks="$(jq -cn --arg id "$ask_id" --arg question "$question" --arg label "$OWNER_TRACKER_LABEL" \
     '[{id: $id, state: "open", tracker_comment: $question, tracker_label: $label}]')" || return 1
+  OWNER_TRACKER_DESCRIBED=0
   if ! owner_tracker_gate none "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" "$current"; then
     OWNER_TRACKER_CAUSE="$OWNER_TRACKER_GATE_CAUSE"
     owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"
-  else
-    # The Linear package refuses, before any write, a description write to
-    # an item Linear's GitHub sync links (issues.sh
-    # require_unsynced_description), so there the item carries no action line.
-    if "$tracker" issues update "$issue" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err"; then
-      described=1
-    elif grep -q '^linear: refused=synced-description ' "$work/tracker.err"; then
-      OWNER_TRACKER_LINED=0
-      comment_file="$work/tracker-comment-unlined"
-    else
-      OWNER_TRACKER_CAUSE=description
-    fi
-    if [[ "$OWNER_TRACKER_CAUSE" == description ]]; then
-      owner_tracker_unwritten "$issue" description "$work/tracker.err"
-    else
-      OWNER_TRACKER_CAUSE=comment
-      comment_error="$work/tracker-comment.err"
-      comment_id=""
-      # No attribution line, so the comment opens with the owner's mention.
-      if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$comment_file" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
-        if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
-          # The ask is posted only once the saved comment shows the mention
-          # that tells the owner it is there.
-          mentioned=0
-          owner_tracker_mentioned "$tracker" "$comment_id" "$(jq -r '.id' <<<"$owner")" \
-            2>"$work/tracker-mention.err" || mentioned=$?
-          case "$mentioned" in
-            0) OWNER_TRACKER_POSTED=1; OWNER_TRACKER_COMMENT="$comment_id"; return 0 ;;
-            1) OWNER_TRACKER_CAUSE=mention; comment_error="" ;;
-            *) OWNER_TRACKER_CAUSE=mention-read; comment_error="$work/tracker-mention.err" ;;
-          esac
-        else
-          comment_id=""
-          comment_error="$work/tracker.out"
-        fi
-      fi
-      owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
-      # An unposted ask leaves no question comment: the chat carries it, and
-      # no reader follows a reply to a comment the ask does not record.
-      # `comments delete` exits 0 on a refused delete too, so its answer is
-      # judged as the create's is.
-      if [[ -n "$comment_id" ]]; then
-        if "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err"; then
-          jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 ||
-            owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.out"
-        else
-          owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
-        fi
-      fi
-    fi
+  elif owner_tracker_post "$tracker" "$work" "$issue" "$comment_issue" "$ask_id" "$description" \
+       "$(jq -r '.id' <<<"$owner")"; then
+    return 0
   fi
   # The rollback. The description is restored only while the fresh read
   # still holds this ask's exact write. Whatever that finds, the pair is
   # taken again from the asks left on the item, this one withdrawn.
-  if [[ "$described" -eq 1 ]]; then
+  if [[ "$OWNER_TRACKER_DESCRIBED" -eq 1 ]]; then
     if ! latest="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker-rollback.err")" ||
        ! owns_description="$(jq -r --arg written "$description" '(.description // "") == $written' \
          <<<"$latest" 2>"$work/tracker-rollback.err")"; then

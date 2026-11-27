@@ -1030,24 +1030,20 @@ impl Mailbox {
 
     /// `owner-gate --item overseer --id ASK` at the main checkout `root`:
     /// the owner label and assignee on the closed `ask`'s item, set by the
-    /// mailbox's one rule for them from the item's open owner asks, `open`
-    /// and `closed` naming the asks the caller judged to be this mailbox's
-    /// on that item. Answers whether another mailbox's question stands
-    /// there. A refusal keeps the tracker's stderr, where a quota receipt
-    /// reads.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the program's inputs as its help names them, each passed once"
-    )]
+    /// mailbox's one rule for them from the item's open owner asks. The
+    /// asks are `(open, closed, named)`: the open and closed ones the caller
+    /// judged to be this mailbox's on that item, and the closed ones
+    /// recorded under another item whose comment id can still name a
+    /// question there. The owner account is `(email, label)`. Answers
+    /// whether another mailbox's question stands there. A refusal keeps the
+    /// tracker's stderr, where a quota receipt reads.
     pub fn owner_gate(
         &self,
         root: &Path,
         tracker: &Path,
-        email: &str,
-        label: &str,
+        (email, label): (&str, &str),
         ask: &str,
-        open: &[&str],
-        closed: &[&str],
+        (open, closed, named): (&[&str], &[&str], &[&str]),
     ) -> Result<bool, Refusal> {
         const VERB: &str = "owner-gate";
         let root_text = root.display().to_string();
@@ -1057,6 +1053,9 @@ impl Mailbox {
         }
         for id in closed {
             args.extend(["--closed-ask", id]);
+        }
+        for id in named {
+            args.extend(["--named-ask", id]);
         }
         let env = [
             ("OVERSEE_WATCH_TRACKER", tracker.as_os_str()),

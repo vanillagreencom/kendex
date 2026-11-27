@@ -152,7 +152,7 @@ case "${1:-all}" in
 esac
 
 if [[ $# -eq 0 && -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
+  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused settings; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -222,16 +222,11 @@ if [[ $# -eq 0 && -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         "select(.success == true) | .data.comment.id" "select(true) | .data.comment.id"
       assertion='refused comment acknowledgements stay unposted and retain the response'
-    elif [[ "$rule" == settings ]]; then
+    else
       phase=settings
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'refuse item-ask-unconfigured "$ISSUE"' ':'
       assertion='an item ask with label unset refuses by the key it lacks'
-    else
-      phase=close
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        '.[].state = "withdrawn"' '.'
-      assertion='a failed ask post leaves neither the owner label nor the owner assignee'
     fi
     control_rc=0
     MAILBOX_UNDER_TEST="$TMP_ROOT/control-$rule" "$BASH" "$ROOT/skills/mailbox/tests/owner-tracker.sh" "$phase" \

@@ -2002,22 +2002,31 @@ fn clear_owner_item(
     .issue;
     let remaining: Vec<&Envelope> = open.iter().filter(|a| a.on_item_of(ask)).copied().collect();
     let open_ids: Vec<&str> = remaining.iter().map(|a| a.id()).collect();
-    // A legacy close names a question by its comment id, which is the
-    // item's own, or by the ask ids the question lists, which hold only on
-    // the same item.
-    let closed_ids: Vec<&str> = legacy_closes
+    // A legacy close names a question by the ask ids the question lists,
+    // which hold only on the same item, or by its comment id, which names
+    // the comment wherever the close was recorded. Only a close on this
+    // item owns a label here.
+    let legacy: Vec<&Envelope> = legacy_closes
         .iter()
-        .filter(|a| a.id() != ask.id() && (a.tracker_comment.is_some() || a.on_item_of(ask)))
+        .copied()
+        .filter(|a| a.id() != ask.id())
+        .collect();
+    let closed_ids: Vec<&str> = legacy
+        .iter()
+        .filter(|a| a.on_item_of(ask))
+        .map(|a| a.id())
+        .collect();
+    let named_ids: Vec<&str> = legacy
+        .iter()
+        .filter(|a| !a.on_item_of(ask) && a.tracker_comment.is_some())
         .map(|a| a.id())
         .collect();
     let held = match mailbox.owner_gate(
         root,
         linear.cli,
-        &configured.email,
-        &configured.label,
+        (&configured.email, &configured.label),
         ask.id(),
-        &open_ids,
-        &closed_ids,
+        (&open_ids, &closed_ids, &named_ids),
     ) {
         Ok(held) => held,
         Err(refusal) => {
@@ -2026,16 +2035,7 @@ fn clear_owner_item(
             {
                 return Ok(Answered::Quota(quota));
             }
-            let cause = match &refusal {
-                crate::mailbox::Refusal::Exit {
-                    keyed: Some(keyed), ..
-                } => keyed.clone(),
-                _ => refusal.to_string(),
-            };
-            return Err(refused(
-                "owner-gate-unwritten",
-                &[("issue", issue), ("cause", &cause)],
-            ));
+            return Err(refused("owner-gate-unwritten", &[("issue", issue)]));
         }
     };
     let name = item.assignee.map(|a| a.name).unwrap_or_default();
