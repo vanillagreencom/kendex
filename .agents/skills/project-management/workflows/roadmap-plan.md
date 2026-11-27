@@ -26,6 +26,8 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
    - § 2 runs in slicing mode.
    - The § 5 report presents the derived issues against it.
    - The spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue, unconditionally. The § 6 research question offers the reference to pre-existing issues only.
+   - Read from the spec `REMOVED_TERMS[]`, each route, file, rule or mechanism it removes or replaces, with its replacement.
+   - Read from the spec `TEAMS[]`, the tracker teams it names. Null when it names none.
    - The spec skips no approval and no creation gate.
 
 4. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
@@ -125,7 +127,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 ## 3. TPM Analysis
 
-1. Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `research_read_path` from `RESEARCH_READ_PATH`, `research_source_issue` from `SOURCE_ISSUE`, `origin_issue`, `planner_handoff`, and `spec_path`.
+1. Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `research_read_path` from `RESEARCH_READ_PATH`, `research_source_issue` from `SOURCE_ISSUE`, `origin_issue`, `planner_handoff`, `spec_path`, `removed_terms` from `REMOVED_TERMS[]` and `teams` from `TEAMS[]`.
    - Each is null when absent.
    - `spec_path` is set exactly when the artifact in hand, the `@[path]` input or the § 1 disk match, classified as a SPEC.
 2. Delegate to a one-shot `[TPM]` sub-agent.
@@ -140,7 +142,7 @@ Worktree: [WORKTREE_PATH]
 </delegation_format>
 
 1. Materialize the returned artifact the same way as audit-issues § 4.2.
-2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
+2. Read `hierarchy_recommendation`, `cross_project_findings`, `removal_review[]`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
 
 ---
 
@@ -200,6 +202,9 @@ Report as JSON:
 - Render `skip` entries (TPM duplicates, creation-bar failures, user removals) under DECLINED.
 - Render `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer`.
 - Render every `cross_project_findings.conflicts[]` entry in the Conflicts table.
+- Render each `removal_review[]` team as one OPEN ITEMS CHECKED row, and each of its `cancel` and `rewrite` items under EXISTING WORK AFFECTED. Its `keep` items stay in the plan JSON.
+- A removal item whose row a `cross_project_findings` cancel, supersede or expand also names takes that action's row, with both reasons folded into one Why, so that issue renders once under EXISTING WORK AFFECTED.
+- A row a descope finding names keeps its removal action as its own EXISTING WORK AFFECTED row.
 
 <output_format>
 
@@ -223,12 +228,17 @@ Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGI
 
 | Issue | Action | Why |
 |-------|--------|-----|
-| [ISSUE_ID] | cancel \| expand \| descope | [REASON] |
+| [ISSUE_ID] | cancel \| expand \| descope \| rewrite | [REASON] |
 
 **Conflicts** ([N])
 
 | # | New issue | Conflicts with | Resolution |
 |---|-----------|----------------|------------|
+
+### OPEN ITEMS CHECKED (omit when `removal_review[]` is empty)
+
+| Team | Checked | Cancel | Rewrite | Keep |
+|------|---------|--------|---------|------|
 
 ### ARCHITECTURE GAPS
 

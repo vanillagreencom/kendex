@@ -11,7 +11,7 @@ Analyze proposed issues for cross-project conflicts, architecture coverage, and 
 
 ## Input
 
-`--input [file_path]` per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Extract `FEATURE`, `RESEARCH_PATH`, `RESEARCH_READ_PATH`, `RESEARCH_SOURCE_ISSUE`, `SPEC_PATH`, `ORIGIN_ISSUE`, `PLANNER_HANDOFF`, `PROPOSED_ISSUES[]`.
+`--input [file_path]` per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Extract `FEATURE`, `RESEARCH_PATH`, `RESEARCH_READ_PATH`, `RESEARCH_SOURCE_ISSUE`, `SPEC_PATH`, `ORIGIN_ISSUE`, `PLANNER_HANDOFF`, `REMOVED_TERMS[]`, `TEAMS[]`, `PROPOSED_ISSUES[]`.
 
 **Spec mode** (`SPEC_PATH` set): the plan's decisions are binding.
 
@@ -33,9 +33,10 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision.
 
 ### 1.1 Team Scope
 
-1. Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read.
+1. Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. That one team is the scope of § 1.4 placement and the § 2 comparison, and roadmap-create files into it.
 2. Pass `--team` on every comparison `issues list` to filter on the server.
 3. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison.
+4. The removal scope starts as `TEAM`. When `REMOVED_TERMS[]` is nonempty, resolve each `TEAMS` entry with `.agents/skills/linear/scripts/linear.sh teams get [ENTRY]` first, and halt when one resolves none. Add its `name` and `key` only when that `key` differs from `TEAM_PREFIX` and from every key already in the removal scope. Only § 2.1 reads an added team's rows.
 
 - § 2 proposes changes only to active rows. Closed rows remain historical comparison evidence per tpm-audit § 1.1.
 - roadmap-create executes the recommendations.
@@ -79,13 +80,13 @@ Store `id`, `name`, `state`, `description`, `content` per project.
 
 ### 1.5 Issues
 
-Fetch active comparison rows in one command; never loop `--project` per project:
+Fetch each removal-scope team's active rows in one command; never loop `--project` per project:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Triage,Backlog,Todo,In Progress,In Review,Verifying" --max
 ```
 
-Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for comparison, for the in-scope rows alone.
+Store `id`, `title`, `description`, `project`, `state`, `agent`, `labels[]`, `blocked_by[]`, `blocks[]` for each row whose `id` starts with its team's key and `-`. `TEAM`'s rows are the active comparison set.
 
 For each proposed issue, read closed comparison evidence with its title, target, or component terms:
 
@@ -102,7 +103,7 @@ Use the comparison and truncation rules in [tpm-audit](tpm-audit.md) § 1.5: no 
 Before § 2:
 
 1. Select candidate duplicate, relation, and supersession rows from the fetched bodies.
-2. Select active cancellation candidates.
+2. Select active cancellation candidates, and the active rows whose bodies name a `REMOVED_TERMS[]` term.
 3. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation.
    - When that set is empty, because § 1.3 was skipped and no row is a candidate, make no call, per the same section.
    - Do not read every comparison row's comments.
@@ -147,6 +148,24 @@ Then place the roadmap:
 - Retain each proposal's comparison result and actual title, target and component terms for its `organized_issues[].supersession` record, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues defines.
 - Use the rows and searches already read in § 1.5.
 - Write no tracker disposition here.
+
+### 2.1 Removal Review
+
+**Skip if** `REMOVED_TERMS[]` is null or empty.
+
+Review every active row of every removal-scope team from § 1.5 against `REMOVED_TERMS[]`. A row rests on a term when its title, its description or the comments § 1.5 read name the term, or its work needs the removed thing to exist. Give each row one action:
+
+- `cancel`: its whole need rests on a removed term, or the term's replacement covers it.
+- `rewrite`: its need stands, but its text or approach rests on a removed or replaced term. The reason names the `replaced_by` it is rewritten against.
+- `keep`: it rests on no removed term. The reason says why.
+
+Where a § 2 `cross_project_findings` action already names the row, its action here follows that action, and its reason names that finding:
+
+- A cancel or supersede gives `cancel`.
+- An expand gives `rewrite`.
+- A descoped proposal leaves the row to the term test above.
+
+Store each team's rows in `removal_review[]` per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § removal_review. Its `checked` count is that team's § 1.5 active row count. Write no tracker disposition here.
 
 ---
 

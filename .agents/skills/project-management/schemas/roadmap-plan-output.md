@@ -12,6 +12,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
     "rationale": "All proposed issues decompose the origin issue's scope"
   },
   "cross_project_findings": {"duplicates": [], "conflicts": []},
+  "removal_review": [],
   "project_placement": {
     "recommendation": "new",
     "project_name": "Phase 3: API Layer",
@@ -80,6 +81,25 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 `recommendation` is `skip`, `expand`, `descope`, or `cancel`.
 
 `conflict_type`: `breaks_existing`, `concurrent_work`, or `incompatible_approach`.
+
+## removal_review
+
+Written by [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 2.1: one entry per removal-scope team (§ 1.1), and one item per active row of that team. Empty when the input named no removed term.
+
+```json
+{"team": "[TEAM_KEY]", "checked": 2, "items": [
+  {"id": "[ISSUE_ID]", "title": "File a design's items one at a time", "action": "cancel",
+   "terms": ["plan-issues for an accepted design"], "reason": "Its whole need rests on the removed route; roadmap plan replaces it"},
+  {"id": "[ISSUE_ID]", "title": "Add a label to the release workflow", "action": "keep",
+   "terms": [], "reason": "Names no removed term and needs none"}
+]}
+```
+
+- `checked` equals the length of `items`.
+- `action` is `cancel`, `rewrite`, or `keep`.
+- `terms` lists the `removed_terms[].term` values the row rests on, and is empty for `keep`.
+- `reason` is required on every item. A `rewrite` reason names the replacement the row is rewritten against.
+- Closed rows take no entry.
 
 ## project_placement
 

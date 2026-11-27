@@ -2,6 +2,8 @@
 
 Turn a Markdown plan into Linear or GitHub issues. This workflow creates no worktree and launches no session.
 
+A design the owner accepted, tracked in Linear where the project-management skill is installed, is not this workflow's input: [skill-rules.md § Delegation](../references/skill-rules.md#delegation) routes it to `roadmap plan`. This workflow files a design tracked in GitHub, or one in a checkout without project-management.
+
 | Input | Meaning |
 |-------|---------|
 | `plan_path` | The Markdown plan file |

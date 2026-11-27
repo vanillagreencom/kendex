@@ -45,6 +45,7 @@ The paths:
 - **tpm-roadmap-plan.** Resolves the scope, in § 1.1.
   - § 1.4 projects are filtered to it.
   - § 1.5 active/closed issue lists pass `--team`.
+  - With removed terms, § 1.1 resolves each `teams[]` entry with `teams get`, and § 1.5 also reads the active rows of each whose key is not `TEAM_PREFIX` and not already read, one `--team` read per team, for § 2.1 alone.
   - § 1.5 comments cover inputs and candidates.
 - **tpm-cycle-plan.** **Does not** resolve the scope, and **does not** filter.
   - § 1 picks the active project from `session-status`'s workspace-wide started projects.
@@ -55,9 +56,11 @@ The paths:
 - **audit-issues § 1.2.1, § 3.** **Does not** resolve the scope, and **does not** filter.
   - `session-status` selects projects workspace-wide.
   - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
-- **cycle-plan, roadmap-plan, roadmap-create.** **Do not** resolve the scope, and **do not** filter.
+- **cycle-plan, roadmap-plan.** **Do not** resolve the scope, and **do not** filter.
   - Project, initiative, and label reads span the workspace.
-  - roadmap-create's map read is scoped to the team it creates in.
+- **roadmap-create.** Resolves the scope in § 2, per tpm-audit § 1.1.1, only to split its actions by team. **Does not** filter.
+  - Project, initiative, and label reads span the workspace.
+  - The § 1 map read is scoped to the team it creates in.
 - **research-spike.** **Does not** resolve the scope, and **does not** filter.
   - Project and label reads span the workspace.
   - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).

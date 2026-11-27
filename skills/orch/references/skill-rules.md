@@ -18,6 +18,8 @@ When the caller asks for a technical implementation plan:
 - Pass any TPM handoff through the caller.
 - The project-management `roadmap plan` command consumes a finished plan and launches no planner.
 
+When the owner accepts a design tracked in Linear, where the project-management skill is installed, make its items with `roadmap plan [feature] @[design-path]`, then the `roadmap create` command it returns once the plan is approved, never one filing per item. That run also reviews the open items of each team the design names against what the design removes or replaces. A design tracked in GitHub, or one in a checkout without project-management, takes [plan-issues](../workflows/plan-issues.md).
+
 ### Claude Code reviewer names
 
 Omit `name` from a reviewer's `Agent` call, or start the name with the reviewer's canonical agent name, such as `reviewer-correctness`. Claude Code reports the spawn name as `agent_type`. The `reviewer-read-only` hook protects only an `agent_type` that starts with `reviewer-`. A nickname such as `rr-correctness` runs unprotected.

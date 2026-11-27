@@ -16,7 +16,7 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
    - A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`.
    - With no source issue, a local plan still loads as before.
 
-From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
+From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `removal_review[]`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
 
 For a cited research/spec input:
 
@@ -44,7 +44,17 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 ## 2. Resolve Existing Work
 
-**Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries.
+**Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries, and `removal_review[]` has no `cancel` or `rewrite` item.
+
+- Each `removal_review[]` `cancel` or `rewrite` item is an action here. `keep` items take none.
+- A removal item whose row a `cross_project_findings` cancel, supersede or expand also names executes once, as that action, with both reasons in its comment.
+- A row a descope finding names keeps its removal action as its own action, and executes as that action.
+
+Before any write in this section, split the actions by issue team:
+
+1. Resolve the key of the team this run creates in as [tpm-audit](tpm-audit.md) § 1.1.1 does, and halt when none resolves.
+2. An issue whose `removal_review[]` entry's `team`, or whose id prefix, is not that key belongs to another team.
+3. Execute only own-team actions here. Attempt no write on another team's issue.
 
 - Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking, only under the same provenance as `approved_at_plan_gate`: this wrapper collected that answer in this session on this identical presented set.
 - A plan loaded in a later session, or edited since, presents every action.
@@ -56,7 +66,7 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 | # | Issue | Action | Why |
 |---|-------|--------|-----|
-| 1 | [ISSUE_ID] | cancel \| expand \| descope | [REASON] |
+| 1 | [ISSUE_ID] | cancel \| expand \| descope \| rewrite | [REASON] |
 
 **Conflicts** ([N])
 
@@ -66,7 +76,13 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 - `Review each` asks per action (`Execute` | `Skip` | `Modify` with free text).
 - Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb), with the plan's reason named in the comment.
-- Execute modifications per § Descriptions.
+- Execute modifications and rewrites per § Descriptions. A rewrite builds the row's text on the replacement its reason names.
+
+Send another team's action only once it is approved: carried as presented under the provenance rule above, under `Execute all`, or under `Review each` `Execute` or `Modify`, which sends the modified action. `Skip` sends nothing.
+
+1. Send it, with the plan's reason, by `lane-mail peer send --repo [REPO] --file [PATH]` per [orch references/peer-mail.md § Addressing](../../orch/references/peer-mail.md#addressing). `[REPO]` is the checkout whose `LINEAR_TEAM` names that team.
+2. Where this session knows no such checkout, or that repository runs no live overseer, send it to the live registered Jarvis session, else the owner, as that section's step 2 says.
+3. List each sent action in the § 5 report as routed.
 
 For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
 
@@ -267,6 +283,8 @@ This section is the run's one publisher under [publish-artifacts.md](publish-art
 |--------|-------|
 | Issues created | N |
 | Existing issues cancelled | M |
+| Existing issues rewritten | W |
+| Actions routed to another team | T |
 | Bundles | B |
 | Relations added | R |
 

@@ -22,6 +22,10 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
     "recommended_phases": ["Phase 1", "Phase 2"],
     "tpm_questions": ["Should this become a roadmap or child issues under PROJ-136?"]
   },
+  "removed_terms": [
+    {"kind": "route", "term": "plan-issues for an accepted design", "replaced_by": "roadmap plan"}
+  ],
+  "teams": ["PROJ", "OPS"],
   "proposed_issues": [
     {
       "title": "Add dispose safety seam",
@@ -47,6 +51,8 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 | `spec_path` | No | Reference of a finished, reviewed plan |
 | `origin_issue` | No | The issue that triggered this roadmap |
 | `planner_handoff` | No | Technical context from a scout → planner chain |
+| `removed_terms[]` | No | What the spec removes or replaces |
+| `teams[]` | No | The tracker teams the spec names, by key or name |
 | `proposed_issues[]` | Yes | Issues collected from the specialist agents |
 
 - `research_path`: null when research was skipped. When the input is a SPEC this is the spec reference.
@@ -59,6 +65,16 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 - `planner_handoff`:
   - Informs placement, grouping, and ordering.
   - Bypasses no gate, approval, or creation step.
+- `removed_terms[]`:
+  - Each entry is one route, file, rule or mechanism the spec removes or replaces.
+  - `kind` is `route`, `file`, `rule` or `mechanism`.
+  - `term` names it as an open item would.
+  - `replaced_by` names its replacement, or is null for a removal.
+  - The list is empty when the spec removes and replaces nothing, and null when no spec was read.
+- `teams[]`:
+  - Widens only the TPM's removal review: with `removed_terms[]` nonempty, it reads every open item of each listed team beside the one team tpm-audit § 1.1.1 resolves (tpm-roadmap-plan § 1.1).
+  - That resolved team stays the scope of placement and comparison.
+  - Null when no spec was read or the spec names no team.
 
 ### Proposed Issue Fields
 
