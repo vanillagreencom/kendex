@@ -1317,7 +1317,12 @@ linear_guard_create_team() {
 }
 
 # Resolve project name or UUID to UUID
-# Usage: resolve_project_id "Project name" [team-uuid] or resolve_project_id "uuid-here"
+# Usage: resolve_project_id "Project name" [team-uuid [place]] or resolve_project_id "uuid-here"
+#
+# With `place`, the use of an issue write, the matched projects are first
+# narrowed to those that take issues (project_takes_issues), the ones
+# `projects audit` lists for filing, so a completed namesake neither wins nor
+# makes the live one ambiguous; the pick below then runs unchanged.
 #
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
@@ -1325,7 +1330,7 @@ linear_guard_create_team() {
 # issue nobody could find. PROJECT_PICK_JQ (lib/formatters.sh) states the rule
 # that settles it and every other spelling of the lookup.
 resolve_project_id() {
-    local project_ref="$1" team_id="${2:-}"
+    local project_ref="$1" team_id="${2:-}" use="${3:-read}"
 
     # Check if it's already a UUID
     if [[ "$project_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
@@ -1350,6 +1355,9 @@ resolve_project_id() {
         jq -nc --arg name "$project_ref" \
             '{error: ("Could not resolve project \"" + $name + "\": Linear API request failed (see previous error)")}' >&2
         return 1
+    fi
+    if [[ "$use" == place ]]; then
+        result=$(jq -c "$LINEAR_PROJECT_OPEN_JQ"'.projects.nodes |= [.[]? | select(project_takes_issues)]' <<<"$result") || return 1
     fi
 
     # Linear permits multiple live projects with one name in the same team.
@@ -1905,119 +1913,42 @@ linear_require_declared_labels() {
     return 1
 }
 
-# Project map
+# Project admission
 # -----------------------------------------------------------------------------
-# A repository declares which projects its issues may live in once: the first
-# ```json block under `### Project map` in the same project instructions as the
-# label taxonomy, read by linear_declared_block from the same renders. The
-# project-management skill's references/project-map.md states the format and
-# what each field means. With no such heading the repository declares no map,
-# and no rule below applies.
+# Each Linear project states what it admits in the leading lines of its
+# content, the project's long Markdown body. `projects audit` reads them live
+# from Linear; no repository file holds a copy, so a project created in Linear
+# takes issues at once. The Admission lines section of the project-management
+# skill's references/project-map.md states the form.
 
 # The comparison form of a project, initiative or label name: lowercase, with
-# every character but a-z and 0-9 dropped. The map's uniqueness rule and
-# `projects audit`'s name collisions read names through this one definition.
+# every character but a-z and 0-9 dropped. `projects audit`'s name collisions
+# read names through this one definition.
 LINEAR_NAME_KEY_JQ='def name_key: ascii_downcase | gsub("[^a-z0-9]"; "");'
 
-# Every project map refusal: the keyed first line, then the JSON error. A
-# refusal naming the legal projects takes them as a JSON array in OTHER.
-linear_project_message() {
-    local key="$1" value="$2" other="${3:-}"
-    case "$key" in
-    unreadable)
-        printf 'linear-projects: map-unreadable map=%s\n' "$value"
-        jq -cn --arg file "$value" \
-            '{error: ("The repository declares a project map in " + $file + " but its ### Project map section holds no readable JSON contract (project-management references/project-map.md § Declaration), so no project can be judged. Fix the manifest [skill-instructions].project-management and render it.")}'
-        ;;
-    renders-differ)
-        printf 'linear-projects: map-unreadable map=%s differs=%s\n' "$value" "$other"
-        jq -cn --arg file "$value" --arg other "$other" \
-            '{error: ("The project-management renders " + $file + " and " + $other + " carry different ### Project map sections, so no project can be judged: one is a stale render. Render the manifest [skill-instructions].project-management again (kendex refresh) so every render carries one map.")}'
-        ;;
-    declared-missing)
-        printf 'linear-projects: declared-missing project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
-        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
-            '{error: ("The project map in " + $file + " declares project " + ($project | tojson) + " but this team has no live Linear project of that name. Create the project or correct the map, then retry.")}'
-        ;;
-    ambiguous)
-        printf 'linear-projects: ambiguous project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
-        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" \
-            '{error: ("The project map in " + $file + " declares project " + ($project | tojson) + " and this team has more than one live Linear project of that name, so the map cannot say which one it means. Rename or cancel the extra project, then retry.")}'
-        ;;
-    project-missing)
-        printf 'linear-projects: project-missing map=%s\n' "$LINEAR_TAXONOMY_FILE"
-        jq -cn --arg file "$LINEAR_TAXONOMY_FILE" --argjson projects "$other" \
-            '{projects: $projects, error: ("This repository declares a project map in " + $file + ", so every create names its project: pass --project with the map project the item belongs in (project-management references/project-map.md § Routing), or hold the item as project_needed.")}'
-        ;;
-    off-map)
-        printf 'linear-projects: off-map project=%s map=%s\n' "$value" "$LINEAR_TAXONOMY_FILE"
-        jq -cn --arg project "$value" --arg file "$LINEAR_TAXONOMY_FILE" --argjson projects "$other" \
-            '{projects: $projects, error: ("Refusing project " + ($project | tojson) + ": the project map in " + $file + " does not list it. Use a map project (project-management references/project-map.md § Routing), or hold the item as project_needed until the map lists the project it needs.")}'
-        ;;
-    no-team)
-        printf 'linear-projects: no-team\n'
-        jq -cn '{error: "projects audit reads the open issues of one team: set LINEAR_TEAM in kendex.settings.toml [env] or pass --team <key-or-name>."}'
-        ;;
-    *)
-        printf 'linear-projects: unknown-message key=%s\n' "$key"
-        return 1
-        ;;
-    esac
-}
+# A project that takes issues: every state but completed and canceled. The
+# audit lists these for filing, and an issue write resolves a name among them.
+LINEAR_PROJECT_OPEN_JQ='def project_takes_issues: (.state // "" | ascii_downcase) | IN("completed", "canceled") | not;'
 
-# Print the declared project map as {initiatives, projects}, or nothing when
-# the repository declares none. A declared map this cannot read refuses, as an
-# unreadable taxonomy does.
-linear_project_map() {
-    linear_declared_block "### Project map" linear_project_message "$LINEAR_NAME_KEY_JQ"'
-        def text: type == "string" and length > 0;
-        select(type == "object"
-            and (.projects | type == "array" and length > 0)
-            and ((.initiatives // []) | type == "array"))
-        | {initiatives: (.initiatives // []), projects}
-        | select(all(.initiatives[]; type == "object" and (.name | text) and (.outcome | text)
-                and (.projects | type == "array" and all(.[]; text))))
-        | select(all(.projects[]; type == "object" and (.name | text) and (.admits | text)
-                and ((.kind == "deliverable" and (has("role") | not)
-                        and ((has("ends_when") | not) or (.ends_when | text))
-                        and ((has("initiative") | not) or (.initiative | text)))
-                    or (.kind == "standing" and (.role | IN("area", "concern"))
-                        and (has("ends_when") | not) and (has("initiative") | not)))))
-        | . as $map
-        | select(all($map.projects[] | select(has("initiative"));
-                .name as $p | .initiative as $i
-                | any($map.initiatives[]; .name == $i and any(.projects[]; . == $p))))
-        | select(all($map.initiatives[]; .name as $i
-                | all(.projects[]; . as $p
-                    | any($map.projects[]; .name == $p and .initiative == $i))))
-        | select([.projects[].name, .initiatives[].name] | map(name_key) | length == (unique | length))'
-}
-
-# Read each map project's Linear project, every page, as one array in map
-# order: {name, id, state, target_date, live}. `live` counts the live projects
-# of that name, so 0 with an id is a canceled-only project and 0 without one
-# is none. TEAM_ID scopes the read to the team's projects; empty reads the
-# workspace. PROJECT_PICK_JQ (lib/formatters.sh) picks the node, the rule
-# resolve_project_id reads.
-# Usage: linear_map_projects MAP [TEAM_ID]
-linear_map_projects() {
-    local map="$1" team_id="${2:-}" query variables result
-    query='query ProjectMap($names: [String!], $after: String) { projects(filter: {name: {in: $names}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name state targetDate } } }'
-    variables=$(jq -c '{names: [.projects[].name]}' <<<"$map") || return 1
-    if [[ -n "$team_id" ]]; then
-        query='query ProjectMap($names: [String!], $teamId: ID!, $after: String) { projects(filter: {name: {in: $names}, accessibleTeams: {some: {id: {eq: $teamId}}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name state targetDate } } }'
-        variables=$(jq -c --arg teamId "$team_id" '. + {teamId: $teamId}' <<<"$variables") || return 1
-    fi
-    result=$(graphql_pages "$query" "$variables" projects) || return 1
-    jq -c --argjson map "$map" "$PROJECT_PICK_JQ"'
-        (.projects.nodes // []) as $nodes
-        | [$map.projects[] | .name as $n
-            | [$nodes[] | select(.name == $n)] as $named
-            | (($named | live_project_pick($n)) // $named[0] // {}) as $pick
-            | {name: $n, id: ($pick.id // null), state: ($pick.state // null),
-               target_date: ($pick.targetDate // null),
-               live: ([$named[] | select(project_is_live)] | length)}]' <<<"$result"
-}
+# A project's content as {admits, kind, ends_when}, each null when absent.
+# The fields are the `Admits:`, `Kind:` and `Ends when:` lines that open the
+# content, blank lines between them allowed and a CRLF line end trimmed with
+# the other trailing space; the first other line ends the block, so prose
+# below that happens to start with a field name is not read.
+# A repeated field keeps its first value, and a Kind other than deliverable or
+# standing reads as absent.
+LINEAR_PROJECT_ADMISSION_JQ='def project_admission:
+    [(. // "") | split("\n")[] | gsub("^\\s+|\\s+$"; "")] as $lines
+    | ([range(0; $lines | length)
+        | select(($lines[.] | length) > 0 and ($lines[.] | test("^(Admits|Kind|Ends when):") | not))]
+        | first // ($lines | length)) as $end
+    | reduce ($lines[:$end][] | capture("^(?<key>Admits|Kind|Ends when):\\s*(?<value>.*)$")
+        | select(.value | length > 0)) as $field
+        ({}; if has($field.key) then . else .[$field.key] = $field.value end)
+    | {admits: (.Admits // null),
+       kind: ((.Kind // "" | ascii_downcase) as $kind
+           | if $kind == "deliverable" or $kind == "standing" then $kind else null end),
+       ends_when: (."Ends when" // null)};'
 
 # A milestone reference that is already a UUID, and so needs no project to
 # resolve it in. One statement of the rule: the pre-upload guard below and

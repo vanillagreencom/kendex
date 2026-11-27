@@ -43,14 +43,14 @@ Mode `team` uses this same shape with `project: null`: its input set is the whol
   "summary": {"total_issues": 0, "created": 0, "closed": 0, "relations_to_add": 0, "relations_to_remove": 0,
               "priority_misalignment": 0, "agent_mismatch": 0, "label_cooccurrence": 0, "duplicates": 0,
               "obsolete": 0, "hierarchy_changes": 0, "wrong_project": 0, "combinations": 0,
-              "ready_to_schedule": 0, "declined": 0, "project_needed": 0, "map_findings": 0,
+              "ready_to_schedule": 0, "declined": 0, "project_needed": 0, "project_findings": 0,
               "architecture_gaps": {"critical": 0, "required": 0, "research": 0},
               "project_recommendations": {"new_projects": 0, "reopen_projects": 0}},
   "findings": {"project_dependency_issues": [], "add_relations": [], "remove_relations": [],
                "priority_misalignment": [], "agent_mismatch": [], "label_cooccurrence": [],
                "duplicates": [], "obsolete": [], "wrong_project": [], "hierarchy": [], "combine": [],
                "ready_to_schedule": [], "architecture_gaps": [], "project_recommendations": [], "declined": [],
-               "project_needed": [], "map_findings": []},
+               "project_needed": [], "project_findings": []},
   "analysis": ["markdown notes"]
 }
 ```
@@ -70,17 +70,17 @@ Mode `team` uses this same shape with `project: null`: its input set is the whol
 | `ready_to_schedule[]` | `id`, `title`, `cleared_blockers[]`, `reason` |
 | `declined[]` | `title`, `reason` |
 | `project_dependency_issues[]` | `from_project`, `to_project`, `current_relation`, `should_be`, `reason` |
-| `project_needed[]` | `issue`\|`index`, `title`, `name`, `kind`, `initiative`, `ends_when`\|`role`, `reason` |
-| `map_findings[]` | A `projects audit` finding, as that command prints it |
+| `project_needed[]` | `issue`\|`index`, `title`, `name`, `kind`, `initiative`, `admits`, `ends_when`, `reason` |
+| `project_findings[]` | A `projects audit` finding, as that command prints it |
 
 - `agent_mismatch[]` implies `replace_category: agent`.
 - `label_cooccurrence[]` implies `add`.
 - `hierarchy[]`: `close_parent` names a non-terminal parent whose children are all Done or Canceled. A parent with an open child never takes it.
 - `declined[]`: `reason` is one line naming the creation-bar test it failed.
-- `project_needed[]` names the project an item needs when [project-map.md § Routing](../references/project-map.md#routing) routes it to none.
-- `map_findings[]` holds each finding that maps to no other array ([project-map.md § Audit](../references/project-map.md#audit)).
+- `project_needed[]` names the project an item needs when [project-map.md § Routing](../references/project-map.md#routing) routes it to `project_needed`. `ends_when` is null for a standing project.
+- `project_findings[]` holds each finding that maps to no other array ([project-map.md § Audit](../references/project-map.md#audit)).
 
-In a map repository, `wrong_project[].to` is a map project and `to_id` its id from `projects audit`'s `projects[]`; a `from` of null is an item with no project.
+`wrong_project[].to` is a project from `projects audit`'s `projects[]` and `to_id` its id; a `from` of null is an item with no project.
 
 **`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled.
 
@@ -202,7 +202,7 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 | `combine` | Absorb into an existing issue |
 | `cancel` | Cancel — obsolete |
 
-In a map repository a `create` whose item routes to no map project has `project.recommended: null` and a top-level `project_needed[]` row, in the PROJECT mode shape, keyed by its `index`; audit-issues holds that create.
+A `create` whose item routes to `project_needed` has `project.recommended: null` and a top-level `project_needed[]` row, in the PROJECT mode shape, keyed by its `index`; audit-issues holds that create.
 
 `approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6):
 
@@ -269,11 +269,11 @@ A `Post-merge:` box in `create_fields.description` follows [filing.md](../refere
 
 `recommended_order[]` is diagnostic: it records the § 11 step 3 ordering in full. The caller executes `reorder[]`, `complete_candidates[]`, and `recommended_next` — never this array.
 
-- `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`.
+- `ends_when_evidence` states what shows a deliverable's `ends_when` holds, and is null for a project whose `kind` is null.
 - `complete_candidates[]` and `complete_held[]` hold started projects with no open item left ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
-- `complete_held[]` lists each such map deliverable without that evidence, with the map's `ends_when` (null when the map states none). The caller reports it and never completes it ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
+- `complete_held[]` lists each such deliverable without that evidence, with its `ends_when` (null when its content states none). The caller reports it and never completes it ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
 
 `recommended_next.blocked_by_active` is the started project that holds activation, the active project of [project-map.md § Project kinds](../references/project-map.md#project-kinds) that this run does not complete, and null when none does.
 
-- A standing map project is never in it.
+- A standing project is never in it.
 - The caller activates `recommended_next` only when this field is null.

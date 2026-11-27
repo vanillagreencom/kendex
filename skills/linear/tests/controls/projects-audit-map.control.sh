@@ -1,8 +1,32 @@
 # Stop at the first page of open issues.
-control_expect "outside-map: yields its findings"
+control_expect "no-project: yields its findings"
 control_replace scripts/commands/projects.sh 1 \
     "        issues=\$(graphql_pages 'query AuditMapIssues(\$teamId: ID!, \$after: String) { issues(filter: {team: {id: {eq: \$teamId}}, state: {type: {nin: [\"completed\", \"canceled\", \"duplicate\"]}}}, first: 100, after: \$after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \\" \
     "        issues=\$(graphql_query 'query AuditMapIssues(\$teamId: ID!, \$after: String) { issues(filter: {team: {id: {eq: \$teamId}}, state: {type: {nin: [\"completed\", \"canceled\", \"duplicate\"]}}}, first: 100, after: \$after) { pageInfo { hasNextPage endCursor } nodes { identifier project { id name state } } } }' \\"
+
+# An item in a project that admits nothing passes as admitted.
+control_expect "unadmitted: yields its findings"
+control_replace scripts/commands/projects.sh 1 \
+    '        | [$projects[] | select(.admits != null) | .id] as $admitting' \
+    '        | [$projects[] | .id] as $admitting'
+
+# The admission lines are not read from the project's content.
+control_expect "clean: lists each live project's admission lines"
+control_replace scripts/commands/projects.sh 1 \
+    '            | {name, id, state, target_date: .targetDate} + (.content | project_admission)] as $projects' \
+    '            | {name, id, state, target_date: .targetDate} + (null | project_admission)] as $projects'
+
+# The block reads past the first prose line.
+control_expect "admits-after-prose: yields its findings"
+control_replace scripts/lib/common.sh 1 \
+    '        | first // ($lines | length)) as $end' \
+    '        | ($lines | length)) as $end'
+
+# A repeated line keeps its last value.
+control_expect "repeated-field: keeps each line's first value"
+control_replace scripts/lib/common.sh 1 \
+    '        ({}; if has($field.key) then . else .[$field.key] = $field.value end)' \
+    '        ({}; .[$field.key] = $field.value)'
 
 # Each inventory reader lists the team although given an inventory.
 control_expect "inventory: labels-audit lists no issues"

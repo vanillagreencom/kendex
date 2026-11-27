@@ -29,16 +29,13 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 - A legacy plan missing the record returns to roadmap planning.
 - Do not infer its searched terms or search again in this consumer.
 
-**Project map.**
+**Project placement.**
 
-1. Before § 2 writes anything, read the map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`.
+1. Before § 2 writes anything, read the team's projects: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`.
    - A non-zero exit halts with its error output.
-   - `map-absent` leaves § 3 as written.
-2. When `project_placement.project_name` is a map project, keep its `projects[].id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
-3. When a declared map does not list it:
-   1. Halt before any tracker write.
-   2. Report the project as `project_needed`, with the fields [project-map.md § Routing](../references/project-map.md#routing) names.
-   3. Run `roadmap create` again on the same plan once the map lists it.
+2. For `project_placement.recommendation` `existing`, `project_name` names exactly one `projects[]` entry and its `admits` is set. Keep its `id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
+3. For `new`, no `projects[]` entry has that name, and § 3 creates the project.
+4. Any other placement halts before any tracker write, naming the project and why: no entry or several, an `existing` one whose `admits` is null, or a `new` one already listed.
 
 ---
 
@@ -94,7 +91,7 @@ A resolution carried under the provenance rule above executes as presented.
 
 ### 3.1 Initiative
 
-**Skip if** § 1 kept a map project as `PROJECT_ID`.
+**Skip if** § 1 kept a listed project as `PROJECT_ID`.
 
 List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | `Create new initiative` | `No initiative`.
 
@@ -113,11 +110,12 @@ For a new initiative:
 
 ### 3.2 Project
 
-**Skip if** § 1 kept a map project as `PROJECT_ID`.
+**Skip if** § 1 kept a listed project as `PROJECT_ID`.
 
 1. Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs if § 3.1 did not collect them.
 2. Following that template, use the plan's project outcome for `[PROJECT_DESC]`.
 3. Following that template, use the plan's deliverables and acceptance for `[PROJECT_CONTENT]`.
+   - It opens with the project's admission lines ([project-map.md § Admission lines](../references/project-map.md#admission-lines)): `Admits:` from the plan's scope, `Kind: deliverable`, and `Ends when:` from its acceptance.
 4. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
 
 ```bash

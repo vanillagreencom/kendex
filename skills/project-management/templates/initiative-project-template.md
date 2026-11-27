@@ -14,12 +14,17 @@ Use this template when roadmap-create creates an initiative or project.
 
 `--content` is the markdown body.
 
-- Open with the quoted Story and quoted Why this matters blocks, separated by an unquoted blank line, as [issue-description-template.md](issue-description-template.md) § Field Mapping and § Rules describe them.
+- A project's content opens with its admission lines, before any other text ([project-map.md § Admission lines](../references/project-map.md#admission-lines)): `Admits:`, `Kind:`, and `Ends when:` for a deliverable. An initiative's content has none.
+- Then the quoted Story and quoted Why this matters blocks, separated by an unquoted blank line, as [issue-description-template.md](issue-description-template.md) § Field Mapping and § Rules describe them.
 - Then fill at most three short sections in plain words, in this order.
 - Omit a section with nothing to say.
 - Separate every section with blank lines.
 
 ```markdown
+Admits: [One sentence: which items belong in the project.]
+Kind: deliverable
+Ends when: [One sentence: the condition that completes it.]
+
 > **Story:** [Who this outcome is for.] [What they face today.] [What changes once it ships, and its consequence.]
 
 > **Why this matters:** [The cost today, and what the outcome buys.]

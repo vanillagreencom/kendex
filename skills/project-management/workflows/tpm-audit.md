@@ -228,15 +228,14 @@ The same stated cap applies: past 200 issues the comparison set is partial, and 
 
 **Skip if** TRACKER=github — treat the repository as one scope.
 
-Read the project map, kept for § 3 and § 6.3:
+Read the team's projects, kept for § 3 and § 6.3:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]" --inventory [INVENTORY_FILE]   # § 1.1.2
 ```
 
-- A map repository's project definitions are the entries of the `### Project map` block rendered in this skill's project instructions, each with its `kind`, `admits`, and `ends_when` or `role` ([project-map.md § Declaration](../references/project-map.md#declaration)).
-- Each entry's Linear id is the audit's `projects[].id`.
-- A run whose audit returns `map-absent` has no map. For each project from § 1.3, extract from name, description, and content its **purpose** (implementation, testing, refactoring, validation), the **work type** that belongs in it, and the **components** it owns.
+- Each project's definition is its `projects[]` entry: its Linear `id`, and the `kind`, `admits` and `ends_when` of the admission lines that open its content in Linear ([project-map.md § Admission lines](../references/project-map.md#admission-lines)).
+- A project whose `admits` is null admits nothing. § Routing places no item in it, and § 3 reports its `no-admits` finding.
 
 ### 1.7 Collect Verification Evidence
 
@@ -302,11 +301,7 @@ By mode:
 
 **Skip if** MODE = issues.
 
-1. Map every finding of the § 1.6 audit that this mode keeps, map or no map, to output per [project-map.md § Audit](../references/project-map.md#audit), with each `to` from [§ Routing](../references/project-map.md#routing).
-   - With no map that is the one `map-absent` finding, which goes to `map_findings[]`.
-2. With no map, also verify each issue matches the target project's definition from § 1.6. Wrong work type, wrong scope, or content contradicting the project's stated purpose all go to `wrong_project[]`.
-   - In team mode the target is the project named on the issue's own row.
-   - A row with project `""` gets a `wrong_project[]` entry with `from: null` recommending the project its scope fits, or an `analysis[]` note when nothing fits.
+Map every finding of the § 1.6 audit that this mode keeps to output per [project-map.md § Audit](../references/project-map.md#audit), with each `to` from [§ Routing](../references/project-map.md#routing).
 
 Then trace what depends on this project's output:
 
@@ -494,8 +489,7 @@ Compare each input issue against every project definition.
 - A scope matching another project better, or a child sitting in a different project from its parent, goes to `wrong_project[]`.
 - A dependency on work in another project is recorded as a relation, not a move.
 - The current assignment is not evidence.
-- In a map repository the project an item belongs in is the one [project-map.md § Routing](../references/project-map.md#routing) names. An item it routes to none is a `project_needed[]` entry.
-- With no map, a team-mode row with project `""` carries no assignment to weigh. Recommend the project its scope fits.
+- The project an item belongs in is the one [project-map.md § Routing](../references/project-map.md#routing) names. An item it routes to `project_needed` is a `project_needed[]` entry.
 
 ---
 
@@ -549,7 +543,7 @@ Outside these cases:
 Parent and child must share a project.
 
 - If they cannot, record `wrong_project[]` or keep the issue standalone with a relation.
-- Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
+- [project-map.md § Routing](../references/project-map.md#routing) says which.
 
 ### 7.2 Evaluate Coherence
 
@@ -636,7 +630,7 @@ Classify each component as implemented (exists, functions present, no major TODO
 
 Project recommendations:
 
-- Recommend a new project in `project_recommendations[]` for architecture gaps only when 3+ related gaps form a subsystem larger than 8 points with no existing fit. An item that fits no map project is `project_needed` (§ 6.3).
+- Recommend a new project in `project_recommendations[]` for architecture gaps only when 3+ related gaps form a subsystem larger than 8 points with no existing fit. An item § Routing routes to `project_needed` is a `project_needed[]` entry (§ 6.3).
 - Recommend reopening a completed project only when a gap matches its scope and blocks active work or leaves its deliverables incomplete.
 
 ---
@@ -708,7 +702,7 @@ Every project, initiative, and issue read below is filtered to the § 1.1.1 scop
 1. **Fetch** initiatives (`initiatives list --max`) and projects in every state (§ 1.3).
    - Record `id`, `name`, `state`, `progress`, `sort_order`, `blocked_by[]`, `blocks[]`, `description`, `content`, plus each initiative's project names.
    - Build the name→initiative map that fills each project's `initiative` field.
-   - Read the project map as § 1.6 does, kept for step 5.
+   - Read the team's projects as § 1.6 does, kept for step 5.
 
 2. **Assign a layer** to each `planned` and `backlog` project (never `started` or `completed`) from its scope: what it delivers, what it consumes, and what its issues touch (`issues list --team "[TEAM]" --project "[PROJECT_NAME]" --state "Backlog,Todo,In Progress" --max`).
    - Verify against the architecture docs that deliverables do not depend on unbuilt code.
@@ -724,8 +718,8 @@ Every project, initiative, and issue read below is filtered to the § 1.1.1 scop
    - Compute `new_sort_order` with spacing per state column.
 
 5. **Detect transitions**: read each `started` project's open items by its recorded `id`, the read [project-map.md § Project kinds](../references/project-map.md#project-kinds) defines. `progress` is no such read.
-   - A `started` project with no open item left that § Project kinds lets complete is a `complete_candidates[]` entry noting what it unblocks, with the `ends_when` evidence for a map deliverable.
-   - A map deliverable that rule holds open is a `complete_held[]` entry.
+   - A `started` project with no open item left that § Project kinds lets complete is a `complete_candidates[]` entry noting what it unblocks, with the `ends_when` evidence for a deliverable.
+   - A deliverable that rule holds open is a `complete_held[]` entry.
    - Assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next`. It is null, with a `rationale` listing each candidate's blockers, when nothing is ready.
    - `recommended_next.blocked_by_active` names the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds): one that counts as active and is no `complete_candidates[]` entry, a `complete_held[]` deliverable included. It is null when none does.
 
@@ -777,11 +771,10 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
    - Any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
 3. **Placement.**
-   - Linear: the § 1.3 command. With no map, choose the project whose name and description fit the item's `location`.
-   - In a map repository, use the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing):
+   - Linear: use the § 1.6 project read and [project-map.md § Routing](../references/project-map.md#routing):
      - Quote the matching `admits` sentence in the `issues[]` row's `reason` and name the Location it admits.
-     - When no sentence admits that Location, return `project_needed` and explain the missing fit in `reason`. The examples are in § Routing.
-     - Reuse that map read.
+     - When no sentence admits that Location, apply § Routing § No fit and explain the missing fit in `reason`. The examples are in § Routing.
+     - Reuse that project read.
    - GitHub: § 1.3's degradation.
 4. **Duplicates by title, explicit supersession and relation confirmation.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 

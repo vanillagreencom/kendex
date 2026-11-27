@@ -34,10 +34,11 @@ Actions:
   list-updates     List project updates
   reorder          Analyze and reorder backlog projects
   set-sort-order   Set sortOrder for a specific project
-  audit            Read the team's open issues and projects against the
-                   repository's project map (project-management
-                   references/project-map.md) and list every finding;
-                   read-only. With no map it lists one map-absent finding.
+  audit            List the team's live projects with the Admits, Kind and
+                   Ends when lines that open each one's content, and every
+                   finding on the team's open issues and projects
+                   (project-management references/project-map.md § Audit);
+                   read-only.
 
 List Options:
   --state <name>        Filter by state (e.g., "started", "completed")
@@ -115,7 +116,7 @@ Examples:
   projects.sh reorder --dry-run                 # Preview changes only
   projects.sh set-sort-order <id> --after <id>  # Position project after another
 
-  # Project map
+  # Project admission
   projects.sh audit --team KEN
 EOF
 }
@@ -1112,12 +1113,15 @@ set_sort_order() {
     normalize_mutation_response "$result" "projectUpdate" "project"
 }
 
-# Placement against the declared project map: every open team issue outside
-# a map project, and every boundary and project-kind finding the Audit section
-# of project-management references/project-map.md lists. The open issues come
+# Placement against each project's own admission lines, read live from
+# Linear: every open team issue in no project or in one that admits nothing,
+# and every boundary and project-kind finding the Audit section of
+# project-management references/project-map.md lists. The open issues come
 # from the team listing or, given --inventory FILE, the pass's inventory
-# (linear_inventory). Read-only; it reports and never moves an issue. Findings are data, so it
-# exits 0 with them; a read it cannot finish fails with no output.
+# (linear_inventory). `projects[]` is the team's live projects with their
+# admission lines, the list filing places an issue from. Read-only; it reports
+# and never moves an issue. Findings are data, so it exits 0 with them; a read
+# it cannot finish fails with no output.
 audit_projects() {
     local team="" inventory=""
     while [[ $# -gt 0 ]]; do
@@ -1140,36 +1144,23 @@ audit_projects() {
 
     linear_set_team_target "$team"
     if [ -z "$LINEAR_TEAM_TARGET" ]; then
-        linear_project_message no-team "" >&2
+        printf 'linear-projects: no-team\n' >&2
+        jq -cn '{error: "projects audit reads the open issues of one team: set LINEAR_TEAM in kendex.settings.toml [env] or pass --team <key-or-name>."}' >&2
         return 1
-    fi
-    local map declared
-    map=$(linear_project_map) || return 1
-    if [ -z "$map" ]; then
-        jq -n --arg team "$LINEAR_TEAM_TARGET" --arg file "$LINEAR_TAXONOMY_FILE" \
-            '{team: $team, map: $file, projects: [], findings: [{kind: "map-absent", map: $file}]}'
-        return 0
     fi
     # The name collisions read the declared labels beside Linear's.
+    local declared
     declared=$(linear_declared_labels) || return 1
 
-    local team_id variables projects issues labels missing
+    local team_id variables projects initiatives issues labels
     team_id=$(resolve_team_id "$LINEAR_TEAM_TARGET") || return 1
-    projects=$(linear_map_projects "$map" "$team_id") || return 1
-    # A map project Linear lacks refuses the audit, as it refuses a write. One
-    # Linear holds only as canceled has an id, and the findings below report it
-    # and each open item in it.
-    missing=$(jq -r 'first(.[] | select(.live == 0 and .id == null) | .name) // empty' <<<"$projects") || return 1
-    if [ -n "$missing" ]; then
-        linear_project_message declared-missing "$missing" >&2
-        return 1
-    fi
-    missing=$(jq -r 'first(.[] | select(.live > 1) | .name) // empty' <<<"$projects") || return 1
-    if [ -n "$missing" ]; then
-        linear_project_message ambiguous "$missing" >&2
-        return 1
-    fi
     variables=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}') || return 1
+    projects=$(graphql_pages 'query AuditProjects($teamId: ID!, $after: String) { projects(filter: {accessibleTeams: {some: {id: {eq: $teamId}}}}, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name state targetDate content } } }' \
+        "$variables" projects) || return 1
+    projects=$(jq -c '.projects.nodes' <<<"$projects") || return 1
+    initiatives=$(graphql_pages 'query AuditInitiatives($after: String) { initiatives(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { name } } }' \
+        '{}' initiatives) || return 1
+    initiatives=$(jq -c '[.initiatives.nodes[].name]' <<<"$initiatives") || return 1
     if [ -n "$inventory" ]; then
         issues=$(linear_inventory "$inventory" "$team_id" |
             jq -c "$STATE_TYPE_CLOSED_JQ"'[.[] | select(.state.type | state_type_closed | not) | {identifier, project}]') || return 1
@@ -1182,38 +1173,39 @@ audit_projects() {
         "$variables" issueLabels) || return 1
     labels=$(jq -c '[.issueLabels.nodes[].name]' <<<"$labels") || return 1
 
-    jq -s --arg team "$LINEAR_TEAM_TARGET" --arg file "$LINEAR_TAXONOMY_FILE" "$LINEAR_NAME_KEY_JQ"'
-        .[0] as $map | .[1] as $live | .[2] as $issues | .[3] as $labels | (.[4] // []) as $declared
-        | [$map.projects[] as $p | $live[] | select(.name == $p.name) | $p + {id, state, target_date}] as $projects
-        | [$projects[].id] as $ids
-        | ([$projects[] | {level: "project", name}] + [$map.initiatives[] | {level: "initiative", name}]) as $entries
+    # A completed or canceled project takes no issue, so only the live ones
+    # are listed and judged; an open item left in a closed one is its own
+    # finding.
+    jq -s --arg team "$LINEAR_TEAM_TARGET" "$LINEAR_NAME_KEY_JQ$LINEAR_PROJECT_OPEN_JQ$LINEAR_PROJECT_ADMISSION_JQ"'
+        .[0] as $nodes | .[1] as $initiatives | .[2] as $issues | .[3] as $labels | (.[4] // []) as $declared
+        | [$nodes[] | select(project_takes_issues)
+            | {name, id, state, target_date: .targetDate} + (.content | project_admission)] as $projects
+        | [$projects[] | select(.admits != null) | .id] as $admitting
+        | ([$projects[] | {level: "project", name}] + [$initiatives[] | {level: "initiative", name: .}]) as $entries
         | [$issues[] | .identifier as $issue | .project as $project
             | if $project == null then {kind: "no-project", issue: $issue}
-              else (first($map.initiatives[] | select((.name | name_key) == ($project.name | name_key))) // null) as $initiative
+              else (first($initiatives[] | select((. | name_key) == ($project.name | name_key))) // null) as $initiative
               | if $initiative != null then
-                  {kind: "initiative-holds-issue", issue: $issue, initiative: $initiative.name, project: $project.name}
-                elif any($ids[]; . == $project.id) | not then {kind: "outside-map", issue: $issue, project: $project.name}
-                elif $project.state | IN("completed", "canceled") then
+                  {kind: "initiative-holds-issue", issue: $issue, initiative: $initiative, project: $project.name}
+                elif $project | project_takes_issues | not then
                   {kind: "closed-project-item", issue: $issue, project: $project.name, state: $project.state}
+                elif any($admitting[]; . == $project.id) | not then {kind: "unadmitted", issue: $issue, project: $project.name}
                 else empty end
               end] as $items
         | ([($labels + $declared) | unique[] as $label
             | $entries[] | select((.name | name_key) == ($label | name_key))
-            | {kind: "name-collision", label: $label, map: ., declared: any($declared[]; . == $label)}]
-          | group_by([(.label | name_key), .map.level, .map.name])
+            | {kind: "name-collision", label: $label, entry: ., declared: any($declared[]; . == $label)}]
+          | group_by([(.label | name_key), .entry.level, .entry.name])
           | map(.[0] + {declared: any(.[]; .declared)})) as $collisions
         | [$projects[]
-            | if .kind == "standing" then
-                (select(.state == "completed" or .state == "canceled") | {kind: "standing-closed", project: .name, state}),
-                (select(.target_date != null) | {kind: "standing-target-date", project: .name, target_date})
-              else
-                (select(.state == "canceled") | {kind: "deliverable-canceled", project: .name}),
-                (select(has("ends_when") | not) | {kind: "deliverable-no-ends-when", project: .name})
-              end] as $kinds
-        | {team: $team, map: $file,
-           projects: [$projects[] | {name, kind, id, state}],
+            | (select(.admits == null) | {kind: "no-admits", project: .name}),
+              (select(.kind == null) | {kind: "no-kind", project: .name}),
+              (select(.kind == "standing" and .target_date != null) | {kind: "standing-target-date", project: .name, target_date}),
+              (select(.kind == "deliverable" and .ends_when == null) | {kind: "deliverable-no-ends-when", project: .name})] as $kinds
+        | {team: $team,
+           projects: [$projects[] | {name, id, state, kind, admits, ends_when}],
            findings: ($items + $collisions + $kinds | sort_by(.kind, (.issue // .project // .label)))}' \
-        <<<"$map"$'\n'"$projects"$'\n'"$issues"$'\n'"$labels"$'\n'"${declared:-null}"
+        <<<"$projects"$'\n'"$initiatives"$'\n'"$issues"$'\n'"$labels"$'\n'"${declared:-null}"
 }
 
 # Main routing

@@ -1,51 +1,44 @@
 # Project Map Reference
 
-A repository declares which projects its issues live in, what each project admits, and the initiatives above them. The linear CLI refuses an issue write that places an issue outside the map, and `linear.sh projects audit` reports every item and project the map does not hold. Labels stay the taxonomy's, [labels.md](labels.md).
+Each Linear project states what it admits in its own content, and filing reads the team's projects from Linear at the moment it places an item, so a project created in Linear takes issues at once. `linear.sh projects audit` lists those projects and reports every item and project whose placement the lines do not hold. Labels stay the taxonomy's, [labels.md](labels.md).
 
-## Declaration
+A team's project map is its live projects as Linear holds them. A map project is one of them whose content opens with an `Admits:` line (§ Admission lines).
 
-Declare the map in the project's kendex manifest (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout) under `[skill-instructions].project-management`, as a fenced `json` block under a `### Project map` heading, after the `### Project taxonomy` block. kendex renders it into this skill's SKILL.md. The linear CLI reads it from the same renders, with the same reader, as the taxonomy ([labels.md § Project Taxonomy Contract](labels.md#project-taxonomy-contract)).
+## Admission lines
 
-```json
-{"initiatives": [
-   {"name": "Cross-Platform Desktop", "outcome": "The app installs, runs and updates on every desktop OS its users have.", "projects": ["Windows Support"]}],
- "projects": [
-   {"name": "Windows Support", "kind": "deliverable", "initiative": "Cross-Platform Desktop",
-    "ends_when": "A release ships a signed Windows installer that passes the install smoke test.",
-    "admits": "Work whose completion moves the Windows installer toward that release."},
-   {"name": "Review Gate & CI", "kind": "standing", "role": "area", "admits": "Changes to CI workflows, the review gate and the merge rail."},
-   {"name": "Tech Debt", "kind": "standing", "role": "concern", "admits": "Cross-cutting cleanup no single area owns."}]}
+A project's admission lines open its content, the long Markdown body `linear.sh projects create` and `projects update` take as `--content`, never its 255-character `description` summary. One line each, before any other text:
+
+Windows Support, a deliverable:
+
+```text
+Admits: Work whose completion makes kendex install and run on Windows.
+Kind: deliverable
+Ends when: A release installs and runs kendex on Windows with copy-mode delivery, skill roots and hooks working.
 ```
 
-| Field | Required | Meaning |
+Review Gate & CI, a standing area:
+
+```text
+Admits: Changes to CI workflows, the review gate and the merge rail.
+Kind: standing
+```
+
+| Line | Required | Meaning |
 |---|---|---|
-| `projects[]` | yes, one or more | The projects an issue may be placed in |
-| `projects[].name` | yes | The exact Linear project name |
-| `projects[].kind` | yes | `deliverable` or `standing` (§ Project kinds) |
-| `projects[].admits` | yes | One sentence: which items belong in the project |
-| `projects[].ends_when` | deliverable | One observable condition, a date or a release that completes the project |
-| `projects[].initiative` | deliverable, optional | The initiative the deliverable serves |
-| `projects[].role` | standing | `area` or `concern` |
-| `initiatives[]` | no | `name`, `outcome` (one sentence) and `projects[]`, the deliverables it holds |
+| `Admits:` | yes | One sentence: which items belong in the project |
+| `Kind:` | yes | `deliverable` or `standing` (§ Project kinds) |
+| `Ends when:` | deliverable | One sentence: the observable condition, date or release that completes the project |
 
-- The map lists a project only once it exists in Linear.
-- The reader accepts a deliverable with no `ends_when`. The audit reports it.
+- Blank lines between the lines are allowed. The first other line ends them, and a line after it is not read.
+- A repeated line keeps its first value. A `Kind:` other than `deliverable` or `standing` reads as absent.
+- The project's initiative is its Linear initiative. No line names it.
+- A new project takes them in the `--content` it is created with. An existing project takes them through `projects update [ID] --content`, with its existing content kept after them.
 
-The reader refuses as `map-unreadable` a block with any of these shapes:
+A project whose content holds no `Admits:` line admits nothing:
 
-- A missing required field.
-- An unknown `kind` or `role`.
-- A standing project with `ends_when` or `initiative`.
-- A deliverable with `role`.
-- An initiative listing a project whose `initiative` does not name it.
-- A deliverable whose `initiative` does not list it.
-- Two names that compare equal (lowercase, every character but `a-z` and `0-9` dropped).
-
-Two renders that differ refuse the same way.
-
-The reader ignores a key the field table does not name, so a misspelt `ends_when` reads as absent and the audit reports `deliverable-no-ends-when`.
-
-With no `### Project map` heading the repository declares no map: the CLI enforces nothing, and `projects audit` reports one `map-absent` finding.
+- Filing places no item in it, and names it in its report.
+- The audit reports it as `no-admits`.
+- It never stops a create into another project.
 
 ## Levels
 
@@ -74,22 +67,31 @@ Most projects are deliverables. Only work with no end is standing.
 
 A `deliverable` project:
 
-- Has an end state and `ends_when`, and optionally a target date.
+- Has an end state and an `Ends when:` line, and optionally a target date.
 - Is named for the outcome it delivers ("Windows Support", "Package Settings").
 - Is planned, then started when its first item starts.
-- Is completed once `ends_when` holds and it has no open item left: each item is closed or moved to the standing project that owns it.
+- Is completed once its `Ends when:` holds and it has no open item left: each item is closed or moved to the standing project that owns it.
 - Is canceled if abandoned. It may be paused.
-- Admits an item when finishing the item advances `ends_when`.
-- Is a finding when it is canceled and the map still lists it.
+- Admits an item when finishing the item advances its `Ends when:`.
 - Makes each open item in it a finding when it is completed or canceled.
 
 A `standing` project:
 
-- Has no end, no `ends_when` and no target date.
+- Has no end, no `Ends when:` line and no target date.
 - Is named for the area or concern it owns ("Skills & Agents Library", "Tech Debt"), with no date, version, phase or label value in the name.
 - Stays started for as long as the area exists. Retirement is an owner decision that moves its open items first.
-- Admits an item when the item fits the `role` below.
-- Is a finding when it is completed or canceled, or when it has a target date.
+- Admits an item when its `Admits:` sentence names the item's work.
+- Is a finding when it has a target date.
+
+A standing project owns one of:
+
+- An area: an owned subsystem with continuing work, such as Review Gate & CI.
+  - An item belongs to it when it changes the area's Location paths without advancing a deliverable.
+  - A defect in an area goes to that area. Bug-ness is the `bug` label.
+- A concern: cross-cutting work with no single owning area, such as Tech Debt or Upkeep.
+  - An item belongs to it only when no single area owns it.
+
+No line names which one: a standing project's `Admits:` sentence states it. An area's sentence names the Location paths it owns, and a concern's says that no single area owns the work. Read a standing project's role from that sentence.
 
 An open item of a project is every issue in it whose state type is not one of the closed types `completed`, `canceled` and `duplicate`: Triage, Verifying, In Review, blocked, research and `agent:human` issues included.
 
@@ -101,72 +103,67 @@ An open item of a project is every issue in it whose state type is not one of th
 
 A step that decides whether a project with no open item left completes (tpm-audit § 11 step 5, tpm-cycle-plan § 1):
 
-- Reads the map first, as tpm-audit § 1.6 does, and decides from that read.
-- Never completes a standing map project.
-- Completes a map deliverable only on stated evidence that its `ends_when` holds. Without that evidence the deliverable stays started and the step reports it.
-- Completes a project off the map, and every project under `map-absent`, once it has no open item left.
+- Reads the team's projects first, as tpm-audit § 1.6 does, and decides from that read.
+- Never completes a standing project.
+- Completes a deliverable only on stated evidence that its `ends_when` holds. Without that evidence the deliverable stays started and the step reports it.
+- Completes a project whose `kind` is null once it has no open item left.
 
-The steps that run the completion, audit-issues § 2.3 and cycle-plan § 2, follow that decision and read no map.
+The steps that run the completion, audit-issues § 2.3 and cycle-plan § 2, follow that decision and read no project list.
 
 The active project is the started project whose work is current: the one a step plans or audits when none is named, and the one that holds every other project from activation.
 
-- A standing map project never counts as active. It stays started beside the active project.
-- A started map deliverable counts, a held-open one included, and so does a started project off the map.
-- Under `map-absent` every started project counts.
+- A standing project never counts as active. It stays started beside the active project.
+- A started deliverable counts, a held-open one included, and so does a started project whose `kind` is null.
 - tpm-audit § 11 step 5 and tpm-cycle-plan § 1 make the activation decision, each returning the project that holds activation as `blocked_by_active`.
-- audit-issues § 2.3 and cycle-plan § 2 follow it, read no map, and activate nothing while it is set.
+- audit-issues § 2.3 and cycle-plan § 2 follow it, read no project list, and activate nothing while it is set.
 - audit-issues § 3 activates only when no started project counts as active.
-- A step that picks the active project from a list of started projects (tpm-cycle-plan § 1, audit-issues § 3) reads the map first, as tpm-audit § 1.6 does, and skips each standing map project.
+- A step that picks the active project from a list of started projects (tpm-cycle-plan § 1, audit-issues § 3) reads the team's projects first, as tpm-audit § 1.6 does, and skips each standing project.
 
-A standing project's `role` is one of:
+`projects audit` reports a label value in a project name only as a `name-collision`: the label and the whole project name compare equal once each is lowercased with every character but `a-z` and `0-9` dropped, as `tech-debt` does against "Tech Debt".
 
-- `area`: an owned subsystem with continuing work, such as Review Gate & CI.
-  - An item belongs to it when it changes the area's Location paths without advancing a deliverable.
-  - A defect in an area goes to that area. Bug-ness is the `bug` label.
-- `concern`: cross-cutting work with no single owning area, such as Tech Debt or Upkeep.
-  - An item belongs to it only when no single area owns it.
-
-`projects audit` reports a label value in a project name only as a `name-collision`: the label and the whole project name compare equal under the § Declaration name key, as `tech-debt` does against "Tech Debt".
-
-The owner judges a partial match, such as "Tech Debt & Bugs" against the `bug` label, when editing the map.
+The owner judges a partial match, such as "Tech Debt & Bugs" against the `bug` label, when naming the project.
 
 ## Routing
+
+Filing places an item from the team's live projects as Linear holds them at that moment: the `projects[]` of the § Audit command, each with the `kind`, `admits` and `ends_when` its admission lines give. A team that serves several repositories gives each of them this one list.
 
 Place an item with no parent by the first rule that admits it; a child follows its parent, below:
 
 1. The deliverable whose `ends_when` the item advances.
-2. The standing area that owns the item's Location paths.
-3. The standing concern whose `admits` rule takes the item.
-4. None: the item is `project_needed`.
+2. The standing project whose `admits` sentence names the work at the item's Location: an area before a concern.
+3. No fit: § No fit.
 
-- Judge the item's Location against each project's `admits` sentence in that order, using the map text the route already read.
+- Judge the item's Location against each project's `admits` sentence in that order, using the project list the route already read.
 - The sentence must name the work at that Location. A project name, label or current assignment alone does not establish a fit.
-- When no sentence admits it, return `project_needed` rather than choosing a listed project by name.
+- A project whose `admits` is null admits nothing: place no item in it, and name it in the report.
 
-Examples, against the § Declaration map:
+### No fit
+
+When no `admits` sentence names the item's work:
+
+- One design that produces several issues is proposed as its own project. The item is `project_needed`: held, not created.
+- A single small issue goes to the nearest standing project, the one whose `admits` sentence names the work closest to the item's Location. Its `reason` says that no sentence names the Location and which project is nearest.
+- With no standing project that admits anything, the item is `project_needed`.
+
+Examples, against the two projects § Admission lines shows:
 
 - A single filing ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 3) with Location `.github/workflows/ci.yml` returns `project.recommended: "Review Gate & CI"` and a `reason` that quotes the sentence: `Review Gate & CI admits "Changes to CI workflows, the review gate and the merge rail."; .github/workflows/ci.yml is a CI workflow.`
-- A filing with Location `docs/legal/terms.md` matches no `admits` sentence, so its row has `project.recommended: null` and a `project_needed[]` row whose `reason` says no sentence names that Location. The create is held.
+- A filing with Location `docs/legal/terms.md` matches no `admits` sentence. As a single small issue it goes to the nearest standing project, with a `reason` that says so.
+- A research decomposition that files a design of several issues for a new installer channel, which no sentence names, has `project.recommended: null` and a `project_needed[]` row for the project it needs. The creates are held.
 
-No default project exists. Under a declared map:
-
-- `linear.sh issues create` refuses a create with no `--project`, naming the map file and the legal projects.
-- `issues create`, `issues update --project` and `issues bulk-update --project` refuse a project the map does not list, naming the map file and the legal projects.
-- The same commands refuse a map project with no single live Linear project in the issue's team, naming the map file and that project. A project Linear holds only as canceled counts as none.
-- An issue already outside the map keeps its project until a write moves it. The audit lists it.
+The linear CLI checks no project's admission lines. `--project` takes a project UUID as given, or a name, which resolves to the one project of that name in the issue's team that takes issues (every state but `completed` and `canceled`); a name matching none or several refuses. This section is the placement rule, and filing holds it: a write passes the chosen project's `id` from `projects[]`.
 
 A `project_needed` item is held, not created.
 
-- Its producer returns the project it needs: `name`, `kind`, `initiative`, `ends_when` for a deliverable or `role` for a standing project, and `reason`.
+- Its producer returns the project it needs: `name`, `kind`, `initiative`, `ends_when` for a deliverable, `admits` and `reason`.
 - Propose a deliverable only with a stated `ends_when`.
-- Propose an area only when a subsystem has no owner.
-- Otherwise the item fits a concern or fails the creation bar.
-- The overseer creates the project per [initiative-project-template](../templates/initiative-project-template.md) and adds it to the map. The held create then proceeds.
+- Propose a standing project only when an area has no owner.
+- The overseer creates the project in Linear per [initiative-project-template](../templates/initiative-project-template.md), its content opening with the proposed admission lines. The held create then proceeds.
 
 A child takes its parent's project ([dependencies.md](dependencies.md) § Parent-Child Placement): the parent is routed, and its children follow it.
 
 - Related items that are not the parts of one deliverable are grouped by this route, or by one label where no project says what they share, never under a parent ([filing.md](filing.md) § Group by project or label, never by parent).
-- A parent outside the map moves to its own route before its child is created there.
+- A parent in no project, or in one that does not admit it, moves to its own route before its child is created there.
 - research-complete § 6.4 makes that move for the `hierarchy_contract` parent before it builds the audit input, and holds the whole contract when the parent's route is `project_needed`.
 - A parent no step moves keeps its project, and its child takes audit-issues § 7.2's standalone fallback: created in its own route, with `related` to the parent.
 
@@ -176,50 +173,47 @@ A child takes its parent's project ([dependencies.md](dependencies.md) § Parent
 .agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"
 ```
 
-It reads the team's open issues, the map projects, and the team and workspace labels, and prints `{team, map, projects, findings}`. `projects[]` lists each map project's `name`, `kind`, Linear `id` and `state`.
+It reads the team's open issues, the team's projects with their content, the workspace's initiatives, and the team and workspace labels, and prints `{team, projects, findings}`.
 
-- A team or issue audit reads those open issues from its run's inventory ([tpm-audit § 1.6](../workflows/tpm-audit.md#16-extract-project-definitions)). The project and label reads stay live.
-- A map project with no Linear project in the team, or with two live ones, refuses the audit, as it refuses a write.
-- A map project Linear holds only as canceled, which a write also refuses, is a finding instead: `deliverable-canceled` or `standing-closed`, with each open item in it a `closed-project-item`.
+- `projects[]` lists each live project of the team, every state but `completed` and `canceled`, with its `name`, Linear `id`, `state`, and the `kind`, `admits` and `ends_when` of its admission lines, each null where its line is absent.
+- A team or issue audit reads those open issues from its run's inventory ([tpm-audit § 1.6](../workflows/tpm-audit.md#16-extract-project-definitions)). The project, initiative and label reads stay live.
 - Report a non-zero exit with its error output. Never read it as clean.
 - A step that has no team of its own (tpm-cycle-plan § 1, audit-issues § 3, research-spike § 3) runs it without `--team`, so the team is `LINEAR_TEAM`. With that unset the command refuses `no-team`, and the refusal stops the step.
 
 Each finding maps to one action.
 
-- tpm-audit § 3 maps every finding its mode keeps, map or no map.
+- tpm-audit § 3 maps every finding its mode keeps.
 - audit-issues § 7.1 applies a `wrong_project` whose `to` is a map project as its own-authority correction, and reports the rest.
 
 | `kind` | Fields | Output |
 |---|---|---|
 | `no-project` | `issue` | `wrong_project[]` with `from: null` |
-| `outside-map` | `issue`, `project` | `wrong_project[]` with `from: project` |
-| `initiative-holds-issue` | `issue`, `initiative`, `project` | The same as `outside-map` |
-| `closed-project-item` | `issue`, `project`, `state` | The same as `outside-map` |
-| `name-collision` | `label`, `map: {level, name}`, `declared` | `map_findings[]` |
-| `standing-closed` | `project`, `state` | `map_findings[]` |
-| `standing-target-date` | `project`, `target_date` | `map_findings[]` |
-| `deliverable-canceled` | `project` | `map_findings[]` |
-| `deliverable-no-ends-when` | `project` | `map_findings[]` |
-| `map-absent` | `map` | `map_findings[]` |
+| `unadmitted` | `issue`, `project` | `wrong_project[]` with `from: project` |
+| `initiative-holds-issue` | `issue`, `initiative`, `project` | The same as `unadmitted` |
+| `closed-project-item` | `issue`, `project`, `state` | The same as `unadmitted` |
+| `name-collision` | `label`, `entry: {level, name}`, `declared` | `project_findings[]` |
+| `no-admits` | `project` | `project_findings[]` |
+| `no-kind` | `project` | `project_findings[]` |
+| `standing-target-date` | `project`, `target_date` | `project_findings[]` |
+| `deliverable-no-ends-when` | `project` | `project_findings[]` |
 
 What each kind means, and its action:
 
-- `no-project`: its `to` comes from § Routing. When nothing fits, it is a `project_needed[]` entry instead.
-- `outside-map`: routed the same way as `no-project`.
-- `initiative-holds-issue`: the item sits in a project named for an initiative.
-- `closed-project-item`: an open item in a completed or canceled map project.
-- `name-collision`: a label whose name compares equal to a map project or initiative.
+- `no-project`: its `to` comes from § Routing. When the route is `project_needed`, it is a `project_needed[]` entry instead.
+- `unadmitted`: an open item in a live project whose content holds no `Admits:` line, or in a project the team's list does not hold. Routed the same way as `no-project`.
+- `initiative-holds-issue`: the item sits in a project named for a Linear initiative.
+- `closed-project-item`: an open item in a completed or canceled project.
+- `name-collision`: a label whose name compares equal to a live project or an initiative.
   - `declared` is true when the taxonomy declares the label.
   - The owner renames one side.
-- `standing-closed`: the owner reopens it or retires it from the map.
+- `no-admits`: the project's content holds no `Admits:` line, so it admits nothing. The owner writes the line.
+- `no-kind`: the project's content holds no readable `Kind:` line. The owner writes it.
 - `standing-target-date`: the owner clears the date or makes the project a deliverable.
-- `deliverable-canceled`: the owner reopens it or removes it from the map.
-- `deliverable-no-ends-when`: the owner states `ends_when` in the map.
-- `map-absent`: the repository declares no map.
+- `deliverable-no-ends-when`: the owner writes the project's `Ends when:` line.
 
 The audit is team-wide, and it reads every open item of the team, Triage included, by the closed types of § Project kinds. Which findings a run keeps:
 
 - A finding that carries `issue` is kept only when that issue is in the run's input set (tpm-audit § Inputs).
 - Of the findings without `issue`, a `team` audit keeps every one.
-- A `project` audit keeps `map-absent` and those whose `project` or `map.name` is its project.
-- An `issues` or `single` audit runs no tpm-audit § 3 and keeps no finding, as its output has no `map_findings[]`. In a map repository, tpm-audit § 6.3 or § 14 places each input item by § Routing.
+- A `project` audit keeps those whose `project` or `entry.name` is its project.
+- An `issues` or `single` audit runs no tpm-audit § 3 and keeps no finding, as its output has no `project_findings[]`. tpm-audit § 6.3 or § 14 places each input item by § Routing.

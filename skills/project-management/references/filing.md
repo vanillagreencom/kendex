@@ -119,7 +119,7 @@ Do not create a separate item to carry the verification check.
 File one approved design or plan as one group: one parent with sub-issues, or one project, whichever fits the work.
 
 - File a parent when the design is one deliverable accepted as one thing, the case § Group by project or label, never by parent admits.
-- File a project when the work is larger: it runs over weeks with its own milestones, or it holds several deliverables. A project the map does not list takes the `project_needed` route of [project-map.md](project-map.md) § Routing.
+- File a project when the work is larger: it runs over weeks with its own milestones, or it holds several deliverables. A project Linear does not hold yet takes the `project_needed` route of [project-map.md](project-map.md) § Routing.
 - A parent that only bundles related open work stays forbidden under § Group by project or label, never by parent.
 
 Split the work into items no further than one reasonable pull request:

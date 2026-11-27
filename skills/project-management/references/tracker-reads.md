@@ -50,20 +50,20 @@ The paths:
 - **tpm-cycle-plan.** **Does not** resolve the scope, and **does not** filter.
   - § 1 picks the active project from `session-status`'s workspace-wide started projects.
   - Every issue read is scoped to that pick.
-  - The § 1 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+  - The § 1 project read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
 - **audit-issues §§ 7.2-7.5.** Not applicable: it executes an artifact tpm-audit produced under its scope.
   - Reads are rooted at an in-scope project or an issue this run mutated.
 - **audit-issues § 1.2.1, § 3.** **Does not** resolve the scope, and **does not** filter.
   - `session-status` selects projects workspace-wide.
-  - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+  - The § 3 project read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
 - **cycle-plan, roadmap-plan.** **Do not** resolve the scope, and **do not** filter.
   - Project, initiative, and label reads span the workspace.
 - **roadmap-create.** Resolves the scope in § 2, per tpm-audit § 1.1.1, only to split its actions by team. **Does not** filter.
   - Project, initiative, and label reads span the workspace.
-  - The § 1 map read is scoped to the team it creates in.
+  - The § 1 project read is scoped to the team it creates in.
 - **research-spike.** **Does not** resolve the scope, and **does not** filter.
   - Project and label reads span the workspace.
-  - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+  - The § 3 project read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
 - **research-complete.** Not applicable.
   - Reads are rooted at the caller's issue identifier.
 - **research-issue.** Not applicable.

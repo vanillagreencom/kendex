@@ -125,7 +125,7 @@ Collect the artifact per § 4.2 step 1-2, then present:
 |------------|---------|-------|-------|-----|-----------|
 | [NAME] | [NAME] | [STATE] | L[N] | [CURRENT]→[RECOMMENDED] | [WHY] |
 
-**Complete** (no open item left, needs state transition): [PROJECT] — unblocks [PROJECTS] [· ends_when holds: [ENDS_WHEN_EVIDENCE], for a map deliverable]
+**Complete** (no open item left, needs state transition): [PROJECT] — unblocks [PROJECTS] [· ends_when holds: [ENDS_WHEN_EVIDENCE], for a deliverable]
 
 **Held open** (no open item left, `ends_when` not shown to hold): [PROJECT] — ends when [ENDS_WHEN]
 
@@ -164,7 +164,7 @@ Collect the artifact per § 4.2 step 1-2, then present:
 
 1. With `TARGET` set, use it.
 2. Otherwise take the first `session-status.projects` entry with `has_active_work` that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project.
-   - Read the map first as that section says, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)).
+   - Read the team's projects first as that section says, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)).
    - `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([tracker-reads.md](../references/tracker-reads.md) § Scope by Path).
 3. With no such project, take the first entry that counts as active, since it holds every other project from activation.
 4. With none:
@@ -360,9 +360,9 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
 | `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
-| `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
+| `wrong_project` | `issues update [ID] --project "[TO_ID]"`, the finding's `to_id`, + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
-| `project_needed`, `map_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
+| `project_needed`, `project_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
 
 A `hierarchy` `close_parent` closes through the verifier's route instead: `.agents/skills/orch/scripts/orch-runtime container-close . [ID]` from the checkout root.
 
@@ -387,11 +387,10 @@ Order per issue: relations first, then priority and labels, then project/state, 
 - Never cancel or re-scope the contract parent here, or write it into a Completion block.
 - The caller owns its coordination-only conversion after the audit.
 
-**Project map (Linear).** **Skip if** the repository declares no project map.
+**Project placement (Linear).**
 
-- Before the first create, check every create's `--project` against the map ([project-map.md § Routing](../references/project-map.md#routing)): each passes the map project its row recommends.
-- A `project_needed` row is held, not created, and reported in § 8. It resumes once the map lists the new project.
-- A row whose project the map does not list halts the whole batch before any create, so a mixed batch is never half applied.
+- Each create passes `--project` with its target: its row's `project.recommended_id`, or `project_placement.target_project_id` on an architecture-gap row.
+- A `project_needed` row is held, not created, and reported in § 8. It resumes once the project exists in Linear with its admission lines.
 
 **Linear route (TRACKER=linear)**
 
@@ -408,12 +407,12 @@ A Linear create:
 - Backlog is mandatory, never the team-default Triage.
 - A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`.
 - A child must share the parent's project. If it cannot, create it standalone with `related`, except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone.
-- Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies.
+- [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies.
 
 A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT_ID]" --labels "[VALIDATED_FINAL_LABELS]" --priority [PRIORITY] --review-born
 ```
 
 A `create` whose `review_born` is false is the same command without that flag.
@@ -569,6 +568,7 @@ Report any mismatch between an approved action and the re-fetched state in § 8.
 - Repeat cancellation, supersession, decline and deferred-cleanup bullets per entry.
 - Omit empty categories.
 - Include each absent identifier reported as not touched in a row's `reason`.
+- Name each create's target project from the field its § 7.2 `--project` came from: `project.recommended` with `project.recommended_id`, or `project_placement.target_project` with `project_placement.target_project_id` on an architecture-gap row.
 
 <output_format>
 
@@ -578,7 +578,7 @@ Report any mismatch between an approved action and the re-fetched state in § 8.
 
 | Outcome | Count | Items |
 |---------|-------|-------|
-| Created | N | [ISSUE_IDS] |
+| Created | N | [ISSUE_ID] in [TARGET_PROJECT] ([TARGET_PROJECT_ID]), one per create |
 | Cancelled | N | [ISSUE_IDS] |
 | Modified | N | expand/update/combine |
 | Corrections applied | N | labels, priorities, relations, hierarchy, project moves |
@@ -589,8 +589,8 @@ Report any mismatch between an approved action and the re-fetched state in § 8.
 - Supersession: [SUPERSEDED_ID] → [REPLACEMENT_ID]: [now: cancelled | partial: re-scoped to REMAINDER | at-completion: completion block and related link recorded | not touched: REASON]
 - Declined: [TITLE]: [REASON]
 - Deferred cleanup: [candidate BLOCKER_ID for TARGET_ID: REASON, or stale reference ISSUE_ID: OLD PATTERN; not applied under auto]
-- Project needed: [ISSUE_ID or TITLE]: [NAME] ([KIND]): [REASON], held until the map lists it
-- Map finding: [KIND] [SUBJECT]
+- Project needed: [ISSUE_ID or TITLE]: [NAME] ([KIND]): [REASON], held until Linear holds the project
+- Project finding: [KIND] [SUBJECT]
 
 **Degraded (github)**: [every obligation executed through a documented degradation, or omit this line]
 
