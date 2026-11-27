@@ -231,7 +231,8 @@ load_rules() { # DOCS-WRITING-DIR, or empty when none was found
   # The retired route table with a Shape column still reads until the next
   # major release (changelog.d/README.md § Release standard): a repository
   # whose docs-writing render predates the three-column table keeps its route
-  # and its size signal. On stderr, so --route's stdout stays the hook's.
+  # and its size signal. On stderr, so --route's stdout carries only the
+  # route lines CHECKS.md documents.
   [ -z "$RULES_RETIRED" ] \
     || gg_message warning "route-table-shape path=$DW/SKILL.md:$RULES_RETIRED" "The route table's Shape column is retired and not read. The table is Path | Section | Example; refresh docs-writing." >&2
 }
@@ -469,11 +470,10 @@ fi
 # --- the lane -----------------------------------------------------------------
 gg_repo_root_cd
 gg_md_load_paths md-type COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
-# Every move and copy the diff reports is parsed at its new path, an
-# unchanged move included: a file moved unedited from outside
-# COMMIT_GUARDS_MD_PATHS arrives as Markdown no lane has parsed, and the
-# exact walk drops that move.
-GG_MD_RENAMES=detect
+# Every move is parsed at its new path, an unchanged move included: a file
+# moved unedited from outside COMMIT_GUARDS_MD_PATHS arrives as Markdown no
+# lane has parsed, and the exact walk drops that move.
+GG_MD_RENAMES=off
 gg_md_scope md-type "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 

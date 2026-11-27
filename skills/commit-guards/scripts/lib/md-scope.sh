@@ -40,7 +40,7 @@ GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
 
 # The lane's rename policy, one of the GG_WALK_RENAMES modes that
 # configured-paths.sh states, set by the lane before gg_md_scope; `exact`
-# unless the lane sets another. md-type sets `detect` and states why. The
+# unless the lane sets another. md-type sets `off` and states why. The
 # staged trigger and the diff walks read this one value, so the trigger and
 # the walk cannot disagree about a move.
 GG_MD_RENAMES=exact

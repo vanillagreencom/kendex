@@ -130,11 +130,27 @@ fx_plugin() { repo "$1"; put skills/vgs/README.md "${PLUGIN/A desktop assistant 
 fx_unended() { repo "$1"; put docs/plan.md '```\nopen\n'; }
 fx_unended_pushed() { repo "$1"; put README.md '# Tool\n'; commit; put docs/plan.md '```\nopen\n'; commit plan; }
 fx_moved_in() { repo "$1"; put notes.txt '```\nopen\n'; commit; mkdir -p "$R/docs"; git -C "$R" mv notes.txt docs/notes.md; }
+# A blob:none clone whose promisor is gone: the checkout holds every blob at
+# HEAD, Markdown included, and lacks a.txt's earlier blob, which any rename
+# or copy pairing would read.
+fx_partial() {
+  repo "$1-origin"
+  put a.txt 'one\ntwo\nthree\n'
+  commit
+  put a.txt 'one\ntwo\nfour\n'
+  put docs/plan.md '```\nopen\n'
+  commit plan
+  git -C "$R" config uploadpack.allowFilter true
+  git clone -q --filter=blob:none "file://$R" "$TMP/$1"
+  R="$TMP/$1"
+  git -C "$R" remote set-url origin "file://$TMP/$1-gone"
+}
 lane_rows \
   "the plugin README, with value tables, sections out of order and no description, passes|fx_plugin plugin|--staged|rc=0" \
   "a staged file the parser cannot end fails|fx_unended unended|--staged|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
   "and the same file pushed fails over the range|fx_unended_pushed unended-pushed|--against HEAD~1|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
-  "a file moved unedited into the Markdown paths is parsed where it arrives|fx_moved_in moved-in|--staged|rc=1 md-type: fence-unclosed=docs/notes.md:1"
+  "a file moved unedited into the Markdown paths is parsed where it arrives|fx_moved_in moved-in|--staged|rc=1 md-type: fence-unclosed=docs/notes.md:1" \
+  "a range whose Markdown is present is judged though a partial clone lacks another file's earlier blob|fx_partial partial|--against HEAD~1|rc=1 md-type: fence-unclosed=docs/plan.md:1"
 
 echo "=== a docs-writing --as cannot read is a gap, never a pass ==="
 # A copy of the scripts with no docs-writing beside it, so the fixture's own
