@@ -353,6 +353,21 @@ class OwnerAsksContract(unittest.TestCase):
         with self.assertRaises(owner_asks.Unavailable):
             self.page()
 
+    def test_a_source_change_no_row_shows_keeps_the_revision_and_its_walks(self):
+        self.source.data = projection(str(self.home), 40)
+        first = self.page()
+        self.assertFalse(first["complete"])
+        # A comment that asks nothing changes the raw read, not the rows.
+        self.source.data["tracker"]["issues"][0]["comments"].append(request_comment("unrelated", "Not a question"))
+        self.now += owner_asks.COLLECTION_SECONDS
+        refreshed = self.page(owner=self.new_owner())
+        self.assertEqual(self.source.collections, 2)
+        self.assertEqual(refreshed["revision"], first["revision"])
+        following = self.page(cursor=first["nextCursor"], owner=self.new_owner())
+        self.assertTrue(following["complete"])
+        ids = [row["id"] for row in first["rows"] + following["rows"]]
+        self.assertEqual(len(set(ids)), 40)
+
     def test_first_pages_inside_a_window_share_its_collection(self):
         first = self.page()
         self.assertEqual(self.source.collections, 1)
