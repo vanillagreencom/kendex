@@ -858,6 +858,8 @@ PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='*' \
 # A generated Markdown edit beside README.md needs the verifier's proof
 # for the render. README.md belongs to the consumer, outside that proof.
 reset_case
+commit_paths "$repo" "a tracked skill render" .agents/skills/orch/SKILL.md
+mixed_base="$(git -C "$repo" rev-parse HEAD)"
 write_lines "$repo" .agents/skills/orch/SKILL.md 2
 write_lines "$repo" README.md 1
 git -C "$repo" add -A
@@ -865,7 +867,7 @@ git -C "$repo" commit -q -m "a render beside a README edit"
 while IFS='|' read -r verifier expected; do
   set_verifier "$verifier"
   mixed_err="$(PATH="$stub_bin:$PATH" "$CHANGE_SCOPE" --repo "$repo" \
-    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+    --event pull_request --base "$mixed_base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "a mixed Markdown range under $verifier render verification" \
     "$expected" "$(sed -n 's/^class: //p' <<<"$mixed_err")"
 done <<'MIXED_RENDER_ROWS'
