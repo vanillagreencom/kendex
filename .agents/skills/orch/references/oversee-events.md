@@ -794,6 +794,16 @@ The watch prints each message line at least once. A stop between the print and i
 
 `EVENT owner-ask-unmarked [ASK_ID] issue=[ITEM] step=[STEP] cause=[KEY]`: a tracker mark of an owner ask did not land on the item. The line prints once per cause. Correct what the key names.
 
+### `owner-tracker-unread`
+
+`EVENT owner-tracker-unread cause=[CAUSE]`: the watch's read of the owner's tracker answers did not finish. Owner comments on tracker items may not have reached the mailbox, and no due tracker ask closes on its recommendation. The line prints once while the cause stands, and again when the cause changes. A whole read ends it with no line. `cause=mailbox` is the watch's own call to `lane-mail owner-answers` failing. Every other cause is the word `owner-answers` names for its failed read step.
+
+Until the read is fixed, read the owner's asks by hand. Take as an answer only a comment `owner-answers` would deliver by its rules in `lane-mail --help`, its delivery-id check included, and act on it as [communication-modes.md § Answers](communication-modes.md#answers) says. Read each item's comments with its own `linear.sh comments list`: `comments bulk-list` refuses the whole batch when one item no longer exists.
+
+Once the read is whole, the watch may deliver a comment already acted on by hand as `owner-ask-resolved`. Check it against what was already done before acting again.
+
+Correct the cause. The watch writes the same `owner-tracker-unread cause=[CAUSE]` words to `oversee-watch.err` beside the fleet state on every unread pass.
+
 ### `peer-note`
 
 `EVENT peer-note [REPOSITORY] [ID] kind=[KIND] [re=[ASK_ID]]`, then the note: a peer repository's overseer wrote to this one.

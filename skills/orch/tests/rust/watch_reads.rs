@@ -6025,14 +6025,18 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         closes(&due)
     );
     // An unread tracker (a failed owner-items read) hands nothing back and
-    // closes no due ask: the pass is not failed, its own lines stand.
+    // closes no due ask: the pass is not failed, its own lines stand, and
+    // the read's cause is said.
     let later = ask("KEN-9", "question-3");
     world.linear(
         "issues list --assignee",
         json!({"exit": 1, "stderr": "linear: auth-failed source=api-key"}),
     );
     let second = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
-    assert_eq!(rendered(&second), Vec::<String>::new());
+    assert_eq!(
+        rendered(&second),
+        ["EVENT owner-tracker-unread cause=issues"]
+    );
     assert_eq!(
         closes(&later),
         Vec::<Value>::new(),
@@ -6099,7 +6103,10 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     let third = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1480);
     std::fs::remove_dir(&box_file).unwrap();
     std::fs::rename(&held, &box_file).unwrap();
-    assert_eq!(rendered(&third.unwrap()), Vec::<String>::new());
+    assert_eq!(
+        rendered(&third.unwrap()),
+        ["EVENT owner-tracker-unread cause=asks"]
+    );
     let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
     assert_eq!(
         linear_log.matches("issues list --assignee").count(),
@@ -6151,6 +6158,51 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         "the fleet holds tracker reads until the imported reset"
     );
     assert_eq!(closes(&quota_due), Vec::<Value>::new());
+}
+
+/// An unread owner-tracker read reaches the overseer as one
+/// `owner-tracker-unread` line per standing cause, on the real mailbox
+/// program: a repeated cause says nothing, a changed one is said again, and
+/// a whole read clears the row with no line, so the same cause after it is
+/// said again.
+#[test]
+fn an_unread_owner_tracker_read_is_said_once_per_standing_cause() {
+    let mut world = World::new();
+    let (mut settings, _) = posted_owner_ask(
+        &world,
+        "ask-1",
+        ("KEN-7", None),
+        Some("question-1"),
+        "2099-01-01T00:00:00Z",
+    );
+    settings.linear_team = None;
+    let mut body = tracker::body(world.context(settings, Some(SINCE)));
+    let mut baseline = Baseline::default();
+    let clock = FakeClock::new();
+    let failed = json!({"exit": 1, "stderr": "linear: request-failed status=500"});
+    let empty = json!({"body": []});
+    let no_comments = comments(&["KEN-7"], &[]);
+    let said = |cause: &str| vec![format!("EVENT owner-tracker-unread cause={cause}")];
+    for (wall, items, comments_read, lines, row) in [
+        (1000, &failed, &no_comments, said("issues"), Some("issues")),
+        (1240, &failed, &no_comments, vec![], Some("issues")),
+        (1480, &empty, &failed, said("comments"), Some("comments")),
+        (1720, &empty, &no_comments, vec![], None),
+        (1960, &failed, &no_comments, said("issues"), Some("issues")),
+    ] {
+        world
+            .linear("issues list --assignee", items.clone())
+            .linear("comments bulk-list", comments_read.clone());
+        let produced = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + wall).unwrap();
+        assert_eq!(
+            (
+                rendered(&produced),
+                baseline.get(tracker::OWNER_UNREAD_ROW, "fleet")
+            ),
+            (lines, row),
+            "the pass at {wall}"
+        );
+    }
 }
 
 /// A posted owner ask closed by any route gets its tracker marks from the

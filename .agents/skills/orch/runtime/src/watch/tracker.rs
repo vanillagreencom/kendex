@@ -72,6 +72,8 @@ pub const TERMINAL_CLOSE_ROW: &str = "terminal-close";
 /// An owner ask's tracker marks, keyed by the ask's id; its `fleet` row is
 /// the floor the first mailbox read set.
 pub const OWNER_MARK_ROW: &str = "owner-ask-mark";
+/// The owner-tracker read's standing unread cause, keyed `fleet`.
+pub const OWNER_UNREAD_ROW: &str = "owner-tracker-unread";
 
 const HELD_CLOSE_PREFIX: &str = "held|";
 
@@ -1392,8 +1394,9 @@ fn startable(item: &OpenItem, by_id: &BTreeMap<&str, &OpenItem>, parents: &BTree
 // --- the owner's tracker answers and the due tracker asks -----------------------
 
 /// How the owner-tracker read ended: off with no owner tracker configured,
-/// read whole, or unread with its cause, named once on stderr as the pass
-/// goes on; the due tracker asks are resolved only after a whole read.
+/// read whole, or unread with its cause, named on stderr on every such pass
+/// and as an `owner-tracker-unread` line once per standing cause as the
+/// pass goes on; the due tracker asks are resolved only after a whole read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OwnerRead {
     Disabled,
@@ -1494,10 +1497,12 @@ fn read_owner_tracker_answers(
     owner_pass: &mut OwnerPass,
 ) -> Result<Answered<OwnerRead>> {
     let Some(owner) = ctx.settings.reads.owner_asks.configured() else {
+        owner_pass.keep_owner_read(tick, None);
         return Ok(Answered::Value(OwnerRead::Disabled));
     };
-    let unread = |cause: &str| {
+    let unread = |owner_pass: &mut OwnerPass, cause: &str| {
         let _ = writeln!(std::io::stderr(), "owner-tracker-unread cause={cause}");
+        owner_pass.keep_owner_read(tick, Some(cause));
         Ok(Answered::Value(OwnerRead::Unread(cause.to_owned())))
     };
     let imported = match mailbox.owner_answers(
@@ -1507,7 +1512,7 @@ fn read_owner_tracker_answers(
         &owner.label,
     ) {
         Ok(imported) => imported,
-        Err(_) => return unread("mailbox"),
+        Err(_) => return unread(owner_pass, "mailbox"),
     };
     let mut quota = None;
     for receipt in imported.receipts {
@@ -1551,10 +1556,17 @@ fn read_owner_tracker_answers(
     if let Some(quota) = quota {
         return Ok(Answered::Quota(quota));
     }
+    // A quota answers no read: the standing cause, if any, stays.
     match imported.read {
-        OwnerImportRead::Disabled => Ok(Answered::Value(OwnerRead::Disabled)),
-        OwnerImportRead::Read => Ok(Answered::Value(OwnerRead::Read)),
-        OwnerImportRead::Unread(cause) => unread(&cause),
+        OwnerImportRead::Disabled => {
+            owner_pass.keep_owner_read(tick, None);
+            Ok(Answered::Value(OwnerRead::Disabled))
+        }
+        OwnerImportRead::Read => {
+            owner_pass.keep_owner_read(tick, None);
+            Ok(Answered::Value(OwnerRead::Read))
+        }
+        OwnerImportRead::Unread(cause) => unread(owner_pass, &cause),
         OwnerImportRead::Quota(quota) => Ok(Answered::Quota(quota)),
     }
 }
@@ -1705,6 +1717,32 @@ fn unmarked(ask: &str, issue: &str, step: OwnerMark, cause: &str) -> Event {
 }
 
 impl OwnerPass {
+    /// The owner-tracker read's standing cause moved to `cause`: a cause
+    /// not standing before is said and kept, and a read that ended with no
+    /// cause, whole or with no owner tracker to read, clears the row, so
+    /// the same cause after it is said again.
+    fn keep_owner_read(&mut self, tick: &Tick, cause: Option<&str>) {
+        if tick.baseline.get(OWNER_UNREAD_ROW, FLEET) == cause {
+            return;
+        }
+        self.changes.push(match cause {
+            Some(cause) => {
+                self.events.push(Event::OwnerTrackerUnread {
+                    cause: cause.to_owned(),
+                });
+                Change::Set {
+                    kind: OWNER_UNREAD_ROW.to_owned(),
+                    identity: FLEET.to_owned(),
+                    value: cause.to_owned(),
+                }
+            }
+            None => Change::Clear {
+                kind: OWNER_UNREAD_ROW.to_owned(),
+                identity: FLEET.to_owned(),
+            },
+        });
+    }
+
     /// The row of `ask` moved from what the tick's baseline holds to
     /// `marks`: set, cleared when nothing stands, untouched when unchanged.
     fn keep_marks(&mut self, tick: &Tick, ask: &str, marks: &Marks) {

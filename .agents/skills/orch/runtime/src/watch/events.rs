@@ -317,6 +317,14 @@ pub enum Event {
         step: OwnerMark,
         cause: String,
     },
+    /// The owner's tracker answers did not read, `cause` the read's word:
+    /// owner comments may not have reached the mailbox, and no due tracker
+    /// ask closed. Said once per standing cause: the cause is kept as the
+    /// watch's `owner-tracker-unread` row, a changed cause is said again,
+    /// and a whole read clears the row with no line.
+    OwnerTrackerUnread {
+        cause: String,
+    },
     OwnerNote {
         id: String,
     },
@@ -736,6 +744,9 @@ impl Event {
                 "EVENT owner-ask-unmarked {ask} issue={issue} step={} cause={cause}",
                 step.word()
             ),
+            Event::OwnerTrackerUnread { cause } => {
+                format!("EVENT owner-tracker-unread cause={cause}")
+            }
             Event::OwnerNote { id } => format!("EVENT owner-note {id}"),
             Event::DataNote { id, source } => format!("EVENT data-note {id} source={source}"),
             Event::PeerNote {
