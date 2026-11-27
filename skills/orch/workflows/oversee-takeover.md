@@ -10,6 +10,19 @@ Run this at succession, at takeover and after compaction.
 
 ## 1. Read the mailbox and handoff
 
+### Base sync on resume
+
+On the turn that delivers the takeover brief, run this step once from your own base checkout before acting on the mailbox, handoff or watch. A return from compaction alone resumes at the interrupted step.
+
+- Run `orch-runtime state inspect --fleet`. In `result.state.intents`, find the `start-controller` intent whose `phase` names your own tmux server, socket and pane. Its `target` names the predecessor generation, which is the recorded controller's `generation` while the start is open and one below it after confirmation. A first fleet start targets `overseer:0`. A succession uses `request-transfer`.
+- While that intent is open, a nonempty `result.state.controller.pending.resume` matching the intent's `phase.session_id` identifies a resume. Once the start is confirmed, that pending field is gone. In that case require the recorded `phase.session_id` to match the published controller's `session_id` and require the brief to arrive in that same native conversation with user turns from before this launch. A fresh start that assigns a native id can also carry `phase.session_id`. Go to the mailbox reads on a fresh start or a succession.
+- For a resume whose start intent is still open, reread the same intent at intervals within the existing controller verification bound (`AGENT_RUNTIME_TMUX_VERIFY_SECS`). The brief can arrive before publication. Require the start intent to be confirmed with `observation.retired` true, no `reconciled` marker and its runner published as this controller at the next generation. That confirmation records the predecessor's stop and leaves no separate runner. An open controller intent holds the sync.
+- Read `agent-runtime controller status --record [OVERSEE_STATE]` with your own `--server`, `--socket` and `--pane`. Use the `result.path` from the fleet inspection as `[OVERSEE_STATE]`. If `result.live` is true, require `result.binding` to be `bound` to your pane.
+- If either read fails, the resume or stop proof is missing, or the status reads another controller as live, report the hold and its cause under [Owner delivery](../references/communication-modes.md#owner-delivery) and skip the sync.
+- Otherwise run the bounded `sync-base [DIR]` command in [oversee.md § Controller start and adoption](oversee.md#controller-start-and-adoption) step 5 with `[DIR]` set to your own base checkout. Report a refusal or timeout and its cause under [Owner delivery](../references/communication-modes.md#owner-delivery), then continue the takeover.
+
+### Mailbox and handoff reads
+
 The overseer mailbox carries owner and delegate notes, and data notices a program writes there, which the watch reports as `data-note` and which give no instruction ([oversee-events.md § `data-note`](../references/oversee-events.md#data-note)).
 
 - A note arrives through `.agents/skills/mailbox/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any project checkout.
@@ -21,7 +34,7 @@ The overseer mailbox carries owner and delegate notes, and data notices a progra
 - Ask the owner a question under [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), never in a question dialog.
 - Read the linked communication and peer-mail sections when a note, reply or ask needs them.
 
-1. Read the mailbox first in every session, before the handoff.
+1. Read the mailbox before the handoff, after the base sync step on resume.
    - `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` prints every note no reader has taken, and moves the mailbox's cursor past them.
    - Act on each note but a data notice, or record it in the fleet log.
    - The watch reads through the same cursor, so it does not report those notes again. The exception is a note the watch read earlier and has not acknowledged; a repeated note id is one already seen.

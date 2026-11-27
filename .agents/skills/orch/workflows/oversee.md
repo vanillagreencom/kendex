@@ -124,15 +124,17 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
    - Once the start judges its predecessor gone, it brings the checkout to the landed base through `sync-base`, before the controller's window opens. A sync that refuses leaves the checkout where it stood, and the start still runs. A predecessor that may still run keeps its checkout as it stands, and the start refuses it (step 8). A start reconciled from an earlier open one moves nothing either.
    - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
+   - Before its first decision, the resumed controller syncs its own base through the [takeover base sync step](oversee-takeover.md#base-sync-on-resume).
    - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
    - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
    - On `controller-resume-failed`, where the start was refused, `note` is the refusal's key and `cause` its own cause. Otherwise `note` names the failure, and `cause` is its cause, or `-` where it carries none.
    - Where the checkout did not follow, a resumed controller's line leads `sync-base-[REASON]` in place of `controller-resumed`, at exit 4. A failed or unconfirmed one carries `base=sync-base-[REASON]` after its `intent`.
      - `[REASON]` is the word `sync-base`'s own `sync-base: [REASON]` line leads with.
      - These keys come from no such line: `sync-base-timeout` for a fetch past the read bound, `sync-base-unstarted` where the script could not start and `sync-base-exit-[N]` where it printed no reason.
+     - Older resume runtimes, before the predecessor-gated start, also reported `sync-base-controller-live` for a live controller and `sync-base-[STATUS_ERROR_KEY]` for a refused status read, such as `sync-base-controller-unreadable`. Those keys came from the old status read before the sync.
      - Nor does `sync-base-not-run`, for a start that never reached the sync: it ended before judging its predecessor gone, or it reconciled an earlier open start.
    - Where the checkout did not follow, what comes next depends on the controller's state, never on the key:
-     - After a resumed controller's line at exit 4, the checkout stays behind the landed base until the next follow.
+     - Exit 4 reports that the resume started the controller without a successful base sync. The checkout can already match the landed base, for example when `sync-base` refuses tracked changes.
      - After a failed or unconfirmed line, the caller runs no `sync-base` until the fleet state records that the predecessor and any runner the start opened have stopped. `orch-runtime state inspect --fleet` prints that state and reads no process.
      - The runners' stop is the start's intent closed with outcome `failed`, which settles only once every runner the start opened reads stopped or gone. An open intent proves no stop.
      - The predecessor's stop is the controller record's `exit.run.generation` equal to its `generation`. A predecessor identity with no such exit record is unproven, as after a failed start's `retired: false`.
