@@ -2835,7 +2835,8 @@ with open(sys.argv[1], "ab") as out:
     def test_controller_notices_wait_for_the_end_of_the_owners_quiet_hours(self):
         # The failure it stops: a stop read in the owner's quiet hours tells
         # him at once; or its held notice holds the next stop's recovery; or
-        # the notice after the hours names the morning, not the stop.
+        # the notice after the hours names the morning, not the stop; or an
+        # unread answer sends at night, or holds every notice with no report.
         at = 1795496400  # 2026-11-24 05:00 UTC.
         morning = at + 2 * 3600  # 07:00 UTC, where hours 0-7 end.
         walls = {"usage": {"event": "StopFailure", "error": "rate_limit"},
@@ -2848,17 +2849,21 @@ with open(sys.argv[1], "ab") as out:
         # one more. Each pass names the recoveries started by then, and the
         # owner's notices sent by then where the hours hold them or not.
         passes = [(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 330, 2, 0, 2), (morning, 2, 2, 2), (morning + 30, 2, 2, 2)]
-        # Each row: the stop, the quiet hours in UTC, and whether they hold
-        # the stop's pass.
-        for stop, hours, held in (("usage", "0-7", True), ("usage", "8-12", False), ("usage", "", False),
-                                  ("sign-in", "0-7", True), ("sign-in", "8-12", False), ("sign-in", "", False),
-                                  ("exit", "0-7", True), ("exit", "8-12", False), ("exit", "", False)):
+        # Each row: the stop, the quiet hours in UTC, and how orch reads them
+        # at the stop's pass. Hours outside the form leave the answer unread:
+        # the notice stays held and the owner-quiet read reports once.
+        for stop, hours, answer in (("usage", "0-7", "quiet"), ("usage", "8-12", "waking"), ("usage", "", "waking"),
+                                    ("usage", "07-23", "unread"),
+                                    ("sign-in", "0-7", "quiet"), ("sign-in", "8-12", "waking"), ("sign-in", "", "waking"),
+                                    ("exit", "0-7", "quiet"), ("exit", "8-12", "waking"), ("exit", "", "waking")):
             with self.subTest(stop=stop, hours=hours), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.home = self.project("quiet-" + stop + "-" + (hours or "none"))
                 self.home.joinpath("kendex.settings.toml").write_text(
                     '[env]\nORCH_REPORT_QUIET_HOURS="' + hours + '"\nORCH_OWNER_TIME_ZONE="UTC"\n')
-                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + self.home.name))
+                # The log keeps every event: no batch settles and takes it.
+                self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-" + self.home.name)),
+                                     JARVIS_WAKE_SETTLE_SECS="86400")
                 if stop == "exit":
                     plant, calls = self.exited_session()
                     plant("start", running)
@@ -2890,7 +2895,16 @@ with open(sys.argv[1], "ab") as out:
                     rows = self.owner_notice_rows()
                     threads = [" ".join([root["text"]] + [row["text"] for row in rows if row.get("ref") == root["id"]])
                                for root in rows if "ref" not in root]
-                    self.assertEqual(len(threads), quiet_told if held else told, (now, threads))
+                    self.assertEqual(len(threads), {"quiet": quiet_told, "waking": told, "unread": 0}[answer],
+                                     (now, threads))
+                    events = watch.log.read_text() if watch.log.exists() else ""
+                    unreachable = re.findall(r"^EVENT root-unreachable .*", events, re.M)
+                    self.assertEqual(len(unreachable), answer == "unread", events)
+                    for line in unreachable:
+                        # The refusal orch-runtime keys for hours outside their
+                        # form, a space in an event token read as \u0020.
+                        self.assertIn(r" cause=orch-runtime:\u0020settings-invalid\u0020key=ORCH_REPORT_QUIET_HOURS",
+                                      line)
                 for thread, read in zip(threads, (at, at + 330)):
                     self.assertTrue(any(self.module.wall_time(read + offset) in thread for offset in range(3)), thread)
                     self.assertIn(outcome, thread)
