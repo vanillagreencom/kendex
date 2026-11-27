@@ -58,8 +58,9 @@ delivery, so a channel's earlier history is never delivered. It seeds the
 mailbox before its first mailbox post, from the store's committed position:
 each box's count of complete lines and its first id. A notice or answer on
 a line at or below that count is never posted, and one appended after it
-posts whatever second it is stamped in. A poll reads that position once,
-before its deliveries; an owner message's delivery never reads it. The
+posts whatever second it is stamped in. A poll reads that position before
+its deliveries, and so does the first pass that drains queued owner
+messages, once; an owner message's own delivery never reads it. The
 position read validates no envelope, so a damaged line defers no seed, and
 a mailbox read that refuses holds posts alone, never an owner's message. A
 position read that refuses all the same leaves the mailbox seed to the
@@ -505,6 +506,7 @@ class RootRelay:
         self.due: Optional[Set[str]] = set() if settings.inbound == "socket" else None
         self.catch_up_at = 0.0  # Slack's Retry-After, waited across polls
         self.discovered = False
+        self.inbound_seed_tried = False
         # The status record carries the compaction day across restarts; the
         # journal holds deliveries and positions alone.
         record = read_status(path) or {}
@@ -549,6 +551,14 @@ class RootRelay:
         if not self.state.history_seeded:
             self.journal.append(t="seen", ts=self.binding.bound_at)
 
+    def seed_before_inbound(self) -> None:
+        """The first pass that drains queued owner messages tries the mailbox
+        seed before them, once, so a reply to a request it accepts lands past
+        the floor. A refused try leaves the seed to the next poll."""
+        if not self.state.seeded and not self.inbound_seed_tried:
+            self.inbound_seed_tried = True
+            self.seed_mailbox()
+
     def seed_mailbox(self) -> None:
         """The mailbox past the store's committed position now, journaled
         before the first post, so a restart keeps it. Mail on a line at or
@@ -580,8 +590,7 @@ class RootRelay:
         """What every delivery needs first: the owners as the setting names
         them, and the history seed of a start whose journal holds none: a
         journal of connection lines alone, which a connect writes before the
-        first poll, is not seeded. A delivery reads no mailbox position, so
-        a held mailbox lock never delays an owner message."""
+        first poll, is not seeded. A delivery reads no mailbox position."""
         self.owners_current()
         if not self.state.seeded:
             self.seed_history()
@@ -1677,6 +1686,7 @@ class Relay:
         clean = True
         for root in self.roots:
             try:
+                root.seed_before_inbound()
                 drain(root, self.bot_user)
             except Exception as err:
                 self.root_failed(root, err)

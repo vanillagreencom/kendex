@@ -34,7 +34,8 @@
 # notice stamped in its own second and posting one stamped before it but
 # appended after, a damaged line, a refused position read and a timed-out
 # mailbox initialization each holding back no owner message, a live owner
-# message reading no position, a clock start from before positions kept, daily compaction retaining aged posts in live
+# message reading no position, a clock start from before positions kept, a
+# reply to a request the first queue pass accepted posted, daily compaction retaining aged posts in live
 # threads and removing inactive ones, aged unposted envelopes skipped,
 # a journal reset re-posting open asks alone,
 # owners re-resolved from the setting, a report whose file matches the pattern
@@ -650,6 +651,37 @@ sk_poll "$CLOCK"
 assert_eq "$RC|$(asks "$CLOCK_CH" 'Aged before the floor.')|$(asks "$CLOCK_CH" 'Named in the floor second.')|$(asks "$CLOCK_CH" 'Written after the floor.')" \
   "0|0|0|1" \
   "a clock start from before positions passes over mail before its second and named in it, and posts later mail"
+
+# --- a reply to a queued request accepted before the first poll posts -------------------------------
+# One queue pass drains the request; the overseer's reply lands before the
+# relay's first poll, which a later process runs.
+QSEED="$(sk_new_root cutoff-queue)"
+sk_bind "$QSEED"
+QSEED_CH="$(sk_channel "$QSEED")"
+QSEED_TS="$(sk_inject "$QSEED_CH" U001 'A queued request.')"
+mkdir -p -m 700 "$QSEED/tmp/slack/inbox" || exit 1
+sk_ctl /_test/state | jq --arg c "$QSEED_CH" --arg ts "$QSEED_TS" '.messages[$c][] | select(.ts == $ts) | . + {channel: $c}' \
+  > "$QSEED/tmp/slack/inbox/request.json" || exit 1
+PROBE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_LINEAR_DIR="$SK_LINEAR_STUB" SLACK_INBOUND=queue \
+  SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 - "${SK_BIN%/*}/lib" "$QSEED" 2>"$SK_TMP/err" >/dev/null <<'PY' || PROBE_RC=$?
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from api import Slack
+from relay import Relay
+from settings import load
+settings = load()
+assert Relay([Path(sys.argv[2])], settings, Slack(settings.token, settings.api_url)).poll_queue()
+PY
+QSEED_ID="$(jq -r --arg d "$QSEED_CH:$QSEED_TS" 'select(.delivery_id == $d) | .id' "$(sk_box "$QSEED")/to-lane.jsonl")" || exit 1
+sk_lm "$QSEED" notice --item overseer --to owner --ref "$QSEED_ID" --file "$(sk_text cut9 'Reply before the first poll.')" >/dev/null
+sk_poll "$QSEED" SLACK_INBOUND=queue
+assert_eq "$PROBE_RC|$RC|${QSEED_ID:+delivered}|$(asks "$QSEED_CH" 'Reply before the first poll.')" "0|0|delivered|1" \
+  "a reply to a request the first queue pass accepted, written before the first poll, posts"
 
 # --- an external parent missed during disconnect is discovered by catch-up ------
 for mode in production control; do
