@@ -683,6 +683,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
         cause = None
         root_events, root_delivered = [], []
         home_read = side == "local" and root == home
+        mark, unmarked = (marks or {}).get(key), None
         try:
             if not isinstance(common, Path):
                 raise common
@@ -691,7 +692,9 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
                 size_read = run(["wc", "-c", str(filename)])
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
-                if size is not None and size == before.get("size"):
+                # An owed mark is saved only on a pass whose header read names
+                # the file's first envelope: a replacement can match its size.
+                if size is not None and size == before.get("size") and (box != "to-overseer" or mark is None):
                     continue
                 (count, first), envelopes = mailbox_events(bash, root, box, before.get("count", 0))
                 next_root[box] = {"count": count, "size": size, "first": first}
@@ -748,7 +751,6 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                     next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             cause = failure("root-read", error).record
-        mark, unmarked = (marks or {}).get(key), None
         if not cause and mark is not None and len(boxes) > 1 and mark_holds(mark, next_root.get("to-overseer", {})):
             # The reads stand whatever the mark does: a failed mark stays owed
             # and reports once, as a failed read does, never holding back mail.

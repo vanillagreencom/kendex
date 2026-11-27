@@ -928,6 +928,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         #   restored: the box is emptied with the drained count owed, and a
         #     notice lands once a pass has read it empty.
         #   unmarked: the mark the drain owes is refused while a notice lands.
+        #   replaced: with the drained count owed, the box is replaced by one
+        #     line more than that count under another first envelope.
+        #   swapped: with the drained count owed, the box is replaced by one of
+        #     the same byte length and lines under another first envelope.
         rows = (("captured", set()),
                 ("late append", {"late"}),
                 ("retry", {"refused"}),
@@ -936,7 +940,9 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 ("retained", {"held"}),
                 ("handoff", {"held", "handoff"}),
                 ("restored", {"restored"}),
-                ("unmarked", {"unmarked"}))
+                ("unmarked", {"unmarked"}),
+                ("replaced", {"replaced"}),
+                ("replaced same length", {"swapped"}))
         for name, traits in rows:
             with self.subTest(row=name), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -977,6 +983,20 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     (mailbox / "tmp/lane-mail/overseer/to-overseer.jsonl").write_text("")
                 if "unmarked" in traits:
                     self.intercept_mail('case "$*" in *--count*) exit 1;; esac')
+                box = mailbox / "tmp/lane-mail/overseer/to-overseer.jsonl"
+                if "replaced" in traits:
+                    texts.append("last notice of the replacement of row " + name)
+                    box.write_text("".join(json.dumps({"id": "r%d" % line, "kind": "notice", "to": "owner",
+                                                       "at": "2026-11-26T00:00:00Z", "text": "replacement %d" % line}) + "\n"
+                                           for line in range(1, captured + 1)) +
+                                   json.dumps({"id": "r0", "kind": "notice", "to": "owner",
+                                               "at": "2026-11-26T00:00:00Z", "text": texts[-1]}) + "\n")
+                if "swapped" in traits:
+                    old = box.read_text()
+                    first = json.loads(old.splitlines()[0])["id"]
+                    swapped = old.replace(first, first[:-1] + ("1" if first[-1] == "0" else "0"), 1)
+                    self.assertEqual(len(swapped.encode()), len(old.encode()))
+                    box.write_text(swapped)
                 cycle(watch, 3)
                 if "held" in traits:
                     self.assertIsNone(seen(mailbox), "no mark while the root's notice waits for a batch")
@@ -987,6 +1007,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     cycle(watch, 3)
                     self.assertNotIn("cause", watch.cursors[side][str(root)])
                     captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
+                if traits & {"replaced", "swapped"}:
+                    self.assertIsNone(seen(mailbox), "no mark on a file the drained count did not count")
+                    self.assertNotIn("cause", watch.cursors[side][str(root)])
+                    captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
                 if "unmarked" in traits:
                     self.assertEqual(watch.cursors[side][str(root)]["cause"]["key"][0], "mailbox-mark")
                     self.assertIsNone(seen(mailbox))
@@ -995,12 +1019,15 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     cycle(watch, 3)
                     captured = watch.cursors[side][str(root)]["to-overseer"]["count"]
                     shutil.copyfile(lane_mail, self.mail_command)
-                if traits & {"held", "restored", "unmarked"}:
+                if traits & {"held", "restored", "unmarked", "replaced"}:
                     batch(watch, 4, False)
                     drain()
                     cycle(watch, 5)
                     cycle(watch, 6)
-                self.assertEqual(seen(mailbox), captured)
+                # A same-length replacement's lines at or below the drained
+                # count are read past, so no batch carries one to mark.
+                expected = None if "swapped" in traits else captured
+                self.assertEqual(seen(mailbox), expected)
                 self.assertEqual(self.native_events(mailbox, "to-overseer")[0], captured + ("late" in traits))
                 bodies = [row["text"] for row in self.inbox() if row.get("delivery_id", "").startswith("jarvis-")]
                 for text in texts:
@@ -1008,7 +1035,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 # The unchanged relay owner reads the mark.
                 received = self.command([sys.executable, "-B", "-c", probe, REPO / "skills/slack/scripts/lib", mailbox])
                 self.assertEqual(received.returncode, 0, received.stderr)
-                self.assertEqual(received.stdout.strip(), str(captured))
+                self.assertEqual(received.stdout.strip(), str(expected))
 
     def test_root_paths_are_distinct_cursor_keys(self):
         # Real registry + mailbox table: equal names and equal cross-host paths.
