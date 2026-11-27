@@ -546,20 +546,31 @@ def notice_receipt(result):
 
 
 def mailbox_events(bash, root, box, after=0):
-    """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
+    """One `lane-mail events --item overseer --box` read in root, as ((count, first), rows)."""
     operation = "mailbox-events-" + box
     args = [bash, lane_mail(), "events", "--item", "overseer", "--box", box, "--after", str(after)]
     lines = checked(args, root, operation=operation).split("\n")
     header = mailbox_header(lines[0])
     if not header:
         raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
-    return header[0], [json.loads(row) for row in lines[1:] if row]
+    return header, [json.loads(row) for row in lines[1:] if row]
 
 
 def mailbox_mark(bash, root, count):
     """Save count, lines of root's to-overseer.jsonl the Jarvis session took in a drained batch, for the Slack relay's hold resume."""
     checked([bash, lane_mail(), "events", "--item", "overseer", "--box", "to-overseer", "--after", str(count),
              "--mark-read", "--count", str(count)], root, operation="mailbox-mark")
+
+
+def mark_holds(mark, box):
+    """Whether box, a root record's to-overseer read, is still the file mark [count, first] counted.
+
+    A restored or replaced mailbox opens with another first envelope, or
+    holds fewer lines, so its lines past the mark's are not the lines the
+    session took. A record kept from before first ids were saved, and a mark
+    taken from one, carry no first id, and compare on the count alone.
+    """
+    return box.get("first") == mark[1] and box.get("count", -1) >= mark[0]
 
 
 def owner_unread(bash, root, cursor, count, now, reported, events):
@@ -640,9 +651,10 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
 
     A satellite is no fleet contact: it reads its own home alone, as a
     registered home, so its session gets its own mail and owner-unread.
-    marks maps a root to the to-overseer count it saves, recorded as its
-    `seen`. The home's record names as `drained` the latest of batches,
-    the loop's directive ids in send order, that its drain cursor passed.
+    marks maps a root to the to-overseer [count, first] it saves after its
+    reads, recorded as its `seen`, where its read still holds that file. The
+    home's record names as `drained` the latest of batches, the loop's
+    directive ids in send order, that its drain cursor passed.
     """
     state = json.loads(json.dumps(cursor))
     events = []
@@ -651,7 +663,8 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
     roots = [root for root, _ in listed]
     # A home the project list omits (unregistered, removed, unreadable or a
     # linked worktree) still receives owner mail. Its to-lane alone is read for
-    # those rows: no mail event, no to-overseer mark-read, no receipts.
+    # those rows: no mail event and no to-overseer read. Its receipts are read
+    # for the drained batch alone, since the loop's batches land there.
     alone = side == "local" and home not in roots
     readers = mailbox_readers(bash, listed)
     if alone:
@@ -669,13 +682,10 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
         next_root = json.loads(json.dumps(prior))
         cause = None
         root_events, root_delivered = [], []
+        home_read = side == "local" and root == home
         try:
             if not isinstance(common, Path):
                 raise common
-            mark = (marks or {}).get(key)
-            if mark is not None and len(boxes) > 1:
-                mailbox_mark(bash, root, mark)
-                next_root["seen"] = mark
             for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
@@ -683,8 +693,8 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 if size is not None and size == before.get("size"):
                     continue
-                count, envelopes = mailbox_events(bash, root, box, before.get("count", 0))
-                next_root[box] = {"count": count, "size": size}
+                (count, first), envelopes = mailbox_events(bash, root, box, before.get("count", 0))
+                next_root[box] = {"count": count, "size": size, "first": first}
                 for envelope in envelopes:
                     if box == "to-lane":
                         if side == "local" and root == home:
@@ -703,13 +713,20 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append((root, event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n"))
-            if len(boxes) > 1:
+            if len(boxes) > 1 or home_read:
                 receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
                 _, cursor_read, lane_count, listed = mailbox_receipts(receipts)
                 if cursor_read is None:
                     raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
                 unread = [row for row in listed if row[2] is not None and row[0] > cursor_read]
-                if side == "local" and root == home:
+                if home_read:
+                    lines = {row[1]: row[0] for row in listed}
+                    drained = [batch for batch in batches if lines.get(batch, cursor_read + 1) <= cursor_read]
+                    if drained:
+                        next_root["drained"] = drained[-1]
+                    else:
+                        next_root.pop("drained", None)
+                if home_read and len(boxes) > 1:
                     # Only the home inbox's receipts say whether owner mail was read.
                     unread_events = []
                     owned = owner_unread(bash, root, cursor_read, lane_count, now,
@@ -721,13 +738,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                         next_root["owner_unread"] = owned
                     else:
                         next_root.pop("owner_unread", None)
-                    lines = {row[1]: row[0] for row in listed}
-                    drained = [batch for batch in batches if lines.get(batch, cursor_read + 1) <= cursor_read]
-                    if drained:
-                        next_root["drained"] = drained[-1]
-                    else:
-                        next_root.pop("drained", None)
-                if unread and now - int(unread[0][2]) >= 900:
+                if len(boxes) > 1 and unread and now - int(unread[0][2]) >= 900:
                     oldest = unread[0][1]
                     if prior.get("unread") != oldest:
                         root_events.append((root, event("overseer-unread", repo=root.name, unread=len(unread),
@@ -737,6 +748,17 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                     next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             cause = failure("root-read", error).record
+        mark, unmarked = (marks or {}).get(key), None
+        if not cause and mark is not None and len(boxes) > 1 and mark_holds(mark, next_root.get("to-overseer", {})):
+            # The reads stand whatever the mark does: a failed mark stays owed
+            # and reports once, as a failed read does, never holding back mail.
+            try:
+                mailbox_mark(bash, root, mark[0])
+                next_root["seen"] = mark
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                unmarked = failure("mailbox-mark", error).record
+                if not isinstance(prior.get("cause"), dict) or prior["cause"].get("key") != unmarked["key"]:
+                    events.append((root, event("root-unreachable", repo=root.name, cause=unmarked["detail"])))
         if cause:
             if not isinstance(prior.get("cause"), dict) or prior["cause"].get("key") != cause["key"]:
                 events.append((root, event("root-unreachable", repo=root.name, cause=cause["detail"])))
@@ -745,7 +767,10 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 next_root = prior
             # A failed root read commits neither of its box cursors.
         else:
-            next_root.pop("cause", None)
+            if unmarked is None:
+                next_root.pop("cause", None)
+            else:
+                next_root["cause"] = unmarked
             events.extend((root, block, binding) for binding, block in root_events)
             if delivered is not None:
                 delivered.extend(root_delivered)
@@ -1083,14 +1108,21 @@ class Watch:
             base = self.state.get("log_base", 0)
             logical = [[span[0] + base, span[1] + base, *span[2:]] for span in selected]
             identity = json.dumps([self.state["generation"], logical]).encode()
-            # The to-overseer count each destination's latest pass read: every
-            # event of those passes is in this batch or an earlier one, unless
-            # a retained span still holds one of that root's.
-            waiting = {tuple(span[2]) for span in retained if len(span) > 2}
-            sides = {target.key for target in self.destinations}
-            counts = {side: {root: record["to-overseer"]["count"] for root, record in roots.items()
-                             if "to-overseer" in record and (side, root) not in waiting}
-                      for side, roots in self.cursors.items() if side in sides}
+            # The to-overseer [count, first] each destination's latest pass
+            # read: every event of those passes is in this batch or an earlier
+            # one, unless a retained span still holds one of that mailbox's.
+            # A span's root names the mailbox it read through that root's
+            # record; a root that reads no mailbox now, its reader handed to
+            # another root, names none, so its side records no count.
+            counts = {}
+            for side in {target.key for target in self.destinations} & set(self.cursors):
+                roots = self.cursors[side]
+                held = {roots.get(span[2][1], {}).get("mailbox") for span in retained
+                        if len(span) > 2 and span[2][0] == side}
+                if None not in held:
+                    counts[side] = {root: [record["to-overseer"]["count"], record["to-overseer"].get("first")]
+                                    for root, record in roots.items()
+                                    if "to-overseer" in record and record.get("mailbox") not in held}
             self.state["pending"] = {"key": BATCH_KEY + hashlib.sha256(identity).hexdigest(),
                                      "body": body.decode(), "retained": retained, "end": end, "counts": counts}
             # Selection is durable before the mailbox append. A retry uses
@@ -1785,8 +1817,12 @@ class Watch:
                 for target, counts in mark["counts"].items():
                     owed.setdefault(target, {}).update(counts)
             self.state["marks"] = marks[through:]
+        # A count retires once its pass saved it, once its root reads no
+        # mailbox, or once a restore or replacement left its file.
         saved = owed.get(side, {})
-        for root in [root for root, count in saved.items() if roots.get(root, {}).get("seen") == count]:
+        for root in [root for root, mark in saved.items() if roots.get(root, {}).get("seen") == mark
+                     or "mailbox" not in roots.get(root, {})
+                     or not mark_holds(mark, roots[root].get("to-overseer", {}))]:
             del saved[root]
         self.state["owed"] = {target: counts for target, counts in owed.items() if counts}
 
