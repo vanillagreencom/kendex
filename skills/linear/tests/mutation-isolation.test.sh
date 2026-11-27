@@ -61,6 +61,7 @@ export CONTROL_JOBS=2
 # `fixture ROOT residue` makes the suite's own run write a scratch file inside
 # its copy of the skill, the way a cache or lock suite does; `fixture ROOT
 # broken` ships a value the suite fails on before any mutation.
+# FIXTURE_SUITE_CAP holds the suite cap the fixture's runner copy applies.
 fixture() {
     local root="$1" mode="${2:-}"
     mkdir -p "$root/scripts" "$root/tests/controls"
@@ -68,12 +69,13 @@ fixture() {
     if [ "$mode" = broken ]; then
         printf 'A=2\n' >"$root/scripts/a.sh"
     fi
-    if [ "$mode" = baseline-timeout ]; then
+    if [ "$mode" = slow ]; then
+        # Longer than the 1-second mutation cap, well inside the suite cap.
         printf 'A=1\nsleep 2\n' >"$root/scripts/a.sh"
     fi
     if [ "$mode" = baseline-term-ignore ]; then
-        # The finite fallback bounds the old runner too; the fixed cap must
-        # kill the suite before this timer can finish on its own.
+        # The timer bounds a runner whose baseline has no deadline; the copy's
+        # suite cap must kill the suite before the timer finishes on its own.
         printf 'A=1\ntrap "" TERM\nsleep 4\n' >"$root/scripts/a.sh"
     fi
     if [ "$mode" = baseline-exit ]; then
@@ -104,6 +106,18 @@ if [ "$E" != 1 ]; then echo "FAIL: a is one with fallback" >&2; rc=1; fi
 exit "$rc"
 SUITE
     control_runner_install "$root"
+    FIXTURE_SUITE_CAP=60
+    if [ "$mode" = baseline-term-ignore ]; then
+        # A 1-second suite cap in this copy of the runner, so its baseline
+        # crosses the cap without a 60-second fixture.
+        FIXTURE_SUITE_CAP=1
+        awk '$0 == "SUITE_TIMEOUT=60" { $0 = "SUITE_TIMEOUT=1"; n++ } { print } END { exit n != 1 }' \
+            "$root/tests/must-fail-controls.sh" >"$root/tests/must-fail-controls.sh.new" &&
+            mv "$root/tests/must-fail-controls.sh.new" "$root/tests/must-fail-controls.sh" || {
+            printf 'mutation-isolation: suite-cap=unedited file=[%s]\n' "$root/tests/must-fail-controls.sh" >&2
+            exit 2
+        }
+    fi
 }
 
 # control NAME ROOT — the control each case writes for the fixture's suite,
@@ -258,8 +272,8 @@ the prefix report names the assertion the mutation did not redden|plain|prefix|-
 a suite with no control file is reported missing|plain|missing|-|verdicts|beta.test.sh:0|rc=1;MISSING alpha.test.sh;ok beta.test.sh;2 controls, 1 failing, 0 orphaned
 a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
 the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh; | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
-the baseline timeout report names its exit status and suite cap|baseline-timeout|clean|1|verdicts|alpha.test.sh:124|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
-the baseline cap kills a suite that ignores TERM|baseline-term-ignore|clean|1|verdicts|alpha.test.sh:137|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
+a baseline slower than the mutation cap runs under the suite cap|slow|capped|1|verdicts|alpha.test.sh:0|rc=1;TIMEOUT alpha.test.sh mutation 1;1 controls, 1 failing, 0 orphaned
+the baseline cap kills a suite that ignores TERM|baseline-term-ignore|clean|10|verdicts|alpha.test.sh:137|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
 the baseline failure report names its exit status|baseline-exit|clean|-|verdicts|alpha.test.sh:7|rc=1;UNSTAGED alpha.test.sh;1 controls, 1 failing, 0 orphaned
 a control declaring no mutation changed nothing|plain|empty|-|verdicts|alpha.test.sh:0|rc=1;NOOP alpha.test.sh;1 controls, 1 failing, 0 orphaned
 a mutation whose line the file lacks did not apply|plain|badctrl|-|verdicts|alpha.test.sh:0|rc=1;BADCTRL alpha.test.sh mutation 1;1 controls, 1 failing, 0 orphaned
@@ -272,9 +286,10 @@ while IFS='|' read -r label fix ctl cap keep baselines expect; do
     assert_eq "$label" "$RUN_RESULT" "$expect"
     # CI triage reads these machine fields. Ignore elapsed values while
     # checking their format, each baseline status, and exactly-once delivery.
-    baseline_output="$(awk '
+    # Every baseline runs under its runner copy's suite cap, whatever CAP is.
+    baseline_output="$(awk -v cap="cap=${FIXTURE_SUITE_CAP}s" '
         /^BASELINE / {
-            if (NF != 5 || $3 !~ /^elapsed=[0-9]+s$/ || $4 !~ /^exit=[0-9]+$/ || $5 !~ /^cap=[0-9]+s$/) {
+            if (NF != 5 || $3 !~ /^elapsed=[0-9]+s$/ || $4 !~ /^exit=[0-9]+$/ || $5 != cap) {
                 print "invalid-baseline"; next
             }
             sub(/^exit=/, "", $4)
