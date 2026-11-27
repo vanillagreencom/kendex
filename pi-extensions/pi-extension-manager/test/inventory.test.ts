@@ -18,7 +18,11 @@ const originalEnv = {
 	PATH: process.env.PATH,
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 };
-const nodePath = Bun.which("node");
+// The real node binary, read once while the caller's HOME holds. Each case pins
+// HOME to a temp directory, and a version-manager shim on PATH resolves its
+// node through HOME, so the shim fails under the pinned HOME.
+const nodeOnPath = Bun.which("node");
+const nodePath = nodeOnPath ? Bun.spawnSync([nodeOnPath, "-p", "process.execPath"]).stdout.toString().trim() : undefined;
 
 function live(): AbortSignal {
 	return new AbortController().signal;
@@ -69,7 +73,7 @@ beforeEach(() => {
 	process.env.PI_CODING_AGENT_DIR = join(rootTmp, "home", ".pi", "agent");
 	clearPackageConfigCache();
 	// Package scripts and npm-root lookups inherit the live environment.
-	if (!nodePath) throw new Error("inventory-test: node is not on PATH");
+	if (!nodePath) throw new Error("inventory-test: node is not on PATH or did not print its executable");
 	process.env.PATH = [dirname(nodePath), "/usr/bin", "/bin"].join(":");
 });
 
