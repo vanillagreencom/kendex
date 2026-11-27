@@ -43,8 +43,9 @@ a body synced with GitHub or for an item on another team refuses
 tracker-opening-invalid, tracker-box-outside, tracker-item-synced or
 tracker-item-cross-team.
 Discovery matches the item that holds a line of request REF. Otherwise it
-matches an item bound to REF and the outcome. Lines of REF on two items, or an
-uncertain or second binding, refuse tracker-item-ambiguous. Otherwise it
+matches an item bound to REF and the outcome. Lines of REF on two items, a
+line of REF on one item and that binding on another, or an uncertain or second
+binding, refuse tracker-item-ambiguous. Otherwise it
 creates the item in the named project with the configured Linear team. A
 tracker refusal leaves the handoff intact, except one while deleting an older
 `Jarvis next action:` comment: once the line reads back, the record keeps that
@@ -333,8 +334,23 @@ def issue_binding(title, description, comments, source, outcome, source_token):
     return True if not outcomes and title == outcome else None
 
 
+def unfenced(lines, index):
+    """Whether a line placed at index sits outside every code fence.
+
+    The shared heading reader owns fence tracking: a heading placed there is
+    read as one only outside a fence.
+    """
+    return any(row[0] == index for row in headings(lines[:index] + ["## fence probe\n"]))
+
+
+def outcome_lines(lines):
+    """(index, request id, ask) of each outcome box outside a code fence."""
+    return [(index, *match.groups()) for index, match in enumerate(map(OUTCOME_LINE.match, lines))
+            if match and unfenced(lines, index)]
+
+
 def outcome_requests(body):
-    return {match[1] for match in map(OUTCOME_LINE.match, body.splitlines()) if match}
+    return {request for _, request, _ in outcome_lines(body.splitlines(keepends=True))}
 
 
 def project_matches(home, project, source, outcome):
@@ -343,12 +359,11 @@ def project_matches(home, project, source, outcome):
     if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
         raise Refusal("tracker-unread", "issues list " + project)
     source, outcome = binding_source(source), outcome.strip()
-    # Every ask of one request stays on the item that holds its first line.
+    # Every ask of one request stays on the item that holds its first line,
+    # unless another item is bound to this outcome, as one filed per outcome is.
     held = [row["id"] for row in rows if source in outcome_requests(row["description"])]
     if len(held) > 1:
         raise Refusal("tracker-item-ambiguous", ",".join(held) + " (resolve with --item)")
-    if held:
-        return held[0]
     source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
     # Either description form may have been followed by a binding comment.
     retained = project_comments(home, [row["id"] for row in rows])
@@ -360,6 +375,11 @@ def project_matches(home, project, source, outcome):
             matches.append(item)
         elif bound is None:
             uncertain.append(item)
+    if held:
+        others = [item for item in matches + uncertain if item not in held]
+        if others:
+            raise Refusal("tracker-item-ambiguous", ",".join(held + others) + " (resolve with --item)")
+        return held[0]
     if uncertain or len(matches) > 1:
         raise Refusal("tracker-item-ambiguous", ",".join(matches + uncertain) + " (resolve with --item)")
     return matches[0] if matches else None
@@ -405,8 +425,7 @@ def place_outcome(item, body, key, box):
     """body with key's box and its indented lines replaced by box, or box added at the end of Done when."""
     ended = body.endswith("\n")
     lines = (body if ended or not body else body + "\n").splitlines(keepends=True)
-    found = [index for index, line in enumerate(lines)
-             if OUTCOME_LINE.match(line) and OUTCOME_LINE.match(line).groups() == key]
+    found = [index for index, *found_key in outcome_lines(lines) if tuple(found_key) == key]
     if len(found) > 1:
         raise Refusal("tracker-line-ambiguous", item)
     if found:
@@ -415,16 +434,20 @@ def place_outcome(item, body, key, box):
         while end < len(lines) and lines[end][:1] in (" ", "\t") and lines[end].strip():
             end += 1
     else:
-        # skills/linear lib/issue-validation.sh done_when_parse reads boxes only
-        # from a `## Done when` line to the next `## ` line, and issues update
-        # refuses a box outside them.
-        starts = [index for index, line in enumerate(lines) if re.fullmatch(r"## Done when\s*", line)]
+        # skills/linear lib/issue-validation.sh done_when_parse reads boxes from
+        # a `## Done when` line to the next line opening `## `, fenced or not,
+        # and counts no box inside a code fence; issues update refuses a box
+        # outside the section. A fenced example heading opens no section here.
+        starts = [index for index, level, _ in headings(lines)
+                  if level == 2 and re.fullmatch(r"## Done when\s*", lines[index])]
         if len(starts) > 1:
             raise Refusal("tracker-section-ambiguous", item)
         if starts:
             end = next((index for index in range(starts[0] + 1, len(lines)) if lines[index].startswith("## ")),
                        len(lines))
-            start = end = next(index for index in range(end, starts[0], -1) if lines[index - 1].strip())
+            # The line right below the heading is outside any fence, so the search ends.
+            start = end = next(index for index in range(end, starts[0], -1)
+                               if lines[index - 1].strip() and unfenced(lines, index))
         else:
             lines += (["\n"] if lines else []) + ["## Done when\n", "\n"]
             start = end = len(lines)

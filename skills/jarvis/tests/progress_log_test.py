@@ -370,9 +370,9 @@ class ProgressLog(ProgressLogCommands):
         self.assertEqual(self.action_calls(), [
             ("issues", "list"), ("comments", "bulk-list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
             *NAMED_READBACK[1:],
-            ("issues", "list"), *NAMED_READBACK[1:],
-            ("issues", "list"), *NAMED_READBACK[1:],
-            ("issues", "list"), ("issues", "get"), ("comments", "list")])
+            ("issues", "list"), ("comments", "bulk-list"), *NAMED_READBACK[1:],
+            ("issues", "list"), ("comments", "bulk-list"), *NAMED_READBACK[1:],
+            ("issues", "list"), ("comments", "bulk-list"), ("issues", "get"), ("comments", "list")])
 
     def test_issue_guards_run_under_linear_bash(self):
         validator = self.root / "issue-validation.sh"
@@ -651,13 +651,22 @@ class ProgressLog(ProgressLogCommands):
     def test_update_refusals_name_their_route(self):
         notes = STORY + "## Notes\n\n- [ ] Call the vendor.\n"
         deeper = STORY + "## Context\n\n### Done when\n\nThe vendor answers.\n"
-        # (case, item body, stub mode, refusal key or None, whether the shipped guard decides it)
-        for name, body, mode, key, guarded in (
+        fenced = STORY + "## Example\n\n```\n## Done when\n\n- [ ] Call the vendor.\n## Filing record\n```\n"
+        verify = "## Done when\n\n- [ ] Verify the receipt.\n"
+        duplicate = "\n## Example\n\n```\n" + verify + "```\n"
+        example = "```\n" + box(REQUEST, 1, "An example line.") + "```\n"
+        added = "\n## Done when\n\n" + box(REQUEST, 1, ACTION)
+        # (case, item body, stub mode, refusal key, or the body after the write; whether the shipped guard decides it)
+        for name, body, mode, outcome, guarded in (
             ("no opening", "", "", "tracker-opening-invalid", True),
             ("box under another heading", notes, "", "tracker-box-outside", True),
             ("synced with GitHub", None, "synced", "tracker-item-synced", False),
             ("another team", None, "cross-team", "tracker-item-cross-team", False),
-            ("Done when below level 2", deeper, "", None, True),
+            ("Done when below level 2", deeper, "", deeper + added, True),
+            ("a fenced Done when alone", fenced, "", fenced + added, True),
+            ("a section and a fenced copy", STORY + verify + duplicate, "",
+             STORY + verify + box(REQUEST, 1, ACTION) + duplicate, True),
+            ("a fenced example of the line", OPENING + example, "", OPENING + example + box(REQUEST, 1, ACTION), True),
         ):
             with self.subTest(case=name):
                 if guarded and LINEAR_BASH is None:
@@ -667,15 +676,31 @@ class ProgressLog(ProgressLogCommands):
                 self.action_world(issues={"KEN-1": self.issue(body=body)}, mode=mode)
                 stored = self.world()["issues"]["KEN-1"]["description"]
                 result = self.next_action()
-                if key is None:
+                if outcome.startswith("tracker-"):
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertTrue(result.stderr.startswith("progress-log: %s=KEN-1 " % outcome), result.stderr)
+                    self.assertEqual(self.handoff.read_text(), before)
+                    self.assertEqual(self.world()["issues"]["KEN-1"]["description"], stored)
+                else:
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(self.world()["issues"]["KEN-1"]["description"],
-                                     deeper + "\n## Done when\n\n" + box(REQUEST, 1, ACTION))
-                    continue
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertTrue(result.stderr.startswith("progress-log: %s=KEN-1 " % key), result.stderr)
-                self.assertEqual(self.handoff.read_text(), before)
-                self.assertEqual(self.world()["issues"]["KEN-1"]["description"], stored)
+                    self.assertEqual(self.world()["issues"]["KEN-1"]["description"], outcome)
+
+    def test_discovery_keeps_items_filed_per_outcome(self):
+        # resolve_item's create path filed one item per outcome of a request.
+        filed = {item: self.issue(item, title, "Jarvis request source: " + REQUEST + "\n\nJarvis requested outcome: " + title)
+                 for item, title in (("KEN-1", OUTCOME), ("KEN-3", "Send the receipt to the user"))}
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n"))
+        self.action_world(issues=filed)
+        first = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn(box(REQUEST, 1, ACTION).rstrip("\n"), self.world()["issues"]["KEN-1"]["description"].splitlines())
+        held = self.handoff.read_text()
+        second = self.next_action(discover=True, outcome="Send the receipt to the user", ask=2,
+                                  action="Jarvis sends the receipt to the user.")
+        self.assertEqual(second.returncode, 2, second.stderr)
+        self.assertEqual(second.stderr.split(" (", 1)[0], "progress-log: tracker-item-ambiguous=KEN-1,KEN-3")
+        self.assertEqual(self.handoff.read_text(), held)
+        self.assertEqual(self.world()["issues"]["KEN-3"], filed["KEN-3"])
 
     def assert_home_check(self, expected, handoff=None):
         args = [] if handoff is None else ["--handoff", str(handoff)]
