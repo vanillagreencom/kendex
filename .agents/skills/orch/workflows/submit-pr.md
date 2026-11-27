@@ -578,7 +578,7 @@ Its JSON's `mergeable` routes first:
 - `CONFLICTING` takes the `conflict` row of the table below.
 - `MERGEABLE`, and `UNKNOWN` while GitHub still computes mergeability, go on to the first call.
 
-The runtime's `verify-pr` operation gives the pull request's CI verdict. One call reads the pull request's current head, base and state. It judges that head as the `verify-head` of [base-publication.md § 5](base-publication.md#5-verify-the-published-head) judges a pinned head, and records the verdict itself with `source: verify-pr`.
+The runtime's `verify-pr` operation gives the pull request's CI verdict. One call reads the pull request's current head, base and state. It reads that head as the `verify-head` of [base-publication.md § 5](base-publication.md#5-verify-the-published-head) reads a pinned head, and records the verdict itself with `source: verify-pr`. Its judgement adds one rule: under a required set, a workflow job's check counts only from a run GitHub evaluates for a pull request or a run a required workflow rule binds.
 
 - Run it through [Waiter launch](../references/waiter-launch.md), within the lane's CI budget `CI_WAIT_MAX_SECS`.
 - Repeat it while `result.status` is `pending` or `unreadable`, no more often than every 180 seconds.

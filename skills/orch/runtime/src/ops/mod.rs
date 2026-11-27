@@ -130,9 +130,10 @@ pub enum Request {
     /// Read GitHub for a pinned head, then record; the `verify` module runs
     /// it, since the reads come before the one transition it makes.
     VerifyHead(VerifyHead),
-    /// Read a pull request's current head, then verify it as `verify-head`
-    /// does; `ops::verify_pr` runs it, since the reads come before the one
-    /// transition it makes.
+    /// Read a pull request's current head, then verify it over the pinned
+    /// evidence `verify-head` reads, under the pull request's event rule
+    /// (`verify::selection`, step 2); `ops::verify_pr` runs it, since the
+    /// reads come before the one transition it makes.
     VerifyPr(VerifyPr),
     /// Read a pull request's review state, make the one request its
     /// head owes, then record; `ops::verify_review` runs it, since the

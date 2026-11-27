@@ -33,8 +33,11 @@
 //!
 //! The `verify-pr` operation (`ops::verify_pr`) is the one caller that
 //! names a pull request: [`pull_request`] reads its current head, base and
-//! state through `gh pr view`, by number, and [`run`] then judges that
-//! head exactly as above, recording under its own `source`. The review
+//! state through `gh pr view`, by number, and [`run`] then reads that head
+//! as above, recording under its own `source`. Its judgement of the same
+//! pinned evidence differs in one rule, the pull request's event rule
+//! (`selection`, step 2), so the same head can take another verdict than
+//! `verify-head` gives it. The review
 //! gate's reads (`review`) name the pull request too: its verdict is the
 //! reviewers' state on the head the pull request answers.
 
@@ -60,7 +63,7 @@ use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
 
 pub(crate) use evidence::required_contexts;
-use judge::Judgement;
+use judge::{Judged, Judgement};
 
 /// Which operation asked for the verdict: the `source` the record names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +183,13 @@ pub struct Verified {
     pub head: String,
     pub repo: String,
     pub checks: Vec<CheckReport>,
+    /// Checks bearing a required context's name that the pull request's
+    /// required set does not count: a job check of a run whose event GitHub
+    /// does not evaluate for a pull request, such as a `workflow_dispatch`
+    /// run on the head. Reported, never judged; only `verify-pr` sets any
+    /// aside.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub non_required: Vec<CheckReport>,
     /// The `record-verification` transition that committed, on `complete`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded: Option<Applied>,
@@ -229,14 +239,31 @@ pub(crate) fn run_with(
         head: r.head.clone(),
         repo: r.repo.clone(),
         checks,
+        non_required: Vec::new(),
         recorded,
     };
-    match evidence::read(gh, r).map(judge::judge) {
-        Ok(Judgement::Final {
+    let Judged {
+        judgement,
+        non_required,
+    } = match evidence::read(gh, r) {
+        Ok(evidence) => judge::judge(evidence, caller),
+        Err(cause) => {
+            return Ok(reply(
+                Status::Unreadable,
+                None,
+                cause.key(),
+                cause.detail(),
+                Vec::new(),
+                None,
+            ));
+        }
+    };
+    let answer = match judgement {
+        Judgement::Final {
             verdict,
             reason,
             checks,
-        }) => {
+        } => {
             let request = Request::RecordVerification(RecordVerification {
                 round_id: None,
                 head: r.head.clone(),
@@ -245,27 +272,23 @@ pub(crate) fn run_with(
                 source: caller.source().to_owned(),
             });
             let recorded = ops::apply(path, &request, env, locking)?;
-            Ok(reply(
+            reply(
                 Status::Complete,
                 Some(verdict),
                 reason,
                 None,
                 checks,
                 Some(recorded),
-            ))
+            )
         }
-        Ok(Judgement::Pending { reason, checks }) => {
-            Ok(reply(Status::Pending, None, reason, None, checks, None))
+        Judgement::Pending { reason, checks } => {
+            reply(Status::Pending, None, reason, None, checks, None)
         }
-        Err(cause) => Ok(reply(
-            Status::Unreadable,
-            None,
-            cause.key(),
-            cause.detail(),
-            Vec::new(),
-            None,
-        )),
-    }
+    };
+    Ok(Verified {
+        non_required,
+        ..answer
+    })
 }
 
 /// The request's fields in the forms the reads pin. A head is the full

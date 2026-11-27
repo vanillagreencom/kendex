@@ -1,9 +1,9 @@
 //! The selection stage: which members of the validated `Evidence` the
 //! verdict considers and which runs its correlation reads. `select` is a
-//! pure function `Evidence → Selection`: the rollup's reduction, the
-//! required-definition walk and bound required-job membership, and a failed
-//! required workflow's placeholders; the classification stage (`judge`)
-//! reads the selected members only.
+//! pure function `(Evidence, Caller) → (Selection, non-required lines)`:
+//! the rollup's reduction, the required-definition walk and bound
+//! required-job membership, and a failed required workflow's placeholders;
+//! the classification stage (`judge`) reads the selected members only.
 //!
 //! The stage, in order:
 //!
@@ -41,7 +41,20 @@
 //!    A linked entry with a workflow name is a job of that run under that
 //!    name; a linked entry with none is a run status; an unlinked entry is
 //!    run-less. The association the evidence read (`Association`) travels
-//!    with the member and is read by the classification alone.
+//!    with the member and is read by the classification alone. Under
+//!    `verify-pr` with a required set that names anything, a workflow
+//!    job's check (a check run whose suite has a run) that step 7 did not
+//!    bind counts only from a run GitHub evaluates for a pull request
+//!    (`Replacements::PullRequestRuns`): one of another run is set aside
+//!    here, joins no run group the pick reads and matches no required
+//!    context, and one bearing a required context's name is reported as a
+//!    non-required line, whichever arm step 8 takes. Such a member's failure is held or
+//!    replaced only by such a run (`judge::correlate`). A commit status
+//!    and a check whose suite has no run keep every run, since GitHub's
+//!    event rule covers workflow job checks alone: a status's publisher
+//!    can be a run of any event. `verify-head` sets nothing aside: a head
+//!    pushed to the base has no pull request, and its only CI run can be a
+//!    schedule or a dispatch.
 //! 3. Run rank per workflow name: a run's jobs grouped by run under the
 //!    workflow name the rollup showed, so two workflow files sharing a name
 //!    are one group; ranked by `[last job start, run id]` when every run of
@@ -54,7 +67,10 @@
 //!    later entry of step 1's order wins: the earlier-listed member among
 //!    equal starts); an aggregate (run-level link) whose run ranks below a
 //!    selected run of its source group with no failed job is rewritten
-//!    `expected`, pending, while that newer run publishes its own.
+//!    `expected`, pending, while that newer run publishes its own. A run
+//!    status keeps every run (step 2), so its groups and their pick are
+//!    those of steps 3 and 4 over every job, the set-aside checks included:
+//!    the runs `judge::correlate` reads for it.
 //! 6. Run-less members: deduplicated by name, the latest start winning, the
 //!    later entry of step 1's order on an equal start (the earlier-listed
 //!    member).
@@ -81,8 +97,9 @@
 //!    `html_url`, unequal where GitHub's two URLs differ), each bound job
 //!    whose link the scoped rollup lacks as `expected`
 //!    (`missing_required`); the runs are the bound runs and the runs of
-//!    every workflow a named context's member ran in. Otherwise every
-//!    member and every run.
+//!    every workflow a named context's member ran in, whatever their
+//!    event, each failure reading those its `Replacements` admits.
+//!    Otherwise every member and every run.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,7 +107,49 @@ use super::evidence::{
     Association, CheckRunEvidence, Evidence, RequiredEvidence, RequiredWorkflowEvidence,
     RunEvidence, StatusEvidence,
 };
-use super::{Bucket, CheckReport, Source};
+use super::{Bucket, Caller, CheckReport, Source};
+
+/// The events whose workflow runs make job checks GitHub evaluates for a
+/// pull request's required status checks: "For checks created by workflow
+/// jobs to be evaluated for a pull request, the workflow run must be
+/// triggered by one of these events: push, pull_request,
+/// pull_request_review, pull_request_target, deployment,
+/// deployment_status", and "Merge queues require the separate merge_group
+/// event" (docs.github.com, troubleshooting-required-status-checks,
+/// "Checks from some workflow jobs are not evaluated").
+const PULL_REQUEST_EVENTS: [&str; 7] = [
+    "push",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_target",
+    "deployment",
+    "deployment_status",
+    "merge_group",
+];
+
+/// The runs that count for a member: whose check counts toward its
+/// required context, and which can hold or replace its failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Replacements {
+    /// Every run on the head.
+    AnyRun,
+    /// Only a run of `PULL_REQUEST_EVENTS`: a workflow job's check under
+    /// `verify-pr` with a required set (step 2). The restriction "applies
+    /// only to checks created by workflow jobs, not to checks created by
+    /// an external GitHub App" (the same page), and a commit status is no
+    /// check, so neither takes it.
+    PullRequestRuns,
+}
+
+impl Replacements {
+    /// Whether a check or run of a run dispatched by `event` counts.
+    pub(super) fn admits(self, event: &str) -> bool {
+        match self {
+            Self::AnyRun => true,
+            Self::PullRequestRuns => PULL_REQUEST_EVENTS.contains(&event),
+        }
+    }
+}
 
 /// One check the verdict considers, with its association to a run.
 #[derive(Debug, Clone)]
@@ -99,6 +158,7 @@ pub(super) struct Member {
     pub(super) association: Association,
     /// The run the member's link names, held or not.
     pub(super) linked: Option<u64>,
+    pub(super) replacements: Replacements,
 }
 
 impl Member {
@@ -189,11 +249,15 @@ struct Entry<'a> {
     bucket: Bucket,
     /// The check run's `startedAt`, `""` where unknown.
     started: &'a str,
+    /// The event of the check run's suite's run, `""` for a status or a
+    /// check whose suite has no run.
+    event: &'a str,
     place: Place<'a>,
     /// A check run's `details_url` or a status's
     /// target, matched by equality against a bound job's `html_url`.
     link: Option<&'a str>,
     association: Association,
+    replacements: Replacements,
 }
 
 impl Entry<'_> {
@@ -214,6 +278,7 @@ impl Entry<'_> {
             },
             association: self.association,
             linked: self.linked(),
+            replacements: self.replacements,
         }
     }
 }
@@ -236,6 +301,122 @@ struct RunGroup {
     substantive: bool,
     failed: usize,
     rank: (String, u64),
+}
+
+/// Steps 3 and 4 over one list of entries: each workflow name's run
+/// groups, ranked, and the indices of its selected groups among them, the
+/// bound runs first, then the pick. A group's `jobs` index that list.
+#[derive(Debug)]
+struct Runs<'a> {
+    workflows: BTreeMap<&'a str, Vec<RunGroup>>,
+    selected: BTreeMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> Runs<'a> {
+    fn rank(entries: &[Entry<'a>], bound_ids: &BTreeSet<u64>) -> Self {
+        // 3. Run rank per workflow name.
+        let mut workflows: BTreeMap<&'a str, Vec<RunGroup>> = BTreeMap::new();
+        let mut jobs: BTreeMap<(&'a str, u64), Vec<usize>> = BTreeMap::new();
+        for (i, entry) in entries.iter().enumerate() {
+            if let Place::Job { workflow, run } = entry.place {
+                jobs.entry((workflow, run)).or_default().push(i);
+            }
+        }
+        for ((workflow, run), indices) in jobs {
+            let buckets = || indices.iter().map(|&i| entries[i].bucket);
+            let last_start = indices
+                .iter()
+                .map(|&i| entries[i].started)
+                .max()
+                .unwrap_or_default()
+                .to_owned();
+            workflows.entry(workflow).or_default().push(RunGroup {
+                run,
+                substantive: buckets().any(|b| b != Bucket::Skipping),
+                failed: buckets().filter(|b| *b == Bucket::Fail).count(),
+                // Pending is read here; the rank below depends on it.
+                rank: (
+                    if buckets().any(|b| b == Bucket::Pending) {
+                        String::new()
+                    } else {
+                        last_start
+                    },
+                    run,
+                ),
+                jobs: indices,
+            });
+        }
+        for groups in workflows.values_mut() {
+            // Time ranks only when every run of the group is settled and
+            // dated; otherwise run id alone.
+            if groups.iter().any(|g| g.rank.0.is_empty()) {
+                for g in groups.iter_mut() {
+                    g.rank.0.clear();
+                }
+            }
+        }
+
+        // 4. Selected runs per group: bound runs, then the pick.
+        let mut selected: BTreeMap<&'a str, Vec<usize>> = BTreeMap::new();
+        for (&workflow, groups) in &workflows {
+            let mut chosen: Vec<usize> = (0..groups.len())
+                .filter(|&g| bound_ids.contains(&groups[g].run))
+                .collect();
+            let substantive: Vec<usize> = (0..groups.len())
+                .filter(|&g| groups[g].substantive)
+                .collect();
+            let pool = if substantive.is_empty() {
+                (0..groups.len()).collect()
+            } else {
+                substantive
+            };
+            if let Some(pick) = pool.into_iter().max_by_key(|&g| &groups[g].rank)
+                && !bound_ids.contains(&groups[pick].run)
+            {
+                chosen.push(pick);
+            }
+            selected.insert(workflow, chosen);
+        }
+        Self {
+            workflows,
+            selected,
+        }
+    }
+
+    /// The selected groups of one workflow name, in their order.
+    fn selected_in(&self, workflow: &str) -> impl Iterator<Item = &RunGroup> {
+        let groups = self.workflows.get(workflow).map_or(&[][..], Vec::as_slice);
+        self.selected
+            .get(workflow)
+            .into_iter()
+            .flatten()
+            .map(move |&g| &groups[g])
+    }
+
+    /// Every selected group, by workflow name.
+    fn selected(&self) -> impl Iterator<Item = &RunGroup> {
+        self.workflows
+            .keys()
+            .flat_map(|&workflow| self.selected_in(workflow))
+    }
+
+    /// Step 5's hold of a run-level aggregate of `run`, which is not
+    /// selected: the first selected run of its source group (the workflow
+    /// name `run`'s jobs are grouped under) that ranks above it, when that
+    /// run has no failed job.
+    fn holds(&self, run: u64) -> bool {
+        if self.selected().any(|g| g.run == run) {
+            return false;
+        }
+        self.workflows
+            .iter()
+            .find_map(|(&workflow, groups)| {
+                let status_run = groups.iter().find(|g| g.run == run)?;
+                self.selected_in(workflow)
+                    .find(|g| g.rank > status_run.rank)
+            })
+            .is_some_and(|g| g.failed == 0)
+    }
 }
 
 /// How one required definition binds to the head's runs.
@@ -506,82 +687,12 @@ fn bind<'a>(
     }
 }
 
-/// The selection over validated evidence; see the module header for the
-/// steps.
-pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
-    // 1. The rollup, in gh's order; 2. placement.
-    let mut entries: Vec<Entry<'_>> = Vec::new();
-    for context in eliminate_duplicates(evidence) {
-        entries.push(match context {
-            Context::Check(check) => Entry {
-                name: check.name(),
-                source: Source::CheckRun,
-                state: check.outcome().word(),
-                bucket: check.outcome().check_bucket(),
-                started: check.started().unwrap_or_default(),
-                place: place(check.linked(), check.workflow(), check.run_level()),
-                link: check.link(),
-                association: check.association(),
-            },
-            Context::Status(status) => Entry {
-                name: status.context(),
-                source: Source::CommitStatus,
-                state: status.state().word(),
-                bucket: status.state().bucket(),
-                started: "",
-                place: place(status.linked(), "", status.run_level()),
-                link: status.target(),
-                association: status.association(),
-            },
-        });
-    }
-
-    // 3. Run rank per workflow name.
-    let mut workflows: BTreeMap<&str, Vec<RunGroup>> = BTreeMap::new();
-    {
-        let mut jobs: BTreeMap<(&str, u64), Vec<usize>> = BTreeMap::new();
-        for (i, entry) in entries.iter().enumerate() {
-            if let Place::Job { workflow, run } = entry.place {
-                jobs.entry((workflow, run)).or_default().push(i);
-            }
-        }
-        for ((workflow, run), indices) in jobs {
-            let buckets = || indices.iter().map(|&i| entries[i].bucket);
-            let last_start = indices
-                .iter()
-                .map(|&i| entries[i].started)
-                .max()
-                .unwrap_or_default()
-                .to_owned();
-            workflows.entry(workflow).or_default().push(RunGroup {
-                run,
-                substantive: buckets().any(|b| b != Bucket::Skipping),
-                failed: buckets().filter(|b| *b == Bucket::Fail).count(),
-                // Pending is read here; the rank below depends on it.
-                rank: (
-                    if buckets().any(|b| b == Bucket::Pending) {
-                        String::new()
-                    } else {
-                        last_start
-                    },
-                    run,
-                ),
-                jobs: indices,
-            });
-        }
-        for groups in workflows.values_mut() {
-            // Time ranks only when every run of the group is settled and
-            // dated; otherwise run id alone.
-            if groups.iter().any(|g| g.rank.0.is_empty()) {
-                for g in groups.iter_mut() {
-                    g.rank.0.clear();
-                }
-            }
-        }
-    }
-
+/// The selection over validated evidence for `caller`, with the set-aside
+/// checks bearing a required context's name (step 2), which the verdict
+/// reports and never judges; see the module header for the steps.
+pub(super) fn select(evidence: &Evidence, caller: Caller) -> (Selection<'_>, Vec<CheckReport>) {
     // 7. The required-definition walk, first: its bound runs are kept in
-    // step 4 whatever their rank.
+    // step 4 whatever their rank, and step 2 sets none of them aside.
     let walked = evidence
         .required()
         .filter(|req| !req.workflows().is_empty())
@@ -606,36 +717,73 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         bound.iter().flat_map(|b| b.jobs.iter().copied()).collect();
     let bound_links: BTreeSet<&str> = bound_jobs.iter().map(|(_, link)| *link).collect();
 
-    // 4. Selected runs per group: bound runs, then the pick.
-    let mut selected: BTreeMap<&str, Vec<&RunGroup>> = BTreeMap::new();
-    for (workflow, groups) in &workflows {
-        let mut chosen: Vec<&RunGroup> = groups
-            .iter()
-            .filter(|g| bound_ids.contains(&g.run))
-            .collect();
-        let substantive: Vec<&RunGroup> = groups.iter().filter(|g| g.substantive).collect();
-        let pool = if substantive.is_empty() {
-            groups.iter().collect()
-        } else {
-            substantive
-        };
-        if let Some(pick) = pool.iter().max_by_key(|g| &g.rank)
-            && !bound_ids.contains(&pick.run)
-        {
-            chosen.push(pick);
-        }
-        selected.insert(workflow, chosen);
+    // 1. The rollup, in gh's order; 2. placement, with the pull request's
+    // rule for a workflow job's check.
+    let pull_request_rule = match caller {
+        Caller::VerifyPr => evidence
+            .required()
+            .is_some_and(RequiredEvidence::names_anything),
+        Caller::VerifyHead => false,
+    };
+    let mut every: Vec<Entry<'_>> = Vec::new();
+    for context in eliminate_duplicates(evidence) {
+        every.push(match context {
+            Context::Check(check) => Entry {
+                name: check.name(),
+                source: Source::CheckRun,
+                state: check.outcome().word(),
+                bucket: check.outcome().check_bucket(),
+                started: check.started().unwrap_or_default(),
+                event: check.event(),
+                place: place(check.linked(), check.workflow(), check.run_level()),
+                link: check.link(),
+                association: check.association(),
+                replacements: if pull_request_rule
+                    && !check.event().is_empty()
+                    && !check.linked().is_some_and(|run| bound_ids.contains(&run))
+                {
+                    Replacements::PullRequestRuns
+                } else {
+                    Replacements::AnyRun
+                },
+            },
+            Context::Status(status) => Entry {
+                name: status.context(),
+                source: Source::CommitStatus,
+                state: status.state().word(),
+                bucket: status.state().bucket(),
+                started: "",
+                event: "",
+                place: place(status.linked(), "", status.run_level()),
+                link: status.target(),
+                association: status.association(),
+                replacements: Replacements::AnyRun,
+            },
+        });
     }
-    let selected_ids: BTreeSet<u64> = selected.values().flatten().map(|g| g.run).collect();
+    let admitted = |entry: &Entry<'_>| entry.replacements.admits(entry.event);
+    let non_required: Vec<CheckReport> = evidence.required().map_or_else(Vec::new, |req| {
+        every
+            .iter()
+            .filter(|entry| !admitted(entry))
+            .filter(|entry| req.contexts().iter().any(|context| context == entry.name))
+            .map(|entry| entry.member().report)
+            .collect()
+    });
+    let entries: Vec<Entry<'_>> = every.iter().filter(|e| admitted(e)).cloned().collect();
+
+    // 3. Run rank per workflow name; 4. selected runs per group.
+    let runs = Runs::rank(&entries, &bound_ids);
+    // A run status keeps every run (step 2): its hold reads the groups of
+    // every job, the set-aside checks included.
+    let every_run = Runs::rank(&every, &bound_ids);
 
     // The scoped list: selected runs' jobs, then run statuses, then
     // run-less members.
-    let mut scoped: Vec<Entry<'_>> = Vec::new();
-    for groups in selected.values() {
-        for group in groups {
-            scoped.extend(group.jobs.iter().map(|&i| entries[i].clone()));
-        }
-    }
+    let mut scoped: Vec<Entry<'_>> = runs
+        .selected()
+        .flat_map(|group| group.jobs.iter().map(|&i| entries[i].clone()))
+        .collect();
 
     // 5. Run statuses: the latest per name by run id, an aggregate behind
     // a newer selected run of its group held `expected`.
@@ -656,28 +804,10 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             run,
             run_level: true,
         } = entry.place
+            && every_run.holds(run)
         {
-            let source_workflow = entries.iter().find_map(|e| match e.place {
-                Place::Job { workflow, run: r } if r == run => Some(workflow),
-                Place::Job { .. } | Place::RunStatus { .. } | Place::Runless => None,
-            });
-            let status_run = source_workflow.and_then(|workflow| {
-                workflows
-                    .get(workflow)
-                    .and_then(|groups| groups.iter().find(|g| g.run == run))
-                    .map(|g| (workflow, g))
-            });
-            let newer = status_run.and_then(|(workflow, status_run)| {
-                selected.get(workflow).and_then(|groups| {
-                    groups
-                        .iter()
-                        .find(|g| !selected_ids.contains(&run) && g.rank > status_run.rank)
-                })
-            });
-            if newer.is_some_and(|g| g.failed == 0) {
-                entry.state = "expected";
-                entry.bucket = Bucket::Pending;
-            }
+            entry.state = "expected";
+            entry.bucket = Bucket::Pending;
         }
         scoped.push(entry);
     }
@@ -705,11 +835,13 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         report: expected(name),
         association: Association::None,
         linked: None,
+        replacements: Replacements::AnyRun,
     };
     let expected_workflow = |name: &str| Member {
         report: expected(name),
         association: Association::None,
         linked: None,
+        replacements: Replacements::AnyRun,
     };
     let run_member = |run: &RunEvidence| Member {
         report: CheckReport {
@@ -720,6 +852,7 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         },
         association: Association::Run(run.id()),
         linked: Some(run.id()),
+        replacements: Replacements::AnyRun,
     };
     let absence = |req: &RequiredEvidence| {
         Some(AbsenceFacts {
@@ -729,7 +862,7 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             runs: evidence.runs().len(),
         })
     };
-    match evidence.required() {
+    let selection = match evidence.required() {
         Some(req) if unresolved.is_some() => Selection {
             members: unresolved
                 .map(|workflow| expected_workflow(workflow.path()))
@@ -820,5 +953,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             required_only: false,
             absence: None,
         },
-    }
+    };
+    (selection, non_required)
 }

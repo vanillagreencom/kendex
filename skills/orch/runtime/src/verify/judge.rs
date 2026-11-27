@@ -1,8 +1,8 @@
 //! The classification stage: the verdict over the selected members.
 //! `judge` is the judgement's one entry: it takes a validated, complete
-//! `Evidence` by value and nothing else, runs the selection stage and
-//! classifies its members. The state machine is in `classify`'s doc
-//! comment.
+//! `Evidence` by value and the caller and nothing else, runs the selection
+//! stage and classifies its members. The state machine is in `classify`'s
+//! doc comment.
 
 use crate::ops::Verdict;
 
@@ -11,7 +11,7 @@ use super::selection::{
     AbsenceFacts, Member, Scope, Selection, by_workflow, current_execution, select,
 };
 use super::wire::{Outcome, RunConclusion};
-use super::{Bucket, CheckReport, Source};
+use super::{Bucket, Caller, CheckReport, Source};
 
 /// What one read set establishes.
 pub(super) enum Judgement {
@@ -26,9 +26,20 @@ pub(super) enum Judgement {
     },
 }
 
+/// The judgement with the checks the selection set aside, which it
+/// reports and never judges.
+pub(super) struct Judged {
+    pub(super) judgement: Judgement,
+    pub(super) non_required: Vec<CheckReport>,
+}
+
 /// The judgement's entry: `Evidence → Selection → Classification`.
-pub(super) fn judge(evidence: Evidence) -> Judgement {
-    classify(select(&evidence))
+pub(super) fn judge(evidence: Evidence, caller: Caller) -> Judged {
+    let (selection, non_required) = select(&evidence, caller);
+    Judged {
+        judgement: classify(selection),
+        non_required,
+    }
 }
 
 /// The dispatches that make current-head work: only a substantive run
@@ -74,8 +85,8 @@ enum Correlation {
 }
 
 /// The correlation of settled failures with the head's runs: per
-/// failure, no run of its own among the scoped
-/// runs is `terminal`; its own run unfinished is `active`; any substantive
+/// failure, over the scoped runs its `Replacements` admits, no run of its
+/// own is `terminal`; its own run unfinished is `active`; any substantive
 /// run in flight is `active`; else the newest substantive execution of its
 /// workflow (a newer id, or a later attempt of an older run whose activity
 /// postdates the failing run's) decides: none or not a success is
@@ -88,12 +99,17 @@ enum Correlation {
 /// run is in flight, since a run the read could not find is no proof of an
 /// external failure, and `terminal` otherwise. A member with no association
 /// is `terminal`.
-fn correlate(failed: &[&Member], runs: &[&RunEvidence]) -> Correlation {
-    let head_in_flight = runs
-        .iter()
-        .any(|r| substantive(r) && r.outcome().unfinished());
+fn correlate(failed: &[&Member], scoped: &[&RunEvidence]) -> Correlation {
     let mut active = false;
     for member in failed {
+        let runs: Vec<&RunEvidence> = scoped
+            .iter()
+            .filter(|r| member.replacements.admits(r.event()))
+            .copied()
+            .collect();
+        let head_in_flight = runs
+            .iter()
+            .any(|r| substantive(r) && r.outcome().unfinished());
         let (own_id, unresolved) = match member.association {
             Association::Run(id) => (Some(id), false),
             Association::Unresolved { linked } => (linked, true),

@@ -3,9 +3,10 @@
 //! One `gh pr view` names the pull request by its number and answers its
 //! current head, base and state (`verify::pull_request`); a pull request
 //! that is closed or merged refuses before any verdict read; the head is
-//! then judged exactly as `verify-head` judges a pinned head (`verify::run`)
-//! and a final verdict is recorded as `.verification` with `source:
-//! verify-pr`. The head is read afresh on every call, so a pull request
+//! then read as `verify-head` reads a pinned head (`verify::run`), judged
+//! over that same pinned evidence under the pull request's event rule
+//! (`verify::selection`, step 2), and a final verdict is recorded
+//! as `.verification` with `source: verify-pr`. The head is read afresh on every call, so a pull request
 //! whose head moved between two calls is judged on the newer head and the
 //! older record replaced. `pending` and an unreadable read are results the
 //! caller repeats under its own budget, never verdicts, as `verify-head`
@@ -61,6 +62,10 @@ pub struct PrVerified {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
     pub checks: Vec<CheckReport>,
+    /// The checks bearing a required context's name that the pull
+    /// request's required set does not count (`verify::Verified`'s).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub non_required: Vec<CheckReport>,
     /// The `record-verification` transition that committed, on `complete`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded: Option<Applied>,
@@ -117,6 +122,7 @@ pub(crate) fn run_with(
                 base: None,
                 verdict: None,
                 checks: Vec::new(),
+                non_required: Vec::new(),
                 recorded: None,
             });
         }
@@ -147,6 +153,7 @@ pub(crate) fn run_with(
         base: Some(head.base),
         verdict: verified.verdict,
         checks: verified.checks,
+        non_required: verified.non_required,
         recorded: verified.recorded,
     })
 }
