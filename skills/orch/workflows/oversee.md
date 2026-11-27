@@ -131,8 +131,10 @@ On every surface the watch reports a lane's questions as `lane-question` and new
      - `[REASON]` is the word `sync-base`'s own `sync-base: [REASON]` line leads with.
      - These keys come from no such line: `sync-base-timeout` for a fetch past the read bound, `sync-base-unstarted` where the script could not start and `sync-base-exit-[N]` where it printed no reason.
      - Nor does `sync-base-not-run`, for a start that never reached the sync: it ended before judging its predecessor gone, or it reconciled an earlier open start.
-     - After any key but `sync-base-not-run`, run `sync-base` (step 5) once the cause is cleared, before the overseer's first decision.
-     - After `sync-base-not-run`, run no `sync-base` while the controller the start refused or reconciled may still run. Read the intent and the controller with `orch-runtime state inspect --fleet` first. Sync only once that controller is proven stopped, or leave the follow to the next start that judges its predecessor gone.
+   - Where the checkout did not follow, who syncs depends on the controller's state, never on the key:
+     - After a resumed controller's line at exit 4, the caller runs no `sync-base`. The resumed controller runs `sync-base` (step 5) itself once the cause is cleared, before its first decision.
+     - After a failed or unconfirmed line, the caller runs no `sync-base` until `orch-runtime state inspect --fleet` proves stopped both the predecessor and any runner the start opened.
+     - Where that stop stays unproven, leave the open intent to its reconcile (step 7) and the sync to a fresh start that judges its predecessor gone.
    - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 
