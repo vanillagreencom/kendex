@@ -91,7 +91,7 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 - A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it.
 - A `Declined:` there takes one of the reason forms [`../reviewer/references/finding-disposition.md`](../reviewer/references/finding-disposition.md) § Decision flow sets out, never a label or a test count.
 
-**Admitted paths.** A delegation's `Admitted paths:` line is a JSON array of the paths the lane may change: the set its launch judge admitted. An entry that ends in `/` covers every path under it. A delegation with no such line sets no bound.
+**Admitted paths.** A delegation's `Admitted paths:` line is a JSON array of the paths the lane may change: the set its launch judge admitted. Each entry covers the path it names and every path under it, with or without a trailing `/`, as defined by `covers` in `skills/orch/runtime/src/ops/admission.rs`. A delegation with no such line sets no bound.
 
 1. Before the first edit, list every repository path the round adds or changes, companions included: module declarations, tests, generated copies, docs and callers.
 2. A listed path outside the set is a blocker, except a `changelog.d/` fragment, which the judge never counts.
