@@ -18,7 +18,11 @@
 //! Copilot CLI's is inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
 //! repeat each user turn; this reader leaves those out of the bytes. A
-//! failed call reads no section: its result counts to its source alone.
+//! failed call that names one read and runs nothing else reads no section:
+//! its result counts to its source alone. A failed call that ran more may
+//! have printed its reads before the part that failed (a Bash command that
+//! exits nonzero still returns its output on Claude Code and Pi), so each
+//! of its reads stands, its figures unclear.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -29,12 +33,15 @@
 //! between the two responses belongs to it, and to one item or section only
 //! where it is alone there, the call having run nothing else; any other
 //! share is unclear. So a gap that holds injected text beside a turn or a
-//! result leaves each share in it unclear. A response whose usage its
-//! writer never counted ([`Response::Uncounted`]) closes no gap: the next
-//! response's growth also holds its output, and every share of that gap is
-//! unclear. The first response's prompt also holds the harness's own
-//! prompt and tools, which no record names apart, so the first delivery's
-//! tokens are unsupported.
+//! result leaves each share in it unclear, and so does a gap that also
+//! holds a result the harness counted: that count is the harness's own,
+//! not shown to be in the provider's tokens, so the growth less it is no
+//! figure for the rest. A response whose usage its writer never counted
+//! ([`Response::Uncounted`]) closes no gap: the next response's growth
+//! also holds its output, and every share of that gap is unclear. The
+//! first response's prompt also holds the harness's own prompt and tools,
+//! which no record names apart, so the first delivery's tokens are
+//! unsupported.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -360,7 +367,7 @@ impl Walk {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
-                if failed {
+                if failed && reads.len() == 1 && !more {
                     return;
                 }
                 let shared = reads.len() > 1 || more;
@@ -381,7 +388,7 @@ impl Walk {
         let (id, split, context) = match response {
             Response::Spent(spent) => (spent.id, spent.split, Some(spent.context)),
             Response::Unread => (None, None, None),
-            Response::Uncounted => {
+            Response::Uncounted { .. } => {
                 if self.turns == 1 {
                     self.start.tokens = Figure::Unsupported;
                 }
@@ -411,13 +418,11 @@ impl Walk {
     fn close(&mut self, next: Option<Split>) {
         let gap = std::mem::take(&mut self.gap);
         let uncounted = std::mem::take(&mut self.uncounted);
-        let pending: Vec<usize> = gap
-            .into_iter()
-            .filter(|&i| self.items[i].share == Share::Pending)
-            .collect();
+        let pending = self.pending(&gap);
         if pending.is_empty() {
             return;
         }
+        let counted = pending.len() < gap.len();
         // With no response before the gap, its growth also holds the
         // harness's own prompt.
         let (Some(before), Some(after)) = (self.open.as_ref().and_then(|open| open.split), next)
@@ -434,7 +439,7 @@ impl Walk {
             return;
         };
         let source = self.items[pending[0]].source;
-        if uncounted {
+        if uncounted || counted {
             self.settle(&pending, Share::Unclear);
         } else if pending.len() == 1 {
             self.settle(&pending, Share::Whole(growth));
@@ -446,6 +451,15 @@ impl Walk {
         }
     }
 
+    /// The items of `gap` whose share is still open: every item but one
+    /// the harness counted.
+    fn pending(&self, gap: &[usize]) -> Vec<usize> {
+        gap.iter()
+            .copied()
+            .filter(|&i| self.items[i].share == Share::Pending)
+            .collect()
+    }
+
     fn settle(&mut self, items: &[usize], share: Share) {
         for &i in items {
             self.items[i].share = share;
@@ -453,7 +467,8 @@ impl Walk {
     }
 
     fn report(mut self) -> Report {
-        let open: Vec<usize> = std::mem::take(&mut self.gap);
+        let gap = std::mem::take(&mut self.gap);
+        let open = self.pending(&gap);
         self.settle(&open, Share::Unclear);
         let context = SOURCES
             .iter()

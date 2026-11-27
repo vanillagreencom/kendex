@@ -15,8 +15,12 @@ use serde_json::{Value, json};
 struct Row {
     harness: &'static str,
     fixture: &'static str,
-    /// The context the first turn's last response left.
-    start: u64,
+    /// The fixture's first lines alone, as a session's file stands while
+    /// the harness still writes it.
+    head: Option<usize>,
+    /// The context the first turn's last response left, `None` where that
+    /// response's writer never counted it.
+    start: Option<u64>,
     /// JSON pointers into the reply's `result`, each with its value: `null`
     /// where the pointer names nothing.
     more: fn() -> Vec<(&'static str, Value)>,
@@ -26,8 +30,9 @@ const ROWS: &[Row] = &[
     Row {
         harness: "claude",
         fixture: "load/claude.jsonl",
+        head: None,
         // msg_1: 2 + 23454 + 900 + 30; the sidechain's message is passed over.
-        start: 24386,
+        start: Some(24386),
         more: || {
             vec![
                 // The Stop hook's reply is no turn.
@@ -45,12 +50,13 @@ const ROWS: &[Row] = &[
                 // msg_4's growth holds the persona.md read and turn p-3
                 // together, so neither the read nor its source owns it.
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
-                // msg_8's and msg_10's growth, each a call's alone, and
-                // msg_12's, shared by the two failed reads of msg_11.
+                // msg_8's, msg_10's and msg_14's growth, each a call's
+                // alone, and msg_12's, shared by the two failed reads of
+                // msg_11.
                 ("/context/2/source", json!("rule-reads")),
                 (
                     "/context/2/tokens",
-                    json!({"basis": "attributed", "value": 33 + 40 + 22}),
+                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28}),
                 ),
                 ("/context/2/unattributed", json!(1)),
                 // msg_6's growth, shared by the two results of msg_5.
@@ -66,8 +72,15 @@ const ROWS: &[Row] = &[
                 ("/sections/2/bytes", json!({"basis": "unclear"})),
                 ("/sections/3/read", json!({"kind": "file", "file": "c.md"})),
                 ("/sections/3/tokens", json!({"basis": "unclear"})),
-                // The failed read and `jarvis-section` read no section.
-                ("/sections/4", Value::Null),
+                // The failed read and `jarvis-section` of msg_11 read no
+                // section. msg_13's command printed its section before its
+                // `ls` failed, so the section stands, its share unclear.
+                (
+                    "/sections/4/read",
+                    json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
+                ),
+                ("/sections/4/tokens", json!({"basis": "unclear"})),
+                ("/sections/5", Value::Null),
                 // The Stop hook's reply, alone before msg_3.
                 ("/context/4/source", json!("injected-text")),
                 (
@@ -84,8 +97,9 @@ const ROWS: &[Row] = &[
     Row {
         harness: "codex",
         fixture: "load/codex.jsonl",
+        head: None,
         // The turn's second response; the event between repeats the first.
-        start: 12540,
+        start: Some(12540),
         more: || {
             vec![
                 // The UserMessage's text.
@@ -108,10 +122,11 @@ const ROWS: &[Row] = &[
     Row {
         harness: "copilot",
         fixture: "copilot-events.jsonl",
+        head: None,
         // The turn's last session.usage_record, its prompt and output. The
         // CLI's own count on the last tool row, 44644, is older than the
         // turn's last calls.
-        start: 290886 + 96,
+        start: Some(290886 + 96),
         more: || {
             vec![
                 ("/sections/0/read", json!({"kind": "skill", "name": "x"})),
@@ -134,7 +149,9 @@ const ROWS: &[Row] = &[
     Row {
         harness: "copilot",
         fixture: "load/copilot.jsonl",
-        start: 20100 + 30,
+        head: None,
+        // u3: the background call after it has a prompt of its own.
+        start: Some(20100 + 30),
         more: || {
             vec![
                 // The turn as the CLI sent it, its datetime included.
@@ -154,16 +171,48 @@ const ROWS: &[Row] = &[
                     "/sections/1/read",
                     json!({"kind": "file", "file": "/w/b/SKILL.md"}),
                 ),
-                // The failed view reads no section.
+                (
+                    "/sections/1/tokens",
+                    json!({"basis": "measured", "value": 9}),
+                ),
+                // The failed view reads no section. u3's growth also holds
+                // b's counted result, so the failed view's share of it is
+                // unclear.
                 ("/sections/2", Value::Null),
+                (
+                    "/context/2/tokens",
+                    json!({"basis": "measured", "value": 12 + 9}),
+                ),
+                ("/context/2/unattributed", json!(1)),
+            ]
+        },
+    },
+    Row {
+        harness: "copilot",
+        fixture: "load/copilot.jsonl",
+        // Cut before u3: the open gap keeps b's counted result.
+        head: Some(10),
+        start: Some(20060 + 25),
+        more: || {
+            vec![
+                (
+                    "/sections/1/tokens",
+                    json!({"basis": "measured", "value": 9}),
+                ),
+                (
+                    "/context/2/tokens",
+                    json!({"basis": "measured", "value": 12 + 9}),
+                ),
+                ("/context/2/unattributed", json!(1)),
             ]
         },
     },
     Row {
         harness: "pi",
         fixture: "load/pi.jsonl",
+        head: None,
         // e4, after the reads' results and the wake event.
-        start: 10520,
+        start: Some(10520),
         more: || {
             vec![
                 // The turn alone: the extension's text after it is injected
@@ -213,6 +262,15 @@ const ROWS: &[Row] = &[
             ]
         },
     },
+    Row {
+        harness: "pi",
+        fixture: "load/pi-uncounted.jsonl",
+        head: None,
+        // The first turn goes on past e2's count, after the wake event, to
+        // e3's pi-codex placeholder.
+        start: None,
+        more: Vec::new,
+    },
 ];
 
 fn fixture(name: &str) -> PathBuf {
@@ -231,18 +289,29 @@ fn load(harness: &str, file: &Path) -> (Value, std::process::Output) {
     (reply, out)
 }
 
-/// Each harness's Start is measured, and its first delivery, which shares
-/// the first call with the harness's own prompt, is unsupported.
+/// Each harness's Start is measured where the first turn's last response
+/// was counted, and its first delivery, which shares the first call with
+/// the harness's own prompt, is unsupported.
 #[test]
 fn session_load_reads_each_harness_record_with_each_figure_named_by_its_basis() {
+    let root = tempfile::tempdir().unwrap();
     for row in ROWS {
-        let (reply, out) = load(row.harness, &fixture(row.fixture));
+        let mut file = fixture(row.fixture);
+        if let Some(lines) = row.head {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let head: Vec<&str> = text.lines().take(lines).collect();
+            assert_eq!(head.len(), lines, "{}", row.fixture);
+            file = root.path().join("head.jsonl");
+            std::fs::write(&file, head.join("\n")).unwrap();
+        }
+        let (reply, out) = load(row.harness, &file);
         let result = &reply["result"];
+        let start = match row.start {
+            Some(value) => json!({"basis": "measured", "value": value}),
+            None => json!({"basis": "unsupported"}),
+        };
         let mut want = vec![
-            (
-                "/start/tokens",
-                json!({"basis": "measured", "value": row.start}),
-            ),
+            ("/start/tokens", start),
             ("/context/0/source", json!("first-delivery")),
             ("/context/0/tokens", json!({"basis": "unsupported"})),
         ];
