@@ -120,6 +120,7 @@ skills/orch/references/quote-heading.md|Prose.\n\n> ## Layout\n|Prose.\n\n> ## N
 skills/orch/references/list-heading.md|Prose.\n\n- ## Step\n|Prose.\n\n- ## New step\n
 skills/orch/references/quote-setext.md|Prose.\n\n> Title\n> =====\n|Prose.\n\n> New title\n> =====\n
 skills/orch/references/fence.md|Prose.\n\n```\ncode\n```\n\n## Usage\n|Prose.\n\n```\ncode\n\n## Usage\n
+skills/orch/references/destination.md|Prose.\n\nSee the [guide](\n../SKILL.md\n) for more.\n|Prose.\n\nSee the [guide](\n../DEVELOPMENT.md\n) for more.\n
 skills/orch/references/close.md|Intro.\n\nSee [doc](\n../a.md\n"Title"\nTail.\n|Intro.\n\nSee [doc](\n../a.md\n"Title")\nTail.\n
 skills/orch/gone.md|Base prose.\n|Base prose.\n
 skills/group/nested/SKILL.md|---\nname: nested\n---\n|---\nname: nested\n---\n
@@ -167,6 +168,7 @@ base|skills/orch/references/list-heading.md|true
 base|skills/orch/references/quote-setext.md|true
 base|skills/orch/references/fence.md|true
 base|skills/orch/references/close.md|true
+base|skills/orch/references/destination.md|true
 base|skills/orch/references/new.md|true
 base|skills/orch/gone.md|true
 base|skills/notes.md|true
@@ -205,12 +207,13 @@ SKILL.md as text@            if shipped and name not in inputs and name in track
 text excuses others@    [[ \$SKILL_TEXT == *\$'\n'"\$path"\$'\n'* ]] || return 0@    [[ \$SKILL_TEXT == *\$'\n'?* ]] || return 0@kendex.toml
 link syntax unread@$syntax@  # syntax control@references/link.md
 heading unread@$syntax@  # syntax control@references/heading.md
-wrapped destination unread@$syntax@  # syntax control@references/wrapped.md
+wrapped destination unread@$syntax@  # syntax control@references/wrapped.md@  line ~ /(\\(|\\]:)[ \\t]*\$/ { doubt() }@  # opener control
 block-quote heading unread@$syntax@  # syntax control@references/quote-heading.md
 list-item heading unread@$syntax@  # syntax control@references/list-heading.md
 deleted closing fence unread@$syntax@  # syntax control@references/fence.md
 added closing parenthesis unread@$syntax@  # syntax control@references/close.md
 URL unread@  tolower(line) ~ /http|github\\.com/ { doubt() }@  # URL control@references/url.md
+wrapped opener unread@  line ~ /(\\(|\\]:)[ \\t]*\$/ { doubt() }@  # opener control@references/destination.md
 setext underline unread@  underline(line) { doubt() }@  # underline control@references/setext.md
 block-quote setext unread@$syntax@  # syntax control@references/quote-setext.md@      if (!match(s, /^([ \\t]+|>|[-*+]([ \\t]|\$)|[0-9]+[.)]([ \\t]|\$))/)) return 0@      if (!match(s, /^([ \\t]+|[-*+]([ \\t]|\$)|[0-9]+[.)]([ \\t]|\$))/)) return 0
 ROWS

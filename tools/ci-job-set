@@ -1031,9 +1031,11 @@ SKILL_TEXT=$'\n'
 # Over one file's `git diff -U1`: exit 0 where the edit is prose. A changed
 # line keeps the job when it holds any Markdown syntax character, one of
 # [ ] ( ) < > # ` ~, or a URL (`http`, or the bare `github.com` the links
-# pass also reads). A changed or context line keeps it when it is only `=`
-# or `-` once leading quote markers, list markers and blanks are off, which
-# can underline a line into a heading. No hunk, or a binary diff, keeps it.
+# pass also reads). A changed or context line keeps it when it ends in `(`
+# or `]:`, which can open a wrapped link destination on the next line, or
+# when it is only `=` or `-` once leading quote markers, list markers and
+# blanks are off, which can underline a line into a heading. No hunk, or a
+# binary diff, keeps it.
 PROSE_EDIT='
   function doubt() { found = 1; exit }
   function underline(s) {
@@ -1047,6 +1049,7 @@ PROSE_EDIT='
   !hunk { if (/^Binary files /) doubt(); next }
   /^\\/ { next }
   { mark = substr($0, 1, 1); line = substr($0, 2) }
+  line ~ /(\(|\]:)[ \t]*$/ { doubt() }
   underline(line) { doubt() }
   mark == " " { next }
   line ~ /[][()<>#`~]/ { doubt() }
