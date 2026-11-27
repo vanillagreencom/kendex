@@ -251,7 +251,7 @@ For a local lane whose session has ended, run the relaunch from the checkout wit
 - A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
 - After `launch-failed`, the lane reads `stopped` with `restart_closed`. A rerun of the relaunch sends the launch alone, and its lines name that close as `close=[ID]`. `jarvis-session resume` reruns it for each such lane.
 - After `launch-unconfirmed`, the lane reads `preparing` until the launch's reconcile settles it. A reconcile that settles the launch failed leaves it `stopped` with `restart_closed`.
-- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `handoff-unreadable` where a place the item's handoff is read from cannot be read, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
+- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `lane-live` where the lane's session still runs, `handoff-unreadable` where a place the item's handoff is read from cannot be read, `harness-unreadable`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, the launch's admission refusals, and the close's holder refusals `launch-overlap`, `holder-unreadable` and `touched-unreadable`.
 
 Compose the steps below by hand to change the harness, account or brief, to supply an explicit close reason, for a lane whose session still runs, which step 2's `no_landing` close ends, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 
@@ -293,7 +293,8 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - Left out, `tracker`, `repo`, `over_cap`, `permission` and `obligation` keep the record's value.
 - A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
-- A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or the file-overlap hold; it keeps the record's touched sets and tier.
+- A relaunch keeps the record's touched set, scope, [Ancestor gate](skill-rules.md#ancestor-gate) and tier.
+- The set, or the item's Location paths where the record holds none, meets the holders standing now as a running lane's added path does. It is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
 ### Watch recovery

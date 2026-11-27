@@ -677,9 +677,9 @@ fn a_relaunch_brief_says_the_session_ended_without_a_handoff_only_where_none_sta
 /// session still runs, idle at its composer, a fleet whose controller
 /// record names no server, so the caller's own server is never reached, an
 /// item with no lane, a hosted lane, whose server is its host's, a lane
-/// whose own account the launch's judge reads walled, and a launch its
-/// admission refuses, here on a setting only a launch reads. The lane
-/// stands running after each.
+/// whose own account the launch's judge reads walled, a recorded path a
+/// live lane holds now, and a launch its admission refuses, here on a
+/// setting only a launch reads. The lane stands running after each.
 #[test]
 fn lane_relaunch_refuses_by_key_with_nothing_closed() {
     let dir = tempfile::tempdir().unwrap();
@@ -719,6 +719,21 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
         .as_object_mut()
         .unwrap()
         .remove("account");
+    let holder = Owned::sleep();
+    let mut overlapping = accountless.clone();
+    overlapping["lanes"][0]["touched"] = json!(["src/a.sh"]);
+    overlapping["lanes"].as_array_mut().unwrap().push(json!({
+        "item": "KEN-H",
+        "tracker": "linear",
+        "harness": "copilot",
+        "window": "fleet:KEN-H",
+        "mail_root": "/w/holder",
+        "session_since": "2026-01-29T15:00:00Z",
+        "launched_at": "2026-01-29T15:00:00Z",
+        "status": "running",
+        "launch": {"pane": "%7", "server": 41020, "pid": holder.pid(), "start": holder.start()},
+        "touched": ["src/a.sh"],
+    }));
     let unadmitted = [("ORCH_LANE_OUTPUT", "bogus")];
     // The item, the fleet record, the run's extra environment, the key and
     // a field the refusal carries.
@@ -729,7 +744,7 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
         &'a str,
         Option<Value>,
     );
-    let rows: [Row; 5] = [
+    let rows: [Row; 6] = [
         (
             "KEN-1",
             &unrecorded,
@@ -745,6 +760,13 @@ fn lane_relaunch_refuses_by_key_with_nothing_closed() {
             &[],
             "account-walled",
             Some(json!(["account", runner.state_dir().display().to_string()])),
+        ),
+        (
+            "KEN-1",
+            &overlapping,
+            &[],
+            "launch-overlap",
+            Some(json!(["holder", "KEN-H"])),
         ),
         (
             "KEN-1",

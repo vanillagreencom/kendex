@@ -1444,9 +1444,8 @@ pub(super) fn launch_lane(
     // A read-only lane holds no path, which stands only where something
     // holds it to shipping no change, on an ssh host `record-push` alone: a
     // launch nothing holds would ship one under an empty touched set. It is
-    // decided where the launch is judged: a relaunch, unjudged, keeps the
-    // record's, so a writing record never turns read-only over the set it
-    // holds.
+    // decided where the launch is judged: a relaunch keeps the record's,
+    // so a writing record never turns read-only over the set it holds.
     let read_only = match relaunch {
         Some(index) => lanes[index].read_only,
         None => r.read_only,
@@ -1465,7 +1464,9 @@ pub(super) fn launch_lane(
     // account's room and the cap, so one transition admits, joins or
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
-    // since a recorded lane's relaunch was judged when it was admitted.
+    // judged when it was admitted, and meets the holders standing now with
+    // them, since a stopped record held nothing while another lane could
+    // take its path.
     let candidate = Admission {
         item: &r.item,
         tracker: r.tracker.as_deref(),
@@ -1475,14 +1476,29 @@ pub(super) fn launch_lane(
         scope_range: r.scope_range.as_ref(),
         in_scope: &r.in_scope,
         paths: &[],
-        checkout: Some(Path::new(&r.mail_root)),
+        launch: admission::Launch::First(Path::new(&r.mail_root)),
         read_only,
     };
-    let judged = match relaunch {
-        Some(_) => None,
-        None => Some(admission::judge(
-            path, &lanes, &intents, &candidate, env, host,
-        )?),
+    // A relaunch is bound before anything is read, as a first launch is:
+    // its sets were judged when first admitted, bar where it runs and whose
+    // item it is, so the binding is judged on its effective tracker and
+    // repository before the patch writes them. Either binding answers the
+    // checkout's common git folder it read.
+    let (judged, checkout_common) = match relaunch {
+        Some(index) => {
+            let record = &lanes[index];
+            let tracker = r.tracker.as_deref().or(record.tracker.as_deref());
+            let repo = r.repo.as_deref().or(record.repo.as_deref());
+            let common =
+                admission::bound(path, &r.item, tracker, repo, Path::new(&r.mail_root), host)?;
+            admission::relaunch_held(path, &lanes, &intents, record, tracker, repo, env, host)?;
+            (None, common)
+        }
+        None => {
+            let judged = admission::judge(path, &lanes, &intents, &candidate, env, host)?;
+            let common = judged.checkout_common.clone();
+            (Some(judged), common)
+        }
     };
     // A launch joined to a running lane opens none: no record, no intent,
     // no slot and no account.
@@ -1507,24 +1523,6 @@ pub(super) fn launch_lane(
         env,
         host,
     )?;
-    // A relaunch was judged when first admitted, bar where it runs and
-    // whose item it is: the binding, on its effective tracker and
-    // repository, before the patch writes them. Either binding answers the
-    // checkout's common git folder it read.
-    let checkout_common = match relaunch {
-        Some(index) => {
-            let record = &lanes[index];
-            admission::bound(
-                path,
-                &r.item,
-                r.tracker.as_deref().or(record.tracker.as_deref()),
-                r.repo.as_deref().or(record.repo.as_deref()),
-                Path::new(&r.mail_root),
-                host,
-            )?
-        }
-        None => judged.as_ref().and_then(|j| j.checkout_common.clone()),
-    };
     if admission.occupancy >= cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
@@ -1836,6 +1834,24 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
+    // A recovery ground retires the lane for the record's own relaunch,
+    // which meets the holders of its paths standing now: judged here, by
+    // every caller's close, a relaunch they refuse leaves the lane as it
+    // stood instead of stopped with no relaunch.
+    if let CloseGround::NoLanding { reason, .. } = &ground
+        && RecoveryReason::read(reason).is_some()
+    {
+        admission::relaunch_held(
+            path,
+            &lanes,
+            &open,
+            &lane,
+            lane.tracker.as_deref(),
+            lane.repo.as_deref(),
+            env,
+            host,
+        )?;
+    }
     let mut intent = new_intent(EffectOp::CloseResources, &r.item, env)?;
     LaneMembers {
         lane_since: lane.session_since.clone(),
@@ -2866,6 +2882,19 @@ mod tests {
     use agent_runtime::intent::{EffectOp, Phase};
     use agent_runtime::settings::Judged;
 
+    /// The shared fleet fixture with its lane's touched set recorded, as
+    /// every admitted record carries one, so a relaunch of it is judged on
+    /// that set and never on its item.
+    fn fleet_fixture() -> String {
+        let text = fixtures::FLEET.replacen("\"touched\": null", "\"touched\": []", 1);
+        assert_ne!(
+            text,
+            fixtures::FLEET,
+            "the fixture's lane records a touched field"
+        );
+        text
+    }
+
     #[test]
     fn launch_lane_writes_the_released_record_and_the_intent_then_reconciles() {
         let dir = tempfile::tempdir().unwrap();
@@ -2991,7 +3020,7 @@ mod tests {
         for (status, refusal) in rows {
             fs::write(
                 &path,
-                fixtures::FLEET.replacen("\"done\"", &format!("\"{}\"", status.word()), 1),
+                fleet_fixture().replacen("\"done\"", &format!("\"{}\"", status.word()), 1),
             )
             .unwrap();
             let result = run(&path, &launch("KEN-4437"));
@@ -3251,6 +3280,7 @@ mod tests {
             "launch": launch,
             "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
             "cycles": 2,
+            "touched": [],
         })
     }
 
@@ -3612,7 +3642,7 @@ mod tests {
         };
         fs::write(
             &path,
-            fixtures::FLEET.replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1),
+            fleet_fixture().replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1),
         )
         .unwrap();
         let err = run(&path, &relaunch(&accounts.join("link"))).unwrap_err();
@@ -3647,7 +3677,7 @@ mod tests {
     fn a_relaunch_keeps_unwritten_fields_and_its_confirmation_writes_the_whole_selection() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1)
             .replacen("\"kind\": \"local\"", "\"kind\": \"claude-cloud\"", 1)
             .replacen("\"surface\": \"tmux\"", "\"surface\": \"cloud\"", 1)
@@ -3748,7 +3778,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let stopped =
-            fixtures::FLEET.replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1);
+            fleet_fixture().replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1);
         for (implicit, prior) in [(true, false), (false, true)] {
             let text = if prior {
                 stopped.replacen(
@@ -3784,7 +3814,7 @@ mod tests {
     fn a_relaunch_of_a_parked_lane_unparks_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"parked\"", 1)
             .replacen(
                 "      \"launch\": {",
@@ -3823,7 +3853,7 @@ mod tests {
     fn record_phase_writes_the_open_intent_s_phase_and_refuses_a_closed_one() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, fleet_fixture()).unwrap();
         let id = intend(&path, &transfer(expected()));
         let opened = agent_runtime::intent::OpenedPane {
             pane: "%12".into(),
@@ -4113,7 +4143,7 @@ mod tests {
     fn a_confirmed_close_deletes_the_pr_identities() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"running\"", 1)
             .replacen(
                 "      \"launch\": {",

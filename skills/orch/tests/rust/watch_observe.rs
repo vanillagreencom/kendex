@@ -7980,6 +7980,81 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     })));
 }
 
+/// A walled worker whose recorded path another live lane took after it was
+/// admitted is not retired by its wall recovery: the chain's close refuses
+/// `launch-overlap` at exit 1, the walled harness runs on, the lane reads
+/// `running` and no close is recorded.
+#[test]
+fn a_wall_relaunch_beside_a_live_holder_of_its_path_closes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let checkout = dir.path().join("checkout");
+    init_checkout(&fleet, &checkout);
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+    let old_account = dir.path().join("old-account");
+    let new_account = dir.path().join("new-account");
+    std::fs::create_dir_all(&old_account).unwrap();
+    plant_credential(&new_account);
+    let mut record = relaunchable(lane_record(
+        "KEN-4",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &checkout,
+    ));
+    record["effort"] = json!("high");
+    record["account"] = json!(old_account.display().to_string());
+    record["touched"] = json!(["src/a.sh"]);
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = scripts;
+    driver.pick = Pick::Lane(new_account.display().to_string());
+    let produced = driver.pass(&state);
+    assert_eq!(
+        driver.relaunches.borrow().len(),
+        1,
+        "{:?}",
+        lines(&produced)
+    );
+    // The holder takes the path once the relaunch is composed, as another
+    // lane's admission can while the walled lane stands.
+    let holder = Owned::sleep();
+    let mut lanes = fleet.runner.fleet()["lanes"].as_array().unwrap().clone();
+    lanes.push(json!({
+        "item": "KEN-H",
+        "tracker": "linear",
+        "harness": "copilot",
+        "window": "fleet:KEN-H",
+        "mail_root": "/w/holder",
+        "session_since": "2026-01-29T15:00:00Z",
+        "launched_at": "2026-01-29T15:00:00Z",
+        "status": "running",
+        "launch": {"pane": "%7", "server": 41020, "pid": holder.pid(), "start": holder.start()},
+        "touched": ["src/a.sh"],
+    }));
+    fleet.set_lanes(lanes);
+    let before = fleet.runner.fleet();
+    let relaunch = driver.relaunches.borrow()[0].clone();
+    let out = run_relaunch(&fleet, &relaunch);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        reply(&out)["refusal"]["key"],
+        "launch-overlap",
+        "{}",
+        stderr(&out)
+    );
+    assert!(live(identity.pid), "the walled harness is not retired");
+    assert_eq!(fleet.runner.fleet(), before, "nothing is written");
+    assert_eq!(fleet.runner.fleet()["lanes"][0]["status"], "running");
+}
+
 /// A walled worker whose walk found no room is walked again on each later
 /// pass under the same banner, quietly, before its reset and after it while
 /// its own account still has no room; a refusal a later walk meets is said
