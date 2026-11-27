@@ -430,6 +430,10 @@ git -C "$repo" rm -q -- .github/ci-lanes.conf
 printf '%s\n' 'setting' >"$repo/tools/ci.config"
 printf '%s\n' 'source ./tools/env-lib.sh' >"$repo/tools/step-env.sh"
 printf '%s\n' 'true' >"$repo/tools/env-lib.sh"
+mkdir -p "$repo/tools/bin"
+printf '%s\n' '#!/bin/bash' '/usr/bin/cat ./tools/path-input.config "$@"' >"$repo/tools/bin/cat"
+chmod +x "$repo/tools/bin/cat"
+printf '%s\n' 'setting' >"$repo/tools/path-input.config"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a shell job with no overlapping lane reads'
 literal_job_base="$(git -C "$repo" rev-parse HEAD)"
@@ -437,7 +441,7 @@ while IFS='|' read -r variant old new; do
   git -C "$repo" checkout -qb "fixture-$variant" "$literal_job_base"
   edit_workflow "$old" "$new"
   case "$variant" in
-    *-computed)
+    *-computed|literal-job-path)
       printf '%s\n' 'web tools/ci.config # reason: the web check reads its protected setting' \
         >"$repo/.github/ci-lanes.conf" ;;
   esac
@@ -451,27 +455,19 @@ literal-step-if-computed|      - run: cat ./tools/input.sh\n|      - if: ${{ var
 literal-step-env-computed|      - run: cat ./tools/input.sh\n|      - env:\n          CI_CONFIG: ${{ vars.CI_CONFIG }}\n        run: cat ./tools/input.sh\n
 literal-job-env|    runs-on: ubuntu-latest\n|    env:\n      CI_CONFIG: tools/ci.config\n    runs-on: ubuntu-latest\n
 literal-job-env-computed|    runs-on: ubuntu-latest\n|    env:\n      CI_CONFIG: ${{ vars.CI_CONFIG }}\n    runs-on: ubuntu-latest\n
+literal-job-path|    runs-on: ubuntu-latest\n|    env:\n      PATH: tools/bin\n    runs-on: ubuntu-latest\n
 ROWS
 
 # HTIO-57's checkout ref, Node setup and npm wrapper, under a standard lane gate.
 git -C "$repo" checkout -qb fixture-npm "$literal_job_base"
 edit_workflow '      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n' \
-  '      - uses: actions/checkout@v7\n        with:\n          ref: ${{ github.sha }}\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n      - run: npm run check:vercel\n      - working-directory: deploy\n        run: vercel build\n'
+  '      - uses: actions/checkout@v7\n        with:\n          ref: ${{ github.sha }}\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n      - run: npm run check:vercel\n'
 printf '%s\n' '{"scripts":{"check:vercel":"bash ./tools/check-vercel.sh"}}' \
   >"$repo/package.json"
 printf '%s\n' '{"lockfileVersion":3,"packages":{"":{}}}' >"$repo/package-lock.json"
 printf '%s\n' 'cat ./tools/check.config' >"$repo/tools/check-vercel.sh"
 printf '%s\n' 'setting' >"$repo/tools/check.config"
-printf '%s\n' 'setting' >"$repo/tools/build.config"
-mkdir -p "$repo/deploy/.vercel" "$repo/deploy/site"
-printf '%s\n' '{"scripts":{"build":"cat ../tools/build.config"}}' >"$repo/deploy/package.json"
-printf '%s\n' '{"framework":null,"installCommand":"","buildCommand":"npm run build","outputDirectory":"site"}' \
-  >"$repo/deploy/vercel.json"
-# vercel pull's project-settings.ts writes the link and rootDirectory before
-# build starts. The reader needs those bytes without running the pull itself.
-printf '%s\n' '{"projectId":"prj_fixture","orgId":"team_fixture","settings":{"rootDirectory":null}}' \
-  >"$repo/deploy/.vercel/project.json"
-printf '%s\n' '<h1>Site</h1>' >"$repo/deploy/site/index.html"
+printf '%s\n' 'setting' >"$repo/tools/npm-input.config"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'the npm job has local build inputs'
 npm_base="$(git -C "$repo" rev-parse HEAD)"
@@ -496,11 +492,31 @@ while IFS='|' read -r variant file old new; do
 done <<'ROWS'
 npm-config-claim|.npmrc||legacy-peer-deps=true\n
 npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
-vercel-output-unproved|deploy/vercel.json|,"outputDirectory":"site"|
-vercel-env-unproved|deploy/.vercel/.env.preview.local||NODE_OPTIONS=--require=../tools/preload.cjs\n
-vercel-config-conflict|deploy/vercel.toml||buildCommand = "true"\n
-vercel-pull-unproved|.github/workflows/ci.yml|        run: vercel build\n|        run: vercel pull --yes\n      - working-directory: deploy\n        run: vercel build\n
+npm-helper-computed|tools/check-vercel.sh|cat ./tools/check.config|cat "$CI_PROFILE"
+npm-preload|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm run check:vercel\n
+vercel-retained|.github/workflows/ci.yml|      - run: npm run check:vercel\n|      - run: npm run check:vercel\n      - run: vercel build\n
 ROWS
+git -C "$repo" checkout -q fixture-npm-preload
+printf '%s\n' 'require("node:fs").readFileSync("tools/npm-input.config")' >"$repo/tools/node-setup.js"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Node resolves the extensionless preload to a tracked module'
+for variant in npm-helper-computed npm-lifecycle; do
+  git -C "$repo" checkout -qb "fixture-$variant-config" "fixture-$variant"
+  printf '%s\n' 'engine-strict=true' >"$repo/.npmrc"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm 'npm config and an executable input coexist'
+done
+git -C "$repo" checkout -qb fixture-npm-linked-lifecycle "$npm_base"
+# npm v3 records a file: dependency's hook on the link target.
+edit_file "$repo/package.json" '{"scripts":' '{"dependencies":{"shared":"file:./shared"},"scripts":'
+printf '%s\n' '{"lockfileVersion":3,"packages":{"":{"dependencies":{"shared":"file:./shared"}},"node_modules/shared":{"resolved":"shared","link":true},"shared":{"version":"1.0.0","hasInstallScript":true}}}' \
+  >"$repo/package-lock.json"
+mkdir -p "$repo/shared"
+printf '%s\n' '{"name":"shared","version":"1.0.0","scripts":{"postinstall":"cat ../tools/npm-input.config"}}' \
+  >"$repo/shared/package.json"
+printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a linked dependency has an install hook'
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
 for shape in event-gate event-gate-unguarded; do
@@ -1379,7 +1395,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
-    literal-*|npm-computed|npm-config-claim|npm-lifecycle|vercel-*-unproved|vercel-config-conflict)
+    literal-*|npm-computed|npm-config-claim|npm-*lifecycle*|npm-helper-computed*|npm-preload|vercel-retained)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
@@ -1615,13 +1631,13 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-step-if-computed) refused_jobs='job=web cause=opaque-step-condition' ;;
     literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
     literal-job-env-computed) refused_jobs='job=web cause=opaque-job-env' ;;
-    npm-computed) refused_jobs='job=web cause=computed-command' ;;
+    literal-job-path) refused_jobs='job=web cause=opaque-job-env' ;;
+    npm-computed|npm-helper-computed*) refused_jobs='job=web cause=computed-command' ;;
     npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
-    npm-lifecycle) refused_jobs='job=web cause=opaque-npm-dependency' ;;
+    npm-*lifecycle*) refused_jobs='job=web cause=opaque-npm-dependency' ;;
+    npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
     npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
-    vercel-output-unproved) refused_jobs='job=web cause=opaque-vercel-config' ;;
-    vercel-env-unproved|vercel-config-conflict) refused_jobs='job=web cause=opaque-vercel-discovery' ;;
-    vercel-pull-unproved) refused_jobs='job=web cause=opaque-vercel-command' ;;
+    vercel-retained) refused_jobs='job=web cause=opaque-vercel-command' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1795,19 +1811,19 @@ literal-step-env-computed|tools/unrelated.txt|||true|
 literal-job-env|tools/unrelated.txt|||false|
 literal-job-env-read|tools/ci.config|||true|
 literal-job-env-computed|tools/unrelated.txt|||true|
+literal-job-path|tools/path-input.config|||true|
 npm-unrelated|tools/unrelated.txt|||false|
 npm-run-read|tools/check.config|||true|
-npm-build-read|tools/build.config|||true|
 npm-computed|tools/unrelated.txt|||true|
+npm-helper-computed|tools/npm-input.config|||true|
+npm-helper-computed-config|tools/npm-input.config|||true|
 npm-config-claim|tools/unrelated.txt|||false|
 npm-lifecycle|tools/unrelated.txt|||true|
+npm-lifecycle-config|tools/unrelated.txt|||true|
+npm-linked-lifecycle|tools/npm-input.config|||true|
+npm-preload|tools/npm-input.config|||true|
 npm-ref-mismatch|tools/unrelated.txt|||true||pull_request
-vercel-output-read|deploy/site/index.html|||true|
-vercel-config-read|deploy/vercel.toml|||true|
-vercel-output-unproved|tools/unrelated.txt|||true|
-vercel-env-unproved|tools/unrelated.txt|||true|
-vercel-config-conflict|tools/unrelated.txt|||true|
-vercel-pull-unproved|tools/unrelated.txt|||true|
+vercel-retained|tools/unrelated.txt|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
