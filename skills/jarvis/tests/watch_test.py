@@ -2847,24 +2847,33 @@ with open(sys.argv[1], "ab") as out:
         # Every row runs the same passes: the stop, its successor running, a
         # second stop of that successor, the first pass after the hours and
         # one more. Each pass names the recoveries started by then, and the
-        # owner's notices sent by then where the hours hold them or not.
-        passes = [(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 330, 2, 0, 2), (morning, 2, 2, 2), (morning + 30, 2, 2, 2)]
+        # owner's notices sent by then where the hours hold them or not. The
+        # times each notice names as read close the passes.
+        twice = ([(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 330, 2, 0, 2), (morning, 2, 2, 2), (morning + 30, 2, 2, 2)],
+                 (at, at + 330))
+        # A restarted controller that exits again inside 300 seconds failed
+        # its restart: nothing starts again, and the owner reads one notice
+        # of what happened, never the success the hours held before it.
+        again = ([(at, 1, 0, 1), (at + 30, 1, 0, 1), (at + 200, 1, 0, 2), (morning, 1, 1, 2), (morning + 30, 1, 1, 2)],
+                 (at,))
         # Each row: the stop, the quiet hours in UTC, and how orch reads them
         # at the stop's pass. Hours outside the form leave the answer unread:
         # the notice stays held and the owner-quiet read reports once.
         for stop, hours, answer in (("usage", "0-7", "quiet"), ("usage", "8-12", "waking"), ("usage", "", "waking"),
                                     ("usage", "07-23", "unread"),
                                     ("sign-in", "0-7", "quiet"), ("sign-in", "8-12", "waking"), ("sign-in", "", "waking"),
-                                    ("exit", "0-7", "quiet"), ("exit", "8-12", "waking"), ("exit", "", "waking")):
+                                    ("exit", "0-7", "quiet"), ("exit", "8-12", "waking"), ("exit", "", "waking"),
+                                    ("exit again", "0-7", "quiet")):
+            passes, reads = again if stop == "exit again" else twice
             with self.subTest(stop=stop, hours=hours), patch.dict(os.environ, self.env, clear=True), \
                     contextlib.redirect_stdout(io.StringIO()):
-                self.home = self.project("quiet-" + stop + "-" + (hours or "none"))
+                self.home = self.project("quiet-" + stop.replace(" ", "-") + "-" + (hours or "none"))
                 self.home.joinpath("kendex.settings.toml").write_text(
                     '[env]\nORCH_REPORT_QUIET_HOURS="' + hours + '"\nORCH_OWNER_TIME_ZONE="UTC"\n')
                 # The log keeps every event: no batch settles and takes it.
                 self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-" + self.home.name)),
                                      JARVIS_WAKE_SETTLE_SECS="86400")
-                if stop == "exit":
+                if stop in ("exit", "exit again"):
                     plant, calls = self.exited_session()
                     plant("start", running)
                     # A bound controller that is not live leaves the exit to the status read.
@@ -2874,7 +2883,7 @@ with open(sys.argv[1], "ab") as out:
                     self.root.joinpath("status.json").write_text(json.dumps(gone))
                     plants = [lambda: plant("status", ended), lambda: plant("status", running)] * 2
                     recoveries = lambda: len([call for call in calls() if call.startswith("start ")])
-                    run, outcome = self.exited_passes, "started again"
+                    run, outcome = self.exited_passes, "started again" if stop == "exit" else "exited again"
                 else:
                     log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
                     # The walled controller, its successor, the successor walled, and its own successor.
@@ -2905,7 +2914,7 @@ with open(sys.argv[1], "ab") as out:
                         # form, a space in an event token read as \u0020.
                         self.assertIn(r" cause=orch-runtime:\u0020settings-invalid\u0020key=ORCH_REPORT_QUIET_HOURS",
                                       line)
-                for thread, read in zip(threads, (at, at + 330)):
+                for thread, read in zip(threads, reads):
                     self.assertTrue(any(self.module.wall_time(read + offset) in thread for offset in range(3)), thread)
                     self.assertIn(outcome, thread)
 

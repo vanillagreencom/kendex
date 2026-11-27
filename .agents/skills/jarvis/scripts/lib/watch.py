@@ -1353,7 +1353,8 @@ class Watch:
         text = ("Jarvis on " + (memory["account"] or "its default account") + " (" + memory["harness"]
                 + ") " + down + " (read at " + wall_time(memory["at"]) + "). " + memory["outcome"])
         try:
-            self.owner_notice(text, "exited-notice", now)
+            # A failed restart's outcome takes the place of its success notice still held.
+            memory["notice_id"] = self.owner_notice(text, "exited-notice", now, replaces=memory.get("notice_id"))
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             self.failed_pass("exited-notice", failure("exited-notice", error).record)
             return
@@ -1377,12 +1378,18 @@ class Watch:
         self.state.pop("owner-quiet_failure", None)
         return not answer
 
-    def owner_notice(self, text, operation, now, ref=None):
+    def owner_notice(self, text, operation, now, ref=None, replaces=None):
         """The receipt id of the owner notice TEXT in REF's thread: lane-mail's,
         or a held one while the owner's quiet hours cover NOW or an earlier
         notice is still held. The episode counts a held notice as sent, so
-        holding it holds no recovery; release sends it after the hours."""
+        holding it holds no recovery; release sends it after the hours. TEXT
+        takes the place of the held notice REPLACES while it is still held."""
         held = self.state.get("held_notices", [])
+        superseded = next((entry for entry in held if entry["id"] == replaces), None)
+        if superseded is not None:
+            superseded["text"] = text
+            self.save()
+            return superseded["id"]
         if not held and self.waking(now):
             return self.send_notice(text, operation, ref)
         entry = next((entry for entry in held if entry["id"] == ref), None)
