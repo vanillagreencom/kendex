@@ -90,6 +90,9 @@ VITEST_STATIC_IMPORT = re.compile(
     r"\s*import\s*\{\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*,?\s*\}\s*"
 )
 JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
+# Vitest 4 looks for these, with any script extension, in its root and then
+# each ancestor: any(configFiles, { cwd: root }) in vitest/dist/node.js.
+VITEST_CONFIG = ("vitest.config.", "vite.config.")
 JS_PACKAGES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}
 CHECKOUT = r"actions/checkout@[^\s]+"
 # A symlink or a submodule: git tracks no entry below either.
@@ -480,7 +483,10 @@ class Evidence:
             parts = [*Path(target).parts, *parts]
         reads.update(name for name in self.changed if under(name, "/".join(current) or "."))
 
-    def cargo_reads(self, args, directory):
+    def cargo_reads(self, args, directory, reads):
+        """Record each input in reads as the reader proves it, and the paths
+        Cargo discovers in the scanned packages once the reader succeeds.
+        Return the changed paths the reader judged."""
         require(args[:1] in [["test"], ["check"], ["clippy"], ["build"]],
                 "unsupported-cargo-command")
         options = args[1:]
@@ -525,10 +531,10 @@ class Evidence:
                 reads.add(path)
             return found
 
-        reads = {path for path in self.changed | self.files.keys()
-                 if any(part == ".cargo" for part in Path(path).parts)
-                 or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
-                                         ".clippy.toml"}}
+        reads.update(path for path in self.changed | self.files.keys()
+                     if any(part == ".cargo" for part in Path(path).parts)
+                     or Path(path).name in {"rust-toolchain", "rust-toolchain.toml", "clippy.toml",
+                                             ".clippy.toml"})
         found = inventory()
         defaults = set(found["workspace_default_members"])
         if not workspace and not package:
@@ -544,6 +550,10 @@ class Evidence:
         scanned = set()
         # Other evidence also lands in reads, so reads cannot mark a scan.
         scanned_sources = set()
+        # Cargo discovers a build script, targets and modules by their place in
+        # a package, so the reader takes a path there, which a change can add,
+        # as an input it did not read.
+        discovered = set()
         pending = roots[:]
         while pending:
             manifest = pending.pop()
@@ -555,16 +565,22 @@ class Evidence:
             scanned.add(manifest)
             scope = Path(manifest).parent.as_posix()
             for dependency in entry["dependencies"]:
-                local = dependency["path"]
+                # Cargo metadata gives a registry or Git dependency no path.
+                local = dependency.get("path")
                 require(isinstance(local, str), "cargo-external-dependency")
                 pending.append(self.relative(Path(local) / "Cargo.toml"))
             sources = set()
+            # Target auto-discovery: src/main.rs, src/bin, tests, examples and
+            # benches. https://doc.rust-lang.org/cargo/reference/cargo-targets.html#target-auto-discovery
+            module_roots = {(Path(scope) / name).as_posix()
+                            for name in ("src", "tests", "examples", "benches")}
             require(entry["targets"], "cargo-targets-unreadable")
             for target in entry["targets"]:
                 require(not ({"custom-build", "proc-macro"} & set(target["kind"])),
                         "cargo-opaque-target")
                 source = self.relative(target["src_path"])
                 sources.add(source)
+                module_roots.add(Path(source).parent.as_posix())
                 sources.update(path for path in self.files if path.endswith(".rs") and
                                under(path, Path(source).parent.as_posix()))
             target_sources = sources.copy()
@@ -593,17 +609,47 @@ class Evidence:
                     r"|\b(?:fs|process|File|Path|PathBuf|Command|extern|unsafe)\b",
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
-            reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
+            # A build.rs is discovered when the manifest sets no build key, and
+            # a manifest the change adds in the tree can join the workspace.
+            # https://doc.rust-lang.org/cargo/reference/manifest.html#the-build-field
+            # Cargo follows a link at a target directory and finds targets
+            # below it, so a path there is an input whatever its type.
+            target_dirs = {(Path(scope) / name).as_posix()
+                           for name in ("tests", "examples", "benches", "src/bin")}
+            discovered.update(path for path in self.changed | self.files.keys() if (
+                path == (Path(scope) / "build.rs").as_posix()
+                or (Path(path).name == "Cargo.toml" and under(path, scope))
+                or any(under(path, root) for root in target_dirs)
+                or (path.endswith(".rs") and any(under(path, root) for root in module_roots))))
+        reads.update(discovered)
         covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
-        return reads, covered | reads
+        return covered | reads
 
     def vitest_reads(self, directory, reads):
+        """Record each input in reads as the walk proves it. Return the
+        changed paths the reader judged."""
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
+        # Vitest loads the first config it finds in its root or an ancestor,
+        # which can move the root or widen discovery past it, and the reader
+        # cannot rule out a test that config discovers.
+        require(not any(
+            Path(path).parent in {Path(directory), *Path(directory).parents}
+            and Path(path).name.startswith((*VITEST_CONFIG, "vitest.workspace."))
+            for path in self.files), "vitest-loaded-config")
         paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
-        config_dirs = {Path(directory), *Path(directory).parents}
+        config_dirs = set()
+
+        def resolves_from(folder):
+            # Resolution reads the package and TypeScript config files in a
+            # module's directory and its ancestors, so the walk proves them as
+            # it reaches the module.
+            added = {folder, *folder.parents} - config_dirs
+            config_dirs.update(added)
+            reads.update(path for path in self.changed if Path(path).parent in added
+                         and Path(path).name in JS_PACKAGES | JS_CONFIG)
 
         def ungraphed(path):
             # A changed file the module graph does not judge: a non-module
@@ -612,11 +658,17 @@ class Evidence:
                 Path(path).parent in config_dirs and Path(path).name in JS_PACKAGES
             )
 
-        reads.update((self.changed - paths) | set(filter(ungraphed, paths)))
+        # Vitest discovers tests and Vite its config and env files under the
+        # root, and a path there the base lacks could be any of them, so each
+        # changed path there is an input before any refusal. So is a config
+        # an ancestor holds.
+        reads.update(path for path in self.changed if under(path, directory) or (
+            Path(path).parent in Path(directory).parents and Path(path).name.startswith(VITEST_CONFIG)))
+        resolves_from(Path(directory))
         members = {path for path in self.files if under(path, directory)}
         for path in members:
             name = Path(path).name
-            require_shape(not name.startswith(("vitest.config.", "vite.config.", "vitest.workspace.",
+            require_shape(not name.startswith((*VITEST_CONFIG, "vitest.workspace.",
                                                "tsconfig", "jsconfig", ".env")) and
                           self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
         pending = {path for path in members if MODULE.search(path)}
@@ -629,8 +681,7 @@ class Evidence:
             scanned.add(path)
             reads.add(path)
             parent = Path(path).parent
-            config_dirs.update((parent, *parent.parents))
-            reads.update(filter(ungraphed, paths))
+            resolves_from(parent)
             source = self.blob(path)
             require_shape(not re.search(
                 r"\b(?:require|eval|Function|fetch|process|globalThis)\b"
@@ -660,8 +711,10 @@ class Evidence:
                 # Vite and Node resolve a relative specifier by name, so a
                 # directory it passes through need not exist.
                 imported, _ = self.checkout_path(parent.as_posix(), target)
-                # A shape refusal keeps every module the walk resolved.
+                # A shape refusal keeps every module the walk resolved, and
+                # the package files its resolution reads.
                 reads.add(imported)
+                resolves_from(Path(imported).parent)
                 require_shape(imported in self.files and MODULE.search(imported),
                               "vitest-module-unresolved")
                 if self.package_path(imported):
@@ -995,14 +1048,13 @@ def job_reads(evidence, job, env_words, bash_env, ordinary, readers):
             if not args:
                 continue
             if args[0] == "cargo":
+                readers.append(set())
                 try:
-                    cargo, paths = evidence.cargo_reads(args[1:], directory)
+                    covered.append(evidence.cargo_reads(args[1:], directory, readers[-1]))
                 except Unreadable as error:
                     # A refusal drops every read the Cargo reader made, so no
                     # claim stands in for what it could not rule out.
                     raise Unreadable(str(error)) from error
-                readers.append(cargo)
-                covered.append(paths)
             elif args in (["vitest", "run"], ["./node_modules/.bin/vitest", "run"],
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(set())
