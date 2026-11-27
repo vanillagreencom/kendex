@@ -50,13 +50,13 @@ const ROWS: &[Row] = &[
                 // msg_4's growth holds the persona.md read and turn p-3
                 // together, so neither the read nor its source owns it.
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
-                // msg_8's, msg_10's, msg_14's and msg_16's growth, each a
-                // call's alone, and msg_12's, shared by the two failed reads
-                // of msg_11.
+                // msg_8's, msg_10's, msg_14's, msg_16's, msg_18's and
+                // msg_20's growth, each a call's alone, and msg_12's, shared
+                // by the two failed reads of msg_11.
                 ("/context/2/source", json!("rule-reads")),
                 (
                     "/context/2/tokens",
-                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28 + 30}),
+                    json!({"basis": "attributed", "value": 33 + 40 + 22 + 28 + 30 + 25 + 30}),
                 ),
                 ("/context/2/unattributed", json!(1)),
                 // msg_6's growth, shared by the two results of msg_5.
@@ -81,17 +81,17 @@ const ROWS: &[Row] = &[
                 ),
                 ("/sections/4/tokens", json!({"basis": "unclear"})),
                 // msg_15's `cat` failed on its second file after printing
-                // its first, so both reads stand, their shares unclear.
+                // its first, which no line of the result marks as AGENTS.md's,
+                // so neither read stands. msg_17's `ls` failed before its
+                // `jarvis-section` ran, so the result holds no Role heading.
+                // msg_19's `tail` printed AGENTS.md under its header before
+                // failing on notes.txt, whose error the result also holds.
                 (
                     "/sections/5/read",
                     json!({"kind": "file", "file": "AGENTS.md"}),
                 ),
-                ("/sections/5/tokens", json!({"basis": "unclear"})),
-                (
-                    "/sections/6/read",
-                    json!({"kind": "file", "file": "CLAUDE.md"}),
-                ),
-                ("/sections/7", Value::Null),
+                ("/sections/5/bytes", json!({"basis": "unclear"})),
+                ("/sections/6", Value::Null),
                 // The Stop hook's reply, alone before msg_3.
                 ("/context/4/source", json!("injected-text")),
                 (
@@ -270,6 +270,23 @@ const ROWS: &[Row] = &[
                     "/context/4/bytes",
                     json!({"basis": "measured", "value": 13 + 15 + 13 + 15}),
                 ),
+            ]
+        },
+    },
+    Row {
+        harness: "pi",
+        fixture: "load/pi-failed.jsonl",
+        head: None,
+        // e4: 10 + 10080 + 31 + 10.
+        start: Some(10131),
+        more: || {
+            vec![
+                // The failed command printed its section before its `ls`.
+                (
+                    "/sections/0/read",
+                    json!({"kind": "section", "file": "persona.md", "heading": "Role"}),
+                ),
+                ("/sections/0/tokens", json!({"basis": "unclear"})),
             ]
         },
     },

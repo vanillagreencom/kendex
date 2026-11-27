@@ -750,14 +750,15 @@ pub enum Entry {
     /// A tool result sent back: its bytes, `None` where the text it added
     /// is not the row's; the tokens the harness counted for it where it
     /// counts them; the name of what it loaded where the harness names
-    /// that only on the result (a Copilot skill); and whether the record
-    /// marks the call failed.
+    /// that only on the result (a Copilot skill); and, where the record
+    /// marks the call failed, the text the result sent, each part on its
+    /// own line.
     Result {
         call: String,
         bytes: Option<u64>,
         tokens: Option<u64>,
         loaded: Option<String>,
-        failed: bool,
+        failed: Option<String>,
     },
 }
 
@@ -882,7 +883,8 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         bytes: Some(text_bytes(block.get("content"), "text")),
                         tokens: None,
                         loaded: None,
-                        failed: block.get("is_error").and_then(Value::as_bool) == Some(true),
+                        failed: (block.get("is_error").and_then(Value::as_bool) == Some(true))
+                            .then(|| content_text(block.get("content"), "text")),
                     }),
                     ("user", "text") => found.push(Entry::Text {
                         bytes: text(block.get("text")).len() as u64,
@@ -919,7 +921,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     bytes: Some(text_bytes(payload.get("output"), "input_text")),
                     tokens: None,
                     loaded: None,
-                    failed: false,
+                    failed: None,
                 }],
                 _ => Vec::new(),
             }
@@ -946,11 +948,13 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     vec![Entry::Call { id: call, action }]
                 }
                 "tool.execution_complete" => {
-                    let failed = field("error").is_some_and(|error| !error.is_null());
                     let sent = match field("result") {
                         Some(result) => result.get("content"),
                         None => field("error").and_then(|e| e.get("message")),
                     };
+                    let failed = field("error")
+                        .is_some_and(|error| !error.is_null())
+                        .then(|| text(sent).to_owned());
                     let loaded = field("toolTelemetry")
                         .and_then(|t| t.get("restrictedProperties"))
                         .and_then(|p| p.get("skillName"))
@@ -1013,7 +1017,8 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     bytes: Some(text_bytes(message.get("content"), "text")),
                     tokens: None,
                     loaded: None,
-                    failed: message.get("isError").and_then(Value::as_bool) == Some(true),
+                    failed: (message.get("isError").and_then(Value::as_bool) == Some(true))
+                        .then(|| content_text(message.get("content"), "text")),
                 }],
                 _ => Vec::new(),
             }
@@ -1043,19 +1048,32 @@ fn turn_bytes(harness: Harness, row: &Value) -> u64 {
     text_bytes(content, "text")
 }
 
-/// The bytes of a content value: a string whole, or the `text` of each part
-/// of type `part` in an array; anything else, an image among them, adds none.
-fn text_bytes(content: Option<&Value>, part: &str) -> u64 {
+/// The texts of a content value: a string whole, or the `text` of each part
+/// of type `part` in an array; anything else, an image among them, holds
+/// none.
+fn content_texts<'a>(content: Option<&'a Value>, part: &str) -> Vec<&'a str> {
     match content {
-        Some(Value::String(text)) => text.len() as u64,
+        Some(Value::String(text)) => vec![text],
         Some(Value::Array(parts)) => parts
             .iter()
             .filter(|p| p.get("type").and_then(Value::as_str) == Some(part))
             .filter_map(|p| p.get("text").and_then(Value::as_str))
-            .map(|text| text.len() as u64)
-            .sum(),
-        _ => 0,
+            .collect(),
+        _ => Vec::new(),
     }
+}
+
+/// The bytes of a content value's [`content_texts`].
+fn text_bytes(content: Option<&Value>, part: &str) -> u64 {
+    content_texts(content, part)
+        .iter()
+        .map(|text| text.len() as u64)
+        .sum()
+}
+
+/// A content value's [`content_texts`], each on its own line.
+fn content_text(content: Option<&Value>, part: &str) -> String {
+    content_texts(content, part).join("\n")
 }
 
 /// A session file a store lists for a cwd, with the modification time read

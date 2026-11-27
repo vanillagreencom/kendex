@@ -18,11 +18,15 @@
 //! Copilot CLI's is inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
 //! repeat each user turn; this reader leaves those out of the bytes. A
-//! failed call that names one read and runs nothing else reads no section:
-//! its result counts to its source alone. A failed call that ran more may
-//! have printed its reads before the part that failed (a Bash command that
-//! exits nonzero still returns its output on Claude Code and Pi), so each
-//! of its reads stands, its figures unclear.
+//! failed call's result counts to its source, and a read of it stands only
+//! where the result's text holds the line that read's output begins with
+//! ([`printed`]): a Bash command that exits nonzero still returns what it
+//! printed on Claude Code and Pi, so a read before the part that failed
+//! may stand, and one the shell never ran does not. A read whose output
+//! begins with no line of its own (a `cat`, `sed` or `nl` read, a `head`
+//! or `tail` of one file, a read tool's or a skill's) never stands in a
+//! failed call, nor do reads that share a line the result holds fewer
+//! times than they do; a read that stands has unclear figures.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -367,10 +371,10 @@ impl Walk {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
-                if failed && reads.len() == 1 && !more {
-                    return;
+                let shared = reads.len() > 1 || more || failed.is_some();
+                if let Some(text) = failed {
+                    reads = stood(reads, &text);
                 }
-                let shared = reads.len() > 1 || more;
                 for read in reads {
                     self.sections.push(Section {
                         item,
@@ -565,6 +569,88 @@ fn item_tokens(share: Share) -> Figure {
         Share::Source | Share::Pending | Share::Unclear => Figure::Unclear,
         Share::Unsupported => Figure::Unsupported,
     }
+}
+
+/// The reads of a failed call that the result's `text` shows ran: each
+/// whose [`Marker`] it holds on at least as many lines as the call has
+/// reads with that marker, since a line the result holds once cannot tell
+/// two such reads apart.
+fn stood(reads: Vec<Read>, text: &str) -> Vec<Read> {
+    let markers: Vec<Option<Marker>> = reads.iter().map(marker).collect();
+    let stands: Vec<bool> = markers
+        .iter()
+        .map(|own| {
+            own.is_some_and(|own| {
+                let sharing = markers.iter().filter(|other| **other == Some(own)).count();
+                printed(own, text) >= sharing
+            })
+        })
+        .collect();
+    reads
+        .into_iter()
+        .zip(stands)
+        .filter_map(|(read, stands)| stands.then_some(read))
+        .collect()
+}
+
+/// The line a read's output begins with, where it has one of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Marker<'a> {
+    /// `jarvis-section` prints the section from its ATX heading line on
+    /// (skills/jarvis/scripts/jarvis-section, its heading rule in the
+    /// jarvis lib's `sections.py`).
+    Heading(&'a str),
+    /// `head` and `tail` of several files print `==> FILE <==` before each
+    /// file they open, and only those (GNU coreutils 9.4, measured; a
+    /// printer that writes no such header leaves the read unshown).
+    Header(&'a str),
+}
+
+fn marker(read: &Read) -> Option<Marker<'_>> {
+    match read {
+        Read::Section { heading, .. } => Some(Marker::Heading(heading)),
+        Read::File { file } => Some(Marker::Header(file)),
+        Read::Skill { .. } | Read::Unreadable => None,
+    }
+}
+
+/// The lines of `text` that begin a read's output by `marker`.
+fn printed(marker: Marker, text: &str) -> usize {
+    text.lines()
+        .filter(|line| match marker {
+            Marker::Heading(heading) => heading_title(line) == Some(heading),
+            Marker::Header(file) => {
+                line.strip_prefix("==> ")
+                    .and_then(|l| l.strip_suffix(" <=="))
+                    == Some(file)
+            }
+        })
+        .count()
+}
+
+/// The title of an ATX heading line, as `sections.py` reads one: up to
+/// three spaces, one to six `#`, then the title after a space or tab, less
+/// a closing run of `#` after one.
+fn heading_title(line: &str) -> Option<&str> {
+    let rest = line.strip_suffix('\r').unwrap_or(line);
+    let marks = rest.trim_start_matches(' ');
+    if rest.len() - marks.len() > 3 {
+        return None;
+    }
+    let title = marks.trim_start_matches('#');
+    if !(1..=6).contains(&(marks.len() - title.len())) {
+        return None;
+    }
+    if !title.is_empty() && !title.starts_with([' ', '\t']) {
+        return None;
+    }
+    let title = title.trim_matches([' ', '\t']);
+    let open = title.trim_end_matches('#');
+    let title = match open.strip_suffix([' ', '\t']) {
+        Some(_) if open.len() < title.len() => open,
+        _ => title,
+    };
+    Some(title.trim_matches([' ', '\t']))
 }
 
 /// The programs whose Markdown operands are file reads, each printing the
@@ -773,6 +859,91 @@ mod tests {
         ];
         for (action, reads, more) in rows {
             assert_eq!(rule_reads(&action), Rules { reads, more }, "{action:?}");
+        }
+    }
+
+    /// Each row: a failed call's reads, the text its result sent, and the
+    /// reads that stand. A row naming its command holds what that command
+    /// printed under bash with GNU coreutils 9.4 and the jarvis
+    /// `jarvis-section`.
+    #[test]
+    fn a_failed_calls_read_stands_only_where_its_result_holds_the_reads_output() {
+        let section = |file: &str, heading: &str| Read::Section {
+            file: file.to_owned(),
+            heading: heading.to_owned(),
+        };
+        let file = |file: &str| Read::File {
+            file: file.to_owned(),
+        };
+        let rows: Vec<(Vec<Read>, &str, Vec<Read>)> = vec![
+            // ls /nonexistent && jarvis-section persona.md Role
+            (
+                vec![section("persona.md", "Role")],
+                "ls: cannot access '/nonexistent': No such file or directory\n",
+                vec![],
+            ),
+            // jarvis-section persona.md Role; ls missing
+            (
+                vec![section("persona.md", "Role")],
+                "## Role\n\nThe role text.\n\nls: cannot access 'missing': No such file or directory\n",
+                vec![section("persona.md", "Role")],
+            ),
+            // A heading written with indent, a tab and a closing run.
+            (
+                vec![section("persona.md", "Role")],
+                "   ##\tRole ##\r\nThe role text.\n",
+                vec![section("persona.md", "Role")],
+            ),
+            // jarvis-section persona.md Gone; false
+            (
+                vec![section("persona.md", "Gone")],
+                "jarvis-section: {\"error\": \"unknown-heading\", \"heading\": \"Gone\", \"candidates\": [{\"heading\": \"Persona\", \"line\": 1}]}\n",
+                vec![],
+            ),
+            // Two sections of one heading, one heading line printed.
+            (
+                vec![section("a.md", "Role"), section("b.md", "Role")],
+                "## Role\n\nThe role text.\njarvis-section: {\"error\": \"read-failed\", \"file\": \"b.md\"}\n",
+                vec![],
+            ),
+            // A longer title, marks with no space after them and seven
+            // marks are no Role heading.
+            (
+                vec![section("a.md", "Role")],
+                "## Roles\n#Role\n####### Role\n",
+                vec![],
+            ),
+            // cat AGENTS.md CLAUDE.md: no line of AGENTS.md's own.
+            (
+                vec![file("AGENTS.md"), file("CLAUDE.md")],
+                "# Rules\n\nThe rules.\ncat: CLAUDE.md: No such file or directory\n",
+                vec![],
+            ),
+            // head -5 AGENTS.md CLAUDE.md
+            (
+                vec![file("AGENTS.md"), file("CLAUDE.md")],
+                "==> AGENTS.md <==\n# Rules\n\nThe rules.\nhead: cannot open 'CLAUDE.md' for reading: No such file or directory\n",
+                vec![file("AGENTS.md")],
+            ),
+            // head -3 AGENTS.md; ls missing: one file prints no header.
+            (
+                vec![file("AGENTS.md")],
+                "# Rules\n\nThe rules.\nls: cannot access 'missing': No such file or directory\n",
+                vec![],
+            ),
+            // A failed read tool's result and a failed skill's.
+            (vec![file("/h/gone.md")], "File does not exist.", vec![]),
+            (
+                vec![Read::Skill {
+                    name: Some("x".to_owned()),
+                }],
+                "x",
+                vec![],
+            ),
+            (vec![Read::Unreadable], "", vec![]),
+        ];
+        for (reads, text, want) in rows {
+            assert_eq!(stood(reads.clone(), text), want, "{reads:?} in {text:?}");
         }
     }
 }
