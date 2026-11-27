@@ -1156,7 +1156,7 @@ pub(super) fn bound(
     clippy::too_many_arguments,
     reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
 )]
-pub(crate) fn relaunch_held(
+pub(super) fn relaunch_held(
     path: &Path,
     lanes: &[Lane],
     intents: &[Intent],
@@ -1314,6 +1314,13 @@ pub(super) fn judge(
         if lane.item == a.item || !holds(lane, a.repo) {
             continue;
         }
+        // A holder that yields holds nothing, so its set is never read: an
+        // item that cannot be read refuses only beside a lane holding paths.
+        let live = match holding(lane, intents, env, host) {
+            Holding::Yields => continue,
+            Holding::Live => Ok(()),
+            Holding::Unknown(cause) => Err(cause),
+        };
         let read;
         let held = match &lane.touched {
             Some(paths) => paths,
@@ -1339,47 +1346,42 @@ pub(super) fn judge(
         let Some(file) = paths.first() else {
             continue;
         };
-        match holding(lane, intents, env, host) {
-            // A first launch joins one live holder before its review, and
-            // under direct delivery passes one in its review, the publication
-            // taking the order; a relaunch, which never joins, passes one in
-            // its review there too, where its review reads here; the paths a
-            // running lane adds never merge two lanes.
-            Holding::Live => {
-                let first = a.checkout().is_some();
-                let tie = Tie::File(file.clone());
-                if first && let Some(route) = unreachable(lane) {
-                    branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
-                }
-                let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
-                let direct = match a.launch {
-                    Launch::First(_) => direct(host)?,
-                    Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
-                    Launch::Added => false,
-                };
-                let before = if joinable || direct {
-                    Some(before_review(path, lane, a.item, &tie)?)
-                } else {
-                    None
-                };
-                match before {
-                    Some(true) if joinable => {
-                        join.get_or_insert(Join { holder: index, tie });
-                    }
-                    Some(false) if direct => {}
-                    _ => {
-                        return Err(Error::LaunchOverlap {
-                            item: a.item.to_owned(),
-                            file: file.clone(),
-                            holder: lane.item.clone(),
-                        });
-                    }
-                }
+        if let Err(cause) = live {
+            return Err(holder_unreadable(&lane.item, "identity", cause));
+        }
+        // A first launch joins one live holder before its review, and under
+        // direct delivery passes one in its review, the publication taking
+        // the order; a relaunch, which never joins, passes one in its review
+        // there too, where its review reads here; the paths a running lane
+        // adds never merge two lanes.
+        let first = a.checkout().is_some();
+        let tie = Tie::File(file.clone());
+        if first && let Some(route) = unreachable(lane) {
+            branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
+        }
+        let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
+        let direct = match a.launch {
+            Launch::First(_) => direct(host)?,
+            Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
+            Launch::Added => false,
+        };
+        let before = if joinable || direct {
+            Some(before_review(path, lane, a.item, &tie)?)
+        } else {
+            None
+        };
+        match before {
+            Some(true) if joinable => {
+                join.get_or_insert(Join { holder: index, tie });
             }
-            Holding::Unknown(cause) => {
-                return Err(holder_unreadable(&lane.item, "identity", cause));
+            Some(false) if direct => {}
+            _ => {
+                return Err(Error::LaunchOverlap {
+                    item: a.item.to_owned(),
+                    file: file.clone(),
+                    holder: lane.item.clone(),
+                });
             }
-            Holding::Yields => {}
         }
     }
     let check_unowned = a.checkout().is_some() && !touched.is_empty();
@@ -2645,15 +2647,15 @@ mod tests {
         assert!(judged.is_ok(), "a done lane holds nothing: {judged:?}");
     }
 
-    /// A holder with no recorded set is read from its item, once, and one
-    /// whose item cannot be read blocks; a holder of another repository is
-    /// never read.
+    /// A live holder with no recorded set is read from its item, once, and
+    /// one whose item cannot be read blocks; a holder of another repository
+    /// is never read.
     #[test]
     fn a_holder_without_a_touched_set_is_read_from_its_item_or_blocks_unread() {
         let planted = Planted {
             items: [
                 ("KEN-L".to_owned(), body("`src/a.sh`")),
-                ("KEN-H".to_owned(), body("`src/a.sh`")),
+                ("KEN-H".to_owned(), body("`src/b.sh`")),
                 (
                     "KEN-U".to_owned(),
                     Err("issue-read exit 1: refused".to_owned()),
@@ -2661,7 +2663,14 @@ mod tests {
                 ("KEN-T".to_owned(), body("src/a.sh (unticked)")),
             ]
             .into(),
-            readings: BTreeMap::new(),
+            readings: [(
+                12,
+                Reading::Live(Identity {
+                    pid: 12,
+                    start: "ticks:1".into(),
+                }),
+            )]
+            .into(),
             ranges: Vec::new(),
             reads: RefCell::new(Vec::new()),
         };

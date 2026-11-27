@@ -1834,6 +1834,24 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
+    // A recovery ground retires the lane for the record's own relaunch,
+    // which meets the holders of its paths standing now: judged here, by
+    // every caller's close, a relaunch they refuse leaves the lane as it
+    // stood instead of stopped with no relaunch.
+    if let CloseGround::NoLanding { reason, .. } = &ground
+        && RecoveryReason::read(reason).is_some()
+    {
+        admission::relaunch_held(
+            path,
+            &lanes,
+            &open,
+            &lane,
+            lane.tracker.as_deref(),
+            lane.repo.as_deref(),
+            env,
+            host,
+        )?;
+    }
     let mut intent = new_intent(EffectOp::CloseResources, &r.item, env)?;
     LaneMembers {
         lane_since: lane.session_since.clone(),
@@ -2869,7 +2887,11 @@ mod tests {
     /// that set and never on its item.
     fn fleet_fixture() -> String {
         let text = fixtures::FLEET.replacen("\"touched\": null", "\"touched\": []", 1);
-        assert_ne!(text, fixtures::FLEET, "the fixture's lane records a touched field");
+        assert_ne!(
+            text,
+            fixtures::FLEET,
+            "the fixture's lane records a touched field"
+        );
         text
     }
 

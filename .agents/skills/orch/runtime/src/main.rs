@@ -2897,8 +2897,7 @@ fn pr_verb(op: PrOp, flags: &Flags) -> Result<serde_json::Value> {
 )]
 fn lane_verb(op: LaneOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
-    let env = Env::system()?;
-    let now = env.now_secs;
+    let now = Env::system()?.now_secs;
     let host = ops::Host::kernel();
     match op {
         LaneOp::Status { item } => Ok(watch::lanes::status(
@@ -2914,7 +2913,7 @@ fn lane_verb(op: LaneOp, flags: &Flags, locking: Locking) -> Result<serde_json::
         )?),
         LaneOp::Relaunch { target, lane: item } => {
             let path = target_path(&target, &settings);
-            relaunch_lane(&path, &item, settings, &env, locking)
+            relaunch_lane(&path, &item, settings, &host, now, locking)
         }
         LaneOp::Charges {
             fleet: _,
@@ -3933,8 +3932,7 @@ fn applied_live(
 
 /// The local lane `item` relaunched from its record on the controller
 /// record's server: both requests composed and admitted before the close,
-/// judged on the host the launch itself judges on, so every refusal at
-/// exit 1 leaves the lane as it stood; then the close,
+/// so every refusal at exit 1 leaves the lane as it stood; then the close,
 /// and only after a confirmed close the launch. A lane an earlier
 /// relaunch's close left stopped takes the launch alone, its lines naming
 /// that close. Every answer after the close names its outcome, the line
@@ -3943,12 +3941,12 @@ fn relaunch_lane(
     path: &Path,
     item: &str,
     settings: Settings,
-    env: &Env,
+    host: &ops::Host,
+    now: u64,
     locking: Locking,
 ) -> Result<serde_json::Value> {
     let settings = on_recorded_server(settings, path)?;
-    let host = kernel_host(&settings);
-    let relaunch = effects::relaunch::composed(&settings, path, item, &host, env)?;
+    let relaunch = effects::relaunch::composed(&settings, path, item, host, now)?;
     let close = match relaunch.close {
         effects::relaunch::Close::Request(request) => {
             let close = admitted(path, read_request(&request)?, &settings)?;

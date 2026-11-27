@@ -6,7 +6,6 @@
 use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
-use agent_runtime::journal::Env;
 
 use super::refused;
 use crate::error::Result;
@@ -48,8 +47,7 @@ pub enum Close {
 /// live idle lane. Then the record's own account judged by the launch's
 /// own judge, with the lane's own charge left out, so an account that
 /// cannot take the lane refuses with the launch's own key before the close
-/// retires anything, as do the record's paths another lane holds now, met
-/// by the launch's own holder judgement; then the
+/// retires anything; then the
 /// record's own relaunch on that account and the start brief, which
 /// continues from the item's standing handoff, retiring the predecessor on
 /// the `restart-recovery` ground; on a lane such a close already left
@@ -65,13 +63,9 @@ pub fn composed(
     path: &Path,
     item: &str,
     host: &ops::Host,
-    env: &Env,
+    now: u64,
 ) -> Result<Relaunch> {
-    let fleet = super::fleet(path)?;
-    let lane = fleet
-        .lanes
-        .iter()
-        .find(|l| l.item == item)
+    let lane = super::lane_model::lane_of(path, item)?
         .ok_or_else(|| refused("lane-missing", &[("item", item)]))?;
     if let Some(at) = lane
         .host
@@ -80,7 +74,7 @@ pub fn composed(
     {
         return Err(refused("lane-hosted", &[("item", item), ("host", at)]));
     }
-    ops::lane::ended(lane, host)?;
+    ops::lane::ended(&lane, host)?;
     let harness = lane
         .harness
         .as_deref()
@@ -100,23 +94,10 @@ pub fn composed(
             },
             Some(item),
             host,
-            env.now_secs,
+            now,
         )?;
     }
-    // The launch judges the same holders again under its lock; judged here
-    // against the fleet as read now, an overlap refuses before the close
-    // retires the lane.
-    ops::admission::relaunch_held(
-        path,
-        &fleet.lanes,
-        &fleet.intents,
-        lane,
-        lane.tracker.as_deref().filter(|t| !t.is_empty()),
-        lane.repo.as_deref().filter(|r| !r.is_empty()),
-        env,
-        host,
-    )?;
-    let brief: Brief = match handoff_standing(&settings.state_dir, lane) {
+    let brief: Brief = match handoff_standing(&settings.state_dir, &lane) {
         HandoffReading::Stands { record: _ } => super::launch::start_brief,
         HandoffReading::None => super::launch::interrupted_start_brief,
         HandoffReading::Unreadable { path } => {
@@ -127,7 +108,7 @@ pub fn composed(
         }
     };
     let Composed { close, launch, .. } = compose_relaunch(
-        lane,
+        &lane,
         harness,
         &Composition {
             stem: STEM,

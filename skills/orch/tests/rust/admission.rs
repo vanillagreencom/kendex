@@ -829,6 +829,27 @@ fn a_relaunch_over_no_recorded_set_and_no_location_is_refused() {
     assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
 }
 
+/// A holder that yields holds nothing, so its set is never read: a stopped
+/// record no judgement wrote, whose item cannot be read, refuses neither a
+/// relaunch nor a first launch of a path its item might name.
+#[test]
+fn a_yielding_holder_whose_set_cannot_be_read_blocks_no_launch() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.item("KEN-F", "`src/a.sh`", 0, &[]);
+    // KEN-S's item is planted nowhere, so its read fails.
+    fleet.write_lanes(vec![
+        holder("KEN-S", "stopped", None, None),
+        holder("KEN-R", "stopped", None, Some(&["src/a.sh"])),
+    ]);
+    for item in ["KEN-R", "KEN-F"] {
+        let out = fleet.op(&launch(item, fleet.state_dir().as_path()));
+        assert_eq!(reply(&out)["ok"], true, "{item}: {}", stderr(&out));
+        // No fleet server exists here, so the launch fails before any window.
+        assert_eq!(fleet.lane(item)["status"], "stopped", "{item}");
+    }
+}
+
 /// The bundle reply a linear package whose formatter names no launch
 /// blockers prints over a node blocked by the started issue CC-9: that
 /// formatter's own output, planted as it stands for the row below, since
