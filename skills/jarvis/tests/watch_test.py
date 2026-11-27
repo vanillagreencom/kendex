@@ -2402,7 +2402,7 @@ with open(sys.argv[1], "ab") as out:
                     link.symlink_to(program)
         return directory
 
-    def controller(self, session, account, row, pane="%3", verdict=None, runtime=True, setup=True):
+    def controller(self, session, account, row, pane="%3", verdict=None, runtime=True, setup=True, harness="claude"):
         """The home's live, bound controller SESSION on ACCOUNT in PANE, its
         context stamp a day old: agent-runtime's status read is planted, and
         the real wall verdict judges ROW, an object or a raw line, as the
@@ -2411,7 +2411,8 @@ with open(sys.argv[1], "ab") as out:
         wrapper's exit 69; RUNTIME false leaves no runtime installed; SETUP
         false runs the real wrapper with no binary built on a PATH without
         cargo, whose gh GitHub refuses, where it fetches and builds nothing
-        and refuses every command, setup-required, the status read first."""
+        and refuses every command, setup-required, the status read first.
+        HARNESS is the recorded harness, in the home as its directory."""
         directory = self.packages / "agent-runtime"
         if directory.is_symlink():
             directory.unlink()
@@ -2446,7 +2447,8 @@ with open(sys.argv[1], "ab") as out:
         status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
             "live": True, "open_intents": [], "server_start": 1790000000,
             "recorded": {"server": 4242, "pane": pane, "session_id": session,
-                         "account": account, "harness": "claude"}}}))
+                         "account": account, "harness": harness, "cwd": str(self.home),
+                         "server_socket": "/sock"}}}))
         box = self.home / "tmp/lane-mail/overseer"
         box.mkdir(parents=True, exist_ok=True)
         box.joinpath("context.json").write_text(json.dumps(
@@ -2487,7 +2489,7 @@ with open(sys.argv[1], "ab") as out:
         class Inline:
             def submit(self, work, *args):
                 future = Future()
-                if work.__name__ == "wall" or work.__name__ == "succeed" and succeeding:
+                if work.__name__ == "wall" or work.__name__ in ("succeed", "recover_provider") and succeeding:
                     future.set_result(work(*args))
                 return future
         for offset in range(3):
@@ -2814,6 +2816,175 @@ with open(sys.argv[1], "ab") as out:
             watch._poll(Inline(), Future(), now + 31)
             held[0][0].set_result(held[0][1]())
             watch._poll(Inline(), Future(), now + 32)
+
+    def session_record(self, harness, account, lines, session="s1"):
+        """ACCOUNT's own record of the Codex or Copilot SESSION: LINES,
+        rows of agent-runtime's recorded real stops."""
+        if harness == "codex":
+            path = account / ("sessions/2026/11/26/rollout-2026-11-26T01-17-55-" + session + ".jsonl")
+        else:
+            path = account / "session-state" / session / "events.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.with_name("workspace.yaml").write_text("id: " + session + "\n")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(line + "\n" for line in lines))
+
+    @staticmethod
+    def recorded_stop(name, edit=None):
+        """The rows of agent-runtime's recorded real stop NAME, EDIT applied to each."""
+        text = (REPO / "skills/agent-runtime/tests/rust/fixtures/stops" / name).read_text()
+        return [edit(line) if edit else line for line in text.splitlines()]
+
+    def test_a_provider_stop_asks_agent_runtime_on_each_check_and_keeps_its_episode(self):
+        # The failure it stops: a session whose turn the provider failed
+        # stays stopped, on any harness, with nobody typing, a Codex or
+        # Copilot stop drawn on the pane and absent from the record among
+        # them; a watch that drops the episode the decision named, so the
+        # decision never ages it past its patience and never moves the
+        # session to another provider; or one that keeps it past a returned
+        # turn, a new controller or a wall, so a later stop is moved on its
+        # first failure. A failed recovery reports once per episode, through
+        # a busy pane, and is asked again. A full context, which a Codex pane
+        # draws as it draws a provider error, is no provider stop. A provider
+        # stop tells nobody.
+        episode = lambda since, last: ({"state": "running", "provider_recovery": "resumed",
+                                        "episode": {"since": since, "last": last}}, 0)
+        failed = {"state": "failed", "reason": "handover-failed", "detail": "The session could not resume."}, 1
+        # A resume whose walk could not judge another provider.
+        unmoved = ({**episode(100, 130)[0], "provider_walk": "walk-unread"}, 0)
+        busy = {"state": "running", "provider_recovery": "busy"}, 0
+        waiting = {"state": "running", "wall_recovery": "waiting"}, 0
+        fixtures = REPO / "skills/agent-runtime/tests/rust/fixtures"
+        # Screens agent-runtime's judge reads: a turn at work, an idle one
+        # that returned, and an idle one the provider stopped, the Codex one
+        # as a real pane drew it.
+        working = "› Continue your work\n\n• Working (3s • esc to interrupt)\n\n› Ask Codex to do anything\n"
+        drawn = {"codex": '■ {"detail":"Bad Request"}\n1 background terminal running · /ps to view · /stop to close\n'
+                          "› Ask Codex to do anything\nContext 61% left · ~/dev/.worktrees/kendex/ken-5026 · "
+                          "GPT-6.1-Sol high · ken-…\n← for agents · ? for shortcuts ⚠ 2 warnings · f2 to view\n",
+                 "copilot": "❯ Brief\n✗ Execution failed: CAPIError: Connection error.\n❯ \n" + "─" * 40 + "\n"}
+        # A full context's record is drawn on the pane as its error is.
+        screens = {harness: {"returned": (fixtures / (harness + "-idle.txt")).read_text(), "drawn": drawn[harness],
+                             "full": drawn[harness]} for harness in drawn}
+        # The words each record types a full context with, in place of the overload's.
+        full = {"codex": ('"codex_error_info":"server_overloaded"', '"codex_error_info":"context_window_exceeded"'),
+                "copilot": ('"errorType":"query"', '"errorType":"context_limit"')}
+        panes = self.root / "panes"
+        panes.mkdir()
+        self.executable("tmux", '#!/bin/sh\n[ "$1 $2 $3" = "-S /sock capture-pane" ] || exit 9\n'
+                                'for pane; do :; done\nexec cat ' + shlex.quote(str(panes)) + '/"$pane"\n')
+        for harness, ends in (("claude", True), ("codex", False), ("copilot", False)):
+            with self.subTest(harness=harness), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.home = self.project("home-provider-" + harness)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-provider-" + harness))
+                account = self.root / ("accounts-" + harness)
+                account.mkdir()
+                stop, filled = [], []
+                if harness != "claude":
+                    stop = self.recorded_stop(harness + "-overload.jsonl")
+                    filled = [line.replace(*full[harness]) for line in stop]
+                    self.assertNotEqual(filled, stop)
+                wall = {"codex": "codex-credits.jsonl", "copilot": "copilot-quota.jsonl"}
+
+                def plant(session, pane, turn):
+                    if harness == "claude":
+                        # A hook row names a provider stop, a returned turn or a
+                        # wall; the pane is never read.
+                        row = {"usage": {"event": "StopFailure", "error": "rate_limit"},
+                               "full": {"event": "StopFailure", "error": "invalid_request", "message": "Prompt is too long"},
+                               "returned": {"event": "Stop"}}.get(turn, {"event": "StopFailure", "error": "server_error"})
+                        self.controller(session, str(account), row, pane=pane)
+                        return
+                    self.controller(session, str(account), {"event": "Stop"}, pane=pane, harness=harness)
+                    # A failed turn's record, a wall's, or a new turn opened
+                    # after the failed one, which the pane tells apart.
+                    lines = {"failed": stop, "full": filled, "usage": self.recorded_stop(wall[harness])}.get(
+                        turn, stop + [stop[0]])
+                    self.session_record(harness, account, lines, session)
+                    panes.joinpath(pane).write_text(screens[harness].get(turn, working))
+                watch = self.watch()
+                # The loop's log is sent and cut between checks: each pass it
+                # writes is kept as written.
+                written, append = [], watch.append
+                watch.append = lambda output: (written.append(output), append(output))[1]
+                ask = lambda session="s1", pane="%3", *since: [
+                    "succeed", "--home", str(self.home), "--provider-stop", session, "4242 " + pane, *(
+                        ["--since", since[0], "--last", since[1]] if since else [])]
+                # Each check: the controller, its turn, the session command's
+                # answer, the arguments the check passes it, and the
+                # root-unreachable events written by then.
+                for index, (session, pane, turn, (answer, code), asked, alerts) in enumerate((
+                        ("s1", "%3", "failed", episode(100, 100), ask(), 0),
+                        ("s1", "%3", "failed", failed, ask("s1", "%3", "100", "100"), 1),
+                        ("s1", "%3", "failed", episode(100, 130), ask("s1", "%3", "100", "100"), 1),
+                        ("s1", "%3", "failed", unmoved, ask("s1", "%3", "100", "130"), 2),
+                        # A busy pane decides nothing: the same walk refusal is not told again.
+                        ("s1", "%3", "failed", busy, ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "failed", unmoved, ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "returned" if ends else "running", (None, 0), None, 2),
+                        ("s1", "%3", "failed", episode(160, 160), ask() if ends else ask("s1", "%3", "100", "130"), 2),
+                        ("s1", "%3", "failed", failed, ask("s1", "%3", "160", "160"), 3),
+                        # A returned turn ends the episode and its report: the next one's failure is told.
+                        ("s1", "%3", "returned", (None, 0), None, 3),
+                        ("s1", "%3", "failed", failed, ask(), 4),
+                        ("s1", "%3", "drawn", episode(200, 200), ask(), 4),
+                        # A full context asks nothing and ends the episode.
+                        ("s1", "%3", "full", (None, 0), None, 4),
+                        ("s1", "%3", "failed", episode(220, 220), ask(), 4),
+                        ("s2", "%4", "failed", episode(230, 230), ask("s2", "%4"), 4),
+                        ("s2", "%4", "usage", waiting, ["succeed", "--home", str(self.home), "--account-walled",
+                                                        "--usage-wall", "s2", "4242 %4"], 4))):
+                    plant(session, pane, turn)
+                    log = self.session_command(answer, code)
+                    self.wall_passes(watch, 1000 + 30 * index)
+                    self.assertEqual(log.read_text().splitlines() if log.exists() else [],
+                                     [" ".join(asked)] if asked else [], "check " + str(index))
+                    events = [line for output in written for line in output.splitlines()
+                              if line.startswith("EVENT root-unreachable")]
+                    self.assertEqual(len(events), alerts, "check " + str(index))
+                    if turn != "usage":
+                        self.assertEqual(self.owner_notice_rows(), [], "check " + str(index))
+                self.assertNotIn("provider", watch.state)
+
+    def test_a_codex_or_copilot_wall_starts_its_succession_and_tells_the_owner_once(self):
+        # The failure it stops: a Codex or Copilot Jarvis session at its
+        # account's limit or signed out is never read walled, so no
+        # successor starts on another account and the owner is never told.
+        refusal = "No account is left to take over. Jarvis keeps running."
+        waiting = {"state": "running", "wall_recovery": "waiting"}, 0
+        refused = {"state": "failed", "reason": "handover-failed", "detail": refusal}, 1
+        signed_out = lambda line: line.replace('"statusCode":402', '"statusCode":401')
+        usage = ["--account-walled", "--usage-wall", "s1", "4242 %3"]
+        # Each row: the harness, its recorded stop, the session command's
+        # answer, the arguments each of two checks passes it, and the words
+        # the owner's one notice names beside the account.
+        for harness, stop, (answer, code), asked, words in (
+                ("codex", self.recorded_stop("codex-credits.jsonl"), waiting, [usage, usage],
+                 ["usage limit", "reset time unknown"]),
+                ("copilot", self.recorded_stop("copilot-quota.jsonl"), waiting, [usage, usage],
+                 ["usage limit", "reset time unknown"]),
+                ("copilot", self.recorded_stop("copilot-quota.jsonl", signed_out), refused, [["--account-walled"]],
+                 ["signed out", refusal])):
+            with self.subTest(harness=harness, words=words), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                name = harness + "-" + words[0].replace(" ", "-")
+                self.home = self.project("home-wall-" + name)
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-wall-" + name))
+                account = self.root / ("accounts-" + name)
+                account.mkdir()
+                self.controller("s1", str(account), {"event": "Stop"}, harness=harness)
+                self.session_record(harness, account, stop)
+                log = self.session_command(answer, code)
+                watch = self.watch()
+                self.wall_passes(watch, 1000)
+                self.wall_passes(watch, 1030)
+                self.assertEqual(log.read_text().splitlines() if log.exists() else [],
+                                 [" ".join(["succeed", "--home", str(self.home), *args]) for args in asked])
+                notices = self.owner_notices()
+                self.assertEqual(len(notices), 1, notices)
+                for word in [str(account), *words]:
+                    self.assertIn(word, notices[0])
 
     def test_an_exited_controller_is_started_again_and_reported_once(self):
         # The failure it stops: a controller whose CLI exited writes no rows,

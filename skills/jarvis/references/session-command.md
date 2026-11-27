@@ -71,6 +71,20 @@ Read by section, only for the step that needs it: [Session command](#session-com
   1. Start with `--mode resume --origin manual --keep-brief` on the recorded harness and account.
   2. If that Start refuses, at once, as with `account-walled`, or once its detached start records the refusal, run `jarvis-session succeed --home HOME --exited`. It hands the exited controller over to the next account the walk picks, never the recorded one, and retires nothing live.
      - `--exited` refuses `record-unreadable` while the controller runs, while a start is open, and after a Stop. After an app-off Stop it refuses `app-off`. During an open hand-over it answers `handing-over`, as every `succeed` does.
+- The Jarvis session goes on after a stop with nobody typing, by the five rules a worker follows. agent-runtime decides each one: its stop table for a provider stop, its account walk for a limit or an ended sign-in. The owner it tells is the owner's channel.
+  1. A provider stop, such as an overload, a server error, a broken stream, a dropped connection or a safety flag, resumes the same session at each watch check for up to 30 minutes. After that it moves the session to the first entry with room on another provider. With no such entry, a walk that refused, or succession off, it keeps resuming at each check. A walk that chose none past an entry it read unread is one with no such entry.
+  2. An exited harness starts again with its session resumed, by the route above.
+  3. A usage limit moves the session to another account with room. With none, the session waits for its account's reset and resumes there.
+  4. An ended sign-in moves the session to another account and sends the owner's channel one notice naming the account.
+  5. A limit or an ended sign-in that no account can take over, with no known reset, leaves the session where it stopped and sends the owner's channel one notice with its cause.
+- The [watch loop](control-host-events.md#delivery) takes a provider stop by running `jarvis-session succeed --home HOME --provider-stop SESSION PANE`, with `--since S --last L` where an earlier answer named the episode. SESSION and PANE name the recorded controller.
+  - It runs `agent-runtime controller successor --stop provider` only where the pane reads idle. A working pane, such as one running the turn the last resume started, answers `provider_recovery` `busy` and decides nothing.
+  - A pane in any other state, at a dialog or unjudged among them, answers `failed` with `handover-failed`, and the detail names the state.
+  - A `resume` types a continue line into the same pane, and answers `resumed`, or `unconfirmed` where no turn confirmed the line.
+  - A resume whose walk refused or read an entry unread prints one `jarvis-session: provider-walk=KEY` line, and its answer carries that key as `provider_walk`.
+  - A `move-provider` hands the session over to the successor the decision chose, retired as a walled session is, and answers `moved`. A successor that fails is passed for the next one the decision chooses.
+  - A `resumed`, `unconfirmed` or `moved` answer carries the `episode` the decision named. A refusal carries none, and the watch keeps the episode it held.
+  - A move whose next decision chooses no successor refuses `handover-failed`. Where the walk refused or read an entry unread, its detail names that key ahead of the accounts tried.
 - After a machine restart, or once a tmux server holding the delegate, an overseer or a lane is gone, run `.agents/skills/jarvis/scripts/jarvis-session resume --home HOME`.
   - It resumes the recorded delegate first, through Start's resume of its recorded conversation. It never opens a new conversation.
   - It then relaunches each lane whose record reads `running`, and each lane recorded `stopped` with `restart_closed`, through `orch-runtime lane relaunch --fleet ITEM` run from its checkout, in each checkout `kendex project list --json` registers. It leaves a lane hosted on another machine as it is.

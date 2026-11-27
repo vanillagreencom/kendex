@@ -41,13 +41,19 @@ class SuccessionContract(SessionContract):
                 argv.append("--reset-passed")
             if "resume_cursor" in kwargs:
                 argv += ["--resume-cursor", str(kwargs["resume_cursor"])]
+        stopped = kwargs.get("provider_stop")
+        if stopped:
+            argv += ["--provider-stop", stopped["session_id"], f'{stopped["server"]} {stopped["pane"]}']
+            if kwargs.get("episode"):
+                argv += ["--since", str(kwargs["episode"]["since"]), "--last", str(kwargs["episode"]["last"])]
         result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=300)
         self.stderr = result.stderr
         try:
             output, recovery = result.stdout, None
-            if before:
+            if before or stopped:
                 fields = json.loads(output)
-                recovery = {key: fields.pop(key) for key in ("wall_recovery", "wall_resume") if key in fields}
+                recovery = {key: fields.pop(key) for key in ("wall_recovery", "wall_resume", "provider_recovery",
+                                                             "episode") if key in fields}
                 output = json.dumps(fields)
             answer = session_test.validate(output, result.returncode, "succeed")
             if recovery is not None:
@@ -150,6 +156,37 @@ class SuccessionContract(SessionContract):
         self.assertEqual(self.controller()["session_id"], before["session_id"])
         self.assertEqual(len(self.started()), 1)
         self.assertEqual(len(self.prompts()), len(prompts) + 1)
+        self.assertEqual(list((self.home / "state/archive").glob("handoff-*.md")), [])
+
+    def test_a_provider_stop_resumes_the_same_session_and_keeps_its_episode(self):
+        # The failure it stops: a session its provider stopped waits for a
+        # person, or a repeated stop opens a new episode each time, so the
+        # decision never ages it past its patience. agent-runtime's own
+        # decision answers the resume inside the patience, typed into the
+        # real pane of the same session.
+        before = self.running()
+        prompts = self.prompts()
+        episode = None
+        for asked in range(2):
+            deadline = time.monotonic() + 30
+            while True:
+                answer, code = self.succeed(provider_stop=before, episode=episode)
+                self.assertEqual((answer["state"], code), ("running", 0), self.stderr)
+                if answer["provider_recovery"] != "busy":
+                    break
+                self.assertLess(time.monotonic(), deadline, self.diagnostics())
+                time.sleep(0.2)
+            self.assertIn(answer["provider_recovery"], ("resumed", "unconfirmed"), self.stderr)
+            if episode is None:
+                episode = answer["episode"]
+            self.assertEqual(answer["episode"]["since"], episode["since"], answer)
+            deadline = time.monotonic() + 5
+            while len(self.prompts()) < len(prompts) + asked + 1:
+                self.assertLess(time.monotonic(), deadline, self.diagnostics())
+                time.sleep(0.02)
+        self.assertEqual(self.controller()["session_id"], before["session_id"])
+        self.assertEqual(len(self.started()), 1)
+        self.assertEqual(len(self.prompts()), len(prompts) + 2)
         self.assertEqual(list((self.home / "state/archive").glob("handoff-*.md")), [])
 
     def test_usage_wall_hands_over_to_a_free_account_before_reset(self):
@@ -475,6 +512,126 @@ class HandOverBound(unittest.TestCase):
         self.assertEqual((refused.exception.reason, world.transfers), ("handover-failed", 1))
 
 
+class ProviderStopDecision(unittest.TestCase):
+    """The provider stop over agent-runtime's replies stood in for: the
+    pane's read, `controller successor --stop provider`'s decision, and the
+    deliver or transfer the decision names."""
+
+    def test_a_busy_pane_decides_nothing_and_each_action_is_taken_as_decided(self):
+        # The failure it stops: a decision asked while the resumed turn still
+        # runs, which ages the episode past its patience and moves a session
+        # that works; a pane at a dialog or unjudged read as busy on every
+        # check, so the session never resumes and nobody is told; a move the
+        # decision did not name, a resume never typed, a transfer that keeps
+        # the stopped account, or a walk that cannot judge another provider
+        # dropped, so a session that never moves says nothing of why.
+        path = session_test.SKILLS / "jarvis/scripts/lib/session.py"
+        spec = importlib.util.spec_from_file_location("jarvis_session_provider", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(os.environ, {"JARVIS_BASH": os.environ.get("JARVIS_TEST_BASH", "bash")}):
+            spec.loader.exec_module(module)
+        recorded = {"pane": "%1", "server": "4242", "server_socket": "/sock", "server_start": 1, "cwd": "/home",
+                    "harness": "claude", "harness_pid": 7, "harness_start": "lstart:1", "session_id": "s1",
+                    "account": "/accounts/.aclaude", "generation": 1}
+        codex, copilot = {"harness": "codex", "account": "/accounts/.ccodex"}, {
+            "harness": "copilot", "account": "/accounts/.dcopilot"}
+        decided = {"since": 100, "last": 160}
+        # agent-runtime `deliver --no-paste`'s refusal of a pane that is not
+        # idle names its state, and nothing else of an unjudged one.
+        refused = lambda state: (None, 1, {"key": "deliver-refused", "fields": [["pane", "%1"], ["state", state]],
+                                          "text": "refused"}, "")
+        idle = ({}, 0, {}, "")
+        walk_refused = {"walk_refused": {"key": "account-unjudged", "fields": [["account", "/accounts/.ccodex"]],
+                                         "text": "unjudged"}}
+        unread = {"walk": {"unread": ["codex-b", "copilot-a"]}}
+        # A successor whose account path fills the detail's bound once named.
+        long = {"harness": "codex", "account": "/accounts/" + "c" * 200}
+        # Each row: the pane's read, the decision's action, what each
+        # decision adds to its answer, the successor each one chooses, whose
+        # first transfer fails where there are two, the outcome (the recovery
+        # answered with its walk key, or the refusal's state and reason, and
+        # a key its detail names), and whether a line is typed.
+        for name, pane, action, adds, successors, outcome, typed in (
+                ("working", refused("working"), None, [], [], ("busy", None), False),
+                ("unjudged", refused("unjudged"), None, [], [], ("failed", "handover-failed", "unjudged"), False),
+                ("asking", refused("asking"), None, [], [], ("failed", "handover-failed", "asking"), False),
+                ("resume", idle, "resume", [{}], [None], ("resumed", None), True),
+                ("resume, walk refused", idle, "resume", [walk_refused], [None], ("resumed", "account-unjudged"), True),
+                ("resume, walk unread", idle, "resume", [unread], [None], ("resumed", "walk-unread"), True),
+                ("move", idle, "move-provider", [{}], [codex], ("moved", None), False),
+                # A successor that fails is passed for the next the decision chooses.
+                ("move again", idle, "move-provider", [{}, {}], [codex, copilot], ("moved", None), False),
+                # The next decision's walk refused: the refusal names its key.
+                ("move, then walk refused", idle, "move-provider", [{}, walk_refused], [codex, None],
+                 ("failed", "handover-failed", "account-unjudged"), False),
+                # A walk that chose none past entries it read unread is named
+                # as the resume names it, ahead of the accounts tried.
+                ("move, then walk unread", idle, "move-provider", [{}, unread], [long, None],
+                 ("failed", "handover-failed", "walk-unread"), False)):
+            with self.subTest(row=name):
+                calls = {"decisions": [], "lines": 0, "transfers": []}
+                unproved = []
+
+                class World(module.Session):
+                    def __init__(self, home):
+                        self.home, self.path = str(home), home / "jarvis-session.json"
+
+                    def fleet(self):
+                        return self.path.with_name("fleet.json")
+
+                    def reach(self, socket):
+                        return []
+
+                    def status(self, reconcile=True):
+                        return {"recorded": dict(recorded, unproved=list(unproved)), "open_intents": []}
+
+                    def settled_transfer(self, generation):
+                        return 0
+
+                    def ready_successor(self, *args, recorded=None):
+                        calls["decisions"].append([str(arg) for arg in args])
+                        asked = len(calls["decisions"]) - 1
+                        return {"action": {"action": action}, "episode": decided, "successor": successors[asked],
+                                "expected": {"generation": 1}, **adds[asked]}, 0, None, ""
+
+                    def reply(self, *args, timeout=None, track_launch=False):
+                        if args[:2] == ("deliver", "--no-paste"):
+                            return pane
+                        if args[:2] == ("deliver", "--line"):
+                            calls["lines"] += 1
+                            return {"delivery": "confirmed"}, 0, {}, ""
+                        if args[:2] == ("controller", "transfer"):
+                            calls["transfers"].append(json.loads(Path(args[args.index("--request") + 1]).read_text()))
+                            if len(calls["transfers"]) < len(successors):
+                                unproved.append({"account": successors[0]["account"], "at": "1",
+                                                 "note": "successor-not-signed-in"})
+                                return {}, 3, {}, ""
+                        return {}, 0, {}, ""
+
+                with tempfile.TemporaryDirectory() as home:
+                    home = Path(home)
+                    (home / "state").mkdir()
+                    (home / "state/handoff.md").write_text("handoff\n")
+                    try:
+                        answer, code = World(home).provider_stop({}, {"recorded": recorded}, (100, 130))
+                        got = (answer["provider_recovery"], answer.get("provider_walk"))
+                        self.assertEqual(code, 0)
+                        self.assertEqual(answer.get("episode"), decided if action else None)
+                    except module.Refusal as refusal:
+                        got = (refusal.state, refusal.reason, outcome[2] if outcome[2] in refusal.detail else None)
+                self.assertEqual(got, outcome)
+                self.assertEqual(len(calls["decisions"]), len(adds))
+                for words in calls["decisions"]:
+                    self.assertEqual(words[words.index("--stop"):words.index("--stop") + 6],
+                                     ["--stop", "provider", "--since", "100", "--last", "130"])
+                self.assertEqual(calls["lines"], 1 if typed else 0)
+                self.assertEqual([(request["successor"]["harness"], request["successor"]["account"], request["cause"],
+                                   request.get("exclude_account"), request["expected"])
+                                  for request in calls["transfers"]],
+                                 [(successor["harness"], successor["account"], "walled", recorded["account"],
+                                   {"generation": 1}) for successor in successors if successor])
+
+
 class SuiteStop(unittest.TestCase):
     """A succession suite stopped mid-run, as the battery runner stops an
     overdue suite: its tmux server and fake harness must not outlive it,
@@ -550,6 +707,7 @@ if __name__ == "__main__":
         session_test.HARNESS = native
         # The session rows SuccessionContract inherits run in their own suite.
         unittest.main(defaultTest=["SuccessionContract." + name for name in vars(SuccessionContract) if name.startswith("test_")]
+                      + ["ProviderStopDecision." + name for name in vars(ProviderStopDecision) if name.startswith("test_")]
                       + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it",
                          "HandOverBound.test_an_unfinished_transfer_that_fails_does_not_count_as_a_hand_over",
                          "SuiteStop.test_a_suite_stopped_by_term_leaves_no_process_of_its_run"])
