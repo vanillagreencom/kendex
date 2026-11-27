@@ -723,10 +723,11 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
 /// recorded; the stopped lane's relaunch then meets that holder, as a
 /// running lane's added path does, with its record's set, or its item's
 /// Location paths where the record holds none, and its record's scope and
-/// repository, the request naming none. Before the holder's review it is
-/// refused `launch-overlap` under either delivery, never joined, nothing
-/// written; under `ORCH_DELIVERY=push-base` with the holder in its review
-/// it is relaunched, the publication taking the order, over its kept sets.
+/// repository, the request naming none. It is refused `launch-overlap`,
+/// never joined, nothing written: under `ORCH_DELIVERY=push-base` before
+/// the holder's review, and under `pr` with the holder in its review. Under
+/// `push-base` with the holder in its review it is relaunched, the
+/// publication taking the order, over its kept sets.
 /// The recorded set's row plants no item, so its relaunch reads none.
 #[test]
 fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
@@ -767,27 +768,29 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
             )
         };
 
-        for delivery in ["pr", "push-base"] {
+        let refused = |delivery: &str, stage: &str| {
             let out = relaunch(delivery);
             let (key, fields) = refusal(&out);
-            assert_eq!(key, "launch-overlap", "{row}, {delivery}: {}", stderr(&out));
+            assert_eq!(key, "launch-overlap", "{row}, {stage}: {}", stderr(&out));
             assert_eq!(
                 fields,
                 pairs(&[("item", "KEN-R"), ("file", "src/a.sh"), ("holder", "KEN-H")]),
-                "{row}, {delivery}: the record's scope leaves docs/x.md out"
+                "{row}, {stage}: the record's scope leaves docs/x.md out"
             );
             assert_eq!(
                 fleet.fleet(),
                 before,
-                "{row}, {delivery}: nothing written, no join"
+                "{row}, {stage}: nothing written, no join"
             );
-        }
+        };
+        refused("push-base", "push-base before the holder's review");
+        fleet.review("KEN-H");
+        refused("pr", "pr with the holder in its review");
         assert!(
             live(harness.pid()),
             "{row}: a refused relaunch signals nothing"
         );
 
-        fleet.review("KEN-H");
         let out = relaunch("push-base");
         assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
         let lane = fleet.lane("KEN-R");
@@ -801,6 +804,29 @@ fn a_relaunch_meets_a_live_holder_of_its_recorded_path_and_is_never_joined() {
             "{row}: the holder is not joined"
         );
     }
+}
+
+/// A stopped record no judgement wrote, whose item names no Location path,
+/// holds no set its relaunch could meet a holder with: the relaunch is
+/// refused `touched-unreadable read=location` beside a live holder, nothing
+/// written.
+#[test]
+fn a_relaunch_over_no_recorded_set_and_no_location_is_refused() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.plant("KEN-R", json!({}));
+    let harness = Owned::sleep();
+    fleet.write_lanes(vec![
+        holder("KEN-R", "stopped", None, None),
+        holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"])),
+    ]);
+    let before = fleet.fleet();
+
+    let out = fleet.op(&launch("KEN-R", fleet.state_dir().as_path()));
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "touched-unreadable", "{}", stderr(&out));
+    assert_eq!(fields, pairs(&[("item", "KEN-R"), ("read", "location")]));
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
 }
 
 /// The bundle reply a linear package whose formatter names no launch

@@ -2864,6 +2864,15 @@ mod tests {
     use agent_runtime::intent::{EffectOp, Phase};
     use agent_runtime::settings::Judged;
 
+    /// The shared fleet fixture with its lane's touched set recorded, as
+    /// every admitted record carries one, so a relaunch of it is judged on
+    /// that set and never on its item.
+    fn fleet_fixture() -> String {
+        let text = fixtures::FLEET.replacen("\"touched\": null", "\"touched\": []", 1);
+        assert_ne!(text, fixtures::FLEET, "the fixture's lane records a touched field");
+        text
+    }
+
     #[test]
     fn launch_lane_writes_the_released_record_and_the_intent_then_reconciles() {
         let dir = tempfile::tempdir().unwrap();
@@ -2989,7 +2998,7 @@ mod tests {
         for (status, refusal) in rows {
             fs::write(
                 &path,
-                fixtures::FLEET.replacen("\"done\"", &format!("\"{}\"", status.word()), 1),
+                fleet_fixture().replacen("\"done\"", &format!("\"{}\"", status.word()), 1),
             )
             .unwrap();
             let result = run(&path, &launch("KEN-4437"));
@@ -3249,6 +3258,7 @@ mod tests {
             "launch": launch,
             "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
             "cycles": 2,
+            "touched": [],
         })
     }
 
@@ -3610,7 +3620,7 @@ mod tests {
         };
         fs::write(
             &path,
-            fixtures::FLEET.replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1),
+            fleet_fixture().replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1),
         )
         .unwrap();
         let err = run(&path, &relaunch(&accounts.join("link"))).unwrap_err();
@@ -3645,7 +3655,7 @@ mod tests {
     fn a_relaunch_keeps_unwritten_fields_and_its_confirmation_writes_the_whole_selection() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1)
             .replacen("\"kind\": \"local\"", "\"kind\": \"claude-cloud\"", 1)
             .replacen("\"surface\": \"tmux\"", "\"surface\": \"cloud\"", 1)
@@ -3746,7 +3756,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let stopped =
-            fixtures::FLEET.replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1);
+            fleet_fixture().replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1);
         for (implicit, prior) in [(true, false), (false, true)] {
             let text = if prior {
                 stopped.replacen(
@@ -3782,7 +3792,7 @@ mod tests {
     fn a_relaunch_of_a_parked_lane_unparks_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"parked\"", 1)
             .replacen(
                 "      \"launch\": {",
@@ -3821,7 +3831,7 @@ mod tests {
     fn record_phase_writes_the_open_intent_s_phase_and_refuses_a_closed_one() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, fleet_fixture()).unwrap();
         let id = intend(&path, &transfer(expected()));
         let opened = agent_runtime::intent::OpenedPane {
             pane: "%12".into(),
@@ -4111,7 +4121,7 @@ mod tests {
     fn a_confirmed_close_deletes_the_pr_identities() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let text = fixtures::FLEET
+        let text = fleet_fixture()
             .replacen("\"status\": \"done\"", "\"status\": \"running\"", 1)
             .replacen(
                 "      \"launch\": {",

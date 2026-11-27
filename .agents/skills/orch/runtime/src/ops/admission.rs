@@ -1148,13 +1148,15 @@ pub(super) fn bound(
 /// `tracker` and `repo` are the relaunch's effective ones, the request's
 /// else the record's. A record no judgement wrote, a surface lane's, holds
 /// no set: its item's Location paths are its set, read as a first launch
-/// reads them, and with no tracker to read them through it is refused, as
-/// a holder whose set is unread is.
+/// reads them, and refused where the item names no Location path, since
+/// a surface lane's item can keep its paths outside its description. A
+/// record naming no tracker is judged on no item, as a first launch naming
+/// none is.
 #[allow(
     clippy::too_many_arguments,
     reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
 )]
-pub(super) fn relaunch_held(
+pub(crate) fn relaunch_held(
     path: &Path,
     lanes: &[Lane],
     intents: &[Intent],
@@ -1172,9 +1174,7 @@ pub(super) fn relaunch_held(
     let read;
     let paths = match (&record.touched, tracker) {
         (Some(paths), _) => paths.as_slice(),
-        (None, _) if record.read_only => &[],
-        (None, None) => return Err(unreadable("item", "tracker-unnamed".to_owned())),
-        (None, Some(tracker)) => {
+        (None, Some(tracker)) if !record.read_only => {
             let reads = host
                 .admission
                 .as_ref()
@@ -1182,8 +1182,12 @@ pub(super) fn relaunch_held(
             let item = (reads.item)(&reads.clis, tracker, &record.item, repo)
                 .map_err(|c| unreadable("item", c))?;
             read = location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?;
+            if read.is_empty() {
+                return Err(unreadable("location", "location-unnamed".to_owned()));
+            }
             read.as_slice()
         }
+        (None, _) => &[],
     };
     let a = Admission {
         item: &record.item,
