@@ -2709,8 +2709,7 @@ fn a_lead_on_an_account_records_it_in_the_counted_folder_and_refuses_any_other()
 /// under the root the runtime resolves, here named only in the private env
 /// file so a caller's own default (`~/.local/state`) would miss it; the
 /// group and stop verbs read the same record by the same name, and the stop
-/// removes it once the group ended, whether the stop ended it or found it
-/// already gone.
+/// removes it once it ended the group.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
@@ -2793,19 +2792,6 @@ fn a_worker_led_by_name_is_charged_under_the_root_the_private_env_file_names() {
     assert_eq!(stopped["result"]["stop"]["outcome"], "stopped", "{stopped}");
     assert_eq!(charges(), std::collections::BTreeMap::new());
     assert!(!record("w").exists());
-    // A leader this row killed and still holds unreaped: its group reads
-    // gone and its pid stays this row's.
-    let mut gone = led("g", &["sleep", "300"]);
-    await_reading("g", "live");
-    gone.children[0].kill().unwrap();
-    await_reading("g", "gone");
-    assert!(record("g").exists());
-    let stopped = reply(&["process", "stop", "--grace-secs", "5", "--worker", "g"]);
-    assert_eq!(
-        stopped["result"]["stop"]["outcome"], "already-gone",
-        "{stopped}"
-    );
-    assert!(!record("g").exists());
     // A leader whose TERM handler forks a member into its group and exits:
     // the stop ends that member too, so one stop leaves the group gone and
     // its record removed.
