@@ -77,9 +77,12 @@ Before any write in this section, split the actions by issue team:
 
 Send another team's action only once it is approved: carried as presented under the provenance rule above, under `Execute all`, or under `Review each` `Execute` or `Modify`, which sends the modified action. `Skip` sends nothing.
 
+Each approved action goes to exactly one recipient:
+
 1. Send it, with the plan's reason, by `lane-mail peer send --repo [REPO] --file [PATH]` per [orch references/peer-mail.md § Addressing](../../orch/references/peer-mail.md#addressing). `[REPO]` is the checkout whose `LINEAR_TEAM` names that team.
-2. Where this session knows no such checkout, or that repository runs no live overseer, send it to the live registered Jarvis session, else the owner, as that section's step 2 says.
-3. List each sent action in the § 5 report as routed.
+2. A send delivered the action when it exits `0`, including one whose stderr opens with `no-reader` or `reader-unjudged`. It also delivered the action when it refuses with a first stderr line `lane-mail: duplicate id=<id>`: the peer already holds that earlier envelope, and its id is the delivery's id. Send a delivered action nowhere else.
+3. Only where this session knows no such checkout, or the send refuses with a nonzero exit other than `duplicate`, send it to the live registered Jarvis session, else the owner, as that section's step 2 says.
+4. List each sent action in the § 5 report as routed, with its recipient, its receipt id or a `duplicate` refusal's id, and any `no-reader` line.
 
 For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
 
