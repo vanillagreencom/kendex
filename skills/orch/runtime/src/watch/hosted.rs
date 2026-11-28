@@ -81,10 +81,11 @@ pub const ORCH_RUNTIME: &str = "orch-runtime";
 /// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
 pub const PREPARE_ROW: &str = "lane-prepare";
-/// `close-pending<TAB><lane><TAB><row>|<key>`: a finished close the
-/// tracker's quota hold deferred, retried while the notification row still
-/// reads `<key>|reported`.
+/// `close-pending<TAB><lane><TAB><row>|[owed|]<key>`: a finished close
+/// retried while its notification row still reads `<key>|reported`.
+/// `owed|` records that the close-out notice was emitted for that key.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
+const OWED_PREFIX: &str = "owed|";
 /// `lane-left<TAB><lane><TAB><screen key>|reported`: the screen under which
 /// a merged lane read neither idle nor exited was asked whether its work
 /// left nothing behind.
@@ -2533,6 +2534,10 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 /// same places the handoff reads. A record in either means the close-out
 /// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
+    record_left_with(scripts, lane, |_| ())
+}
+
+fn record_left_with<T>(scripts: &Path, lane: &Lane, live: impl FnOnce(PathBuf) -> T) -> Answer<T> {
     let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
@@ -2550,7 +2555,7 @@ pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
             &lane.item,
             &place.display().to_string(),
         ) {
-            Answer::Live(_) => return Answer::Live(()),
+            Answer::Live(_) => return Answer::Live(live(place)),
             Answer::Gone => {}
             Answer::Unreadable { cause } => {
                 unread.get_or_insert(cause);
@@ -2780,14 +2785,21 @@ pub(super) fn with_session_root<'a>(lane: &'a Lane, intents: &[Intent]) -> Cow<'
 // --- the finished close -------------------------------------------------------
 
 /// Whether a merged lane's work has left its host, the read the finished
-/// close and the idle line's continuation guard share: [`left_locally`] for
-/// a lane on this machine, [`record_left`] where the provider's verb reads
-/// the lane's files, and `None` on a host with no such read.
-pub fn work_left(lane: &Lane, pass: &Pass, caps: &Capabilities) -> Option<Answer<()>> {
+/// close and the idle line's continuation guard share. A live hosted
+/// reading carries the item record's path.
+pub(super) fn work_left(
+    lane: &Lane,
+    pass: &Pass,
+    caps: &Capabilities,
+) -> Option<Answer<Option<PathBuf>>> {
     if host_of(lane) == "local" {
-        Some(left_locally(pass.state_dir, lane))
+        Some(match left_locally(pass.state_dir, lane) {
+            Answer::Live(()) => Answer::Live(None),
+            Answer::Gone => Answer::Gone,
+            Answer::Unreadable { cause } => Answer::Unreadable { cause },
+        })
     } else if caps.files == Files::Verb {
-        Some(record_left(pass.scripts, lane))
+        Some(record_left_with(pass.scripts, lane, Some))
     } else {
         None
     }
@@ -2799,7 +2811,9 @@ pub fn work_left(lane: &Lane, pass: &Pass, caps: &Capabilities) -> Option<Answer
 /// machine, [`record_left`] on its host) is
 /// closed through the one close; one whose item's record stands with no
 /// close-out stamp of its attempt is inside its merge close-out or resumed
-/// and is left. A lane its provider's status
+/// and is left. An idle or exited hosted lane with a live item record is
+/// reported once and checked again while its notification stands.
+/// A lane its provider's status
 /// verb read exited on two passes (`lane-exited`) whose item has no merge
 /// is closed with its
 /// sandbox kept: the attempt ends and its record stops charging a slot,
@@ -2815,13 +2829,26 @@ pub fn close_finished(
     hosts: &Hosts,
     row: &str,
     key: &str,
+    retry: bool,
     out: &mut Produced,
 ) {
     let name = lane_name(lane);
+    let told = pass
+        .baseline
+        .get(CLOSE_PENDING_ROW, &name)
+        .and_then(pending_close)
+        == Some((row, key, true));
+    let defer = |out: &mut Produced, told: bool| {
+        let marker = if told { OWED_PREFIX } else { "" };
+        out.changes.push(set(
+            CLOSE_PENDING_ROW,
+            &name,
+            format!("{row}|{marker}{key}"),
+        ));
+    };
     let merge = finished_merge(pass.baseline, lane);
     if matches!(merge, FinishedMerge::Undated) {
-        out.changes
-            .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+        defer(out, told);
         return;
     }
     let Ok(caps) = hosts.of(lane) else {
@@ -2832,15 +2859,37 @@ pub fn close_finished(
             return;
         };
         match left {
-            Answer::Live(()) => return,
+            Answer::Live(Some(path)) if matches!(row, "lane-idle" | "lane-exited") => {
+                if !told {
+                    if retry {
+                        // Other observations may have printed since the
+                        // original notice. Give the payload its own heading.
+                        out.events.push(if row == "lane-idle" {
+                            Event::IdleAfterReturn {
+                                lane: name.clone(),
+                                note: None,
+                            }
+                        } else {
+                            Event::LaneExited { lane: name.clone() }
+                        });
+                    }
+                    out.events.push(Event::Tail(format!(
+                        "close-out-owed item={} path={}",
+                        lane.item,
+                        path.display()
+                    )));
+                }
+                defer(out, true);
+                return;
+            }
+            Answer::Live(_) => return,
             Answer::Gone => {}
             Answer::Unreadable { cause } => {
                 fail(
                     out,
                     format!("worktree-read-failed item={} cause={cause}", lane.item),
                 );
-                out.changes
-                    .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+                defer(out, told);
                 return;
             }
         }
@@ -2853,9 +2902,8 @@ pub fn close_finished(
         }
         return;
     };
-    let pending = format!("{row}|{key}");
     if reason == "finished" && tracker_held(pass, lane) {
-        out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
+        defer(out, told);
         return;
     }
     let Some(closed) = close_once(pass, lane, reason, out) else {
@@ -2864,7 +2912,7 @@ pub fn close_finished(
     say_closed(&lane.item, &closed, out);
     match closed {
         Closed::Failed { .. } | Closed::Deferred => {
-            out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
+            defer(out, told);
         }
         Closed::Closed { .. } | Closed::Refused { .. } | Closed::Unanswered { .. } => {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
@@ -2889,7 +2937,15 @@ pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut 
         return;
     }
     out.changes.push(set(LEFT_ROW, &name, reported));
-    close_finished(lane, pass, hosts, LEFT_ROW, key, out);
+    close_finished(lane, pass, hosts, LEFT_ROW, key, false, out);
+}
+
+fn pending_close(value: &str) -> Option<(&str, &str, bool)> {
+    let (row, key) = value.split_once('|')?;
+    Some(match key.strip_prefix(OWED_PREFIX) {
+        Some(key) => (row, key, true),
+        None => (row, key, false),
+    })
 }
 
 /// The retry of failed or deferred closes:
@@ -2902,22 +2958,21 @@ pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &m
         let Some(pending) = pass.baseline.get(CLOSE_PENDING_ROW, &name) else {
             continue;
         };
+        let Some((row, key, _)) = pending_close(pending) else {
+            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
+            continue;
+        };
         let touched = out.changes.iter().any(|change| match change {
             Change::Set { kind, identity, .. } | Change::Clear { kind, identity } => {
-                identity == &name
-                    && (kind == CLOSE_PENDING_ROW || pending.starts_with(&format!("{kind}|")))
+                identity == &name && (kind == CLOSE_PENDING_ROW || kind == row)
             }
             Change::Pass { .. } => false,
         });
         if touched {
             continue;
         }
-        let Some((row, key)) = pending.split_once('|') else {
-            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
-            continue;
-        };
         if pass.baseline.get(row, &name) == Some(format!("{key}|reported").as_str()) {
-            close_finished(lane, pass, hosts, row, key, out);
+            close_finished(lane, pass, hosts, row, key, true, out);
         } else {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }

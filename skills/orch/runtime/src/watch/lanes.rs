@@ -596,8 +596,8 @@ fn launch_current(lane: &Lane, row: &rows::Row) -> bool {
 /// One pass's inputs beyond the readers.
 pub struct Pass<'a> {
     pub fleet: &'a FleetState,
-    /// The file `fleet` was read from, read again by the stray sweep after
-    /// its listing.
+    /// The file `fleet` was read from, read again after hosted closes and
+    /// by the stray sweep after its listing.
     pub fleet_path: &'a Path,
     pub readers: &'a Readers<'a>,
     pub baseline: &'a Baseline,
@@ -1296,7 +1296,34 @@ pub fn observe(pass: &Pass) -> Produced {
     wall_pauses(&walls, pass, &mut out);
     hosted::prepare(pass, &mut out);
     hosted::cloud_stalls(pass, &hosts, &mut out);
-    for lane in &in_flight {
+    // The close verb can remove a sandbox and settle its lane in this
+    // duty. The file readers below need that record, even if the verb's
+    // reply was lost.
+    let current;
+    let pass = if in_flight
+        .iter()
+        .any(|lane| hosts.of(lane).is_ok_and(|caps| caps.files == Files::Verb))
+    {
+        current = match read_fleet(pass.fleet_path) {
+            Ok(fleet) => fleet,
+            Err(cause) => {
+                fail(&mut out, format!("fleet-read-failed cause={cause}"));
+                return out;
+            }
+        };
+        &Pass {
+            fleet: &current,
+            ..*pass
+        }
+    } else {
+        pass
+    };
+    for lane in pass
+        .fleet
+        .lanes
+        .iter()
+        .filter(|lane| lane.status.in_flight())
+    {
         start_stall(lane, pass, &hosts, &mut out);
     }
     lane_long(pass, &hosts, &mut out);
@@ -1612,7 +1639,7 @@ fn observe_one(
             out.changes
                 .push(set("lane-exited", lane, format!("{pane_key}|reported")));
             out.changes.push(clear("lane-asking", lane));
-            hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, out);
+            hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, false, out);
             restart_exited(obs, pass, out);
         } else {
             out.changes.push(set("lane-exited", lane, pane_key));
@@ -1765,7 +1792,7 @@ fn observe_one(
                 note,
             });
             out.events.extend(payload(bounded_tail(&slice, cap)));
-            hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
+            hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, false, out);
         }
         // A pass that reads no stopped turn ends a first sighting, which two
         // consecutive idle passes confirm, but never a told one: the told

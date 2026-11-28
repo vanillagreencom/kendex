@@ -730,7 +730,9 @@ impl MailDuty {
     /// can still read the same snapshot. A box the host did not serve is
     /// judged by the host's listing, read once per host into `listings` for
     /// the whole turn, so one failed host is asked once however many of its
-    /// lanes it refused.
+    /// lanes it refused. A failure that remains is judged against the
+    /// current fleet record because native observation can close a lane
+    /// while this duty is draining its opening snapshot.
     fn drain_hosted<'a>(
         &self,
         lanes: &'a [(Drain, String)],
@@ -787,14 +789,26 @@ impl MailDuty {
                             .map(|rows| super::hosted::listed_in(rows, &lane.item))
                             .map_err(Clone::clone)
                     });
-                    match unread {
-                        // The lane's own close-out can take its sandbox
-                        // before the overseer's close: no box is left to
-                        // read, and its rows stand for that close.
-                        Unread::Gone { .. } => {}
-                        Unread::Busy { .. } | Unread::Failed { .. } => {
+                    // The lane's own close-out can take its sandbox before
+                    // the overseer's close. Its mail rows stand for that close.
+                    if matches!(unread, Unread::Gone { .. }) {
+                        return None;
+                    }
+                    match fleet(&self.config.fleet) {
+                        Ok(current)
+                            if current.lanes.iter().any(|record| {
+                                record.item == lane.item
+                                    && record.status.in_flight()
+                                    && record.mail_host() == Some(host.as_str())
+                            }) =>
+                        {
                             turn.refuse(&lane.item, unread);
                         }
+                        Ok(_) => {}
+                        Err(cause) => turn.refuse(
+                            &lane.item,
+                            format!("{unread} fleet-read-failed cause={cause}"),
+                        ),
                     }
                     None
                 }

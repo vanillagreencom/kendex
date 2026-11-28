@@ -288,6 +288,8 @@ Each cause, its meaning and its action:
 - A running item: the lane finishes [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) itself.
   - Where its worktree or sandbox is gone, the runtime close completes the item's branch boxes from the pull request body's `## Done-when evidence` section ([lane-reach.md § Lane close](lane-reach.md#lane-close)).
   - When a merged lane's work has left its host, the watch closes it at its `lane-exited` or `idle-after-return` line, with the merge as the close's `delivery`.
+  - A hosted lane with a state record still on its host prints `close-out-owed item=[ITEM] path=[PATH]` under that line. Send the lane a directive to finish [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 6 before [presenting results](../workflows/merge-pr.md#6-present-results). Use [Resume Close-out](../workflows/merge-pr.md#resume-close-out) when the handoff is available. If the session exited, send the directive first, then use [Recovery relaunch](lane-directive.md#recovery-relaunch) so the lane reads it from its inbox.
+    After the recovered lane confirms close-out, run [`close-lane`](lane-reach.md#lane-close) with the original merged pull request as `delivery`.
   - A running or stopped lane whose harness ended before it finished, which a `lane-ended` line names, takes [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes).
   - Close any other local lane once it has finished `merge-pr.md` § 5. Add `"delivery":{"pr":{"pr":[PR_NUMBER],"repo":"[OWNER/REPO]"}}` to the request § Direct-push cycle records shows.
   - Run it from the overseer's base checkout, or from a checkout of the lane's repository where its `mail_root` is another repository's worktree.
@@ -416,6 +418,7 @@ Each answer:
 - A lane at a harness session limit ("You've hit your session limit · resets 9:50am") is walled, not dead: § `usage-limit` applies.
 - Relaunch a lane that reported `handoff` per § `handoff`. Never nudge it.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line, with its merge as the close's `delivery`.
+- For `close-out-owed`, follow § [`merged`](#merged).
 - Under `ORCH_WALL_RELAUNCH=auto`, the watch relaunches a local lane whose item has no merge from its record, as `orch-runtime lane relaunch` does ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)), once per assignment. § `lane-relaunched` follows. Nothing is owed.
 - `relaunch-refused lane=[LANE] reason=[REASON]` under the line names the step that stopped that relaunch. Repair it, or relaunch by hand. The watch asks again on each later pass while the exit stands. It tells a refusal once while it stands, and a changed refusal again.
 - `relaunch-refused lane=[LANE] reason=second-death`: the relaunched lane exited again. Tell the owner, and do not retry it.
@@ -502,6 +505,7 @@ Read the closing lines under the `idle-after-return` line.
 - `cause=api-error` on Codex or Copilot, `cause=server_error` or `cause=refusal` (a safety refusal) on a local Claude session, and `cause=error` on Pi are failed provider turns, as agent-runtime's stop reading names them. The watch resumes a worker session it reaches, and moves it to another provider after 30 minutes ([lane-directive.md § Watch recovery](lane-directive.md#watch-recovery)). For a worker, this event reports a continuation the wake could not deliver, an unreachable session, a reading worker with a posted result, or a provider move the watch could not start, named by `provider-move-refused lane=[LANE] reason=[REASON]` under it. `reason=walk-unjudged [CAUSE]` is a walk the watch could not judge: repair the setting or the reading the cause names. For a reading worker, use the result and close steps above. For another worker, send a one-line continuation directive if the workflow calls for another turn.
 - `stop-cause=allow-all-blocked-by-policy`: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of sending a directive. That section names the `session-record=` reasons.
 - A lane whose merge landed and whose work has left its host: the watch closes it at this line.
+- For `close-out-owed`, follow § [`merged`](#merged).
 - A lane inside `merge-pr.md` § 5 step 1 waits on its queue. That is work in flight, not idle.
 
 Otherwise the lane has returned and is free for another fleet launch.

@@ -6689,6 +6689,7 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
     let second = driver.pass(&state);
     let kept = format!("path={}", host.clone_of("KEN-5").display());
+    let owed = support::item_record(&state_dir, "KEN-2");
     assert_eq!(
         lines(&second),
         vec![
@@ -6696,6 +6697,7 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
             "EVENT lane-closed KEN-1",
             "kept=none",
             "EVENT lane-exited gh-2",
+            &format!("close-out-owed item=KEN-2 path={}", owed.display()),
             "EVENT lane-exited gh-3",
             "EVENT lane-closed KEN-3",
             "kept=sandbox",
@@ -6838,6 +6840,338 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
         lines(&second)
     );
     assert_eq!(closes(&fleet, "issue-1"), 1, "one ask per screen");
+}
+
+/// A provider can refuse a file read with `item-unknown` while its list
+/// still names the sandbox. The watch closes one case through the real
+/// close verb and leaves the other in flight.
+#[test]
+fn a_hosted_handoff_read_is_skipped_after_a_same_pass_close() {
+    use orch_runtime::schedule::Duty;
+    use orch_runtime::watch;
+
+    let results = [true, false].map(|close| {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["issue-1"]);
+        drop(host.lead("issue-1", "codex"));
+        host.leave("issue-1");
+        let root = host.lane_root("issue-1");
+        let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", root.to_str().unwrap());
+        lane["repo"] = json!("o/r");
+        lane["harness"] = json!("codex");
+        lane["session_since"] = json!("2026-09-20T11:00:00Z");
+        fleet.set_lanes(vec![lane]);
+        world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
+
+        let provider = world.scripts.join("provider");
+        let ssh = world.scripts.join("ssh-provider");
+        let refused = world.scripts.join("item-unknown");
+        std::fs::rename(&provider, &ssh).unwrap();
+        write_executable(
+            &provider,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = cat ] && [ "${{4-}}" = '{gitfile}' ]; then
+  if [ '{close}' = false ] || jq -e '.lanes[] | select(.item == "issue-1" and .status == "done")' '{fleet}' >/dev/null; then
+    : > '{refused}'
+    echo 'lane-host-daytona: item-unknown item=issue-1' >&2
+    exit 1
+  fi
+fi
+if [ "$1" = list ]; then
+  printf 'o/r/issue-1\trunning\t1m\tbox\n'
+  exit 0
+fi
+exec '{ssh}' "$@"
+"#,
+                gitfile = root.join(".git").display(),
+                fleet = fleet.path().display(),
+                refused = refused.display(),
+                ssh = ssh.display()
+            ),
+        );
+
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = world.scripts.clone();
+        if close {
+            // The previous pass read the exited lane once.
+            driver.baseline.apply(Change::Set {
+                kind: "lane-exited".into(),
+                identity: "gh-1".into(),
+                value: String::new(),
+            });
+            let merged = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+            driver.baseline.apply(Change::Set {
+                kind: "merged".into(),
+                identity: "issue-1".into(),
+                value: format!("o/r#7@{merged}"),
+            });
+        }
+        let mut produced = driver.pass(&fleet.read());
+        let failure = produced.failed.clone();
+
+        let paths = watch::Paths::of(&fleet.path()).unwrap();
+        let clock = FakeClock::new();
+        let pid = std::process::id();
+        let identity = Identity { pid, start: start_of(pid) };
+        let mut runner = watch::Runner::new(
+            paths.clone(),
+            &clock,
+            &settings_in(fleet.runner.state_dir()),
+            watch::Flags {
+                interval: Duration::from_secs(240),
+                max_loops: 25,
+                since: None,
+                repos: Vec::new(),
+                fresh: true,
+            },
+            identity.clone(),
+            watch::Recorded {
+                pane: "none".into(),
+                script: "orch-runtime".into(),
+                cwd: dir.path().display().to_string(),
+            },
+        )
+        .unwrap();
+        runner.register(
+            Duty::NativeObservation,
+            Box::new(move |_| Ok(std::mem::take(&mut produced))),
+        );
+        run_driven(runner, &clock, &paths, &identity, || clock.await_sleepers(1)).unwrap();
+        let log = std::fs::read_to_string(&paths.log).unwrap();
+        assert_eq!(
+            log.contains("EVENT lane-closed issue-1"),
+            close,
+            "{log} {failure:?} {:?}",
+            host.calls(),
+        );
+        let status = fleet.read().lanes[0].status;
+        if close {
+            assert_eq!(status, state::LaneStatus::Done);
+        } else {
+            assert!(status.in_flight(), "{status:?}");
+        }
+        if !close {
+            assert!(failure.as_deref().is_some_and(|cause| cause.starts_with("handoff-read-failed item=issue-1 ") && cause.contains("item-unknown item=issue-1")), "{failure:?}");
+        }
+        (
+            failure,
+            log.contains("EVENT watch-step-failed step=native-observation"),
+            refused.exists(),
+        )
+    });
+    assert!(results[1].1 && results[1].2, "{results:?}");
+    assert_eq!(results[0], (None, false, false));
+}
+
+/// The mail duty can start its read before the watch settles a close. A
+/// provider's list can still name the sandbox after its file read fails.
+#[test]
+fn a_failed_hosted_mail_read_is_judged_against_the_current_lane() {
+    use orch_runtime::schedule::Duty;
+    use orch_runtime::watch::{self, mail};
+
+    for closed in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let root = dir.path().to_str().unwrap();
+        fleet.set_lanes(vec![hosted_lane(dir.path(), "KEN-1", "gh-1", root)]);
+        let current = fleet.path().with_extension("closed");
+        let mut record = fleet.runner.fleet();
+        record["lanes"][0]["status"] = json!("done");
+        std::fs::write(&current, record.to_string()).unwrap();
+        std::fs::create_dir(dir.path().join("scripts")).unwrap();
+        write_executable(
+            Path::new(&provider(dir.path())),
+            format!(
+                r#"#!/bin/sh
+case "$1" in
+  read-many)
+    if [ '{closed}' = true ]; then mv '{current}' '{fleet}'; fi
+    echo 'lane-host-daytona: item-unknown item=KEN-1' >&2
+    exit 1 ;;
+  list) printf 'o/r/KEN-1\trunning\t1m\tbox\n' ;;
+  *) exit 64 ;;
+esac
+"#,
+                current = current.display(),
+                fleet = fleet.path().display(),
+            ),
+        );
+        let settings = settings_in(fleet.runner.state_dir());
+        let paths = watch::Paths::of(&fleet.path()).unwrap();
+        let config = mail::Config::of(&settings, &paths).unwrap();
+        let mut mail = mail::MailDuty::new(Mailbox::new(lane_mail().to_path_buf()), config);
+        let clock = FakeClock::new();
+        let produced = mail
+            .run(&watch::Tick {
+                duty: Duty::Mail,
+                now: clock.now(),
+                wall: clock.wall_secs(),
+                baseline: &Baseline::default(),
+                clock: &clock,
+            })
+            .unwrap();
+        assert_eq!(fleet.read().lanes[0].status.in_flight(), !closed);
+        match (closed, produced.failed.as_deref()) {
+            (true, None) => {}
+            (false, Some(cause)) => {
+                assert!(cause.contains("item=KEN-1 mail-read-failed"), "{cause}")
+            }
+            (_, failure) => panic!("closed={closed}: {failure:?}"),
+        }
+    }
+}
+
+/// A hosted lane with a merge newer than its session still owns a
+/// close-out while the state record stands. The idle key earns one line,
+/// and removal of the record lets the pending close finish.
+#[test]
+fn a_merged_idle_hosted_lane_reports_close_out_owed_once_then_closes() {
+    hosted_idle_close_out(FirstCloseOut::Live);
+}
+
+/// A reported idle key still owes the path when its first hosted read
+/// refused the record or its merge was undated. A refusal after the path
+/// was printed does not rearm the notice.
+#[test]
+fn a_hosted_idle_retry_reports_the_previously_unread_close_out_path_once() {
+    hosted_idle_close_out(FirstCloseOut::Refused);
+    hosted_idle_close_out(FirstCloseOut::Undated);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FirstCloseOut {
+    Live,
+    Refused,
+    Undated,
+}
+
+fn hosted_idle_close_out(first: FirstCloseOut) {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["issue-1"]);
+    let _group = host.lead("issue-1", "codex");
+    let root = host.lane_root("issue-1");
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        "printf '%s\\n' '› complete' '› Type a prompt'; exec bash --norc --noprofile",
+    );
+    await_drawn(&server, &pane, "Type a prompt");
+    let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", root.to_str().unwrap());
+    lane["harness"] = json!("codex");
+    lane["repo"] = json!("o/r");
+    lane["launch"] = json!({"pane": pane, "server": server.pid});
+    lane["session_since"] = json!("2026-09-20T11:00:00Z");
+    fleet.set_lanes(vec![lane]);
+    let state_dir = host.clone_of("issue-1").join("tmp");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let record = support::item_record(&state_dir, "issue-1");
+    std::fs::write(&record, "{}").unwrap();
+    let refuse = world.scripts.join("refuse-record");
+    if first == FirstCloseOut::Refused {
+        let provider = world.scripts.join("provider");
+        let ssh = world.scripts.join("ssh-provider");
+        std::fs::rename(&provider, &ssh).unwrap();
+        write_executable(
+            &provider,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = cat ] && [ "${{4-}}" = '{record}' ] && [ -f '{refuse}' ]; then
+  echo 'lane-host-ssh: record read unavailable' >&2
+  exit 1
+fi
+exec '{ssh}' "$@"
+"#,
+                record = record.display(),
+                refuse = refuse.display(),
+                ssh = ssh.display(),
+            ),
+        );
+    }
+    world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let merged = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+    let merge_row = |value: String| Change::Set {
+        kind: "merged".into(),
+        identity: "issue-1".into(),
+        value,
+    };
+    let dated = format!("o/r#7@{merged}");
+    driver
+        .baseline
+        .apply(merge_row(if first == FirstCloseOut::Undated {
+            "o/r#7".into()
+        } else {
+            dated.clone()
+        }));
+    assert!(event_lines(&driver.pass(&fleet.read())).is_empty());
+    if first == FirstCloseOut::Refused {
+        std::fs::write(&refuse, "").unwrap();
+    }
+    let idle = driver.pass(&fleet.read());
+    let header = "EVENT idle-after-return gh-1";
+    assert_eq!(event_lines(&idle), [header], "{first:?}");
+    let owed = format!("close-out-owed item=issue-1 path={}", record.display());
+    let has_owed = |produced: &Produced| lines(produced).contains(&owed);
+    let assert_refused = |produced: &Produced| {
+        assert!(
+            produced.failed.as_deref().is_some_and(|cause| {
+                cause.starts_with("worktree-read-failed item=issue-1 ")
+                    && cause.contains("record read unavailable")
+            }),
+            "{:?}",
+            produced.failed
+        );
+    };
+    let told = match first {
+        FirstCloseOut::Live => idle,
+        FirstCloseOut::Refused => {
+            assert_refused(&idle);
+            assert!(!has_owed(&idle));
+            std::fs::remove_file(&refuse).unwrap();
+            driver.pass(&fleet.read())
+        }
+        FirstCloseOut::Undated => {
+            assert_eq!(idle.failed, None);
+            assert!(!has_owed(&idle));
+            driver.baseline.apply(merge_row(dated));
+            driver.pass(&fleet.read())
+        }
+    };
+    let said = lines(&told);
+    assert_eq!(
+        said.iter().filter(|line| **line == owed).count(),
+        1,
+        "{first:?}: {said:?}"
+    );
+    if first != FirstCloseOut::Live {
+        assert_eq!(said, [header, &owed], "{first:?}");
+    }
+    assert_eq!(told.failed, None);
+    if first == FirstCloseOut::Refused {
+        std::fs::write(&refuse, "").unwrap();
+        let unread = driver.pass(&fleet.read());
+        assert_refused(&unread);
+        assert!(lines(&unread).is_empty(), "{:?}", lines(&unread));
+        std::fs::remove_file(&refuse).unwrap();
+    }
+    let repeated = driver.pass(&fleet.read());
+    assert!(lines(&repeated).is_empty(), "{:?}", lines(&repeated));
+    assert_eq!(closes(&fleet, "issue-1"), 0);
+    assert_eq!(repeated.failed, None);
+
+    std::fs::remove_file(&record).unwrap();
+    let finished = driver.pass(&fleet.read());
+    assert_eq!(finished.failed, None);
+    assert_eq!(lines(&finished), ["EVENT lane-closed issue-1", "kept=none"]);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Done);
 }
 
 #[test]
