@@ -1487,8 +1487,16 @@ class Watch:
                                                answer.get("detail") or answer.get("reason")).record)
             return None
         self.state.pop("exited_failure", None)
-        memory = self.state.get("exited")
         reading, identity = (answer.get("state"), answer.get("reason")), answer.get("controller")
+        wall = self.state.get("wall")
+        if (reading == ("stopped", "ended") and wall is not None and wall["kind"] == "auth"
+                and isinstance(identity, dict)
+                and (identity.get("session_id"), identity.get("pane"), answer.get("account"))
+                == (wall["session"], wall["pane"].partition(" ")[2], wall["account"])):
+            # The wall already owns recovery and its notice. An exit's
+            # normal resume would try the account whose sign-in failed.
+            return None
+        memory = self.state.get("exited")
         if memory is not None and memory.get("ran") and memory.get("controller") is None and reading[0] == "running":
             memory["controller"] = identity
             self.save()
