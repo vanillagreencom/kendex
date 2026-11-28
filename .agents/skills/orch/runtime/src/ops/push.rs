@@ -420,11 +420,14 @@ fn map_file(worktree: &Path) -> Result<PathBuf> {
 }
 
 /// The guarded restack workflow's admission, before it runs worktree.
-/// The consumed map binds the admission's original head to the rewritten
-/// head. A force-push lease remains the worktree publisher's authority.
+/// The map binds the admission's original head to the rewritten head.
+/// Keep that head when consuming the map, until publication is confirmed.
+/// A force-push lease remains the worktree publisher's authority.
 #[derive(Debug, Serialize, Deserialize)]
 struct RestackLanding {
     original: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head: Option<String>,
     at: u64,
     round: Option<String>,
 }
@@ -445,8 +448,23 @@ impl RestackLanding {
         )
     }
 
-    fn matches_map(&self, text: &str, head: &str) -> Result<bool> {
-        let hops = match proof::hops(text) {
+    fn reaches_head(&self, worktree: &Path, map: &Path, head: &str) -> Result<bool> {
+        let text = match fs::read_to_string(map) {
+            Ok(text) => text,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(self.head.as_deref() == Some(head));
+            }
+            Err(error) => {
+                return Err(refuse(
+                    "rebase-map-unreadable",
+                    &[
+                        ("path", &map.display().to_string()),
+                        ("cause", &error.to_string()),
+                    ],
+                ));
+            }
+        };
+        let hops = match proof::hops(&text) {
             Ok(hops) => hops,
             Err(e) if e.cause == "rebase-unmapped" => return Ok(false),
             Err(e) => {
@@ -456,18 +474,38 @@ impl RestackLanding {
                 ));
             }
         };
-        let rewritten = hops.iter().fold(self.original.clone(), |sha, hop| {
-            let mapped = proof::remap(&sha, hop);
-            if mapped.starts_with("dropped:") {
-                hop.iter()
-                    .rev()
-                    .find(|(_, new)| new != "dropped")
-                    .map_or(mapped, |(_, new)| new.clone())
-            } else {
-                mapped
+        let start = self.head.as_deref().unwrap_or(&self.original);
+        let mut tip = start;
+        for hop in &hops {
+            match hop.iter().find(|(old, _)| old == tip) {
+                Some((_, new)) if new == "dropped" => {
+                    if let Some((_, kept)) = hop.iter().rfind(|(_, new)| new != "dropped") {
+                        tip = kept;
+                    } else {
+                        // The shipped restack map names each dropped commit
+                        // but no destination when every topic commit drops.
+                        // Both Git rebase backends record the branch update
+                        // as "(finish): <ref> onto <base>" (sequencer.c and
+                        // builtin/rebase.c). An all-dropped result is that base.
+                        let reflog = git(
+                            worktree,
+                            "restack-reflog",
+                            &["reflog", "show", "-2", "--format=%H%x09%gs", "@{0}"],
+                        )
+                        .map_err(|cause| refuse("restack-reflog", &[("cause", &cause)]))?;
+                        let mut entries = reflog.lines().filter_map(|line| line.split_once('\t'));
+                        return Ok(entries.next().is_some_and(|(sha, action)| {
+                            sha == head
+                                && action.contains(" (finish): refs/heads/")
+                                && action.ends_with(&format!(" onto {head}"))
+                        }) && entries.next().is_some_and(|(sha, _)| sha == tip));
+                    }
+                }
+                Some((_, new)) => tip = new,
+                None => {}
             }
-        });
-        Ok(rewritten == head && rewritten != self.original)
+        }
+        Ok(tip == head && (tip != start || self.head.is_some()))
     }
 
     /// The last validation for this head must have an acceptable native
@@ -487,22 +525,8 @@ pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Resul
     let Some(landing) = RestackLanding::read(doc, item, worktree)? else {
         return Ok(None);
     };
-    let map = map_file(worktree)?;
-    let text = match fs::read_to_string(&map) {
-        Ok(text) => text,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(refuse(
-                "rebase-map-unreadable",
-                &[
-                    ("path", &map.display().to_string()),
-                    ("cause", &error.to_string()),
-                ],
-            ));
-        }
-    };
     let current = head(worktree)?;
-    if !landing.matches_map(&text, &current)?
+    if !landing.reaches_head(worktree, &map_file(worktree)?, &current)?
         || doc.get("branch").and_then(Value::as_str)
             != Some(
                 git(
@@ -518,6 +542,41 @@ pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Resul
         return Ok(None);
     }
     Ok(Some(current))
+}
+
+/// Record the exact landing head before a push or prepare consumes its map.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the landing head committed under the item's write check before map removal"
+)]
+fn remember_landing(
+    path: &Path,
+    item: &str,
+    worktree: &Path,
+    map: &Path,
+    locking: Locking,
+) -> Result<()> {
+    record::reread(
+        || {
+            let Some(snapshot) = state::load(path)? else {
+                return Ok(());
+            };
+            let Some(mut landing) = RestackLanding::read(&snapshot.doc, item, worktree)? else {
+                return Ok(());
+            };
+            let current = head(worktree)?;
+            if landing.head.as_deref() != Some(&current)
+                && landing.reaches_head(worktree, map, &current)?
+            {
+                landing.head = Some(current);
+                let mut after = snapshot.doc.clone();
+                record::set(&mut after, LANDING, serde_json::to_value(landing)?);
+                record::store(path, &snapshot.doc, &after, locking)?;
+            }
+            Ok(())
+        },
+        Error::key,
+    )
 }
 
 /// Apply `hops` in order to the recorded commits, the item's `rebase_map`
@@ -633,9 +692,6 @@ pub(crate) fn consume(
             }
             let mut doc = snapshot.doc.clone();
             let reports = apply_hops(&mut doc, &hops, key);
-            if key == RESTACK {
-                record::delete(&mut doc, LANDING);
-            }
             record::store(path, &snapshot.doc, &doc, locking).map_err(|e| {
                 if e.key() == "record-changed" {
                     e.into()
@@ -968,7 +1024,12 @@ fn prepare_once(cli: &Path, worktree: &Path, item: &str, file: &Path) -> Result<
     clippy::disallowed_methods,
     reason = "the push's attempt record committed under the item's write check, before the push and after its answer"
 )]
-fn mark_attempt(path: &Path, value: Option<Value>, locking: Locking) -> Result<()> {
+fn mark_attempt(
+    path: &Path,
+    value: Option<Value>,
+    published_landing: Option<&str>,
+    locking: Locking,
+) -> Result<()> {
     if state::load(path)?.is_none() {
         return Ok(());
     }
@@ -981,6 +1042,11 @@ fn mark_attempt(path: &Path, value: Option<Value>, locking: Locking) -> Result<(
                 None => {
                     record::delete(&mut doc, "push_attempt");
                 }
+            }
+            if let Some(head) = published_landing
+                && doc.get(LANDING).and_then(|value| value["head"].as_str()) == Some(head)
+            {
+                record::delete(&mut doc, LANDING);
             }
             Ok(record::store(path, &snapshot.doc, &doc, locking)?)
         },
@@ -1022,7 +1088,10 @@ fn settle(
     let mut settled = attempt.clone();
     settled["state"] = json!(word);
     settled["settled_from"] = json!("remote");
-    mark_attempt(path, Some(settled), locking)?;
+    let published_landing = attempt["head"]
+        .as_str()
+        .filter(|head| landed && *head == published);
+    mark_attempt(path, Some(settled), published_landing, locking)?;
     Ok(Some(word.to_owned()))
 }
 
@@ -1299,14 +1368,26 @@ pub fn run(
                 let Some(before) = record else {
                     return Err(refuse("restack-state", &[("issue", &item)]));
                 };
-                let landing = RestackLanding {
-                    original: head(&worktree)?,
-                    at: env.now_secs,
-                    round: before
-                        .get("dev_round_id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
+                let current = head(&worktree)?;
+                let mut landing = match RestackLanding::read(&before, &item, &worktree)? {
+                    Some(landing)
+                        if landing.reaches_head(&worktree, &map_file(&worktree)?, &current)? =>
+                    {
+                        landing
+                    }
+                    _ => RestackLanding {
+                        original: current.clone(),
+                        head: None,
+                        at: env.now_secs,
+                        round: before
+                            .get("dev_round_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    },
                 };
+                if landing.original != current {
+                    landing.head = Some(current);
+                }
                 let mut after = before.clone();
                 record::set(&mut after, LANDING, serde_json::to_value(landing)?);
                 record::store(path, &before, &after, locking)?;
@@ -1338,6 +1419,7 @@ pub fn run(
     }
     let map = map_file(&worktree)?;
     let pending = map.with_file_name(PENDING);
+    remember_landing(path, &item, &worktree, &map, locking)?;
     // The hops a restack left are reconciled before the push, where nothing
     // new is stale yet; the run that validated the restacked head is kept
     // for the stage the push records once it lands.
@@ -1380,6 +1462,8 @@ pub fn run(
     let cli = &settings.worktree_cli;
     if let RecordPush::Prepare { .. } = r {
         let push = prepare_once(cli, &worktree, &item, &map.with_file_name(FOLD_MESSAGE))?;
+        remember_landing(path, &item, &worktree, &map, locking)
+            .map_err(|e| after_push(e, &push))?;
         if let Some(reports) = consume(path, &item, &map, RESTACK, locking, None, &mut || {
             keep_pending(&worktree)
         })
@@ -1473,17 +1557,19 @@ pub fn run(
         Some(
             json!({"state": "attempted", "mode": r.word(), "head": published, "at": env.now_secs}),
         ),
+        None,
         locking,
     )?;
     let push = match push_once(cli, &worktree, &args) {
         Ok(push) => push,
         Err(e) => {
-            mark_attempt(path, None, locking)?;
+            mark_attempt(path, None, None, locking)?;
             return Err(e);
         }
     };
     // The push rebases before it publishes, so its own hop is in the map
     // whatever its answer.
+    remember_landing(path, &item, &worktree, &map, locking).map_err(|e| after_push(e, &push))?;
     if let Some(reports) = consume(path, &item, &map, PUSHED, locking, None, &mut || {})
         .map_err(|e| after_push(e, &push))?
     {
@@ -1491,18 +1577,23 @@ pub fn run(
     }
     match &push.status {
         PushStatus::Unknown => {}
-        PushStatus::Confirmed => mark_attempt(
-            path,
-            Some(
-                json!({"state": "confirmed", "mode": r.word(), "head": head(&worktree)?, "at": env.now_secs}),
-            ),
-            locking,
-        )?,
+        PushStatus::Confirmed => {
+            let confirmed = head(&worktree)?;
+            mark_attempt(
+                path,
+                Some(
+                    json!({"state": "confirmed", "mode": r.word(), "head": confirmed, "at": env.now_secs}),
+                ),
+                Some(&confirmed),
+                locking,
+            )?;
+        }
         PushStatus::Failed => mark_attempt(
             path,
             Some(
                 json!({"state": "failed", "mode": r.word(), "exit": push.exit, "at": env.now_secs}),
             ),
+            None,
             locking,
         )?,
     }

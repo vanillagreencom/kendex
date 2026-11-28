@@ -346,6 +346,16 @@ mod push {
             .unwrap();
         assert_eq!(lease.status.code(), Some(1));
 
+        assert!(
+            repo.op(json!({
+                "op":"record-push", "mode":"check-live-round", "worktree":repo.wt, "landing":true
+            }))
+            .status
+            .success()
+        );
+        assert_eq!(repo.read()["restack_landing"]["original"], original);
+        assert_eq!(repo.read()["restack_landing"]["head"], repo.head());
+
         let markers = repo.main.join(".git/lane-mail");
         fs::create_dir_all(&markers).unwrap();
         fs::write(markers.join("ken-1"), format!("{}\n", repo.wt.display())).unwrap();
