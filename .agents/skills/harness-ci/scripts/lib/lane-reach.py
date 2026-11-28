@@ -1256,7 +1256,56 @@ def expression(value):
     return value[3:-2].strip() if value.startswith("${{") and value.endswith("}}") else value
 
 
-def matrix_words(job):
+def reads_runner_inputs(job, variable):
+    # The runner context supports both property and index syntax. A step's
+    # if also accepts an expression without braces.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+    name = re.escape(variable)
+    reference = re.compile(
+        rf"'(?:[^']|'')*'|(?P<runner>(?<![\w.-])(?:runner(?![\w-])|"
+        rf"vars\s*(?:\.\s*{name}(?![\w-])|\[\s*'{name}'\s*\])))", re.IGNORECASE,
+    )
+
+    def reads_runner(value):
+        return any(match["runner"] for match in reference.finditer(value))
+
+    def interpolated(values):
+        if isinstance(values, str):
+            # An expression can contain }} inside a quoted string. Consume
+            # complete tokens without backtracking into a quoted string.
+            return any(reads_runner(match) for match in re.findall(
+                r"\$\{\{((?>'(?:[^']|'')*'|[^'}]+|\}(?!\}))*)\}\}", values,
+            ))
+        if isinstance(values, dict):
+            values = list(values.values())
+        return isinstance(values, list) and any(interpolated(value) for value in values)
+
+    for step in job["steps"]:
+        condition = step.get("if", "")
+        if isinstance(condition, str) and reads_runner(condition):
+            return True
+        run = step.get("run", "")
+        # GitHub exports runner properties to shell steps as RUNNER_*.
+        # https://docs.github.com/en/actions/reference/workflows-and-actions/variables
+        if isinstance(run, str) and re.search(r"\bRUNNER_[A-Z0-9_]+\b", run):
+            return True
+        if interpolated({key: value for key, value in step.items() if key not in {"if", "name", "id"}}):
+            return True
+    return interpolated(job.get("env", {}))
+
+
+def runner_fallback(job):
+    runner = job.get("runs-on")
+    if isinstance(runner, str):
+        match = re.fullmatch(
+            r"\$\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\|\|\s*'([^']+)'\s*\}\}", runner,
+        )
+        if match and literal(match[2]):
+            return match[1]
+    return None
+
+
+def matrix_words(job, fallback_variable):
     strategy = job.get("strategy", {})
     require(isinstance(strategy, dict) and set(strategy) <= {"matrix", "fail-fast", "max-parallel"}
             and strategy.get("fail-fast", "true") in ("true", "false")
@@ -1282,6 +1331,11 @@ def matrix_words(job):
     for runner in runners:
         require(isinstance(runner, str), "opaque-runner")
         if literal(runner):
+            continue
+        # The template's fallback only proves the expression's shape. A
+        # configured value can choose a runner with different properties.
+        if fallback_variable is not None:
+            require(not reads_runner_inputs(job, fallback_variable), "opaque-runner")
             continue
         reference = re.fullmatch(r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)", expression(runner))
         require(reference and values.get(reference[1]), "opaque-runner")
@@ -1314,14 +1368,14 @@ def claimed_paths(work):
     return claimed
 
 
-def job_reads(evidence, job, workflow_words, ordinary, readers):
+def job_reads(evidence, job, workflow_words, ordinary, readers, fallback_variable):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
     covered = []
+    matrix = matrix_words(job, fallback_variable)
     job_words = env_words(job.get("env", {}), "job")
     inherited = workflow_words + job_words
-    matrix = matrix_words(job) if "strategy" in job else []
     default = job.get("defaults", {}).get("run", {})
     step_inputs = []
     for step in job["steps"]:
@@ -1652,8 +1706,10 @@ def derived(evidence, claimed, settings, declared, nightly, render_refusal):
 
     def job_reach(name, lane):
         ordinary, readers = set(), []
+        job = jobs[name]
+        fallback_variable = runner_fallback(job)
         try:
-            covered = job_reads(evidence, jobs[name], workflow_words, ordinary, readers)
+            covered = job_reads(evidence, job, workflow_words, ordinary, readers, fallback_variable)
             unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
@@ -1661,7 +1717,9 @@ def derived(evidence, claimed, settings, declared, nightly, render_refusal):
             if not isinstance(error, NamedUnreadable):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
-            if not is_shape(error):
+            # A repository variable can select another runner. An incomplete
+            # read cannot rule out inputs from that runner.
+            if fallback_variable is not None or not is_shape(error):
                 return set(), evidence.changed
             # The lane's reasoned claims name what the reader misses in this
             # shape, and the reads proved before the refusal still reach the
