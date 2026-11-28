@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import sys
@@ -93,14 +94,18 @@ for root in "$@"; do
     cd -- "$common"
     "$BASH" "$mail" pending --item overseer --root "$common" --to owner >"$work/pending"
     "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/outward"
+    "$BASH" "$mail" events --item overseer --root "$common" --box to-lane >"$work/inward"
   )
-  jq -cn --arg root "$common" --rawfile pending "$work/pending" --rawfile outward "$work/outward" \
+  jq -cn --arg root "$common" --rawfile pending "$work/pending" --rawfile outward "$work/outward" --rawfile inward "$work/inward" \
     '{root: $root, pending: $pending,
+      answered: [$inward | split("\n") | .[1:][] | select(length > 0) | fromjson
+        | select(.kind == "answer" and .sender == "owner") | .re] | unique,
       outward: ($outward | split("\n")
         | [.[0], (.[1:][] | select(length > 0) | fromjson
-            | select(.kind == "ask" and .to == "owner")
+            | select(.to == "owner" and (.kind == "ask" or (.kind == "notice" and .presentation.route != null)))
             | with_entries(select(.key | IN(
-                "id", "tracker_posted", "tracker_comment", "identity", "replacement", "replaces")))
+                "id", "kind", "presentation", "tracker_posted", "tracker_comment", "identity", "replacement", "replaces")))
+            | if .presentation then del(.presentation.question) else . end
             | tojson), ""]
         | join("\n"))}'
 done
@@ -113,11 +118,20 @@ done
 MAILBOX_ANSWER = r"""set -euo pipefail
 mail=$1
 root=$2
-shift 2
+verb=$3
+shift 3
 note="$(mktemp)"
 trap 'rm -f -- "${note:?}"' EXIT
 cat >"$note"
-(cd -- "$root" && exec "$BASH" "$mail" send --item overseer --root "$root" --file "$note" "$@")
+(cd -- "$root" && exec "$BASH" "$mail" "$verb" --item overseer --root "$root" --file "$note" "$@")
+"""
+MAILBOX_CALL = r"""set -euo pipefail
+mail=$1
+root=$2
+verb=$3
+shift 3
+cd -- "$root"
+exec "$BASH" "$mail" "$verb" --item overseer "$@"
 """
 # The tracker questions still open. An item in a closed state has settled
 # every question on it, as an exact mailbox close settles one.
@@ -341,6 +355,9 @@ class Sources:
             mailboxes = dict.fromkeys(answer["mailbox"] for answer in answers if answer["mailbox"] is not None)
             if [read["root"] for read in reads] != list(mailboxes):
                 raise ValueError("mailbox-reads")
+            own = next((answer["mailbox"] for answer in answers if answer["registered"] == self.session.home), None)
+            for read in reads:
+                read["own"] = not target.host and read["root"] == own
         except (ValueError, TypeError, KeyError) as error:
             raise source_failure("mailbox/lane-mail", target.key, error) from error
         return reads
@@ -374,6 +391,7 @@ class Sources:
             roots.append(self.session.home)
         return [{"destination": target.key, "root": record["root"],
                  "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
+                 "own": record["own"], "answered": record["answered"],
                  "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
 
     def open_tracker(self, tracker, mailboxes, requests):
@@ -445,23 +463,93 @@ class Sources:
             raise Unavailable(DELIVERY_UNCONFIRMED, error.diagnostic if isinstance(error, Unavailable)
                               else watch.failure("owner-asks-delivery", error).record) from error
 
-    def answer(self, route, body, key):
+    def answer(self, route, body, key, delivery=None):
         # lane-mail judges a repeated delivery id under the mailbox lock and
         # names the answer that landed, before it judges closure. Reply and
         # Done carry the owner's own text from the console, so the answer
         # records the owner as its sender.
-        delivery = "owner-ask-" + key
-        target = next((target for target in watch.destinations(self.settings) if target.key == route["destination"]), None)
-        if target is None:
-            raise Unavailable("The ask's destination is no longer declared.")
-        args = [route["root"], "--re", route["ask"], "--delivery-id", delivery, "--sender", "owner"]
-        result = self.call(target, route["root"], "mailbox", "lane-mail", args,
-                           shell_args=["-c", MAILBOX_ANSWER, "owner-asks"], data=body, check=False)
+        if delivery is None:
+            delivery = "owner-ask-" + key
+        args = ["--re", route["ask"], "--delivery-id", delivery, "--sender", "owner"]
+        if route.get("presenter"):
+            args += ["--presenter", route["presenter"]]
+        target = self.target(route["destination"])
+        result = self.mailbox(target, route["root"], "send", args, data=body, check=False)
         if watch.send_receipt(result, delivery):
             return True
         if result.returncode == 2 and CLOSED.match(result.stderr):
             return False
         raise source_failure("mailbox/lane-mail", target.key + ":" + route["root"], watch.child_failure("mailbox/lane-mail", result))
+
+    def target(self, key):
+        target = next((target for target in watch.destinations(self.settings) if target.key == key), None)
+        if target is None:
+            raise Unavailable("The ask's destination is no longer declared.")
+        return target
+
+    def mailbox(self, target, root, verb, args=(), data=None, check=True):
+        script = MAILBOX_CALL if data is None else MAILBOX_ANSWER
+        return self.call(target, root, "mailbox", "lane-mail", [root, verb, *args],
+                         shell_args=["-c", script, "owner-asks"], data=data, check=check)
+
+    def present(self, destination, root, ask_id, introduction, reserved):
+        if not introduction.strip():
+            raise Unavailable("Write Jarvis's introduction to the original question.")
+        target = self.target(destination)
+        if not target.host:
+            bash = self.session.env["JARVIS_BASH"]
+            if watch.mailbox_root(bash, Path(root)) == watch.mailbox_root(bash, Path(self.session.home)):
+                raise Unavailable("Jarvis's own question has its own presentation route.")
+        presenter = "jarvis-" + digest([self.session.home, destination, root, ask_id])
+        args = ["--id", ask_id, "--presenter", presenter]
+        if reserved:
+            args.append("--reserved")
+        receipt = json.loads(self.mailbox(target, root, "present", args).stdout)
+        if receipt["presenter"] != presenter:
+            original = self.event(target, root, "to-overseer", ask_id)
+            return {"v": 1, "kind": "already-presented", "presentation": original["presentation"]}
+        if receipt.get("reserve"):
+            self.mailbox(target, root, "reserve", ["--id", ask_id])
+        pending = self.mailbox(target, root, "pending", ["--to", "owner"]).stdout
+        asks = {ask["id"]: ask for ask in map(json.loads, filter(None, pending.split("\n")))}
+        ask = asks.get(ask_id)
+        if ask is None:
+            raise Unavailable("The original question closed before it could be presented.")
+        notice = encoded({"destination": destination, "root": root, "ask": ask, "introduction": introduction})
+        posted = json.loads(self.mailbox(self.target("local"), self.session.home, "present", data=notice).stdout)
+        return {"v": 1, "kind": "presented", "notice": posted["id"], "thread": posted["presentation"].get("thread")}
+
+    def event(self, target, root, box, event_id):
+        rows = self.events(self.mailbox(target, root, "events", ["--box", box]).stdout)["rows"]
+        row = next((row for row in rows if row["id"] == event_id), None)
+        if row is None:
+            raise Unavailable("The original mailbox no longer holds the question.")
+        return row
+
+    def deliver_presented(self):
+        local, home = self.target("local"), self.session.home
+        outgoing = self.events(self.mailbox(local, home, "events", ["--box", "to-overseer"]).stdout)["rows"]
+        incoming = self.events(self.mailbox(local, home, "events", ["--box", "to-lane"]).stdout)["rows"]
+        notices = {row["id"]: row["presentation"] for row in outgoing
+                   if row["kind"] == "notice" and (row.get("presentation") or {}).get("route")}
+        delivered, undelivered = [], []
+        for reply in incoming:
+            parent = reply.get("parent") or {}
+            presentation = notices.get(parent.get("envelope"))
+            delivery = reply.get("delivery_id")
+            if (reply["kind"] != "directive" or reply.get("from") != "owner" or parent.get("author") != "bot"
+                    or not presentation or not delivery or reply.get("owner_delivered")):
+                continue
+            route = dict(presentation["route"], presenter=presentation["presenter"])
+            try:
+                if not self.answer(route, reply["text"], None, delivery):
+                    raise Unavailable("The original ask is unavailable.")
+                self.mailbox(local, home, "present", ["--id", reply["id"], "--owner-delivered"])
+                delivered.append(reply["id"])
+            except Unavailable as error:
+                diagnostic(error, "owner-asks-deliver")
+                undelivered.append({"id": reply["id"], "cause": str(error)})
+        return {"v": 1, "kind": "deliveries", "delivered": delivered, "undelivered": undelivered}
 
     def reply(self, route, body, key, retry):
         # KEY is the comment's own id, Linear's CommentCreateInput.id ("The
@@ -514,16 +602,33 @@ def source_rows(source):
                      "link": link, "threadRef": digest(thread)}
         routes[key] = route
 
+    presented_threads = {row["presentation"]["presenter"]: row["presentation"]["thread"]
+                         for mailbox in source["mailboxes"] if mailbox.get("own")
+                         for row in mailbox["outward"]["rows"]
+                         if row.get("kind") == "notice" and (row.get("presentation") or {}).get("thread")}
     for mailbox in source["mailboxes"]:
         destination, root = mailbox["destination"], mailbox["root"]
         for ask in mailbox["asks"]:
-            # An ask with no confirmed tracker mirror has no conversation link.
-            link = mailbox["links"].get(ask["id"])
+            presentation = ask.get("presentation") or {}
+            if ask["id"] in mailbox.get("answered", ()) or not (mailbox.get("own") or presentation):
+                continue
+            presenter = presentation.get("presenter")
+            thread = presentation.get("thread") or presented_threads.get(presenter)
+            original = mailbox["links"].get(ask["id"]) if not presentation else None
+            link = {"label": "Slack thread", "url": thread} if thread else (
+                {"label": "Original ask", "url": original["url"]} if original else None)
             identity = ["mailbox", destination, root, ask["id"]]
+            route = {"source": "mailbox", "destination": destination, "root": root, "ask": ask["id"]}
+            if presenter:
+                route["presenter"] = presenter
             add(identity, "fleet-approval" if ask.get("draft") else "jarvis-ask",
-                ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"],
-                None if link is None else {"label": "Original ask", "url": link["url"]}, identity,
-                {"source": "mailbox", "destination": destination, "root": root, "ask": ask["id"]})
+                ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"], link, identity, route)
+            if ask.get("reserved") or ask.get("draft"):
+                rows[digest(identity)]["statusText"] = (
+                    "Type yes in the Slack thread after the asker reads back the exact action." if thread else
+                    "Type yes in Slack after the asker reads back the exact action. The thread is unconfirmed.")
+            elif presentation and not thread:
+                rows[digest(identity)]["statusText"] = "The Slack thread is unconfirmed."
     tracker = source["tracker"]
     if tracker is not None:
         for request in tracker["requests"]:
@@ -596,7 +701,8 @@ class OwnerAsks:
         Every caller holds the home's lock, so a first page that waits on a
         running collection takes its result here."""
         saved = state.get("collection")
-        if saved is not None and 0 <= self.clock() - saved["at"] < COLLECTION_SECONDS:
+        if (saved is not None and 0 <= self.clock() - saved["at"] < COLLECTION_SECONDS
+                and all("own" in mailbox for mailbox in saved["source"]["mailboxes"])):
             return saved
         source = self.sources.collect(state["requests"].values())
         self.remember(state, source, self.clock())
@@ -738,7 +844,7 @@ def main(args, session_type, refusal_type):
         session.deadline = time.monotonic() + min(CALL_SECONDS, budget)
         settings = watch.config(session.env["JARVIS_BASH"], session.home)
         role = watch.role(settings)
-        data = sys.stdin.read() if args.action != "list" else None
+        data = sys.stdin.read() if args.action not in ("list", "deliver") else None
         if role.kind == "invalid":
             raise Unavailable("The main-home setting is invalid.")
         if role.kind == "satellite":
@@ -749,7 +855,11 @@ def main(args, session_type, refusal_type):
                 argv += ["--view", args.view]
                 if args.cursor is not None:
                     argv += ["--cursor", args.cursor]
-            else:
+            elif args.action == "present":
+                argv += ["--id", args.id, "--destination", args.destination, "--root", args.root]
+                if args.reserved:
+                    argv += ["--reserved"]
+            elif args.action != "deliver":
                 argv += ["--id", args.id]
             cause, result = forward.host_call(role, session.deadline, MAIN, argv, data, reached=REACHED)
             if cause != "ok":
@@ -766,16 +876,28 @@ def main(args, session_type, refusal_type):
             return result.returncode
         owner = OwnerAsks(session, Sources(session, settings))
         with session.locked():
-            state = owner.read()
-            if args.action == "list":
+            if args.action == "present":
+                result = owner.sources.present(args.destination, args.root, args.id, data, args.reserved)
+                state = owner.read()
+                state.pop("collection", None)
+                session.write(state)
+            elif args.action == "deliver":
+                result = owner.sources.deliver_presented()
+                if result["delivered"]:
+                    state = owner.read()
+                    state.pop("collection", None)
+                    session.write(state)
+            elif args.action == "list":
+                state = owner.read()
                 result = owner.page(state, args.view, args.cursor)
             else:
+                state = owner.read()
                 request = json.loads(data)
                 if not isinstance(request, dict) or not printable(request.get("requestId")) or not printable(request.get("expectedRevision")):
                     raise Unavailable("The action needs a printable request identity and revision.")
                 result = owner.act(state, args.action, args.id, request)
         print(encoded(result))
-        return 0
+        return int(bool(result.get("undelivered")))
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, OverflowError, watch.DestinationRefusal, refusal_type) as error:
         diagnostic(error, "owner-asks-" + args.action)
         cause = str(error) if isinstance(error, Unavailable) else "The owner-ask operation could not read its required evidence."

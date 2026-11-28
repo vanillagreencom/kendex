@@ -144,6 +144,7 @@ class Thread:
     parent: Optional[Dict] = None
     active: float = 0.0
     missing: bool = False
+    presenter: str = ""
     # Per reader generation, the newest message of this thread it was delivered.
     reads: Dict[int, str] = field(default_factory=dict)
     # Answers deliver their own text, without the earlier thread context.
@@ -272,6 +273,8 @@ class State:
                 thread = self.threads[thread_ts]
                 thread.envelope, thread.kind, thread.open = env_id, line["kind"], state == "open"
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
+            if line.get("presenter"):
+                self.threads[thread_ts].presenter = str(line["presenter"])
             if "parent" in line:
                 self.threads[thread_ts].parent = dict(line["parent"], **(self.threads[thread_ts].parent or {}))
             self.by_envelope[env_id] = thread_ts
@@ -370,7 +373,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
     last_seen = max((i for i, line in enumerate(lines) if line.get("t") == "seen"), default=-1)
     last_hold = max((i for i, line in enumerate(lines) if line.get("t") in ("hold", "resume")), default=-1)
     live = {ts for ts, thread in state.threads.items()
-            if thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
+            if thread.presenter or thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
     # Live replies have no age limit. Keep only the context marks and the
     # answers beyond them, with their receipt marks, after history expires.
     received = {ts for thread in state.threads.values() for ts in thread.reads.values()}

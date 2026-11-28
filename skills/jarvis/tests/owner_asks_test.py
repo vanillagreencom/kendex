@@ -45,7 +45,7 @@ def projection(home, count=1):
 def mailbox_projection(home):
     ask = {"id": "mail-ask", "from": "overseer:repo", "at": "2026-11-01T02:00:00Z", "text": "Mailbox question"}
     return {"home": home, "config": {"configured": False}, "tracker": None,
-            "mailboxes": [{"destination": "local", "root": "/canonical/repo", "asks": [ask],
+            "mailboxes": [{"destination": "local", "root": "/canonical/repo", "own": True, "asks": [ask],
                            "outward": {"rows": [ask]},
                            "links": {ask["id"]: {"url": "https://linear.app/example/issue/KEN-1#comment-mirror"}}}]}
 
@@ -250,7 +250,7 @@ class OwnerAsksContract(unittest.TestCase):
         first = data["tracker"]["requests"][0]["comment"]
         ask = {"id": "actual-mail-id", "from": "overseer:repo", "at": "2026-10-30T01:00:00Z", "text": "Mailbox original",
                "tracker_posted": True, "issue": "KEN-1", "tracker_comment": first["id"]}
-        data["mailboxes"] = [{"destination": "local", "root": "/canonical/repo", "asks": [ask], "outward": {"rows": [ask]},
+        data["mailboxes"] = [{"destination": "local", "root": "/canonical/repo", "own": True, "asks": [ask], "outward": {"rows": [ask]},
                               "links": {ask["id"]: {"url": first["url"]}}}]
         rows, _ = owner_asks.source_rows(data)
         self.assertEqual(len(rows), 2)
@@ -755,6 +755,9 @@ class OwnerAsksContract(unittest.TestCase):
                 # lost acknowledgement appends the answer twice.
                 ("jarvis/scripts/lib/owner_asks.py", 'delivery = "owner-ask-" + key', 'delivery = "owner-ask-" + str(uuid.uuid4())',
                  "PublicOwnerAsks.test_mailbox_answers_land_once_in_the_asks_own_mailbox", "(destination='ssh:fixture')"),
+                ("jarvis/scripts/lib/owner_asks.py", 'self.answer(route, reply["text"], None, delivery)',
+                 'self.answer(route, reply["text"], None, str(uuid.uuid4()))',
+                 "PublicOwnerAsks.test_presented_reply_recovers_at_both_delivery_boundaries", None),
                 # A reply Linear mints its own id for.
                 ("jarvis/scripts/lib/owner_asks.py", '"--id", key, "--no-attribution"', '"--no-attribution"',
                  "PublicOwnerAsks.test_tracker_answers_post_once_with_the_main_credential", "(action='reply', create='stored')"),
@@ -919,8 +922,9 @@ class PublicOwnerAsks(MailWorld):
                 expected = []
                 if asked:
                     expected.append("Asked in " + name)
-                    self.mirror(folder, self.mail(folder, "ask", expected[0], "--to", "owner", "--options", "a,b", "--reserved"),
-                                "mirror")
+                    ask = self.mail(folder, "ask", expected[0], "--to", "owner", "--options", "a,b", "--reserved")
+                    self.mirror(folder, ask, "mirror")
+                    self.direct_presentation(folder, ask)
                 self.register(self.registry, self.home, folder)
                 traced = {"GIT_TRACE": "1", "GIT_TRACE2": "1"} if name.endswith("-traced") else {}
                 with patch.dict(self.env, traced):
@@ -942,6 +946,7 @@ class PublicOwnerAsks(MailWorld):
         ask = self.mail(local, "ask", what, "--to", "owner", "--options", "a,b", "--reserved")
         self.tracker_api([request_comment("mirror", "Tracker copy")])
         self.mirror(local, ask, "mirror")
+        self.direct_presentation(local, ask)
         marker = self.root / "executed-local-checkout"
         planted = 'from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\nraise SystemExit(91)\n'
         for module in ("json", "base64"):
@@ -964,7 +969,7 @@ class PublicOwnerAsks(MailWorld):
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 row, = page["rows"]
                 self.assertEqual((row["what"], row["askedAt"]), (what, self.box(local, "to-overseer")[0]["at"]))
-                self.assertEqual(row["link"]["url"], request_comment("mirror")["url"])
+                self.assertIsNone(row["link"])
 
     def test_remote_list_runs_caller_code_on_checkout_data(self):
         remote = make_project(self.root / "remote (owner)")
@@ -984,6 +989,7 @@ class PublicOwnerAsks(MailWorld):
         ask = self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
         self.tracker_api([request_comment("mirror", "Tracker copy")])
         self.mirror(remote, ask, "mirror")
+        self.direct_presentation(remote, ask)
         # The host's transport cost is per destination: a worktree beside its
         # main checkout adds no call.
         calls = []
@@ -1019,7 +1025,7 @@ class PublicOwnerAsks(MailWorld):
                 result, page = self.run_cli()
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 row, = page["rows"]
-                self.assertEqual((row["what"], row["link"]["url"]), ("Remote original", request_comment("mirror")["url"]))
+                self.assertEqual((row["what"], row["link"]), ("Remote original", None))
                 self.assertFalse(executed.exists(), "checkout-code-executed")
 
     # ssh HOST COMMAND, as watch.host_args spells it, with COMMAND parsed by
@@ -1077,7 +1083,8 @@ os.execvp(argv[0], argv)
         self.env.update(REMOTE_REGISTRY=str(remote_registry))
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
         self.executable("ssh", "#!" + sys.executable + "\n" + self.LOGIN_SSH)
-        self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
+        ask = self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
+        self.direct_presentation(remote, ask)
         self.tracker_api([])
         rows = {}
         for login in ("sh", "fish"):
@@ -1382,6 +1389,10 @@ print(json.dumps(owner._presence('ssh:fixture')))
         payload = json.dumps(dict({"requestId": request_id, "expectedRevision": row["revision"]}, **fields))
         return self.run_cli(action, None, payload, "--id", row["id"])
 
+    def direct_presentation(self, root, ask):
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", "slack:C123"], root).check_returncode()
+
     # ssh fixture COMMAND, run here. While SSH_DROP names a file, the next
     # answer send runs whole and then loses its answer, as a dropped
     # connection does. While SSH_BREAK names a file, an answer send runs with
@@ -1395,7 +1406,7 @@ if len(sys.argv) != 3 or sys.argv[1] != "fixture":
 data = sys.stdin.buffer.read()
 with open(os.environ["SSH_STREAM"], "ab") as stream:
     stream.write(data)
-answer = b"send --item overseer --root" in data
+answer = b" send --re " in data.partition(b"\njarvis-files\n")[0]
 env = dict(os.environ)
 if answer and Path(os.environ.get("SSH_BREAK", "/nonexistent")).exists():
     env["TMPDIR"] = os.environ["SSH_BREAK"] + "/missing"
@@ -1427,6 +1438,10 @@ sys.exit(result.returncode)
         roots = {"local": self.home, "ssh:fixture": clone}
         asks = {name: self.mail(root, "ask", "Asked at " + name, "--to", "owner", "--options", "a,b", "--reserved")
                 for name, root in roots.items()}
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([row["what"] for row in page["rows"]], ["Asked at local"])
+        self.direct_presentation(clone, asks["ssh:fixture"])
         for name, root in roots.items():
             with self.subTest(destination=name):
                 result, page = self.run_cli()
@@ -1441,7 +1456,12 @@ sys.exit(result.returncode)
                 result, receipt = self.act_cli("reply", row, "reply-" + name, text="Second option")
                 self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "accepted", "open"), result.stderr)
                 result, page = self.run_cli()
-                row, = [row for row in page["rows"] if row["what"] == "Asked at " + name]
+                self.assertNotIn("Asked at " + name, [row["what"] for row in page["rows"]])
+                done = self.mail(root, "ask", "Done at " + name, "--to", "owner", "--options", "a,b", "--reserved")
+                if name != "local":
+                    self.direct_presentation(root, done)
+                result, page = self.run_cli()
+                row, = [row for row in page["rows"] if row["what"] == "Done at " + name]
                 result, receipt = self.act_cli("done", row, "done-" + name, text="Merged")
                 self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "accepted", "checking"),
                                  result.stderr)
@@ -1450,10 +1470,13 @@ sys.exit(result.returncode)
                 answers = [(envelope.get("sender"), envelope["re"], envelope["closes"], envelope["text"])
                            for envelope in self.box(root, "to-lane") if envelope["kind"] == "answer"]
                 self.assertEqual(answers, [("owner", asks[name], False, "Second option"),
-                                           ("owner", asks[name], False, owner_asks.DONE_CLAIM + "\n\nMerged")])
+                                           ("owner", done, False, owner_asks.DONE_CLAIM + "\n\nMerged")])
                 result, page = self.run_cli()
-                row, = [row for row in page["rows"] if row["what"] == "Asked at " + name]
-                self.assertEqual(row["state"], "checking")
+                self.assertNotIn("Done at " + name, [row["what"] for row in page["rows"]])
+                pending = self.command([LIB.parents[2] / "mailbox/scripts/lane-mail", "pending", "--item", "overseer",
+                                        "--to", "owner"], root)
+                pending.check_returncode()
+                self.assertEqual({json.loads(line)["id"] for line in pending.stdout.splitlines()}, {asks[name], done})
         self.assertEqual({line.split("\t", 1)[0] for line in sudo_log.read_text().splitlines()}, {"overseer"})
         self.assertFalse(writes.exists())
         self.assertNotIn(b"main-linear-key", stream.read_bytes())
@@ -1473,7 +1496,8 @@ sys.exit(result.returncode)
                         '    sys.stdout.write(open(os.environ["REMOTE_REGISTRY"]).read())\n    sys.exit()\n' + self.DROPPING_SSH)
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
         self.tracker_api([])
-        self.mail(remote, "ask", "Remote question", "--to", "owner", "--options", "a,b", "--reserved")
+        ask = self.mail(remote, "ask", "Remote question", "--to", "owner", "--options", "a,b", "--reserved")
+        self.direct_presentation(remote, ask)
         result, page = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         row, = page["rows"]
@@ -1482,6 +1506,77 @@ sys.exit(result.returncode)
         self.assertEqual((result.returncode, answer.get("kind")), (1, "unavailable"), result.stderr)
         self.assertFalse(marker.exists())
         self.assertEqual([row for row in self.box(remote, "to-lane") if row["kind"] == "answer"], [])
+
+    def test_presented_reply_recovers_at_both_delivery_boundaries(self):
+        origin = make_project(self.root / "original")
+        drop, broken = self.root / "drop", self.root / "broken"
+        self.env.update(SSH_STREAM=str(self.root / "stream"), SSH_DROP=str(drop), SSH_BREAK=str(broken), SSH_BASH=BASH)
+        self.executable("ssh", "#!" + sys.executable + "\n" + self.DROPPING_SSH)
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
+        question = "Can the two changes ship?"
+        ask = self.mail(origin, "ask", question, "--to", "owner", "--options", "first,both",
+                        "--recommend", "first", "--effect", "none")
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        presenter = "jarvis-" + owner_asks.digest([str(self.home), "ssh:fixture", str(origin), ask])
+        first = self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", presenter,
+                              "--reserved"], origin)
+        first.check_returncode()
+        # The process stopped after the claim. The first receipt still
+        # requires a reservation when the caller retries without the flag.
+        args = ("--destination", "ssh:fixture", "--root", origin, "--id", ask)
+        for _ in range(2):
+            result, receipt = self.run_cli("present", None, "Please choose the part to ship.", *args)
+            self.assertEqual((result.returncode, receipt.get("notice")), (0, presenter), result.stderr + result.stdout)
+        notice, = [row for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"]
+        self.assertEqual(notice["presentation"]["question"]["reserved"], True)
+        self.assertEqual(notice["presentation"]["question"]["text"], question)
+        self.command([mail, "resolve", "--item", "overseer", "--id", ask], origin).check_returncode()
+
+        closed = self.mail(origin, "ask", "This one closed during review.", "--to", "owner", "--options", "yes,no",
+                           "--recommend", "no", "--effect", "none")
+        interrupted = "jarvis-" + owner_asks.digest([str(self.home), "ssh:fixture", str(origin), closed])
+        self.command([mail, "present", "--item", "overseer", "--id", closed, "--presenter", interrupted,
+                      "--reserved"], origin).check_returncode()
+        self.command([mail, "resolve", "--item", "overseer", "--id", closed], origin).check_returncode()
+        result, closed_receipt = self.run_cli("present", None, "This must not post.",
+                                              "--destination", "ssh:fixture", "--root", origin, "--id", closed, "--reserved")
+        self.assertEqual((result.returncode, closed_receipt["kind"]), (1, "unavailable"), result.stderr)
+        self.assertEqual([row["id"] for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"], [presenter])
+
+        parent = self.root / "parent"
+        parent.write_text(json.dumps({"ts": "1.000001", "author": "bot", "excerpt": question, "envelope": presenter}))
+        self.mail(self.home, "send", "Only the first one.", "--directive", "--delivery-id", "C123:1.000002",
+                  "--thread-ts", "1.000001", "--parent", str(parent))
+        broken.mkdir()
+        result, failure = self.run_cli("deliver")
+        self.assertEqual((result.returncode, len(failure["undelivered"])), (1, 1), result.stderr)
+        self.assertEqual([row for row in self.box(origin, "to-lane") if row["kind"] == "answer"], [])
+        broken.rmdir()
+        drop.touch()
+        result, failure = self.run_cli("deliver")
+        self.assertEqual((result.returncode, len(failure["undelivered"])), (1, 1), result.stderr)
+        result, recovered = self.run_cli("deliver")
+        self.assertEqual((result.returncode, len(recovered["delivered"]), recovered["undelivered"]), (0, 1, []), result.stderr)
+        result, again = self.run_cli("deliver")
+        self.assertEqual((result.returncode, again["delivered"]), (0, []), result.stderr)
+        answers = [row for row in self.box(origin, "to-lane") if row["kind"] == "answer"]
+        self.assertEqual(len(answers), 1)
+        answer = answers[0]
+        self.assertEqual((answer["re"], answer["sender"], answer["delivery_id"], answer["text"], answer["owner_question"]["text"]),
+                         (ask, "owner", "C123:1.000002", "Only the first one.", question))
+
+    def test_local_presentation_requires_a_separate_mailbox(self):
+        origin = make_project(self.root / "local-overseer")
+        for checkout, expected in ((self.home, "unavailable"), (origin, "presented")):
+            with self.subTest(checkout=checkout.name):
+                ask = self.mail(checkout, "ask", "Should this safe step go ahead?", "--to", "owner",
+                                "--options", "yes,no", "--recommend", "no", "--effect", "none")
+                result, receipt = self.run_cli("present", None, "Please consider the original question.",
+                                               "--destination", "local", "--root", checkout, "--id", ask)
+                self.assertEqual(receipt["kind"], expected, result.stderr)
+                self.assertEqual(result.returncode, int(checkout == self.home))
+        notice, = [row for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"]
+        self.assertEqual(notice["presentation"]["route"]["root"], str(origin))
 
     def test_answer_to_a_closed_ask_adds_nothing(self):
         # A delegate's close that lands between the list and the answer.
@@ -1647,11 +1742,15 @@ sys.exit(result.returncode)
             for issue in issues[number::mailboxes]:
                 # The continuation mirror belongs to the earliest visible ask.
                 at = "2026-10-30T00:00:00Z" if issue == continuation_issue else "2026-10-31T00:00:00Z"
-                ask = dict(envelope, id="%s-%d" % (stem, len(rows) // 2 + 1), at=at,
+                ask = dict(envelope, id="%s-%d" % (stem, len(rows) // 4 + 1), at=at,
                            issue=issue, text="Asked on " + issue)
                 rows += [ask, {"id": ask["id"] + "-tracker", "kind": "tracker-posted", "at": ask["at"], "from": ask["from"],
                                "re": ask["id"], "issue": issue, "tracker_label": "owner-waiting",
-                               "tracker_comment": "mirror-" + issue, "text": ""}]
+                               "tracker_comment": "mirror-" + issue, "text": ""},
+                         {"id": ask["id"] + "-claim", "kind": "owner-presentation", "re": ask["id"],
+                          "at": at, "presenter": "slack:C123", "text": ""},
+                         {"id": ask["id"] + "-thread", "kind": "owner-presented", "re": ask["id"],
+                          "at": at, "thread": "https://workspace.slack.test/archives/C123/" + issue, "text": ""}]
             path.write_text("".join(json.dumps(record) + "\n" for record in rows))
         self.register(self.registry, self.home, *roots)
         for view in ("active", "snoozed"):
@@ -1679,11 +1778,11 @@ sys.exit(result.returncode)
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
-                # Each ask links the mirror comment on its own issue.
+                # Mailbox asks with posting evidence link their own Slack thread.
                 if view == "active":
                     self.assertEqual(page["rows"][0]["what"], "Asked on " + continuation_issue)
                 self.assertEqual({row["what"]: row["link"]["url"] for row in page["rows"]},
-                                 {row["what"]: request_comment("mirror-" + row["what"].split()[-1])["url"]
+                                 {row["what"]: "https://workspace.slack.test/archives/C123/" + row["what"].split()[-1]
                                   for row in page["rows"]})
 
     # ssh -o BatchMode=yes -o ConnectTimeout=N DEST COMMAND, as forward.host_call spells it, run here.

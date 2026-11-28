@@ -62,7 +62,9 @@ listen    the relay: SLACK_INBOUND selects socket (the default) or queue
           An attached report lands as its file with the notice as its mrkdwn
           comment. A post Slack refuses fails the poll and is made again on
           the next one; an envelope post whose response was lost is
-          journaled unknown and never repeated. One relay per checkout, held
+          journaled unknown and never repeated. An ask or presentation notice
+          gains a thread link once Slack confirms its post, including through
+          message readback after a lost response. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
           opens no connection, polls each root once, with history in socket
           mode or queued events in queue mode,
