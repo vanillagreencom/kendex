@@ -71,7 +71,7 @@ notice() { # KEY VALUE [DETAIL]
 }
 
 MISSING=""
-for dependency in jq git cat grep awk; do
+for dependency in jq git cat awk; do
   command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
 done
 [ -z "$MISSING" ] || notice missing-tools "${MISSING#,}"
@@ -97,76 +97,114 @@ if [ ! -r "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
   notice transcript unreadable
 fi
 
-# A recorded command is read as the shell splits it into words and commands,
-# over the text the transcript keeps it in: a double quote escaped once in a
-# Claude Code transcript's JSON and twice in a Codex rollout's arguments
-# string, a single quote as itself, and a newline as an escaped `\n`.
-DQUOTE='\\+"'
-SQUOTE="'"
-# A path is an absolute word. Bare, it ends where the shell ends an unquoted
-# word, at whitespace or a metacharacter (`;`, `&`, `|`, `(`, `)`, `<`, `>`),
-# so `<path>; echo $?`, `<path>&&git status`, `<path>)` and `<path>|tail` all
-# give `<path>`; quoted, it is the whole span between a pair. A relative path,
-# or one holding a quote, a space, a backslash or a metacharacter, is not
-# read; the dev workflows pass the absolute worktree path, under which
-# orch-runtime validate entry makes its run directories.
-PATH_RE="/[^[:space:]\"'\\\\&;|()<>]+"
-VALUE_RE="($DQUOTE$PATH_RE$DQUOTE|$SQUOTE$PATH_RE$SQUOTE|$PATH_RE)"
-# The words of one command: an unquoted `;`, `&` or `|`, or a newline, ends
-# it, while a quoted word may hold any of them and the `&` of a redirection
-# such as `2>&1` or `&>log` leaves the words one command. A parenthesis
-# between the verb and its flags opens only a `$(...)`, whose output the
-# shell hands to the verb as words.
-REDIRECT_RE='&>|[<>]&'
-WORDS_RE="([^\"'\\\\&;|]|$REDIRECT_RE|${DQUOTE}[^\"\\\\]*$DQUOTE|${SQUOTE}[^'\\\\]*$SQUOTE)*"
+# Decode only the transcript fields that record a shell call. Hosted Codex
+# 0.172.0 emits CommandExecution from unified exec under the outer code-mode
+# call. The outer JavaScript and its output can both contain arbitrary text.
+# Keep the transcript line number even for multiline shell source, so waits
+# and holds can be compared in their original order.
+transcript_paths() { # worktree | wait | hold
+  local found
+  found=$(jq -nr --arg kind "$1" '
+    def shell_calls:
+      if .type == "assistant" then
+        .message.content | arrays | .[] |
+        select(.type == "tool_use" and .name == "Bash") | .input.command | strings | [false, .]
+      elif .type == "response_item" then
+        .payload | select(.type == "function_call" and .name == "exec_command") |
+        .arguments | strings | fromjson? | .cmd | strings | [false, .]
+      elif .type == "event_msg" then
+        .payload | select(.type == "item_completed") | .item |
+        select(.type == "CommandExecution" and .source == "unified_exec_startup") |
+        .command | arrays | select(length == 3 and
+          (.[0] | strings | test("(^|/)bash$")) and (.[1] | IN("-lc", "-c"))) |
+        .[2] | strings | [true, .]
+      else empty end;
 
-# The one reader of a path in the transcript: every path it gives as the
-# value after PREFIX, an extended regular expression ending in the spaces or
-# the `=` the value follows, as `<line> <path>` in transcript order, or exit 1
-# for none.
-transcript_paths() { # PREFIX
-  local records found rc=0
-  # Keep one output line per record so holds and executed waits share the
-  # transcript's order. Hold feedback is evidence of a hold, never a command.
-  # This field selection is local to the reader; it changes no hook policy.
-  records=$(jq -r --arg prefix "$1" '
-    if $prefix == "dev-stop-check: running=" then tojson
-    else [
-      (.message.content | arrays | .[] |
-        select(.type == "tool_use" and .name == "Bash") |
-        .input.command | strings | tojson),
-      (.payload | select(.type == "function_call" and .name == "exec_command") |
-        .arguments | strings | fromjson? | .cmd | strings | tojson | tojson)
-    ] | join("\\n") end' "$TRANSCRIPT" 2>&1) || {
-      printf '%s\n' "$records"
+    # Read literal shell words and flat lists without evaluating the source.
+    # Quoted and escaped operators stay inside words. Unknown shell syntax
+    # gives no evidence, so nested source cannot supply a command head.
+    def token:
+      match("\\A(?<space>[ \t]+)|\\A(?<comment>#[^\n]*)|"
+        + "\\A(?<redirect>[0-9]*(?:<<<|<<-|<<|<&|>&|>>|<>|>\\||[<>])|[&]>{1,2})|"
+        + "\\A(?<separator>[&;|()\n])|"
+        + "\\A(?<word>(?:\u0027[^\u0027]*\u0027|\"(?:[^\"\\\\$`]|\\\\[\\s\\S]|\\$(?![({]))*\""
+        + "|\\\\[\\s\\S]|\\$(?![({\u0027\"])|[^ \t\n&;|()<>\u0027\"\\\\$`])+)|"
+        + "\\A(?<unknown>[\\s\\S])")
+      | .captures[] | select(.string != null);
+    def unquote:
+      if test("^(?:\u0027[^\u0027]*\u0027|\"[^\"]*\")\\z") then .[1:-1] else . end;
+    def skip_here($documents):
+      reduce $documents[] as [$delimiter, $strip_tabs] (.;
+        (if . == null then null
+        else split("\n") |
+          map(if $strip_tabs then sub("^\t+"; "") else . end) |
+          index($delimiter) as $end |
+          if $end == null then null else $end + 1 end
+        end) as $lines |
+        if $lines == null then null else split("\n")[$lines:] | join("\n") end);
+    def commands($native):
+      {rest: ., words: [], commands: [], documents: [], redirect: null, depth: 0, unknown: false}
+      | until(.rest == "" or .unknown;
+          (.rest | token) as $tok |
+          .rest |= .[($tok.length):] |
+          if $tok.name == "space" or $tok.name == "comment" then .
+          elif $tok.name == "word" then
+            if .redirect != null then
+              if (.redirect | test("<<-?$")) then
+                .documents += [[($tok.string | unquote), (.redirect | endswith("-"))]]
+              else . end | .redirect = null
+            elif .words == [] and ($tok.string | test("^[a-zA-Z_][a-zA-Z_0-9]*\\+?=")) then .
+            elif .words == [] and ($tok.string | IN("{", "}", "if", "while", "until",
+              "for", "select", "case", "function", "coproc", "[[")) then .unknown = true
+            else .words += [($tok.string | unquote)] end
+          elif $tok.name == "redirect" and .redirect == null then .redirect = $tok.string
+          elif $tok.name != "separator" or .redirect != null or
+            ($native and $tok.string != "\n") then .unknown = true
+          elif $tok.string == "(" and .words != [] then .unknown = true
+          else
+            if $tok.string == "(" then .depth += 1
+            elif $tok.string == ")" then .depth -= 1
+            else . end |
+            .commands += [.words] | .words = [] |
+            if $tok.string == "\n" and .documents != [] then
+              .documents as $documents | .rest |= skip_here($documents) |
+              .unknown = (.rest == null) | .documents = []
+            else . end
+          end)
+      | select(.unknown == false and .redirect == null and .documents == [] and .depth == 0)
+      | (.commands + [.words] | map(select(length > 0)))
+      | select($native == false or length == 1) | .[];
+    def path:
+      strings | select(test("^/[^[:space:]\"\u0027\\\\&;|()<>$`*?\\[{}]+\\z"));
+    def command_path:
+      select((.[0] | strings | test("(^|/)orch-runtime$")) and .[1:3] == ["validate", "entry"])
+      | .[3:]
+      | if $kind == "worktree" then
+          select(all(.[]; IN("--help", "-h", "--live", "--stop", "--record") | not)) |
+          index("--worktree") as $flag | select($flag != null) | .[$flag + 1] | path
+        else
+          index("--wait") as $wait | index("--run-dir") as $flag |
+          select($wait != null and $flag != null and $wait < $flag) | .[$flag + 1] | path
+        end;
+    foreach inputs as $record (0; . + 1;
+      . as $line | $record |
+      (if $kind == "hold" then
+        tojson | match("dev-stop-check: running=(/[^[:space:]\"\\\\]+)"; "g") |
+        .captures[0].string | path
+      else shell_calls as [$native, $source] |
+        $source | select(contains("orch-runtime")) | commands($native) | command_path
+      end)
+      | "\($line) \(.)")' "$TRANSCRIPT" 2>&1) || {
+      printf '%s\n' "$found"
       return 2
     }
-  found=$(printf '%s\n' "$records" | grep -noE -- "$1$VALUE_RE" 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || {
-    printf '%s\n' "$found"
-    return "$rc"
-  }
-  # The value is the run of path characters the match ends in, its closing
-  # quote dropped.
-  printf '%s\n' "$found" | PATH_RE=$PATH_RE awk '{ line = $0; sub(/:.*/, "", line)
-    match($0, ENVIRON["PATH_RE"] "[\\\\\"'\'']*$"); value = substr($0, RSTART, RLENGTH)
-    sub(/[\\\\"'\'']+$/, "", value); print line, value }'
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
 }
 
-# An `orch-runtime validate entry` command giving FLAGS, in the order the dev
-# workflows write them, each flag a word of that one command, as the PREFIX of
-# its value.
-command_prefix() { # FLAGS...
-  local flag prefix="orch-runtime($DQUOTE|$SQUOTE)? +validate +entry"
-  for flag in "$@"; do
-    prefix="$prefix$WORDS_RE +$flag"
-  done
-  printf '%s +' "$prefix"
-}
-
-# The last transcript line giving PATH after PREFIX, 0 for none, or
+# The last transcript line giving PATH for KIND, 0 for none, or
 # transcript_paths' failure and its words.
-last_line() { # PREFIX PATH
+last_line() { # KIND PATH
   local found rc=0
   found=$(transcript_paths "$1") || rc=$?
   case "$rc" in
@@ -184,7 +222,7 @@ last_line() { # PREFIX PATH
 # outlasts its timeout records only the path of the file its output goes to,
 # never the run directory the start printed.
 rc=0
-MENTIONS=$(transcript_paths "$(command_prefix --worktree)") || rc=$?
+MENTIONS=$(transcript_paths worktree) || rc=$?
 case "$rc" in
   0) ;;
   1) exit 0 ;;
@@ -286,8 +324,8 @@ while IFS= read -r WORKTREE; do
   # message, Codex as a hook prompt, on one line with the --wait command it
   # names, which a wait on that line therefore does not follow; a hold another
   # hook made counts as none of this hook's.
-  HELD=$(last_line 'dev-stop-check: running=' "$RUN_DIR") || notice transcript unread "$HELD"
-  WAITED=$(last_line "$(command_prefix --wait --run-dir)" "$RUN_DIR") ||
+  HELD=$(last_line hold "$RUN_DIR") || notice transcript unread "$HELD"
+  WAITED=$(last_line wait "$RUN_DIR") ||
     notice transcript unread "$WAITED"
   { [ "$HELD" -gt 0 ] && [ "$WAITED" -le "$HELD" ]; } || refuse running "$RUN_DIR"
   notice abandoned "$RUN_DIR"
