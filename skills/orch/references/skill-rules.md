@@ -406,7 +406,7 @@ The overseer's side:
 
 ### Lane finish
 
-After the workflow's item close-out step and any final notice, the lane follows [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) before its final return. A turn ending to wait for more item work still follows [§ Lane mail](#lane-mail).
+After the workflow confirms successful item close-out and sends any final notice, the lane follows [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) before its final return. A turn ending to wait for more item work still follows [§ Lane mail](#lane-mail).
 
 ### Question tools
 

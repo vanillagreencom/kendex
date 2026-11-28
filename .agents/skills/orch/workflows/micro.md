@@ -296,7 +296,7 @@ A `dequeued` verdict routes to [merge-contracts.md § Late-findings triage](../r
 
 ## 5. Return
 
-For a confirmed PR merge, return only after [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge) has run, except on the quick-change route below.
+For a confirmed PR merge on the regular route, use the close-out outcome of [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge). An unfinished close-out takes [merge-pr.md § 7](merge-pr.md#7-return)'s unfinished route.
 
 **Quick change.**
 
@@ -306,7 +306,7 @@ After a quick change's confirmed merge or direct delivery, close out from `[WT_P
 .agents/skills/orch/scripts/orch-runtime state remove --item [ISSUE_ID] --archive [WT_PATH]/tmp
 ```
 
-If `result.kept` names an archive inside `[WT_PATH]`, keep a copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/` too. Keep the scratch checkout and report a missing record, close-out refusal or failed copy. Once close-out succeeds and the copies stand, remove only the scratch checkout and local directive branch. For a handback, the directive escape disposes of them.
+If `result.kept` names an archive inside `[WT_PATH]`, keep a copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/` too. A missing record, close-out refusal or failed copy leaves this step owed. Keep the scratch checkout and report the failure and the unfinished part of § 5 to resume. Once close-out succeeds and the copies stand, remove only the scratch checkout and local directive branch. For a handback, the directive escape disposes of them.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 control-host refusal is the one return outside this table. It returns its own two lines.
 
@@ -324,7 +324,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 contro
 
 </output_format>
 
-After a confirmed merge, a lane follows [§ Lane finish](../references/skill-rules.md#lane-finish) before returning.
+After a confirmed merge with successful close-out, a lane follows [§ Lane finish](../references/skill-rules.md#lane-finish) before returning.
 
 ## Escape
 
