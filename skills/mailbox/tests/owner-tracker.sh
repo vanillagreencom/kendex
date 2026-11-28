@@ -53,7 +53,7 @@ close_rows() {
   assert_eq "$(jq '.posted' <<<"$CLOSE_FACTS")" true 'a confirmed tracker post projects as posted'
   assert_eq "$(jq '.close_untracked' <<<"$CLOSE_FACTS")" true 'a close writes nothing to the tracker and reads only its comments'
   assert_eq "$(jq '.retained_error' <<<"$CLOSE_FACTS")" true 'a refused label retains tracker error bytes after close'
-  assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'only successful tracker posts leave a question comment'
+  assert_eq "$(jq '.comments' <<<"$CLOSE_FACTS")" true 'every created question keeps its original comment'
   assert_eq "$(jq '.rollback_owned' <<<"$CLOSE_FACTS")" true 'failed comments restore the exact description the ask replaced'
   assert_eq "$(jq '.rollback_unowned' <<<"$CLOSE_FACTS")" true 'rollback preserves a later description and reports lost ownership'
   assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback reports its cause and retains the comment error'
@@ -62,7 +62,8 @@ close_rows() {
   assert_eq "$(jq '.rollback_pair' <<<"$CLOSE_FACTS")" true 'a failed ask post leaves neither the owner label nor the owner assignee'
   assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
   assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
-  assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
+  assert_eq "$(jq '.settlement' <<<"$CLOSE_FACTS")" true 'failed publication preserves its reply binding and settles once under the original question'
+  assert_eq "$(jq '.cross_project' <<<"$CLOSE_FACTS")" true 'both arrival orders preserve replies and the next pass repairs stale owner marks'
 }
 
 # A new ask that replaces an open one, each row judged on its own tracker.

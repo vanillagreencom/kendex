@@ -6792,9 +6792,9 @@ fn two_mailboxes_keep_the_item_gated_until_both_rulings_land() {
 }
 
 /// A closing ask's watch removes the action line its question marks, under
-/// any name, and only that line: while another mailbox's question awaits
-/// a ruling, the write is that line alone, and a line naming the other
-/// question, the same action or a longer one, is left as it stands. Once
+/// any name, after the last foreign question closes. A new question can
+/// publish during the gate's later write, after the watch read the original
+/// description. A line naming a different question stays. Once
 /// no question stands, the owner assignee leaves the item, whether or not
 /// the owner label is still there, and a teammate the item was reassigned
 /// to stays; a label a close on another item recorded stays as well.
@@ -6830,7 +6830,19 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
         &'a str,
         &'a [&'a str],
     );
-    let rows: [Row; 11] = [
+    let rows: [Row; 12] = [
+        (
+            "another mailbox publishes during the close's label write",
+            line("Maya", "Approve.", FIRST),
+            &ruled,
+            &owner,
+            gated,
+            "late-publication",
+            &[
+                "issues update KEN-7 --clear-assignee",
+                "issues update KEN-7 --labels skills",
+            ],
+        ),
         (
             "the other question's identical action",
             line("Maya", "Approve.", SECOND),
@@ -6856,7 +6868,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &owner,
             gated,
             "",
-            &["issues update KEN-7 --description Body."],
+            &[],
         ),
         (
             "its own line under another name",
@@ -6865,7 +6877,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &owner,
             gated,
             "",
-            &["issues update KEN-7 --description Body."],
+            &[],
         ),
         (
             "its own line once every question is ruled",
@@ -6936,7 +6948,7 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             &Value::Null,
             &["skills"],
             "",
-            &["issues update KEN-7 --description Body."],
+            &[],
         ),
         (
             "another open ask, with a teammate the item was reassigned to",
@@ -7027,6 +7039,31 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
                     "labels": {"nodes": nodes}
                 }}}),
             );
+        if other == "late-publication" {
+            let tracker = dir.join("linear-late-publication");
+            std::fs::write(
+                dir.join("publication.json"),
+                json!({"questions": open, "description": line("Maya", "Approve later.", SECOND)})
+                    .to_string(),
+            )
+            .unwrap();
+            write_executable(
+                &tracker,
+                r#"#!/bin/sh
+set -eu
+dir=$(dirname "$0")
+if [ "$*" = 'issues update KEN-7 --labels skills' ]; then
+  jq -c --slurpfile publication "$dir/publication.json" '
+    .["comments owner-questions"].body = $publication[0].questions
+    | .["graphql OwnerAskItem"].body.issue.description = $publication[0].description
+  ' "$dir/linear.json" >"$dir/linear-published.json"
+  mv "$dir/linear-published.json" "$dir/linear.json"
+fi
+exec "$dir/linear" "$@"
+"#,
+            );
+            settings.reads.tracker_cli = tracker;
+        }
         let mut body = tracker::body(world.context(settings, None));
         let mut baseline = Baseline::default();
         pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
@@ -7038,7 +7075,198 @@ fn a_closing_ask_removes_only_the_action_line_its_question_marks() {
             .filter(|call| call.starts_with("issues update "))
             .collect();
         assert_eq!(updates, expected, "{case}");
+        if other == "late-publication" {
+            assert_eq!(world.posted_comments()[0].1, FIRST);
+            assert_eq!(
+                baseline.get(tracker::OWNER_MARK_ROW, "ask-a"),
+                Some("ruling=ok")
+            );
+        }
     }
+}
+
+#[test]
+fn one_owner_answer_pass_repairs_an_action_line_cleared_after_the_new_ask_publishes() {
+    const NAME: &str =
+        "one_owner_answer_pass_repairs_an_action_line_cleared_after_the_new_ask_publishes";
+    if !isolated_row(NAME) {
+        return;
+    }
+    #[derive(serde::Deserialize)]
+    struct ActionWindow {
+        mail: PathBuf,
+        tracker: PathBuf,
+        newer: PathBuf,
+        message: PathBuf,
+        env: BTreeMap<String, String>,
+        old_ask: String,
+        old_question: String,
+        body: String,
+    }
+    let world = World::new();
+    let root = world.dir.path().join("project");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/tests/lib/owner-tracker-close.py");
+    let setup = program("python3")
+        .args(["-B"])
+        .arg(fixture)
+        .arg("action-window")
+        .arg(&root)
+        .arg("/bin/bash")
+        .output()
+        .unwrap();
+    assert!(setup.status.success(), "{}", stderr(&setup));
+    let fixture: ActionWindow = serde_json::from_slice(&setup.stdout).unwrap();
+    // The watch starts both programs in-process, so give each child the
+    // fixture environment without changing the test process's own.
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
+    let mut exports = String::new();
+    for (name, value) in &fixture.env {
+        exports.push_str(&format!("export {name}={}\n", quote(value)));
+    }
+    let wrapped = |name: &str, path: &Path| {
+        let script = world.dir.path().join(name);
+        write_executable(
+            &script,
+            format!(
+                "#!/bin/sh\n{exports}exec {} \"$@\"\n",
+                quote(path.to_str().unwrap())
+            ),
+        );
+        script
+    };
+    let mail = wrapped("action-mail", &fixture.mail);
+    let tracker = wrapped("action-tracker", &fixture.tracker);
+    let mut settings = world.settings(&[
+        ("OVERSEE_WATCH_TRACKER", tracker.to_str().unwrap()),
+        ("ORCH_OWNER_EMAIL", "owner@example.test"),
+        ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+    ]);
+    settings.linear_team = None;
+    settings.reach = Some(agent_runtime::effects::Reach {
+        mail_program: mail.clone(),
+        mail_root: root.clone(),
+        socket: Some(root.join("no-server")),
+    });
+    let read_json = |name: &str| -> Value {
+        serde_json::from_slice(&std::fs::read(root.join(name)).unwrap()).unwrap()
+    };
+    let calls = || -> Vec<Vec<String>> {
+        lines(&root.join("calls.jsonl"))
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let original_thread = read_json("threads.json");
+    let mut watch = tracker::body(world.context(settings, None));
+    let mut baseline = Baseline::default();
+    let clock = FakeClock::new();
+    pass(&mut watch, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    let resolved = program(&mail)
+        .args([
+            "resolve",
+            "--item",
+            "overseer",
+            "--id",
+            &fixture.old_ask,
+            "--text",
+        ])
+        .arg(&fixture.message)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{}", stderr(&resolved));
+    let start = calls().len();
+    pass(&mut watch, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    let closed = calls();
+    let stale = ["issues", "update", "KEN-7", "--description", &fixture.body];
+    let stale_at = closed
+        .iter()
+        .skip(start)
+        .position(|argv| argv == &stale)
+        .unwrap()
+        + start;
+    assert_eq!(&closed[stale_at - 1][..2], ["comments", "owner-questions"]);
+    assert_eq!(
+        baseline.get(tracker::OWNER_MARK_ROW, &fixture.old_ask),
+        Some("ruling=ok item=ok")
+    );
+    let question = std::fs::read_to_string(root.join("question-id")).unwrap();
+    let ask = std::fs::read_to_string(root.join("new-ask-id")).unwrap();
+    assert_ne!(question, fixture.old_question);
+    let published = format!(
+        "**Owner, what you do:** Review the newer change `Owner question: {question}`\n\n{}",
+        fixture.body
+    );
+    let publish = ["issues", "update", "KEN-7", "--description", &published];
+    assert!(closed[stale_at + 1..].iter().any(|argv| argv == &publish));
+    assert_eq!(read_json("item.json")["description"], fixture.body);
+
+    let mut threads = read_json("threads.json");
+    assert!(
+        threads
+            .as_array()
+            .unwrap()
+            .starts_with(original_thread.as_array().unwrap())
+    );
+    assert!(
+        threads
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| { row["parent_id"] == fixture.old_question && row["ruling"] == true })
+    );
+    threads.as_array_mut().unwrap().push(json!({
+        "id": "newer-reply", "parent_id": question, "body": "Answer the new question",
+        "user_email": "owner@example.test", "created_at": "2099-01-01T00:00:00Z"
+    }));
+    std::fs::write(root.join("threads.json"), threads.to_string()).unwrap();
+    let mut repair = program(&fixture.mail);
+    repair
+        .args(["owner-answers", "--item", "overseer"])
+        .current_dir(&fixture.newer)
+        .envs(&fixture.env)
+        .env("HOME", &fixture.newer)
+        .env("TMPDIR", &fixture.newer)
+        .env("OVERSEE_WATCH_TRACKER", &fixture.tracker);
+    for key in [
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+    ] {
+        repair.env(key, fixture.newer.join(key));
+    }
+    let repaired = repair.output().unwrap();
+    assert!(repaired.status.success(), "{}", stderr(&repaired));
+    let receipt = String::from_utf8(repaired.stdout).unwrap();
+    assert_eq!(receipt.lines().last(), Some("owner-answers: read=read"));
+    let answers: Vec<Value> = receipt
+        .lines()
+        .filter(|line| line.starts_with('{'))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|row: &Value| row["kind"] == "delivered")
+        .collect();
+    assert_eq!(
+        answers,
+        [json!({"kind": "delivered", "ask": ask, "issue": "KEN-7", "comment": "newer-reply"})]
+    );
+    assert_eq!(
+        read_json("item.json"),
+        json!({
+            "description": published, "labels": ["owner-gated", "skills"], "assignee": "Owner Person"
+        })
+    );
+    assert_eq!(read_json("threads.json"), threads);
+    let repaired_calls = calls();
+    assert_eq!(
+        repaired_calls[closed.len()..]
+            .iter()
+            .filter(|argv| argv
+                .starts_with(&["issues", "update", "KEN-7", "--description"].map(str::to_owned)))
+            .collect::<Vec<_>>(),
+        [&publish.map(str::to_owned)]
+    );
 }
 
 /// This test process's own identity, the one a runner in it claims with.

@@ -1976,9 +1976,10 @@ fn settle_mark<T>(
 /// the mailbox's owner gate once no owner ask stands, given the `open` asks
 /// on the same item and the `legacy_closes` there whose unreserved
 /// questions it answers for, and its action line removed, or replaced by
-/// the latest open ask's, only where the description still opens with it. While another mailbox's question awaits
-/// a ruling there, as the gate reads the item's questions, the close stays
-/// unmarked.
+/// the latest open ask's, only where the description still opens with it.
+/// The gate's standing-question read comes last, since a question can
+/// publish after the description was read. A foreign question holds the
+/// description and leaves the close retryable.
 fn clear_owner_item(
     linear: &Linear,
     (mailbox, root): (&Mailbox, &Path),
@@ -2038,12 +2039,13 @@ fn clear_owner_item(
             return Err(refused("owner-gate-unwritten", &[("issue", issue)]));
         }
     };
+    if held {
+        return Ok(Answered::Value(false));
+    }
     let name = item.assignee.map(|a| a.name).unwrap_or_default();
     let original = item.description.unwrap_or_default();
-    // A line marked with this ask's question is its own under any name. A
-    // line written before the mark is known by its text alone, which another
-    // mailbox's ask can share, so it is taken only with no other question
-    // open on the item.
+    // A line marked with this ask's question is its own under any name.
+    // Legacy action lines use the pre-clear assignee's name.
     let owned = ask
         .action
         .as_deref()
@@ -2053,7 +2055,7 @@ fn clear_owner_item(
                 .as_deref()
                 .and_then(|question| marked_action_body(&original, action, question))
                 .or_else(|| {
-                    let line = owner_action_line(&name, action, None, "").filter(|_| !held)?;
+                    let line = owner_action_line(&name, action, None, "")?;
                     original.strip_prefix(&line)
                 })
         });
@@ -2073,7 +2075,7 @@ fn clear_owner_item(
             &["issues", "update", issue, "--description", &description]
         )?);
     }
-    Ok(Answered::Value(!held))
+    Ok(Answered::Value(true))
 }
 
 // --- the closes ---------------------------------------------------------------
