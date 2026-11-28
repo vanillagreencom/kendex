@@ -270,7 +270,12 @@ pub fn last_row(file: &Path) -> Reading<Row> {
 /// The launch boundary, in the same one-based line positions as [`Row`].
 /// Count even an unfinished line: an append closes it before adding a row.
 pub fn last_position(file: &Path) -> Reading<usize> {
-    read_file(file, |text| Reading::Live(text.lines().count()))
+    read_file(file, |text| Reading::Live(last_position_in(text)))
+}
+
+/// The same launch boundary when the file's text was read elsewhere.
+pub fn last_position_in(text: &str) -> usize {
+    text.lines().count()
 }
 
 fn read_file<T>(file: &Path, read: impl FnOnce(&str) -> Reading<T>) -> Reading<T> {
@@ -984,6 +989,7 @@ mod tests {
         let partial = format!("{prefix}{prompt}");
         let cursor = complete_line_count(&partial);
         assert_eq!(cursor, 2);
+        assert_eq!(last_position_in(&partial), 3);
         assert!(rows_after_in(&partial, cursor).next().is_none());
         let text = format!("{partial}\n{{\"event\":\"UserPromptSubmit\"}}\n{{");
         let rows = rows_after_in(&text, cursor)

@@ -16,14 +16,15 @@
 //! its resume, reconciles it once and types nothing for it: a local target's
 //! bound file read past the mark's count, a later user turn being the
 //! delivery and none `wake-unconfirmed cause=outcome-lost`; a hosted lane's
-//! prompt rows are read once for the matching digest, else `outcome-lost`.
+//! prompt rows are read for the saved digest. A refused Claude resume
+//! receipt read keeps the mark open for the next pass.
 //!
 //! Slot: the mail duty sets a baseline row of kind [`UNREAD_KIND`], its
 //! identity the target (an item key, or [`OVERSEER_TARGET`]), its value the
 //! unread state it announced (the newest unread envelope's id or index),
 //! while the target's box holds mail the target has not read, and clears
 //! the row once read. The wake reads that row from its tick's snapshot and
-//! writes no row of its own.
+//! keeps its own row for a pending resume's status or cursor refusal.
 //!
 //! Resume: the lane and controller duties set a row of kind [`RESUME_KIND`]
 //! for a passed lane wall (`usage-limit|<identity>|<reset>`), or a failed
@@ -52,11 +53,12 @@
 //! prompt rows past the pre-send complete-line cursor confirm the digest.
 //! Pending, unmatched or failed post-send reads are read once on later
 //! passes without resending. No evidence gives final `session-hosted`; a
-//! failed pre-send cursor read still sends, final `rows-host-unread`. An
-//! unanswered transport paste keeps `paste-unanswered`. A failed
-//! turn's resume reaches either kind by the same route and is final as
-//! typed; a provider read that refuses it is told once. A wall's resume is
-//! local alone.
+//! failed pre-send cursor read on an inbox wake still sends, final
+//! `rows-host-unread`. An unanswered transport paste keeps
+//! `paste-unanswered`. A Claude provider stop uses the confirmed launch's
+//! root for both reads. A refused status or cursor read leaves the request
+//! pending. The saved receipt remains open after lane observation clears
+//! the request. A wall's resume is local alone.
 //!
 //! The duty starts no detached process: nothing new charges the lane cap.
 //!
@@ -90,6 +92,7 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host;
+use agent_runtime::intent::Intent;
 use agent_runtime::reading::Reading;
 use agent_runtime::stop::{self, Kind};
 use serde_json::Value;
@@ -233,17 +236,6 @@ impl Resume {
         })
     }
 
-    /// Whether the wake resumes `lane`, whose host declares `caps`, for this
-    /// cause: a wall's resume spends an account its reading measures, an API
-    /// error's any lane the wake types into.
-    fn reaches(&self, lane: &Lane, caps: Option<Capabilities>) -> bool {
-        if self.wall {
-            resumable(lane)
-        } else {
-            reaches(lane, caps)
-        }
-    }
-
     /// The line typed for `target`: the resume sentence, then the inbox
     /// line, so the resumed turn reads the mail that waited too.
     fn line(&self, target: &str) -> String {
@@ -259,6 +251,23 @@ impl Resume {
             self.ended,
             line_for(target)
         )
+    }
+
+    fn rows_root(&self, lane: &Lane) -> RowsRoot {
+        if lane.mail_host().is_some()
+            && lane
+                .harness
+                .as_deref()
+                .and_then(Harness::parse)
+                .is_some_and(|harness| {
+                    harness == Harness::Claude
+                        && stop::of_cause(harness, &self.cause) == Some(Kind::Provider)
+                })
+        {
+            RowsRoot::Confirmed
+        } else {
+            RowsRoot::Recorded
+        }
     }
 }
 
@@ -358,17 +367,29 @@ struct Target {
     session_id: Option<String>,
     route: Route,
     prompt_rows: bool,
+    rows_root: RowsRoot,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowsRoot {
+    Recorded,
+    Confirmed,
 }
 
 impl Target {
-    fn rows_lane(&self) -> Option<&Lane> {
+    /// The same resolved lane and root policy own cursor and receipt reads.
+    fn session_rows(&self, scripts: &Path) -> Option<hosted::Answer<String>> {
         if !self.prompt_rows {
             return None;
         }
-        match &self.route {
-            Route::Transport { lane, .. } | Route::Send { lane, .. } => Some(lane),
-            Route::Pane => None,
-        }
+        let lane = match &self.route {
+            Route::Transport { lane, .. } | Route::Send { lane, .. } => lane,
+            Route::Pane => return None,
+        };
+        Some(match self.rows_root {
+            RowsRoot::Recorded => hosted::session_rows(scripts, lane),
+            RowsRoot::Confirmed => hosted::confirmed_session_rows(scripts, lane),
+        })
     }
 }
 
@@ -453,6 +474,22 @@ fn target_of(
     lane_target(lane, socket).or_else(|| hosted_target(lane, line()?, socket))
 }
 
+fn resume_target(
+    lane: &Lane,
+    intents: &[Intent],
+    rows_root: RowsRoot,
+    socket: &Path,
+    caps: Option<Capabilities>,
+) -> Option<Target> {
+    if rows_root == RowsRoot::Recorded {
+        return target_of(lane, socket, || caps);
+    }
+    let rooted = hosted::with_session_root(lane, intents);
+    let mut target = hosted_target(&rooted, caps?, socket)?;
+    target.rows_root = rows_root;
+    Some(target)
+}
+
 /// The line `lane`'s host declares, read once per pass into `lines`; none
 /// for a local lane or a line that could not be read.
 fn host_line(
@@ -502,10 +539,6 @@ fn hosted_rows_refused(cause: &str) -> bool {
     cause.split_ascii_whitespace().next() == Some(hosted::SESSION_ROWS_READ_FAILED)
 }
 
-fn claude_provider_stop(harness: Harness, cause: &str) -> bool {
-    harness == Harness::Claude && stop::of_cause(harness, cause) == Some(Kind::Provider)
-}
-
 /// A running lane's recorded window as a target, wherever its harness runs.
 fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
     if lane.status != LaneStatus::Running {
@@ -536,6 +569,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         session_id: lane.session_id.clone(),
         route: Route::Pane,
         prompt_rows: false,
+        rows_root: RowsRoot::Recorded,
     })
 }
 
@@ -565,6 +599,7 @@ fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
         session_id: overseer.session_id.clone(),
         route: Route::Pane,
         prompt_rows: false,
+        rows_root: RowsRoot::Recorded,
     })
 }
 
@@ -788,12 +823,24 @@ impl Wake {
                     .push(super::lanes::clear(RESUME_READ_ROW, &lane));
             }
         }
-        if unread.is_empty() && resumes.is_empty() {
-            return Ok(produced);
-        }
         // The marks as the record holds them at the start of this pass:
         // nothing is carried in memory between passes.
         let mut record = load_record(&self.record)?;
+        let pending: Vec<_> = record
+            .marks
+            .iter()
+            .filter(|(_, mark)| hosted_open(mark))
+            .filter_map(|(item, mark)| {
+                let resume = Resume::of(item, mark.resume.as_deref()?)?;
+                // An ordinary inbox wake carries the last resume row too.
+                // The saved digest identifies which line this mark sent.
+                (mark.line_digest == line_digest(&resume.line(item)))
+                    .then(|| (item.clone(), mark.clone(), resume))
+            })
+            .collect();
+        if unread.is_empty() && resumes.is_empty() && pending.is_empty() {
+            return Ok(produced);
+        }
         let Some(fleet) = load_fleet(&self.fleet)? else {
             return Ok(produced);
         };
@@ -803,6 +850,37 @@ impl Wake {
         // in this pass.
         let mut lines = BTreeMap::new();
         let mut provider_resumes = BTreeSet::new();
+        // The saved mark owns the receipt even after lanes retires the
+        // request. Read it before any send can replace the saved cursor.
+        for (item, mark, resume) in pending {
+            let Some(lane) = fleet.lanes.iter().find(|lane| {
+                lane.item == item
+                    && lane.launch.as_ref().is_some_and(|launch| {
+                        launch.pane.as_deref() == Some(mark.pane.as_str())
+                            && launch.server == Some(mark.server)
+                            && launch.server_start == mark.server_start
+                    })
+            }) else {
+                continue;
+            };
+            let rows_root = resume.rows_root(lane);
+            if rows_root != RowsRoot::Confirmed {
+                continue;
+            }
+            provider_resumes.insert(item);
+            let caps = host_line(&mut lines, &scripts, lane);
+            if let Some(target) = resume_target(lane, &fleet.intents, rows_root, &socket, caps)
+                .filter(|target| target.prompt_rows)
+            {
+                self.repeat(
+                    &target,
+                    mark,
+                    Some(&resume.cause),
+                    &mut record,
+                    &mut produced,
+                )?;
+            }
+        }
         // A resume goes first: its line runs the inbox read too, so the
         // unread state it types for stands marked when the mail is served.
         for (name, row) in resumes {
@@ -860,46 +938,12 @@ impl Wake {
             else {
                 continue;
             };
-            // An older Claude record can hold the proof of its root only in
-            // the launch journal. Use it for this stop's cursor and receipt.
-            let provider_stop = lane.mail_host().is_some()
-                && lane
-                    .harness
-                    .as_deref()
-                    .and_then(Harness::parse)
-                    .is_some_and(|harness| claude_provider_stop(harness, &resume.cause));
-            let rooted;
-            let lane = if provider_stop {
-                rooted = hosted::with_session_root(lane, &fleet.intents);
-                rooted.as_ref()
-            } else {
-                lane
-            };
+            if provider_resumes.contains(&lane.item) {
+                continue;
+            }
             let marked = record.get(&lane.item);
             if let Some(mark) = marked.filter(|m| m.resume.as_deref() == Some(row.as_str())) {
-                if provider_stop && hosted_open(mark) {
-                    provider_resumes.insert(lane.item.clone());
-                    // A confirmation belongs to the same window and the
-                    // same server as the saved cursor and digest.
-                    if lane.launch.as_ref().is_some_and(|launch| {
-                        launch.pane.as_deref() == Some(mark.pane.as_str())
-                            && launch.server == Some(mark.server)
-                            && launch.server_start == mark.server_start
-                    }) {
-                        let caps = host_line(&mut lines, &scripts, lane);
-                        if let Some(target) =
-                            caps.and_then(|caps| hosted_target(lane, caps, &socket))
-                        {
-                            self.repeat(
-                                &target,
-                                mark.clone(),
-                                Some(&resume.cause),
-                                &mut record,
-                                &mut produced,
-                            )?;
-                        }
-                    }
-                } else if mark.outcome.is_none() {
+                if mark.outcome.is_none() {
                     let mark = mark.clone();
                     self.reconcile(
                         lane,
@@ -913,13 +957,14 @@ impl Wake {
                 continue;
             }
             let caps = host_line(&mut lines, &scripts, lane);
-            if !resume.reaches(lane, caps) {
+            if resume.wall && !resumable(lane) {
                 continue;
             }
-            let Some(target) = target_of(lane, &socket, || caps) else {
+            let rows_root = resume.rows_root(lane);
+            let Some(target) = resume_target(lane, &fleet.intents, rows_root, &socket, caps) else {
                 continue;
             };
-            if provider_stop {
+            if rows_root == RowsRoot::Confirmed {
                 // The resume line includes the inbox read. A second send
                 // would replace its unresolved delivery mark.
                 provider_resumes.insert(lane.item.clone());
@@ -1133,7 +1178,6 @@ impl Wake {
                 mark.turns_before,
                 mark.line_digest,
                 Duration::ZERO,
-                resume.is_some_and(|cause| claude_provider_stop(target.harness, cause)),
             ) {
                 Paste::Confirmed { turns_after } => Confirmation::Matched { turns_after },
                 Paste::Unconfirmed { ref cause }
@@ -1323,7 +1367,7 @@ impl Wake {
                 mark.turns_before = turns;
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
-                match self.paste(target, &line, turns, false, false)? {
+                match self.paste(target, &line, turns, false)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                         delivered(&name, None).into_iter().collect()
@@ -1443,9 +1487,7 @@ impl Wake {
             })
         };
         let room = resume.is_some_and(|r| r.wall);
-        let provider_stop = resume.filter(|r| {
-            !matches!(target.route, Route::Pane) && claude_provider_stop(target.harness, &r.cause)
-        });
+        let provider_stop = resume.filter(|_| target.rows_root == RowsRoot::Confirmed);
         let report_refusal = |produced: &mut Produced, resume: &Resume, cause: &str| {
             super::lanes::report_unreadable(
                 produced,
@@ -1470,8 +1512,8 @@ impl Wake {
             return Ok(());
         }
         let read = match &target.route {
-            // An exited or unread hosted harness is the lanes duty's to
-            // name; the rows cursor is read only after this idle check.
+            // This read separates a refused probe for a provider stop
+            // from an exited harness before starting the rows cursor read.
             // A transport window's screen is judged by the paste itself; a
             // provider-held session's screen is the provider's capture, read
             // by the watch's one judge, and only an idle one is sent its line.
@@ -1528,10 +1570,7 @@ impl Wake {
                 mark.turns_before = if matches!(target.route, Route::Pane) {
                     turns
                 } else {
-                    match (
-                        self.hosted_cursor(target, provider_stop.is_some()),
-                        provider_stop,
-                    ) {
+                    match (self.hosted_cursor(target), provider_stop) {
                         (Ok(cursor), _) => cursor,
                         (Err(cause), Some(resume)) => {
                             report_refusal(produced, resume, &cause);
@@ -1543,13 +1582,7 @@ impl Wake {
                 clear_refusal(produced);
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
-                match self.paste(
-                    target,
-                    &line,
-                    mark.turns_before,
-                    room,
-                    provider_stop.is_some(),
-                )? {
+                match self.paste(target, &line, mark.turns_before, room)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                         lines(Event::WakeDelivered {
@@ -1696,14 +1729,7 @@ impl Wake {
     /// pass; any other failure may have typed
     /// part of the line, so it is final with its cause and never sent
     /// again for this state.
-    fn paste(
-        &self,
-        target: &Target,
-        line: &str,
-        turns_before: u64,
-        room: bool,
-        provider_stop: bool,
-    ) -> Result<Paste> {
+    fn paste(&self, target: &Target, line: &str, turns_before: u64, room: bool) -> Result<Paste> {
         if let Route::Send { host, .. } = &target.route {
             let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
             return Ok(
@@ -1719,7 +1745,6 @@ impl Wake {
                         turns_before,
                         line_digest(line),
                         self.settings.engine.verify.get()?,
-                        provider_stop,
                     ),
                     Err(hosted::Asked::Failed(cause))
                         if matches!(
@@ -1770,31 +1795,18 @@ impl Wake {
                     turns_before,
                     line_digest(line),
                     self.settings.engine.verify.get()?,
-                    provider_stop,
                 )),
                 Some(_) | None => Err(protocol_error("not a paste", &result)),
             },
         }
     }
 
-    fn hosted_cursor(
-        &self,
-        target: &Target,
-        provider_stop: bool,
-    ) -> std::result::Result<u64, String> {
-        let Some(lane) = target.rows_lane() else {
-            return Ok(0);
-        };
+    fn hosted_cursor(&self, target: &Target) -> std::result::Result<u64, String> {
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
-        let answer = if provider_stop {
-            hosted::confirmed_session_rows(&scripts, lane)
-        } else {
-            hosted::session_rows(&scripts, lane)
-        };
-        match answer {
-            hosted::Answer::Live(text) => Ok(agent_runtime::rows::complete_line_count(&text)),
-            hosted::Answer::Gone => Ok(0),
-            hosted::Answer::Unreadable { cause } => Err(cause),
+        match target.session_rows(&scripts) {
+            Some(hosted::Answer::Live(text)) => Ok(agent_runtime::rows::complete_line_count(&text)),
+            None | Some(hosted::Answer::Gone) => Ok(0),
+            Some(hosted::Answer::Unreadable { cause }) => Err(cause),
         }
     }
 
@@ -1808,13 +1820,9 @@ impl Wake {
         cursor: u64,
         digest: u32,
         bound: Duration,
-        provider_stop: bool,
     ) -> Paste {
         let unconfirmed = |cause: &str| Paste::Unconfirmed {
             cause: cause.to_owned(),
-        };
-        let Some(lane) = target.rows_lane() else {
-            return unconfirmed("session-hosted");
         };
         if cursor == ROWS_CURSOR_UNREAD {
             return unconfirmed("rows-host-unread");
@@ -1822,15 +1830,13 @@ impl Wake {
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
         let deadline = self.clock.now() + bound;
         loop {
-            let answer = if provider_stop {
-                hosted::confirmed_session_rows(&scripts, lane)
-            } else {
-                hosted::session_rows(&scripts, lane)
+            let Some(answer) = target.session_rows(&scripts) else {
+                return unconfirmed("session-hosted");
             };
             let text = match answer {
                 hosted::Answer::Live(text) => text,
                 hosted::Answer::Gone => return unconfirmed("rows-host-unread"),
-                hosted::Answer::Unreadable { cause } if provider_stop => {
+                hosted::Answer::Unreadable { cause } if target.rows_root == RowsRoot::Confirmed => {
                     return Paste::Unconfirmed { cause };
                 }
                 hosted::Answer::Unreadable { .. } => return unconfirmed("rows-host-unread"),

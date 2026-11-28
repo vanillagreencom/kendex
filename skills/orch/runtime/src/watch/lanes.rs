@@ -791,7 +791,7 @@ fn ssh_claude_rows(
                 out.changes.push(set(
                     SSH_ROWS_FLOOR,
                     &name,
-                    format!("{}|{attempt}", text.lines().count()),
+                    format!("{}|{attempt}", rows::last_position_in(&text)),
                 ));
                 return Ok(Reading::Gone);
             }

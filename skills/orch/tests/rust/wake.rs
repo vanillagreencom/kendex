@@ -20,7 +20,6 @@
 mod support;
 
 use agent_runtime::record::FLEET_FILE_NAME;
-use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1926,21 +1925,34 @@ done
     assert_eq!(refused["lane"]["sandbox"], "standing", "{refused}");
     assert_eq!(fleet.server.panes(), before);
     std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    let write_row = |event| {
+        assert!(
+            agent_runtime::rows::write_lane(
+                rows.parent().unwrap(),
+                &agent_runtime::rows::LaneRow {
+                    event,
+                    harness: "claude",
+                    at: 0,
+                    transcript: None,
+                    working_agents: None,
+                },
+                agent_runtime::rows::WAIT,
+            )
+            .unwrap()
+        );
+    };
     let stop = || {
-        writeln!(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&rows)
-                .unwrap(),
-            "{}",
-            json!({"harness":"claude","event":"StopFailure","error":"server_error"})
-        )
-        .unwrap();
+        write_row(agent_runtime::rows::TurnEvent::StopFailure {
+            error: Some("server_error"),
+        })
     };
     // The failed launch left a reusable worktree. Stand one predecessor
-    // row there while the next launch still owns no window.
-    stop();
+    // row there without its trailing newline, as an interrupted append can.
+    std::fs::write(
+        &rows,
+        json!({"harness":"claude","event":"StopFailure","error":"server_error"}).to_string(),
+    )
+    .unwrap();
     let fifo = fleet.root.join("capture.fifo");
     let mark = fleet.root.join("capture.mark");
     mkfifo(&fifo);
@@ -2104,6 +2116,16 @@ done
     );
     assert!(!refuse_status.exists());
     for first in [true, false] {
+        if !first {
+            let observed = observe_ssh_worker(&fleet, &mut baseline, &clock);
+            assert!(
+                !observed
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, watch::Event::LaneUnreadable { .. })),
+                "{observed:?}"
+            );
+        }
         std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
         let refused = wake(&mut baseline);
         assert!(
@@ -2159,6 +2181,17 @@ done
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(typed().lines().count(), 3);
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    assert!(
+        !baseline
+            .identities(UNREAD_KIND)
+            .iter()
+            .any(|item| item == "KEN-1")
+    );
     // New inbox mail cannot take over the mark while the receipt is open.
     // The same provider refusal does not produce another notice.
     let mut with_unread = baseline.clone();
