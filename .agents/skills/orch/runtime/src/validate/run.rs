@@ -9,7 +9,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock::{self, Clock};
 use agent_runtime::effects::Reach;
-use agent_runtime::{process::Member, reading::Unreadable};
+use agent_runtime::{
+    process::Member,
+    reading::{Reading, Unreadable},
+};
 use serde::Serialize;
 
 use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
@@ -928,13 +931,43 @@ pub(crate) fn executor_reading(
     ))
 }
 
+pub(crate) fn command_reading(run_dir: &Path) -> Result<Option<Reading<()>>> {
+    let command = read_command(run_dir)?;
+    if execution_unanswered(&command)
+        && stop_recorded(run_dir)
+        && abandoned_execution(&super::files::RunFile::read(run_dir)?)
+    {
+        return Ok(Some(Reading::Gone));
+    }
+    Ok(command)
+}
+
+fn execution_unanswered(command: &Option<Reading<()>>) -> bool {
+    matches!(
+        command,
+        Some(Reading::Unreadable {
+            cause: "execution-unanswered"
+        })
+    )
+}
+
+fn abandoned_execution(run: &super::files::RunFile) -> bool {
+    // Read the runner first: while it is live it may still publish a pid.
+    // The runner file must stand because the reader also treats an absent
+    // runner record as gone.
+    matches!(super::files::runner_reading(run), Reading::Gone)
+        && super::files::fields(&run.dir.join("runner")).is_ok()
+        && ["command", "pid"].into_iter().all(|name| {
+            fs::symlink_metadata(run.dir.join(name))
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        })
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the run's command identity is read before a new start can use its host"
 )]
-pub(crate) fn command_reading(
-    run_dir: &Path,
-) -> Result<Option<agent_runtime::reading::Reading<()>>> {
+fn read_command(run_dir: &Path) -> Result<Option<Reading<()>>> {
     let bytes = match fs::read(run_dir.join("command")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1962,8 +1995,9 @@ pub fn stop_worktree(
 /// before the end it records: at once on a run whose stage records the stop
 /// (`staged`), since that stage's close reads `stopped` whatever the stop
 /// finds, and otherwise only where the command group, or a runner that is
-/// not attached, does not read gone. A run whose work reads gone at a stop
-/// no stage records keeps the word its own ending reads. A host run's
+/// not attached, does not read gone, or an unanswered execution claim has
+/// a recorded runner that reads gone. Other runs whose work reads gone at
+/// a stop no stage records keep the word their own ending reads. A host run's
 /// command runs on its host: the host stop (`release_host`) is asked
 /// whatever the run's holder reads, and a stop it does not confirm refuses
 /// `stop-failed`.
@@ -2041,17 +2075,20 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                         ));
                     }
                 }
-            } else if command_reading(run_dir)?
-                .is_some_and(|reading| !matches!(reading, agent_runtime::reading::Reading::Gone))
-                || !matches!(
-                    super::files::runner_reading(&run),
-                    agent_runtime::reading::Reading::Gone
-                )
-            {
-                return Err(super::files::unreadable(
-                    "stop-unreadable",
-                    format!("run-dir={} execution-unanswered", run_dir.display()),
-                ));
+            } else {
+                let command = read_command(run_dir)?;
+                if execution_unanswered(&command) && abandoned_execution(&run) {
+                    mark(!stop_recorded(run_dir))?;
+                    return Ok(None);
+                }
+                if command.is_some_and(|reading| !matches!(reading, Reading::Gone))
+                    || !matches!(super::files::runner_reading(&run), Reading::Gone)
+                {
+                    return Err(super::files::unreadable(
+                        "stop-unreadable",
+                        format!("run-dir={} execution-unanswered", run_dir.display()),
+                    ));
+                }
             }
         }
         Err(e) => {
@@ -2200,6 +2237,95 @@ pub fn stop(
 mod tests {
     use super::*;
     use crate::ops::validate::{end_notice, failure_cause, memory_cap_cause, sentinel_outcome};
+    use crate::validate::files;
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the rows write private validation records and read the live test process identity"
+    )]
+    fn stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let pid = std::process::id();
+        let Reading::Live(identity) = agent_runtime::process::identity(pid) else {
+            panic!("the test process must have a readable identity");
+        };
+        let live_runner = format!("runner=attached\npid={pid}\nstart={}\n", identity.start);
+        for (case, runner, closed) in [
+            ("gone", "runner=setsid\nstatus=exited-203\n", false),
+            ("live", live_runner.as_str(), false),
+            ("closed", "runner=setsid\nstatus=exited-203\n", true),
+        ] {
+            let worktree = root.join(case);
+            let run = worktree.join("tmp/dev-validate-claim");
+            fs::create_dir_all(&run).unwrap();
+            fs::write(run.join("start"), "start=1\n").unwrap();
+            fs::write(run.join("runner"), runner).unwrap();
+            fs::write(run.join("execution"), "attempted\n").unwrap();
+
+            assert!(
+                execution_unanswered(&command_reading(&run).unwrap()),
+                "{case}"
+            );
+            if closed {
+                let settings = crate::settings::load(
+                    &agent_runtime::settings::Roots {
+                        project: worktree.clone(),
+                        common: worktree.clone(),
+                    },
+                    &[],
+                    &crate::settings::Flags {
+                        state_dir: Some(worktree.join("state")),
+                        private_env: false,
+                    },
+                )
+                .unwrap();
+                let path = state::item_path(&settings.state_dir, "KEN-5938");
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let record = serde_json::json!({"stages": [{
+                    "kind": "validate", "round_id": "claim", "start": 1, "end": 2,
+                    "run_dir": run, "outcome": "lost", "cause": "unit-ended",
+                }]})
+                .to_string();
+                fs::write(&path, &record).unwrap();
+                let result = stop_worktree(
+                    &settings,
+                    &crate::effects::fleet_mailbox(&settings),
+                    &worktree,
+                    None,
+                    &Env {
+                        now_secs: 3,
+                        now_nanos: 3_000_000_000,
+                        nonce: 0,
+                        owner: None,
+                    },
+                    Locking::FLOCK,
+                );
+                assert_eq!(result.unwrap(), WorktreeStop::default());
+                assert_eq!(fs::read_to_string(&path).unwrap(), record);
+            } else if case == "live" {
+                let error = stop_files(&run, false).unwrap_err();
+                assert!(
+                    matches!(error, Error::ValidateUnreadable { read: "stop-unreadable", ref cause }
+                    if cause.ends_with(" execution-unanswered"))
+                );
+                assert!(!run.join("stop").exists());
+                continue;
+            } else {
+                assert_eq!(stop_files(&run, false).unwrap(), None);
+            }
+            assert_eq!(
+                fs::read_to_string(run.join("stop")).unwrap(),
+                "stop-requested\n"
+            );
+            assert_eq!(
+                files::RunFile::read(&run).unwrap().verdict().unwrap(),
+                "no-verdict"
+            );
+            assert_eq!(files::live(&worktree).unwrap(), None);
+        }
+    }
 
     #[test]
     #[allow(
