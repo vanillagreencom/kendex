@@ -527,7 +527,7 @@ fi
 # stops publication and auto-merge.
 report_settings() {
   if ! settings_report="$(jq -c --args '. + {notes: $ARGS.positional}' -- ${setting_notes[@]+"${setting_notes[@]}"} <"$TMP/settings.json" |
-    python3 "$SCRIPT_DIR/refresh-report.py" --settings)"; then
+    python3 "$SCRIPT_DIR/refresh-report.py" --settings "$ROOT")"; then
     printf 'refresh-error=settings-report value=%s\n' "$SCRIPT_DIR/refresh-report.py" >&2
     exit 1
   fi
@@ -630,6 +630,11 @@ if ! tree="$(git write-tree)"; then
   printf 'refresh-error=read value=tree\n' >&2
   exit 1
 fi
+report_settings
+if ! changelog_report="$(python3 "$SCRIPT_DIR/refresh-report.py" --catalog "$base" "$TMP/catalog-history" "${projects[@]}")"; then
+  printf 'refresh-warning=catalog-report\n' >&2
+  changelog_report=$'## Kendex changelog\n\nCould not read the recorded kendex catalog changes.'
+fi
 if [ -n "$old" ] && [ "$tree" = "$(git rev-parse "$old^{tree}")" ]; then
   # A new scheduled run must not replace an identical commit and reset CI.
   head="$old"
@@ -640,7 +645,13 @@ else
   git config user.email "$user_id+${REFRESH_APP_SLUG}[bot]@users.noreply.github.com"
   # No consumer hook executes under the app token. Verification checks the
   # installed files; the repository's checks run on its pull request.
-  git -c core.hooksPath=/dev/null commit -m 'chore: refresh kendex renders'
+  # The default-branch push carries the notices in its commit message.
+  {
+    printf 'chore: refresh kendex renders\n'
+    [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report"
+    [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+  } >"$TMP/commit-message"
+  git -c core.hooksPath=/dev/null commit --cleanup=verbatim -F "$TMP/commit-message"
   head="$(git rev-parse HEAD)"
   state=pushed
 fi
@@ -667,7 +678,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] ||
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-report_settings
+[ -z "${setting_notes[0]:-}" ] || report_settings
 # An identical tree publishes no new head. Only a new publication belongs to
 # this automatic admission route; absence of an open PR proves no first arm.
 # A held run still names its findings on the retained head and keeps it a
@@ -677,6 +688,7 @@ if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then
   printf 'Refresh retained head `%s`; no new head was published. Automatic admission was deferred.\n\n%s\n\n%s\n' "$head" "$version_report" "$class_line" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
+  [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
 fi
 # Writes the emitted paths of the root .kendex-lock.json to FILE, one per
@@ -780,6 +792,7 @@ if [ "$land_check" = try ]; then
         "$head" "$default" "$version_report" "$class" "$class_line"
       [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report"
       [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+      [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report"
       [ -z "$retired_items" ] || printf '\nRetired items:\n```text\n%s```\n' "$retired_items"
     } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
     exit 0
@@ -808,6 +821,28 @@ if [ -n "$verify_report" ]; then
   printf -v verify_note 'kendex verify failed on declarations this repository holds, so this pull request stays a draft and unarmed until verify passes. Make the edit each finding names on the default branch; the next refresh renders on it and marks this pull request ready.\n\n%s' "$verify_report"
   printf -v body '%s\n%s\n' "$body" "$verify_note"
 fi
+pull_body="$TMP/pull-body"
+printf '%s' "$body" >"$pull_body"
+report_location="[Read the full catalog report in the refresh commit](https://github.com/$GH_REPO/commit/$head)."
+if [ "$state" = unchanged ] &&
+    ! git show -s --format=%B "$head" | grep -Fx '## Kendex changelog' >/dev/null; then
+  report_location='The full report exceeds GitHub’s limit. The retained commit predates the catalog report.'
+fi
+# Stream the report to keep it outside argv and check GitHub's character limit before publication.
+printf '%s' "${changelog_report:+$'\n'$changelog_report$'\n'}" | python3 -c '
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+body = path.read_text(encoding="utf-8", errors="replace")
+report = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+if report and len(body + report) > 65536:
+    report = f"\n## Kendex changelog\n\n{sys.argv[2]}\n"
+    if len(body + report) > 65536:
+        body = body.replace(sys.argv[3] + "\n", "", 1)
+if len(body + report) > 65536:
+    raise SystemExit("refresh-error=pull-body value=too-large")
+path.write_text(body + report, encoding="utf-8")
+' "$pull_body" "$report_location" "$merge_note"
 if [ "$state" = pushed ] || [ -n "$verify_report" ]; then
   # An old arm survives a push and could merge the replacement before review,
   # and a held head must not merge at all. Read lifecycle again after
@@ -869,9 +904,9 @@ fi
 if [ -z "$pr" ]; then
   draft=()
   if [ -n "$verify_report" ]; then draft=(-F draft=true); fi
-  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" ${draft[@]+"${draft[@]}"} --jq .number)"
+  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -F body=@"$pull_body" ${draft[@]+"${draft[@]}"} --jq .number)"
 else
-  if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" --jq .draft)"; then
+  if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -F body=@"$pull_body" --jq .draft)"; then
     printf 'refresh-error=pull-update pr=%s\n' "$pr" >&2
     exit 1
   fi

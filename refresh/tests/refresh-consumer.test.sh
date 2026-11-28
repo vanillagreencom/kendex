@@ -218,6 +218,7 @@ printf '%s|%s\n' "${GH_TOKEN-}" "$*" >>"$TEST_STATE/tokens"
 query=""
 for arg in "$@"; do
   case "$arg" in
+    body=@*) cat -- "${arg#body=@}" >"$TEST_STATE/body" ;;
     body=*) printf '%s\n' "${arg#body=}" >"$TEST_STATE/body" ;;
     query=*) query="${arg#query=}" ;;
   esac
@@ -397,6 +398,13 @@ case "$1" in
       done <.fixture-render-removes
     fi
     if [ -f .fixture-render-lock ]; then cp .fixture-render-lock .kendex-lock.json; fi
+    if [ -f .fixture-render-retired-settings ]; then
+      path="$(cat .fixture-render-retired-path)"
+      mkdir -p "$(dirname "$path")"
+      cp .fixture-render-retired-settings "$path"
+      jq --arg path "$path" '. + [$path] | sort' .kendex-generated.json >inventory-next
+      mv inventory-next .kendex-generated.json
+    fi
     if [ -f "$TEST_STATE/classifier-proof" ]; then
       mkdir -p .agents/skills/probe
       printf 'a gained render\n' >.agents/skills/probe/SKILL.md
@@ -430,6 +438,11 @@ case "$1" in
       [ -e "$TEST_STATE/adopted" ] || exit 52
     fi
     [ ! -e .fixture-verify-fail ] || exit 49
+    if [ "$TEST_VERIFY" = withheld ]; then
+      printf '%s\n' '{"version":1,"clean":false,"failed":0,"rows":[{"kind":"record","name":".kendex-lock.json","state":"ok"},{"kind":"skill","name":"probe","state":"unrecorded","detail":"withheld: a dependency is excluded"}]}'
+      printf '1 checked, 1 OK, 0 failed\n' >&2
+      exit 1
+    fi
     if [[ " $* " == *' --json '* ]] && [ -f "$TEST_STATE/classifier-proof" ]; then
       failed=0
       [ "$(cat "$TEST_STATE/classifier-proof")" != verify-not-clean ] || failed=1
@@ -1676,10 +1689,12 @@ for row in \
 done
 # A report that cannot read the retired list stops before publication or
 # merge changes.
+cp "$repo/.kendex-generated.json" "$TMP/settings-inventory"
 for mode in refusal refusal-control; do
   reset_default
   cp "$TMP/stale-runner" "$runner"
   rm -f -- "${repo:?}/.agents/skills/review-gate/retired-settings.json"
+  jq '. + [".agents/skills/review-gate/retired-settings.json"]' "$TMP/settings-inventory" >"$repo/.kendex-generated.json"
   if [ "$mode" = refusal-control ]; then
     file_edit "$repo" refresh/refresh-consumer.sh 1 \
       'refresh-error=settings-report' '/refresh-error=settings-report/{n;s/exit 1/: # exit 1/;}'
@@ -1699,10 +1714,147 @@ for mode in refusal refusal-control; do
 done
 reset_default
 cp "$TMP/stale-runner" "$runner"
+cp "$TMP/settings-inventory" "$repo/.kendex-generated.json"
 cp "$SKILL_DIR/retired-settings.json" "$repo/.agents/skills/review-gate/retired-settings.json"
 cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
+
+# The engine leaves the old source in the committed lock and its selected
+# catalog in the rendered lock. The release tree stays older than both.
+mkdir -p "$TMP/report-release" "$CATALOG/skills/harness-ci" "$CATALOG/skills/orch"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/report-release/"
+file_edit "$TMP/report-release" refresh/refresh-report.py 1 'https://github.com/vanillagreencom/kendex.git' \
+  "s|https://github.com/vanillagreencom/kendex.git|$CATALOG|"
+classifier_entry='KEN-5872: Markdown takes the cheapest change class'
+field_entry='KEN-5807: The lane-host protocol names the 5-hour window per account'
+manifest_entry='Add the review helper to the default bundle'
+changelog_entry='- The lane host reports each account window.'
+overflow_marker='END OF LONG CATCH-UP REPORT'
+printf '%s\n' 'old classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm 'Older catalog entry outside the recorded range'
+catalog_before="$(git -C "$CATALOG" rev-parse HEAD)"
+printf '%s\n' 'new classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm "$classifier_entry (#123)"
+printf '%s\n' 'window_5h' >"$CATALOG/skills/orch/account-field"
+printf '# Changelog\n\n%s Closes #124.\n' "$changelog_entry" >"$CATALOG/CHANGELOG.md"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm "$field_entry"
+printf '%s\n' '[bundles.review]' >"$CATALOG/kendex.toml"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm "$manifest_entry"
+catalog_after="$(git -C "$CATALOG" rev-parse HEAD)"
+printf '%s\n' 'later classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm 'Newer catalog entry outside the recorded range'
+python3 -c 'import sys; print("- " + "entry " * 30000 + sys.argv[1])' "$overflow_marker" >>"$CATALOG/CHANGELOG.md"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm 'Catalog entries accumulated over a long catch-up interval'
+catalog_catchup="$(git -C "$CATALOG" rev-parse HEAD)"
+
+saved_runner="$runner"
+for report_case in pull landed legacy catch-up; do
+  reset_default
+  route=pull
+  catalog_tip="$catalog_after"
+  retired_key=RENDER_ONLY_RETIRED_KEY
+  rendered_path=.agents/skills/review-gate/retired-settings.json
+  case "$report_case" in
+    landed)
+      route=landed
+      rendered_path=.claude/skills/review-gate/retired-settings.json ;;
+    legacy) retired_key=PR_REVIEW_GATE ;;
+    catch-up) catalog_tip="$catalog_catchup" ;;
+  esac
+  printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo/kendex.toml"
+  printf '[env]\n%s = "on"\n' "$retired_key" >"$repo/kendex.settings.toml"
+  if [ "$report_case" = legacy ]; then
+    # A pinned pre-list review-gate still emits its skill tree.
+    rm -f -- "$repo/.agents/skills/review-gate/retired-settings.json" \
+      "$repo/.fixture-render-retired-settings" "$repo/.fixture-render-retired-path"
+  else
+    printf '%s\n' "$rendered_path" >"$repo/.fixture-render-retired-path"
+    jq '.keys += ["RENDER_ONLY_RETIRED_KEY"]' "$SKILL_DIR/retired-settings.json" >"$repo/.fixture-render-retired-settings"
+  fi
+  for record in ".kendex-lock.json:$catalog_before" ".fixture-render-lock:$catalog_tip"; do
+    jq -cn --arg commit "${record#*:}" \
+      '{version:12,installations:{},entries:{},sources:{kendex:{repo:"VanillaGreenCom/kendex",commit:$commit}}}' \
+      >"$repo/${record%%:*}"
+  done
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+  land_rolling="$(git --git-dir="$TMP/remote" rev-parse --verify --quiet refs/heads/kendex/refresh)" || land_rolling=""
+  : >"$TMP/state/calls"
+  rm -f -- "$TMP/state/body"
+  runner="$TMP/report-release/refresh/refresh-consumer.sh"
+  if [ "$route" = landed ]; then
+    : >"$TMP/state/pr"
+    LAND_TOKEN=land-token LAND_CONFIGURED=true
+  fi
+  run_refresh "catalog-report-$report_case" pass render
+  unset LAND_TOKEN LAND_CONFIGURED
+  report="$TMP/state/body"
+  if [ "$route" = landed ]; then
+    report="$TMP/state/landed-report"
+    git --git-dir="$TMP/remote" log -1 --format=%B refs/heads/main >"$report"
+  fi
+  if ! land_matches "$route" render '' ''; then
+    bad "$report_case publishes by its existing route" "$OUT"
+  elif grep -qxF '## Consumer settings' "$report" &&
+      grep -qF -- "- <code>$retired_key</code>:" "$report"; then
+    ok "$report_case reports the expected retired key"
+  else bad "$report_case retired settings report" "$OUT"; fi
+  if [ "$report_case" = catch-up ]; then
+    published="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    commit_report="$TMP/state/catchup-commit"
+    git --git-dir="$TMP/remote" log -1 --format=%B "$published" >"$commit_report"
+    if [ -f "$report" ] && [ "$(wc -c <"$report")" -le 65536 ] &&
+        grep -Fq "https://github.com/acme/test/commit/$published" "$report" &&
+        grep -Fq -- "$overflow_marker" "$commit_report" &&
+        [ "$(wc -c <"$commit_report")" -gt 131072 ]; then
+      ok 'catch-up pull request points to the complete report in its published commit'
+    else bad 'catch-up pull request report overflow' "$OUT"; fi
+    report="$commit_report"
+  fi
+  if [ -f "$report" ] &&
+      grep -qxF '## Kendex changelog' "$report" &&
+      grep -qF -- "$classifier_entry (kendex reference 123)" "$report" &&
+      grep -qF -- "$field_entry" "$report" &&
+      grep -qF -- "$manifest_entry" "$report" &&
+      grep -qF -- "$changelog_entry Closes kendex reference 124." "$report" &&
+      ! grep -qE '#12[34]|Older catalog entry outside the recorded range' "$report" &&
+      { [ "$report_case" = catch-up ] || ! grep -qF 'Newer catalog entry outside the recorded range' "$report"; }; then
+    ok "$report_case reports the exact catalog interval"
+  else bad "$report_case changelog from recorded commits" "$OUT"; fi
+  if [ "$report_case" = catch-up ] && [ "$RC" -eq 0 ]; then
+    # An older runner could have published this tree without the report.
+    retained="$(git -C "$repo" commit-tree "$published^{tree}" -p "$land_base" -m 'chore: refresh kendex renders')"
+    git -C "$repo" push -q --force origin "$retained:refs/heads/kendex/refresh"
+    : >"$TMP/state/pr-draft"
+    : >"$TMP/state/calls"
+    run_refresh "catalog-report-$report_case" withheld render
+    if [ "$RC" -eq 0 ] && grep -qxF "refresh-state=held pr=1 class=render head=$retained" <<<"$OUT" &&
+        grep -qF 'The retained commit predates the catalog report.' "$TMP/state/body" &&
+        ! grep -qF '/commit/' "$TMP/state/body" &&
+        ! grep -qE '^git push|^pr merge ' "$TMP/state/calls"; then
+      ok 'catch-up draft retains its older commit and reports the unavailable catalog report'
+    else bad 'catch-up draft report on a retained commit' "$OUT"; fi
+    rm -f -- "$TMP/state/pr-draft"
+  fi
+  git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+done
+runner="$saved_runner"
+reset_default
+rm -f -- "$repo/.fixture-render-retired-settings" "$repo/.fixture-render-retired-path" "$repo/.fixture-render-lock" "$repo/.kendex-lock.json" "$repo/kendex.toml"
+cp "$SKILL_DIR/retired-settings.json" "$repo/.agents/skills/review-gate/retired-settings.json"
+cp "$TMP/models-settings" "$repo/kendex.settings.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
+printf '1\n' >"$TMP/state/pr"
+
 # A consumer without committed settings keeps the clean body. A run with no
 # render change opens no pull request, so its run summary carries the warning.
 cp "$runner" "$TMP/summary-runner"
