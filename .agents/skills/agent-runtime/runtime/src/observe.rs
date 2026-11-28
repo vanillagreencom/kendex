@@ -301,8 +301,8 @@ static MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^❯|^›").unwra
 /// Claude Code's composer: the marker then U+00A0, the padding it gives the
 /// input line and no shell prompt or echoed turn carries.
 static CLAUDE_COMPOSER: LazyLock<Regex> = LazyLock::new(|| Regex::new("^❯\u{a0}").unwrap());
-/// Codex's composer line, `› ` then its placeholder or the draft.
-static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^› ").unwrap());
+/// Codex's composer line. Herdr trims the spaces on a blank `› ` row.
+static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^›(?: |$)").unwrap());
 /// Copilot's composer is the marker line with a rule drawn under it.
 static FRAME_RULE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[─━]{10,}\s*$").unwrap());
 /// Pi's editor border while a turn runs: an indicator frame and the word, or
@@ -374,7 +374,7 @@ pub fn submit_refused(screen: &str, harness: Harness) -> bool {
         Harness::Copilot => {
             screen.lines().any(|l| COPILOT_POLICY_LOADING.is_match(l))
                 && !is_working(screen)
-                && !ASKING.is_match(screen)
+                && !is_asking(screen, harness)
         }
         Harness::Claude | Harness::Codex | Harness::Pi => false,
     }
@@ -596,6 +596,33 @@ pub fn is_working(slice: &str) -> bool {
     WORKING.is_match(slice)
 }
 
+// Copilot's SDK onUserInputRequest handles ask_user in an SDK-managed
+// session (https://docs.github.com/en/copilot/how-tos/copilot-sdk/troubleshooting/compatibility).
+// The CLI's elicitation_dialog and ask_user hooks report events without
+// identifying the pane's current input focus
+// (https://docs.github.com/en/copilot/reference/hooks-reference).
+// Pi's optional pi-bridge questions lists pending requests
+// (pi-extensions/pi-questions/README.md). A pending request does not say
+// which editor control is drawn and taking input. Delivery reads the
+// existing pane to determine where its next key will go.
+fn is_asking(slice: &str, harness: Harness) -> bool {
+    ASKING.is_match(slice)
+        || match harness {
+            // Copilot's ask_user chooser takes input in place of the composer.
+            Harness::Copilot => slice.lines().any(|line| {
+                line.trim() == "↑/↓ select · enter accept · ctrl+d decline · esc cancel"
+            }),
+            // The pi-questions editor dialog frames its navigation hints.
+            Harness::Pi => slice.lines().any(|line| {
+                line.trim_end()
+                    .strip_prefix("┃  ⇆ tab  ")
+                    .and_then(|hint| hint.strip_suffix('┃'))
+                    .is_some_and(|hint| hint.trim_end().ends_with("  esc dismiss"))
+            }),
+            Harness::Claude | Harness::Codex => false,
+        }
+}
+
 /// Whether Pi's editor border, or pi-qol's status line, says a turn is
 /// running.
 ///
@@ -798,7 +825,7 @@ fn judge_slice(
             Some(true) => {}
         }
     }
-    if ASKING.is_match(slice) {
+    if is_asking(slice, harness) {
         if slice.lines().any(|l| RATE_LIMIT_SWITCH.is_match(l))
             && slice.lines().any(|l| DIALOG_ROW.is_match(l))
         {
@@ -836,6 +863,410 @@ fn judge_slice(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Excerpts of 200-column captures from tmux 3.8 (capture-pane -p -N)
+    // and Herdr Core 0.1.22 (hc read --lines 0). The same installed version
+    // ran on each host: Claude Code 2.1.332, Codex 0.172.0, Copilot 1.0.117,
+    // and Pi 1.7.0. Pi normally uses the Fleet pi-qol composer. Its asking
+    // rows use the installed pi-questions 2.1.0 editor in a scratch config.
+    // Keep the drawn rows in order. Omit outer blank rows, collapse runs
+    // of interior blank rows to one and trim trailing ASCII spaces while
+    // preserving Claude's U+00A0. Paths and account allowance are redacted.
+    #[test]
+    fn judges_captures_from_tmux_and_herdr() {
+        const ASKING_OTHER: State = State::Asking {
+            dialog: Dialog::Other,
+        };
+        let cases = [
+            (
+                "claude-tmux-idle",
+                Harness::Claude,
+                State::Idle,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  claude (🌳 master*) Sonnet 5.5
+  ⏸ manual mode on
+"#,
+            ),
+            (
+                "claude-hc-idle",
+                Harness::Claude,
+                State::Idle,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  claude (🌳 master*) Sonnet 5.5
+  ⏸ manual mode on
+"#,
+            ),
+            (
+                "claude-tmux-working",
+                Harness::Claude,
+                State::Working,
+                r#"❯ Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+● The rain stopped an hour ago, but the garden is still dripping. Every leaf holds a bead of water at its tip, and each bead falls when a breeze shifts the branch above it. The air smells of wet soil
+  and crushed mint. Under that is the cool mineral scent of stone that has drunk its fill.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  claude (🌳 master*) Sonnet 5.5 3%
+  ⏸ manual mode on · esc to interrupt
+"#,
+            ),
+            (
+                "claude-hc-working",
+                Harness::Claude,
+                State::Working,
+                r#"❯ Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+● The rain stopped an hour ago, but the garden is still dripping. Every leaf holds a bead of water at its tip, and each bead lets go in its own time. Each one lands with a small tick on the leaves
+  below. The air smells of wet soil and crushed mint, with a mineral edge that rises from the flagstones as they warm.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  claude (🌳 master*) Sonnet 5.5 4%
+  ⏸ manual mode on · esc to interrupt
+"#,
+            ),
+            (
+                "claude-tmux-asking",
+                Harness::Claude,
+                ASKING_OTHER,
+                r#"❯ Call the Bash tool to run exactly: touch judge-probe.txt. Wait for my approval if asked.
+
+● Creating an empty file named judge-probe.txt
+  ⎿  $ touch judge-probe.txt
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Create an empty file named judge-probe.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch judge-probe.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to ~/capture from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+"#,
+            ),
+            (
+                "claude-hc-asking",
+                Harness::Claude,
+                ASKING_OTHER,
+                r#"❯ Call the Bash tool to run exactly: touch judge-probe.txt. Wait for my approval if asked.
+
+  Creating an empty file named judge-probe.txt
+  ⎿  $ touch judge-probe.txt
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Create an empty file named judge-probe.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch judge-probe.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to ~/capture from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+"#,
+            ),
+            (
+                "codex-tmux-idle",
+                Harness::Codex,
+                State::Idle,
+                r#"› Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+• Rain had flattened the thyme along the path, and its smell rose wherever a shoe brushed the leaves. The bricks were dark red, except where water stood in the hollows and held the pale evening sky. A
+  snail had come out from under the step. It crossed the mortar slowly, carrying a chip of dead leaf on its shell. At the far end of the garden, the gutter still emptied into the barrel, one fat drop
+  at a time. Each struck with a small, hollow knock.
+
+  The peonies had taken the worst of it. Two blooms lay face down in the soil, their stems bowed almost to the ground. When I lifted one, cold water ran out of the petals and down my sleeve. The
+  flower was white toward the edges and pink in the folds, where a few black ants were picking their way outward. I propped the stem in the fork of a hazel twig. For a moment it held, then the head
+  turned sideways, heavy as before.
+
+  Beyond the beans, the rain had cut a shallow channel across the bare bed. It had carried three radish seeds as far as the boards, where they rested in a little fan of silt. I knew them by the faint
+  rose color of the seed coating. Upstairs, someone opened a window. The sash stuck, then gave with the familiar scrape. Warm air smelling of fried onions drifted down almost to the mint before the
+  damp smell of the garden swallowed it.
+
+  Light came back first on the underside of the clouds, a washed yellow that caught in the wet tops of the bean poles. A blackbird dropped onto the lawn and stood with its head cocked. It hopped
+  twice, pulled something pale from the grass, and flew low through the gap in the hedge. Water fell from the shaken leaves. In the brief light I could see the beans had grown long enough to reach
+  past their poles. Their thin tips hung loose above the twine. One had doubled back and wound itself around the stem of its neighbor, and the two swayed together.
+
+  Worked for 21s • 03:15
+
+›
+
+  Context 99% left · ~/capture · GPT-6.2-Sol default · master · 475K window · Standard · Ask for approval · weekly [redacted]% left
+                                                                                                                                                                               ⚠ 1 warning · f2 to view
+"#,
+            ),
+            (
+                "codex-hc-idle",
+                Harness::Codex,
+                State::Idle,
+                r#"› Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+• The rain had stopped, but the garden was still making up its mind. Water ticked from the gutter into the mint, and every so often the pear tree let go of a little shower all its own. Where the path
+  dipped, a puddle held the pale square of an upstairs window. When I stepped over it, my reflection broke into long strips that caught for a moment on the gravel.
+
+  The peonies had gone down first. Their heavy pink heads lay sideways in the bed, close enough to the soil for ants to walk straight into them. I slid a hand under one bloom and lifted it. Cold water
+  ran down my sleeve to the elbow. Inside, the petals were almost white, and a black beetle, disturbed by the sudden light, backed slowly into the folds and disappeared from view.
+
+  The storm had washed the dust off the brick wall. Its old repairs showed plainly now, the yellow mortar and the odd blue brick my father had put in where a root pushed through. At the foot of the
+  wall, the sage smelled sharp when I brushed past it. Under that smell was the softer one of wet wood rising from the stakes where the sweet peas had come loose.
+
+  A snail was crossing the broadest flagstone. It had reached a place where the water thinned to a sheen, and its feelers moved independently, one aimed at the grass and the other at my shoe. I stood
+  still until it lowered both and went on. Behind it, the trail was hard to distinguish from the wet stone except where it passed over a small, dry island under the bench leg.
+
+  By then the sun had come through low enough to reach under the rhubarb leaves. The stalks glowed a dull red. A sparrow landed in the bare patch where I had pulled the lettuces and took a bath in a
+  hollow left by my heel. It shook itself so hard that I heard the quick rattle of its wings. After it flew away, the water in the hollow kept trembling.
+
+  Worked for 23s • 03:14
+
+›
+
+  Context 99% left · ~/capture · GPT-6.2-Sol default · master · 475K window · Standard · Ask for approval · weekly [redacted]% left
+                                                                                                                                                                               ⚠ 1 warning · f2 to view
+"#,
+            ),
+            (
+                "codex-tmux-working",
+                Harness::Codex,
+                State::Working,
+                r#"› Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+Working (7s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  Context 100% left · ~/capture · GPT-6.2-Sol default · master · 500K window · Standard · Ask for approval · weekly [redacted]% left
+  ← for agents · ? for shortcuts                                                                                                                                               ⚠ 1 warning · f2 to view
+"#,
+            ),
+            (
+                "codex-hc-working",
+                Harness::Codex,
+                State::Working,
+                r#"› Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.
+
+Working (8s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  Context 100% left · ~/capture · GPT-6.2-Sol default · master · 500K window · Standard · Ask for approval · weekly [redacted]% left
+  ← for agents · ? for shortcuts                                                                                                                                               ⚠ 1 warning · f2 to view
+"#,
+            ),
+            (
+                "codex-tmux-asking",
+                Harness::Codex,
+                ASKING_OTHER,
+                r#"  Folder access
+  ~/capture
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even without a model request. Continue only if you
+  trust these files. Your trust decision will be saved.
+
+› 1. Trust and continue
+  2. Back to Agent Command Center
+
+  enter continue · esc back
+"#,
+            ),
+            (
+                "codex-hc-asking",
+                Harness::Codex,
+                ASKING_OTHER,
+                r#"  Folder access
+  ~/capture
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even without a model request. Continue only if you
+  trust these files. Your trust decision will be saved.
+
+› 1. Trust and continue
+  2. Back to Agent Command Center
+
+  enter continue · esc back
+"#,
+            ),
+            (
+                "copilot-tmux-idle",
+                Harness::Copilot,
+                State::Idle,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ← open sidebar · Interactive · Allow All · / commands · ? help · tab next tab                                                                                                GPT-6.1 Sol · High · (7%)
+"#,
+            ),
+            (
+                "copilot-hc-idle",
+                Harness::Copilot,
+                State::Idle,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ← open sidebar · Interactive · Allow All · / commands · ? help · tab next tab                                                                                                GPT-6.1 Sol · High · (7%)
+"#,
+            ),
+            (
+                "copilot-tmux-working",
+                Harness::Copilot,
+                State::Working,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◎ Working ctrl+c interrupt                                                                                                                                                   GPT-6.1 Sol · High · (7%)
+"#,
+            ),
+            (
+                "copilot-hc-working",
+                Harness::Copilot,
+                State::Working,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ○ Working ctrl+c interrupt                                                                                                                                                   GPT-6.1 Sol · High · (7%)
+"#,
+            ),
+            (
+                "copilot-tmux-asking",
+                Harness::Copilot,
+                ASKING_OTHER,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ Which color?
+
+ Color:
+ ❯ Blue
+   Green
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · ctrl+d decline · esc cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+"#,
+            ),
+            (
+                "copilot-hc-asking",
+                Harness::Copilot,
+                ASKING_OTHER,
+                r#"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Copilot needs information.
+ Which color?
+
+ Color:
+ ❯ Blue
+   Green
+   Other (type your answer)
+
+ ↑/↓ select · enter accept · ctrl+d decline · esc cancel
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+"#,
+            ),
+            (
+                "pi-tmux-idle",
+                Harness::Pi,
+                State::Idle,
+                r#"pi (🌳 master) Claude / Fable 5.2 / medium 1M ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 100%
+π
+"#,
+            ),
+            (
+                "pi-hc-idle",
+                Harness::Pi,
+                State::Idle,
+                r#"pi (🌳 master) Claude / Fable 5.2 / medium 1M ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 100%
+π
+"#,
+            ),
+            (
+                "pi-tmux-working",
+                Harness::Pi,
+                State::Working,
+                r#"┏━ π ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.                                                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ 
+
+● pi (🌳 master) Claude / Fable 5.2 / medium 1M  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 99%
+π
+"#,
+            ),
+            (
+                "pi-hc-working",
+                Harness::Pi,
+                State::Working,
+                r#"┏━ π ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Without tools, write 350 words of original descriptive prose about a garden after a rainstorm.                                                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+● pi (🌳 master) Claude / Fable 5.2 / medium 1M  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 99%
+π
+"#,
+            ),
+            (
+                "pi-tmux-asking",
+                Harness::Pi,
+                ASKING_OTHER,
+                r#"┏ Color choice ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   Which color?                                                                                                                                                                                       ┃
+┃                                                                                                                                                                                                      ┃
+┃  Which color?                                                                                                                                                                                        ┃
+┃                                                                                                                                                                                                      ┃
+┃  1. Blue                                                                                                                                                                                             ┃
+┃     The color blue                                                                                                                                                                                   ┃
+┃  2. Green                                                                                                                                                                                            ┃
+┃     The color green                                                                                                                                                                                  ┃
+┃  3. Something else                                                                                                                                                                                   ┃
+┃     Type your answer, then press enter.                                                                                                                                                              ┃
+┃                                                                                                                                                                                                      ┃
+┃  ⇆ tab  ↑↓ select  enter confirm  esc dismiss                                                                                                                                                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+~/capture (master)
+↑3.9k ↓105 $0.009 0.4%/1.0M (auto)                                                                                                                         (vercel-ai-gateway) zai/glm-5.3-fast • medium
+"#,
+            ),
+            (
+                "pi-hc-asking",
+                Harness::Pi,
+                ASKING_OTHER,
+                r#"┏ Color choice ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃   Color                                                                                                                                                                                              ┃
+┃                                                                                                                                                                                                      ┃
+┃  Which color?                                                                                                                                                                                        ┃
+┃                                                                                                                                                                                                      ┃
+┃  1. Blue                                                                                                                                                                                             ┃
+┃     The color blue                                                                                                                                                                                   ┃
+┃  2. Green                                                                                                                                                                                            ┃
+┃     The color green                                                                                                                                                                                  ┃
+┃  3. Something else                                                                                                                                                                                   ┃
+┃     Type your answer, then press enter.                                                                                                                                                              ┃
+┃                                                                                                                                                                                                      ┃
+┃  ⇆ tab  ↑↓ select  enter confirm  esc dismiss                                                                                                                                                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+~/capture (master)
+↑3.9k ↓98 $0.009 0.4%/1.0M (auto)                                                                                                                          (vercel-ai-gateway) zai/glm-5.3-fast • medium
+"#,
+            ),
+        ];
+        for (name, harness, expected, screen) in cases {
+            let observed = observe_pane(screen, harness, &ProcessReading::HarnessUp, None);
+            assert_eq!(observed.state, expected, "{name}");
+        }
+    }
 
     #[test]
     fn a_usage_banner_below_the_last_turn_is_a_usage_wall_unless_the_account_has_room() {

@@ -801,9 +801,8 @@ fn a_composer_row_after_an_echo_that_fills_its_row_exactly_reads_idle() {
 /// draft is `› ` and nothing after (its placeholder goes once the draft is
 /// non-empty, a blank included), and a draft whose first row is blank
 /// draws the arrow and blanks. tmux trims a row's trailing blanks unless
-/// asked to keep them, so a trimmed row read hands the judge `›`, which
-/// Codex's rule does not take. `inspect` reads each pane idle; the trimmed
-/// row capture of the same pane judges unjudged, which names the mechanism.
+/// asked to keep them. The trimmed `›` row and the live `inspect` call
+/// both read idle.
 #[test]
 #[cfg(unix)]
 fn a_codex_composer_over_a_blank_draft_reads_idle() {
@@ -820,10 +819,10 @@ fn a_codex_composer_over_a_blank_draft_reads_idle() {
             &format!("printf '%s\\n' '\u{203a} first turn' 'some answer' '{drawn}'\n"),
         );
         let trimmed = pane.await_row(&|l| l == "\u{203a}");
-        assert!(matches!(
+        assert_eq!(
             judge(&trimmed, Harness::Codex, &ProcessReading::HarnessUp, None),
-            State::Unjudged { .. }
-        ));
+            State::Idle
+        );
         let result = inspect(
             &dir.path().join("record.json"),
             &pane.record("codex", &dir.path().join("home"), dir.path(), None),
