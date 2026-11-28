@@ -510,9 +510,12 @@ def snapshot(fd, path, dest):
 
 def row_metadata(rows, jq_defs):
     """Use lane-mail's stamp parser and mailbox classifier in one jq call."""
-    program = jq_defs + ''' split("\\n")[:-1] | map(mailbox_line_invalid as $invalid | (fromjson? // null)
+    program = jq_defs + ''' split("\\n")[:-1] as $lines
+      | [$lines[] | fromjson? | objects | select(owner_private)] as $private
+      | $lines | map(mailbox_line_invalid as $invalid | (fromjson? // null)
         | if type == "object" then
-            {epoch: (.at // "" | at_epoch), class: overseer_mail_class, invalid: false}
+            {epoch: (.at // "" | at_epoch), class: overseer_mail_class, invalid: false,
+             tracker_cleanup: (owner_tracker_record($private) | owner_tracker_needs_cleanup)}
           else {epoch: null, class: null, invalid: $invalid} end)'''
     result = subprocess.run(["jq", "-Rs", program], input=b"".join(rows),
                             capture_output=True, check=True)
@@ -576,6 +579,7 @@ def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
             bound = (b == 0 and obj and isinstance(obj.get("id"), str)
                      and (obj["id"] in presented_asks or obj["id"] in presentations))
             retain = (at is None or at >= cutoff or unread or open_ask or awaiting_delivery or bound
+                      or metadata[b][i].get("tracker_cleanup")
                       or (b == 1 and i == directive_to_keep))
             selected.append(retain)
             if obj:

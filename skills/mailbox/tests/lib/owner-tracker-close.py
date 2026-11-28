@@ -7,6 +7,7 @@ fake Linear endpoint, so the stored comment is the body that package sends.
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import tempfile
 
 
 REPO = Path(__file__).resolve().parents[4]
+Overseer = runpy.run_path(str(Path(__file__).with_name("owner-replace.py")))["Overseer"]
 # What the linear package prints for a delete Linear answers success:false.
 DELETE_REFUSED = {"success": False, "identifier": None, "url": None, "data": {"success": False}}
 
@@ -85,7 +87,7 @@ elif args[:2] == ["comments", "create"]:
     sent = subprocess.run([os.environ["TRACKER_BASH"], os.environ["TRACKER_LINEAR"], *args],
                           capture_output=True, text=True,
                           env={"PATH": os.environ["TRACKER_CURL_DIR"] + os.pathsep + os.environ["PATH"],
-                               "HOME": str(root), "TRACKER_CASE": str(root),
+                               "HOME": str(root), "TRACKER_CASE": str(root), "TRACKER_ROW": row,
                                "LINEAR_API_KEY_OVERRIDE": "stub", "KENDEX_USER_EMAIL": "",
                                "LINEAR_REQUIRE_REACH": ""})
     sys.stdout.write(sent.stdout)
@@ -102,7 +104,7 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
     # Linear's bodyData for the saved comment: the owner's mention is a
     # suggestion_userMentions node carrying the owner's user id.
     node = {"type": "suggestion_userMentions", "attrs": {"id": "owner", "label": "owner.person"}}
-    if row == "mention-missing" or (row == "delete-refused" and not (root / "closing").exists()):
+    if row == "mention-missing" or (row.startswith("delete-") and not (root / "closing").exists()):
         node = {"type": "text", "text": comments[-1].splitlines()[0]}
     elif row == "mention-other":
         node = {"type": "suggestion_userMentions", "attrs": {"id": "someone-else", "label": "someone.else"}}
@@ -110,7 +112,7 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
     print(json.dumps({"comment": {"bodyData": json.dumps(doc)}}))
 elif args[:2] == ["comments", "delete"]:
     # The linear package exits 0 on a refused delete and prints the answer.
-    if row == "delete-refused" and not (root / "cleanup-allowed").exists():
+    if row.startswith("delete-") and not (root / "cleanup-allowed").exists():
         surviving_id.write_text(args[2])
         print(json.dumps(DELETE_REFUSED))
         sys.exit(0)
@@ -163,6 +165,9 @@ import sys
 
 data = next(line[len("data = "):] for line in sys.stdin.read().splitlines() if line.startswith("data = "))
 payload = json.loads(json.loads(data))
+if payload["query"].lstrip().startswith("query OwnerRuling"):
+    print("___HTTP_CODE___403", end="")
+    sys.exit(0)
 if not payload["query"].lstrip().startswith("mutation CreateComment"):
     print(json.dumps({"errors": [{"message": "unexpected fixture query"}]}) + "___HTTP_CODE___200", end="")
     sys.exit(0)
@@ -170,8 +175,16 @@ root = Path(os.environ["TRACKER_CASE"])
 comments_path = root / "comments.json"
 question = payload["variables"]["input"]
 body = question["body"]
-(root / "question-id").write_text(question["id"])
-comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
+row = os.environ["TRACKER_ROW"]
+lost = row.startswith("create-lost") and not (root / "closing").exists()
+if not lost or row != "create-lost-absent":
+    (root / "question-id").write_text(question["id"])
+    comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
+    if lost:
+        (root / "surviving-id").write_text(question["id"])
+if lost:
+    print("___HTTP_CODE___500", end="")
+    sys.exit(0)
 comment = {"id": question["id"], "body": body, "createdAt": "2026-11-22T00:00:00Z",
            "updatedAt": "2026-11-22T00:00:00Z", "user": {"name": "App", "email": "app@example.test"},
            "issue": {"identifier": "KEN-7", "updatedAt": "2026-11-22T00:00:00Z"}}
@@ -179,12 +192,21 @@ print(json.dumps({"data": {"commentCreate": {"success": True, "comment": comment
 '''
 
 
+RECOVERY = {
+    "delete-refused": (False, "mention", 3),
+    "delete-compacted": (True, "mention", 2),
+    "create-lost": (True, "comment", 1),
+    "create-lost-absent": (True, "comment", 0),
+}
+
+
 def run(source, scratch, bash):
     facts = {"unposted": True, "notice": True, "posted": True, "close_untracked": True,
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True, "mention": True,
-             "comment_delete": True, "rollback_pair": True, "survivor_removed": False}
+             "comment_delete": True, "rollback_pair": True, "survivor_removed": False,
+             "delete-compacted": False, "create-lost": False, "create-lost-absent": False}
     # One copy of the real linear scripts, with no orch beside it, so its
     # attribution line reads unknown rather than this checkout's session.
     linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
@@ -199,7 +221,7 @@ def run(source, scratch, bash):
                         ("comment-refused", False), ("comment-preexisting", False),
                         ("comment-label-edit", False), ("mention-missing", False),
                         ("mention-other", False), ("mention-unread", False),
-                        ("delete-refused", False)):
+                        *((case, False) for case in RECOVERY)):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -241,7 +263,7 @@ def run(source, scratch, bash):
 
             ask_args = ("ask", "--item", "overseer", "--to", "owner", "--do", "Approve change",
                         "--wait", "5", "--options", "approve,hold", "--file", str(message))
-            approval = ("--reserved",) if row == "delete-refused" else ("--recommend", "approve", "--effect", "none")
+            approval = ("--reserved",) if row in RECOVERY else ("--recommend", "approve", "--effect", "none")
             ask = invoke(*ask_args, "--issue", "KEN-7", *approval)
             ask_id = ask.stdout.strip().split("=", 1)[1]
             reserved = (root / "reserved-id").read_text()
@@ -260,9 +282,7 @@ def run(source, scratch, bash):
                     and any(line.startswith("Reply to this comment") for line in lines)
                     and lines[-1] == "Requested by the " + root.name + " overseer"
                     and ask_id not in after_comments[-1] and "ask=" not in after_comments[-1])
-            elif row == "delete-refused":
-                # A refused delete leaves the question comment the ask could
-                # not take down.
+            elif row in ("delete-refused", "delete-compacted", "create-lost"):
                 facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
             else:
                 facts["comments"] &= after_comments == previous_comments
@@ -273,7 +293,7 @@ def run(source, scratch, bash):
                 facts["rollback_labels"] &= after_ask["labels"] == expected_labels
                 if row == "comment-refused":
                     response_file = Path(ask.stderr.partition("error-file=")[2].strip())
-                    facts["comment_refused"] &= (pending["tracker_posted"] is False
+                    facts["comment_refused"] &= (pending["tracker_posted"] is False and "tracker_comment" not in pending
                         and "cause=comment" in ask.stderr and response_file.is_file()
                         and json.loads(response_file.read_text()) == {"success": False,
                             "data": {"success": False, "comment": None}})
@@ -347,26 +367,37 @@ def run(source, scratch, bash):
                     and error_file.read_bytes() == b"tracker: refused=write\n")
             (root / "closing").touch()
             to_close = ask_id
-            if row == "delete-refused":
-                outcome = next(record for record in map(json.loads,
-                    (root / "tmp/lane-mail/overseer/to-overseer.jsonl").read_text().splitlines())
+            if row in RECOVERY:
+                expire, cause, attempts = RECOVERY[row]
+                overseer = Overseer(root, env, mail)
+                outcome = next(record for record in overseer.rows("to-overseer.jsonl")
                     if record.get("re") == ask_id and record["kind"] == "tracker-failed")
-                # The first question never posted for mailbox presentation.
-                # The new question reaches the same tracker item under an alias.
+                if row.startswith("create-lost"):
+                    error_file = Path(ask.stderr.partition("error-file=")[2].strip())
+                    failure = error_file.read_text()
+                    facts["notice"] &= ("linear-http: write=unconfirmed code=500" in failure
+                                        and json.loads(failure.splitlines()[-1])["error"] == "HTTP error: 403")
+                if expire:
+                    # A chat close and cursor acknowledgment make this exchange
+                    # eligible for expiry before a later tracker ask exists.
+                    overseer.resolve(ask_id)
+                    overseer.compact()
+                retained = overseer.asks().get(ask_id, {})
                 message.write_text("Approve the revised change?\n")
                 later = invoke(*ask_args, "--issue", "OLD-7", "--reserved")
                 to_close = later.stdout.strip().split("=", 1)[1]
                 current = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
                 latest_body = json.loads(comments_path.read_text())[-1]
                 survived = (outcome.get("tracker_comment") == reserved and pending.get("tracker_comment") == reserved
+                    and outcome.get("cause") == cause and retained.get("tracker_comment") == reserved
                     and pending.get("reserved") is True and pending.get("tracker_posted") is False
                     and current["id"] == to_close and current["tracker_posted"] is True
                     and current["identity"]["uuid"] == pending["identity"]["uuid"]
-                    and current["replaces"] == [{"id": ask_id, "identity": current["identity"]}])
+                    and current.get("replaces", []) == ([] if expire else [{"id": ask_id, "identity": current["identity"]}]))
             before_close = json.loads(state.read_text())
             calls = (root / "calls.jsonl").read_bytes()
             close_args = ("resolve", "--item", "overseer", "--id", to_close)
-            invoke(*close_args, *(("--text", str(message)) if row != "delete-refused" else ()))
+            invoke(*close_args, *(("--text", str(message)) if row not in RECOVERY else ()))
             after_close = json.loads(state.read_text())
             if row == "label-failed":
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
@@ -379,28 +410,37 @@ def run(source, scratch, bash):
             facts["close_untracked"] &= (after_close == before_close
                 and all(args[:3] == ["comments", "bulk-list", "KEN-7"] or args[:2] == ["comments", "react"]
                         for args in closing))
-            if row == "delete-refused":
+            if row in RECOVERY:
                 (root / "ruled").touch()
                 gate = (*mail, "owner-gate", "--item", "overseer", "--id", to_close)
                 def reconcile():
                     return subprocess.run(gate, cwd=root, env=env, capture_output=True, text=True, timeout=10)
 
-                refused = reconcile()
-                still_held = json.loads(state.read_text())
+                if row == "delete-refused":
+                    refused = reconcile()
+                    still_held = json.loads(state.read_text())
                 (root / "cleanup-allowed").touch()
-                lost = reconcile()
+                if row == "delete-refused":
+                    lost = reconcile()
+                    survived &= (refused.returncode == lost.returncode == 2
+                        and "cause=comment-delete" in refused.stderr and json.dumps(DELETE_REFUSED) in refused.stderr
+                        and "tracker: write=unconfirmed" in lost.stderr
+                        and still_held["assignee"] == "Owner Person" and "owner-gated" in still_held["labels"])
                 retried = reconcile()
                 cleared = json.loads(state.read_text())
                 delete_calls = [call[2] for call in map(json.loads, (root / "calls.jsonl").read_text().splitlines())
                                 if call[:2] == ["comments", "delete"]]
-                facts["survivor_removed"] = (survived and refused.returncode == lost.returncode == 2
-                    and "cause=comment-delete" in refused.stderr and json.dumps(DELETE_REFUSED) in refused.stderr
-                    and "tracker: write=unconfirmed" in lost.stderr
-                    and still_held["assignee"] == "Owner Person" and "owner-gated" in still_held["labels"]
-                    and delete_calls == [reserved] * 3 and retried.returncode == 0
+                settled = overseer.asks().get(ask_id, {})
+                passed = (survived and settled.get("tracker_cause") == cause and settled.get("tracker_posted") is False
+                    and "tracker_comment" not in settled and delete_calls == [reserved] * attempts and retried.returncode == 0
                     and retried.stdout.strip() == "owner-gate: held=false"
                     and json.loads(comments_path.read_text()) == previous_comments + [latest_body]
                     and cleared["assignee"] == "" and cleared["labels"] == ["skills"])
+                if expire:
+                    overseer.compact()
+                    passed &= not any(record.get("id") == ask_id or record.get("re") == ask_id
+                                      for box in ("to-overseer.jsonl", "to-lane.jsonl") for record in overseer.rows(box))
+                facts["survivor_removed" if row == "delete-refused" else row] = passed
     return facts
 
 

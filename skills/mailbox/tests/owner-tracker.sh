@@ -64,6 +64,9 @@ close_rows() {
   assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
   assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
   assert_eq "$(jq '.survivor_removed' <<<"$CLOSE_FACTS")" true 'a later close recovers a failed reserved question before clearing the owner pair'
+  assert_eq "$(jq '."delete-compacted"' <<<"$CLOSE_FACTS")" true 'compaction retains a closed failed ask until its surviving question is gone'
+  assert_eq "$(jq '."create-lost"' <<<"$CLOSE_FACTS")" true 'a lost create receipt retains the reserved ID for later deletion'
+  assert_eq "$(jq '."create-lost-absent"' <<<"$CLOSE_FACTS")" true 'the gate retires an unconfirmed ID that the item read proves absent'
 }
 
 # A new ask that replaces an open one, each row judged on its own tracker.

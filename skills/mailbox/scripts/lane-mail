@@ -702,7 +702,8 @@ and count its line.
 A private tracker-posted or tracker-failed record carries an immutable ask's
 outcome by its re and issue. Posted records carry the question comment's id in
 tracker_comment. Failure records carry the failed operation in cause and
-also carry tracker_comment if deletion of the comment was unconfirmed.
+also carry tracker_comment if creation or deletion was unconfirmed. The
+exchange stays available to the owner gate until it confirms cleanup.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. A tracker-unwritten cause=label
@@ -1848,7 +1849,7 @@ lm_send_channel() {
 # and decides which lanes are this overseer's to write.
 OWN_ROOT=""
 case "$VERB" in
-  ask | notice | send | resolve | reserve | present | replace | peer | compact | attach-check)
+  ask | notice | send | resolve | reserve | present | replace | peer | compact | attach-check | owner-gate)
     OWN_ROOT="$(mailbox_common_root . 2>/dev/null)" || OWN_ROOT="" ;;
 esac
 
@@ -2006,12 +2007,13 @@ fi
 # The asking watch's close takes the owner label and assignee from the one
 # rule the ask post and its rollback take them by, owner_tracker_gate; the
 # caller judges which asks are this mailbox's on the item.
-if [ "$VERB" = owner-gate ]; then
+lm_owner_gate() {
+  local cleared
   [ "$ITEM" = overseer ] || refuse overseer-only "$ITEM"
   [ -n "$MSGID" ] || refuse option-required --id
   "$SCRIPT_DIR/lane-mail" events --item overseer --root "$ROOT" >"$WORK_DIR/gate-events" 2>"$WORK_DIR/gate.err" ||
     refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/gate.err")"
-  GATE_ASKS="$(jq -cs --arg id "$MSGID" --arg open "$GATE_OPEN" --arg closed "$GATE_CLOSED" --arg named "$GATE_NAMED" '
+  GATE_ASKS="$(jq -cs --arg id "$MSGID" --arg open "$GATE_OPEN" --arg closed "$GATE_CLOSED" --arg named "$GATE_NAMED" "$OWNER_TRACKER_FIELDS_JQ"'
     (map(select(.box == "to-overseer" and .kind == "ask" and .to == "owner")) | INDEX(.id)) as $asks
     | [{id: $id, state: "closed"}]
       + [$open | splits("\n") | select(length > 0) | {id: ., state: "open"}]
@@ -2022,10 +2024,10 @@ if [ "$VERB" = owner-gate ]; then
         else {id, state, tracker_comment: $ask.tracker_comment, tracker_label: $ask.tracker_label,
           issue: $ask.issue, identity: $ask.identity} end)
     | . + [$asks[] | $asks[$id] as $closing
-      | select(.tracker_posted == false and .tracker_cause != null and (.tracker_comment | type) == "string")
+      | select(owner_tracker_needs_cleanup)
       | select(if .identity.uuid != null and $closing.identity.uuid != null
           then .identity.uuid == $closing.identity.uuid else .issue == $closing.issue end)
-      | {id, state: "unpublished", tracker_comment}]' "$WORK_DIR/gate-events")" ||
+      | {id, state: "unpublished", tracker_comment, issue, at, from, tracker_cause}]' "$WORK_DIR/gate-events")" ||
     refuse file-unreadable "$WORK_DIR/gate-events"
   GATE_UNKNOWN="$(jq -r 'map(select(.unknown == true) | .id) | first // ""' <<<"$GATE_ASKS")" ||
     refuse file-unreadable "$WORK_DIR/gate-events"
@@ -2046,9 +2048,16 @@ if [ "$VERB" = owner-gate ]; then
     REFUSE_EXTRA="cause=$OWNER_TRACKER_GATE_CAUSE"
     refuse owner-gate-unwritten "$GATE_ISSUE"
   fi
+  # A fresh item read or a confirmed delete settled every selected ID.
+  # Keep the failure and its original age while releasing cleanup retention.
+  jq -cr '.[] | select(.state == "unpublished")
+    | {id: (.id + "-tracker-cleared"), kind: "tracker-failed", at, from, re: .id, issue, cause: .tracker_cause, text: ""}
+    | [.id, tojson] | join("\t")' <<<"$GATE_ASKS" >"$WORK_DIR/gate-cleared" || refuse write-failed "$TO_OVERSEER"
+  while IFS=$'\t' read -r SENT_ID cleared; do
+    lm_append_local "$TO_OVERSEER" "$cleared" lm_guard_reply_record || :
+  done <"$WORK_DIR/gate-cleared"
   printf 'owner-gate: held=%s\n' "$OWNER_TRACKER_HELD"
-  exit 0
-fi
+}
 
 # A send writes a mailbox of the caller's own repository, never one another
 # repository owns: its own lanes, and its own overseer mailbox from any of its
@@ -2064,7 +2073,7 @@ lm_root_own() { # ROOT own|checkout
     # Compaction retains existing rows and delivers no new envelope. Cursor
     # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | present | peer | peer-receive)
+      ask | notice | send | resolve | present | peer | peer-receive | owner-gate)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
@@ -2076,7 +2085,7 @@ lm_root_own() { # ROOT own|checkout
     esac
   fi
   if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] ||
-     [ "$VERB" = present ] || [ "$VERB" = replace ]; then
+     [ "$VERB" = present ] || [ "$VERB" = replace ] || [ "$VERB" = owner-gate ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
@@ -2084,7 +2093,8 @@ lm_root_own() { # ROOT own|checkout
 if [ "$HOST" -eq 0 ]; then
   if [ "$VERB" = peer ] || { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }; then
     lm_root_own "$ROOT" checkout
-  elif [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] || [ "$VERB" = present ] || [ "$VERB" = replace ]; then
+  elif [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] || [ "$VERB" = present ] ||
+       [ "$VERB" = replace ] || [ "$VERB" = owner-gate ]; then
     lm_root_own "$ROOT" own
   fi
 fi
@@ -3172,7 +3182,7 @@ lm_seconds() { # OPTION VALUE
 lm_compact_locked() {
   local counts root total archive aside name
   lm_cursor_read
-  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$MAILBOX_LINE_JQ" "$SET_ASIDE"
+  lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$MAILBOX_LINE_JQ$OWNER_TRACKER_FIELDS_JQ" "$SET_ASIDE"
   counts="$(cat -- "$WORK_DIR/counts.json")" || refuse file-unreadable "$BOX"
   total="$(jq '.["to-lane"] + .["to-overseer"]' <<<"$counts")" || refuse file-unreadable "$BOX"
   aside="$(jq -r '.["set-aside"] | to_entries[] | select(.value > 0) | .key' <<<"$counts")" ||
@@ -3325,6 +3335,7 @@ fi
 
 
 case "$VERB" in
+  owner-gate) lm_owner_gate ;;
   compact)
     # Retention reads settings here, not on the hooks' reader path.
     COMPACT_DAYS="$("$ORCH_SCRIPTS/orch-env" ORCH_RECORD_RETENTION_DAYS 5)" || refuse retention-invalid ORCH_RECORD_RETENTION_DAYS

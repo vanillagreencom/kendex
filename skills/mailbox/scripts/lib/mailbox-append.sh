@@ -229,7 +229,7 @@ owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
 # selecting asks or cursors: posting evidence, and a reservation, which makes a
 # standing owner ask reserved as `--reserved` makes one at ask time, so every
 # reader of the folded ask judges the one `reserved` field.
-OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_private:
+OWNER_TRACKER_FIELDS_JQ='def owner_private:
   .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation" or .kind == "replacement"
     or .kind == "owner-presentation" or .kind == "owner-presented" or .kind == "owner-delivered";
 def owner_tracker_public:
@@ -266,10 +266,14 @@ def owner_tracker_record($outcomes):
       . as $ask | ([$outcomes[] | select(.kind == "replacement" and .re == $ask.id)] | last) as $replacement
       | if $replacement != null then .replacement = $replacement.outcome else . end
     else . end;
+def owner_tracker_needs_cleanup:
+  .kind == "ask" and .to == "owner" and .tracker_posted == false and .tracker_cause != null
+    and (.tracker_comment | type) == "string";
 def owner_tracker_release_at:
   (.at | at_epoch) + 300;
 def owner_tracker_snapshot($now):
   select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);'
+OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ$OWNER_TRACKER_FIELDS_JQ"
 
 # An ask's `replaces` takes effect only where the ask reached the owner: an
 # ask with no item, or an item ask whose question posted. The ask's replace
@@ -478,7 +482,7 @@ owner_tracker_delete_comment() { # TRACKER WORK COMMENT_ID
 # shows the owner's mention. Returns 0 on a posted ask and 1 on any failure,
 # with OWNER_TRACKER_CAUSE naming it and OWNER_TRACKER_DESCRIBED saying
 # whether the action line was written, which the rollback restores.
-owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWNER_ID
+owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWNER_ID QUESTION_ID
   local tracker="$1" work="$2" issue="$3" comment_issue="$4" ask_id="$5" description="$6" owner_id="$7"
   local comment_file="$work/tracker-comment-lined" comment_error comment_id mentioned
   OWNER_TRACKER_DESCRIBED=0
@@ -514,6 +518,10 @@ owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWN
       comment_id=""
       comment_error="$work/tracker.out"
     fi
+  elif grep -q '^linear-http: write=unconfirmed ' "$comment_error"; then
+    # Linear's create may have landed without a readable receipt. A later
+    # item read must find this question before the gate attempts deletion.
+    OWNER_TRACKER_COMMENT="$8"
   fi
   owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
   if [[ -n "$comment_id" ]] && ! owner_tracker_delete_comment "$tracker" "$work" "$comment_id"; then
@@ -577,7 +585,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     OWNER_TRACKER_CAUSE="$OWNER_TRACKER_GATE_CAUSE"
     owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"
   elif owner_tracker_post "$tracker" "$work" "$issue" "$comment_issue" "$ask_id" "$description" \
-       "$(jq -r '.id' <<<"$owner")"; then
+       "$(jq -r '.id' <<<"$owner")" "$question"; then
     return 0
   fi
   # The rollback. The description is restored only while the fresh read
