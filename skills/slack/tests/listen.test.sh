@@ -1262,7 +1262,7 @@ sk_poll "$ZETA"
 assert_eq "$(sk_reactions "$ZETA_CH" "$MC2")" "white_check_mark" "control: the cursor unread, an unread directive is marked read"
 sk_bin_reset
 
-sk_mutant answer-read relay.py 'e\["box"\] == "to-lane" and' 'e["box"] == "to-lane" and e["kind"] == "directive" and'
+sk_mutant answer-read relay.py 'e\["box"\] == "to-lane" and e\["line"\] is not None' 'e["box"] == "to-lane" and e["kind"] == "directive" and e["line"] is not None'
 AR="$(sk_new_root answer-read)"
 sk_bind "$AR"
 answer_read "$AR" "$(sk_channel "$AR")" answer-control
