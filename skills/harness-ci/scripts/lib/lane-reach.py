@@ -1117,7 +1117,26 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
         condition = step.get("if", "true")
         require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
                 "opaque-step-condition")
-        step_inputs.append(env_words(step.get("env", {}), "step"))
+        step_words = env_words(step.get("env", {}), "step")
+        uses_action = "uses" in step
+        inputs = job_words + step_words if uses_action else inherited + step_words + matrix
+        raw_directory = "." if uses_action else step.get("working-directory", default.get("working-directory", "."))
+        directory = raw_directory
+        step_reads, step_visited = set(), set()
+        directory_error = None
+        if directory != ".":
+            try:
+                directory = evidence.working_directory(directory, step_reads)
+            except Unreadable as error:
+                if inputs:
+                    # A relative env value could load code from this directory.
+                    raise Unreadable(str(error)) from error
+                directory_error = error
+        if directory_error is None:
+            input_reads(evidence, inputs, directory, step_reads, step_visited)
+        # Keep known reads at their original step, but check for unreadable
+        # code inputs before any earlier refusal can let a claim stand in.
+        step_inputs.append((step_words, directory, step_reads, step_visited, directory_error))
         # A claim-backed refusal can end the regular scan before a script runs.
         for line in step.get("run", "").splitlines():
             try:
@@ -1127,32 +1146,34 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
             if args[:1] == ["vercel"] and all(literal(word) or word == ":" for word in args):
                 reject_vercel(args)
             if len(args) > 1 and args[0] == "npm":
+                options = any(word.startswith("-") for word in args[1:])
+                require(not options or args[1:] == ["ci", "--no-audit"], "opaque-npm-options")
                 named_run = args[1] in NPM_RUN and any(not word.startswith("-") for word in args[2:])
                 require(args[1] not in NPM_SCRIPT and not named_run,
                         "opaque-npm-script")
                 if args[1] in NPM_CI:
-                    reject_npm_ci_scripts(evidence, step.get("working-directory",
-                                                             default.get("working-directory", ".")))
+                    reject_npm_ci_scripts(evidence, raw_directory)
     require_shape(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                               "permissions", "steps", "defaults", "strategy", "env"}, "opaque-job")
     visited = set()
     opaque_action = None
     npm_shape = None
     require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
-    for step, step_words in zip(job["steps"], step_inputs):
+    for step, (step_words, directory, step_reads, step_visited, directory_error) in zip(job["steps"], step_inputs):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes", "if", "env"}, "opaque-step")
         if "uses" in step:
-            input_reads(evidence, job_words + step_words, ".", ordinary, visited)
+            ordinary.update(step_reads)
+            visited.update(step_visited)
             if not (checkout_reads_head(evidence, step) or setup_reads(evidence, step, ordinary)):
                 opaque_action = step["uses"]
             continue
         require_shape(step.get("shell", default.get("shell", "bash")) == "bash",
                       "unsupported-shell")
-        directory = step.get("working-directory", default.get("working-directory", "."))
-        if directory != ".":
-            directory = evidence.working_directory(directory, ordinary)
-        input_reads(evidence, inherited + step_words + matrix, directory, ordinary, visited)
+        ordinary.update(step_reads)
+        if directory_error is not None:
+            raise directory_error
+        visited.update(step_visited)
         for line in step["run"].splitlines():
             node_line = re.match(r"\s*(?:npm|vercel)(?:\s|$)", line)
             if npm_shape and not node_line:

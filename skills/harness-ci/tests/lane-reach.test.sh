@@ -479,7 +479,13 @@ while IFS='|' read -r variant file old new; do
       printf '%s\n' '{"optionalDependencies":{"fsevents":"2.3.3"}}' >"$repo/package.json"
       edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n' ;;
     npm-preload)
-      printf '%s\n' 'require("node:fs").readFileSync("tools/npm-input.config")' >"$repo/tools/node-setup.js" ;;
+      mkdir -p "$repo/web/tools"
+      printf '%s\n' 'require("node:fs").readFileSync("../tools/npm-input.config")' >"$repo/web/tools/node-setup.js" ;;
+    npm-prefixed-install)
+      printf '%s\n' '{"scripts":{"postinstall":"cat ../tools/npm-input.config"}}' >"$repo/web/package.json"
+      printf '%s\n' '{"lockfileVersion":3,"packages":{"":{}}}' >"$repo/web/package-lock.json" ;;
+    npm-global-option)
+      printf '%s\n' '{"scripts":{"test":"cat ./tools/npm-input.config"}}' >"$repo/package.json" ;;
     npm-script-retained)
       printf '%s\n' '{"scripts":{"check:vercel":"cat ./tools/check.config"}}' >"$repo/package.json" ;;
     npm-project-lifecycle)
@@ -493,7 +499,9 @@ done <<'ROWS'
 npm-config-claim|.npmrc||legacy-peer-deps=true\n
 npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
 npm-project-lifecycle|package.json|{"private":true}|{"scripts":{"postinstall":"cat ./tools/npm-input.config"}}
-npm-preload|.github/workflows/ci.yml|      - run: npm ci\n|      - env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm ci\n
+npm-preload|.github/workflows/ci.yml|      - run: npm ci\n|      - run: echo Checking\n      - working-directory: web\n        env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm ci\n
+npm-prefixed-install|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --prefix web\n
+npm-global-option|.github/workflows/ci.yml|      - run: npm ci\n|      - run: echo Checking\n      - run: npm --silent test\n
 npm-unsupported-invocation|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --no-audit\n
 npm-script-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: npm run-script check:vercel\n
 vercel-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: vercel build\n
@@ -1389,7 +1397,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
-    literal-*|npm-config-claim|npm-*lifecycle|npm-preload|npm-unsupported-invocation|npm-script-retained|vercel-*)
+    literal-*|npm-config-claim|npm-*lifecycle|npm-preload|npm-prefixed-install|npm-global-option|npm-unsupported-invocation|npm-script-retained|vercel-*)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
@@ -1631,6 +1639,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
     npm-lifecycle|npm-linked-lifecycle) refused_jobs='job=web cause=opaque-npm-dependency' ;;
     npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
+    npm-prefixed-install|npm-global-option) refused_jobs='job=web cause=opaque-npm-options' ;;
     npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
     vercel-*) refused_jobs='job=web cause=opaque-vercel-command' ;;
   esac
@@ -1645,6 +1654,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   case "$label" in
     workflow-env-unreadable) env_refusal='key=BASH_ENV path=tools/env.sh reason=computed-command' ;;
     workflow-env-preload) env_refusal='key=NODE_OPTIONS path=tools/setup.cjs reason=unsupported-script-interpreter' ;;
+    npm-preload)
+      for implementation in action local; do
+        assert_eq "$label $implementation resolved preload" 'key=NODE_OPTIONS path=web/tools/node-setup reason=node-preload-unresolved' \
+          "$(sed -n 's/^lane-reach: job=web cause=opaque-step-env //p' "$SANDBOX/$implementation-log")"
+      done ;;
   esac
   if [ -n "$env_refusal" ]; then
     for implementation in action local; do
@@ -1815,6 +1829,8 @@ npm-lifecycle|tools/unrelated.txt|||true|
 npm-project-lifecycle|tools/npm-input.config|||true|
 npm-linked-lifecycle|tools/npm-input.config|||true|
 npm-preload|tools/npm-input.config|||true|
+npm-prefixed-install|tools/npm-input.config|||true|
+npm-global-option|tools/npm-input.config|||true|
 npm-ref-mismatch|tools/unrelated.txt|||true||pull_request
 npm-unsupported-invocation|tools/unrelated.txt|||false|
 vercel-retained|tools/unrelated.txt|||true|
