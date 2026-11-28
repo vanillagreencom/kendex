@@ -95,13 +95,26 @@ RENDER = (".agents/", ".claude/", ".codex/", ".pi/")
 # kendex parks a switched-off skill's SKILL.md under the second name.
 SKILL_MARKERS = ("SKILL.md", "SKILL.md.disabled")
 MODULE = re.compile(r"\.(?:[cm]?[jt]s|[jt]sx)$")
-JS_TRIVIA = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
+# The comment body cannot consume its closing delimiter even on backtracking.
+JS_TRIVIA = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\r\n\u2028\u2029]*(?=[\r\n\u2028\u2029]|\Z))*"
 JS_REFERENCE = re.compile(r"\b(?:import\b" + JS_TRIVIA + r"(\(" + JS_TRIVIA +
                           r")?|from\b" + JS_TRIVIA + r")")
 JS_SPECIFIER = re.compile(r"""(['"])([^'"\\\r\n]+)\1""")
 VITEST_STATIC_IMPORT = re.compile(
     r"\s*import\s*\{\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*,?\s*\}\s*"
 )
+VITEST_LITERAL = re.compile(
+    JS_TRIVIA + r"""(?P<token>'[^'"\\\r\n]*'|"[^'"\\\r\n]*"|[A-Za-z_]\w*|-?\d+(?:\.\d+)?|[{}\[\]:,])"""
+)
+VITEST_CONFIG_BODY = re.compile(
+    JS_TRIVIA + r"(?:import\s*\{\s*defineConfig\s*\}\s*from\s*(['\"])vitest/config\1\s*;?"
+    + JS_TRIVIA + r"export\s+default\s+defineConfig\s*\((?P<wrapped>[\s\S]*)\)"
+    + r"|export\s+default\s+(?P<plain>\{[\s\S]*\}))" + JS_TRIVIA + r";?" + JS_TRIVIA
+)
+VITEST_EXTENSIONS = (".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json")
+VITEST_SAFE_BUILTINS = {"node:assert", "node:assert/strict", "node:buffer", "node:events", "node:path",
+                        "node:path/posix", "node:path/win32", "node:querystring", "node:string_decoder",
+                        "node:url", "node:util", "node:util/types"}
 JS_CONFIG = {"jsconfig.json", "tsconfig.json"}
 # Vitest 4 looks for these, with any script extension, in its root and then
 # each ancestor: any(configFiles, { cwd: root }) in vitest/dist/node.js.
@@ -265,6 +278,122 @@ def lane_table(lines, lane):
         functions[definition[1]] = lines[index + 1:close]
         index = close + 1
     return members[lane], functions, fixtures
+
+
+def vitest_literal(source):
+    cause = "vitest-opaque-config"
+    body = VITEST_CONFIG_BODY.fullmatch(source)
+    require_shape(body, cause)
+    source = body["wrapped"] if body["wrapped"] is not None else body["plain"]
+    parts = []
+    end = 0
+    for match in VITEST_LITERAL.finditer(source):
+        require_shape(match.start() == end, cause)
+        parts.append(match["token"])
+        end = match.end()
+    require_shape(re.fullmatch(JS_TRIVIA, source[end:]), cause)
+
+    def unique(pairs):
+        result = dict(pairs)
+        require_shape(len(result) == len(pairs), cause)
+        return result
+
+    # Decode the literal object subset. Quotes, bare keys and trailing commas
+    # are the only differences from JSON that this reader accepts.
+    encoded = []
+    for index, token in enumerate(parts):
+        following = parts[index + 1:index + 2]
+        if token.startswith(("'", '"')):
+            token = json.dumps(token[1:-1])
+        elif following == [":"] and re.fullmatch(r"[A-Za-z_]\w*", token):
+            token = json.dumps(token)
+        elif token == "," and following in (["}"], ["]"]):
+            continue
+        encoded.append(token)
+    try:
+        return json.loads(" ".join(encoded), object_pairs_hook=unique)
+    except (ValueError, RecursionError) as error:
+        raise ShapeUnreadable(cause) from error
+
+
+def vitest_config(source):
+    cause = "vitest-opaque-config"
+    config = vitest_literal(source)
+    require_shape(isinstance(config, dict) and config.keys() <= {"resolve", "test"}, cause)
+    resolve = config.get("resolve", {})
+    require_shape(isinstance(resolve, dict) and resolve.keys() <= {"alias", "tsconfigPaths"}, cause)
+    aliases = resolve.get("alias", {})
+    require_shape(isinstance(aliases, dict) and aliases.keys() <= {"@"}, cause)
+    alias = aliases.get("@")
+    # Vite resolves /dir against its root before trying a filesystem path.
+    require_shape(not aliases or (isinstance(alias, str) and alias.startswith("/")
+                  and literal(alias[1:]) and not {"..", "."} & set(alias[1:].split("/"))), cause)
+    ts_paths = resolve.get("tsconfigPaths", False)
+    require_shape(isinstance(ts_paths, bool), cause)
+
+    def test_settings(test, keys):
+        require_shape(isinstance(test, dict) and test.keys() <= keys, cause)
+        require_shape(test.get("environment", "node") == "node", cause)
+        for key in ("include", "exclude"):
+            patterns = test.get(key, [])
+            require_shape(isinstance(patterns, list) and all(isinstance(pattern, str)
+                          and not pattern.lstrip("!").startswith("/") and ".." not in pattern
+                          and "\\" not in pattern for pattern in patterns), cause)
+        setup = test.get("setupFiles", [])
+        if isinstance(setup, str):
+            setup = [setup]
+        require_shape(isinstance(setup, list) and all(isinstance(path, str) and literal(path)
+                      and path.startswith("./") and ".." not in Path(path).parts for path in setup), cause)
+        return set(setup)
+
+    keys = {"name", "environment", "include", "exclude", "setupFiles", "maxWorkers"}
+    test = config.get("test", {})
+    setup = test_settings(test, keys | {"projects"})
+    projects = test.get("projects", [])
+    require_shape(isinstance(projects, list), cause)
+    for project in projects:
+        # Vitest inline projects with extends: true reuse the parent config.
+        # A project path, another root or a plugin can read outside this graph.
+        require_shape(isinstance(project, dict) and project.keys() <= {"extends", "test"}
+                      and project.get("extends") is True, cause)
+        setup.update(test_settings(project.get("test", {}), keys))
+    return alias, ts_paths, setup
+
+
+def vitest_tsconfig(source):
+    try:
+        config = json.loads(source)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(config, dict) or config.keys() != {"compilerOptions"}:
+        return None
+    options = config["compilerOptions"]
+    if not isinstance(options, dict) or options.keys() != {"paths"}:
+        return None
+    paths = options["paths"]
+    if not isinstance(paths, dict) or paths.keys() != {"@/*"}:
+        return None
+    aliases = paths["@/*"]
+    if isinstance(aliases, list) and len(aliases) == 1 and isinstance(aliases[0], str):
+        target = aliases[0].removesuffix("/*")
+        if aliases[0] != target and literal(target) and ".." not in Path(target).parts:
+            return target
+    return None
+
+
+def vitest_source(source):
+    cause = "vitest-opaque-source"
+    # Node's native fetch rejects file URLs (Undici's schemeFetch).
+    require_shape(not re.search(r"\b(?:require|eval|Function|globalThis)\b|Snapshot\b|\\u"
+                                r"|\bnew\b" + JS_TRIVIA + r"URL\b", source), cause)
+    # Process methods can load builtins or change the working directory.
+    # import.meta.glob and import.meta.resolve can read outside the graph.
+    for symbol, properties in (
+        (r"\bprocess\b", r"(?:arch|env|platform|version|versions)\b|cwd\b" + JS_TRIVIA + r"\(\s*\)"),
+        (r"\bimport\b" + JS_TRIVIA + r"\." + JS_TRIVIA + r"meta\b", r"(?:env|url)\b"),
+    ):
+        require_shape(all(re.match(JS_TRIVIA + r"\." + JS_TRIVIA + rf"(?:{properties})",
+                                   source[use.end():]) for use in re.finditer(symbol, source)), cause)
 
 
 class Evidence:
@@ -689,11 +818,11 @@ class Evidence:
         changed paths the reader judged."""
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
-        # Vitest loads the first config it finds in its root or an ancestor,
-        # which can move the root or widen discovery past it, and the reader
-        # cannot rule out a test that config discovers.
+        root = Path(directory)
+        config = (root / "vitest.config.ts").as_posix()
+        # A different config in the lookup chain can widen test discovery.
         require(not any(
-            Path(path).parent in {Path(directory), *Path(directory).parents}
+            path != config and Path(path).parent in {root, *root.parents}
             and Path(path).name.startswith((*VITEST_CONFIG, "vitest.workspace."))
             for path in self.files), "vitest-loaded-config")
         paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
@@ -720,19 +849,66 @@ class Evidence:
         # changed path there is an input before any refusal. So is a config
         # an ancestor holds.
         reads.update(path for path in self.changed if under(path, directory) or (
-            Path(path).parent in Path(directory).parents and Path(path).name.startswith(VITEST_CONFIG)))
-        resolves_from(Path(directory))
+            Path(path).parent in root.parents and Path(path).name.startswith(VITEST_CONFIG)))
+        resolves_from(root)
+        alias, ts_paths, setup = (None, False, set())
+        if config in self.files:
+            alias, ts_paths, setup = vitest_config(self.blob(config))
+        ts_config, ts_alias = None, None
+        for folder in dict.fromkeys([root, Path(".")]):
+            path = (folder / "tsconfig.json").as_posix()
+            if path in self.files and (target := vitest_tsconfig(self.blob(path))) is not None:
+                ts_config, ts_alias = path, (folder, target)
+                break
+
+        def import_alias(target, parent):
+            if alias:
+                folder, replacement = root, alias[1:]
+            else:
+                require_shape(ts_paths and ts_alias and under(parent.as_posix(), ts_alias[0].as_posix()),
+                              "vitest-opaque-import")
+                folder, replacement = ts_alias
+            suffix = target.removeprefix("@/")
+            require_shape(literal(suffix) and not {".", ".."} & set(suffix.split("/")),
+                          "vitest-opaque-import")
+            path = replacement + "/" + suffix
+            imported, _ = self.checkout_path(folder, path)
+            # Vite tries the bare file, then its default extensions before
+            # using package metadata or an index for a directory import.
+            # New earlier candidates can redirect the import outside the
+            # Vitest root, where discovery does not cover added files.
+            if imported not in self.files:
+                reads.update({imported} & self.changed)
+                # Vite can substitute a TypeScript file for a JS-suffixed
+                # import before appending extensions. Only probe extensions
+                # when the specifier's final component has no suffix.
+                require_shape("." not in Path(suffix).name, "vitest-module-unresolved")
+                for extension in VITEST_EXTENSIONS:
+                    candidate, _ = self.checkout_path(folder, path + extension)
+                    if candidate in self.files:
+                        return candidate
+                    reads.update({candidate} & self.changed)
+            return imported
+
         members = {path for path in self.files if under(path, directory)}
         for path in members:
+            if path in {config, ts_config}:
+                continue
             name = Path(path).name
             require_shape(not name.startswith((*VITEST_CONFIG, "vitest.workspace.",
                                                "tsconfig", "jsconfig", ".env")) and
                           self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
-        pending = {path for path in members if MODULE.search(path)}
+        # Vitest's getTestDependencies starts at each test file, so its
+        # --changed listing does not cover setup modules or their imports.
+        # Walk them first and keep all their reads when filtering the rest.
+        setup = {self.resolve(directory, path)[0] for path in setup}
+        require_shape(all(path in members and MODULE.search(path) for path in setup), "vitest-opaque-config")
+        pending = [(path, False) for path in sorted(members - {config}) if MODULE.search(path)]
+        pending.extend((path, True) for path in sorted(setup))
         scanned = set()
         package_imports = set()
         while pending:
-            path = pending.pop()
+            path, is_setup = pending.pop()
             if path in scanned:
                 continue
             scanned.add(path)
@@ -740,10 +916,9 @@ class Evidence:
             parent = Path(path).parent
             resolves_from(parent)
             source = self.blob(path)
-            require_shape(not re.search(
-                r"\b(?:require|eval|Function|fetch|process|globalThis)\b"
-                r"|\bimport\.meta|\b(?:node:|new\s+URL)|Snapshot\b|\\u", source,
-            ), "vitest-opaque-source")
+            if is_setup:
+                setup.add(path)
+            vitest_source(source)
             for reference in JS_REFERENCE.finditer(source):
                 require_shape(not reference[1], "vitest-runtime-import")
                 start = reference.end()
@@ -763,32 +938,43 @@ class Evidence:
                     require_shape(all(re.match(JS_TRIVIA + r"\(", uses[use.end():])
                                       for use in re.finditer(bindings, uses)), "vitest-runtime-binding")
                     continue
-                require_shape(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
-                              "vitest-opaque-import")
-                # Vite and Node resolve a relative specifier by name, so a
-                # directory it passes through need not exist.
-                imported, _ = self.checkout_path(parent.as_posix(), target)
+                if target in VITEST_SAFE_BUILTINS:
+                    continue
+                if target.startswith("@/"):
+                    require_shape(alias or path.endswith((".ts", ".tsx", ".mts", ".cts")),
+                                  "vitest-opaque-import")
+                    imported = import_alias(target, parent)
+                else:
+                    require_shape(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
+                                  "vitest-opaque-import")
+                    # Vite and Node resolve a specifier by name. A directory
+                    # it passes through need not exist.
+                    imported, _ = self.checkout_path(parent.as_posix(), target)
                 # A shape refusal keeps every module the walk resolved, and
                 # the package files its resolution reads.
                 reads.add(imported)
                 resolves_from(Path(imported).parent)
                 require_shape(imported in self.files and MODULE.search(imported),
                               "vitest-module-unresolved")
+                # Vitest 4's getTestDependencies prunes paths containing
+                # node_modules, including regular files and their imports.
+                require_shape(is_setup or "node_modules" not in imported,
+                              "vitest-import-outside-changed-graph")
                 if self.package_path(imported):
                     # Package ownership also needs imports outside Vitest's changed graph.
                     package_imports.add(imported)
-                pending.add(imported)
+                pending.append((imported, is_setup))
         if any(self.package_path(path) for path in self.changed):
             require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
         require_shape(not any(
-            Path(path).parent in config_dirs and Path(path).name in JS_CONFIG
+            path != ts_config and Path(path).parent in config_dirs and Path(path).name in JS_CONFIG
             for path in self.files
         ), "vitest-inherited-config")
         # No later refusal is a shape refusal, so Vitest's related-test listing
         # alone judges a changed module the walk read.
-        reads.difference_update(scanned - package_imports)
+        reads.difference_update(scanned - package_imports - setup)
         cwd = self.checkout / directory
         upstream = self.trusted / directory / "node_modules"
         binary = upstream / ".bin/vitest"
@@ -798,13 +984,19 @@ class Evidence:
         paths = {path for path in paths if not ungraphed(path)}
         if not paths:
             return self.changed
+        # Vitest applies the same exclusion to absolute paths in the scratch
+        # checkout. Its location depends on this run's environment.
+        require("node_modules" not in str(self.checkout), "vitest-scratch-outside-changed-graph")
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
                                       cwd, env=env))
-            require(isinstance(rows, list), "vitest-incomplete-list")
-            result = {self.relative(row["file"]) for row in rows}
-            require(len(result) == len(rows) and result <= members, "vitest-invalid-list")
+            require(isinstance(rows, list) and all(isinstance(row, dict) for row in rows),
+                    "vitest-incomplete-list")
+            # Vitest's formatFilesAsJSON emits a row per project and test file.
+            specs = {(row.get("projectName"), self.relative(row["file"])) for row in rows}
+            result = {path for _, path in specs}
+            require(len(specs) == len(rows) and result <= members, "vitest-invalid-list")
             return result
 
         full = listing([])
@@ -937,8 +1129,21 @@ def roster(jobs, classifier, step):
     event_term = r"(?:github\.event_name == '[a-z_]+' && )?"
     read_output = re.escape(prefix + ".outputs.")
     lane_output = read_output + f"lane_({LANE_ID})" + re.escape(" != 'false'")
-    gate = re.compile(status + event_term + fallback + r"\(" + read_output + "lanes != 'false' && " +
-                      lane_output + r"\)\) \}\}")
+    ordinary = r"\(" + read_output + "lanes != 'false' && " + lane_output + r"\)\) \}\}"
+    gate = re.compile(status + event_term + fallback + ordinary)
+    # These OR arms can run the job with a false lane verdict. The jobs
+    # accepting them need only the classifier, so they have no gated prerequisites.
+    widening_arms = []
+    if references(outputs, "change_class", step_id, "change_class"):
+        widening_arms.append(re.escape(
+            f"(github.event_name == 'merge_group' && {prefix}.outputs.change_class != 'render') || "
+        ))
+    if "declaration_changed" in outputs:
+        widening_arms.append(re.escape(f"{prefix}.outputs.declaration_changed == 'true' || "))
+    widened_gate = (
+        re.compile(status + fallback + "(?:" + "|".join(widening_arms) + ")" + ordinary)
+        if widening_arms else None
+    )
     scan_gate = None
     if narrowed and references(outputs, "change_class", step_id, "change_class") and references(
         outputs, "queue_deferred", emitters[0], "queue_deferred",
@@ -966,6 +1171,8 @@ def roster(jobs, classifier, step):
         if condition in {"always()", "${{ always() }}", "!cancelled()", "${{ !cancelled() }}"}:
             independent_jobs.add(name)
         match = gate.fullmatch(condition)
+        if not match and widened_gate and needs == [classifier]:
+            match = widened_gate.fullmatch(condition)
         if not match and scan_gate:
             match = scan_gate.fullmatch(condition)
             if match:
