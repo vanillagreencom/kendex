@@ -56,6 +56,14 @@ agent_runtime_cache() {
   printf '%s\n' "${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
 }
 
+# The staged file has the binary's basename and lives on the same filesystem.
+# Link into its parent so a directory at the key path cannot become the
+# destination directory. A competing placement keeps its inode.
+agent_runtime_place_binary() { # STAGED BINARY
+  local staged="$1" binary="$2"
+  ln -- "$staged" "${binary%/*}/" 2>/dev/null || [ -e "$binary" ] || [ -L "$binary" ]
+}
+
 # The publisher in skill-tests.yml builds on Linux x86_64. Its executable
 # can still require libraries the host lacks, so probe it before placement.
 agent_runtime_fetch() ( # BINARY
@@ -133,9 +141,7 @@ agent_runtime_fetch() ( # BINARY
       137) unavailable probe-interrupted; return 1 ;;
       *) unavailable incompatible; return 1 ;;
     esac
-    # Both paths are in bin/, so even concurrent installers expose the
-    # whole executable in one rename.
-    mv -fT -- "$scratch/$name" "$binary" || { unavailable placement; return 1; }
+    agent_runtime_place_binary "$scratch/$name" "$binary" || { unavailable placement; return 1; }
     return 0
   done <<<"$candidates"
   unavailable "${run_cause:-no-published-artifact}" "$unread_run"

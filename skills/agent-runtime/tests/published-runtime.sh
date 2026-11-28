@@ -17,7 +17,7 @@ export HOME="$TMP_ROOT/home"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 export FAKE_CARGO_LOG="$TMP_ROOT/cargo.log" API_LOG="$TMP_ROOT/api.log"
 mkdir -p "$HOME" "$TMP_ROOT/bin" "$TMP_ROOT/cargo" "$TMP_ROOT/publish"
-for tool in awk bash cat chmod cut find jq mkdir mktemp mv rm sha256sum sleep sort timeout uname unzip wc; do
+for tool in awk bash cat chmod cut find jq ln mkdir mktemp mv rm sha256sum sleep sort timeout uname unzip wc; do
   ln -s "$(command -v "$tool")" "$TMP_ROOT/bin/$tool"
 done
 ln -s "$ROOT/skills/agent-runtime/tests/setup/cargo" "$TMP_ROOT/cargo/cargo"

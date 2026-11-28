@@ -102,6 +102,35 @@ key_of() { # OUT — the key the success line names
   printf '%s' "${line%% *}"
 }
 
+concurrent_placement() {
+  local cache="$TMP_ROOT/cache-race" hold="$TMP_ROOT/race-hold" pid binary="" status=0 OUT=""
+  : >"$hold"
+  FAKE_CARGO_HOLD="$hold" AGENT_RUNTIME_CACHE="$cache" "$SETUP" >"$TMP_ROOT/race-out" 2>"$TMP_ROOT/race-err" &
+  pid=$!
+  # Cargo acknowledges the hold after setup has checked the empty cache.
+  if await_marker "$hold.pid"; then
+    run "$cache" "$SETUP"
+    assert_eq "$RC" 0 'concurrent setup: first placement succeeds' "$TMP_ROOT/err"
+    binary="$cache/bin/agent-runtime-$(key_of "$OUT")"
+    ln -- "$binary" "$TMP_ROOT/first-placement" || fail 'concurrent setup: retain the first inode'
+  else
+    fail 'concurrent setup: the held build reaches cargo'
+  fi
+  rm -- "$hold"
+  wait "$pid" || status=$?
+  assert_eq "$status|$(cat "$TMP_ROOT/race-out")" "0|$OUT" 'concurrent setup: second placement reports success for the same binary' "$TMP_ROOT/race-err"
+  if [ "$binary" -ef "$TMP_ROOT/first-placement" ]; then
+    pass 'concurrent setup keeps the first inode'
+  else
+    fail 'concurrent setup keeps the first inode'
+  fi
+}
+
+if [ "${1:-}" = placement-race ]; then
+  concurrent_placement
+  exit "$((FAIL != 0))"
+fi
+
 RC=0
 python3 -B "$SRC/tests/setup/wrapper-timeout.py" "$WRAPPER" "$PKG/scripts/lib/key.sh" "$TMP_ROOT" 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC" 0 'wrapper timeout during a build leaves the keyed binary ready' "$TMP_ROOT/err"
@@ -132,6 +161,8 @@ run "$CACHE" "$SETUP"
 assert_eq "$RC" 0 'repeated setup exits 0' "$TMP_ROOT/err"
 assert_eq "$OUT" "agent-runtime-setup: key=$KEY binary=$CACHE/bin/agent-runtime-$KEY" 'repeated setup prints the same line'
 assert_eq "$(calls)" 1 'repeated setup calls cargo no second time'
+
+concurrent_placement
 
 # --- --offline reaches cargo ----------------------------------------------
 run "$TMP_ROOT/cache-offline" "$SETUP" --offline
