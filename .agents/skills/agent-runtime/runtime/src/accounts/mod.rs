@@ -204,6 +204,9 @@ pub struct AccountRow {
     /// minute, where its `usage_rate_state` is `measured`.
     pub usage_rate_pct_per_min: Option<f64>,
     pub usage_age_s: Option<f64>,
+    /// The 5-hour window's reading age, which can come from the provider
+    /// while the plan windows keep this machine's age.
+    session_age_s: Option<f64>,
     pub credits: Option<Value>,
     /// The pool the row spends: `plan` where the listing named none,
     /// `copilot`, `api-credit` or `cloud-credit` for a grant.
@@ -322,6 +325,7 @@ impl AccountRow {
             .unwrap_or_default();
         let retire = listing::retire_date(settings, &alias, &config_dir);
         let excluded = listing::excluded(settings, &alias, &config_dir);
+        let usage_age_s = number(raw, "usage_age_s");
         Some(AccountRow {
             canon: wall::canon(&config_dir),
             harness,
@@ -338,7 +342,8 @@ impl AccountRow {
                 == Some("measured"))
             .then(|| number(raw, "usage_rate_pct_per_min"))
             .flatten(),
-            usage_age_s: number(raw, "usage_age_s"),
+            usage_age_s,
+            session_age_s: usage_age_s,
             credits: raw.get("credits").filter(|c| c.is_object()).cloned(),
             pool: string(raw, "pool").unwrap_or_else(|| "plan".to_owned()),
             plan_ends: match string(raw, "plan_ends").or_else(|| string(raw, "plan-ends")) {
@@ -777,17 +782,17 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// read the pool, else this machine's reading stands where it holds a
 /// figure, measured or stated; a
 /// Claude row the provider measured with no window scoped to `model` is
-/// judged on this machine's reading where it measured the account and holds
+/// judged on this machine's reading where it read the account `ok` and holds
 /// any model window, whatever its label, unmarked; and otherwise on the
 /// provider's shared windows, its buckets as read,
 /// marked `scope: unread`, for every pick, a worker's and a controller's
 /// alike: the provider's line states no model window, so a pick that held
 /// out for one would find no Claude account it measures. The provider's words
 /// (`reserved`, `plan-ends`, `unified-status`), its Codex reset count, and
-/// its 5-hour window, where that window is the fuller and its
-/// reset ahead, stand whichever reading does, a row with no reading
-/// included. A Claude account keeps its local limit resets. An account with
-/// one reading keeps it. The roster reports both readings.
+/// its 5-hour window with its own reading age, where that window is the
+/// fuller and its reset ahead, stand whichever reading does, a row with no
+/// reading included. A Claude account keeps its local limit resets. An
+/// account with one reading keeps it. The roster reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
 /// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
@@ -853,6 +858,7 @@ fn resolve(
                 let admission = provider.raw.get("unified_status").cloned();
                 let session = session_window(&provider)
                     .filter(|w| reset_epoch(w.resets_at.as_deref()).is_some_and(|at| at > now));
+                let session_age_s = provider.session_age_s;
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model)
                 } else {
@@ -876,6 +882,7 @@ fn resolve(
                     .filter(|w| number(&stands.raw, SESSION.field).is_none_or(|pct| w.pct > pct))
                     && let Value::Object(raw) = &mut stands.raw
                 {
+                    stands.session_age_s = session_age_s;
                     raw.insert(SESSION.field.to_owned(), figure(window.pct));
                     let resets = raw.entry("resets").or_insert_with(|| json!({}));
                     if !resets.is_object() {
@@ -2085,18 +2092,19 @@ fn judge(
     // serves a backed-off reading's figures only while that reading is
     // fresh (orch's lane-host schema, Accounts rows), so it is judged on its
     // figures alone.
-    let stale = launch
-        .then_some(row.usage_age_s)
-        .flatten()
-        .filter(|_| binding.is_some())
-        .and_then(|age| {
-            plan_windows(row, req.model.as_deref(), req.binding_floor)
-                .iter()
-                .chain(session.as_ref())
-                .map(project)
-                .find(|p| age / 3600.0 * p.burn >= max - p.window.pct)
-                .map(|p| (age, p.window.bucket.clone()))
-        });
+    let stale = if launch && binding.is_some() {
+        plan_windows(row, req.model.as_deref(), req.binding_floor)
+            .iter()
+            .map(|window| (window, row.usage_age_s))
+            .chain(session.as_ref().map(|window| (window, row.session_age_s)))
+            .find_map(|(window, age)| {
+                let age = age?;
+                (age / 3600.0 * project(window).burn >= max - window.pct)
+                    .then(|| (age, window.bucket.clone()))
+            })
+    } else {
+        None
+    };
     // A spent 5-hour window admits no start until its reset, whatever the
     // other figures hold.
     let spent = launch.then(|| row.session_spent_until(now)).flatten();

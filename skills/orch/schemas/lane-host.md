@@ -333,7 +333,8 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 | `harness` | Required: `claude`, `codex`, `pi` or `copilot`. |
 | `status` | The listing's status word; `ok` when absent. |
 | `detail` | The provider's text for the status, carried into the record as written. |
-| `weekly-pct`, `model-pct`, `monthly-pct`, `session-5h-pct` | Whole numbers `0` to `100`; `session-5h-pct` is the 5-hour window. |
+| `weekly-pct`, `model-pct`, `monthly-pct` | Whole numbers `0` to `100`. |
+| `session-5h-pct` | The 5-hour window as a whole number `0` to `100`. The provider's 5-hour window, with its reset and observation age, stands over whichever reading the pick uses when it is fuller and its reset is ahead. |
 | `model-label` | The model window's label. |
 | `weekly-resets`, `model-resets`, `monthly-resets`, `session-resets` | Each window's reset timestamp. |
 | `observed-age` | Seconds since the provider read the figures, written as a whole number such as `observed-age=42`; a reader rounds a fraction up. A launch reads a figure too old to vouch for the room it shows as no room. |
@@ -343,7 +344,7 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 | `credit-remaining`, `credit-available`, `credit-overage-limit-reached`, `credit-spend-control-reached` | A Codex credit. |
 
 - A `harness=claude` row with no `session-5h-pct` whose `model-pct` has no `model-label` states its 5-hour window there, with `model-resets` its reset. Fleet's line takes that form until it names the window.
-- A Claude row with no window scoped to the pick's model is judged on its shared windows for every pick, its record marked `scope: unread`, unless this machine measured the account and holds any model window for it, whatever its label, which then stands unmarked.
+- A Claude row with no window scoped to the pick's model is judged on its shared windows for every pick, its record marked `scope: unread`, unless this machine read the account `ok` and holds any model window for it, whatever its label. That local reading then stands unmarked.
 - Only `ok` and `rate_limited` rows are measured. A row whose usage read backs off says `rate_limited`, with its last reading's percentages while that reading is fresh. Any other `status` word leaves the account unmeasured.
 - A `detail` starting `api-credit-` marks a Pi row as an API grant.
 - A Pi API grant sits on a `harness=pi` row with no `monthly-pct`: all four fields together, dollars as non-negative decimals with at most two places, a limit above zero, the expiry a timestamp.

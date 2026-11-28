@@ -779,14 +779,50 @@ mod tests {
         );
     }
 
-    /// One account as this machine reads it: Claude's weekly window and its
-    /// model windows `buckets` measured.
-    fn local(dir: &str, weekly: u64, buckets: Value) -> AccountRow {
+    /// A fresh local Claude reading with weekly, model and optional 5-hour windows.
+    fn local(dir: &str, weekly: u64, buckets: Value, session: Option<u64>) -> AccountRow {
         let raw = json!({"alias": dir, "harness": "claude", "config_dir": dir,
             "measured_through": "local", "status": "ok", "verdict": "room",
             "headroom_pct": 100 - weekly, "binding_bucket": "weekly",
-            "binding_resets_at": null, "weekly_pct": weekly, "model_buckets": buckets});
+            "binding_resets_at": null, "weekly_pct": weekly, "model_buckets": buckets,
+            "usage_age_s": 0, "session_5h_pct": session,
+            "resets": {"session": session.map(|_| at(2.0))}});
         AccountRow::parse(&raw, &super::super::tests::settings()).unwrap()
+    }
+
+    #[test]
+    fn a_carried_provider_window_keeps_its_observation_age() {
+        let settings = super::super::tests::settings();
+        let tokens = Judged::of(crate::settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+        let (provider, notes) = host(&format!(
+            "account=/h/.a\tharness=claude\tweekly-pct=20\tsession-5h-pct=89\tsession-resets={}\tobserved-age=7200",
+            at(2.0)
+        ));
+        assert!(notes.is_empty(), "{notes:?}");
+        let rows = [
+            local(
+                "/h/.a",
+                20,
+                json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                Some(10),
+            ),
+            AccountRow::parse(&provider[0], &settings).unwrap(),
+        ];
+        let req = PickRequest {
+            model: Some("claude-opus-5-5".to_owned()),
+            lane: Some("/h/.a".to_owned()),
+            max_pct: Some(95),
+            projected: true,
+            ..PickRequest::new(Harness::Claude)
+        };
+        let reply = pick(&rows, &req, &FleetFacts::default(), &settings, &tokens, NOW).reply();
+        assert_eq!(
+            reply["record"]["projected_window"]["bucket"],
+            json!("session")
+        );
+        assert_eq!(reply["record"]["burn_pct_per_lane_hour"], json!(5));
+        assert_eq!(reply["record"]["projected_headroom_pct"], json!(6));
+        assert_eq!(reply["answer"], json!("unmeasured"), "{reply}");
     }
 
     /// The pick over Fleet's lines, each case a pick the KEN-5803 review
@@ -879,7 +915,7 @@ mod tests {
                     "account=/h/.5claude\tharness=claude\tweekly-pct=30\tsession-5h-pct=20\tsession-resets={}",
                     at(2.0)
                 ),
-                vec![local("/h/.5claude", 40, json!([]))],
+                vec![local("/h/.5claude", 40, json!([]), None)],
                 worker("claude-fable-5-2", None),
                 (&[], &[]),
                 ("lane", &["/h/.5claude"]),
@@ -922,13 +958,14 @@ mod tests {
                     "/h/.6claude",
                     20,
                     json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                    None,
                 )],
                 worker("claude-opus-5-5", Some("/h/.6claude")),
                 (&[], &[]),
                 ("walled", &["/h/.6claude"]),
             ),
             (
-                "a spent 5-hour window on an account this machine reads with room on the model",
+                "provider 100 stands over local 10 in the 5-hour window",
                 format!(
                     "account=/h/.7claude\tharness=claude\tweekly-pct=20\tsession-5h-pct=100\tsession-resets={}",
                     at(2.0)
@@ -937,6 +974,23 @@ mod tests {
                     "/h/.7claude",
                     20,
                     json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                    Some(10),
+                )],
+                worker("claude-opus-5-5", Some("/h/.7claude")),
+                (&[], &[]),
+                ("walled", &["/h/.7claude"]),
+            ),
+            (
+                "local 100 stands over provider 40 in the 5-hour window",
+                format!(
+                    "account=/h/.7claude\tharness=claude\tweekly-pct=20\tsession-5h-pct=40\tsession-resets={}",
+                    at(2.0)
+                ),
+                vec![local(
+                    "/h/.7claude",
+                    20,
+                    json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                    Some(100),
                 )],
                 worker("claude-opus-5-5", Some("/h/.7claude")),
                 (&[], &[]),
@@ -952,6 +1006,7 @@ mod tests {
                 "/h/.8claude",
                 20,
                 json!([{"label": "Opus", "pct": 10, "resets_at": at(100.0)}]),
+                None,
             )],
             overseer(Some("/h/.8claude"), &[]),
             (&[], &[]),
