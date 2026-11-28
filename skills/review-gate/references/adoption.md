@@ -365,14 +365,14 @@ The refresh pull request also adds Retired items: each line refresh printed for 
 On a new publication, the refresh pull request also adds Consumer settings. The consumer owns any setting changes.
 
 - The same parse passes every committed `kendex.settings.toml` `[env]` setting.
-- The report reads the rendered review-gate `retired-settings.json` from the consumer's shared skill tree. A consumer that uses the shared workflow without installing review-gate uses the release's list.
+- The report reads the rendered review-gate `retired-settings.json` at the path recorded in the consumer's generated inventory, including per-harness copies. It uses the release's list when the inventory names no list, including when review-gate is absent or pinned to a revision that predates the file.
 - The report names each key the list records under `keys`, with the key that replaces it where `successors` names one, and each value it records under `values` for that key, a shipped default since replaced.
 - The section also carries the `setting-unset:` line change-class printed for the pull request, and its `queue-only:` line where the cause is `queue-list-undeclared` or `queue-settings-unreadable`, so an unset `HARNESS_CI_QUEUE_PATHS` is named there. The `queue-only:` line every other verdict prints names no setting and stays out.
 - A current consumer runs no classifier and appends the retired rows to its run summary.
 - A run that retains an unchanged head includes the classifier's setting notes in that summary.
 - A report that fails, such as on an unreadable list, stops publication and auto-merge.
 
-The Kendex changelog section uses the kendex source commits recorded in each selected project's committed and rendered locks. It lists catalog commit subjects and added changelog text for those revisions. Where the history cannot be read, the report says so and the refresh can still land.
+The Kendex changelog section uses the kendex source commits recorded in each selected project's committed and rendered locks. It lists catalog commit subjects and added changelog text for those revisions. When the report would put the pull request body over GitHub's limit, the section links to the full report in the published refresh commit. Where the history cannot be read, the report says so and the refresh can still land.
 
 For a direct landing, the consumer overseer reads the Kendex changelog and retired settings in the refresh commit message in the default branch's push history. The run summary also carries the classifier's setting notes.
 

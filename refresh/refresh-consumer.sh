@@ -645,8 +645,7 @@ else
   git config user.email "$user_id+${REFRESH_APP_SLUG}[bot]@users.noreply.github.com"
   # No consumer hook executes under the app token. Verification checks the
   # installed files; the repository's checks run on its pull request.
-  # The default-branch push has no PR body. Its commit message makes these
-  # notices available in push history without another credential or write.
+  # The default-branch push carries the notices in its commit message.
   {
     printf 'chore: refresh kendex renders\n'
     [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report"
@@ -815,9 +814,6 @@ fi
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
 fi
-if [ -n "$changelog_report" ]; then
-  printf -v body '%s\n%s\n' "$body" "$changelog_report"
-fi
 if [ -n "$retired_items" ]; then
   printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"
 fi
@@ -825,6 +821,23 @@ if [ -n "$verify_report" ]; then
   printf -v verify_note 'kendex verify failed on declarations this repository holds, so this pull request stays a draft and unarmed until verify passes. Make the edit each finding names on the default branch; the next refresh renders on it and marks this pull request ready.\n\n%s' "$verify_report"
   printf -v body '%s\n%s\n' "$body" "$verify_note"
 fi
+pull_body="$TMP/pull-body"
+printf '%s' "$body" >"$pull_body"
+# Stream the report to keep it outside argv and check GitHub's character limit before publication.
+printf '%s' "${changelog_report:+$'\n'$changelog_report$'\n'}" | python3 -c '
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+body = path.read_text(encoding="utf-8", errors="replace")
+report = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+if report and len(body + report) > 65536:
+    report = f"\n## Kendex changelog\n\n[Read the full catalog report in the refresh commit]({sys.argv[2]}).\n"
+    if len(body + report) > 65536:
+        body = body.replace(sys.argv[3] + "\n", "", 1)
+if len(body + report) > 65536:
+    raise SystemExit("refresh-error=pull-body value=too-large")
+path.write_text(body + report, encoding="utf-8")
+' "$pull_body" "https://github.com/$GH_REPO/commit/$head" "$merge_note"
 if [ "$state" = pushed ] || [ -n "$verify_report" ]; then
   # An old arm survives a push and could merge the replacement before review,
   # and a held head must not merge at all. Read lifecycle again after
@@ -886,9 +899,9 @@ fi
 if [ -z "$pr" ]; then
   draft=()
   if [ -n "$verify_report" ]; then draft=(-F draft=true); fi
-  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" ${draft[@]+"${draft[@]}"} --jq .number)"
+  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -F body=@"$pull_body" ${draft[@]+"${draft[@]}"} --jq .number)"
 else
-  if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" --jq .draft)"; then
+  if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -F body=@"$pull_body" --jq .draft)"; then
     printf 'refresh-error=pull-update pr=%s\n' "$pr" >&2
     exit 1
   fi
