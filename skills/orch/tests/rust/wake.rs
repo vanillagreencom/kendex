@@ -2065,7 +2065,6 @@ done
 
     let lane = record["lanes"][0].as_object_mut().unwrap();
     lane.insert("mail_root".to_owned(), lane["checkout"].clone());
-    #[cfg(target_os = "linux")]
     {
         let phase = record["intents"]
             .as_array_mut()
@@ -2093,18 +2092,6 @@ done
     stop();
     continue_once(&mut baseline, 1);
 
-    // Keep this next refusal on the normal status verb. The legacy case
-    // above has already used the provider's worktree proof to continue.
-    #[cfg(target_os = "linux")]
-    {
-        let mut rooted = fleet.read_fleet();
-        rooted["intents"]
-            .as_array_mut()
-            .unwrap()
-            .last_mut()
-            .unwrap()["phase"]["hosted_mail_root"] = json!(host.worktree());
-        fleet.write_fleet(&rooted);
-    }
     stop();
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
     let refused = observe_ssh_worker(&fleet, &mut baseline, &clock);
@@ -2142,7 +2129,7 @@ done
     assert!(
         matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
             if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
-                && cause.contains("harness-probe-failed")),
+                && cause.contains("session-rows-read-failed")),
         "{refused:?}"
     );
     assert!(!refuse_status.exists());
@@ -2270,12 +2257,6 @@ done
         [watch::Event::LaneUnreadable { lane, cause }]
             if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
     ));
-    // Normal inbox wakes use the recorded root. Restore the launch's
-    // confirmed fields after the legacy replacement scenario.
-    let mut rooted = fleet.read_fleet();
-    rooted["lanes"][0]["mail_root"] = confirmed["lane"]["mail_root"].clone();
-    rooted["lanes"][0]["mail_root_confirmed"] = confirmed["lane"]["mail_root_confirmed"].clone();
-    fleet.write_fleet(&rooted);
     let omit_prompt = host.worktree().join("omit-next-prompt");
     std::fs::write(&omit_prompt, "").unwrap();
     std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
@@ -2304,11 +2285,39 @@ done
         observe_ssh_worker(&fleet, &mut baseline, &clock);
     }
     assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
-    baseline.apply(Change::Set {
-        kind: UNREAD_KIND.into(),
-        identity: "KEN-1".into(),
-        value: "unread-after-retired-resume".into(),
+    let envelope = json!({
+        "id": "unread-after-retired-resume",
+        "kind": "directive",
+        "at": "2026-01-29T15:13:20Z",
+        "from": "overseer:kendex",
+        "text": "Continue the outstanding work.",
     });
+    std::fs::write(
+        rows.with_file_name("to-lane.jsonl"),
+        format!("{envelope}\n"),
+    )
+    .unwrap();
+    let mut mail = watch::mail::MailDuty::new(
+        Mailbox::new(lane_mail().to_path_buf()),
+        watch::mail::Config::of(&fleet.settings, &fleet.paths).unwrap(),
+    );
+    let pass = mail
+        .run(&Tick {
+            duty: Duty::Mail,
+            now: clock.now(),
+            wall: clock.wall_secs(),
+            baseline: &baseline,
+            clock: &clock,
+        })
+        .unwrap();
+    assert!(pass.failed.is_none(), "{pass:?}");
+    for change in pass.changes {
+        baseline.apply(change);
+    }
+    assert_eq!(
+        baseline.get(UNREAD_KIND, "KEN-1"),
+        Some("unread-after-retired-resume")
+    );
     let delivered = wake(&mut baseline);
     assert_eq!(
         rendered(&delivered),
@@ -2462,8 +2471,8 @@ done
         );
     }
 
-    // A legacy lane record stores a different root from the confirmed
-    // journal. The inbox receipt's cursor belongs to the recorded file.
+    // A legacy lane record stores a different root from the provider
+    // proof. The inbox receipt's cursor belongs to the recorded file.
     let recorded = host.worktree().join("recorded-root");
     let recorded_rows = recorded.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
     std::fs::create_dir_all(recorded_rows.parent().unwrap()).unwrap();

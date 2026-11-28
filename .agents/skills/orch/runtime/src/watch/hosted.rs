@@ -2915,6 +2915,14 @@ pub(crate) fn session_rows_at(
     }
 }
 
+/// A recorded mail route needs launch proof where it lacks a usable root.
+pub(super) fn needs_mail_root(lane: &Lane) -> bool {
+    lane.status == LaneStatus::Running
+        && lane.harness.as_deref() == Some("claude")
+        && lane.mail_host().is_some()
+        && mail_root(lane).is_err()
+}
+
 /// The matching launch's journal proves its mail root. Legacy journals
 /// still bind the lane to its launch identity, which lets its provider
 /// prove the owned worktree while that worker runs.

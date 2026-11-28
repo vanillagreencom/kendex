@@ -8555,8 +8555,8 @@ fi
 }
 
 #[test]
-fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
-    use orch_runtime::watch::{Change, hosted};
+fn hosted_mail_root_missing_at_confirmation_requires_launch_proof() {
+    use orch_runtime::watch::{Change, Event, hosted};
 
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -8570,6 +8570,10 @@ fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
         .remove("hosted_mail_root");
     world.runner.write_fleet(&fleet);
     let lane = world.reconcile_launch();
+    let confirmed = world.runner.fleet();
+    let mut mismatched = confirmed.clone();
+    mismatched["lanes"][0]["launch"]["start"] = json!("an-earlier-process");
+    world.runner.write_fleet(&mismatched);
     let (mail, refused) = world.watch_mail();
     assert!(
         refused
@@ -8584,7 +8588,19 @@ fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
         }),
         "{mail:?}"
     );
+
+    world.runner.write_fleet(&confirmed);
+    world.hosted_mail(&["notice", "--item", "KEN-H"]);
+    let (mail, refused) = world.watch_mail();
+    assert!(refused.is_empty(), "{refused:?}");
+    assert!(
+        mail.events
+            .iter()
+            .any(|event| matches!(event, Event::LaneNotice { item, .. } if item == "KEN-H")),
+        "{mail:?}"
+    );
     assert!(lane["mail_root"].is_null(), "{lane}");
+    assert!(world.runner.fleet()["lanes"][0]["mail_root"].is_null());
     let lane = serde_json::from_value(lane).unwrap();
     assert_eq!(
         hosted::record_left(&world.scripts, &lane),

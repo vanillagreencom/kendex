@@ -2897,7 +2897,7 @@ exit 9
         self.assertEqual((running.returncode, running.stdout, lane.poll()), (0, b"running\n", None), running.stderr)
         # merge-pr removes the registered tree before its harness exits.
         worktree = Path(self.row["clone"] + "-worktree")
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
             proved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
             self.assertEqual((proved.returncode, proved.stdout), (0, f"running\n{worktree}\n".encode()),
                              proved.stderr)
@@ -2940,6 +2940,27 @@ exit 9
         self.assertEqual(status().stdout, b"exited\n")
         record.unlink()
         self.assertEqual(status().stdout, b"exited\n")
+
+    def test_status_compares_the_cwd_reported_on_a_nonlinux_target(self):
+        lane = self.launch_lane()
+        worktree = self.row["clone"] + "-worktree"
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+        expected = shlex.quote(f"-nP -a -p {lane.pid} -d cwd -F0pfn")
+        for pid, root, code in ((lane.pid, worktree, 0), (lane.pid, str(self.root), 0),
+                                (1, worktree, 0), (lane.pid, worktree, 1)):
+            with self.subTest(pid=pid, root=root, code=code):
+                self.executable(remote_bin / "lsof", "#!/bin/sh\n"
+                                f"test \"$*\" = {expected} || exit 2\n"
+                                f"printf 'p%s\\0\\nfcwd\\0n%s\\0\\n' {pid} {shlex.quote(root)}\n"
+                                f"exit {code}\n")
+                answer = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree",
+                                   SSH_TEST_REMOTE_BIN=str(remote_bin))
+                if (pid, root, code) == (lane.pid, worktree, 0):
+                    self.assertEqual((answer.returncode, answer.stdout), (0, f"running\n{worktree}\n".encode()),
+                                     answer.stderr)
+                else:
+                    self.assertEqual((answer.returncode, answer.stdout), (1, b""), answer.stderr)
 
     def test_stop_reaches_the_recorded_group_alone_whatever_the_worktree(self):
         # merge-pr removes the item's worktree before its lane goes idle: the

@@ -85,6 +85,7 @@
 //! the owner told once, as for its mail.
 
 use agent_runtime::controller::Overseer;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -535,24 +536,34 @@ fn target_of(
     lane_target(lane, socket).or_else(|| hosted_target(lane, line()?, socket))
 }
 
-fn resume_target(
+type RootReads<'a> = BTreeMap<&'a str, std::result::Result<Cow<'a, Lane>, String>>;
+
+fn wake_target<'a>(
     scripts: &Path,
-    lane: &Lane,
+    lane: &'a Lane,
     intents: &[Intent],
     rows_root: RowsRoot,
     socket: &Path,
     caps: Option<Capabilities>,
+    roots: &mut RootReads<'a>,
 ) -> Option<Target> {
     if rows_root == RowsRoot::Recorded {
-        return target_of(lane, socket, || caps);
+        if let Some(target) = lane_target(lane, socket) {
+            return Some(target);
+        }
+        if !hosted::needs_mail_root(lane) {
+            return hosted_target(lane, caps?, socket);
+        }
     }
     let caps = caps?;
-    let rooted = hosted::with_session_root(scripts, lane, intents, caps);
+    let rooted = roots
+        .entry(&lane.item)
+        .or_insert_with(|| hosted::with_session_root(scripts, lane, intents, caps));
     let mut target = hosted_target(rooted.as_deref().unwrap_or(lane), caps, socket)?;
     if let Err(cause) = rooted
         && target.prompt_rows.is_some()
     {
-        target.prompt_rows = Some(Err(cause));
+        target.prompt_rows = Some(Err(cause.clone()));
     }
     target.rows_root = rows_root;
     Some(target)
@@ -1065,6 +1076,7 @@ impl Wake {
         // Each host's line is shared by new sends and open receipt reads
         // in this pass.
         let mut lines = BTreeMap::new();
+        let mut roots = RootReads::new();
         let mut provider_resumes = BTreeSet::new();
         let mut covered_unread = BTreeSet::new();
         let mut receipt_rows = BTreeMap::new();
@@ -1106,8 +1118,15 @@ impl Wake {
             }
             let evidence = receipt_rows.entry(&lane.item).or_insert_with(|| {
                 let caps = host_line(&mut lines, &scripts, lane);
-                let target =
-                    resume_target(&scripts, lane, &fleet.intents, rows_root, &socket, caps)?;
+                let target = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    rows_root,
+                    &socket,
+                    caps,
+                    &mut roots,
+                )?;
                 let snapshot = target.session_rows(&scripts)?;
                 Some((target, snapshot))
             });
@@ -1214,9 +1233,19 @@ impl Wake {
             if let Some(mark) = marked.filter(|m| m.resume.as_deref() == Some(row.as_str())) {
                 if mark.outcome.is_none() {
                     let mark = mark.clone();
+                    let caps = host_line(&mut lines, &scripts, lane);
+                    let target = wake_target(
+                        &scripts,
+                        lane,
+                        &fleet.intents,
+                        resume.rows_root(lane),
+                        &socket,
+                        caps,
+                        &mut roots,
+                    );
                     self.reconcile(
                         lane,
-                        &socket,
+                        target,
                         mark,
                         SavedReceipt {
                             key: &lane.item,
@@ -1240,9 +1269,15 @@ impl Wake {
             {
                 target
             } else {
-                let Some(target) =
-                    resume_target(&scripts, lane, &fleet.intents, rows_root, &socket, caps)
-                else {
+                let Some(target) = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    rows_root,
+                    &socket,
+                    caps,
+                    &mut roots,
+                ) else {
                     continue;
                 };
                 resolved = target;
@@ -1317,6 +1352,19 @@ impl Wake {
                 let Some(lane) = fleet.lanes.iter().find(|l| l.item == name) else {
                     continue;
                 };
+                let caps = (!marked(&record, lane, &state)
+                    || record.get(&lane.item).is_some_and(hosted_open))
+                .then(|| host_line(&mut lines, &scripts, lane))
+                .flatten();
+                let target = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    RowsRoot::Recorded,
+                    &socket,
+                    caps,
+                    &mut roots,
+                );
                 if let Some(mark) = record
                     .get(&lane.item)
                     .filter(|m| m.outcome.is_none() && marked(&record, lane, &state))
@@ -1324,7 +1372,7 @@ impl Wake {
                 {
                     self.reconcile(
                         lane,
-                        &socket,
+                        target,
                         mark,
                         SavedReceipt {
                             key: &name,
@@ -1336,13 +1384,7 @@ impl Wake {
                     )?;
                     continue;
                 }
-                let line = || {
-                    (!marked(&record, lane, &state)
-                        || record.get(&lane.item).is_some_and(hosted_open))
-                    .then(|| host_line(&mut lines, &scripts, lane))
-                    .flatten()
-                };
-                target_of(lane, &socket, line)
+                target
             };
             let Some(target) = target else {
                 continue;
@@ -1452,24 +1494,22 @@ impl Wake {
     fn reconcile(
         &self,
         lane: &Lane,
-        socket: &Path,
+        target: Option<Target>,
         mark: WakeMark,
         receipt: SavedReceipt<'_>,
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
         if hosted::host_of(lane) != crate::provider::LOCAL {
-            let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
             if mark.turns_before != ROWS_CURSOR_UNREAD
-                && let Ok(caps) = hosted::capabilities(&scripts, hosted::host_of(lane))
-                && let Some(target) = hosted_target(lane, caps, socket)
+                && let Some(target) = target
                 && target.prompt_rows.is_some()
             {
                 return self.repeat_at(&target, receipt, mark, record, produced);
             }
             return self.lost(&lane.item, mark, receipt.resume, record, produced);
         }
-        match lane_target(lane, socket) {
+        match target {
             Some(target) => self.repeat_at(&target, receipt, mark, record, produced),
             None => Ok(()),
         }

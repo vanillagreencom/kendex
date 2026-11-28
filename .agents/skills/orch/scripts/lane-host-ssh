@@ -1164,6 +1164,25 @@ def process_group(row, item):
     raise SystemExit(1)
 
 
+# lsof -F0pfn writes NUL-terminated fields and ends each set with a newline.
+# The extra NUL is emitted only when lsof exits successfully.
+WORKTREE_CWD = r'''
+system=$(uname -s) || exit 1
+if test "$system" = Linux; then
+  test "$1" -ef "/proc/$2/cwd"
+else
+  {
+    IFS= read -r -d '' process || exit 1
+    IFS= read -r -d '' descriptor || exit 1
+    IFS= read -r -d '' cwd || exit 1
+    IFS= read -r -d '' end || exit 1
+    [[ "$process" == "p$2" && "$descriptor" == $'\nfcwd' && "$cwd" == n/* && "$end" == $'\n' ]] || exit 1
+    test "$1" -ef "${cwd#n}"
+  } < <(lsof -nP -a -p "$2" -d cwd -F0pfn && printf '\0')
+fi
+'''
+
+
 def status(row, item, prove_worktree=False):
     """Read the lane's recorded process group, optionally proving its cwd."""
     owned(row, item, "status")
@@ -1175,7 +1194,7 @@ def status(row, item, prove_worktree=False):
     path = worktree_path(row, item)
     pid, start = group.get("pid"), group.get("start")
     if isinstance(pid, int) and pid > 1 and isinstance(start, str) and start:
-        cwd = remote(row, 'test "$1" -ef "/proc/$2/cwd"', path, str(pid), accept=(1,))
+        cwd = remote(row, WORKTREE_CWD, path, str(pid), accept=(1,))
         if cwd.returncode == 0:
             checked = process_group(row, item)
             if (checked.get("pid"), checked.get("start")) == (pid, start):
@@ -1610,8 +1629,8 @@ its own close-out removed stops all the same. A failed validation stop exits 1
 with stop-validations-failed, a failed group stop with stop-failed, each below
 the runtime's own line. status takes the same arguments and reads the
 recorded group without signalling it: running while a member lives, exited
-otherwise. On Linux, status --worktree also proves the recorded group's
-working directory for a running lane. A failed ownership or group read exits nonzero and reports no
+otherwise. status --worktree also proves the recorded group's working
+directory through procfs on Linux or lsof on other hosts. A failed ownership or group read exits nonzero and reports no
 status. A clone holding neither a marker naming the item nor
 the item's worktree, as a finished close leaves it whether or not a create for
 another item followed, holds nothing of the item: stop answers stopped item=ID
