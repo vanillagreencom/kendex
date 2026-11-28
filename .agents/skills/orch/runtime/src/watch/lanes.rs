@@ -55,6 +55,7 @@
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use agent_runtime::record::Document;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -637,6 +638,8 @@ pub struct Pass<'a> {
 /// What one lane's pass read, kept for the report a row asks for.
 struct Observed<'a> {
     lane: &'a Lane,
+    /// The lane used to read a current provider stop when its root needed proof.
+    continuation_lane: Option<Box<Lane>>,
     name: String,
     pane_key: Option<String>,
     identity: Option<Identity>,
@@ -732,8 +735,8 @@ impl HostRead {
         let pi = lane.harness.as_deref().and_then(Harness::parse) == Some(Harness::Pi);
         let rows = match (caps.files, &status) {
             (Files::Verb, None | Some(Ok(HostStatus::Running))) if pi => {
-                Some(Ok(match hosted::session_rows(scripts, lane) {
-                    Answer::Live(text) => rows::last_row_in(&text),
+                Some(Ok(match hosted::session_rows(scripts, lane, caps) {
+                    Answer::Live(rows) => rows.last_row(),
                     Answer::Gone => Reading::Gone,
                     Answer::Unreadable { .. } => Reading::Unreadable {
                         cause: "rows-host-unread",
@@ -757,12 +760,18 @@ impl HostRead {
 fn ssh_claude_rows(
     lane: &Lane,
     pass: &Pass,
+    caps: Capabilities,
+    continuation_lane: &mut Option<Box<Lane>>,
     out: &mut Produced,
 ) -> Result<Reading<rows::Row>, String> {
-    let rooted = hosted::with_session_root(lane, &pass.fleet.intents);
-    let text = match hosted::confirmed_session_rows(pass.scripts, &rooted) {
-        Answer::Live(text) => text,
-        Answer::Gone => String::new(),
+    let rooted = hosted::with_session_root(pass.scripts, lane, &pass.fleet.intents, caps);
+    let answer = match rooted.as_deref() {
+        Ok(rooted) => hosted::confirmed_session_rows(pass.scripts, rooted, caps),
+        Err(cause) => hosted::session_rows_unreadable(hosted::host_of(lane), &lane.item, cause),
+    };
+    let window = match answer {
+        Answer::Live(rows) => Some(rows),
+        Answer::Gone => None,
         Answer::Unreadable { cause } => return Err(cause),
     };
     let at = if let Some(at) = lane.session_rows_at_launch {
@@ -792,23 +801,36 @@ fn ssh_claude_rows(
                 out.changes.push(set(
                     SSH_ROWS_FLOOR,
                     &name,
-                    format!("{}|{attempt}", rows::last_position_in(&text)),
+                    format!(
+                        "{}|{attempt}",
+                        window
+                            .as_ref()
+                            .map_or(0, hosted::SessionRows::last_position),
+                    ),
                 ));
                 return Ok(Reading::Gone);
             }
         }
     };
-    Ok(match rows::last_row_in(&text) {
-        Reading::Live(row)
-            if row.position > at
-                && row.harness.as_deref() == Some("claude")
-                && rows::stop_of(&row) == Some(Kind::Provider) =>
+    Ok(
+        match window
+            .as_ref()
+            .map_or(Reading::Gone, hosted::SessionRows::last_row)
         {
             Reading::Live(row)
-        }
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
-        Reading::Live(_) | Reading::Gone => Reading::Gone,
-    })
+                if row.position > at
+                    && row.harness.as_deref() == Some("claude")
+                    && rows::stop_of(&row) == Some(Kind::Provider) =>
+            {
+                if let Ok(Cow::Owned(rooted)) = rooted {
+                    *continuation_lane = Some(Box::new(rooted));
+                }
+                Reading::Live(row)
+            }
+            Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            Reading::Live(_) | Reading::Gone => Reading::Gone,
+        },
+    )
 }
 
 /// Read one lane: the pane, its foreground, its screen and its local rows. `host` is what its provider answered first: an
@@ -839,6 +861,7 @@ fn read_lane<'a>(
     };
     let unread = |state: LaneState| Observed {
         lane,
+        continuation_lane: None,
         name: name.clone(),
         pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
         identity: identity.clone(),
@@ -908,6 +931,7 @@ fn read_lane<'a>(
         });
         return Observed {
             lane,
+            continuation_lane: None,
             name: name.clone(),
             pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
             identity: identity.clone(),
@@ -938,6 +962,7 @@ fn read_lane<'a>(
         Reading::Live(PaneState::Dead(kept)) if hosted::host_of(lane) == "local" => {
             return Observed {
                 lane,
+                continuation_lane: None,
                 name,
                 pane_key,
                 identity,
@@ -990,6 +1015,7 @@ fn read_lane<'a>(
         );
     Observed {
         lane,
+        continuation_lane: None,
         name,
         pane_key,
         identity,
@@ -1275,6 +1301,7 @@ pub fn observe(pass: &Pass) -> Produced {
     let observed: Vec<Observed> = in_flight
         .iter()
         .filter_map(|lane| {
+            let mut continuation_lane = None;
             let mut host = match hosts.of(lane) {
                 // This kind has no harness for this duty to judge.
                 Ok(caps) if caps.status == Status::None => return None,
@@ -1287,14 +1314,21 @@ pub fn observe(pass: &Pass) -> Produced {
                 // by their pane. They cannot bind a watch floor to an attempt.
                 && (lane.mail_root_confirmed || identity_of(lane).is_some())
                 && matches!(host.status, Some(Ok(HostStatus::Running)))
-                && hosts.of(lane).is_ok_and(|caps| {
-                    caps.launch == Some(hosted::Launch::Ssh) && caps.files == Files::Verb
-                })
+                && let Ok(caps) = hosts.of(lane)
+                && caps.launch == Some(hosted::Launch::Ssh)
+                && caps.files == Files::Verb
             {
-                host.rows = Some(ssh_claude_rows(lane, pass, &mut out));
+                host.rows = Some(ssh_claude_rows(
+                    lane,
+                    pass,
+                    caps,
+                    &mut continuation_lane,
+                    &mut out,
+                ));
             }
             let failed_status = matches!(host.status, Some(Err(_)));
             let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
+            obs.continuation_lane = continuation_lane;
             // The lane status verb carries this cause as unjudged. The
             // watch reports that failed provider read as lane-unreadable.
             if failed_status && let LaneState::Unjudged { cause } = obs.state {
@@ -1801,7 +1835,10 @@ fn observe_one(
                 });
             if let Some(cause) = continuation
                 && !left
-                && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
+                && wake::reaches(
+                    obs.continuation_lane.as_deref().unwrap_or(obs.lane),
+                    hosts.of(obs.lane).ok(),
+                )
             {
                 if !reported {
                     out.changes
@@ -4797,6 +4834,7 @@ mod tests {
     fn observed<'a>(lane: &'a Lane, message: &str) -> Observed<'a> {
         Observed {
             lane,
+            continuation_lane: None,
             name: "gh-1".to_owned(),
             pane_key: Some("1 %1".to_owned()),
             identity: None,
@@ -5534,6 +5572,7 @@ mod tests {
             let walled = matches!(state, LaneState::Walled { .. });
             let obs = Observed {
                 lane: &lane,
+                continuation_lane: None,
                 name: "gh-1".to_owned(),
                 pane_key: Some("1 %1".to_owned()),
                 identity: None,

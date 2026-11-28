@@ -128,6 +128,9 @@ if [[ "${SSH_TEST_REQUEST_TTY:-}" == force && "$tty_off" == false ]]; then
   bash -c "${!#}" | "$REAL_PYTHON" -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b"\\n", b"\\r\\n"))'
   exit
 fi
+if [[ -n "${SSH_TEST_REMOTE_BIN:-}" ]]; then
+  export PATH="$SSH_TEST_REMOTE_BIN:$PATH"
+fi
 exec bash -c "${!#}"
 ''')
         self.executable(self.bin / "git", '''#!/usr/bin/env bash
@@ -1127,6 +1130,78 @@ rc=0
         refused = self.call("cat", "--item", "TEST-1", str(box / "to-lane.jsonl"))
         self.assertEqual(refused.returncode, 3, refused.stderr)
         self.assertIn(f"lane-host-ssh: mailbox-component path={box}\n".encode(), refused.stderr)
+
+    def test_session_rows_use_a_bounded_window_with_absolute_positions(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        limit = 1024 * 1024
+        row = b'{"event":"Stop","harness":"claude"}\n'
+        count = 2 * (limit // len(row) + 1)
+        final = b'{"event":"StopFailure"'
+        path.write_bytes(row * count + final)
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "python3", "#!/bin/sh\nexit 127\n")
+
+        def read():
+            return self.call("cat", "--item", "TEST-1", "--session-rows", str(path),
+                             SSH_TEST_REMOTE_BIN=str(remote_bin))
+
+        result = read()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        header, tail = result.stdout.split(b"\n", 1)
+        skipped, size = map(int, header.split(b"\t"))
+        self.assertGreater(skipped, 0)
+        self.assertGreaterEqual(limit, size)
+        self.assertEqual(size, len(tail))
+        self.assertEqual(skipped + tail.count(b"\n"), count)
+        self.assertEqual(tail, row * (count - skipped) + final)
+
+        path.write_bytes(row + b"x" * (limit + 1) + b"\n")
+        oversized = read()
+        self.assertNotIn(oversized.returncode, (0, 2))
+        self.assertEqual(oversized.stdout, b"")
+
+        path.unlink()
+        missing = read()
+        self.assertEqual((missing.returncode, missing.stdout), (2, b""))
+
+    @unittest.skipIf(os.geteuid() == 0, "root can traverse directories without search permission")
+    def test_session_rows_refuse_an_unsearchable_item_directory(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"event":"Stop"}\n')
+        args = ("cat", "--item", "TEST-1", "--session-rows", str(path))
+        path.parent.chmod(0o600)
+        try:
+            blocked = self.call(*args)
+        finally:
+            path.parent.chmod(0o700)
+        self.assertEqual((blocked.returncode, blocked.stdout), (1, b""), blocked.stderr)
+        self.assertIn(b"session-rows-lookup-failed", recorded_cause(blocked.stderr).split())
+
+        path.unlink()
+        path.parent.rmdir()
+        missing = self.call(*args)
+        self.assertEqual((missing.returncode, missing.stdout), (2, b""), missing.stderr)
+
+    def test_session_row_counter_exits_when_the_writer_never_opens_its_pipe(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"event":"Stop"}\n')
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "tee", "#!/bin/sh\nexit 127\n")
+        args = [str(self.script), "cat", "--item", "TEST-1", "--session-rows", str(path)]
+        with subprocess.Popen(args, cwd=self.root, env={**self.env, "SSH_TEST_REMOTE_BIN": str(remote_bin)},
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              start_new_session=True) as provider:
+            try:
+                stdout, stderr = provider.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(provider.pid, signal.SIGKILL)
+                provider.communicate()
+                self.fail("The provider remained blocked after the writer exited")
+            self.assertEqual((provider.returncode, stdout), (1, b""), stderr)
+            self.assertIn(b"session-rows-transfer-failed exit=127", recorded_cause(stderr))
 
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
@@ -2822,9 +2897,30 @@ exit 9
         self.assertEqual((running.returncode, running.stdout, lane.poll()), (0, b"running\n", None), running.stderr)
         # merge-pr removes the registered tree before its harness exits.
         worktree = Path(self.row["clone"] + "-worktree")
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
+            proved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+            self.assertEqual((proved.returncode, proved.stdout), (0, f"running\n{worktree}\n".encode()),
+                             proved.stderr)
+            runtime = clone / ".agents/skills/agent-runtime/scripts/agent-runtime"
+            original_runtime = runtime.read_text()
+            first_group = shlex.quote(str(self.root / "group-read"))
+            self.executable(runtime, "#!/bin/sh\n"
+                            f"if [ -f {first_group} ]; then\n"
+                            "  printf '%s\\n' '{\"result\":{\"reading\":\"unreadable\",\"cause\":\"proc-unreadable\"}}'\n"
+                            "  exit 0\n"
+                            f"fi\n: > {first_group}\n"
+                            + original_runtime)
+            failed = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(failed.stdout, b"")
+            self.assertIn(b"cause=proc-unreadable", recorded_cause(failed.stderr).split())
+            runtime.write_text(original_runtime)
         subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True, env=self.env)
         self.assertEqual(status().stdout, b"running\n")
+        unproved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+        self.assertNotEqual(unproved.returncode, 0)
+        self.assertEqual(unproved.stdout, b"")
         original = self.script.read_text()
         rule = '{"live": "running", "gone": "exited"}'
         self.assertEqual(original.count(rule), 1)
@@ -2844,6 +2940,48 @@ exit 9
         self.assertEqual(status().stdout, b"exited\n")
         record.unlink()
         self.assertEqual(status().stdout, b"exited\n")
+
+    def test_status_compares_the_cwd_reported_on_a_nonlinux_target(self):
+        self.row["clone"] = str(self.root / r"équipe\lane")
+        self.inventory.write_text(json.dumps([self.row]))
+        lane = self.launch_lane()
+        worktree = self.row["clone"] + "-worktree"
+        owned = os.stat(worktree)
+        elsewhere = self.root.stat()
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
+        expected = shlex.quote(f"-nP -a -p {lane.pid} -d cwd -F0pfDi")
+        process = f"p{lane.pid}"
+        device, inode = f"D0x{owned.st_dev:x}", f"i{owned.st_ino}"
+        cases = (
+            ("matching", process, "fcwd", device, inode, 0, 0),
+            ("different directory", process, "fcwd", f"D0x{elsewhere.st_dev:x}", f"i{elsewhere.st_ino}", 0, 0),
+            ("different device", process, "fcwd", f"D0x{owned.st_dev ^ 1:x}", inode, 0, 0),
+            ("wrong pid", "p1", "fcwd", device, inode, 0, 0),
+            ("wrong descriptor", process, "frtd", device, inode, 0, 0),
+            ("out of order", process, "fcwd", inode, device, 0, 0),
+            ("unreadable cwd", process, "fcwd", device, inode, 1, 0),
+            ("unreadable worktree", process, "fcwd", device, inode, 0, 1),
+        )
+        for label, pid_field, descriptor, dev_field, ino_field, lsof_exit, stat_exit in cases:
+            with self.subTest(label=label):
+                self.executable(remote_bin / "lsof", "#!/bin/sh\n"
+                                f"test \"$*\" = {expected} || exit 2\n"
+                                f"printf '%s\\0\\n%s\\0%s\\0%s\\0\\n' {pid_field} {descriptor} {dev_field} {ino_field}\n"
+                                f"exit {lsof_exit}\n")
+                self.executable(remote_bin / "stat", "#!/bin/sh\n"
+                                "test \"$#\" = 4 && test \"$1\" = -Lf && test \"$2\" = '%Xd %Ui' && test \"$3\" = -- && "
+                                f"test \"$4\" = {shlex.quote(worktree)} || exit 2\n"
+                                f"printf '%s\\n' '{owned.st_dev:x} {owned.st_ino}'\n"
+                                f"exit {stat_exit}\n")
+                answer = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree",
+                                   SSH_TEST_REMOTE_BIN=str(remote_bin), LC_ALL="C")
+                if label == "matching":
+                    self.assertEqual((answer.returncode, answer.stdout), (0, f"running\n{worktree}\n".encode()),
+                                     answer.stderr)
+                else:
+                    self.assertEqual((answer.returncode, answer.stdout), (1, b""), answer.stderr)
+                    self.assertIn(b"status-worktree-unconfirmed", recorded_cause(answer.stderr).split())
 
     def test_stop_reaches_the_recorded_group_alone_whatever_the_worktree(self):
         # merge-pr removes the item's worktree before its lane goes idle: the

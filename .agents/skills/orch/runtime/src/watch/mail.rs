@@ -829,7 +829,32 @@ impl MailDuty {
             .extend(ended::stale_stops(tick.baseline, &fleet));
         let mut local = Vec::new();
         let mut hosted = Vec::new();
+        let scripts = super::overseer::scripts_dir(&self.config.common_root);
+        let hosts = super::hosted::Hosts::read(
+            &scripts,
+            fleet
+                .lanes
+                .iter()
+                .filter(|lane| super::hosted::needs_mail_root(lane)),
+        );
         for lane in &fleet.lanes {
+            let rooted;
+            let lane = if super::hosted::needs_mail_root(lane) {
+                match hosts.of(lane).and_then(|caps| {
+                    super::hosted::with_session_root(&scripts, lane, &fleet.intents, caps)
+                }) {
+                    Ok(resolved) => {
+                        rooted = resolved;
+                        rooted.as_ref()
+                    }
+                    Err(cause) => {
+                        turn.refuse(&lane.item, invalid(&lane.item, cause));
+                        continue;
+                    }
+                }
+            } else {
+                lane
+            };
             match readable(lane) {
                 Ok(None) => {}
                 Ok(Some((host, mut drain))) => {

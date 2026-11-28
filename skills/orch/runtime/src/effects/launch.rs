@@ -1364,8 +1364,8 @@ fn hosted_launch(
     }
     let session_rows_at_launch = if harness == Harness::Claude && caps.files == hosted::Files::Verb
     {
-        match hosted::session_rows_at(&scripts, provider, &r.item, &created.path) {
-            hosted::Answer::Live(text) => Some(rows::last_position_in(&text)),
+        match hosted::session_rows_at(&scripts, provider, &r.item, &created.path, caps) {
+            hosted::Answer::Live(rows) => Some(rows.last_position()),
             hosted::Answer::Gone => Some(0),
             // The provider created a sandbox, but no window or harness was
             // started. A normal relaunch can reuse it and read the floor again.

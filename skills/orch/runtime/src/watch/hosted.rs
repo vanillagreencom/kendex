@@ -42,6 +42,7 @@ use agent_runtime::intent::{EffectOp, Intent};
 use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::record::Document;
+use agent_runtime::rows;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -173,6 +174,10 @@ pub struct Capabilities {
     pub pool: CreditPool,
     /// Whether the kind's provider runs a validation unit (`validate=`).
     pub validate: UnitKind,
+    /// The provider supports the row window on `cat`.
+    pub session_rows: bool,
+    /// The provider can prove a running worker's worktree on `status`.
+    pub worktree_status: bool,
 }
 
 /// Whether a kind's provider runs a validation unit on its host
@@ -254,10 +259,9 @@ impl Capabilities {
     }
 
     /// One tab-separated `key=value` line holding every key of
-    /// [`CAPABILITY_SETS`] once, with an optional `peer-mail=verb` for the
-    /// mailbox sender and an optional `validate=verb` for a host that runs
-    /// validation units. Missing required keys, repeated or unknown keys,
-    /// and invalid values are refused `capability-invalid key=KEY value=VALUE`.
+    /// [`CAPABILITY_SETS`] once, with optional extensions. Missing required
+    /// keys, repeated or unknown keys, and invalid values are refused
+    /// `capability-invalid key=KEY value=VALUE`.
     pub fn parse(line: &str) -> Result<Capabilities, String> {
         let line = line.strip_suffix('\n').unwrap_or(line);
         if line.contains('\n') {
@@ -267,7 +271,7 @@ impl Capabilities {
         for field in line.split('\t') {
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
             let allowed = match key {
-                "peer-mail" | "validate" => value == "verb",
+                "peer-mail" | "validate" | "session-rows" | "worktree-status" => value == "verb",
                 _ => CAPABILITY_SETS
                     .iter()
                     .find(|(k, _)| *k == key)
@@ -326,6 +330,8 @@ impl Capabilities {
                 "verb" => UnitKind::Verb,
                 _ => UnitKind::None,
             },
+            session_rows: of("session-rows") == "verb",
+            worktree_status: of("worktree-status") == "verb",
         })
     }
 }
@@ -437,7 +443,26 @@ pub fn capabilities(_scripts: &Path, host: &str) -> Result<Capabilities, String>
 /// as well; a `touch` that fails, a call the dispatch refused and any other
 /// status are unreadable with their cause.
 pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<String> {
-    let out = match lane_host(scripts, host, &["cat", "--item", item, path]) {
+    match fetch_bytes(scripts, host, item, path, false) {
+        Answer::Live(bytes) => Answer::Live(String::from_utf8_lossy(&bytes).into_owned()),
+        Answer::Gone => Answer::Gone,
+        Answer::Unreadable { cause } => Answer::Unreadable { cause },
+    }
+}
+
+fn fetch_bytes(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    path: &str,
+    window: bool,
+) -> Answer<Vec<u8>> {
+    let args: &[&str] = if window {
+        &["cat", "--item", item, "--session-rows", path]
+    } else {
+        &["cat", "--item", item, path]
+    };
+    let out = match lane_host(scripts, host, args) {
         Ok(out) => out,
         Err(cause) => {
             return Answer::Unreadable {
@@ -446,7 +471,7 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
         }
     };
     match out.status.code() {
-        Some(0) => Answer::Live(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Some(0) => Answer::Live(out.stdout),
         Some(2) => match lane_host(scripts, host, &["touch", "--item", item]) {
             Ok(touched) if touched.status.success() => Answer::Gone,
             Ok(touched) => Answer::Unreadable {
@@ -460,6 +485,34 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
             cause: cause_of("cat", &out),
         },
     }
+}
+
+fn status_worktree(scripts: &Path, host: &str, item: &str) -> Result<String, String> {
+    let out = lane_host(
+        scripts,
+        host,
+        &[
+            "status",
+            "--item",
+            item,
+            "--harness",
+            "claude",
+            "--worktree",
+        ],
+    )?;
+    if !out.status.success() {
+        return Err(cause_of("status", &out));
+    }
+    let stdout = str::from_utf8(&out.stdout).map_err(|_| "status-worktree-invalid".to_owned())?;
+    if stdout == "exited\n" {
+        return Err("status-worktree-exited".to_owned());
+    }
+    let path = stdout
+        .strip_prefix("running\n")
+        .and_then(|tail| tail.strip_suffix('\n'))
+        .filter(|path| !path.contains(['\n', '\r', '\t', '\0']) && Path::new(path).is_absolute())
+        .ok_or_else(|| "status-worktree-invalid".to_owned())?;
+    Ok(path.to_owned())
 }
 
 /// A hosted lane's worktree as its sandbox's disk reads it: the checked-out
@@ -2719,28 +2772,115 @@ fn refused_handoff(pass: &Pass, lane: &Lane, fields: String) -> Result<HandoffRe
     }
 }
 
-/// A lane's session rows through the provider: the file the lane's hook
-/// writes under its root's mailbox on the host.
-pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
+/// The returned row text with the number of complete lines omitted from
+/// its front. The launch floor, row positions and wake cursor share it.
+pub struct SessionRows {
+    skipped: usize,
+    text: String,
+}
+
+impl SessionRows {
+    fn from_window(bytes: Vec<u8>) -> Option<Self> {
+        let end = bytes.iter().position(|&b| b == b'\n')?;
+        let (skipped, size) = str::from_utf8(&bytes[..end]).ok()?.split_once('\t')?;
+        if !skipped
+            .bytes()
+            .chain(size.bytes())
+            .all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let skipped: usize = skipped.parse().ok()?;
+        let payload = &bytes[end + 1..];
+        if payload.len() != size.parse::<usize>().ok()? || (skipped != 0 && payload.is_empty()) {
+            return None;
+        }
+        let text = str::from_utf8(payload).ok()?;
+        skipped.checked_add(rows::last_position_in(text))?;
+        Some(Self {
+            skipped,
+            text: text.to_owned(),
+        })
+    }
+
+    pub(crate) fn last_position(&self) -> usize {
+        self.skipped + rows::last_position_in(&self.text)
+    }
+
+    pub(super) fn complete_position(&self) -> u64 {
+        self.skipped as u64 + rows::complete_line_count(&self.text)
+    }
+
+    pub(super) fn last_row(&self) -> Reading<rows::Row> {
+        match rows::last_row_in(&self.text) {
+            Reading::Gone
+                if self.skipped != 0 && rows::last_position_in(&self.text) < rows::SPAN =>
+            {
+                Reading::Unreadable {
+                    cause: "rows-window-short",
+                }
+            }
+            row => self.absolute(row),
+        }
+    }
+
+    pub(super) fn after(
+        &self,
+        cursor: u64,
+        through: Option<u64>,
+    ) -> Option<impl Iterator<Item = Reading<rows::Row>> + '_> {
+        let relative = cursor.checked_sub(self.skipped as u64)?;
+        let text = if let Some(through) = through {
+            let lines = through.saturating_sub(self.skipped as u64);
+            let bytes = self
+                .text
+                .split_inclusive('\n')
+                .take(usize::try_from(lines).unwrap_or(usize::MAX))
+                .map(str::len)
+                .sum();
+            &self.text[..bytes]
+        } else {
+            &self.text
+        };
+        Some(rows::rows_after_in(text, relative).map(|row| self.absolute(row)))
+    }
+
+    fn absolute(&self, reading: Reading<rows::Row>) -> Reading<rows::Row> {
+        match reading {
+            Reading::Live(mut row) => {
+                row.position += self.skipped;
+                Reading::Live(row)
+            }
+            other @ (Reading::Gone | Reading::Unreadable { .. }) => other,
+        }
+    }
+}
+
+/// The session rows under the lane's recorded mailbox.
+pub fn session_rows(scripts: &Path, lane: &Lane, caps: Capabilities) -> Answer<SessionRows> {
     let root = match mail_root(lane) {
         Ok(root) => root,
         Err(cause) => return session_rows_unreadable(host_of(lane), &lane.item, cause),
     };
-    session_rows_at(scripts, host_of(lane), &lane.item, root)
+    session_rows_at(scripts, host_of(lane), &lane.item, root, caps)
 }
 
 /// A Claude provider stop needs a root proved by the current launch,
 /// even if the legacy record's path differs from its checkout.
-pub(super) fn confirmed_session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
+pub(super) fn confirmed_session_rows(
+    scripts: &Path,
+    lane: &Lane,
+    caps: Capabilities,
+) -> Answer<SessionRows> {
     if !lane.mail_root_confirmed {
         return session_rows_unreadable(host_of(lane), &lane.item, "mail-root-unconfirmed");
     }
-    session_rows(scripts, lane)
+    session_rows(scripts, lane, caps)
 }
 
 pub(super) const SESSION_ROWS_READ_FAILED: &str = "session-rows-read-failed";
 
-fn session_rows_unreadable(host: &str, item: &str, cause: &str) -> Answer<String> {
+pub(super) fn session_rows_unreadable(host: &str, item: &str, cause: &str) -> Answer<SessionRows> {
     Answer::Unreadable {
         cause: format!("{SESSION_ROWS_READ_FAILED} item={item} host={host} cause={cause}"),
     }
@@ -2752,23 +2892,51 @@ pub(crate) fn session_rows_at(
     host: &str,
     item: &str,
     root: &str,
-) -> Answer<String> {
+    caps: Capabilities,
+) -> Answer<SessionRows> {
     let file = marker::mailbox_path(Path::new(root), item).join(agent_runtime::rows::LANE_FILE);
-    match fetch(scripts, host, item, &file.to_string_lossy()) {
+    match fetch_bytes(
+        scripts,
+        host,
+        item,
+        &file.to_string_lossy(),
+        caps.session_rows,
+    ) {
+        Answer::Live(bytes) if caps.session_rows => match SessionRows::from_window(bytes) {
+            Some(rows) => Answer::Live(rows),
+            None => session_rows_unreadable(host, item, "rows-window-invalid"),
+        },
+        Answer::Live(bytes) => Answer::Live(SessionRows {
+            skipped: 0,
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+        }),
         Answer::Unreadable { cause } => session_rows_unreadable(host, item, &cause),
-        answer @ (Answer::Live(_) | Answer::Gone) => answer,
+        Answer::Gone => Answer::Gone,
     }
 }
 
-/// A launch can have the provider's root in its journal even if its lane
-/// record still has the checkout placeholder. Use the journal only when
-/// the confirmation names the very pane and process the lane still holds.
-pub(super) fn with_session_root<'a>(lane: &'a Lane, intents: &[Intent]) -> Cow<'a, Lane> {
+/// A recorded mail route needs launch proof where it lacks a usable root.
+pub(super) fn needs_mail_root(lane: &Lane) -> bool {
+    lane.status == LaneStatus::Running
+        && lane.harness.as_deref() == Some("claude")
+        && lane.mail_host().is_some()
+        && mail_root(lane).is_err()
+}
+
+/// The matching launch's journal proves its mail root. Legacy journals
+/// still bind the lane to its launch identity, which lets its provider
+/// prove the owned worktree while that worker runs.
+pub(super) fn with_session_root<'a>(
+    scripts: &Path,
+    lane: &'a Lane,
+    intents: &[Intent],
+    caps: Capabilities,
+) -> Result<Cow<'a, Lane>, String> {
     if lane.mail_root_confirmed
         || lane.harness.as_deref() != Some("claude")
         || lane.mail_host().is_none()
     {
-        return Cow::Borrowed(lane);
+        return Ok(Cow::Borrowed(lane));
     }
     let root = lane.launch.as_ref().and_then(|launch| {
         let pane = launch.pane.as_deref()?;
@@ -2788,17 +2956,22 @@ pub(super) fn with_session_root<'a>(lane: &'a Lane, intents: &[Intent]) -> Cow<'
                 .is_none_or(|start| start == opened.server_start)
             && launch.pid == Some(u64::from(identity.pid))
             && launch.start.as_deref() == Some(identity.start.as_str()))
-        .then_some(opened.hosted_mail_root.as_ref())
-        .flatten()
+        .then_some(opened.hosted_mail_root.as_deref())
     });
-    if let Some(root) = root.filter(|root| !root.is_empty()) {
-        let mut lane = lane.clone();
-        lane.mail_root = Some(root.clone());
-        lane.mail_root_confirmed = true;
-        Cow::Owned(lane)
-    } else {
-        Cow::Borrowed(lane)
-    }
+    let Some(root) = root else {
+        return Ok(Cow::Borrowed(lane));
+    };
+    let root = match root.filter(|root| !root.is_empty()) {
+        Some(root) => root.to_owned(),
+        None if caps.worktree_status && lane.status == LaneStatus::Running => {
+            status_worktree(scripts, host_of(lane), &lane.item)?
+        }
+        None => return Ok(Cow::Borrowed(lane)),
+    };
+    let mut lane = lane.clone();
+    lane.mail_root = Some(root);
+    lane.mail_root_confirmed = true;
+    Ok(Cow::Owned(lane))
 }
 
 // --- the finished close -------------------------------------------------------
@@ -3052,6 +3225,27 @@ fn park_result(item: &str, closed: &Closed) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_provider_row_window_preserves_absolute_floor_and_cursor() {
+        let tail = concat!(
+            "{\"event\":\"UserPromptSubmit\",\"digest\":123}\n",
+            "\n",
+            "{\"event\":\"StopFailure\",\"error\":\"server_error\"}",
+        );
+        let reply = format!("58000\t{}\n{tail}", tail.len());
+        let window = SessionRows::from_window(reply.into_bytes()).unwrap();
+        assert_eq!(window.last_position(), 58_003);
+        assert_eq!(window.complete_position(), 58_002);
+        assert!(matches!(window.last_row(), Reading::Live(row) if row.position == 58_003));
+        assert!(window.after(57_999, None).is_none());
+        assert!(window.after(58_000, Some(58_000)).unwrap().next().is_none());
+        let mut later = window.after(58_000, None).unwrap();
+        assert!(matches!(
+            later.next(), Some(Reading::Live(row)) if row.position == 58_001 && row.digest == Some(123)
+        ));
+        assert!(later.next().is_none());
+    }
+
     /// A provider call read by the runner's three values: a provider that
     /// is not there made nothing (`host-create-failed`); one whose bound
     /// passed, or that a signal ended, may hold the item
@@ -3157,6 +3351,8 @@ mod tests {
                 park: ParkKind::None,
                 pool: CreditPool::Plan,
                 validate: UnitKind::None,
+                session_rows: false,
+                worktree_status: false,
             })
         );
         assert_eq!(

@@ -29,7 +29,7 @@ LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
                           "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local",
-                          "peer-mail=verb", "validate=verb"))
+                          "peer-mail=verb", "validate=verb", "session-rows=verb", "worktree-status=verb"))
 
 
 def notice(key, **values):
@@ -417,14 +417,76 @@ def peer_read_allowed(row, path):
 
 READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
 
-def read(row, path):
+# Count and window the same byte stream on the host. The extra window byte
+# tells whether its first line starts at a row boundary.
+SESSION_ROWS_BYTES = 1024 * 1024
+READ_SESSION_ROWS = MAILBOX_GUARD + r'''
+if ! test -e "$1"; then
+  # test cannot distinguish a missing entry from a failed lookup. Use the
+  # C-locale OS error only on this path, where cat must distinguish them.
+  if ! lookup=$(LC_ALL=C ls -d -- "$1" 2>&1); then
+    case "$lookup" in *': No such file or directory') exit 2 ;; esac
+    printf '%s\n' "$lookup" >&2
+  fi
+  printf 'lane-host-ssh: session-rows-lookup-failed path=%s\n' "$1" >&2
+  exit 1
+fi
+test -f "$1" || { printf 'lane-host-ssh: session-rows-not-regular\n' >&2; exit 1; }
+exec 3< "$1" || exit 1
+umask 077
+scratch=$(mktemp -d) || exit 1
+trap 'rm -rf -- "${scratch:?}"' EXIT
+mkfifo "$scratch/count-in" || exit 1
+# The parent holds the FIFO open until the pipeline returns. The counter
+# drops its copy after opening stdin, so it reaches EOF even if tee never starts.
+exec 4<> "$scratch/count-in" || exit 1
+(
+  exec 5< "$scratch/count-in"
+  exec 4>&-
+  wc -l <&5 > "$scratch/count" || {
+    cat <&5 > /dev/null
+    exit 1
+  }
+) &
+counter=$!
+transfer=0
+tee "$scratch/count-in" <&3 4>&- | tail -c "$(($2 + 1))" 4>&- > "$scratch/window" || transfer=$?
+exec 4>&-
+count_status=0
+wait "$counter" || count_status=$?
+if test "$transfer" -ne 0; then
+  printf 'lane-host-ssh: session-rows-transfer-failed exit=%s\n' "$transfer" >&2
+  exit 1
+fi
+test "$count_status" -eq 0 || exit 1
+
+size=$(wc -c < "$scratch/window") || exit 1
+if test "$size" -gt "$2"; then
+  fragment=$(head -n 1 "$scratch/window" | wc -c) || exit 1
+  size=$((size - fragment))
+  if test "$size" -eq 0; then
+    printf 'lane-host-ssh: session-row-too-large\n' >&2
+    exit 1
+  fi
+fi
+lines=$(< "$scratch/count")
+kept=$(tail -c "$((size + 0))" "$scratch/window" | wc -l) || exit 1
+printf '%s\t%s\n' "$((lines - kept))" "$((size + 0))" || exit 1
+tail -c "$((size + 0))" "$scratch/window" || exit 1
+'''
+
+
+def read(row, path, session_rows=False):
     """Return a remote file's bytes, or None for a path that is not there.
 
     A file that is not there exits 2, which is the caller's one reading of
     "the lane has not written this yet"; every other read failure keeps its
     own status so the caller refuses rather than reads empty.
     """
-    result = remote(row, READ_FILE, path, accept=(2,))
+    if session_rows:
+        result = remote(row, READ_SESSION_ROWS, path, str(SESSION_ROWS_BYTES), accept=(2,))
+    else:
+        result = remote(row, READ_FILE, path, accept=(2,))
     return None if result.returncode == 2 else result.stdout
 
 
@@ -576,6 +638,10 @@ printf other''', row["clone"], item).stdout
 def owned_worktree(row, item, verb):
     """Resolve the item only after the clone marker confirms its owner."""
     owned(row, item, verb)
+    return worktree_path(row, item)
+
+
+def worktree_path(row, item):
     path = worktree(row, "path", item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=item, fix=PATH_FIX)
@@ -1080,19 +1146,73 @@ def runtime_result(answer):
     return reply.get("result") or {} if isinstance(reply, dict) else {}
 
 
-def status(row, item):
-    """Read the lane's recorded process group without signalling any process:
-    running while a member lives, exited once none does or nothing was
-    recorded. It reads no directory, so a lane whose worktree its own
-    close-out removed still reads running."""
-    owned(row, item, "status")
+def process_group(row, item):
     answer = remote(row, 'exec "$1$2" process group --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
                     accept=None)
-    word = {"live": "running", "gone": "exited"}.get(runtime_result(answer).get("reading"))
-    if answer.returncode != 0 or word is None:
+    if answer.returncode != 0:
         step_failed("status-read-failed", answer.stderr, RUNTIME_FIX, item=item, exit=answer.returncode)
         raise SystemExit(1)
-    lifecycle_output(row, (word + "\n").encode())
+    group = runtime_result(answer)
+    if isinstance(group, dict):
+        if group.get("reading") in ("live", "gone"):
+            return group
+        cause = group.get("cause")
+        if group.get("reading") == "unreadable" and isinstance(cause, str) and cause:
+            notice("status-read-failed", item=item, cause=cause, fix=RUNTIME_FIX)
+            raise SystemExit(1)
+    notice("status-reply-invalid", item=item, fix=RUNTIME_FIX)
+    raise SystemExit(1)
+
+
+# lsof writes PID, descriptor, hex device and decimal inode in that order.
+# Field mode uses NUL terminators and ends each set with a newline.
+# The extra NUL is emitted only when lsof exits successfully.
+WORKTREE_CWD = r'''
+system=$(uname -s) || exit 1
+if test "$system" = Linux; then
+  test "$1" -ef "/proc/$2/cwd"
+else
+  export LC_ALL=C
+  {
+    IFS= read -r -d '' process || exit 1
+    IFS= read -r -d '' descriptor || exit 1
+    IFS= read -r -d '' device || exit 1
+    IFS= read -r -d '' inode || exit 1
+    IFS= read -r -d '' end || exit 1
+    [[ "$process" == "p$2" && "$descriptor" == $'\nfcwd' && "$end" == $'\n' ]] || exit 1
+    device_field='^D0x(0|[1-9a-f][0-9a-f]{0,15})$'
+    inode_field='^i(0|[1-9][0-9]{0,19})$'
+    [[ "$device" =~ $device_field && "$inode" =~ $inode_field ]] || exit 1
+    inode=${inode#i}
+    if [[ ${#inode} -eq 20 && "$inode" > 18446744073709551615 ]]; then
+      exit 1
+    fi
+    worktree_id=$(stat -Lf '%Xd %Ui' -- "$1") || exit 1
+    [[ "$worktree_id" == "${device#D0x} $inode" ]]
+  } < <(lsof -nP -a -p "$2" -d cwd -F0pfDi && printf '\0')
+fi
+'''
+
+
+def status(row, item, prove_worktree=False):
+    """Read the lane's recorded process group, optionally proving its cwd."""
+    owned(row, item, "status")
+    group = process_group(row, item)
+    word = {"live": "running", "gone": "exited"}[group["reading"]]
+    if word == "exited" or not prove_worktree:
+        lifecycle_output(row, (word + "\n").encode())
+        return
+    path = worktree_path(row, item)
+    pid, start = group.get("pid"), group.get("start")
+    if isinstance(pid, int) and pid > 1 and isinstance(start, str) and start:
+        cwd = remote(row, WORKTREE_CWD, path, str(pid), accept=(1,))
+        if cwd.returncode == 0:
+            checked = process_group(row, item)
+            if (checked.get("pid"), checked.get("start")) == (pid, start):
+                lifecycle_output(row, f"running\n{path}\n".encode())
+                return
+    notice("status-worktree-unconfirmed", item=item)
+    raise SystemExit(1)
 
 
 def stop_lane(row, item, path, verb, failed):
@@ -1461,7 +1581,9 @@ remote account directory, so folder trust and hook approval precede the first tu
 travel on stdin. read-many reads a JSON array of item/path requests from stdin
 and returns item/path/status/base64-data rows, in request order, with one SSH
 call per target. Missing files have status 2; other failed files keep their
-nonzero status and no bytes. cat exits 2 for a path that is not there. put stages beside
+nonzero status and no bytes. cat exits 2 for a path that is not there.
+cat --session-rows returns an absolute line offset and a bounded row window.
+put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
 leaves its staged file behind. A failed write of the staged bytes, or of
@@ -1518,8 +1640,10 @@ its own close-out removed stops all the same. A failed validation stop exits 1
 with stop-validations-failed, a failed group stop with stop-failed, each below
 the runtime's own line. status takes the same arguments and reads the
 recorded group without signalling it: running while a member lives, exited
-otherwise. A failed ownership or group read exits nonzero and reports no
-status. A clone holding neither a marker naming the item nor
+otherwise. status --worktree also proves the recorded group's working
+directory through procfs on Linux or compares lsof and stat device and
+inode numbers on other hosts. A failed ownership or group read exits
+nonzero and reports no status. A clone holding neither a marker naming the item nor
 the item's worktree, as a finished close leaves it whether or not a create for
 another item followed, holds nothing of the item: stop answers stopped item=ID
 processes=0, status answers exited and close answers closed=absent item=ID,
@@ -1617,12 +1741,16 @@ capabilities prints the static ssh host kind's one capability line
         action.add_argument("--item", required=True)
         if verb in ("cat", "put", "append"):
             action.add_argument("path")
+        if verb == "cat":
+            action.add_argument("--session-rows", action="store_true")
         if verb == "close":
             action.add_argument("--merged", action="store_true")
     for verb in ("stop", "status"):
         stopping = sub.add_parser(verb)
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+        if verb == "status":
+            stopping.add_argument("--worktree", action="store_true")
     unit = sub.add_parser("validate")
     for field in ("item", "run-id"):
         unit.add_argument("--" + field, required=True)
@@ -1707,7 +1835,7 @@ def dispatch(row, args):
         if not peer_read_allowed(row, args.path):
             notice("peer-read-outside-inbox", path=args.path)
             raise SystemExit(1)
-        data = read(row, args.path)
+        data = read(row, args.path, session_rows=args.session_rows)
         if data is None:
             raise SystemExit(2)
         sys.stdout.buffer.write(data)
@@ -1722,7 +1850,7 @@ def dispatch(row, args):
     elif args.verb == "stop":
         stop(row, args.item)
     elif args.verb == "status":
-        status(row, args.item)
+        status(row, args.item, prove_worktree=args.worktree)
     elif args.verb == "close":
         path = owned_worktree(row, args.item, "close")
         # Nothing of the lane outlives its record: a lane whose SSH session
