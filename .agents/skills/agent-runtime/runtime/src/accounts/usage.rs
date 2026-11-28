@@ -416,6 +416,35 @@ pub fn parse_body(harness: Harness, body: &Value, rounding: Rounding) -> Value {
     }
 }
 
+pub(super) fn claude_limit_resets(body: &Value, now: u64) -> Vec<super::LimitReset> {
+    use super::{LimitReset, LimitResetKind};
+
+    let program = &body["cedar_ember"];
+    if program["eligible"].as_bool() != Some(true) {
+        return Vec::new();
+    }
+    program["grants"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|grant| {
+            let left = grant["resets_left"].as_u64()?;
+            let end = crate::clock::epoch_secs(&utc_stamp(grant["ends_at"].as_str()?))?;
+            if left == 0 || end <= now {
+                return None;
+            }
+            let kind = match grant["gives_back_weekly"].as_bool()? {
+                true => LimitResetKind::Fable,
+                false => LimitResetKind::Full,
+            };
+            Some(LimitReset {
+                kind: Some(kind),
+                left,
+            })
+        })
+        .collect()
+}
+
 /// One spelling for every reset a record carries: whole-second UTC with a
 /// `Z`. The Claude endpoint writes fractional seconds and `+00:00`, and a
 /// provider row carries whatever its timestamp is; a reader comparing two

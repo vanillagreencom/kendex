@@ -179,7 +179,7 @@ impl World {
     }
 
     /// The body the usage fixture answers for `token` at `endpoint`
-    /// (`usage`, `profile` or `copilot`), and the status line beside it.
+    /// (`usage`, `usage-grants`, `profile` or `copilot`), and its status.
     fn plant_answer(&self, token: &str, endpoint: &str, body: &Value, status: Option<&str>) {
         let fixtures = self.path().join("fixtures");
         std::fs::create_dir_all(&fixtures).unwrap();
@@ -208,6 +208,13 @@ impl World {
         ))
     }
 
+    fn grant_path(&self, alias: &str) -> PathBuf {
+        let usage = self.record_path("claude", alias);
+        self.path()
+            .join("usage/grants")
+            .join(usage.file_name().unwrap())
+    }
+
     /// The requests the usage fixture answered, `<endpoint> <token>` each.
     fn curl_log(&self) -> Vec<String> {
         std::fs::read_to_string(self.path().join("fixtures/curl.log"))
@@ -215,6 +222,21 @@ impl World {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+
+    fn curl_argv(&self, expected_endpoint: &str) -> Vec<Vec<String>> {
+        let log = std::fs::read_to_string(self.path().join("fixtures/curl.argv")).unwrap();
+        let mut fields = log.split_terminator('\0');
+        let mut requests = Vec::new();
+        while let Some(endpoint) = fields.next() {
+            let count = fields.next().unwrap().parse::<usize>().unwrap();
+            let args: Vec<_> = fields.by_ref().take(count).map(str::to_owned).collect();
+            assert_eq!(args.len(), count, "{endpoint}");
+            if endpoint == expected_endpoint {
+                requests.push(args);
+            }
+        }
+        requests
     }
 
     /// The executable in this world, with its environment and the usage
@@ -322,6 +344,10 @@ fn now() -> u64 {
 
 fn stamp(at: u64) -> String {
     clock::iso_utc(at)
+}
+
+fn curl_pair(args: &[String], option: &str, value: &str) -> bool {
+    args.windows(2).any(|pair| pair == [option, value])
 }
 
 /// One measured local row of the listing for a Claude account at
@@ -2275,7 +2301,10 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     let first = world.roster();
     assert_eq!(first["rows"][0]["status"], json!("ok"), "{first}");
     assert_eq!(first["rows"][0]["record"]["headroom_pct"], json!(80));
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
     let record = world.record_path("claude", "aclaude");
     let mut value: Value =
         serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
@@ -2298,7 +2327,7 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     );
     let age = row["usage_age_s"].as_u64().unwrap();
     assert!((45..=60).contains(&age), "the figure's own age: {refused}");
-    assert_eq!(world.curl_log().len(), 2);
+    assert_eq!(world.curl_log().len(), 3);
     let value: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
     assert_eq!(value["refusal"]["code"], json!("429"));
     assert_eq!(
@@ -2309,7 +2338,7 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     let again = world.roster();
     assert_eq!(again["rows"][0]["status"], json!("rate_limited"), "{again}");
     assert_eq!(again["rows"][0]["record"]["headroom_pct"], json!(80));
-    assert_eq!(world.curl_log().len(), 2, "nothing posts inside the window");
+    assert_eq!(world.curl_log().len(), 3, "nothing posts inside the window");
     assert_eq!(
         chosen(&world.pick(&claude(None))).as_deref(),
         Some(world.dir("aclaude").as_str()),
@@ -2331,8 +2360,363 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
         json!("usage"),
         "{old}"
     );
-    assert_eq!(world.curl_log().len(), 2);
+    assert_eq!(world.curl_log().len(), 3);
     assert_eq!(world.pick(&claude(None))["answer"], json!("none"));
+}
+
+#[test]
+fn a_cached_claude_fable_grant_is_named_before_wait_and_stop() {
+    use agent_runtime::stop::{self, Ground, Kind, Session};
+
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("aclaude", 100, 10)]);
+    std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+    let token = "token-aclaude";
+    world.plant_answer(
+        token,
+        "usage",
+        &claude_body(json!(10), json!(100), &[]),
+        None,
+    );
+    world.plant_answer(token, "usage-grants", &fable_grant_body(), None);
+
+    let first = listed_row(&world, "aclaude");
+    let cached = listed_row(&world, "aclaude");
+    let grants = json!([{"kind":"fable","left":1}]);
+    for row in [&first, &cached] {
+        assert_eq!(row["weekly_pct"], json!(100), "{row}");
+        assert_eq!(row["limit_resets"], grants, "{row}");
+    }
+    assert_eq!(
+        world.curl_log(),
+        ["usage token-aclaude", "usage-grants token-aclaude"]
+    );
+    let plain = &world.curl_argv("usage")[0];
+    let query = &world.curl_argv("usage-grants")[0];
+    assert!(!plain.iter().any(|arg| arg == "cedar_ember=1"), "{plain:?}");
+    assert!(query.iter().any(|arg| arg == "--get"), "{query:?}");
+    for (option, value) in [
+        ("--data", "cedar_ember=1"),
+        ("--data", "skip_spend=1"),
+        ("-H", "x-app: cli"),
+        ("-H", "anthropic-beta: oauth-2025-04-20"),
+        ("-K", "-"),
+    ] {
+        assert!(
+            curl_pair(query, option, value),
+            "{option} {value}: {query:?}"
+        );
+    }
+    assert!(
+        query
+            .windows(2)
+            .any(|pair| pair[0] == "-A" && pair[1].starts_with("claude-cli/")),
+        "{query:?}"
+    );
+    assert!(!plain.iter().chain(query).any(|arg| arg.contains(token)));
+
+    // The host's usage row can win the pick, while the grant remains local.
+    let mut host = cached.clone();
+    host["measured_through"] = json!("host");
+    host.as_object_mut().unwrap().remove("limit_resets");
+    let mut roster = roster_of(rows(&[cached, host], &world.settings));
+    roster.carry_limit_resets(r#"{"accounts":[]}"#).unwrap();
+    let tokens = Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()));
+    let holders = roster.reset_holders(&claude(None), &tokens, now()).unwrap();
+    for (reset, then) in [(true, "wait-for-reset"), (false, "notify")] {
+        let action = stop::action(
+            Kind::Usage,
+            std::time::Duration::ZERO,
+            Session::Worker,
+            Ground {
+                own_room: false,
+                room: false,
+                reset,
+                resets: &holders,
+            },
+        );
+        let notice = json!(action);
+        assert_eq!(notice["action"], json!("notify-reset"));
+        assert_eq!(notice["then"]["action"], json!(then));
+        assert_eq!(
+            notice["accounts"],
+            json!([{"config_dir": world.dir("aclaude"),
+            "alias": "aclaude", "limit_resets": grants}])
+        );
+    }
+}
+
+fn fable_grant_body() -> Value {
+    json!({"cedar_ember": {"eligible": true,
+        "grants": [{"type": "full", "resets_left": 1, "ends_at": stamp(now() + 3600),
+                    "gives_back_weekly": true}]}})
+}
+
+#[test]
+fn a_claude_grant_refusal_leaves_usage_readable_and_defers_the_grant_get() {
+    let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    let token = "token-aclaude";
+    world.plant_answer(token, "usage-grants", &json!({}), Some("429 300"));
+    for (weekly, status, read_status, read_weekly) in [
+        (20, None, "ok", 20),
+        (40, Some("429 1"), "rate_limited", 20),
+    ] {
+        world.plant_answer(
+            token,
+            "usage",
+            &claude_body(json!(10), json!(weekly), &[]),
+            status,
+        );
+        let row = listed_row(&world, "aclaude");
+        assert_eq!(row["status"], json!(read_status), "{row}");
+        assert_eq!(row["weekly_pct"], json!(read_weekly), "{row}");
+        assert_eq!(row["limit_resets"], Value::Null, "{row}");
+        assert!(
+            row["detail"].as_str().unwrap().contains("HTTP 429"),
+            "{row}"
+        );
+    }
+    // Expire the ordinary refusal without waiting out the grant refusal.
+    let path = world.record_path("claude", "aclaude");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["refusal"]["expires_at"] = json!(now());
+    std::fs::write(&path, record.to_string()).unwrap();
+    world.plant_answer(
+        token,
+        "usage",
+        &claude_body(json!(10), json!(40), &[]),
+        None,
+    );
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("ok"), "{row}");
+    assert_eq!(row["weekly_pct"], json!(40), "{row}");
+    assert!(
+        row["detail"].as_str().unwrap().contains("HTTP 429"),
+        "{row}"
+    );
+    assert_eq!(
+        world.curl_log(),
+        [
+            "usage token-aclaude",
+            "usage-grants token-aclaude",
+            "usage token-aclaude",
+            "usage token-aclaude"
+        ]
+    );
+
+    let path = world.grant_path("aclaude");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["refusal"]["expires_at"] = json!(now());
+    std::fs::write(&path, record.to_string()).unwrap();
+    world.plant_answer(token, "usage-grants", &fable_grant_body(), None);
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(
+        row["limit_resets"],
+        json!([{"kind":"fable","left":1}]),
+        "{row}"
+    );
+    assert_eq!(row["detail"], Value::Null, "{row}");
+    assert_eq!(
+        &world.curl_log()[4..],
+        ["usage token-aclaude", "usage-grants token-aclaude"]
+    );
+}
+
+#[test]
+fn a_cached_claude_grant_read_distinguishes_failure_from_no_program() {
+    for (status, cause) in [
+        (None, None),
+        (Some("exit"), Some("grant query could not be run")),
+        (Some("429 300"), Some("grant query refused with HTTP 429")),
+    ] {
+        let mut world = World::new(&[]);
+        world.plant_listing(&[measured("aclaude", 20, 10)]);
+        let missing = listed_row(&world, "aclaude");
+        assert_eq!(missing["status"], json!("ok"), "{missing}");
+        assert_eq!(missing["weekly_pct"], json!(20), "{missing}");
+        assert_eq!(missing["limit_resets"], Value::Null, "{missing}");
+        assert_eq!(
+            missing["detail"],
+            json!("no cached grant response for this login"),
+            "{missing}"
+        );
+        assert!(world.curl_log().is_empty());
+        std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+        let token = "token-aclaude";
+        world.plant_answer(
+            token,
+            "usage",
+            &claude_body(json!(10), json!(20), &[]),
+            None,
+        );
+        world.plant_answer(
+            token,
+            "usage-grants",
+            &json!({"cedar_ember":{"eligible":false}}),
+            status,
+        );
+        for row in [listed_row(&world, "aclaude"), listed_row(&world, "aclaude")] {
+            assert_eq!(row["status"], json!("ok"), "{row}");
+            assert_eq!(row["weekly_pct"], json!(20), "{row}");
+            assert_eq!(row["limit_resets"], Value::Null, "{row}");
+            assert_eq!(row["detail"], json!(cause), "{row}");
+        }
+        if status == Some("429 300") {
+            let path = world.grant_path("aclaude");
+            let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            record["refusal"]["expires_at"] = json!(now());
+            std::fs::write(&path, record.to_string()).unwrap();
+            let expired = listed_row(&world, "aclaude");
+            assert_eq!(expired["status"], json!("ok"), "{expired}");
+            assert_eq!(expired["weekly_pct"], json!(20), "{expired}");
+            assert_eq!(expired["limit_resets"], Value::Null, "{expired}");
+            assert!(
+                expired["detail"].as_str().unwrap().contains("HTTP 429"),
+                "{expired}"
+            );
+        }
+        assert_eq!(
+            world.curl_log(),
+            ["usage token-aclaude", "usage-grants token-aclaude"]
+        );
+    }
+}
+
+#[test]
+fn a_claude_usage_refusal_keeps_only_current_login_figures_and_fresh_grants() {
+    for (replace_login, backoff, fresh_grant) in [
+        (false, false, true),
+        (false, false, false),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        let mut world = World::new(&[]);
+        world.plant_listing(&[measured("aclaude", 20, 10)]);
+        let usage_path = world.record_path("claude", "aclaude");
+        std::fs::remove_file(&usage_path).unwrap();
+        world.plant_answer(
+            "token-aclaude",
+            "usage",
+            &claude_body(json!(10), json!(20), &[]),
+            None,
+        );
+        world.plant_answer(
+            "token-aclaude",
+            "usage-grants",
+            &fable_grant_body(),
+            backoff.then_some("429 300"),
+        );
+        let first = listed_row(&world, "aclaude");
+        assert_eq!(first["limit_resets"].is_array(), !backoff, "{first}");
+
+        let grant_path = world.grant_path("aclaude");
+        let mut recorded_usage: Value =
+            serde_json::from_slice(&std::fs::read(&usage_path).unwrap()).unwrap();
+        recorded_usage["fetched_at"] = json!(now() - 3600);
+        std::fs::write(&usage_path, recorded_usage.to_string()).unwrap();
+        if !backoff && !fresh_grant {
+            let mut recorded_grant: Value =
+                serde_json::from_slice(&std::fs::read(&grant_path).unwrap()).unwrap();
+            recorded_grant["fetched_at"] = json!(now() - 3600);
+            std::fs::write(&grant_path, recorded_grant.to_string()).unwrap();
+        }
+        let token = if replace_login {
+            for path in [&usage_path, &grant_path] {
+                std::fs::File::open(path)
+                    .unwrap()
+                    .set_times(
+                        std::fs::FileTimes::new()
+                            .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(now() - 60)),
+                    )
+                    .unwrap();
+            }
+            std::fs::write(
+                credential_file(&world, "claude", "aclaude"),
+                json!({"claudeAiOauth":{"accessToken":"replacement-token",
+                    "expiresAt":(now()+3600)*1000,"subscriptionType":"max"}})
+                .to_string(),
+            )
+            .unwrap();
+            "replacement-token"
+        } else {
+            "token-aclaude"
+        };
+        let body = claude_body(json!(10), json!(40), &[]);
+        world.plant_answer(token, "usage", &body, Some("429 1"));
+        let refused = listed_row(&world, "aclaude");
+        assert_eq!(refused["status"], json!("rate_limited"), "{refused}");
+        let expected_weekly = (!replace_login).then_some(20);
+        assert_eq!(refused["weekly_pct"], json!(expected_weekly), "{refused}");
+        assert_eq!(
+            refused["limit_resets"].is_array(),
+            !replace_login && fresh_grant,
+            "{refused}"
+        );
+        if !replace_login && !fresh_grant {
+            assert!(
+                refused["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("cached grant response is stale"),
+                "{refused}"
+            );
+        }
+        if replace_login {
+            let mut record: Value =
+                serde_json::from_slice(&std::fs::read(&usage_path).unwrap()).unwrap();
+            record["refusal"]["expires_at"] = json!(now());
+            std::fs::write(&usage_path, record.to_string()).unwrap();
+            world.plant_answer(token, "usage", &body, None);
+            world.plant_answer(token, "usage-grants", &fable_grant_body(), None);
+            let row = listed_row(&world, "aclaude");
+            assert_eq!(row["weekly_pct"], json!(40), "{row}");
+            assert_eq!(
+                row["limit_resets"],
+                json!([{"kind":"fable","left":1}]),
+                "{row}"
+            );
+            assert_eq!(
+                world.curl_log().last().unwrap(),
+                "usage-grants replacement-token"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_ended_claude_plan_hides_a_fresh_grant() {
+    let mut world = World::new(&[]);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    let path = world.record_path("claude", "aclaude");
+    std::fs::remove_file(&path).unwrap();
+    let token = "token-aclaude";
+    world.plant_answer(
+        token,
+        "usage",
+        &claude_body(json!(10), json!(20), &[]),
+        None,
+    );
+    world.plant_answer(token, "usage-grants", &fable_grant_body(), None);
+    assert!(listed_row(&world, "aclaude")["limit_resets"].is_array());
+
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["fetched_at"] = json!(now() - 3600);
+    std::fs::write(&path, record.to_string()).unwrap();
+    world.plant_answer(token, "usage", &json!({}), Some("403"));
+    world.plant_answer(
+        token,
+        "profile",
+        &json!({
+            "organization":{"organization_type":"claude_free","subscription_status":"canceled"},
+            "account":{"has_claude_max":false},
+        }),
+        None,
+    );
+    for row in [listed_row(&world, "aclaude"), listed_row(&world, "aclaude")] {
+        assert_eq!(row["status"], json!("plan_ended"), "{row}");
+        assert_eq!(row["limit_resets"], Value::Null, "{row}");
+    }
 }
 
 /// The week every wall row's account is walled in, as `measured` plants it.
@@ -2466,7 +2850,7 @@ fn two_refreshers_under_the_lock_fetch_once() {
     }
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude"],
+        vec!["usage token-aclaude", "usage-grants token-aclaude"],
         "the second reader took the first's figure inside the lock"
     );
 }
@@ -3207,14 +3591,19 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
         vec!["copilot token-acopilot", "copilot gho_keyring"],
         "{log:?}"
     );
-    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    let argv = world.curl_argv("copilot");
     assert!(
-        !argv.contains("token-acopilot")
-            && !argv.contains("gho_keyring")
-            && !argv.contains("ghu_tenant"),
-        "no login on an argument vector: {argv}"
+        !argv.iter().flatten().any(|arg| {
+            ["token-acopilot", "gho_keyring", "ghu_tenant"]
+                .iter()
+                .any(|token| arg.contains(token))
+        }),
+        "no login on an argument vector: {argv:?}"
     );
-    assert!(argv.contains("-K -"), "{argv}");
+    assert!(
+        argv.iter().all(|args| curl_pair(args, "-K", "-")),
+        "{argv:?}"
+    );
 }
 
 /// A stated Pi root is measured through its own Copilot login, as a Copilot
@@ -3321,10 +3710,10 @@ fn a_pi_roots_copilot_login_is_measured_first_and_the_statement_stands_in_where_
             "copilot ghu_unanswered"
         ]
     );
-    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    let argv = world.curl_argv("copilot");
     assert!(
-        !argv.contains("ghu_pi"),
-        "no login on an argument vector: {argv}"
+        !argv.iter().flatten().any(|arg| arg.contains("ghu_pi")),
+        "no login on an argument vector: {argv:?}"
     );
     let reply = world.pick(&PickRequest {
         model: Some("github-copilot/claude-sonnet-5".to_owned()),
@@ -3917,7 +4306,8 @@ fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing()
         vec![
             "token refresh-aclaude",
             "token refresh-aclaude",
-            "usage renewed-token"
+            "usage renewed-token",
+            "usage-grants renewed-token"
         ],
         "the next listing posts again and reads usage through the new token"
     );
@@ -3945,13 +4335,22 @@ fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing()
         (before + 3600) * 1000 <= expires && expires <= (now() + 3600 + 60) * 1000,
         "the new expiry is one lifetime on: {expires}"
     );
-    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    let argv = world.curl_argv("token");
     assert!(
-        !argv.contains("refresh-aclaude"),
-        "no refresh token on an argument vector: {argv}"
+        !argv
+            .iter()
+            .flatten()
+            .any(|arg| arg.contains("refresh-aclaude")),
+        "no refresh token on an argument vector: {argv:?}"
     );
-    assert!(argv.contains("--data-binary @-"), "{argv}");
-    assert!(argv.contains("-A claude-cli/"), "{argv}");
+    for args in &argv {
+        assert!(curl_pair(args, "--data-binary", "@-"), "{args:?}");
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-A" && pair[1].starts_with("claude-cli/")),
+            "{args:?}"
+        );
+    }
     let mode = std::os::unix::fs::PermissionsExt::mode(
         &std::fs::metadata(credential_file(&world, "claude", "aclaude"))
             .unwrap()
@@ -4002,7 +4401,10 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     let row = listed_row(&world, "aclaude");
     assert_eq!(row["status"], json!("ok"), "{row}");
     assert_eq!(row["refreshable"], json!(false), "{row}");
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
 
     write_claude_login(
         &world,
@@ -4014,7 +4416,7 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     assert_eq!(row["status"], json!("expired"), "{row}");
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude"],
+        vec!["usage token-aclaude", "usage-grants token-aclaude"],
         "an expired token under an ended login is not renewed"
     );
 
@@ -4025,7 +4427,11 @@ fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() 
     assert_eq!(row["headroom_pct"], json!(80), "{row}");
     assert_eq!(
         world.curl_log(),
-        vec!["usage token-aclaude", "token refresh-aclaude"],
+        vec![
+            "usage token-aclaude",
+            "usage-grants token-aclaude",
+            "token refresh-aclaude"
+        ],
         "a login this listing renewed is the same account: its record is served"
     );
 }
@@ -4061,9 +4467,12 @@ fn two_renewers_under_the_credentials_lock_rotate_the_refresh_token_once() {
         "one grant for two renewers: {log:?}"
     );
     assert_eq!(
-        log.iter().filter(|l| l.starts_with("usage ")).count(),
-        1,
-        "one usage request, the waiter served from the record: {log:?}"
+        log.iter()
+            .filter(|l| l.starts_with("usage"))
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["usage renewed-token", "usage-grants renewed-token"],
+        "one usage refresh, the waiter served from the record"
     );
     let file: Value = serde_json::from_str(
         &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
@@ -4334,7 +4743,11 @@ fn a_private_file_setting_reaches_the_account_readers_as_it_reached_the_released
     assert_eq!(row["refreshable"], json!(true), "{roster}");
     assert_eq!(
         world.curl_log(),
-        vec!["token refresh-aclaude", "usage renewed-token"]
+        vec![
+            "token refresh-aclaude",
+            "usage renewed-token",
+            "usage-grants renewed-token"
+        ]
     );
 }
 
@@ -4612,7 +5025,10 @@ fn without_flock_the_renewal_waits_out_a_shell_renewers_mkdir_mutex_and_takes_it
     let row = &reply["result"]["rows"][0]["record"];
     assert_eq!(row["status"], json!("ok"), "{reply}");
     assert_eq!(row["headroom_pct"], json!(70), "{reply}");
-    assert_eq!(world.curl_log(), vec!["usage peer-token"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage peer-token", "usage-grants peer-token"]
+    );
     let login: Value = serde_json::from_str(
         &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
     )
@@ -4664,6 +5080,7 @@ fn a_cold_429_is_asked_once_more_by_the_first_cold_account_of_a_listing_alone() 
         vec![
             "usage token-aclaude",
             "usage token-aclaude",
+            "usage-grants token-aclaude",
             "usage token-bclaude"
         ],
         "one retry per listing, spent on the first cold account"
@@ -4749,7 +5166,10 @@ fn two_readers_of_a_changed_login_fetch_its_usage_once() {
             "{reply}"
         );
     }
-    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "usage-grants token-aclaude"]
+    );
 }
 
 #[test]

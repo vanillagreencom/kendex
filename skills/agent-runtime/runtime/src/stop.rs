@@ -343,6 +343,10 @@ mod tests {
         let held = [ResetHolder {
             config_dir: "/h/.1codex".to_owned(),
             alias: "1codex".to_owned(),
+            limit_resets: vec![crate::accounts::LimitReset {
+                kind: None,
+                left: 1,
+            }],
         }];
         let ground = |own_room, room, reset| Ground {
             own_room,

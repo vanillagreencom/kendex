@@ -36,7 +36,7 @@ use crate::settings::AccountSettings;
 /// The token endpoint answers HTTP 429 to a POST carrying no User-Agent,
 /// whatever the rate; it matches the `claude-cli/` prefix and reads no
 /// version.
-const CLAUDE_TOKEN_UA: &str = "claude-cli/2.1.278 (external, cli)";
+pub(super) const CLAUDE_TOKEN_UA: &str = "claude-cli/2.1.278 (external, cli)";
 /// The POST's own bound is curl's `--max-time 25`; the runner's covers the
 /// start.
 const TOKEN_BOUND: Duration = Duration::from_secs(30);

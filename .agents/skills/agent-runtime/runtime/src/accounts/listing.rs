@@ -33,6 +33,7 @@ use crate::settings::{AccountSettings, CopilotPool};
 
 const COPILOT_CREDITS_URL: &str = "https://api.github.com/copilot_internal/user";
 pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
+const CLAUDE_GRANTS_ENDPOINT: &str = "usage-grants";
 /// A request's own bound is curl's `--max-time 10`; the runner's covers
 /// the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
@@ -531,7 +532,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
             }
         },
     };
-    let mut reading = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
+    let (mut reading, grants) = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
     reading.plan = match (harness, &reading.usage) {
         (Harness::Copilot | Harness::Pi, Some(Usage::Body(body))) => body
             .get("copilot_plan")
@@ -541,7 +542,13 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
         (Harness::Copilot | Harness::Pi, _) => String::new(),
         _ => plan,
     };
+    // A confirmed ended plan or a refusal without a current usage figure
+    // cannot make an older grant a reset candidate.
+    let has_usage = reading.usage.is_some();
     let mut row = row(ctx, reading);
+    if has_usage {
+        attach_grants(&mut row, grants);
+    }
     // A Pi root's statement is the reading its owner relies on until its own
     // login measures the pool: a refused, unanswered or empty answer keeps
     // it, where a Copilot CLI home reads the error.
@@ -766,7 +773,7 @@ fn usage_reading(
     token: &str,
     account_id: &str,
     renewed: bool,
-) -> Reading {
+) -> (Reading, GrantRead) {
     let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
     let record = |ctx: &mut Ctx| -> Option<Reading> {
         if !renewed && credential_newer(harness, dir, &path) {
@@ -784,7 +791,7 @@ fn usage_reading(
         Some(refused_reading(&record, harness, &refusal, age, ctx.now))
     };
     if let Some(reading) = record(ctx) {
-        return reading;
+        return (reading, claude_grants(ctx, harness, dir, None));
     }
     let url = match harness {
         Harness::Claude => ctx.accounts.claude_usage_url.clone(),
@@ -794,9 +801,9 @@ fn usage_reading(
     let usage_dir = ctx.usage_dir.clone();
     let (reading, notice) = cache::under_refresh_lock(&usage_dir, || {
         if let Some(reading) = record(ctx) {
-            return reading;
+            return (reading, claude_grants(ctx, harness, dir, None));
         }
-        fetch(ctx, harness, dir, &path, &url, token, account_id)
+        fetch(ctx, harness, dir, &url, token, account_id, renewed)
     });
     if let Some(notice) = notice {
         ctx.notes.push(notice);
@@ -878,7 +885,7 @@ fn refused_reading(
     reading
 }
 
-/// One request to the usage endpoint: a refusal recorded in the account's
+/// Refresh the usage endpoint: a refusal recorded in the account's
 /// record for its window, an answer recorded as the figure with the one it
 /// displaced beside it. A 429 with no kept figure to answer from is asked
 /// once more, after its window or five seconds whichever is shorter, by the
@@ -893,54 +900,66 @@ fn fetch(
     ctx: &mut Ctx,
     harness: Harness,
     dir: &str,
-    path: &Path,
     url: &str,
     token: &str,
     account_id: &str,
-) -> Reading {
-    let Some(mut answer) = request(harness, url, token, account_id) else {
-        return Reading::refused("unreachable", "usage query could not be run".to_owned());
+    renewed: bool,
+) -> (Reading, GrantRead) {
+    let failed = |ctx: &mut Ctx, reading| (reading, claude_grants(ctx, harness, dir, None));
+    let Some(mut answer) = request(harness, url, token, account_id, false) else {
+        return failed(
+            ctx,
+            Reading::refused("unreachable", "usage query could not be run".to_owned()),
+        );
     };
     if answer.code == Some(429) {
-        let refused = refused_answer(ctx, harness, dir, path, url, token, &answer);
+        let refused = refused_answer(ctx, harness, dir, url, token, &answer, renewed);
         if refused.usage.is_some() || ctx.retry_spent {
-            return refused;
+            return failed(ctx, refused);
         }
         ctx.retry_spent = true;
         let window = refusal_window(answer.retry_after.as_deref());
         std::thread::sleep(Duration::from_secs(window.min(RETRY_WAIT_MAX_S)));
-        answer = match request(harness, url, token, account_id) {
+        answer = match request(harness, url, token, account_id, false) {
             Some(answer) => answer,
             None => {
                 let mut refused = refused;
                 refused
                     .detail
                     .push_str(", and the one retry could not be run");
-                return refused;
+                return failed(ctx, refused);
             }
         };
     }
     if answer.code.is_some_and(|c| !(200..300).contains(&c)) {
-        return refused_answer(ctx, harness, dir, path, url, token, &answer);
+        let reading = refused_answer(ctx, harness, dir, url, token, &answer, renewed);
+        return failed(ctx, reading);
     }
     if answer.body.is_empty() {
-        return Reading::refused(
-            "unreachable",
-            format!(
-                "usage query answered HTTP {} with no body",
-                answer.code.unwrap_or(0)
+        return failed(
+            ctx,
+            Reading::refused(
+                "unreachable",
+                format!(
+                    "usage query answered HTTP {} with no body",
+                    answer.code.unwrap_or(0)
+                ),
             ),
         );
     }
-    let Ok(usage) = serde_json::from_str::<Value>(&answer.body) else {
-        return Reading::refused("error", "usage response was not a JSON object".to_owned());
+    let Ok(usage @ Value::Object(_)) = serde_json::from_str::<Value>(&answer.body) else {
+        return failed(
+            ctx,
+            Reading::refused("error", "usage response was not a JSON object".to_owned()),
+        );
     };
-    if !usage.is_object() {
-        return Reading::refused("error", "usage response was not a JSON object".to_owned());
-    }
-    let written = cache::write_figure(path, harness.name(), dir, usage.clone(), ctx.now);
+    // Only the plain GET is known to carry the usage windows. Publish that
+    // figure after saving the grant result so a waiter can see both.
+    let grants = claude_grants(ctx, harness, dir, Some((url, token)));
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
+    let written = cache::write_figure(&path, harness.name(), dir, usage.clone(), ctx.now);
     let (prior, rated_from) = spans(written.prior, written.rated_from, ctx.now);
-    Reading {
+    let reading = Reading {
         status: "ok".to_owned(),
         detail: String::new(),
         plan: String::new(),
@@ -950,6 +969,118 @@ fn fetch(
         rated_from,
         fall: written.fall,
         refused_endpoint: None,
+    };
+    (reading, grants)
+}
+
+type GrantRead = Result<Vec<super::LimitReset>, String>;
+
+fn claude_grants(
+    ctx: &mut Ctx,
+    harness: Harness,
+    dir: &str,
+    refresh: Option<(&str, &str)>,
+) -> GrantRead {
+    if harness != Harness::Claude {
+        return Ok(Vec::new());
+    }
+    let path = cache::grant_path(&ctx.usage_dir, harness.name(), dir);
+    // An ordinary usage refusal can rewrite its own record. The grant
+    // record must still be checked against the credential independently.
+    let record = (!credential_newer(harness, dir, &path))
+        .then(|| cache::read(&path, harness.name(), dir))
+        .flatten();
+    if let Some((refusal, _)) = record
+        .as_ref()
+        .and_then(|record| cache::refusal(record, CLAUDE_GRANTS_ENDPOINT, ctx.now))
+    {
+        return Err(refusal.detail);
+    }
+    let Some((url, token)) = refresh else {
+        let record = record.ok_or_else(|| "no cached grant response for this login".to_owned())?;
+        if let Some(refusal) = record
+            .refusal
+            .as_ref()
+            .filter(|r| r.endpoint == CLAUDE_GRANTS_ENDPOINT)
+        {
+            return Err(format!("last grant read: {}", refusal.detail));
+        }
+        return match cache::figure(&record, harness, Some(ctx.serve_max_age), ctx.now) {
+            FigureRead::Served(figure) => Ok(usage::claude_limit_resets(&figure.usage, ctx.now)),
+            FigureRead::Miss | FigureRead::Reset(_) => {
+                Err("cached grant response is stale".to_owned())
+            }
+        };
+    };
+    let (grants, written) = match grant_answer(url, token, ctx.now) {
+        Ok(body) => (
+            Ok(usage::claude_limit_resets(&body, ctx.now)),
+            cache::write_grants(&path, harness.name(), dir, body, ctx.now),
+        ),
+        Err(refusal) => (
+            Err(refusal.detail.clone()),
+            cache::write_refusal_keeping(&path, harness.name(), dir, refusal, ctx.now, false),
+        ),
+    };
+    if let Err(cause) = written {
+        ctx.notes
+            .push(format!("grant-cache-unwritten account={dir} cause={cause}"));
+    }
+    grants
+}
+
+fn grant_answer(url: &str, token: &str, now: u64) -> Result<Value, Refusal> {
+    let failure = |status, code: Option<u16>, detail, retry_after| Refusal {
+        endpoint: CLAUDE_GRANTS_ENDPOINT.to_owned(),
+        status,
+        code: code.map(|code| code.to_string()),
+        detail,
+        expires_at: now.saturating_add(refusal_window(retry_after)),
+    };
+    let Some(answer) = request(Harness::Claude, url, token, "", true) else {
+        return Err(failure(
+            "unreachable".to_owned(),
+            None,
+            "grant query could not be run".to_owned(),
+            None,
+        ));
+    };
+    if let Some(code) = answer.code.filter(|code| !(200..300).contains(code)) {
+        return Err(failure(
+            usage::refusal_status(code, "refused"),
+            Some(code),
+            format!("grant query refused with HTTP {code}"),
+            answer.retry_after.as_deref(),
+        ));
+    }
+    if let Ok(body) = serde_json::from_str::<Value>(&answer.body)
+        && let program = &body["cedar_ember"]
+        && (program["eligible"].as_bool() == Some(false)
+            || (program["eligible"].as_bool() == Some(true) && program["grants"].is_array()))
+        && program["ineligible_reason"].as_str() != Some("surface")
+    {
+        return Ok(json!({"cedar_ember": program}));
+    }
+    Err(failure(
+        "error".to_owned(),
+        answer.code,
+        "grant query returned no readable grant program".to_owned(),
+        None,
+    ))
+}
+
+fn attach_grants(row: &mut Value, grants: GrantRead) {
+    match grants {
+        Ok(grants) if !grants.is_empty() => row["limit_resets"] = json!(grants),
+        Err(cause) => {
+            let detail = row["detail"].as_str().unwrap_or_default();
+            row["detail"] = if detail.is_empty() {
+                json!(cause)
+            } else {
+                json!(format!("{detail}; {cause}"))
+            };
+        }
+        Ok(_) => {}
     }
 }
 
@@ -957,9 +1088,15 @@ fn fetch(
 /// where the request could not be run.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the listing's one request to a usage endpoint, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
+    reason = "the listing's requests to the usage endpoint use the one runner under its tag, with the bearer on stdin"
 )]
-fn request(harness: Harness, url: &str, token: &str, account_id: &str) -> Option<usage::Answer> {
+fn request(
+    harness: Harness,
+    url: &str,
+    token: &str,
+    account_id: &str,
+    grants: bool,
+) -> Option<usage::Answer> {
     let mut args: Vec<&str> = vec![
         "-s",
         "--max-time",
@@ -975,6 +1112,19 @@ fn request(harness: Harness, url: &str, token: &str, account_id: &str) -> Option
     let config = match harness {
         Harness::Claude => {
             args.extend(["-H", &beta]);
+            if grants {
+                args.extend([
+                    "--get",
+                    "--data",
+                    "cedar_ember=1",
+                    "--data",
+                    "skip_spend=1",
+                    "-H",
+                    "x-app: cli",
+                    "-A",
+                    renewal::CLAUDE_TOKEN_UA,
+                ]);
+            }
             format!("header = \"Authorization: Bearer {token}\"\n")
         }
         Harness::Copilot | Harness::Pi => {
@@ -1012,10 +1162,10 @@ fn refused_answer(
     ctx: &mut Ctx,
     harness: Harness,
     dir: &str,
-    path: &Path,
     url: &str,
     token: &str,
     answer: &usage::Answer,
+    renewed: bool,
 ) -> Reading {
     let code = answer.code.unwrap_or(0);
     let mut status = usage::refusal_status(code, "refused");
@@ -1034,14 +1184,19 @@ fn refused_answer(
         detail: detail.clone(),
         expires_at: ctx.now + refusal_window(answer.retry_after.as_deref()),
     };
-    if let Err(cause) = cache::write_refusal(path, harness.name(), dir, refusal, ctx.now) {
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
+    let keep = harness != Harness::Claude || renewed || !credential_newer(harness, dir, &path);
+    if let Err(cause) =
+        cache::write_refusal_keeping(&path, harness.name(), dir, refusal, ctx.now, keep)
+    {
         ctx.notes.push(format!(
             "refusal-unrecorded dir={} cause={cause}",
             ctx.usage_dir.display()
         ));
     }
     if status == "rate_limited"
-        && let Some(record) = cache::read(path, harness.name(), dir)
+        && keep
+        && let Some(record) = cache::read(&path, harness.name(), dir)
         && let FigureRead::Served(figure) =
             cache::figure(&record, harness, Some(FIVE_HOURS_S), ctx.now)
     {
@@ -1535,6 +1690,66 @@ pub fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
 mod tests {
     use super::*;
     use crate::settings::Judged;
+
+    #[test]
+    fn claude_rows_carry_only_unused_unexpired_grants() {
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let env = Env {
+            accounts: &accounts,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+            account_tokens: &Judged::of("tokens", Ok(Vec::new())),
+        };
+        let settings = accounts.get().unwrap();
+        let now = clock::epoch_secs("2026-11-26T00:00:00Z").unwrap();
+        let ctx = Ctx::new(&env, &settings, now).unwrap();
+        // KEN-5781 comment 3940d9cc records the full grant and describes
+        // the Fable, spent, ended and ineligible cases.
+        let full = json!({
+            "id": "full-reset-2611", "label": "One full limit reset (November 2026)",
+            "resets_total": 1, "resets_left": 1, "starts_at": "2026-11-10T21:30:00+00:00",
+            "ends_at": "2026-12-10T22:00:00+00:00",
+            "clears": ["five_hour", "seven_day", "seven_day_overage_included"],
+            "paused": false, "usable_now": true, "use_requires_limit": false,
+            "type": "full", "unavailable_reason": null, "gives_back_weekly": false
+        });
+        let mut fable = full.clone();
+        fable["gives_back_weekly"] = json!(true);
+        let mut spent = full.clone();
+        spent["resets_left"] = json!(0);
+        let mut ended = full.clone();
+        ended["ends_at"] = json!("2026-11-25T00:00:00+00:00");
+        let program = |grant| json!({"eligible": true, "grants": [grant]});
+        for (case, program, expected) in [
+            ("Fable", program(fable), json!([{"kind":"fable","left":1}])),
+            ("full", program(full), json!([{"kind":"full","left":1}])),
+            ("spent", program(spent), Value::Null),
+            ("ended", program(ended), Value::Null),
+            ("no program", json!({"eligible": false}), Value::Null),
+        ] {
+            let mut reading = Reading::refused("ok", String::new());
+            reading.usage = Some(Usage::Body(json!({
+                "seven_day": {"utilization": 20, "resets_at": "2026-11-29T00:00:00Z"},
+            })));
+            let mut row = emit(
+                &ctx,
+                &Emit {
+                    alias: "a",
+                    harness: Harness::Claude,
+                    dir: "/h/.a",
+                    through: "local",
+                    reading,
+                    words: None,
+                },
+            );
+            let grants = usage::claude_limit_resets(&json!({"cedar_ember": program}), now);
+            attach_grants(&mut row, Ok(grants));
+            assert_eq!(row["limit_resets"], expected, "{case}");
+        }
+    }
 
     #[test]
     fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {

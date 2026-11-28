@@ -95,6 +95,21 @@ fn one() -> u64 {
 }
 
 impl Record {
+    fn empty(harness: &str, config_dir: &str, now: u64) -> Self {
+        Self {
+            harness: harness.to_owned(),
+            config_dir: config_dir.to_owned(),
+            fetched_at: now,
+            usage: None,
+            usage_fetched_at: None,
+            prior: None,
+            rated_from: None,
+            sample_claims: 1,
+            refusal: None,
+            fall: None,
+        }
+    }
+
     /// The stamp of the figure the record holds: its own where it stands
     /// alone, `usage_fetched_at` where a refusal was written over it.
     fn figure_at(&self) -> Option<u64> {
@@ -159,6 +174,12 @@ pub fn record_path(usage_dir: &Path, harness: &str, config_dir: &str) -> PathBuf
         crate::record::cksum(config_dir.as_bytes()),
         config_dir.len()
     ))
+}
+
+/// One grant response and its independent refusal window, under the usage
+/// cache's account key and refresh lock. It contributes no rate samples.
+pub(super) fn grant_path(usage_dir: &Path, harness: &str, config_dir: &str) -> PathBuf {
+    record_path(&usage_dir.join("grants"), harness, config_dir)
 }
 
 /// The record at `path` naming `harness` and `config_dir`, or `None`: no
@@ -302,19 +323,30 @@ pub fn write_figure(
         (_, displaced) => (displaced, None),
     };
     let record = Record {
-        harness: harness.to_owned(),
-        config_dir: config_dir.to_owned(),
-        fetched_at: now,
         usage: Some(usage),
-        usage_fetched_at: None,
         prior,
         rated_from,
-        sample_claims: 1,
-        refusal: None,
         fall,
+        ..Record::empty(harness, config_dir, now)
     };
     let _ = replace(path, &record);
     record
+}
+
+pub(super) fn write_grants(
+    path: &Path,
+    harness: &str,
+    config_dir: &str,
+    usage: Value,
+    now: u64,
+) -> Result<(), String> {
+    replace(
+        path,
+        &Record {
+            usage: Some(usage),
+            ..Record::empty(harness, config_dir, now)
+        },
+    )
 }
 
 /// How a later reading stands to the rate's anchor ([`step`]).
@@ -407,8 +439,20 @@ pub fn write_refusal(
     refusal: Refusal,
     now: u64,
 ) -> Result<(), String> {
-    let kept = read(path, harness, config_dir)
-        .filter(|_| refusal.status != "plan_ended")
+    write_refusal_keeping(path, harness, config_dir, refusal, now, true)
+}
+
+pub(super) fn write_refusal_keeping(
+    path: &Path,
+    harness: &str,
+    config_dir: &str,
+    refusal: Refusal,
+    now: u64,
+    keep: bool,
+) -> Result<(), String> {
+    let kept = (keep && refusal.status != "plan_ended")
+        .then(|| read(path, harness, config_dir))
+        .flatten()
         .and_then(|r| {
             Some((
                 r.figure_at()?,
@@ -425,16 +469,13 @@ pub fn write_refusal(
         None => (None, None, None, None, None),
     };
     let record = Record {
-        harness: harness.to_owned(),
-        config_dir: config_dir.to_owned(),
-        fetched_at: now,
         usage,
         usage_fetched_at,
         prior,
         rated_from,
-        sample_claims: 1,
         refusal: Some(refusal),
         fall,
+        ..Record::empty(harness, config_dir, now)
     };
     replace(path, &record)
 }

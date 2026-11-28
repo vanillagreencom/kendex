@@ -54,7 +54,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::clock;
@@ -215,10 +215,9 @@ pub struct AccountRow {
     /// (`unified-status=rejected`): walled whatever its figures read
     /// ([`Reads::of`]).
     pub rejected: bool,
-    /// The unused limit resets the provider states for the account, on
-    /// each reading of it ([`Roster::carry_limit_resets`]) and on the
-    /// reading a pick takes ([`resolve`]); `None` where it states none.
-    pub limit_resets: Option<u64>,
+    /// Claude's locally measured grants with their kind, or Codex's
+    /// provider-stated count.
+    pub limit_resets: Vec<LimitReset>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
     /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: the judge refuses it
@@ -350,7 +349,13 @@ impl AccountRow {
             reserved: flag(raw, "reserved"),
             seat: flag(raw, "seat"),
             rejected: string(raw, "unified_status").as_deref() == Some("rejected"),
-            limit_resets: None,
+            limit_resets: if harness == Harness::Claude {
+                raw.get("limit_resets")
+                    .and_then(|grants| serde_json::from_value(grants.clone()).ok())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
             retire,
             excluded,
             configured: raw.get("configured") != Some(&Value::Bool(false)),
@@ -557,6 +562,20 @@ pub fn today(now_secs: u64) -> String {
     clock::iso_utc(now_secs)[..10].to_owned()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LimitResetKind {
+    Full,
+    Fable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitReset {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<LimitResetKind>,
+    pub left: u64,
+}
+
 /// An account holding an unused limit reset ([`Roster::reset_holders`]).
 /// The directory names the account, as a launch names it; the alias is a
 /// label only, since `AGENT_RUNTIME_ACCOUNT_ALIASES` can give two
@@ -565,6 +584,7 @@ pub fn today(now_secs: u64) -> String {
 pub struct ResetHolder {
     pub config_dir: String,
     pub alias: String,
+    pub limit_resets: Vec<LimitReset>,
 }
 
 /// One listing under the judge's statement: its rows, the cause the
@@ -643,8 +663,8 @@ impl Roster {
         lines
     }
 
-    /// Carries onto each reading, this machine's or the provider's, the
-    /// unused limit resets the provider's `accounts --json --headroom`
+    /// Carries onto each Codex reading, this machine's or the provider's,
+    /// the count the provider's `accounts --json --headroom`
     /// document `doc` states for its account, matched on the harness and
     /// the directory name, never the local alias, since the document names
     /// the account by its directory's name; the cause where the document
@@ -655,11 +675,16 @@ impl Roster {
     /// carry the count.
     pub fn carry_limit_resets(&mut self, doc: &str) -> std::result::Result<(), String> {
         let stated = batch::limit_resets(doc)?;
-        for row in &mut self.rows {
+        for row in self.rows.iter_mut().filter(|r| r.harness == Harness::Codex) {
             row.limit_resets = stated
                 .iter()
                 .find(|s| s.harness == row.harness && lane_named(&row.config_dir, &s.name))
-                .map(|s| s.count);
+                .map(|s| LimitReset {
+                    kind: None,
+                    left: s.count,
+                })
+                .into_iter()
+                .collect();
         }
         Ok(())
     }
@@ -683,12 +708,13 @@ impl Roster {
         let today = today(now);
         Ok(choosable(&rows, billed, req)
             .filter(|r| {
-                r.limit_resets.is_some_and(|n| n > 0)
+                r.limit_resets.iter().any(|grant| grant.left > 0)
                     && standing_for(r, req, &today) == Standing::Open
             })
             .map(|r| ResetHolder {
                 config_dir: r.config_dir.clone(),
                 alias: r.alias.clone(),
+                limit_resets: r.limit_resets.clone(),
             })
             .collect())
     }
@@ -757,11 +783,11 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// marked `scope: unread`, for every pick, a worker's and a controller's
 /// alike: the provider's line states no model window, so a pick that held
 /// out for one would find no Claude account it measures. The provider's words
-/// (`reserved`, `plan-ends`, `unified-status`), its count of unused limit
-/// resets and its 5-hour window, where that window is the fuller and its
+/// (`reserved`, `plan-ends`, `unified-status`), its Codex reset count, and
+/// its 5-hour window, where that window is the fuller and its
 /// reset ahead, stand whichever reading does, a row with no reading
-/// included. An account with one reading keeps it. The roster is never resolved: it reports both
-/// readings.
+/// included. A Claude account keeps its local limit resets. An account with
+/// one reading keeps it. The roster reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in as this
 /// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
@@ -804,7 +830,7 @@ fn resolve(
         });
         match other {
             Some(i) => {
-                let (own, provider) = if provider_reading(row) {
+                let (mut own, mut provider) = if provider_reading(row) {
                     (out[i].clone(), row.clone())
                 } else {
                     (row.clone(), out[i].clone())
@@ -817,7 +843,11 @@ fn resolve(
                 let (reserved, plan_ends, limit_resets, rejected) = (
                     provider.reserved,
                     provider.plan_ends.clone(),
-                    provider.limit_resets,
+                    if row.harness == Harness::Claude {
+                        std::mem::take(&mut own.limit_resets)
+                    } else {
+                        std::mem::take(&mut provider.limit_resets)
+                    },
                     provider.rejected,
                 );
                 let admission = provider.raw.get("unified_status").cloned();
@@ -836,7 +866,9 @@ fn resolve(
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
-                stands.limit_resets = stands.limit_resets.or(limit_resets);
+                if row.harness == Harness::Claude || stands.limit_resets.is_empty() {
+                    stands.limit_resets = limit_resets;
+                }
                 // The provider's 5-hour window walls the account until its
                 // reset whichever reading stands, and this machine's reading
                 // of a model window can stand over it (`prefer`).
@@ -2586,10 +2618,15 @@ mod tests {
             notes: Vec::new(),
         };
         let counts = |roster: &Roster| -> Vec<Option<u64>> {
-            roster.rows.iter().map(|r| r.limit_resets).collect()
+            roster
+                .rows
+                .iter()
+                .map(|r| r.limit_resets.first().map(|grant| grant.left))
+                .collect()
         };
         roster.carry_limit_resets(HEADROOM).unwrap();
         assert_eq!(counts(&roster), vec![Some(1), None, Some(0), None]);
+        assert_eq!(json!(roster.rows[0].limit_resets), json!([{"left": 1}]));
         assert!(
             roster
                 .carry_limit_resets("account=/h/.1codex\tharness=codex\n")
