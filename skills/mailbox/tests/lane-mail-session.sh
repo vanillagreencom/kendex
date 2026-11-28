@@ -189,7 +189,12 @@ for row in \
   assert_eq "rc=$RC receipt=$(receipt "$cli")" \
     "rc=$want_rc receipt=[\"$result\",$credit,true]" \
     "$label: the receipt holds the send's result, its words and the credit reading"
-  assert_eq "$(sort -u "$USAGE/curl.log")" "usage token-eclaude" \
+  want_requests="usage token-eclaude"
+  if [[ "$usage" != unread ]]; then
+    want_requests+=$'\nusage-grants token-eclaude'
+  fi
+  requests="$(LC_ALL=C sort -u "$USAGE/curl.log")"
+  assert_eq "$requests" "$want_requests" \
     "$label: the credit is read for the route's account alone"
 done
 # The receipt is a stderr line; stdout keeps the `sent` receipt alone.
