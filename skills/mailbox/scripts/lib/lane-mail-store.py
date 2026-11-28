@@ -550,6 +550,7 @@ def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
                if obj and obj.get("kind") == "answer" and isinstance(obj.get("re"), str)}
     owner_closed = {obj.get("re") for obj, row in zip(objects[1], metadata[1])
                     if obj and row["class"] == "close" and isinstance(obj.get("re"), str)}
+    tracker_settled = {obj.get("re") for obj in objects[0] if obj and obj.get("kind") == "tracker-settled"}
     presentations = {obj["id"] for obj in objects[0]
                      if obj and obj.get("kind") == "notice" and "presentation" in obj and isinstance(obj.get("id"), str)}
     presented_asks = {obj["re"] for obj in objects[0]
@@ -575,7 +576,9 @@ def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
             # mailbox retention window, even if the ask has closed.
             bound = (b == 0 and obj and isinstance(obj.get("id"), str)
                      and (obj["id"] in presented_asks or obj["id"] in presentations))
-            retain = (at is None or at >= cutoff or unread or open_ask or awaiting_delivery or bound
+            unsettled = (b == 0 and obj and obj.get("kind") == "tracker-failed"
+                         and isinstance(obj.get("failed_question"), str) and obj.get("re") not in tracker_settled)
+            retain = (at is None or at >= cutoff or unread or open_ask or awaiting_delivery or bound or unsettled
                       or (b == 1 and i == directive_to_keep))
             selected.append(retain)
             if obj:

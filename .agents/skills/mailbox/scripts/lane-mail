@@ -47,7 +47,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail replace --item overseer --id MSGID [--root ROOT]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
-owner-answers reads posted owner asks once, repairs their action descriptions,
+owner-answers reads open owner asks once, repairs posted questions' view marks,
 and delivers later owner comments through the existing delivery-id check. It
 first runs `replace` for each owner ask, open or closed, whose replacement is
 incomplete, its stderr lines passed on. An open question is an open posted
@@ -55,9 +55,9 @@ ask's own question comment, or one an open ask that reached the owner replaced
 (one with no item, or an item ask whose question posted). The comments of each
 open question's item are read, whether or not the item still carries the owner
 label and assignee. A reply whose thread, followed parent by parent, reaches an
-open question goes to that question's ask. A top-level comment goes to the ask
-of the latest open question on the item before it. Any other comment goes to
-no ask. An answer through a replaced question opens with one line naming the
+open question or retained failed-publication comment goes to that ask.
+A top-level comment goes to the latest open posted question before it on the
+item. An answer through a replaced question opens with one line naming the
 replaced ask and the open one. An item Linear answers it holds no issue for
 holds no comments: stderr names it as `owner-answers: item-missing
 issue=<item>`, and the other items are read. An item off the owner list that
@@ -696,7 +696,9 @@ reads fold it into that ask as `reserved: true`, never emit it as an event,
 and count its line.
 A private tracker-posted or tracker-failed record carries an immutable ask's
 outcome by its re and issue. Posted records carry the question comment's id in
-tracker_comment. Failure records carry the failed operation in cause.
+tracker_comment. Failure records carry the failed operation in cause and the
+attempted comment's reserved ID in failed_question when a create was attempted.
+A private tracker-settled receipt releases that exchange to normal retention.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. A tracker-unwritten cause=label
@@ -1544,8 +1546,8 @@ owner_answer_rows() { # COMMENTS ASKS
       | $items | to_entries[] | .key as $issue | (.value | sort_by(.created_at)) as $rows
       | ([$open[] | select(.issue == $issue)] | INDEX(.id)) as $on_item
       | ($rows | INDEX(.id)) as $by_id
-      | $rows[] | select(owned) | . as $row | select(all($open[]; .id != $row.id))
-      | (if (.parent_id // "") == "" then [$open[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
+      | $rows[] | select(owned and .ruling != true) | . as $row | select(all($open[]; .id != $row.id))
+      | (if (.parent_id // "") == "" then [$open[] | select(.failed != true and .issue == $issue and .at < $row.created_at)] | max_by(.at)
          else owner_question_parent($by_id; $on_item; true) as $id
          | if $id == null then null else $on_item[$id] end end) as $q | select($q != null)
       | {ask: $q.ask, issue: $issue, comment: $row, replaced: $q.replaced, under: (($row.parent_id // "") != "")}'
@@ -1567,7 +1569,7 @@ owner_answers() {
   OWNER_TRACKER_QUOTA=0
   owner_tracker_settings "$SCRIPT_DIR" || return 0
   OWNER_TRACKER_READ=unread
-  local items extra issue ask comment id rc repair description labels label cause current variables missing replacing ids=()
+  local items labels label ask replacing
   if ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=asks' >&2; return 0
   fi
@@ -1590,9 +1592,12 @@ owner_answers() {
       echo 'KEN-3624-unread cause=asks' >&2; return 0
     fi
   fi
-  # With no open question, no owner comment reaches an ask. A question a
-  # chat ask replaced stands open with no posted ask beside it.
-  jq -cs "$OWNER_QUESTION_JQ"' owner_questions' "$WORK_DIR/tracker-asks" >"$WORK_DIR/tracker-questions" 2>"$WORK_DIR/tracker.err" ||
+  # The originating mailbox owns a failed root's ruling even after its chat ask closes.
+  jq -c 'select(.box == "to-overseer" and .failed_question != null and .tracker_settled != true)
+    | {ask: .id, comment: .failed_question, item: {ref: (.identity.identifier // .issue), uuid: .identity.uuid}}' \
+    "$WORK_DIR/tracker-events" >"$WORK_DIR/tracker-failures" || return 1
+  jq -cs --slurpfile failures "$WORK_DIR/tracker-failures" "$OWNER_QUESTION_JQ"' owner_questions + $failures' \
+    "$WORK_DIR/tracker-asks" >"$WORK_DIR/tracker-questions" 2>"$WORK_DIR/tracker.err" ||
     { owner_unread $? asks-format; return 0; }
   [[ "$(<"$WORK_DIR/tracker-questions")" != '[]' ]] || { OWNER_TRACKER_READ=read; return 0; }
   labels="$(jq -rs --arg label "$OWNER_TRACKER_LABEL" '
@@ -1618,6 +1623,11 @@ owner_answers() {
   # for one argument in a large workspace: each read below takes it by file.
   jq -cs 'add // [] | unique_by(.id)' "$WORK_DIR/tracker-item-lists" >"$WORK_DIR/tracker-items" 2>"$WORK_DIR/tracker.err" ||
     { owner_unread $? issues-format; return 0; }
+  owner_answers_import
+}
+
+owner_answers_repair_lines() {
+  local repair issue ask cause description current variables
   # An ask is on a listed item where their tracker identities agree; an ask
   # recorded before asks carried one is matched by its item ref as written.
   # A displayed action line stays, another mailbox's included: the watch
@@ -1633,8 +1643,8 @@ owner_answers() {
         then null
         elif (($item.assignee // "") | test("\\S")) then ((.description // "") | owner_action_line($item.assignee; $ask.do; $ask.tracker_comment))
         else error("owner-assignee-unavailable") end)}' \
-    "$WORK_DIR/tracker-items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err" ||
-    { owner_unread $? issues-format; return 0; }
+    "$WORK_DIR/tracker-repair-items" >"$WORK_DIR/tracker-repairs" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? issues-format; return 1; }
   while IFS= read -r repair; do
     issue="$(jq -r '.id' <<<"$repair")" || return 1
     ask="$(jq -r '.ask' <<<"$repair")" || return 1
@@ -1643,7 +1653,7 @@ owner_answers() {
       description="$(jq -r '.description + "."' <<<"$repair")" || return 1
       description="${description%.}"
       if ! "$TRACKER" issues update "$issue" --description "$description" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err"; then
-        tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+        tracker_quota_refusal "$WORK_DIR/tracker.err" && return 1
       fi
       # A write receipt cannot prove the description landed.
       variables="$(jq -cn --arg id "$issue" '{id: $id}')" || return 1
@@ -1657,13 +1667,18 @@ owner_answers() {
           cause=unlanded
         fi
       else
-        tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+        tracker_quota_refusal "$WORK_DIR/tracker.err" && return 1
         cause=tracker-list-failed
       fi
     fi
     jq -cn --arg ask "$ask" --arg issue "$issue" --arg cause "$cause" \
       '{kind: "line", ask: $ask, issue: $issue, cause: (if $cause == "" then null else $cause end)}' || return 1
   done <"$WORK_DIR/tracker-repairs"
+}
+
+owner_answers_import() {
+  local items extra issue ask comment id rc repair cause current ids=()
+  local owner="" gate_asks question ref opened record SENT_ID
   # Every open question's item is read, listed or not: the watch clears the
   # label and assignee of a replaced ask's item where the replacing ask is in
   # chat or on another item, and the replaced question still takes replies.
@@ -1697,6 +1712,58 @@ owner_answers() {
   fi
   owner_answer_rows "$WORK_DIR/tracker-comments" "$WORK_DIR/tracker-asks" \
     >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err" || { owner_unread $? comments-format; return 0; }
+  jq -r --slurpfile failures "$WORK_DIR/tracker-failures" '
+    . as $items | $failures[] | .comment as $id | (.item.ref | ascii_upcase) as $issue
+    | select($items | has($issue))
+    | $items[$issue] as $rows
+    | (any($rows[]; .id == $id and (.parent_id // "") == "")
+      and all($rows[]; .parent_id != $id or .ruling != true)) as $open
+    | [$issue, (.item.uuid // $issue), $id, .ask, $open] | @tsv' "$WORK_DIR/tracker-comments" >"$WORK_DIR/tracker-settlements" || return 1
+  while IFS=$'\t' read -r issue ref question ask opened; do
+    cause=""
+    if [[ "$opened" == true ]] && ! owner_tracker_settle "$TRACKER" "$ref" "$question" 2>"$WORK_DIR/tracker.err"; then
+      cause=failed-question
+    elif ! owner_tracker_gate remove "$TRACKER" "$WORK_DIR" "$issue" "$ref" '[]'; then
+      cause="$OWNER_TRACKER_GATE_CAUSE"
+    fi
+    if [[ -n "$cause" ]]; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+      printf 'owner-answers: unmarked issue=%s comment=%s cause=%s\n' "$issue" "$question" "$cause" >&2
+      continue
+    fi
+    SENT_ID="$ask-tracker-settled"
+    record="$(jq -cn --arg id "$SENT_ID" --arg re "$ask" \
+      '{id: $id, re: $re, kind: "tracker-settled", from: "overseer", at: (now | todateiso8601), text: ""}')" || return 1
+    lm_append_local "$TO_OVERSEER" "$record" lm_guard_reply_record || [[ "$?" -eq 4 ]] || return 1
+  done <"$WORK_DIR/tracker-settlements"
+  # A stale close can take an open question's item out of the owner listing.
+  jq -cs --slurpfile listed "$WORK_DIR/tracker-listed" --slurpfile comments "$WORK_DIR/tracker-comments" '
+    [.[] | select(.tracker_posted == true and (.tracker_comment | type) == "string")
+    | (.identity.identifier // .issue | ascii_upcase) as $id
+    | select(. as $ask | all($listed[0][]; .id != $id and .uuid != ($ask.identity.uuid // $id)))
+    | select(.tracker_comment as $question | any($comments[0][$id][]?; .id == $question))
+    | {id: $id, uuid: .identity.uuid, asks: [{id, state: "open", tracker_label}]}] | group_by(.id)[] | last' \
+    "$WORK_DIR/tracker-asks" >"$WORK_DIR/tracker-unlisted" 2>"$WORK_DIR/tracker.err" ||
+    { owner_unread $? asks-format; return 0; }
+  : >"$WORK_DIR/tracker-restored"
+  while IFS= read -r repair; do
+    issue="$(jq -r '.id' <<<"$repair")" && gate_asks="$(jq -c '.asks' <<<"$repair")" || return 1
+    if [[ -z "$owner" ]] && ! owner="$(owner_tracker_owner "$TRACKER" "$WORK_DIR")"; then
+      cause=owner-read
+    elif ! owner_tracker_gate repair "$TRACKER" "$WORK_DIR" "$issue" "$issue" "$gate_asks" "$owner"; then
+      cause="$OWNER_TRACKER_GATE_CAUSE"
+    elif ! current="$(owner_tracker_item "$TRACKER" "$issue" 2>"$WORK_DIR/tracker.err")"; then
+      cause=item-read
+    else
+      jq -c --argjson row "$repair" --argjson owner "$owner" '
+        {id: $row.id, uuid: $row.uuid, description, assignee: $owner.name}' <<<"$current" >>"$WORK_DIR/tracker-restored" || return 1
+      continue
+    fi
+    tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+    printf 'owner-answers: unmarked issue=%s cause=repair-%s\n' "$issue" "$cause" >&2
+  done <"$WORK_DIR/tracker-unlisted"
+  jq -cs '.[0] + .[1:]' "$WORK_DIR/tracker-items" "$WORK_DIR/tracker-restored" >"$WORK_DIR/tracker-repair-items" || return 1
+  owner_answers_repair_lines || return 0
   while IFS= read -r comment; do
     ask="$(jq -r '.ask' <<<"$comment")" || return 1
     id="$(jq -r '.comment.id' <<<"$comment")" || return 1
@@ -1844,7 +1911,7 @@ lm_send_channel() {
 # and decides which lanes are this overseer's to write.
 OWN_ROOT=""
 case "$VERB" in
-  ask | notice | send | resolve | reserve | present | replace | peer | compact | attach-check)
+  ask | notice | send | resolve | reserve | present | replace | peer | compact | attach-check | owner-answers)
     OWN_ROOT="$(mailbox_common_root . 2>/dev/null)" || OWN_ROOT="" ;;
 esac
 
@@ -1992,13 +2059,6 @@ if [ -z "$ROOT" ] && [ "$VERB" != drain-many ]; then
   [ -n "$ROOT" ] || refuse root-unresolved "$ITEM"
 fi
 
-if [ "$VERB" = owner-answers ]; then
-  LANE_MAIL="$SCRIPT_DIR/lane-mail"
-  owner_answers
-  [ "$OWNER_TRACKER_QUOTA" -eq 1 ] || printf 'owner-answers: read=%s\n' "$OWNER_TRACKER_READ"
-  exit 0
-fi
-
 # The asking watch's close takes the owner label and assignee from the one
 # rule the ask post and its rollback take them by, owner_tracker_gate; the
 # caller judges which asks are this mailbox's on the item.
@@ -2055,7 +2115,7 @@ lm_root_own() { # ROOT own|checkout
     # Compaction retains existing rows and delivers no new envelope. Cursor
     # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | present | peer | peer-receive)
+      ask | notice | send | resolve | present | owner-answers | peer | peer-receive)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
@@ -2067,7 +2127,7 @@ lm_root_own() { # ROOT own|checkout
     esac
   fi
   if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] ||
-     [ "$VERB" = present ] || [ "$VERB" = replace ]; then
+     [ "$VERB" = present ] || [ "$VERB" = replace ] || [ "$VERB" = owner-answers ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
@@ -3316,6 +3376,12 @@ fi
 
 
 case "$VERB" in
+  owner-answers)
+    LANE_MAIL="$SCRIPT_DIR/lane-mail"
+    owner_answers
+    [ "$OWNER_TRACKER_QUOTA" -eq 1 ] || printf 'owner-answers: read=%s\n' "$OWNER_TRACKER_READ"
+    ;;
+
   compact)
     # Retention reads settings here, not on the hooks' reader path.
     COMPACT_DAYS="$("$ORCH_SCRIPTS/orch-env" ORCH_RECORD_RETENTION_DAYS 5)" || refuse retention-invalid ORCH_RECORD_RETENTION_DAYS
@@ -3531,8 +3597,9 @@ case "$VERB" in
           + (if $lined == "0" then {tracker_action_line: false} else {} end) + {text: ""}' <<<"$LINE")" ||
           refuse write-failed "$TO_OVERSEER"
       else
-        POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" '{id: (.id + "-tracker"), kind: "tracker-failed", at, from,
-          re: .id, issue, cause: $cause, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+        POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" --arg question "$OWNER_TRACKER_COMMENT" '
+          {id: (.id + "-tracker"), kind: "tracker-failed", at, from, re: .id, issue, cause: $cause, text: ""}
+          + (if $question == "" then {} else {failed_question: $question} end)' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
       fi
       lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
     fi
