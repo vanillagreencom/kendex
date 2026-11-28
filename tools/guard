@@ -393,10 +393,15 @@ if [ "${1:-}" = --released-packages ]; then
 fi
 # --suite-reach answers on fd 3 alone; every note the selection prints goes
 # to stderr.
+reach_docs_only=false
 if [ "${1:-}" = --suite-reach ]; then
   MODE=suite-reach
   selection_only=1
   shift
+  if [ "${1:-}" = --docs-only ]; then
+    reach_docs_only=true
+    shift
+  fi
   exec 3>&1 1>&2
 fi
 if [ "${1:-}" = --selection ]; then
@@ -470,6 +475,8 @@ case "${1:-}" in
       '        they touch, as DIR/, then `target PACKAGE/NAME` for each skill' \
       '        runtime Rust target the reach holds, a whole set every target of' \
       '        its runtime; run nothing. The notes go to stderr.' \
+      '        With --docs-only, report file readers of skill Markdown paths.' \
+      '        Without it, the report also includes their folder readers.' \
       '        A placed-path note identifies an owned path or a path with a' \
       '        concrete suite or skill runtime reader.' \
       '        The reach misses a caller that runs a script through a variable' \
@@ -511,7 +518,10 @@ INPUTS_NOTE_AWK='
 # Whether a note ITEM covers a repository PATH, mapped_suites' one reading
 # of an item: as a case pattern, or as a directory holding it, one spelled
 # with a trailing slash or a directory of the checkout.
-note_covers() { # ITEM PATH
+note_covers() { # ITEM PATH FILE_ONLY
+  if [ "$3" = true ]; then
+    case "$1" in *.md | *.markdown) ;; *) return 1 ;; esac
+  fi
   # shellcheck disable=SC2254 # the item is a case pattern
   case "$2" in $1) return 0 ;; esac
   case "$1" in
@@ -1903,8 +1913,9 @@ scan_load() { # DIR
     case "$rel" in
       ../*) ;;
       *)
-        path_role "$1" "$rel" || continue
-        role=$ROLE
+        if reach_file_only "$path"; then role=doc
+        elif path_role "$1" "$rel"; then role=$ROLE
+        else continue; fi
         case "$role" in
           doc) ;;
           settings-example)
@@ -1922,7 +1933,7 @@ scan_load() { # DIR
       SCAN_RELS+=("$rel")
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
-      doc_readers "$rel" "$key" "$1" || return 2
+      doc_readers "$rel" "$key" "$1" "$path" || return 2
       scan_parts+=("Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl")
     done
   done <<<"$tree_rows"
@@ -2179,7 +2190,7 @@ scan_load() { # DIR
 # whole word, and a change to comments alone has no reader here. A suite
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
-doc_readers() { # REL KEY TREE, KEY empty for a path query
+doc_readers() { # REL KEY TREE PATH, KEY empty for a path query
   local rel="$1" tree="$3" dir external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
   if [ -n "${2-}" ]; then
@@ -2217,6 +2228,10 @@ doc_readers() { # REL KEY TREE, KEY empty for a path query
         fi
         ;;
     esac
+  fi
+  if reach_file_only "$4"; then
+    dir='-'
+    walk_root=''
   fi
   walk='-'
   if [ -n "$walk_root" ]; then
@@ -2395,22 +2410,22 @@ reach_join() { # ROLE PATH [changed]
 # could not read or compare, status 3 a role reach_join does not know, a
 # broken guard, and status 4, scoped only, a path whose readers are
 # unidentified, which runs the tree's whole set.
-mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
+mapped_suites() { # DIR REL ROW PATH, ROW the path's tree_paths row of DIR from 0
   local dir="$1" rel="$2" row="$3" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
-  local runtime_reached="" targets_before=${#REACH_TARGETS} seeded_only=0
+  local runtime_reached="" targets_before=${#REACH_TARGETS} seeded_only=0 file_only=false
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
-  case "$rel" in
-    ../*) role=doc ;;
-    *)
-      if path_role "$dir" "$rel"; then
-        role=$ROLE
-      else
-        [ "$scoped_only" -eq 1 ] || return 1
-        role=none
-      fi
-      ;;
-  esac
+  if reach_file_only "$4"; then
+    role=doc
+    file_only=true
+  elif [[ $rel == ../* ]]; then
+    role=doc
+  elif path_role "$dir" "$rel"; then
+    role=$ROLE
+  else
+    [ "$scoped_only" -eq 1 ] || return 1
+    role=none
+  fi
   case "$role:$scoped_only" in test-module:0) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   # skill_files globs every scanned path under DIR, so none holds a `..`
@@ -2425,7 +2440,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
   for i in ${SCAN_NOTED[@]+"${SCAN_NOTED[@]}"}; do
     while IFS= read -r input; do
       [ -n "$input" ] || continue
-      note_covers "$input" "$input_path" || continue
+      note_covers "$input" "$input_path" "$file_only" || continue
       reached[i]=1
       noted="$noted$i"$'\n'
       reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
@@ -2531,6 +2546,7 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
     done
   done
   if [ -z "$out" ]; then
+    [ "$file_only" != true ] || return 0
     case "$role" in none | test-module | test-import) return 4 ;; module | runtime | rust-target | rust-input) return 0 ;; esac
     # A reach that holds a Rust target maps to it; a needle another tree's
     # file offered that no file here names maps to nothing.
@@ -2546,6 +2562,13 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
 }
 skill_markdown() { # PATH: a .md file of a skill package, source or render
   case "$1" in skills/*/*.md | .agents/skills/*/*.md) return 0 ;; esac
+  return 1
+}
+reach_file_only() { # PATH
+  [ "$reach_docs_only" = true ] || return 1
+  case "$1" in
+    skills/*/*.md | skills/*/*.markdown | .agents/skills/*/*.md | .agents/skills/*/*.markdown) return 0 ;;
+  esac
   return 1
 }
 # Whether the merge group runs tree DIR's suites: status 0 where
@@ -3030,7 +3053,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             # When its whole set is already kept, a tree still has to
             # place external paths. The extra scan leaves its targets alone.
             [ "$run" != all ] || prior_targets=$REACH_TARGETS
-            mapped_suites "$d" "$rel" "$tree_row" || map_status=$?
+            mapped_suites "$d" "$rel" "$tree_row" "$f" || map_status=$?
             sel=$MAPPED
             if [ "$MODE" = suite-reach ] && [[ $rel == ../* ]] &&
               { [ -n "$sel" ] || [ "${#REACH_TARGETS}" -gt "$targets_before" ]; }; then

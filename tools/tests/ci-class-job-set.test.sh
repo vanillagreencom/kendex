@@ -13,6 +13,33 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$TEST_DIR/lib/ci-job-set-case.sh"
 
+skill_markdown_row() { # READER (folder|file)
+  local reader="$1" world="$TMP/skill-markdown-$1" path=skills/demo/SKILL.md
+  local input=skills/demo/ read=read_dir suffix='' expected='[]' got
+  mkdir -p "$world"
+  cp -R "$READ_WORLD/." "$world/"
+  mkdir -p "$world/skills/demo" "$world/tools/tests"
+  printf -- '---\nname: demo\n---\n\n# Demo\n' >"$world/$path"
+  if [ "$reader" = file ]; then
+    input=$path read=read_to_string suffix=/SKILL.md
+    expected='["skill-suites-shard","cargo-linux"]'
+  fi
+  printf '#!/usr/bin/env bash\n# Inputs: %s\n' "$input" >"$world/tools/tests/read-skill.test.sh"
+  printf 'fn skill() { std::fs::%s(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/demo%s")).unwrap(); }\n' \
+    "$read" "$suffix" >>"$world/crates/demo/src/lib.rs"
+  git -C "$world" add -A
+  got="$(SELECT_IN="$world" SELECT_JOBS=true SELECT_EVENT=merge_group selection trivial true "$path" | field jobs)"
+  check "skill Markdown retains jobs with a $reader input" "$expected" \
+    "$(jq -c 'map(select(. == "skill-suites-shard" or . == "cargo-linux"))' <<<"$got")"
+}
+if [ "${1-}" = --skill-markdown ]; then
+  skill_markdown_row "${2:-folder}"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+row_spawn skill_markdown_row folder
+row_spawn skill_markdown_row file
+
 UNPLACED_LANES="$(lanes both false false false)"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do

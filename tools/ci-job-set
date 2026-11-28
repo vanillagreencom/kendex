@@ -62,7 +62,8 @@
 #   CHANGE_CLASS   render|trivial|micro|small|standard
 #   DOCS_ONLY      true|false, the shipped `harness-only --mode docs` verdict
 #                  for the same diff; true runs only the jobs a reader of a
-#                  changed path keeps, as select_row states
+#                  changed path keeps, as select_row states. Skill Markdown
+#                  retains file readers. Whole-catalog audits run nightly.
 #   CHANGED_PATHS  the changed paths, one per line
 #   CHANGE_BASE    the commit CHANGED_PATHS were measured from, where read;
 #                  only a path edited in place since it can be skill text
@@ -1011,6 +1012,7 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 # Directory build rows include prose that only an explicit read can reach.
 # Native duplicate execution stands down on portable text changes.
 PROSE='\.(md|markdown)$'
+SKILL_MARKDOWN='^(\.agents/)?skills/[^/]+/.*\.(md|markdown)$'
 # The selection's own inputs force full coverage: a changed selector cannot
 # supply independent proof that the checks it omitted were safe to skip.
 LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|guard|rust-reads|macos-test-contracts|macos-test-contracts\.json)$)'
@@ -1292,8 +1294,8 @@ except (OSError, ValueError) as error:
 
 # Project source reads onto compiler, smoke and Linux test inputs. An opaque
 # checkout read retains its executable but cannot place a changed path.
-reads() {
-  local rows job_reads catalog_inputs=""
+reads() { # DOCS
+  local rows job_reads catalog_inputs="" rendered=""
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
     return 1
   awk -F '\t' '
@@ -1307,9 +1309,15 @@ reads() {
   if [[ $rows == *$'\ntarget-catalog\t'* ]]; then
     catalog_inputs="$(catalog_reads)" || return 1
   fi
+  if [ "$1" = true ] && any "$SKILL_MARKDOWN" &&
+    { tracked_file .kendex-generated.json || [ -e .kendex-generated.json ]; }; then
+    rendered="$(jq -er 'if type == "array" and all(.[]; type == "string") then join("\n") else empty end' \
+      .kendex-generated.json)" || return 1
+  fi
   PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
     EXCLUDED="$REACH_EXCLUDED" CARGO_JOB_READS="$job_reads" PATHS="$paths" \
-    CATALOG_READS="$catalog_inputs" CATALOG_SCOPE="$CATALOG_INPUTS" awk -F '\t' '
+    CATALOG_READS="$catalog_inputs" CATALOG_SCOPE="$CATALOG_INPUTS" \
+    DOCS_ONLY="$1" SKILL_MARKDOWN="$SKILL_MARKDOWN" RENDERED="$rendered" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -1328,17 +1336,29 @@ reads() {
         if (entry[1] == "text") skill_text[entry[2]] = 1
         else catalog_input[entry[2]] = entry[1]
       }
+      n = split(ENVIRON["RENDERED"], rendered, "\n")
+      for (i = 1; i <= n; i++) render[rendered[i]] = 1
     }
     $1 == "complete" { next }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
     function select_target(r) {
       selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
     }
+    # The core library checks each shipped declaration and compares the
+    # committed project renders against their sources. Its skills and
+    # .agents read rows otherwise cover files only its corpus walks see.
+    function own_skill_markdown(path, r) {
+      if (crate[r] != "kendex-core" || selector[r] != "lib") return 0
+      if (read[r] == "skills")
+        return path ~ /^skills\/[^/]+\/SKILL\.md$/ || ((".agents/" path) in render)
+      return read[r] == ".agents" && (path in render)
+    }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
       for (p = 1; p <= n; p++) {
         path = changed[p]
         if (path == "") continue
+        skill_doc = ENVIRON["DOCS_ONLY"] == "true" && path ~ ENVIRON["SKILL_MARKDOWN"]
         mapped = path in placed || path ~ ENVIRON["CI_PACKAGES"]
         if (("linux-job", path) in job_script) linux_full = mapped = 1
         if (("lint-job", path) in job_script) lint = mapped = 1
@@ -1355,7 +1375,7 @@ reads() {
             continue
           }
           if (kind[r] == "target-catalog") {
-            if (catalog_input[path] == "read") { select_target(r); mapped = 1 }
+            if (catalog_input[path] == "read" && !skill_doc) { select_target(r); mapped = 1 }
             # An excluded tracked catalog path is placed even when the
             # render lint does not read it. Other target rows still apply.
             if (catalog_input[path] == "excluded" && path ~ ENVIRON["CATALOG_SCOPE"]) mapped = 1
@@ -1367,7 +1387,10 @@ reads() {
             filename = path
             sub(/^.*\//, "", filename)
             if (filename != substr(read[r], 4)) continue
-          } else if (path != read[r] && index(path, read[r] "/") != 1) continue
+          } else if (path != read[r]) {
+            if (index(path, read[r] "/") != 1) continue
+            if (skill_doc && kind[r] == "target" && !own_skill_markdown(path, r)) continue
+          }
           if (kind[r] == "build" && path !~ ENVIRON["PROSE"]) build = 1
           if (kind[r] == "include") included = 1
           if (kind[r] == "package-include" && (crate[r] in windows_packages || "*" in windows_packages)) windows = 1
@@ -1514,11 +1537,12 @@ reach_notes() {
     esac
   done
 }
-reach_read() {
-  local out status=0 list="" target targets placed excluded suites
+reach_read() { # DOCS
+  local out status=0 list="" target targets placed excluded suites docs_arg=""
+  [ "$1" != true ] || docs_arg=--docs-only
   # The query's answer reaches the substitution on fd 3; its stderr streams
   # through reach_notes.
-  out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
+  out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach ${docs_arg:+"$docs_arg"} 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
     status=$?
   if [ "$status" -ne 0 ] || ! PATHS="$paths" awk '
     BEGIN {
@@ -1582,10 +1606,10 @@ linear_controls_needed() {
 # refused or stopped before completing its read authorizes no skips in its
 # roster. Its `suites-unplaced=1`, a path neither the reach nor an excluding
 # owner places, stays in read_lines for each projection to judge.
-read_selection() {
+read_selection() { # DOCS
   [ "$CHECKOUT_READ" = true ] || return 0
   if [ "$SUITE_INPUTS_READ" = true ]; then
-    reach_read || printf 'ci-job-set: reach=unproved coverage=full\n' >&2
+    reach_read "$1" || printf 'ci-job-set: reach=unproved coverage=full\n' >&2
     if any '^skills/linear/' && tracked_file "$LINEAR_CONTROLS_SUITE"; then
       if ! LINEAR_CONTROLS_NEEDED="$(linear_controls_needed)"; then
         printf 'ci-job-set: linear-control-inputs=unread coverage=full\n' >&2
@@ -1594,7 +1618,7 @@ read_selection() {
     fi
   fi
   local line text="" rest=""
-  if read_lines="$(reads)"; then
+  if read_lines="$(reads "$1")"; then
     CARGO_READ=true
     while IFS= read -r line; do
       case "$line" in
@@ -1818,6 +1842,9 @@ macos_shard() { # SHARDS
 # DOCS true, every path in harness-only's docs set, runs a job only where a
 # reader of a changed path keeps it: a suite the reach names, a Rust target,
 # include or catalog render lint that reads the path or a directory over it,
+# except skill Markdown, which keeps file readers and leaves whole-tree
+# tests to the nightly full run; a changed compiler include still selects
+# its consumers. The remaining readers are
 # a target whose checkout read is unresolved ("."), which runs for every
 # path, a lane source, a file the guards scans list, and the catalog job as
 # catalog_input and SKILL_TEXT decide it. The rules that run a job for a
@@ -1956,7 +1983,7 @@ if [ "${EVENT:-}" = push ]; then
   main_reach=false
   REACH_READ=false
   if [ "$range_read" = true ]; then
-    read_selection
+    read_selection false
     main_reach=$REACH_READ
     [[ $read_lines != *suites-unplaced=1* ]] || main_reach=false
     main_build=false
@@ -2004,7 +2031,7 @@ progress() { # STEP [DETAIL]
 # Read each dependency set once, before comparing the event projections.
 if [ "$reach_steps" -eq 1 ]; then
   progress reach
-  read_selection
+  read_selection "$DOCS_ONLY"
 fi
 progress select "event=${EVENT:-}"
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
