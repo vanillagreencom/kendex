@@ -267,7 +267,7 @@ if rows=$(find crates -type f -name '*.rs' |
     for (i = 1; i <= n; i++) emit("manifest", paths[i])
     return 1
   }
-  function scan(file, text,   dir, rest, lit, chain, owner, path, catalog, before) {
+  function scan(file, text,   dir, rest, lit, chain, owner, path, catalog, before, concat) {
     dir = file
     sub(/\/[^\/]*$/, "", dir)
     owner = manifest_dir(file)
@@ -303,17 +303,27 @@ if rows=$(find crates -type f -name '*.rs' |
         text ~ /test_util::source_path\(&catalog\)/)
       lit = substr(rest, RSTART, RLENGTH)
       rest = substr(rest, RSTART + RLENGTH)
-      # The closing parentheses of the Path::new or PathBuf::from around it.
-      if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
       chain = lit == "checkout_root()" ? "../.." : ""
       if (chain != "" && target == "") continue
+      concat = lit != "checkout_root()" && before ~ /(^|[^[:alnum:]_])concat![ \t\n]*[([{][ \t\n]*$/
+      if (concat) {
+        while (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+          chain = chain unquote(substr(rest, RSTART, RLENGTH))
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        if (!sub(/^[ \t\n]*(,[ \t\n]*)?[]})]/, "", rest)) {
+          emit("manifest", resolve(target == "" ? owner : target_manifest, chain), owner)
+          emit("manifest", ".", owner)
+          continue
+        }
+      }
+      # Close any Path::new or PathBuf::from around the operand.
+      sub(/^([ \t\n]*\))+/, "", rest)
       while (1) {
         if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
           lit = substr(rest, RSTART, RLENGTH)
           sub(/[ \t\n]*\)$/, "", lit)
           chain = chain "/" unquote(lit)
-        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
-          chain = chain unquote(substr(rest, RSTART, RLENGTH))
         } else {
           break
         }
@@ -324,7 +334,7 @@ if rows=$(find crates -type f -name '*.rs' |
       if (catalog && path == ".") emit("catalog", "kendex.toml", owner)
       else if (owner != "" || path != ".") emit("manifest", path, owner)
       # An argument the chain could not read may lead anywhere from there.
-      if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
+      if (target == "" && rest ~ /^[ \t\n]*\.join[ \t\n]*\(/) emit("manifest", ".", owner)
     }
   }
   # Use the same width unit as substr. Apple awk can replace a multibyte

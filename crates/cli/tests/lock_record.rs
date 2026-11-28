@@ -1331,11 +1331,19 @@ impl LandingRow {
 fn script_copy(world: &World, edits: &[(&str, &str)]) -> PathBuf {
     let copy = world.home.join("script-copy");
     fs::create_dir_all(copy.join("tools")).unwrap();
-    for (source, name) in [
-        (crate::test_util::checkout_root().join(".agents"), ".agents"),
-        (crate::test_util::checkout_root().join("refresh"), "refresh"),
+    for (source, relative) in [
+        (
+            crate::test_util::checkout_root().join(".agents/skills/github/scripts/lib"),
+            ".agents/skills/github/scripts/lib",
+        ),
+        (
+            crate::test_util::checkout_root().join("refresh/lib"),
+            "refresh/lib",
+        ),
     ] {
-        std::os::unix::fs::symlink(source, copy.join(name)).unwrap();
+        let destination = copy.join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(source, destination).unwrap();
     }
     let mut source = fs::read_to_string(script()).unwrap();
     for (old, new) in edits {

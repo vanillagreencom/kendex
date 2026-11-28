@@ -217,10 +217,13 @@ kendex.settings.toml|kendex-core|--test|integration
 kendex-local.toml|kendex-core|--lib|
 packaging/homebrew/kendex-cli.rb|kendex-cli|--test|integration
 packaging/arch/kendex/PKGBUILD|kendex-cli|--test|integration
+.agents/skills/github/scripts/lib/gh-repo.sh|kendex-cli|--test|integration
+.agents/skills/github/scripts/lib/repo-settings.sh|kendex-cli|--test|integration
 .bun-version|kendex-core|--test|integration
 ROWS
 selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .kendex-lock.json)"
-check "the install record has no shell suite and retains the full Cargo matrix" '[] true null false false' \
+check "the install record keeps the core library and leaves shell suites and compile-only lanes off" \
+  '[] true {"include":[{"crate":"kendex-core","targets":["--lib"]}]} false false' \
   "$(field shards <<<"$selected") $(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected")"
 selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false docs/authoring/README.md)"
 check "the embedded app guide reaches workspace lint, the app, and no unrelated build" 'true false true' \
