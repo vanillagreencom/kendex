@@ -28,21 +28,22 @@ use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::{Run, lane_for_intent, read_intent};
+use super::{Run, close, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::Mailbox;
 use crate::ops::{
     self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, RecordLaneProgress, Report,
-    Request,
+    Request, boxes,
 };
 use crate::settings::Settings;
-use crate::state::{Lane, LaneMembers};
+use crate::state::{Lane, LaneMembers, LaneStatus};
 pub(super) use crate::watch::hosted::Unread;
 use agent_runtime::effects::{Bootstrap, EffectOutcome, Identity, Operation, Signalled, Word};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::Owner;
 use agent_runtime::intent::{EffectOp, PrincipalKeys, Role};
 use agent_runtime::journal::{OutcomeWritten, Progress};
+use agent_runtime::protocol::Outcome;
 use agent_runtime::record::Locking;
 
 pub(super) use worktree::{BranchKept, BranchRelease, KeptBranch, WorktreeRelease};
@@ -868,24 +869,110 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
     let rows: Vec<Value> = LaneObligationRecord::of(run.engine.path, &intent)?
         .map(|record| record.standing.iter().map(standing_value).collect())
         .unwrap_or_default();
+    let members = LaneMembers::of(run.engine.path, &intent)?;
     let keys = PrincipalKeys {
-        since: LaneMembers::of(run.engine.path, &intent)?.lane_since,
+        since: members.lane_since.clone(),
         keys: outcome.principal_keys().to_vec(),
     };
-    Ok(agent_runtime::effects::apply_outcome_with(
-        &run.engine,
-        outcome,
-        |wire| {
-            wire.principal_keys = Some(keys);
-            if let Some(observation) = wire.observation.as_mut() {
-                for key in ["remaining", "untouched"] {
-                    if let Some(Value::Array(held)) = observation.get_mut(key) {
-                        held.extend(rows.iter().cloned());
-                    }
+    let lane = if intent.op == EffectOp::CloseResources && intent.open() && outcome.ended() {
+        let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
+        (!ops::lane_moved(&lane, &keys)).then_some(lane)
+    } else {
+        None
+    };
+    let mut comment = None;
+    let mut written = agent_runtime::effects::apply_outcome_with(&run.engine, outcome, |wire| {
+        wire.principal_keys = Some(keys);
+        if let Some(observation) = wire.observation.as_mut() {
+            for key in ["remaining", "untouched"] {
+                if let Some(Value::Array(held)) = observation.get_mut(key) {
+                    held.extend(rows.iter().cloned());
                 }
             }
-        },
-    )?)
+            if let Some(lane) = &lane
+                && wire.outcome == Outcome::Confirmed
+                && (wire.while_owner.is_none() || wire.while_owner == intent.owner)
+            {
+                let mut boxes_disposed = false;
+                match close::landing(run.settings, lane, &members) {
+                    Some(boxes::Completion::Settled(Some(note))) => {
+                        observation["boxes_note"] = json!(note);
+                    }
+                    Some(boxes::Completion::Unsettled {
+                        note,
+                        comment: text,
+                    }) => {
+                        observation["boxes_note"] = json!(note);
+                        if members.box_disposal().is_some() {
+                            boxes_disposed = true;
+                            comment = text;
+                        } else {
+                            observation["cause"] = json!("boxes-unsettled");
+                            wire.outcome = Outcome::Unconfirmed;
+                            observation["remaining"] = json!([]);
+                        }
+                    }
+                    None | Some(boxes::Completion::Settled(None)) => {}
+                }
+                wire.members
+                    .insert("boxes_disposed".to_owned(), json!(boxes_disposed));
+            }
+        }
+    })?;
+    if let Some(text) = comment
+        && written.recorded_now
+        && written.target["lane"]["status"] == LaneStatus::Done.word()
+        && let Some(observation) = written.intent.observation.as_mut()
+    {
+        let posted = boxes::post(run.settings, &intent.target, &text);
+        observation["boxes_comment"] = json!(format!("boxes-comment={posted}"));
+    }
+    if intent
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.get("mail"))
+        .is_some_and(Value::is_object)
+    {
+        unread_close_mail(
+            run.engine.path,
+            &intent.target,
+            &mut written.intent.observation,
+        );
+    }
+    Ok(written)
+}
+
+/// A kept receipt may now be older than the watch's cursor. Filter the
+/// reply while retaining the complete receipt in the journal.
+fn unread_close_mail(fleet: &Path, item: &str, observation: &mut Option<Value>) {
+    use crate::ops::mail::MailCursor;
+    use crate::watch::{baseline::Baseline, claim::BASELINE_FILE, mail::ClosingMail};
+
+    let Some(Value::Object(observed)) = observation else {
+        return;
+    };
+    let Some(receipt) = observed.get("mail") else {
+        return;
+    };
+    let Ok(mut mail) = serde_json::from_value::<ClosingMail>(receipt.clone()) else {
+        return;
+    };
+    let Ok(baseline) = Baseline::load(&fleet.with_file_name(BASELINE_FILE)) else {
+        return;
+    };
+    let cursor = MailCursor::parse(baseline.get("lane-mail", item));
+    if cursor.first != mail.first || (cursor.first.is_empty() && mail.count < cursor.announced) {
+        return;
+    }
+    let unread = usize::try_from(mail.count.saturating_sub(cursor.announced)).unwrap_or(usize::MAX);
+    if unread == 0 {
+        observed.remove("mail");
+    } else if let Some(announced) = mail.envelopes.len().checked_sub(unread)
+        && announced > 0
+    {
+        mail.envelopes.drain(..announced);
+        observed.insert("mail".to_owned(), json!(mail));
+    }
 }
 
 /// One standing lane obligation as a reconcile's `remaining` carries it.

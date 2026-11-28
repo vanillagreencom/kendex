@@ -431,6 +431,9 @@ pub struct CloseOwnedResources {
     /// (`ops::cycle`), with the fleet-log rows it prints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle: Option<state::CycleRow>,
+    /// The PR to settle even when recording its cycle was given up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<Delivery>,
     /// The landing the close gave up, the fleet-log row it writes when it
     /// confirms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1859,6 +1862,7 @@ pub(super) fn close_owned_resources(
         lane_since: lane.session_since.clone(),
         close: Some(ground),
         cycle: r.cycle.clone(),
+        delivery: r.delivery.clone(),
         disposed: r.disposed.clone(),
         ..LaneMembers::default()
     }
@@ -1870,10 +1874,8 @@ pub(super) fn close_owned_resources(
     })
 }
 
-/// A repeated close's landing on the open close it reconciles: a merge
-/// cycle or a disposal the open intent records none of, which the repeat's
-/// request carries (a delivery the first ask named none of), is written on
-/// it, so the close's outcome records it. One the intent records stands.
+/// Add the landing parts supplied by a repeat that the open close lacks.
+/// A delivery the intent already names stays with that close.
 fn landing_on_repeat(
     path: &Path,
     doc: &mut Document,
@@ -1882,15 +1884,26 @@ fn landing_on_repeat(
 ) -> Result<()> {
     let mut members = LaneMembers::of(path, intent)?;
     let cycle = members.cycle.is_none() && r.cycle.is_some();
+    let delivery = members.delivery.is_none() && r.delivery.is_some();
     let disposed = members.disposed.is_none() && r.disposed.is_some();
-    if !(cycle || disposed) {
+    let boxes = r
+        .disposed
+        .as_ref()
+        .filter(|d| !disposed && members.box_disposal().is_none() && d.of.boxes());
+    if !(cycle || delivery || disposed || boxes.is_some()) {
         return Ok(());
     }
     if cycle {
         members.cycle = r.cycle.clone();
     }
+    if delivery {
+        members.delivery = r.delivery.clone();
+    }
     if disposed {
         members.disposed = r.disposed.clone();
+    }
+    if let Some(boxes) = boxes {
+        members.boxes_disposal = Some(boxes.clone());
     }
     members.write(&mut intent.extra)?;
     let rows = record::array_mut(path, doc, "intents")?;
@@ -2633,6 +2646,16 @@ pub(super) fn record_close_outcome(
                 "item": intent.target,
             });
             let standing = lanes(path, doc)?.swap_remove(index);
+            let boxes_disposed = r.members.get("boxes_disposed").and_then(Value::as_bool);
+            let manual_disposal =
+                boxes_disposed.is_none() && super::boxes::landing(&standing, &members).is_some();
+            if manual_disposal && members.box_disposal().is_none() {
+                return Err(agent_runtime::Error::refused(
+                    "boxes-unsettled",
+                    &[("item", &intent.target), ("cause", "retry-close")],
+                )
+                .into());
+            }
             let hosted = standing.provider_hosted();
             let lane = lane_doc_mut(path, doc, index)?;
             match &members.close {
@@ -2720,17 +2743,32 @@ pub(super) fn record_close_outcome(
             if let Some(cycle_row) = &members.cycle {
                 record::set(lane, "cycle", cycle_row.cycle.clone());
             }
-            let disposed = members.disposed.as_ref().map(|d| {
+            let record_disposal = members
+                .disposed
+                .as_ref()
+                .filter(|d| d.of.record() && members.cycle.is_none());
+            let box_disposal = members
+                .box_disposal()
+                .filter(|_| boxes_disposed == Some(true) || manual_disposal);
+            let disposed = |d: &state::LandingDisposal, of| {
                 json!({
                     "at": at, "kind": "landing-disposed", "item": intent.target,
-                    "by": d.authority.by, "id": d.authority.id, "reason": d.reason, "of": d.of,
+                    "by": d.authority.by, "id": d.authority.id, "reason": d.reason, "of": of,
                 })
-            });
+            };
             let log = record::array_mut(path, doc, "fleet_log")?;
             log.push(row);
             log.extend(cloud);
             log.extend(cycle.into_iter().flatten());
-            log.extend(disposed);
+            if let (Some(record), Some(boxes)) = (record_disposal, box_disposal)
+                && record.authority == boxes.authority
+                && record.reason == boxes.reason
+            {
+                log.push(disposed(record, state::Disposed::Both));
+            } else {
+                log.extend(record_disposal.map(|d| disposed(d, state::Disposed::Record)));
+                log.extend(box_disposal.map(|d| disposed(d, state::Disposed::Boxes)));
+            }
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed | Outcome::Unconfirmed | Outcome::NotStarted => {}
@@ -4027,6 +4065,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            delivery: None,
             disposed: None,
         });
         let err = run(&path, &keep).unwrap_err();
@@ -4073,6 +4112,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            delivery: None,
             disposed: None,
         });
         let err = apply_on(&path, &no_landing, &env(), LOCK, &unreadable).unwrap_err();
@@ -4092,6 +4132,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            delivery: None,
             disposed: None,
         });
         let err = apply_on(&path, &both, &env(), LOCK, &kernel(4)).unwrap_err();
@@ -4111,6 +4152,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            delivery: None,
             disposed: None,
         });
         let Report::CloseOwnedResources(c) = apply_on(&path, &terminal, &env(), LOCK, &kernel(4))
@@ -4183,10 +4225,17 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            delivery: None,
             disposed: None,
         });
         let id = intend(&path, &terminal);
-        run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
+        let Request::RecordOutcome(mut confirmed) = outcome(&id, Outcome::Confirmed) else {
+            unreachable!("the close effect records its outcome");
+        };
+        confirmed
+            .members
+            .insert("boxes_disposed".to_owned(), json!(false));
+        run(&path, &Request::RecordOutcome(confirmed)).unwrap();
         let after = lane_doc(&path, "KEN-4437");
         assert_eq!(after["status"], Value::from("done"));
         assert!(!after.contains_key("pending_pr"));
@@ -4223,6 +4272,7 @@ mod tests {
                 ended: None,
                 identity: None,
                 cycle: None,
+                delivery: None,
                 disposed: None,
             })
         };

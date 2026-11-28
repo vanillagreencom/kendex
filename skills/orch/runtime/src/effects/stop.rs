@@ -104,13 +104,15 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         // provider's reading of the lane answers; a close with no stated
         // ground goes on only where that reading is the harness gone.
         if lane.viewer() {
-            let provider = provider_stops(close.ground, &lane);
+            let host_open = host_close_receipt(close.prior).is_none();
+            let provider = host_open && provider_stops(close.ground, &lane);
             let stop = if provider { "provider" } else { "window-only" };
             let mut observation = json!({"identity": "none", "stop": stop});
             if provider && let Err((cause, fields)) = close.guard_hosted(run, &operation) {
                 return Ok(close.refuse_or_hold(operation, cause, fields));
             }
-            if provider_reads_gone(close.ground, &lane)
+            if host_open
+                && provider_reads_gone(close.ground, &lane)
                 && let Err((cause, fields)) = close.hosted_gone(run)
             {
                 return Ok(close.refuse_or_hold(operation, cause, fields));
@@ -565,12 +567,14 @@ impl Close<'_> {
                 }
             }
         }
-        if provider_stops(self.ground, self.lane)
+        let host_open = host_close_receipt(self.prior).is_none();
+        if host_open
+            && provider_stops(self.ground, self.lane)
             && !self.host_stopped(&mut operation, &mut observation)?
         {
             return Ok(self.hold(operation, observation));
         }
-        if provider_closes(self.ground, self.lane) {
+        if host_open && provider_closes(self.ground, self.lane) {
             match self.last_mail(&operation) {
                 Ok(None) => {}
                 Ok(Some(mail)) => observation["mail"] = json!(mail),
@@ -936,9 +940,16 @@ fn moved_lane(
     Ok(outcome)
 }
 
-/// What a close's run records that its repeat cannot read again: the
-/// local archive of the item's files, which leave in the first run.
-const RECEIPTS: [&str; 1] = ["archive"];
+/// What a close's run records that its repeat cannot read again.
+const RECEIPTS: [&str; 2] = ["archive", "mail"];
+
+/// The provider's successful close answer, in the forms its reader returns.
+pub(super) fn host_close_receipt(prior: Option<&Value>) -> Option<&str> {
+    prior?
+        .get("host_close")?
+        .as_str()
+        .filter(|line| line.starts_with("kept=") || line.starts_with("closed=absent item="))
+}
 
 /// A reconciled close's observation: the reconcile's word and the item,
 /// with the [`RECEIPTS`] the intent's earlier run recorded (`prior`), which
@@ -951,15 +962,21 @@ fn reconcile_observation(item: &str, observation: Value, prior: Option<&Value>) 
     observation
 }
 
-/// The [`RECEIPTS`] `prior` recorded, on an observation that records none of
-/// its own.
+/// Keep the archive and mail read before the provider closed its sandbox.
+/// A failed mail read cannot replace the last envelope.
 fn keep_receipts(observation: &mut Value, prior: Option<&Value>) {
     for key in RECEIPTS {
         if let Some(kept) = prior.and_then(|p| p.get(key))
-            && observation.get(key).is_none()
+            && match key {
+                "mail" => kept.is_object() && !observation[key].is_object(),
+                _ => observation.get(key).is_none(),
+            }
         {
             observation[key] = kept.clone();
         }
+    }
+    if let Some(receipt) = host_close_receipt(prior) {
+        observation["host_close"] = json!(receipt);
     }
 }
 
@@ -992,7 +1009,10 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             reconcile_observation(&item, json!({}), intent.observation.as_ref()),
         );
     }
-    let hold = |operation: LaneOperation, observation: Value| {
+    let hold = |operation: LaneOperation, mut observation: Value| {
+        if host_close_receipt(intent.observation.as_ref()).is_some() {
+            observation["close_out"] = json!("owed");
+        }
         operation.hold(reconcile_observation(
             &item,
             observation,

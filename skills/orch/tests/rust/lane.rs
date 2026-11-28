@@ -683,7 +683,7 @@ fn record(item: &str, status: &str, process: Option<&Owned>, mail_root: &Path) -
         "launched_at": "2026-01-29T15:00:00Z",
         "status": status,
         "launch": launch,
-        "pending_pr": {"pr": 5814, "repo": "o/r", "head": "abc"},
+        "pending_pr": {"pr": 5814, "head": "abc"},
         "cycles": 2,
     })
 }
@@ -4419,6 +4419,21 @@ impl CloseCase2 {
         if let Some(state) = self.tracker {
             fleet.plant_tracker("KEN-1", state);
         }
+        if self.name == "parked" {
+            let bin = fleet.state_dir().join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+            let pull = json!({"number": 7, "state": "open", "title": "work", "body": null,
+                "merged_at": null, "merge_commit_sha": null, "author_association": "NONE",
+                "user": null, "base": {"ref": "main", "sha": "base"},
+                "head": {"ref": "ken-1", "sha": "h2", "repo": null}});
+            std::fs::write(
+                bin.join("gh.json"),
+                json!({"repos/o/r/pulls/7": {"body": pull}}).to_string(),
+            )
+            .unwrap();
+            fleet.env.push(("PATH".to_owned(), tool_path(&[&bin])));
+        }
         plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
         let answer = fleet.close(self.request.clone());
         (fleet, answer)
@@ -7489,6 +7504,14 @@ fn done_when(ticked: bool) -> String {
 }
 
 impl Fleet {
+    fn box_pull(&self, change: impl FnOnce(&mut Value)) {
+        let path = self.state_dir().join("bin/gh.json");
+        let mut replies: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        change(&mut replies["repos/o/r/pulls/7"]);
+        std::fs::write(path, replies.to_string()).unwrap();
+    }
+
     /// A hosted world whose tracker is the linear package's own CLI over
     /// the planted Linear API (`linear-api/curl`) for KEN-1, in `state`
     /// with `description`, and whose `gh` answers pull request 7 of `o/r`
@@ -7580,14 +7603,373 @@ impl Fleet {
     }
 }
 
+#[test]
+fn review_close_keeps_unread_pull_requests_and_releases_read_unmerged_ones() {
+    for (status, holder) in [("parked", "parked"), ("running", "pending_pr")] {
+        let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), "");
+        let mut lane = hosted_lane("KEN-1");
+        lane.as_object_mut().unwrap().remove("cycle");
+        lane["tracker"] = json!("linear");
+        lane["status"] = json!(status);
+        lane[holder] = json!({"pr": 7, "repo": "o/r", "head": "h2"});
+        fleet.write_lanes(vec![lane]);
+        fleet.answer("HARNESS_STATE", "exited");
+        fleet.box_pull(|reply| reply["body"]["merged_at"] = json!(false));
+        let request = json!({"op": "close-owned-resources", "item": "KEN-1"});
+        let held = fleet.close(request.clone());
+        let observed = &held["result"]["effect"]["report"]["intent"]["observation"];
+        assert_eq!(observed["cause"], "boxes-unsettled", "{held}");
+        assert_eq!(fleet.lane("KEN-1")[holder]["pr"], 7, "{held}");
+        assert!(fleet.sent("issueUpdate").is_empty());
+        fleet.box_pull(|reply| reply["body"]["merged_at"] = Value::Null);
+        let ended = fleet.close(request);
+        assert_eq!(fleet.lane("KEN-1")["status"], "done", "{ended}");
+        assert!(fleet.sent("issueUpdate").is_empty(), "{ended}");
+    }
+}
+
+#[test]
+fn review_close_accepts_added_box_authority_and_keeps_each_disposal_attribution() {
+    let mut fleet = Fleet::boxes_world(
+        "Verifying",
+        &done_when(false),
+        "## Done-when evidence\n1: one\n",
+    );
+    let mut lane = fleet.lane("KEN-1");
+    lane.as_object_mut().unwrap().remove("cycle");
+    fleet.write_lanes(vec![lane]);
+    fleet.answer("HARNESS_STATE", "exited");
+    let mut request = json!({"op": "close-lane", "item": "KEN-1",
+        "delivery": {"pr": {"pr": 7, "repo": "o/r"}},
+        "landing": {"disposed": {"by": "overseer", "id": "record-1", "reason": "timeline unavailable", "of": "record"}}});
+    let held = fleet.close(request.clone());
+    assert_eq!(fleet.lane("KEN-1")["status"], "running", "{held}");
+    assert!(fleet.sent("issueUpdate").is_empty(), "{held}");
+    request.as_object_mut().unwrap().remove("delivery");
+    request["landing"]["disposed"] = json!({"by": "owner-directive", "id": "boxes-2",
+        "reason": "second evidence unavailable", "of": "both"});
+    let ended = fleet.close(request);
+    assert_eq!(ended["result"]["word"], "closed", "{ended}");
+    let record = fleet.fleet();
+    let disposals: Vec<_> = record["fleet_log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "landing-disposed")
+        .map(|row| (&row["of"], &row["by"], &row["id"]))
+        .collect();
+    assert_eq!(
+        disposals,
+        [
+            (&json!("record"), &json!("overseer"), &json!("record-1")),
+            (
+                &json!("boxes"),
+                &json!("owner-directive"),
+                &json!("boxes-2")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn review_close_returns_and_reuses_the_provider_and_last_mail_receipts() {
+    let mut fleet = Fleet::boxes_world(
+        "Verifying",
+        &done_when(false),
+        "## Done-when evidence\n1: one\n",
+    );
+    fleet.disk(MAILBOX, &format!("{LAST_NOTICE}\n"));
+    let request = json!({"op": "close-lane", "item": "KEN-1"});
+    let held = fleet.close(request.clone());
+    let observed = &held["result"]["observation"];
+    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
+    assert_eq!(observed["cause"], "boxes-unsettled", "{held}");
+    assert_eq!(observed["mail"]["envelopes"][0]["id"], "n-last", "{held}");
+    let reconciled = reply(&fleet.run(&["reconcile", "--fleet"]));
+    let prior = &reconciled["result"]["reconciled"][0]["report"]["intent"]["observation"];
+    assert_eq!(prior["host_close"], observed["host_close"], "{reconciled}");
+    assert_eq!(prior["mail"], observed["mail"], "{reconciled}");
+    std::fs::write(
+        fleet.state_dir().join("oversee-watch.baseline.json"),
+        json!({"rows": [{"kind": "lane-mail", "identity": "KEN-1", "value": "1 n-last"}]})
+            .to_string(),
+    )
+    .unwrap();
+    fleet.undisk(MAILBOX);
+    fleet.answer("CLOSE_STATUS", "3");
+    fleet
+        .box_pull(|reply| reply["body"]["body"] = json!("## Done-when evidence\n1: one\n2: two\n"));
+    let ended = fleet.close(request);
+    assert_eq!(ended["result"]["word"], "closed", "{ended}");
+    assert!(ended["result"]["observation"]["mail"].is_null(), "{ended}");
+    assert_eq!(
+        fleet.fleet()["intents"][0]["observation"]["mail"],
+        observed["mail"]
+    );
+    assert_eq!(
+        fleet
+            .provider_calls()
+            .iter()
+            .filter(|call| call.starts_with("close "))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn review_close_manual_confirmation_waits_for_the_admitted_settlement() {
+    let mut fleet = Fleet::boxes_world(
+        "Verifying",
+        &done_when(false),
+        "## Done-when evidence\n1: one\n2: two\n",
+    );
+    fleet.answer("CLOSE_STATUS", "3");
+    let request = json!({"op": "close-lane", "item": "KEN-1"});
+    let held = fleet.close(request.clone());
+    let intent = &held["result"]["effect"]["report"]["intent"];
+    let mut confirm = json!({"op": "record-outcome", "intent_id": intent["id"], "outcome": "confirmed",
+        "boxes_disposed": true});
+    confirm["set_revision"] = json!(999_999);
+    let stale = fleet.close(confirm.clone());
+    assert_eq!(stale["refusal"]["key"], "set-replaced", "{stale}");
+    confirm.as_object_mut().unwrap().remove("set_revision");
+    confirm["while_owner"] = json!({"pid": 1, "start": "ticks:1"});
+    let yielded = fleet.close(confirm.clone());
+    assert_eq!(
+        yielded["result"]["report"]["recorded_now"], false,
+        "{yielded}"
+    );
+    confirm.as_object_mut().unwrap().remove("while_owner");
+    let deferred = fleet.close(confirm);
+    assert_eq!(deferred["refusal"]["key"], "boxes-unsettled", "{deferred}");
+    assert_eq!(fleet.lane("KEN-1")["status"], "running", "{deferred}");
+    assert!(fleet.sent("issueUpdate").is_empty(), "{deferred}");
+    fleet.answer("CLOSE_STATUS", "0");
+    let ended = fleet.close(request);
+    assert_eq!(ended["result"]["word"], "closed", "{ended}");
+    assert_eq!(fleet.issue()["state"]["name"], "Done", "{ended}");
+
+    let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), "");
+    fleet.answer("CLOSE_STATUS", "3");
+    let held = fleet.close(json!({"op": "close-lane", "item": "KEN-1",
+        "landing": {"disposed": {"by": "overseer", "id": "manual-disposal",
+            "reason": "evidence unavailable", "of": "boxes"}}}));
+    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
+    let intent = &held["result"]["effect"]["report"]["intent"];
+    let confirmed = fleet.close(json!({"op": "record-outcome", "intent_id": intent["id"],
+        "outcome": "confirmed"}));
+    assert_eq!(
+        confirmed["result"]["report"]["intent"]["outcome"], "confirmed",
+        "{confirmed}"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "done", "{confirmed}");
+    assert!(fleet.sent("issueUpdate").is_empty(), "{confirmed}");
+    assert!(
+        fleet.fleet()["fleet_log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| {
+                row["kind"] == "landing-disposed"
+                    && row["of"] == "boxes"
+                    && row["id"] == "manual-disposal"
+            }),
+        "{confirmed}"
+    );
+}
+
+#[test]
+fn review_close_keeps_cancellation_when_its_sandbox_is_already_absent() {
+    let mut fleet = Fleet::boxes_world("Canceled", &done_when(false), "");
+    let path = fleet.state_dir().join("bin/linear-api.json");
+    let mut issue = fleet.issue();
+    issue["state"]["type"] = json!("canceled");
+    issue["codes"]["BoxItem"] = json!(502);
+    std::fs::write(path, issue.to_string()).unwrap();
+    for (name, value) in MAIL_UNREACHABLE {
+        fleet.answer(name, value);
+    }
+    fleet.answer("LIST", "lane.example:/srv/other/ken-9\tbusy");
+    let ended = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(ended["result"]["word"], "closed", "{ended}");
+    let intent = &ended["result"]["effect"]["report"]["intent"];
+    assert_eq!(intent["close"]["verdict"], "canceled", "{ended}");
+    assert!(fleet.sent("BoxItem").is_empty(), "{ended}");
+    assert!(fleet.sent("issueUpdate").is_empty(), "{ended}");
+}
+
+#[test]
+fn close_lane_retries_settle_the_current_delivery_of_a_verifying_item() {
+    close_retries_settle_verifying("close-lane");
+}
+
+#[test]
+fn close_owned_resources_retries_settle_the_current_delivery_of_a_verifying_item() {
+    close_retries_settle_verifying("close-owned-resources");
+}
+
+#[test]
+fn close_lane_settles_a_merged_delivery_when_it_keeps_the_sandbox() {
+    let evidence = "## Done-when evidence\n1: first proof\n2: second proof\n";
+    let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), evidence);
+    let mut lane = hosted_lane("KEN-1");
+    lane["tracker"] = json!("linear");
+    lane.as_object_mut().unwrap().remove("cycle");
+    fleet.write_lanes(vec![lane]);
+    fleet.answer("HARNESS_STATE", "exited");
+
+    let closed = fleet.close(
+        json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox",
+        "delivery": {"pr": {"pr": 7, "repo": "o/r"}}}),
+    );
+
+    assert_eq!(closed["result"]["word"], "stopped", "{closed}");
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "stopped", "{closed}");
+    assert!(lane["cycle"].is_null(), "{closed}");
+    assert_eq!(fleet.issue()["state"]["name"], "Done", "{closed}");
+    assert_eq!(fleet.sent("issueUpdate").len(), 1, "{closed}");
+}
+
+fn close_retries_settle_verifying(op: &str) {
+    let evidence = "## Done-when evidence\n1: first proof\n2: second proof\n";
+    let mut holders = vec!["request", "parked", "pending_pr"];
+    if op == "close-lane" {
+        holders.push("record-only disposal");
+    }
+    for holder in holders {
+        let mut description = done_when(false);
+        let post_merge = holder == "pending_pr";
+        if post_merge {
+            description.push_str("- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: +24h\n");
+        }
+        let mut fleet = Fleet::boxes_world("Verifying", &description, evidence);
+        let mut lane = hosted_lane("KEN-1");
+        lane["tracker"] = json!("linear");
+        let mut request = json!({"op": op, "item": "KEN-1"});
+        let retry = request.clone();
+        match holder {
+            "request" | "record-only disposal" => {
+                lane.as_object_mut().unwrap().remove("cycle");
+                if op == "close-lane" {
+                    std::os::unix::fs::symlink(
+                        orch_package().parent().unwrap().join("github"),
+                        fleet.state_dir().join(".agents/skills/github"),
+                    )
+                    .unwrap();
+                    let gh = fleet.state_dir().join("bin/gh.json");
+                    let mut replies: Value =
+                        serde_json::from_str(&std::fs::read_to_string(&gh).unwrap()).unwrap();
+                    if holder == "request" {
+                        replies["graphql number=7 cursor="] = merged_timeline();
+                    } else {
+                        request["landing"] = json!({"disposed": {"by": "overseer", "id": "d-1",
+                            "reason": "timeline unavailable", "of": "record"}});
+                    }
+                    std::fs::write(gh, replies.to_string()).unwrap();
+                    fleet
+                        .env
+                        .push(("GH_TOKEN".to_owned(), "fixture-token".to_owned()));
+                    request["delivery"] = json!({"pr": {"pr": 7, "repo": "o/r"}});
+                } else {
+                    request["cycle"] = json!({"cycle": {"pr": 7, "repo": "o/r"}, "lines": []});
+                }
+            }
+            "parked" | "pending_pr" => {
+                lane["cycle"] = json!({"pr": 6, "repo": "o/r"});
+                lane[holder] =
+                    json!({"pr": 7, "repo": "o/r", "head": "h2", "at": "2026-01-29T15:15:00Z"});
+                if holder == "parked" {
+                    lane["status"] = json!("parked");
+                } else {
+                    lane["session_since"] = json!("2026-01-29T15:30:00Z");
+                }
+            }
+            _ => unreachable!(),
+        }
+        fleet.write_lanes(vec![lane]);
+        fleet.answer("HARNESS_STATE", "exited");
+        fleet.answer("CLOSE_STATUS", "1");
+        let before = fleet.issue();
+        let refused = fleet.close(request);
+        assert!(
+            refused["ok"].as_bool() == Some(true),
+            "{op} {holder}: {refused}"
+        );
+        assert!(
+            fleet
+                .provider_calls()
+                .iter()
+                .any(|call| call.starts_with("close ")),
+            "{op} {holder}: {refused}"
+        );
+        assert_eq!(fleet.issue(), before, "{op} {holder}: {refused}");
+        assert!(
+            fleet.sent("issueUpdate").is_empty(),
+            "{op} {holder}: {refused}"
+        );
+        let held = fleet.lane("KEN-1");
+        assert_ne!(held["status"], "done", "{op} {holder}: {held}");
+        if matches!(holder, "parked" | "pending_pr") {
+            assert_eq!(held[holder]["pr"], 7, "{op} {holder}: {held}");
+        }
+        if holder == "record-only disposal" {
+            let intent = &refused["result"]["effect"]["report"]["intent"];
+            assert_eq!(intent["delivery"]["pr"]["pr"], 7, "{refused}");
+            assert!(intent["cycle"].is_null(), "{refused}");
+        }
+        fleet.answer("CLOSE_STATUS", "0");
+        let closed = fleet.close(retry);
+        assert_eq!(
+            fleet.lane("KEN-1")["status"],
+            "done",
+            "{op} {holder}: {closed}"
+        );
+        let after = fleet.issue();
+        assert_eq!(
+            after["state"]["name"],
+            if post_merge { "Verifying" } else { "Done" },
+            "{op} {holder}: {closed}"
+        );
+        let description = after["description"].as_str().unwrap();
+        if post_merge {
+            assert!(description.contains("- [ ] Post-merge: health"));
+        }
+        for proof in ["first proof", "second proof"] {
+            assert!(
+                description
+                    .lines()
+                    .any(|line| line.contains(proof) && line.contains("o/r#7")),
+                "{op} {holder}: {description}"
+            );
+        }
+        assert_eq!(
+            fleet.sent("issueUpdate").len(),
+            1,
+            "{op} {holder}: {closed}"
+        );
+        if holder == "record-only disposal" {
+            let record = fleet.fleet();
+            let log = record["fleet_log"].as_array().unwrap();
+            let disposed: Vec<_> = log
+                .iter()
+                .filter(|row| row["kind"] == "landing-disposed")
+                .collect();
+            assert_eq!(disposed.len(), 1, "{log:?}");
+            assert_eq!(disposed[0]["of"], "record", "{log:?}");
+            assert!(fleet.lane("KEN-1")["cycle"].is_null(), "{closed}");
+        }
+    }
+}
+
 /// A merged item its lane left with branch-provable boxes open, its
 /// sandbox gone or its lane ended over a Done item, has the boxes the
 /// merged pull request's `## Done-when evidence` section proves ticked by
 /// the close, through the linear package's own `issues complete`, each
 /// Evidence line citing the merge and the close's cause, and the state the
 /// command sets. A box the section gives no evidence for ticks nothing and
-/// refuses the close `boxes-unsettled` with nothing moved and nothing
-/// posted; a close whose disposal gives the boxes up then ends the lane,
+/// holds the close `boxes-unsettled` before it moves the lane record and
+/// posts nothing. A close whose disposal gives the boxes up ends the lane,
 /// posts the one comment that names the boxes with and without evidence,
 /// and writes its `landing-disposed` row. An item the lane completed is
 /// left alone.
@@ -7684,15 +8066,13 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
         if open {
             let answer = fleet.close(request.clone());
             assert_eq!(
-                answer["refusal"]["key"], "boxes-unsettled",
+                answer["result"]["observation"]["cause"], "boxes-unsettled",
                 "{name}: {answer}"
             );
-            let fields = refusal_fields(&answer);
-            let cause = case.note.unwrap().split_whitespace().nth(1).unwrap();
             assert_eq!(
-                format!("cause={}", fields["cause"]),
-                cause,
-                "{name}: {fields:?}"
+                answer["result"]["observation"]["boxes_note"],
+                case.note.unwrap(),
+                "{name}: {answer}"
             );
             assert_eq!(fleet.lane("KEN-1")["status"], "running", "{name}");
             assert!(
@@ -7700,11 +8080,13 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
                 "{name}: nothing posted"
             );
             assert!(
-                !fleet
-                    .provider_calls()
-                    .iter()
-                    .any(|l| l.starts_with("stop ")),
-                "{name}: a refused close stops nothing"
+                fleet.sent("issueUpdate").is_empty(),
+                "{name}: no incomplete write"
+            );
+            assert_eq!(
+                fleet.issue()["description"],
+                before,
+                "{name}: delivery remains unsettled"
             );
             request["landing"] = json!({"disposed": {"by": "overseer", "id": "1769700000-9-31",
                 "reason": "the lane wrote no evidence", "of": "boxes"}});
@@ -7868,13 +8250,20 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
         let mut request = json!({"op": "close-lane", "item": "KEN-1"});
         let answer = fleet.close(request.clone());
         assert_eq!(
-            answer["refusal"]["key"], "boxes-unsettled",
+            answer["result"]["observation"]["cause"], "boxes-unsettled",
             "{case}: {answer}"
         );
-        let fields = refusal_fields(&answer);
         assert_eq!(
-            (fields["state"].as_str(), fields["cause"].as_str()),
-            refusal,
+            answer["result"]["observation"]["boxes_note"]
+                .as_str()
+                .unwrap()
+                .split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>(),
+            [
+                format!("boxes-{}", refusal.0),
+                format!("cause={}", refusal.1)
+            ],
             "{case}"
         );
         assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
