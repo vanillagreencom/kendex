@@ -497,20 +497,54 @@ fn recheck_quick(settings: &Settings, r: &ApproveHead, head: &str, token: &str) 
     let Some(notice) = &r.quick_notice else {
         return Ok(());
     };
-    let stale = || refuse("quick-proof-stale", &[("head", head)]);
+    let stale = || {
+        refuse(
+            "quick-proof-stale",
+            &[
+                ("head", head),
+                (
+                    "fix",
+                    "Run the owning lane's review call for the current range and route its result.",
+                ),
+            ],
+        )
+    };
     let base = review::quick_notice_base(notice, r.pr, head).ok_or_else(stale)?;
+    let unreadable = |reason: &str| {
+        refuse(
+            "quick-proof-unreadable",
+            &[
+                ("head", head),
+                ("base", base),
+                ("reason", reason),
+                (
+                    "fix",
+                    "Restore the indicated proof read and retry the same approval request.",
+                ),
+            ],
+        )
+    };
     let gh = app(settings, token);
-    let pull = review::pull(&gh, &r.repo, r.pr).map_err(|_| stale())?;
-    if pull.head.sha != head
-        || review::quick(&gh, &settings.roots.common, &r.repo, &pull)
-            .ok()
-            .flatten()
-            .as_deref()
-            != Some(base)
-    {
+    let pull = review::pull(&gh, &r.repo, r.pr)
+        .map_err(|cause| unreadable(&Unreadable::from(cause).reason))?;
+    if pull.head.sha != head {
         return Err(stale());
     }
-    Ok(())
+    match review::quick(&gh, &settings.roots.common, &r.repo, &pull) {
+        Ok(Some(proved)) if proved == base => Ok(()),
+        Ok(Some(_)) => Err(stale()),
+        Ok(None) => Err(refuse(
+            "quick-range-ineligible",
+            &[
+                ("head", head),
+                (
+                    "fix",
+                    "Run the owning lane's review call and follow the ordinary review route.",
+                ),
+            ],
+        )),
+        Err(reason) => Err(unreadable(&reason)),
+    }
 }
 
 pub fn run(

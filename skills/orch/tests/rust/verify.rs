@@ -4664,6 +4664,10 @@ fi
             format!(
                 r#"#!/bin/sh
 case "$*" in
+  'api repos/{REPO}/pulls/{PR}'|'api repos/{REPO}/git/commits/'*)
+    [ "$GH_TOKEN" = 'approval-fixture-token' ] || exit 4 ;;
+esac
+case "$*" in
   'api repos/{REPO}/pulls/{PR} --jq .head.sha') printf '%s\n' '{HEAD}' ;;
   'api --method POST repos/{REPO}/pulls/{PR}/reviews --input -')
     printf '%s\n' "$*" >> "$GH_FAKE_LOG"
@@ -7277,6 +7281,10 @@ fn a_delivered_quick_notice_cannot_approve_after_a_same_head_base_advance() {
         let legacy = fallback_line("quick");
         assert_eq!(delivered, format!("{legacy} base={MOVED}"));
 
+        let from = gh.log().len();
+        let result = reply(&gh.approve_quick_notice(&lane.main, &path, &legacy));
+        assert_quick_approval_refusal(&gh, &result, "quick-proof-stale", None, from);
+
         if !base_moves {
             let approval = ok_result(&gh.approve_quick_notice(&lane.main, &path, delivered));
             assert_eq!(approval["status"], "confirmed", "{approval}");
@@ -7289,23 +7297,23 @@ fn a_delivered_quick_notice_cannot_approve_after_a_same_head_base_advance() {
             continue;
         }
         gh.quick_range("lane-app[bot]", WORKFLOW_SHA, OTHER_SHA, HEAD);
-        let path = gh.quick_tools(&lane.main, OTHER_SHA, still_quick, measured);
+        let class = if still_quick {
+            measured
+        } else {
+            "class: class=standard measured=true cause=several-subsystems"
+        };
+        let path = gh.quick_tools(&lane.main, OTHER_SHA, still_quick, class);
         let from = gh.log().len();
-        for notice in [delivered, &legacy] {
-            let approval = gh.approve_quick_notice(&lane.main, &path, notice);
-            let result = reply(&approval);
-            assert_eq!(result["refusal"]["key"], "quick-proof-stale", "{result}");
-        }
-        let calls = gh.log_since(from);
+        let result = reply(&gh.approve_quick_notice(&lane.main, &path, delivered));
+        let key = if still_quick {
+            "quick-proof-stale"
+        } else {
+            "quick-range-ineligible"
+        };
+        assert_quick_approval_refusal(&gh, &result, key, None, from);
         assert!(
-            calls.contains(&format!("api repos/{REPO}/git/commits/{WORKFLOW_SHA}")),
-            "{calls:?}"
-        );
-        assert!(
-            !calls
-                .iter()
-                .any(|call| call.starts_with("api --method POST")),
-            "{calls:?}"
+            gh.log_since(from)
+                .contains(&format!("api repos/{REPO}/git/commits/{WORKFLOW_SHA}"))
         );
 
         let routed = lane.review(&gh, &lane.root, &[("PATH", &path)]);
@@ -7321,6 +7329,93 @@ fn a_delivered_quick_notice_cannot_approve_after_a_same_head_base_advance() {
             assert_eq!(routed["request"]["outcome"], "requested", "{routed}");
             assert_eq!(gh.requests(), 1, "{:?}", gh.log());
         }
+    }
+}
+
+fn assert_quick_approval_refusal(
+    gh: &Github,
+    result: &Value,
+    key: &str,
+    unread: Option<(&str, &str)>,
+    from: usize,
+) {
+    let refusal = &result["refusal"];
+    assert_eq!(refusal["key"], key, "{result}");
+    let fields = refusal["fields"].as_array().unwrap();
+    let field = |key: &str| {
+        fields
+            .iter()
+            .find(|pair| pair[0] == key)
+            .and_then(|pair| pair[1].as_str())
+    };
+    assert_eq!(field("head"), Some(HEAD), "{result}");
+    assert_eq!(
+        field("reason"),
+        unread.map(|(_, reason)| reason),
+        "{result}"
+    );
+    assert_eq!(field("base"), unread.map(|(base, _)| base), "{result}");
+    assert!(field("fix").is_some_and(|fix| !fix.is_empty()), "{result}");
+    let calls = gh.log_since(from);
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.starts_with("api --method POST")),
+        "{calls:?}"
+    );
+    let state = gh.state();
+    let entry = &state["head_approvals"][format!("{REPO}#{PR}")][HEAD];
+    assert!(entry["attempt"].is_null(), "{entry}");
+    assert!(entry["comment"].is_null(), "{entry}");
+}
+
+#[test]
+fn a_current_quick_notice_can_approve_once_its_proof_is_readable() {
+    let measured = "class: class=trivial measured=true cause=quick-files";
+    let test_merge = format!("repos/{REPO}/git/commits/{OTHER_SHA}");
+    for (endpoint, reason) in [
+        (Some(pull_path()), "pull-read-failed"),
+        (Some(test_merge), "test-merge-read-failed"),
+        (None, "unresolved-endpoint"),
+    ] {
+        let mut gh = Github::review_world();
+        let lane = LaneWorld::new(&gh, true);
+        gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
+        let path = gh.quick_tools(&lane.main, MOVED, true, measured);
+        let first = lane.review(&gh, &lane.root, &[("PATH", &path)]);
+        assert_eq!(first["request"]["cause"], "quick", "{first}");
+        let notices = lane.box_notices(&lane.root);
+        let delivered = notices[0]["text"].as_str().unwrap().lines().next().unwrap();
+
+        if let Some(endpoint) = endpoint {
+            gh.refused(&endpoint, 403, "Resource not accessible by integration");
+        } else {
+            // change-scope reports a Git diff it could not measure this way.
+            gh.quick_tools(
+                &lane.main,
+                MOVED,
+                false,
+                "class: class=standard measured=false cause=unresolved-endpoint",
+            );
+        }
+        let from = gh.log().len();
+        let result = reply(&gh.approve_quick_notice(&lane.main, &path, delivered));
+        assert_quick_approval_refusal(
+            &gh,
+            &result,
+            "quick-proof-unreadable",
+            Some((MOVED, reason)),
+            from,
+        );
+
+        gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
+        let path = gh.quick_tools(&lane.main, MOVED, true, measured);
+        let approval = ok_result(&gh.approve_quick_notice(&lane.main, &path, delivered));
+        assert_eq!(approval["status"], "confirmed", "{approval}");
+        assert_eq!(approval["head"], HEAD, "{approval}");
+        let state = gh.state();
+        let entry = &state["head_approvals"][format!("{REPO}#{PR}")][HEAD];
+        assert_eq!(entry["attempt"]["state"], "confirmed", "{entry}");
     }
 }
 
