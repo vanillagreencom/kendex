@@ -114,17 +114,18 @@ Under the `approval` gate mode, the review call settles the head's Copilot reque
 
 Under the `off` gate mode:
 
-- A head the call's own ready mark made ready takes one Copilot request where `PR_COPILOT_REQUESTS` is `on` and no request is recorded yet. That reply carries `request` and still answers `off`, `blocked` or `pending copilot-pending`.
+- A head the call's own ready mark made ready takes one Copilot request where `PR_COPILOT_REQUESTS` is `on` and no request is recorded yet. A proved quick head takes the `quick` fallback instead, except on the overseer app's own pull requests. That reply carries `request` and still answers `off`, `blocked` or `pending copilot-pending`.
 - A head the gate did not mark ready takes no request.
 
 Route the `request` before the verdict word:
 
 - `requested`: the call sent the request. Go on to the verdict.
 - `existing`: Copilot's work or review already stands on the head, so no request was needed. Go on to the verdict.
-- `fallback`: no request went out, and `cause` says why. The fallback stands on every later call for that head, except a `draft` fallback, which lapses as `draft` says.
+- `fallback`: no request went out on that decision, and `cause` says why. The fallback stands on every later call for that head, subject to the `draft` and `quick` rules below.
   - `off`: the call recorded the fallback while `PR_COPILOT_REQUESTS` was `off`.
   - `draft`: the head is a draft the call was not asked to mark ready. Keep the draft. This fallback lapses once the gate's ready mark lands, or once the view and `pulls/N` both read the head ready. That call answers the head's request as on a head with no request recorded, and starts the head's hold and review period.
   - `refresh`: the consumer's base-checkout `REVIEW_GATE_REFRESH_REVIEW=overseer` declares this pull request its refresh head. The head takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval).
+  - `quick` means the installed change classifier proves the current GitHub test-merge range is quick and the overseer app did not author the pull request. The head takes the same Fallback approval. When a later read cannot prove the current range quick, the ordinary request route resumes.
   - `no-files`: Copilot's current-head answer says it could review no files. The head takes the same Fallback approval with no further request.
   - `refused` with `exit`: GitHub answered the request with a 4xx refusal.
   - `unconfirmed`: the request and its resend drew neither Copilot's work in flight nor a Copilot review of the head.
@@ -144,7 +145,7 @@ A fallback grants no approval:
 
 The notice:
 
-- Its first line is `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]`, with ` exit=[N]` after `refused`.
+- Its first line is `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]`, with ` exit=[N]` after `refused` or ` base=[BASE_SHA]` after `quick`.
 - Its second line is the lane's status path, for the overseer to read.
 - Nothing holds the notice: not Copilot's work, an open review thread or a standing change request.
 - The overseer's approval follows [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval), and the merge path's own thread and change-request checks still hold the merge.

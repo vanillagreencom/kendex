@@ -21,6 +21,8 @@ Write the approval body to `[BODY_PATH]` and the request to `[PATH]`.
 
 A `copilot-declined-unchanged` approval sets `hold_copilot` to `false` and adds `"comment_file":"[COMMENT_PATH]"`, the comment the approval posts first.
 
+For a `copilot-fallback` notice with `cause=quick`, add `"quick_notice":"[FIRST_LINE]"` with the notice's first line exactly as delivered. The line carries `head [SHA] cause=quick base=[BASE_SHA]`. Include the first line even when an older notice lacks the base.
+
 Run the request from the trusted consumer checkout, then route `result.status` by § Answers:
 
 ```bash
@@ -64,6 +66,7 @@ A `review-replies` refusal approves nothing and writes no `use1` row.
 A refusal of the request itself approves nothing and names what it judged in `refusal.fields`:
 
 - `head-moved` writes no `use1` row; the new head takes its own route.
+- `quick-proof-stale` writes no `use1` row. Run the owning lane's [review call](gates.md#the-review-call) and route its request. A new `fallback cause=quick` takes the current range's notice.
 - `approval-setting-unread` means the private env file sets a key the approval reads (the token file, the login, `GH_HOST`, or a reader credential such as `GH_TOKEN`) in a form only a shell reads. Write it there as a plain value.
 
 ## While the lane's review is pending
@@ -123,6 +126,7 @@ An `awaiting-stale` line means no approval reached the head within the quiet per
    - Send the Jarvis session, while one runs, one notice naming the pull request and the head.
 2. Otherwise, use the [Copilot request owner](gates.md#copilot-requests), with `[PR_NUMBER]` set to `[N]` and `[REVIEW_BASE_CHECKOUT]` bound per that reference. Route its answer before any review wait:
    - `fallback`: a consumer workflow can still request Copilot on that head, so step 1's approval keeps `hold_copilot` `true`.
+   - `fallback cause=quick`: follow § Notice rules with the current range's `copilot-fallback` notice.
    - `fallback cause=refresh`: review that head from the consumer checkout with the reviewer skill.
      - When the review leaves no open blocker, approve it with `approve-head`, `hold_copilot` `true`, and record a fallback Use 1 row.
      - Otherwise approve nothing, and send one owner notice naming the pull request, the head and the open blockers.

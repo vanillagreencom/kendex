@@ -550,6 +550,8 @@ pub(crate) enum Endpoint {
     /// `pulls/{number}`: the pull request object, for the refresh route's
     /// author and branch and the draft flag.
     Pull,
+    /// `git/commits/{sha}`, for an open pull request's test-merge parents.
+    TestMerge,
     /// `pulls/{number}/reviews`: every review, for the Copilot head rule.
     Reviews,
     /// `issues/{number}/timeline`: the head's arrival and Copilot's
@@ -583,6 +585,7 @@ impl Endpoint {
             Endpoint::PullRequest => "pull-request",
             Endpoint::Visibility => "visibility",
             Endpoint::Pull => "pull",
+            Endpoint::TestMerge => "test-merge",
             Endpoint::Reviews => "reviews",
             Endpoint::Timeline => "timeline",
             Endpoint::Threads => "threads",
@@ -610,6 +613,7 @@ impl Endpoint {
             | Endpoint::WorkflowFiles
             | Endpoint::SourceRepository
             | Endpoint::Pull
+            | Endpoint::TestMerge
             | Endpoint::Reviews
             | Endpoint::Timeline
             | Endpoint::Threads

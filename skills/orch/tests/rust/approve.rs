@@ -63,6 +63,7 @@ fn request(root: &Path) -> ApproveHead {
         body_file: root.join("body"),
         hold_copilot: false,
         comment_file: None,
+        quick_notice: None,
     }
 }
 

@@ -38,6 +38,8 @@ pub struct ApproveHead {
     pub hold_copilot: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_file: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_notice: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -489,6 +491,28 @@ fn http_refusal(exit: Option<i32>, stderr: &str) -> bool {
     exit == Some(4) || crate::verify::refused_by_github(stderr)
 }
 
+/// A delivered quick notice can outlive its range while the head stays
+/// fixed. Reuse the request owner's proof before acting on such a notice.
+fn recheck_quick(settings: &Settings, r: &ApproveHead, head: &str, token: &str) -> Result<()> {
+    let Some(notice) = &r.quick_notice else {
+        return Ok(());
+    };
+    let stale = || refuse("quick-proof-stale", &[("head", head)]);
+    let base = review::quick_notice_base(notice, r.pr, head).ok_or_else(stale)?;
+    let gh = app(settings, token);
+    let pull = review::pull(&gh, &r.repo, r.pr).map_err(|_| stale())?;
+    if pull.head.sha != head
+        || review::quick(&gh, &settings.roots.common, &r.repo, &pull)
+            .ok()
+            .flatten()
+            .as_deref()
+            != Some(base)
+    {
+        return Err(stale());
+    }
+    Ok(())
+}
+
 pub fn run(
     path: &Path,
     r: &ApproveHead,
@@ -557,6 +581,7 @@ pub fn run(
         return Ok(finished);
     }
     replies(settings, r, &head, &token)?;
+    recheck_quick(settings, r, &head, &token)?;
     if let Some(text) = &comment
         && let Some(unposted) =
             post_comment(path, r, &head, login, &token, settings, locking, text)?
@@ -627,6 +652,7 @@ fn standing_answer(
     locking: Locking,
     attempt: &Attempt,
 ) -> Result<ApprovedHead> {
+    recheck_quick(settings, r, head, token)?;
     match attempt {
         Attempt::Confirmed { review } => standing(settings, r, head, login, token, review),
         Attempt::Attempted => {
