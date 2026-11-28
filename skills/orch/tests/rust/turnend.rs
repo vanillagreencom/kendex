@@ -4041,10 +4041,7 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
         fs::create_dir_all(world.lane.join("tmp")).unwrap();
         let pane = world.on_pane("%3");
         let mut env = borrowed(&pane);
-        env.extend([
-            ("AGENT_RUNTIME_LAUNCH_AGENT", "controller"),
-            ("AGENT_RUNTIME_LAUNCH_EFFORT", "medium"),
-        ]);
+        env.push(("AGENT_RUNTIME_LAUNCH_AGENT", "controller"));
         let account = world.home.join(".claude");
         let transcript = agent_runtime::session::fixed_file(
             agent_runtime::harness::Harness::Claude,
@@ -4066,16 +4063,24 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
             "server_socket": socket, "pane": "%3", "harness_pid": std::process::id(),
             "harness_start": start_of(std::process::id())});
         fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
-        let out = world.session(&env);
-        assert_eq!(
-            (out.code, out.stdout.as_str()),
-            (
-                0,
-                "model=claude-haiku-5-5 source=session\neffort=medium source=launch\nagent=controller source=launch\n"
-            ),
-            "jarvis={jarvis}: {}",
-            out.stderr
-        );
+        for (declared, effort) in [(None, "high"), (Some("medium"), "medium")] {
+            let mut caller = env.clone();
+            if let Some(declared) = declared {
+                caller.push(("AGENT_RUNTIME_LAUNCH_EFFORT", declared));
+            }
+            let out = world.session(&caller);
+            assert_eq!(
+                out.code, 0,
+                "jarvis={jarvis} effort={declared:?}: {} {}",
+                out.stdout, out.stderr
+            );
+            assert_eq!(
+                out.stdout,
+                format!(
+                    "model=claude-haiku-5-5 source=session\neffort={effort} source=launch\nagent=controller source=launch\n"
+                )
+            );
+        }
         let unnamed = |out: Out| {
             assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
             assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
