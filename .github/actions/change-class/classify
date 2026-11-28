@@ -65,11 +65,10 @@
 #                      groups it here rather than reading the diff again.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
 #                      A proved render runs the lanes reached through installed
-#                      package reads or applicable claims. A render proof or
-#                      ownership refusal keeps ordinary lanes and their derived
-#                      prerequisites eligible. The skip conditions follow
+#                      package reads or applicable claims. The docs-only waiver,
+#                      its refusal exception and the event rules follow
 #                      skills/harness-ci/references/wiring.md
-#                      § Per-lane verdicts.
+#                      § Through the composite action and § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or queue-only where
 #                      lanes=false; full-run on schedule and
 #                      workflow_dispatch; declared-text where declared
@@ -112,8 +111,8 @@
 # quotes or on the shipped queue list; then
 # true where a changed path
 # matches one of the lane's base globs or the declaration comparison selects
-# that lane; then true for ordinary lanes if render proof refused a docs-set
-# diff; and false everywhere else. A deferred
+# that lane; then true for ordinary lanes under the docs-only waiver's
+# refusal exception; and false everywhere else. A deferred
 # lane runs in the merge group. The deferral needs the queue_only
 # answer as well as the path that reached the lane, so no lane is deferred
 # on a pull request change-class reads as free to take the admin merge.
@@ -322,10 +321,9 @@ fi
 
 # Whether the lanes run. A `render` diff was proved by re-rendering it, a
 # `trivial` one is confined to the class's path set, and a docs-only one
-# changes no path outside the documentation set at any size. A refused
-# render proof leaves ordinary lanes eligible, and declared text keeps its
-# owning checks. The queue-only default and the nightly run follow the
-# producer's rules.
+# changes no path outside the documentation set at any size. The producer
+# applies the docs-only waiver and its refusal and declared-text exceptions
+# alongside the event rules.
 # A separately checked-out default branch can predate the installed producer
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then

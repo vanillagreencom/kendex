@@ -144,9 +144,9 @@ git -C "$repo" commit -qam invalid-inventory
 base_invalid_inventory="$(git -C "$repo" rev-parse HEAD)"
 
 rows=0
-while IFS='|' read -r name mixed_base classifier_path mirror_missing expected_cause; do
+while IFS='|' read -r name mixed_base markdown classifier_path mirror_missing expected_cause; do
   rows=$((rows + 1))
-  write_row "$name" "$mixed_base" "docs/guide.md $rendered_skill" 3
+  write_row "$name" "$mixed_base" "$markdown $rendered_skill" 3
   PATH="$classifier_path" MIRROR_MISSING="$mirror_missing" UNREADABLE_INVENTORY="$mixed_base" REAL_GIT="$real_git" \
     run_action merge_group "$mixed_base" "$SANDBOX/default" true
   PATH="$classifier_path" MIRROR_MISSING="$mirror_missing" UNREADABLE_INVENTORY="$mixed_base" REAL_GIT="$real_git" \
@@ -161,11 +161,12 @@ while IFS='|' read -r name mixed_base classifier_path mirror_missing expected_ca
   assert_eq "$name: local and action agree" "$(lane_answer "$SANDBOX/action-output") $(verdicts)" \
     "$(lane_answer "$SANDBOX/local-output") $(verdicts "$SANDBOX/local-output")"
 done <<ROWS
-mixed-verify-refused|$base_default|$SANDBOX/refusing-verifier:$PATH|false|verify-refused
-mixed-source-mirror-missing|$base_default|$SANDBOX/refusing-verifier:$PATH|true|source-mirror-missing
-mixed-no-verifier|$base_default|$no_verifier_path|false|no-verifier
-mixed-invalid-inventory|$base_invalid_inventory|$no_verifier_path|false|invalid-generated-paths
-mixed-unreadable-base-inventory|$base_default|$SANDBOX/unreadable-inventory:$no_verifier_path|false|unreadable-base-inventory
+mixed-verify-refused|$base_default|docs/guide.md|$SANDBOX/refusing-verifier:$PATH|false|verify-refused
+mixed-source-mirror-missing|$base_default|docs/guide.md|$SANDBOX/refusing-verifier:$PATH|true|source-mirror-missing
+mixed-no-verifier|$base_default|docs/guide.md|$no_verifier_path|false|no-verifier
+mixed-invalid-inventory|$base_invalid_inventory|docs/guide.md|$no_verifier_path|false|invalid-generated-paths
+mixed-unreadable-base-inventory|$base_default|docs/guide.md|$SANDBOX/unreadable-inventory:$no_verifier_path|false|unreadable-base-inventory
+mixed-unreadable-changed-path|$base_default|:release-notes.md|$no_verifier_path|false|unreadable-changed-path
 ROWS
 require_rows mixed-render-docs "$rows"
 

@@ -123,7 +123,8 @@ if [ "$docs" = docs_only=true ] && [ "$class" = standard ]; then
     die "cause=class-record-unreadable" "could not read change-class's closing record"
   case "$class_cause" in
     no-verifier | verify-* | source-mirror-missing | head-rev-missing | head-checkout-failed | \
-      file-lookup-failed | unreadable-base-inventory | unreadable-head-inventory | invalid-generated-paths | \
+      file-lookup-failed | unreadable-changed-path | unreadable-base-inventory | unreadable-head-inventory | \
+      invalid-generated-paths | \
       render-path-* | render-retirement-unproved | mixed-render-paths-unreadable)
       render_refusal="$class_cause" ;;
   esac
