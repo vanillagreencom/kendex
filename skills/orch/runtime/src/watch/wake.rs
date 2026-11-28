@@ -841,6 +841,17 @@ impl Wake {
             else {
                 continue;
             };
+            // An older Claude record can hold the proof of its root only in
+            // the launch journal. Use it for this stop's cursor and receipt.
+            let rooted;
+            let lane = if lane.harness.as_deref() == Some("claude")
+                && stop::of_cause(Harness::Claude, &resume.cause) == Some(Kind::Provider)
+            {
+                rooted = hosted::with_session_root(lane, &fleet.intents);
+                rooted.as_ref()
+            } else {
+                lane
+            };
             let marked = record.get(&lane.item);
             if let Some(mark) = marked.filter(|m| m.resume.as_deref() == Some(row.as_str())) {
                 if mark.outcome.is_none() {
@@ -1418,7 +1429,25 @@ impl Wake {
                 mark.turns_before = if matches!(target.route, Route::Pane) {
                     turns
                 } else {
-                    self.hosted_cursor(target)
+                    let provider_stop = resume.filter(|resume| {
+                        target.harness == Harness::Claude
+                            && stop::of_cause(Harness::Claude, &resume.cause)
+                                == Some(Kind::Provider)
+                    });
+                    match (
+                        self.hosted_cursor(target, provider_stop.is_some()),
+                        provider_stop,
+                    ) {
+                        (Ok(cursor), _) => cursor,
+                        (Err(cause), Some(resume)) => {
+                            produced.events.push(Event::LaneUnreadable {
+                                lane: resume.lane.clone(),
+                                cause,
+                            });
+                            return Ok(());
+                        }
+                        (Err(_), _) => ROWS_CURSOR_UNREAD,
+                    }
                 };
                 // The mark is on disk before anything is typed.
                 self.write(record, &name, Some(mark.clone()))?;
@@ -1641,15 +1670,24 @@ impl Wake {
         }
     }
 
-    fn hosted_cursor(&self, target: &Target) -> u64 {
+    fn hosted_cursor(
+        &self,
+        target: &Target,
+        provider_stop: bool,
+    ) -> std::result::Result<u64, String> {
         let Some(lane) = target.rows_lane() else {
-            return 0;
+            return Ok(0);
         };
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
-        match hosted::session_rows(&scripts, lane) {
-            hosted::Answer::Live(text) => agent_runtime::rows::complete_line_count(&text),
-            hosted::Answer::Gone => 0,
-            hosted::Answer::Unreadable { .. } => ROWS_CURSOR_UNREAD,
+        let answer = if provider_stop {
+            hosted::confirmed_session_rows(&scripts, lane)
+        } else {
+            hosted::session_rows(&scripts, lane)
+        };
+        match answer {
+            hosted::Answer::Live(text) => Ok(agent_runtime::rows::complete_line_count(&text)),
+            hosted::Answer::Gone => Ok(0),
+            hosted::Answer::Unreadable { cause } => Err(cause),
         }
     }
 
