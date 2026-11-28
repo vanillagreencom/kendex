@@ -3256,14 +3256,10 @@ fn moved_start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
     ))
 }
 
-/// The runtime's own argv for a relaunch's requests through the one shell
-/// word, each exiting by its effect's outcome, never by its admission
-/// alone: the launch is asked only once the close's effect did not fail
-/// (an unconfirmed close leaves the launch's own transition to refuse a
-/// lane whose harness still runs), and the launch's status is the chain's:
-/// a replacement whose effect failed, or whose outcome is still open,
-/// leaves the status the outcome reader says or settles from the launch's
-/// intent. A close an earlier relaunch confirmed is not sent again.
+/// The runtime's own argv asks for a replacement only after the close's
+/// effect confirms. The outcome reader reserves 75 for an open replacement
+/// launch, so an unconfirmed close exits as a failed recovery and leaves its
+/// own outcome in the log. A previously confirmed close skips the close call.
 fn relaunch_args(pass: &Pass, close: Option<&Path>, launch: &Path) -> Vec<String> {
     let entry = pass.scripts.join("orch-runtime").display().to_string();
     let state = pass.state_dir.display().to_string();
@@ -3272,7 +3268,12 @@ fn relaunch_args(pass: &Pass, close: Option<&Path>, launch: &Path) -> Vec<String
         Some(close) => vec![
             "sh".to_owned(),
             "-c".to_owned(),
-            "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
+            format!(
+                "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; \
+                 case \"$rc\" in 0) exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\";; \
+                 {}) exit 1;; *) exit \"$rc\";; esac",
+                agent_runtime::effects::UNCONFIRMED_EXIT,
+            ),
             "wall-relaunch".to_owned(),
             entry,
             state,
@@ -3291,13 +3292,8 @@ fn relaunch_args(pass: &Pass, close: Option<&Path>, launch: &Path) -> Vec<String
     }
 }
 
-/// Start a composed relaunch of the observed lane: a hosted lane of any
-/// kind has its harness stopped through the provider first (its `stop
-/// --item --harness`), and a stop not confirmed refuses the relaunch as
-/// `stop-failed` with the status, or `stop-unanswered` where it gave no
-/// answer; then the marker the outcome reader settles, then the detached
-/// start, and `lane-relaunched` with its log. `Err` is the refusal's
-/// reason.
+/// Write the outcome reader's marker and start the detached recovery. Its
+/// checked close owns the provider stop and reports any refusal in the log.
 fn start_recovery(
     obs: &Observed,
     pass: &Pass,
@@ -3307,16 +3303,6 @@ fn start_recovery(
     spent: &str,
 ) -> Result<(), String> {
     let lane = &obs.name;
-    let host = hosted::host_of(obs.lane);
-    // A stop refused or unanswered alike may leave the harness running, so
-    // neither relaunches beside it this pass.
-    if host != "local"
-        && let Some(harness) = obs.lane.harness.as_deref()
-        && let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
-            hosted::stop(pass.scripts, host, &obs.lane.item, harness)
-    {
-        return Err(cause);
-    }
     let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
     let log = pass
         .state_dir

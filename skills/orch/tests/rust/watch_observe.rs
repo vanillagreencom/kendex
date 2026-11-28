@@ -5699,6 +5699,33 @@ impl HostedWorld {
         .unwrap();
     }
 
+    /// Keep the journal seen at the first stop or create. The fixture's
+    /// status reads exited only after the provider accepts its stop.
+    fn track_recovery(&self, host: &str, fleet: &Fleet) {
+        let inner = self.scripts.join("provider-fixture");
+        std::fs::rename(host, &inner).unwrap();
+        write_executable(
+            Path::new(host),
+            format!(
+                "#!/bin/sh\n\
+                 case \"$1\" in\n\
+                   stop|create)\n\
+                     snapshot='{dir}/first-'\"$1\".json\n\
+                     [ -e \"$snapshot\" ] || cp '{fleet}' \"$snapshot\" || exit 1;;\n\
+                   status)\n\
+                     if [ -e '{dir}/stopped' ]; then printf 'exited\\n'; exit 0; fi;;\n\
+                 esac\n\
+                 if [ \"$1\" = stop ]; then\n\
+                   '{inner}' \"$@\" || exit \"$?\"\n\
+                   touch '{dir}/stopped'\n\
+                 else exec '{inner}' \"$@\"; fi\n",
+                dir = self.scripts.display(),
+                fleet = fleet.path().display(),
+                inner = inner.display(),
+            ),
+        );
+    }
+
     /// The `gh api` answers, by path.
     fn plant_gh(&self, answers: Value) {
         std::fs::write(self.bin.join("gh.json"), answers.to_string()).unwrap();
@@ -7923,46 +7950,33 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
     assert_eq!(event_lines(&second), Vec::<String>::new());
 }
 
-/// A walled hosted lane's harness must not run on beside the successor the
-/// relaunch opens: a walled lane whose kind declares a local pane has its
-/// harness stopped through the provider's `stop --item --harness` under the
-/// record's host before the relaunch starts. A stop the provider refuses
-/// leaves the wall to the overseer with `wall-relaunch-refused
-/// reason=stop-failed`, its status and its refusal line under the line, and
-/// nothing starts; one that answers exit 0 with a line other than `stopped
-/// item=ITEM processes=N` does the same with `cause=answer-unparsed` alone
-/// (`hosted::stop` states both). So does a stop that gave no answer, a status
-/// of 128 and above (a signal, the ssh provider's 255), said
-/// `reason=stop-unanswered`, since the harness may still run.
+/// Run the watch's real close and launch chain for a hosted lane. The
+/// provider keeps the fleet record it sees at the first stop and the first
+/// replacement create, so the test sees the journal before either effect.
 #[test]
-fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_relaunch() {
-    for (stop, refused) in [
+fn a_walled_hosted_lane_replaces_its_writer_only_after_the_checked_close() {
+    for (stop, outcome) in [
         (ok("stopped item=KEN-4 processes=1\n"), None),
-        (
-            json!({"exit": 1, "stderr": "lane-host-fixture: stopping item=KEN-4\nlane-host-fixture: stop-refused item=KEN-4 fix=retry-stop\n"}),
-            Some("stop-failed exit=1 lane-host-fixture: stop-refused item=KEN-4 fix=retry-stop"),
-        ),
-        (
-            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
-        ),
-        (
-            json!({"exit": 0, "stdout": "stopped item=KEN-4\n", "stderr": "lane-host-fixture: stopping item=KEN-4\n"}),
-            Some("stop-failed cause=answer-unparsed"),
-        ),
-        (
-            json!({"exit": 137}),
-            Some("stop-unanswered stop exit=137 stderr=empty"),
-        ),
-        (
-            json!({"exit": 255}),
-            Some("stop-unanswered stop exit=255 stderr=empty"),
-        ),
+        (answer(255, ""), Some("unconfirmed")),
+        (ok("stopped item=KEN-4 processes=1\n"), Some("confirmed")),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let fleet = Fleet::new(&server);
+        let mut fleet = Fleet::new(&server);
+        let checkout = dir.path().join("checkout");
+        init_checkout(&fleet, &checkout);
+        let checkout = checkout.canonicalize().unwrap();
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+        let new_account = dir.path().join("new-account");
+        std::fs::create_dir_all(&new_account).unwrap();
+        let account = new_account.display().to_string();
+        let world = HostedWorld::new(dir.path(), &server, &fleet);
+        std::fs::remove_file(world.scripts.join("orch-runtime")).unwrap();
+        std::os::unix::fs::symlink(binary(), world.scripts.join("orch-runtime")).unwrap();
+        let package = checkout.join(".agents/skills/orch");
+        std::fs::create_dir_all(&package).unwrap();
+        std::os::unix::fs::symlink(&world.scripts, package.join("scripts")).unwrap();
+
         let mut record = relaunchable(lane_record(
             "KEN-4",
             "gh-4",
@@ -7970,32 +7984,54 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             &server,
             &pane,
             Some(&identity),
-            dir.path(),
+            &checkout,
         ));
-        record["host"] = json!(provider(dir.path()));
+        let host = provider(dir.path());
+        let remote = dir.path().join("remote-worktree").display().to_string();
+        record.as_object_mut().unwrap().remove("refresh");
+        record["host"] = json!(host);
         record["kind"] = json!("ssh");
-        // A hosted record: the lane's root is on its host, and the
-        // checkout the launch ran from, where the relaunch runs again, is
-        // the only local directory it names.
-        let remote_root = dir.path().join("only-on-the-remote-host");
-        record["mail_root"] = json!(remote_root.display().to_string());
-        record["checkout"] = json!(dir.path().display().to_string());
+        record["repo"] = json!("o/fleet");
+        record["checkout"] = json!(checkout);
+        record["mail_root"] = json!(remote);
+        record["effort"] = json!("high");
+        if outcome.is_none() {
+            // The legacy record's tracker item has no Location to admit.
+            let tracker = dir.path().join("tracker");
+            write_executable(
+                &tracker,
+                "#!/bin/sh\n[ \"$*\" = 'issues get KEN-4 --format=safe' ] || exit 1\nprintf '{}\\n'\n"
+                    .to_owned(),
+            );
+            fleet.runner.env.push((
+                "OVERSEE_WATCH_TRACKER".to_owned(),
+                tracker.display().to_string(),
+            ));
+            record["tracker"] = json!("linear");
+        } else {
+            record["file_hold"] = json!("exclusive");
+            record["touched"] = json!(["src/shared.rs"]);
+        }
         fleet.set_lanes(vec![record]);
-        let state = fleet.read();
-        let world = HostedWorld::new(dir.path(), &server, &fleet);
-        let status_file = format!(
-            "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
-            remote_root.display()
+
+        let status_file = format!("cat --item KEN-4 {remote}/tmp/lane-status-KEN-4.md");
+        let create = format!(
+            "create --item KEN-4 --repo o/fleet --harness claude --account {account} --relaunch"
         );
         world.plant_host(&[
             ("capabilities", ok(SSH_LINE)),
             ("status --item KEN-4 --harness claude", ok("running\n")),
             (status_file.as_str(), ok("Step: start\n")),
             ("stop --item KEN-4 --harness claude", stop),
+            (
+                create.as_str(),
+                json!({"exit": 1, "stderr": "lane-host: create-failed item=KEN-4\n"}),
+            ),
         ]);
-        // The fleet's host is the lane's, where the walk judges the lane's
-        // own harness and model.
-        let host = provider(dir.path());
+        world.track_recovery(&host, &fleet);
+        let first_stop = world.scripts.join("first-stop.json");
+        let first_create = world.scripts.join("first-create.json");
+
         lane_driver!(
             server,
             fleet,
@@ -8004,55 +8040,100 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             &[("ORCH_LANE_HOST", host.as_str())]
         );
         driver.scripts = world.scripts.clone();
-        driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
-        let produced = driver.pass(&state);
-        let stop_line = format!(
-            "ORCH_LANE_HOST={} stop --item KEN-4 --harness claude",
-            provider(dir.path())
+        driver.pick = Pick::Lane(account);
+        let produced = driver.pass(&fleet.read());
+        assert_eq!(
+            driver.relaunches.borrow().len(),
+            1,
+            "{:?}",
+            lines(&produced)
         );
         assert!(
-            world.host_log().contains(&stop_line),
-            "{:?}",
-            world.host_log()
+            !first_stop.exists(),
+            "the watch has not submitted its close yet"
         );
-        let started = driver.relaunches.borrow();
-        if let Some(status) = refused {
-            assert!(
-                lines(&produced)
-                    .contains(&format!("wall-relaunch-refused lane=gh-4 reason={status}")),
-                "{:?}",
-                lines(&produced)
-            );
-            assert!(
-                event_lines(&produced)
-                    .iter()
-                    .any(|l| l.starts_with("EVENT usage-limit gh-4 ")),
-                "{:?}",
-                lines(&produced)
-            );
-            assert!(started.is_empty(), "nothing starts on a failed stop");
-        } else {
-            assert!(
-                event_lines(&produced).contains(
-                    &"EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"
-                        .to_owned()
-                ),
-                "{:?}",
-                lines(&produced)
-            );
-            assert_eq!(started.len(), 1);
-            let request: Value = serde_json::from_str(
-                &std::fs::read_to_string(started[0].args.last().unwrap()).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(request["host"], provider(dir.path()), "{request}");
-            assert_eq!(request["kind"], "ssh", "{request}");
+        let relaunch = driver.relaunches.borrow()[0].clone();
+        let out = run_relaunch(&fleet, &relaunch);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let replies: Vec<Value> = stdout
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let close = &replies[0];
+        let stderr = stderr(&out);
+        let code = out.status.code().unwrap();
+        let snapshot = |path: &Path| -> Value {
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+        };
+
+        if let Some(outcome) = outcome {
             assert_eq!(
-                request["mail_root"],
-                dir.path().canonicalize().unwrap().display().to_string(),
-                "the relaunch runs from the checkout, not the host's root: {request}"
+                close["result"]["settled"]["outcome"], outcome,
+                "{stdout}\n{stderr}"
             );
+            let first = snapshot(&first_stop);
+            let intent = &first["intents"][0];
+            assert_eq!(intent["op"], "close-resources", "{first}");
+            assert_eq!(intent["target"], "KEN-4", "{first}");
+            assert_eq!(intent["outcome"], "not-started", "{first}");
+            assert_eq!(
+                intent["close_files"]["touched"],
+                json!(["src/shared.rs"]),
+                "{first}"
+            );
+        } else {
+            assert_eq!(
+                close["refusal"]["key"], "touched-unreadable",
+                "{stdout}\n{stderr}"
+            );
+            assert_eq!(closes(&fleet, "KEN-4"), 0);
+            assert!(live(identity.pid));
+            assert!(!first_stop.exists(), "a refused admission cannot stop");
         }
+        if outcome == Some("confirmed") {
+            assert_eq!(replies.len(), 2, "{stdout}\n{stderr}");
+            let first = snapshot(&first_create);
+            assert_eq!(first["intents"][0]["outcome"], "confirmed", "{first}");
+            assert_eq!(first["intents"][1]["op"], "launch-session", "{first}");
+            assert!(!live(identity.pid));
+        } else {
+            assert_eq!(replies.len(), 1, "the replacement was not called: {stdout}");
+            assert!(!first_create.exists());
+            if outcome == Some("unconfirmed") {
+                let observation = &close["result"]["settled"]["observation"];
+                assert_eq!(observation["host_stop"], "stop-failed", "{observation}");
+                assert!(
+                    observation["cause"]
+                        .as_str()
+                        .is_some_and(|cause| cause.starts_with("stop-unanswered stop exit=255")),
+                    "{observation}"
+                );
+                assert_eq!(code, 1, "{stdout}\n{stderr}");
+            }
+        }
+        assert_ne!(
+            code, 0,
+            "the fixture's replacement create refuses: {stdout}\n{stderr}"
+        );
+        std::fs::write(
+            overseer::relaunch_exit_path(&relaunch.marker),
+            format!("{code}\n"),
+        )
+        .unwrap();
+        let outcomes = overseer::relaunch_outcomes(
+            lanes::watch_state_dir(&driver.settings.claim_store),
+            &fleet.read(),
+            driver.settings.watch.get().unwrap().prepare,
+            driver.now,
+            &driver.baseline,
+        );
+        assert_eq!(
+            lines(&outcomes),
+            vec![format!(
+                "EVENT lane-prepare-failed KEN-4 reason=relaunch-failed exit={code} log={}",
+                relaunch.log.display()
+            )]
+        );
     }
 }
 
@@ -8060,112 +8141,76 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
 /// (`pane=verb`).
 const VERB_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
 
-/// A lane on a provider that owns its harness's session (`pane=verb`),
-/// walled by its Pi session rows read through the provider, has its harness
-/// stopped through the provider's `stop --item --harness` before the relaunch
-/// starts, as a `pane=local` lane's is: a relaunch beside the running
-/// harness would run two sessions for one item. A stop the provider refuses
-/// leaves the wall to the overseer with `reason=stop-failed` and nothing
-/// starts.
+/// The provider-owned pane route reads the Pi wall and schedules the same
+/// checked recovery without stopping the hosted writer during the watch pass.
 #[test]
-fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch() {
-    for (stop, refused) in [
-        (ok("stopped item=KEN-4 processes=1\n"), None),
+fn a_walled_pane_verb_lane_schedules_its_checked_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let mut record = relaunchable(lane_record(
+        "KEN-4",
+        "gh-4",
+        "pi",
+        &server,
+        "%0",
+        None,
+        dir.path(),
+    ));
+    record.as_object_mut().unwrap().remove("launch");
+    record["host"] = json!(provider(dir.path()));
+    record["kind"] = json!("ssh");
+    let remote_root = dir.path().join("only-on-the-remote-host");
+    record["mail_root"] = json!(remote_root.display().to_string());
+    record["checkout"] = json!(dir.path().display().to_string());
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path(), &server, &fleet);
+    let status_file = format!(
+        "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
+        remote_root.display()
+    );
+    // The running watch's own state directory, where the relaunch's
+    // marker is written.
+    std::fs::create_dir_all(fleet.runner.state_dir().join("tmp/oversee-watch")).unwrap();
+    let rows_file = format!(
+        "cat --item KEN-4 {}/tmp/lane-mail/KEN-4/session-rows.jsonl",
+        remote_root.display()
+    );
+    world.plant_host(&[
+        ("capabilities", ok(VERB_LINE)),
+        ("status --item KEN-4 --harness pi", ok("running\n")),
+        ("capture --item KEN-4", ok("pi drew this\n")),
         (
-            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
+            rows_file.as_str(),
+            ok("{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n"),
         ),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let server = Server::start(dir.path(), "fleet");
-        let fleet = Fleet::new(&server);
-        let mut record = relaunchable(lane_record(
-            "KEN-4",
-            "gh-4",
-            "pi",
-            &server,
-            "%0",
-            None,
-            dir.path(),
-        ));
-        record.as_object_mut().unwrap().remove("launch");
-        record["host"] = json!(provider(dir.path()));
-        record["kind"] = json!("ssh");
-        let remote_root = dir.path().join("only-on-the-remote-host");
-        record["mail_root"] = json!(remote_root.display().to_string());
-        record["checkout"] = json!(dir.path().display().to_string());
-        fleet.set_lanes(vec![record]);
-        let state = fleet.read();
-        let world = HostedWorld::new(dir.path(), &server, &fleet);
-        let status_file = format!(
-            "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
-            remote_root.display()
-        );
-        // The running watch's own state directory, where the relaunch's
-        // marker is written.
-        std::fs::create_dir_all(fleet.runner.state_dir().join("tmp/oversee-watch")).unwrap();
-        let rows_file = format!(
-            "cat --item KEN-4 {}/tmp/lane-mail/KEN-4/session-rows.jsonl",
-            remote_root.display()
-        );
-        world.plant_host(&[
-            ("capabilities", ok(VERB_LINE)),
-            ("status --item KEN-4 --harness pi", ok("running\n")),
-            ("capture --item KEN-4", ok("pi drew this\n")),
-            (
-                rows_file.as_str(),
-                ok("{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n"),
-            ),
-            (status_file.as_str(), ok("Step: start\n")),
-            ("stop --item KEN-4 --harness pi", stop),
-        ]);
-        // The fleet's host is the lane's, where the walk judges the lane's
-        // own harness and model.
-        let host = provider(dir.path());
-        lane_driver!(
-            server,
-            fleet,
-            readers,
-            driver,
-            &[("ORCH_LANE_HOST", host.as_str())]
-        );
-        driver.scripts = world.scripts.clone();
-        driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
-        let produced = driver.pass(&state);
-        let stop_line = format!(
-            "ORCH_LANE_HOST={} stop --item KEN-4 --harness pi",
-            provider(dir.path())
-        );
-        assert!(
-            world.host_log().contains(&stop_line),
-            "{:?} {:?}",
-            world.host_log(),
-            lines(&produced)
-        );
-        let started = driver.relaunches.borrow();
-        match refused {
-            Some(status) => {
-                assert!(
-                    lines(&produced)
-                        .contains(&format!("wall-relaunch-refused lane=gh-4 reason={status}")),
-                    "{:?}",
-                    lines(&produced)
-                );
-                assert!(started.is_empty(), "nothing starts on a failed stop");
-            }
-            None => {
-                assert!(
-                    event_lines(&produced).contains(
-                        &"EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"
-                            .to_owned()
-                    ),
-                    "{:?}",
-                    lines(&produced)
-                );
-                assert_eq!(started.len(), 1);
-            }
-        }
-    }
+        (status_file.as_str(), ok("Step: start\n")),
+    ]);
+    // The fleet's host is the lane's, where the walk judges the lane's
+    // own harness and model.
+    let host = provider(dir.path());
+    lane_driver!(
+        server,
+        fleet,
+        readers,
+        driver,
+        &[("ORCH_LANE_HOST", host.as_str())]
+    );
+    driver.scripts = world.scripts.clone();
+    driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+    let produced = driver.pass(&state);
+    let stop_line = format!(
+        "ORCH_LANE_HOST={} stop --item KEN-4 --harness pi",
+        provider(dir.path())
+    );
+    assert!(
+        !world.host_log().contains(&stop_line),
+        "{:?} {:?}",
+        world.host_log(),
+        lines(&produced)
+    );
+    assert_eq!(driver.relaunches.borrow().len(), 1);
 }
 
 #[test]
@@ -9884,12 +9929,12 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             record.as_object_mut().unwrap().remove("refresh");
             record["host"] = json!(provider(dir.path()));
             record["kind"] = json!("ssh");
-            record["repo"] = json!("o/r");
+            record["repo"] = json!("o/fleet");
             record["checkout"] = json!(checkout.display().to_string());
             record["mail_root"] = json!(remote);
             let status = format!("cat --item KEN-4 {remote}/tmp/lane-status-KEN-4.md");
             let create = format!(
-                "create --item KEN-4 --repo o/r --harness claude --account {account} --relaunch"
+                "create --item KEN-4 --repo o/fleet --harness claude --account {account} --relaunch"
             );
             world.plant_host(&[
                 ("capabilities", ok(SSH_LINE)),
@@ -9904,6 +9949,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
                     json!({"exit": 1, "stderr": "lane-host: create-failed item=KEN-4\n"}),
                 ),
             ]);
+            world.track_recovery(&provider(dir.path()), &fleet);
         } else {
             std::fs::write(
                 new_account.join(".claude.json"),
