@@ -12,12 +12,13 @@ use std::time::Duration;
 
 use crate::harness::{Harness, PermissionMeaning};
 use crate::host::{self, Place};
+use crate::launch::Permission;
 use serde_json::{Value, json};
 
 use super::{Env, Judged, PickAnswer, PickRequest};
 use crate::accounts;
 use crate::error::{Error, Result};
-use crate::settings::DEFAULT_CONTROLLER_PREFERENCE;
+use crate::settings::{DEFAULT_CONTROLLER_PREFERENCE, LaunchSettings};
 
 const CLASSIFY_BOUND: Duration = Duration::from_secs(60);
 const LOCAL: &str = "local";
@@ -456,41 +457,44 @@ enum Skip {
     PermissionUntransferable,
 }
 
-/// Whether the walk may launch an entry of `target` under the posture its
-/// source allows: a first launch (no source) writes the target's own
-/// full-bypass word, so a harness with none (Pi) cannot be launched; the
-/// source's own harness always; a numeric entry of another harness never
-/// (its model is spelled for the source's CLI); a lane's walk crosses to a
-/// harness with no word under a source posture that transfers; a harness
-/// with a word takes the source's posture where it transfers, or, where
-/// the judgement was handed no words, where the source harness writes a
-/// full bypass at all.
+/// A first launch needs a bypass spelling. A numeric entry stays on its
+/// source harness because its model is spelled for that CLI. For a
+/// controller succession, the fleet's cross-harness posture takes
+/// precedence. Without that policy, the source's recorded posture decides.
 fn permitted(
     scope: Scope,
     target: Harness,
     callers_model: bool,
     source: Option<&Source>,
-) -> std::result::Result<(), Skip> {
+    policy: Option<Permission>,
+) -> std::result::Result<Option<Permission>, Skip> {
     let target_word = !target.bypass_words().is_empty();
     let Some(source) = source else {
         return if target_word {
-            Ok(())
+            Ok(None)
         } else {
             Err(Skip::PermissionUnwritable)
         };
     };
     if source.harness == target {
-        return Ok(());
+        return Ok(None);
     }
     if callers_model {
         return Err(Skip::PermissionUntransferable);
+    }
+    if let Some(permission) = policy {
+        return if permission == Permission::Bypass && target_word {
+            Ok(Some(permission))
+        } else {
+            Err(Skip::PermissionUntransferable)
+        };
     }
     let transfers = source
         .flags
         .as_ref()
         .is_some_and(|words| transferable(source.harness, words));
     if scope == Scope::Lane && !target_word && transfers {
-        return Ok(());
+        return Ok(None);
     }
     let allowed = target_word
         && match &source.flags {
@@ -498,7 +502,7 @@ fn permitted(
             Some(_) => transfers,
         };
     if allowed {
-        Ok(())
+        Ok((scope == Scope::Overseer).then_some(Permission::Bypass))
     } else {
         Err(Skip::PermissionUntransferable)
     }
@@ -520,6 +524,8 @@ pub struct Chosen {
     /// The launch kind the entry's host declares (`window`, `ssh`,
     /// `cloud-session`), where a lane's host was read.
     pub launch: Option<&'static str>,
+    /// The fleet-authorized posture for a controller changing harness.
+    pub cross_permission: Option<Permission>,
     /// The caller's own lane, kept without a pick.
     pub kept: bool,
     /// An account nothing measured, taken where no entry found room
@@ -658,6 +664,8 @@ pub enum Hosted {
 pub struct Ground<'a> {
     pub host: &'a mut HostOf<'a>,
     pub pick: &'a mut PickUnder<'a>,
+    /// A controller opener supplies its loaded launch policy.
+    pub controller_launch: Option<&'a LaunchSettings>,
 }
 
 /// Where an entry is judged, from the walk's scope, the entry's own host
@@ -703,6 +711,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
     let Ground {
         host: hosted,
         pick: judge,
+        controller_launch,
     } = ground;
     let trigger = req
         .min_headroom_pct
@@ -786,6 +795,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                             record: None,
                             warning: None,
                             launch: None,
+                            cross_permission: None,
                             kept: true,
                             kept_unmeasured: false,
                         }));
@@ -825,23 +835,35 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     )
                 }
             };
-        if let Err(why) = permitted(req.scope, harness, callers_model, req.source.as_ref()) {
-            let word = harness.bypass_words().first().copied().unwrap_or("none");
-            let mut row = match why {
-                Skip::PermissionUnwritable => skip(&text, "entry-permission-unwritable", None),
-                Skip::PermissionUntransferable => {
-                    skip(&text, "entry-permission-untransferable", None)
-                }
-            };
-            row["harness"] = json!(harness);
-            row["source"] = json!(req.source.as_ref().map(|s| s.harness));
-            row["word"] = json!(word);
-            if callers_model {
-                row["model"] = json!(model);
+        let source = req.source.as_ref();
+        let policy = match (req.scope, controller_launch, source) {
+            (Scope::Overseer, Some(launch), Some(source))
+                if source.harness != harness && !callers_model =>
+            {
+                launch.succession_permission()?
             }
-            walked.skipped.push(row);
-            continue;
-        }
+            _ => None,
+        };
+        let cross_permission = match permitted(req.scope, harness, callers_model, source, policy) {
+            Ok(permission) => permission,
+            Err(why) => {
+                let word = harness.bypass_words().first().copied().unwrap_or("none");
+                let mut row = match why {
+                    Skip::PermissionUnwritable => skip(&text, "entry-permission-unwritable", None),
+                    Skip::PermissionUntransferable => {
+                        skip(&text, "entry-permission-untransferable", None)
+                    }
+                };
+                row["harness"] = json!(harness);
+                row["source"] = json!(source.map(|s| s.harness));
+                row["word"] = json!(word);
+                if callers_model {
+                    row["model"] = json!(model);
+                }
+                walked.skipped.push(row);
+                continue;
+            }
+        };
         // No model this entry would run is known, so no judgement of its
         // account answers for it. It is no reading to repair either, so it
         // holds no `:last` entry back.
@@ -871,6 +893,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 record,
                 warning: warning.clone(),
                 launch,
+                cross_permission,
                 kept: false,
                 kept_unmeasured,
             }))

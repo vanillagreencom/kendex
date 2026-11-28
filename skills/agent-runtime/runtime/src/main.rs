@@ -1161,10 +1161,15 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                     }),
                 keep_unmeasured,
             };
-            Ok(
-                accounts::here::walk(&env, &loaded.project, record.as_deref(), &request, now)?
-                    .reply(),
-            )
+            Ok(accounts::here::walk(
+                &env,
+                &loaded.project,
+                record.as_deref(),
+                &request,
+                None,
+                now,
+            )?
+            .reply())
         }
         AccountsOp::Judge {
             rows,
@@ -2828,7 +2833,14 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             };
             let project = loaded.accounts.project.clone();
             let mut walk = |request: &accounts::walk::WalkRequest| {
-                accounts::here::walk(&accounts_env, &project, Some(&record), request, now)
+                accounts::here::walk(
+                    &accounts_env,
+                    &project,
+                    Some(&record),
+                    request,
+                    Some(&loaded.launch),
+                    now,
+                )
             };
             let pick_env = loaded.accounts.env();
             let mut pick =

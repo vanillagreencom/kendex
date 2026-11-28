@@ -293,20 +293,31 @@ impl EngineSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchSettings {
     pub permission: Judged<Permission>,
+    pub(crate) permission_stated: bool,
 }
 
 impl LaunchSettings {
     pub fn read(values: &Layered) -> LaunchSettings {
+        let permission = values.get(LAUNCH_PERMISSION_KEY);
         LaunchSettings {
             permission: Judged::word(
                 LAUNCH_PERMISSION_KEY,
-                values.get(LAUNCH_PERMISSION_KEY),
+                permission,
                 &[
                     ("bypass", Permission::Bypass),
                     ("native", Permission::Native),
                 ],
             ),
+            permission_stated: permission.is_some(),
         }
+    }
+
+    /// A cross-harness successor can use a stated policy. The ordinary
+    /// launch default leaves the predecessor's posture in charge.
+    pub fn succession_permission(&self) -> Result<Option<Permission>> {
+        self.permission_stated
+            .then(|| self.permission.get())
+            .transpose()
     }
 }
 
