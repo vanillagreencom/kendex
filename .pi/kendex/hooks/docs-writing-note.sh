@@ -11,6 +11,7 @@
 # requires-skills: [docs-writing]
 # requires: [docs-writing-bash-note]
 # requires-on: [claude]
+# reads-registration: true
 # ---
 # kendex: a pi-hooks carrier before 0.19.3 names no registration, so this
 # render reads it from the path the registry spawned (docs/adapters/pi.md).

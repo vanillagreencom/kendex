@@ -11,6 +11,7 @@
 # requires-skills: [docs-writing]
 # requires: [docs-writing-bash-note]
 # requires-on: [claude]
+# reads-registration: true
 # ---
 
 set -euo pipefail

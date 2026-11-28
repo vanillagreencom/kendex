@@ -1835,7 +1835,7 @@ history_rows() {
   # hook and its loader in Codex and Pi project layouts, and a project scope
   # below a Git top level that selects the policy and holds a loader that
   # fails. Then a global install whose harness homes CODEX_HOME, COPILOT_HOME
-  # and the carrier's global Pi root move to data/kendex, .github and .pi.
+  # and the carrier's global Pi root move below data.
   # Only HOME has a loader. The checkout's adjacent support files are empty.
   # The Codex project layout in bare has no loader.
   if [ ! -d "$other" ]; then
@@ -1902,11 +1902,12 @@ history_rows() {
         home=$scratch; run_hook="$foreign/.pi/kendex/hooks/command-safety.sh"
         pi_scope=project; pi_root=$foreign
         payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
-      relocated-codex | relocated-copilot | relocated-pi | bare-codex)
+      relocated-codex | relocated-copilot | relocated-copilot-kendex | relocated-pi | bare-codex)
         home=$loader_home
         case "$shape" in
           relocated-codex) run_hook="$relocated/kendex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/kendex" ;;
           relocated-copilot) run_hook="$relocated/.github/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/.github" ;;
+          relocated-copilot-kendex) run_hook="$relocated/kendex/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/kendex" ;;
           relocated-pi)
             pi_scope=global; pi_root="$relocated/.pi"
             run_hook="$pi_root/kendex/hooks/command-safety.sh"
@@ -1916,7 +1917,10 @@ history_rows() {
             ;;
           bare-codex) run_hook="$bare/.codex/hooks/command-safety.sh" ;;
         esac
-        payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+        case "$shape" in
+          relocated-copilot*) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
+          *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+        esac ;;
       # HOME holds no loader, so the project's missing one is not replaced.
       absent-support)
         home=$scratch
@@ -2112,6 +2116,7 @@ outside-foreign-hook|no-lazy-fetch|^$|outside-foreign|"git -C \($repo) log -p"|2
 outside-pi-hook|no-lazy-fetch|^$|outside-pi|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-codex-home|no-lazy-fetch|^$|relocated-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-copilot-home|no-lazy-fetch|^$|relocated-copilot|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+relocated-copilot-kendex-home|no-lazy-fetch|^$|relocated-copilot-kendex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-pi-dir|no-lazy-fetch|^$|relocated-pi|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 scope-without-loader|no-lazy-fetch|^$|bare-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-ancestor|no-lazy-fetch|^$|outside-ancestor|"git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch

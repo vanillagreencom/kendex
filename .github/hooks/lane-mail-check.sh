@@ -10,6 +10,7 @@
 # harnesses: [claude, codex, pi, copilot, opencode, cursor]
 # requires: [lane-mail-deliver, lane-mail-halt, lane-mail-prompt, session-start-row, session-end-row, stop-failure-row, critical-path-deny, lane-mail-model-switch]
 # requires-skills: [orch, mailbox, agent-runtime]
+# reads-registration: true
 # ---
 
 # Each line below serves one of two needs only shell meets: the harness runs
@@ -24,13 +25,17 @@ root=$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/nul
 reader=""
 # The Pi carrier names the scope it ran. A relocated global root can sit
 # inside a checkout, so its parent cannot choose the mailbox reader.
-# A registered Codex home can also end in kendex.
+# A configured Codex or Copilot home can also end in kendex.
 install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$dir" in
   :*/kendex/hooks | :kendex/hooks)
     if [[ "$dir" = "${CODEX_HOME:-}/hooks" ||
           ( "${CODEX_HOME:-}" = /* && "$dir" -ef "$CODEX_HOME/hooks" ) ]]; then
       install_harness=codex
+    elif [[ -f "$dir/lane-mail-check.json" ||
+            "$dir" = "${COPILOT_HOME:-}/hooks" ||
+            ( "${COPILOT_HOME:-}" = /* && "$dir" -ef "$COPILOT_HOME/hooks" ) ]]; then
+      install_harness=copilot
     else
       install_harness=pi
     fi

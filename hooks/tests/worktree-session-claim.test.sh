@@ -65,6 +65,7 @@ GUARD="$WORKTREE_SCRIPTS/worktree-session-guard"
 # alone, which a global hook must not run.
 install_world() { # WORLD [HARNESS]
   WORLD_HOME="$TMP_ROOT/home.$1"
+  WORLD_COPILOT_HOME=""
   WORLD_HOOKS="$WORLD_HOME/.claude/hooks"
   rm -rf -- "${WORLD_HOME:?}" "$TMP_ROOT/harness.$1" "${TREE:?}/.agents" "${TREE:?}/.claude"
   mkdir -p "$WORLD_HOME"
@@ -77,7 +78,10 @@ install_world() { # WORLD [HARNESS]
   case "${2:-claude}" in
     codex) WORLD_HOOKS="$WORLD_HOME/.codex/hooks" ;;
     copilot-project) WORLD_HOOKS="$WORLD_HOME/project/.github/hooks" ;;
-    copilot-global) WORLD_HOOKS="$WORLD_HOME/copilot-account/hooks" ;;
+    copilot-global)
+      WORLD_COPILOT_HOME="$WORLD_HOME/kendex"
+      WORLD_HOOKS="$WORLD_COPILOT_HOME/hooks"
+      ;;
   esac
   mkdir -p "$WORLD_HOOKS"
   cp "$HOOK" "$WORLD_HOOKS/worktree-session-claim.sh"
@@ -103,8 +107,10 @@ release_all() {
 run_hook_in() { # DIR [ENV...]
   local cwd="$1"
   shift
-  (cd "$cwd" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER -u KENDEX_WORKTREE_CLAIM HOME="$WORLD_HOME" \
-    GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$@" \
+  (cd "$cwd" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER -u KENDEX_WORKTREE_CLAIM \
+    -u KENDEX_HOOK_SCOPE -u KENDEX_HOOK_ROOT HOME="$WORLD_HOME" COPILOT_HOME="$WORLD_COPILOT_HOME" \
+    XDG_CONFIG_HOME="$WORLD_HOME/.config" XDG_DATA_HOME="$WORLD_HOME/.local/share" \
+    XDG_STATE_HOME="$WORLD_HOME/.local/state" XDG_CACHE_HOME="$WORLD_HOME/.cache" GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$@" \
     "$BASH" "$WORLD_HOOKS/worktree-session-claim.sh" </dev/null >"$OUT_FILE" 2>"$ERR_FILE")
 }
 

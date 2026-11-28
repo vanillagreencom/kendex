@@ -11,6 +11,7 @@
 # requires-skills: [worktree]
 # requires: [worktree-prompt-claim]
 # requires-on: [claude]
+# reads-registration: true
 # ---
 # kendex: a pi-hooks carrier before 0.19.3 names no registration, so this
 # render reads it from the path the registry spawned (docs/adapters/pi.md).
@@ -197,13 +198,17 @@ HOOK_DIR=${BASH_SOURCE[0]%/*}
 FOUND=""
 # Use the Pi carrier's registration so a global root inside a checkout
 # cannot select the checkout's guard.
-# A registered Codex home can also end in kendex.
+# A configured Codex or Copilot home can also end in kendex.
 install_harness=unknown
 case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
   :*/kendex/hooks | :kendex/hooks)
     if [[ "$HOOK_DIR" = "${CODEX_HOME:-}/hooks" ||
           ( "${CODEX_HOME:-}" = /* && "$HOOK_DIR" -ef "$CODEX_HOME/hooks" ) ]]; then
       install_harness=codex
+    elif [[ "$COPILOT" = true ||
+            "$HOOK_DIR" = "${COPILOT_HOME:-}/hooks" ||
+            ( "${COPILOT_HOME:-}" = /* && "$HOOK_DIR" -ef "$COPILOT_HOME/hooks" ) ]]; then
+      install_harness=copilot
     else
       install_harness=pi
     fi

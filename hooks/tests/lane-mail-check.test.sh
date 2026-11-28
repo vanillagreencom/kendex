@@ -184,19 +184,33 @@ row_arm() {
 }
 
 row_copilot() {
-  built
-  lane copilot
-  direct "rebase onto main"
-  # The harness runs the hook by the path it registered; the directory behind
-  # that path is the install's own, spelled another way.
-  mkdir -p "$LANE/.kendex-hooks" "$LANE/.github"
-  cp -- "$HOOK" "$LANE/.kendex-hooks/lane-mail-check.sh"
-  ln -s ../.kendex-hooks "$LANE/.github/hooks"
-  ROW_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-  run "$LANE/.github/hooks/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
-  assert_eq "RC=$RC decision=$(jq -r '.decision // "none"' "$OUT_FILE" 2>/dev/null || echo unread)" \
-    "RC=0 decision=block" \
-    "the harness is named by the directory as the harness spelled it: a Copilot install through a link answers in Copilot's shape"
+  local scope hook_dir
+  for scope in project global; do
+    built
+    lane "copilot-$scope"
+    direct "rebase onto main"
+    ROW_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+    case "$scope" in
+      project)
+        # The harness runs the registered path through a directory link.
+        mkdir -p "$LANE/.kendex-hooks" "$LANE/.github"
+        ln -s ../.kendex-hooks "$LANE/.github/hooks"
+        hook_dir="$LANE/.github/hooks"
+        ;;
+      global)
+        ROW_HOME="$TMP_ROOT/copilot-home"
+        install_packages "$ROW_HOME/.agents/skills"
+        hook_dir="$ROW_HOME/kendex/hooks"
+        mkdir -p "$hook_dir"
+        # The Copilot adapter registers each script in a document beside it.
+        printf '{"version":1,"hooks":{"agentStop":[{"type":"command","bash":"bash lane-mail-check.sh"}]}}\n' >"$hook_dir/lane-mail-check.json"
+        ;;
+    esac
+    cp -- "$HOOK" "$hook_dir/lane-mail-check.sh"
+    run "$hook_dir/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
+    assert_eq "RC=$RC $(jq -r '[.decision, (.reason | split("\n")[0])] | join(" ")' "$OUT_FILE" 2>/dev/null)" \
+      "RC=0 block lane-mail-check: unread=1" "a $scope Copilot install holds unread mail in Copilot's shape"
+  done
 }
 
 row_global() {
@@ -235,6 +249,7 @@ row_relocated_pi() {
   git -C "$checkout" init -q
   git -C "$checkout" config gc.auto 0
   git -C "$checkout" config maintenance.auto false
+  ROW_HOME="$TMP_ROOT/pi-relocated-home"
   install_packages "$ROW_HOME/.agents/skills"
   cp -- "$HOOK" "$pi_hooks/lane-mail-check.sh"
   ROW_ENV=(KENDEX_HOOK_SCOPE=global "KENDEX_HOOK_ROOT=$checkout/.pi")
