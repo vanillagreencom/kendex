@@ -596,6 +596,15 @@ pub fn is_working(slice: &str) -> bool {
     WORKING.is_match(slice)
 }
 
+// Copilot's SDK onUserInputRequest handles ask_user in an SDK-managed
+// session (https://docs.github.com/en/copilot/how-tos/copilot-sdk/troubleshooting/compatibility).
+// The CLI's elicitation_dialog and ask_user hooks report events without
+// identifying the pane's current input focus
+// (https://docs.github.com/en/copilot/reference/hooks-reference).
+// Pi's optional pi-bridge questions lists pending requests
+// (pi-extensions/pi-questions/README.md). A pending request does not say
+// which editor control is drawn and taking input. Delivery reads the
+// existing pane to determine where its next key will go.
 fn is_asking(slice: &str, harness: Harness) -> bool {
     ASKING.is_match(slice)
         || match harness {
