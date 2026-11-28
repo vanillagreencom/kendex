@@ -32,6 +32,7 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 - Repeat setup and owner changes retain `bound_at`. Only a journal reset starts a new time.
 - A relay whose `SLACK_OWNERS` differs from `owners` re-resolves the ids and rewrites the binding before it delivers anything more.
 - `listen --presentation-threads` gives Jarvis the current presentation stamps and Slack permalinks for the configured channel. A missing thread has no entry. Jarvis matches a stamp and presenter to the mailbox receipt before using the relay's link.
+- Direct asks use presentation receipts when the bound mailbox's installed compactor retains them. An older compactor keeps the pre-presentation direct Slack route until the mailbox package is upgraded.
 
 ## Queue delivery
 

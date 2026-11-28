@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The relay's post and catch-up recovery through a fake Slack and real lane-mail.
 # Controls mutate disposable runtimes and run the same behavioral assertions.
+# Inputs: skills/jarvis/scripts/**
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -112,7 +113,7 @@ PAGE="$(jarvis list --home "$ROOT" --view active)" || exit 1
 assert_eq "$(jq -r '.rows[] | select(.what == "Which other changes?") | .link' <<<"$PAGE")" null \
   "a different ask cannot borrow the home thread by copying its presenter"
 assert_eq "$(jq -r '.rows[] | select(.what == "Send this release draft?") | .link.url' <<<"$PAGE")" \
-  "https://workspace.slack.test/archives/$CH/p${OLD_TS/./}" "the relay link wins over a mailbox URL with the same stamp"
+  "https://workspace.slack.com/archives/$CH/p${OLD_TS/./}" "the relay link wins over a mailbox URL with the same stamp"
 ROW="$(jq -r '.rows[] | select(.what == "Send this release draft?") | .id' <<<"$PAGE")"
 CONSOLE="$(jq -c '{requestId:"console",expectedRevision:.revision,text:"Read the exact wording back."}' <<<"$PAGE" |
   jarvis reply --home "$ROOT" --id "$ROW")" || exit 1
@@ -132,6 +133,50 @@ assert_eq "$(sk_lm "$ORIGIN" events --item overseer | jq -cs --arg ask "$ASK" --
     hashlib.sha256(b"Release exactly this note.").hexdigest(),
     [["owner","console","Read the exact wording back."],["owner","slack","Only the first change."]]], separators=(",",":")))')" \
   "an offline reply to an aged thread and a Console Reply retain both sources on the original draft ask"
+
+# Direct presentation evidence belongs to the relay of the original checkout.
+DIRECT="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text direct 'Approve the direct question?')" \
+  --reserved --options yes,no)" || exit 1
+DIRECT="${DIRECT#id=}"
+sk_poll "$ORIGIN"
+SOURCE_CH="$(sk_channel "$ORIGIN")"
+DIRECT_TS="$(sk_state ".messages.${SOURCE_CH}[] | select(.metadata.event_payload.id == \"$DIRECT\") | .ts")"
+DIRECT_URL="https://workspace.slack.com/archives/$SOURCE_CH/p${DIRECT_TS/./}"
+PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/direct-local" jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -r '.rows[] | select(.what == "Approve the direct question?") | .link.url' <<<"$PAGE")" "$DIRECT_URL" \
+  "a registered non-home checkout supplies its own direct thread"
+
+jq -cn --arg origin "$ORIGIN" '[{folder:$origin,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry.remote"
+jq -cn --arg root "$ROOT" '[{folder:$root,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry"
+printf '[env]\nJARVIS_REMOTE_HOSTS="fixture"\n' >"$ROOT/kendex.settings.toml"
+cat >"$SK_TMP/jarvis-bin/ssh" <<'SH'
+#!/bin/sh
+[ "$#" = 2 ] && [ "$1" = fixture ] || exit 97
+case "$2" in
+  'kendex project list --json') cat "$FIXTURE_REGISTRY.remote" ;;
+  'bash -s') exec bash -s ;;
+  *) exit 97 ;;
+esac
+SH
+chmod +x "$SK_TMP/jarvis-bin/ssh"
+second_presenter() {
+  printf '%s\n' 'Please review.' |
+    jarvis present --home "$ROOT" --destination ssh:fixture --root "$ORIGIN" --id "$DIRECT" --reserved
+}
+PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/direct-remote" jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -r '.rows[] | select(.what == "Approve the direct question?") | .link.url' <<<"$PAGE")" "$DIRECT_URL" \
+  "the SSH destination runs the caller's projection against the originating relay record"
+SECOND="$(second_presenter)" || exit 1
+assert_eq "$(jq -r '[.kind,.delivery,.thread] | join("|")' <<<"$SECOND")" "already-presented|confirmed|$DIRECT_URL" \
+  "the second presenter sees the exact confirmed direct conversation"
+RECORD="$(sk_journal "$ORIGIN")"
+mv -- "$RECORD" "$RECORD.saved"
+ln -s -- "$RECORD.saved" "$RECORD"
+SECOND="$(second_presenter)" || exit 1
+assert_eq "$(jq -r '[.kind,.delivery,.thread == null] | join("|")' <<<"$SECOND")" "already-presented|unconfirmed|true" \
+  "an unsafe remote journal yields only an explicit unconfirmed delivery state"
+rm -- "$RECORD"
+mv -- "$RECORD.saved" "$RECORD"
 
 # A failed pre-send append sends nothing. The next run can still post it.
 ROOT="$(sk_new_root disk-full)"

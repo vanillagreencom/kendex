@@ -133,6 +133,16 @@ shift 3
 cd -- "$root"
 exec "$BASH" "$mail" "$verb" --item overseer "$@"
 """
+# Invoke the same projection as slack listen without loading host settings.
+RELAY_FILES = ("slack/scripts/lib/store.py", "slack/scripts/lib/refusals.py")
+RELAY_READS = r"""exec python3 -IB -c '
+import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+from store import presentation_threads
+print(json.dumps({root: presentation_threads(Path(root)) for root in sys.argv[2:]}))
+' "$@"
+"""
 # The tracker questions still open. An item in a closed state has settled
 # every question on it, as an exact mailbox close settles one.
 TRACKER_QUESTIONS = r"""set -euo pipefail
@@ -287,9 +297,12 @@ class Sources:
         name = package + "/scripts/" + script
         try:
             if target.host:
-                # Only mailbox code runs on a host: lane-mail and its library.
-                if self.closure is None:
-                    self.closure = watch.package_files(watch.MAILBOX_FILES)
+                if package == "slack":
+                    closure = watch.package_files(RELAY_FILES)
+                else:
+                    if self.closure is None:
+                        self.closure = watch.package_files(watch.MAILBOX_FILES)
+                    closure = self.closure
                 # The login shell parses only "bash -s": fish turns \\ inside
                 # single quotes into \, so a quoted command reaches bash
                 # changed. POSIX sh's INPUT FILES leaves a shell reading stdin
@@ -298,11 +311,11 @@ class Sources:
                 # DATA, the closure rides fd 3 inside the command and DATA
                 # follows it, the command's own stdin.
                 if data is None:
-                    command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
+                    command, payload = watch.remote_command(closure, name, args, stdin=True, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
                                        operation=operation, timeout=self.remaining())
                 else:
-                    command, _ = watch.remote_command(self.closure, name, args, shell_args=shell_args)
+                    command, _ = watch.remote_command(closure, name, args, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + data,
                                        operation=operation, timeout=self.remaining())
             else:
@@ -389,10 +402,35 @@ class Sources:
         roots = self.registered(target)
         if not target.host and self.session.home not in roots:
             roots.append(self.session.home)
-        return [{"destination": target.key, "root": record["root"],
-                 "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
-                 "own": record["own"], "answered": record["answered"],
-                 "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
+        mailboxes = [{"destination": target.key, "root": record["root"],
+                      "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
+                      "own": record["own"], "answered": record["answered"],
+                      "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
+        candidates = [mailbox["root"] for mailbox in mailboxes
+                      if any((row.get("presentation") or {}).get("thread_ts")
+                             for row in mailbox["outward"]["rows"])]
+        threads = self.relay_threads(target, candidates)
+        for mailbox in mailboxes:
+            mailbox["relay_threads"] = threads.get(mailbox["root"], {})
+        return mailboxes
+
+    def relay_threads(self, target, roots):
+        """Read the registered checkout's relay projection as its account."""
+        if target.host and roots:
+            try:
+                result = self.call(target, None, "slack", "lib/store.py", roots,
+                                   shell_args=["-c", RELAY_READS, "owner-asks"])
+                return json.loads(result.stdout)
+            except (Unavailable, ValueError) as error:
+                diagnostic(error, "owner-asks-presentation-threads")
+                return {}
+        threads = {}
+        for root in roots:
+            try:
+                threads[root] = self.caller("slack", "slack", ["listen", "--root", root, "--presentation-threads"])
+            except Unavailable as error:
+                diagnostic(error, "owner-asks-presentation-threads")
+        return threads
 
     def open_tracker(self, tracker, mailboxes, requests):
         if tracker is None:
@@ -443,15 +481,8 @@ class Sources:
                     comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
                         mailbox["links"][ask["id"]] = comment
-        relay_threads = {}
-        if any(mailbox["own"] and any((row.get("presentation") or {}).get("thread")
-                                      for row in mailbox["outward"]["rows"]) for mailbox in mailboxes):
-            try:
-                relay_threads = self.caller("slack", "slack", ["listen", "--root", self.session.home, "--presentation-threads"])
-            except Unavailable as error:
-                diagnostic(error, "owner-asks-presentation-threads")
         return {"config": config, "tracker": self.open_tracker(tracker, mailboxes, requests), "mailboxes": mailboxes,
-                "posted": posted, "relay_threads": relay_threads}
+                "posted": posted}
 
     def stable(self, requests):
         first, second = self.collect(requests), self.collect(requests)
@@ -514,10 +545,7 @@ class Sources:
             args.append("--reserved")
         receipt = json.loads(self.mailbox(target, root, "present", args).stdout)
         if receipt["presenter"] != presenter:
-            original = self.event(target, root, "to-overseer", ask_id)
-            return {"v": 1, "kind": "already-presented",
-                    "presentation": {key: value for key, value in original["presentation"].items()
-                                     if key not in ("thread", "thread_ts")}}
+            return {"v": 1, "kind": "already-presented", **self.presentation_status(target, root, ask_id, receipt)}
         if receipt.get("reserve"):
             self.mailbox(target, root, "reserve", ["--id", ask_id])
         pending = self.mailbox(target, root, "pending", ["--to", "owner"]).stdout
@@ -527,14 +555,21 @@ class Sources:
             raise Unavailable("The original question closed before it could be presented.")
         notice = encoded({"destination": destination, "root": root, "ask": ask, "introduction": introduction})
         posted = json.loads(self.mailbox(self.target("local"), self.session.home, "present", data=notice).stdout)
-        return {"v": 1, "kind": "presented", "notice": posted["id"], "thread": posted["presentation"].get("thread")}
+        return {"v": 1, "kind": "presented", "notice": posted["id"],
+                **self.presentation_status(target, root, ask_id, receipt)}
 
-    def event(self, target, root, box, event_id):
-        rows = self.events(self.mailbox(target, root, "events", ["--box", box]).stdout)["rows"]
-        row = next((row for row in rows if row["id"] == event_id), None)
-        if row is None:
-            raise Unavailable("The original mailbox no longer holds the question.")
-        return row
+    def presentation_status(self, target, root, ask_id, receipt):
+        presenter = receipt["presenter"]
+        thread = None
+        try:
+            # Direct presenters are established by their relay. A delegated
+            # presentation is confirmed only in the home mailbox's relay.
+            source = target if presenter.startswith("slack:") else self.target("local")
+            thread = presentation_links(self.destination(source)).get((target.key, root, ask_id, presenter))
+        except Unavailable as error:
+            diagnostic(error, "owner-asks-presentation-threads")
+        return {"presentation": {"presenter": presenter, "at": receipt["at"]}, "thread": thread,
+                "delivery": "confirmed" if thread else "unconfirmed"}
 
     def deliver_presented(self):
         local, home = self.target("local"), self.session.home
@@ -591,6 +626,26 @@ class Sources:
         return True
 
 
+def presentation_links(mailboxes):
+    links = {}
+    for mailbox in mailboxes:
+        for row in mailbox["outward"]["rows"]:
+            presentation = row.get("presentation") or {}
+            presenter = presentation.get("presenter", "")
+            binding = mailbox.get("relay_threads", {}).get(row["id"], {})
+            if not binding or (binding["ts"], binding["presenter"]) != (presentation.get("thread_ts"), presenter):
+                continue
+            route = presentation.get("route")
+            if row["kind"] == "ask" and presenter.startswith("slack:"):
+                key = mailbox["destination"], mailbox["root"], row["id"], presenter
+            elif mailbox["own"] and row["kind"] == "notice" and route:
+                key = route["destination"], route["root"], route["ask"], presenter
+            else:
+                continue
+            links[key] = binding["url"]
+    return links
+
+
 def source_rows(source):
     """The rows by identity, and the conversation each one's answer goes to."""
     rows, routes = {}, {}
@@ -612,22 +667,7 @@ def source_rows(source):
                      "link": link, "threadRef": digest(thread)}
         routes[key] = route
 
-    def confirmed_thread(envelope_id, presentation):
-        binding = source.get("relay_threads", {}).get(envelope_id)
-        if binding and (binding["ts"], binding["presenter"]) == (presentation.get("thread_ts"),
-                                                                presentation.get("presenter")):
-            return binding["url"]
-        return None
-
-    presented_threads = {}
-    for mailbox in source["mailboxes"]:
-        if mailbox.get("own"):
-            for row in mailbox["outward"]["rows"]:
-                presentation = row.get("presentation") or {}
-                route = presentation.get("route")
-                if row.get("kind") == "notice" and route:
-                    key = (route["destination"], route["root"], route["ask"], presentation["presenter"])
-                    presented_threads[key] = confirmed_thread(row["id"], presentation)
+    presented_threads = presentation_links(source["mailboxes"])
     for mailbox in source["mailboxes"]:
         destination, root = mailbox["destination"], mailbox["root"]
         for ask in mailbox["asks"]:
@@ -636,8 +676,6 @@ def source_rows(source):
                 continue
             presenter = presentation.get("presenter")
             thread = presented_threads.get((destination, root, ask["id"], presenter))
-            if mailbox.get("own"):
-                thread = confirmed_thread(ask["id"], presentation)
             original = mailbox["links"].get(ask["id"]) if not presentation else None
             link = {"label": "Slack thread", "url": thread} if thread else (
                 {"label": "Original ask", "url": original["url"]} if original else None)

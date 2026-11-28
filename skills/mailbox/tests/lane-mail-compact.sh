@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Retention, stable logical numbering, and a writer waiting on the compacted inode.
+# Inputs: skills/jarvis/scripts/**
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)" || exit 1
 # shellcheck source=../../orch/tests/lib/git-env.sh

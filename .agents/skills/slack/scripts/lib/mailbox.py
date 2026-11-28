@@ -59,6 +59,7 @@ class LaneMail:
         self.snapshots: Dict = {}
         self.jq_defs = ""
         self.box: Optional[Path] = None
+        self._retention = None
         if not os.access(self.script, os.X_OK):
             raise Refusal("orch-missing", str(root))
 
@@ -268,6 +269,25 @@ class LaneMail:
         was committed at `position`."""
         assert self.store is not None, "an envelope to judge comes from a mailbox read"
         return bool(self._position_rule("passed")(position, envelope, self.snapshots))
+
+    def retains_presentations(self) -> bool:
+        """Ask the bound mailbox's installed compactor, not the relay's copy."""
+        root = self.box.parents[2] if self.box is not None else self.root
+        compactor = (root / LANE_MAIL).parent / "lib/lane-mail-store.py"
+        try:
+            info = compactor.stat()
+        except OSError:
+            return False
+        stamp = (compactor, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+        if self._retention is None or self._retention[0] != stamp:
+            try:
+                result = run_bounded([sys.executable, "-IB", str(compactor), "presentation-retention"],
+                                     root, LANE_MAIL_TIMEOUT_SECONDS)
+                supported = result.returncode == 0 and result.stdout.strip() == "owner-presentation"
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+            self._retention = stamp, supported
+        return self._retention[1]
 
     def present(self, ask_id: str, presenter: str, thread_url: str = "", thread_ts: str = "") -> Optional[Dict]:
         args = ("--thread-url", thread_url, "--thread-ts", thread_ts) if thread_url else ()

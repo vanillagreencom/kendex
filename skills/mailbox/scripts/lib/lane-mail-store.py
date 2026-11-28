@@ -645,7 +645,11 @@ def rewrite(fd, path, dest, name):
 def main():
     """Run the operation selected by lane-mail, reporting filesystem failures."""
     op = sys.argv[1]
-    if op == "plain":
+    if op == "presentation-retention":
+        # The relay enables presentation writes only when the installed
+        # compactor keeps the original ask and its late-delivery binding.
+        print("owner-presentation")
+    elif op == "plain":
         try:
             validate_mailbox(Path(sys.argv[2]))
         except StoreRefusal as error:

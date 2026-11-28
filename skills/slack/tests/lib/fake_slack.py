@@ -563,7 +563,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error": "channel_not_found"})
         for message in self.ws.messages.get(channel, []):
             if message["ts"] == params["message_ts"]:
-                permalink = f"https://workspace.slack.test/archives/{channel}/p{message['ts'].replace('.', '')}"
+                permalink = f"https://workspace.slack.com/archives/{channel}/p{message['ts'].replace('.', '')}"
                 if message.get("thread_ts"):
                     permalink += f"?thread_ts={message['thread_ts']}&cid={channel}"
                 return self.send_json({"ok": True, "channel": channel, "permalink": permalink})

@@ -60,6 +60,9 @@ class AskMailbox:
         self.ask_id = ask_id
         self.answers = []
 
+    def retains_presentations(self):
+        return True
+
     def present(self, ask_id, presenter, *confirmation):
         assert ask_id == self.ask_id
         return {'presenter': presenter}

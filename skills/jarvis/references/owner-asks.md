@@ -29,7 +29,7 @@ Jarvis's own questions enter the page when sent. An overseer's question enters w
 
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-A presented mailbox ask links to its Slack thread when the configured Jarvis-home relay confirms the exact binding. For a delegated ask, the local presentation notice also has to name its destination, repository root and ask id. A direct ask in another checkout stays accessible with an unconfirmed thread. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread source makes the list unavailable.
+A direct ask links to a confirmed Slack thread from the originating checkout's relay. Jarvis reads that relay's projection through the registered destination as its account and matches the ask, presenter and thread stamp. A delegated ask uses the Jarvis-home relay and its notice's full destination, repository root and ask id. When relay evidence is unavailable, a presented ask stays accessible with an unconfirmed thread. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread mailbox source makes the list unavailable.
 
 Cross-source suppression requires confirmed tracker posting and equality of the request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
@@ -71,7 +71,7 @@ A Slack reply through a presentation already bound to an ask can arrive after cl
 
 `present` takes the introduction on stdin. Use the destination, repository root and ask id from the original mailbox's event. The command claims the presentation at the source, reserves the ask when requested, then writes a notice for the relay bound to the Jarvis home. Repeat the same command to resume after an interrupted claim. The first receipt also holds any requested reservation.
 
-`deliver` reads replies bound to those notices and writes the owner's words to their original mailboxes with the Slack event's delivery identity. Run it from the home watch alongside `lane-mail owner-answers`. It reports undelivered replies until each originating mailbox confirms its copy. Repeating the command resumes unconfirmed deliveries.
+The `present` receipt carries a confirmed thread or `delivery: unconfirmed` when the relay has yet to establish it. A second presenter sees the first presentation's state. `deliver` reads replies bound to presentation notices and writes the owner's words to their original mailboxes with the Slack event's delivery identity. Run it from the home watch alongside `lane-mail owner-answers`. It reports undelivered replies until each originating mailbox confirms its copy. Repeating the command resumes unconfirmed deliveries.
 
 ## Receipts and Later
 

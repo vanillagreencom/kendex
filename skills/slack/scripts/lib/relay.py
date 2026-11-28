@@ -885,8 +885,10 @@ class RootRelay:
         # The mailbox judges whether an ask is still open; the journal's own
         # flag only decides how often the thread is read.
         if thread is not None and thread.kind == "ask":
-            outcome, answer_id = (self.mail.answer(thread.envelope, text, delivery, thread.presenter)
-                                  if thread.presenter else self.mail.answer(thread.envelope, text, delivery))
+            if thread.presenter and self.mail.retains_presentations():
+                outcome, answer_id = self.mail.answer(thread.envelope, text, delivery, thread.presenter)
+            else:
+                outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
             if outcome == "answered":
                 self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts,
                                     generation=generation)
@@ -1149,10 +1151,11 @@ class RootRelay:
                           and not presentation and thread is not None and thread.kind == "ask")
             if (thread is not None and not thread.missing
                     and (presentation.get("thread_ts") != thread.ts or not thread.permalink)
-                    and (presenting or presentation.get("presenter") == self.presenter or legacy_ask)):
+                    and (presenting or presentation.get("presenter") == self.presenter or legacy_ask)
+                    and self.mail.retains_presentations()):
                 routed.append((envelope, "confirm", {}))
             if presenting:
-                if not presentation.get("thread") and env_id not in state.carried:
+                if not presentation.get("thread") and env_id not in state.carried and self.mail.retains_presentations():
                     routed.append((envelope, "presentation", {}))
                 continue
             if env_id in closures:
@@ -1353,10 +1356,11 @@ class RootRelay:
             self.bind_presentation({"id": env_id[:-len(":overdue")], "at": at}, message, "ask")
             self._out({"id": env_id, "at": at}, "overdue", "resolved", thread=message["ts"])
 
-    def bind_presentation(self, envelope: Dict, message: Dict, kind: str) -> None:
+    def bind_presentation(self, envelope: Dict, message: Dict, kind: str, retained: bool = True) -> None:
         ask = kind == "ask"
+        presenter = (self.presenter if ask else str(envelope["id"])) if retained else ""
         self._out(envelope, "ask" if ask else "notice", "open" if ask else "resolved",
-                  thread=message["ts"], presenter=self.presenter if ask else str(envelope["id"]),
+                  thread=message["ts"], presenter=presenter,
                   parent=self.parent_of(message, "bot", str(envelope["id"])))
 
     def confirm_presentation(self, envelope: Dict) -> None:
@@ -1431,10 +1435,12 @@ class RootRelay:
 
     def post_ask(self, envelope: Dict) -> bool:
         """Whether the ask landed and its `open` line was journaled."""
-        receipt = self.mail.present(str(envelope["id"]), self.presenter)
-        if receipt is None or receipt.get("presenter") != self.presenter:
-            return False
-        envelope = dict(envelope, presentation={"presenter": self.presenter})
+        retained = self.mail.retains_presentations()
+        if retained:
+            receipt = self.mail.present(str(envelope["id"]), self.presenter)
+            if receipt is None or receipt.get("presenter") != self.presenter:
+                return False
+            envelope = dict(envelope, presentation={"presenter": self.presenter})
         pieces = self.ask_pieces(envelope, f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:")
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
@@ -1446,12 +1452,13 @@ class RootRelay:
                 return False
             # The ask needs its own thread so an owner reply answers this ask.
             pieces += [f"\n\n[Referenced conversation]({permalink})"]
-        ts = self._send(envelope, "ask", pieces, None, presentation=True)
+        ts = self._send(envelope, "ask", pieces, None, presentation=retained)
         if ts is None:
             return False
         excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-        self.bind_presentation(envelope, {"ts": ts, "text": excerpt}, "ask")
-        self.confirm_presentation(envelope)
+        self.bind_presentation(envelope, {"ts": ts, "text": excerpt}, "ask", retained)
+        if retained:
+            self.confirm_presentation(envelope)
         # A reserved ask first posted past its deadline is its own reminder.
         if envelope.get("reserved") is True and at_epoch(str(envelope["deadline"])) <= self.clock():
             self._out(dict(envelope, id=overdue_id(str(envelope["id"]))), "overdue", "resolved", thread=ts)
@@ -1470,18 +1477,20 @@ class RootRelay:
         pieces: List[Union[str, Verbatim]] = (
             [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
             else self.ask_pieces(envelope, f"{header}. Question from {envelope.get('from', 'overseer')}:"))
-        if thread_ts is None and not envelope.get("presentation"):
+        retained = thread_ts is None and self.mail.retains_presentations()
+        if retained and not envelope.get("presentation"):
             receipt = self.mail.present(ask_id, self.presenter)
             if receipt is None or receipt["presenter"] != self.presenter:
                 return
             envelope = dict(envelope, presentation={"presenter": self.presenter})
-        landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=thread_ts is None)
+        landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=retained)
         if landed is None:
             return
         if thread_ts is None:
             excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-            self.bind_presentation(envelope, {"ts": landed, "text": excerpt}, "ask")
-            self.confirm_presentation(envelope)
+            self.bind_presentation(envelope, {"ts": landed, "text": excerpt}, "ask", retained)
+            if retained:
+                self.confirm_presentation(envelope)
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
     def post_notice(self, envelope: Dict, record: Optional[Dict] = None) -> None:
