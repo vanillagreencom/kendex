@@ -37,6 +37,56 @@ for cut in length chunked control; do
   assert_eq "$(asks "$CH" "Cut $cut.")|$(jq -c .unknown "$ROOT/tmp/slack/status.json")" "1|[\"$ID\"]" "$cut: restart reports unknown and does not post again"
 done
 
+# The post reaches Slack before the relay can record its thread. The next
+# poll reads the bot's metadata and binds a reply to the original question.
+ROOT="$(sk_new_root lost-ask)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ROOT"
+ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text lost-ask 'Continue the original work?')" \
+  --options yes,no --reserved)"
+ASK="${ASK#id=}"
+sk_recovery "$ROOT" kill
+assert_eq "$RC" 9 "the relay stops after Slack posts the ask"
+STATE="$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread // "unconfirmed"')"
+assert_eq "$STATE" unconfirmed "a lost response leaves the original ask without a thread"
+TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\") | .ts")"
+sk_inject "$CH" U001 'Program reply' "$TS" '"app_id":"A001"' >/dev/null
+REPLY="$(sk_inject "$CH" U001 'Only the first part.' "$TS")"
+sk_poll "$ROOT"
+ROWS="$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs --arg ask "$ASK" '
+  [split("\n")[] | fromjson? | select(.kind == "answer" and .re == $ask) | [.sender, .delivery_id, .text]]')"
+assert_eq "$ROWS" "[[\"owner\",\"$CH:$REPLY\",\"Only the first part.\"]]" "a reply under a recovered thread reaches the original ask"
+assert_eq "$(asks "$CH" 'Continue the original work?')" 1 "the relay never repeats the unknown post"
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread != null')" true \
+  "a Slack readback confirms the thread on the ask"
+
+ORIGIN="$(sk_new_root presented-origin)"
+ROOT="$(sk_new_root presenter)"
+sk_bind "$ORIGIN"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ORIGIN"
+sk_poll "$ROOT"
+ASK="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text original 'Choose the first change or both.')" \
+  --options first,both --reserved)"
+ASK="${ASK#id=}"
+sk_lm "$ORIGIN" present --item overseer --id "$ASK" --presenter jarvis-fixture >/dev/null
+sk_lm "$ORIGIN" pending --item overseer --to owner |
+  jq --arg root "$ORIGIN" '{destination: "local", root: $root, ask: ., introduction: "Please review the original question."}' >"$SK_TMP/presentation"
+sk_lm "$ROOT" present --item overseer --file "$SK_TMP/presentation" >/dev/null
+sk_poll "$ORIGIN"
+assert_eq "$(asks "$(sk_channel "$ORIGIN")" 'Choose the first change or both.')" 0 "the second presenter leaves the original unposted"
+sk_ctl /_test/fault '{"method":"chat.postMessage","cut":"length"}' >/dev/null
+sk_recovery "$ROOT" poll
+TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"jarvis-fixture\") | .ts")"
+REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$TS")"
+sk_poll "$ROOT"
+assert_eq "$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs '
+  [split("\n")[] | fromjson? | select(.kind == "directive") | [.from, .parent.envelope, .delivery_id, .text]]')" \
+  "[[\"owner\",\"jarvis-fixture\",\"$CH:$REPLY\",\"Only the first change.\"]]" \
+  "a forwarded notice recovers its original mailbox binding after a lost post response"
+
 # A failed pre-send append sends nothing. The next run can still post it.
 ROOT="$(sk_new_root disk-full)"
 sk_bind "$ROOT"

@@ -7,9 +7,9 @@
 # keeps its tracker links; the draft is never linked. A reserved ask is posted
 # naming no default, and once more in its thread on the first poll past its
 # deadline while it stays open and unanswered, never again; one first posted
-# past its deadline is its own reminder; one with no thread to post in, its
-# post response lost or its thread deleted, is reminded with the whole
-# question in a thread a reply in answers. Any other ask is listen.test.sh's. Each rule has its own
+# past its deadline is its own reminder. A question Slack deleted can be
+# reminded in a new thread. A lost response leaves the post unconfirmed
+# until Slack readback. Any other ask is listen.test.sh's. Each rule has its own
 # control on a copy of the scripts.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -282,9 +282,8 @@ assert_eq "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "a reserv
 
 reserved_ask reserved-lost 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
 past_deadline
-reply_to_reminder
-assert_eq "$([ -n "$(reminder_ts)" ] && echo reminded)|$(reminder_options)|$(answers_to_ask)" "reminded|true|1" \
-  "a reserved ask whose post response was lost is reminded with its options in a thread of its own, and a reply there answers the ask"
+assert_eq "$(reminder_ts)|$(asks "$CH" 'Cut the 2.0.0 release?')" "|0" \
+  "a reserved ask whose first post is unconfirmed does not start a second thread"
 
 reserved_ask reserved-deleted 30
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
@@ -324,19 +323,23 @@ sk_mutant reserved-late relay.py 'if envelope\.get\("reserved"\) is True and at_
 reserved_ask control-late 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: without the first-post rule a late reserved ask is posted twice"
 
-sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None\)' 'ts = "1.000001"'
+sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=True\)' 'ts = "1.000001"'
 reserved_ask control-unposted 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: an ask journaled open but never sent fails the posted assertion"
 
 sk_mutant reserved-rebind relay.py 'self\._out\(envelope, "ask", "open", thread=landed,' 'None and self._out(envelope, "ask", "open", thread=landed,'
-reserved_ask control-rebind 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
+reserved_ask control-rebind 30
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+sk_poll "$ROOT"
 past_deadline
 reply_to_reminder
 sk_assert_red "$([ -n "$(reminder_ts)" ] && echo reminded)|$(answers_to_ask)" "reminded|1" \
-  "control: without the rebind a reply to the reminder of a lost ask is no answer"
+  "control: without the rebind a reply to the replacement thread is no answer"
 
 sk_mutant reserved-short relay.py 'if thread_ts is not None\n' 'if True\n'
-reserved_ask control-short 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
+reserved_ask control-short 30
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+sk_poll "$ROOT"
 past_deadline
 sk_assert_red "$([ -n "$(reminder_ts)" ] && echo reminded)|$(reminder_options)" "reminded|true" \
   "control: a replacement reminder built from the question text alone shows no options"

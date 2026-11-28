@@ -266,7 +266,19 @@ class LaneMail:
         assert self.store is not None, "an envelope to judge comes from a mailbox read"
         return bool(self._position_rule("passed")(position, envelope, self.snapshots))
 
-    def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
+    def present(self, ask_id: str, presenter: str, thread_url: str = "") -> Optional[Dict]:
+        args = ("--thread-url", thread_url) if thread_url else ()
+        code, out, err = self._run("present", "--item", "overseer", "--id", ask_id, "--presenter", presenter, *args)
+        if code == 0:
+            try:
+                return json.loads(out)
+            except ValueError as error:
+                raise Refusal("lane-mail-failed", "owner-presentation receipt=unread") from error
+        if _first(err).startswith(f"lane-mail: resolved-already={ask_id} id="):
+            return None
+        raise Refusal("lane-mail-failed", err.strip())
+
+    def answer(self, ask_id: str, text: str, delivery_id: str, presenter: str = "") -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats
         before closure, so a replay never becomes a directive. The relay
         reads only messages from users the binding names as owner, so the
@@ -274,12 +286,13 @@ class LaneMail:
         path = self._text_file(text)
         send = ("send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id)
         try:
-            code, out, err = self._run(*send, "--sender", "owner")
+            binding = ("--presenter", presenter) if presenter else ()
+            code, out, err = self._run(*send, "--sender", "owner", *binding)
             # A bound root whose installed mailbox package predates --sender
             # refuses it before it appends anything. The same delivery then
             # lands with no sender and reads as unrecorded. Remove this retry
             # once no root a relay binds runs a lane-mail without --sender.
-            if code != 0 and _first(err) == "lane-mail: option-unknown=--sender":
+            if not presenter and code != 0 and _first(err) == "lane-mail: option-unknown=--sender":
                 code, out, err = self._run(*send)
         finally:
             os.unlink(path)

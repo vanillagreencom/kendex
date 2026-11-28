@@ -226,6 +226,9 @@ class Workspace:
         start = int(params.get("cursor", "0") or 0)
         size = min(self.page, int(params.get("limit", self.page) or self.page))
         chunk = items[start : start + size]
+        if params.get("include_all_metadata") != "true":
+            chunk = [dict(item, metadata={"event_type": item["metadata"]["event_type"]}) if item.get("metadata") else item
+                     for item in chunk]
         answer = {"ok": True, key: chunk, "has_more": start + size < len(items)}
         answer["response_metadata"] = {"next_cursor": str(start + size) if answer["has_more"] else ""}
         return answer
@@ -568,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return None
         message = {"user": BOT, "bot_id": BOT_ID, "text": body[0], "body_arg": body[1]}
+        if "metadata" in params:
+            message["metadata"] = params["metadata"]
         message["reply_broadcast"] = params.get("reply_broadcast", False)
         if params.get("thread_ts"):
             message["thread_ts"] = params["thread_ts"]
