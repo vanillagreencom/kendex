@@ -33,8 +33,9 @@ Success prints `progress-log: recorded id=ID at=TIME`.
 as a Done when box in the item's body, then records the action and clears its
 State entry. A missing entry is allowed. --state-key selects a local entry
 keyed by another id. The writer reads the body just before the write and reads
-it back; every other line must be byte for byte unchanged. A body another
-writer changed meanwhile is read and the line applied again once; a second
+it back. Linear may store the written box's checked marker as [X], and all
+other bytes must match the write. A body another writer changed meanwhile is
+read and the line applied again once. A second
 mismatch refuses tracker-body-changed with `resume=COMMAND`. --delivered REF
 closes the box with the delivery to the user as its Evidence line; nothing
 else closes it. Each write replaces the box and its indented lines. An update
@@ -107,7 +108,7 @@ ACTION_PREFIX = "Jarvis next action: "
 SOURCE_PREFIX = "Jarvis request source: "
 OUTCOME_PREFIX = "Jarvis requested outcome: "
 # One requested outcome's Done when box: its request id and its place in that request.
-OUTCOME_LINE = re.compile(r"- \[[ x]\] Jarvis outcome (\S+) ask ([1-9][0-9]*): ")
+OUTCOME_LINE = re.compile(r"- \[[ xX]\] Jarvis outcome (\S+) ask ([1-9][0-9]*): ")
 BINDING_FIELD = r"^(?:[-*+] )?(?:\*\*)?(?:%s)(?::\*\*|\*\*:|:)[ \t]+(.+)$"
 BINDING_SOURCE = re.compile(BINDING_FIELD % r"Jarvis request source|Original request(?: reference)?|Request source|Source",
                             re.MULTILINE | re.IGNORECASE)
@@ -422,7 +423,7 @@ def outcome_box(key, action, delivered):
 
 
 def place_outcome(item, body, key, box):
-    """body with key's box and its indented lines replaced by box, or box added at the end of Done when."""
+    """Return the body with key's box placed and the offset of that box."""
     ended = body.endswith("\n")
     lines = (body if ended or not body else body + "\n").splitlines(keepends=True)
     found = [index for index, *found_key in outcome_lines(lines) if tuple(found_key) == key]
@@ -451,8 +452,9 @@ def place_outcome(item, body, key, box):
         else:
             lines += (["\n"] if lines else []) + ["## Done when\n", "\n"]
             start = end = len(lines)
-    placed = "".join(lines[:start]) + box + "".join(lines[end:])
-    return placed if ended else placed[:-1]
+    prefix = "".join(lines[:start])
+    placed = prefix + box + "".join(lines[end:])
+    return (placed if ended else placed[:-1]), len(prefix)
 
 
 def item_body(home, item):
@@ -471,11 +473,17 @@ def write_outcome(home, item, key, box):
     """
     for _ in range(2):
         body = item_body(home, item)
-        placed = place_outcome(item, body, key, box)
-        if placed == body:
+        placed, box_start = place_outcome(item, body, key, box)
+        accepted = (placed,)
+        if box.startswith("- [x] "):
+            # Linear stores checked markers as [X] in KEN-5933's readbacks.
+            # Only the placed box's marker may differ from the proposed body.
+            marker = box_start + len("- [")
+            accepted += (placed[:marker] + "X" + placed[marker + 1:],)
+        if body in accepted:
             return
         linear_call(home, "issues", "update", item, "--description", placed, "--format=ids")
-        if item_body(home, item) == placed:
+        if item_body(home, item) in accepted:
             return
     raise Refusal("tracker-body-changed", item, shlex.join(sys.argv))
 
