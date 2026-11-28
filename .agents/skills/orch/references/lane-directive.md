@@ -292,9 +292,9 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - A request naming neither `host` nor `kind` opens a window on this machine and records a local lane.
 - A relaunch without `refresh` drops the record's `refresh`.
 - The confirmed launch writes `harness`, `account`, `model` and `effort` from the request, each null where the request names none: carry each one the replacement keeps.
-- Left out, `tracker`, `repo`, `over_cap`, `permission` and `obligation` keep the record's value.
+- Left out, `tracker`, `repo`, `over_cap` and `obligation` keep the record's value. If `permission` is left out, a confirmed launch keeps the record's word when the destination harness can carry it and clears it otherwise. A failed launch keeps the word.
 - A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
-- A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
+- A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture. A confirmed launch clears the record's word if the destination harness cannot carry it. A failed launch keeps the word.
 - A relaunch keeps the record's touched set, scope, [Ancestor gate](skill-rules.md#ancestor-gate) and tier.
 - The set, or the item's Location paths where the record holds none, meets the holders standing now as a running lane's added path does. It is refused `launch-overlap`, `holder-unreadable` or `touched-unreadable`, before any close on a `restart-recovery`, `usage-limit`, `auth-wall` or `model-switch` reason. Under `ORCH_DELIVERY=push-base` it passes a local holder in its review.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.

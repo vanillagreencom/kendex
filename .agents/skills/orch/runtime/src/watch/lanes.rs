@@ -2768,14 +2768,17 @@ fn halt_reason(obs: &Observed, pass: &Pass) -> Option<Halt> {
                 Refusal::Unanswered { .. } => "unanswered".to_owned(),
                 Refusal::Exit { status, keyed, .. } => {
                     let status = status.map_or_else(|| "signal".to_owned(), |c| c.to_string());
-                    // `lane-mail --help`'s keyed line: `<key>=<value>`, or a
-                    // key whose value follows its own ` field=`, closed by
-                    // trailing fields that may change from pass to pass.
+                    // `lane-mail --help` gives the whole path for mailbox-unsafe
+                    // and closes envelope-invalid with its logical line number.
+                    // Both fields identify the repair, including spaces in paths.
                     let pair = keyed
                         .as_deref()
                         .and_then(|line| {
                             let (key, rest) = line.split_once('=')?;
-                            let value = rest.split_whitespace().next().unwrap_or_default();
+                            let value = match key {
+                                "mailbox-unsafe" | "envelope-invalid path" => rest,
+                                _ => rest.split_whitespace().next().unwrap_or_default(),
+                            };
                             Some(format!("{key}={value}"))
                         })
                         .unwrap_or_else(|| "unkeyed".to_owned());
@@ -4917,6 +4920,14 @@ mod tests {
         const DATE: &str = "command-missing=date";
         const NO_JQ: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=jq";
         const NO_DATE: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 command-missing=date";
+        const UNSAFE_LANE: &str = "mailbox-unsafe=/w/team space/to-lane.jsonl";
+        const UNSAFE_OVERSEER: &str = "mailbox-unsafe=/w/team space/to-overseer.jsonl";
+        const NO_LANE: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 mailbox-unsafe=/w/team space/to-lane.jsonl";
+        const NO_OVERSEER: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 mailbox-unsafe=/w/team space/to-overseer.jsonl";
+        const INVALID_2: &str = "envelope-invalid path=/w/team space/to-lane.jsonl line=2";
+        const INVALID_3: &str = "envelope-invalid path=/w/team space/to-lane.jsonl line=3";
+        const BAD_LINE_2: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 envelope-invalid path=/w/team space/to-lane.jsonl line=2";
+        const BAD_LINE_3: &str = "wall-relaunch-refused lane=gh-1 reason=halt-unread cause=events: status=2 envelope-invalid path=/w/team space/to-lane.jsonl line=3";
         // The row a watch before the refusal mark wrote at a passed reset
         // it held: `first_seen|banner|identity|reported|screen|held|said`.
         let legacy = format!(
@@ -4926,7 +4937,7 @@ mod tests {
         // (case, the seeded row, whether the wake reaches the lane, per
         // pass: (now, the halt read, lines told, the wake's resume queued))
         type Step = (u64, Read, &'static [&'static str], bool);
-        let scenarios: [(&str, Option<String>, bool, &[Step]); 4] = [
+        let scenarios: [(&str, Option<String>, bool, &[Step]); 6] = [
             (
                 "halt_then_unread",
                 None,
@@ -4995,6 +5006,36 @@ mod tests {
                         &[],
                         false,
                     ),
+                ],
+            ),
+            (
+                "unsafe_mailbox_by_whole_path",
+                None,
+                false,
+                &[
+                    (BEFORE, Read::Exit(UNSAFE_LANE, ""), &[NO_LANE], false),
+                    (
+                        BEFORE + 240,
+                        Read::Exit(UNSAFE_OVERSEER, ""),
+                        &[NO_OVERSEER],
+                        false,
+                    ),
+                    (BEFORE + 480, Read::Exit(UNSAFE_OVERSEER, ""), &[], false),
+                ],
+            ),
+            (
+                "invalid_envelope_by_line",
+                None,
+                false,
+                &[
+                    (BEFORE, Read::Exit(INVALID_2, ""), &[BAD_LINE_2], false),
+                    (
+                        BEFORE + 240,
+                        Read::Exit(INVALID_3, ""),
+                        &[BAD_LINE_3],
+                        false,
+                    ),
+                    (BEFORE + 480, Read::Exit(INVALID_3, ""), &[], false),
                 ],
             ),
             (
