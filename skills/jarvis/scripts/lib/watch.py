@@ -498,6 +498,11 @@ def wall_time(at):
     return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def restart_identity(controller):
+    """The restart's controller as both marked status and an auth wall name it."""
+    return {key: controller.get(key) for key in ("session_id", "pane", "server_start")} if controller else None
+
+
 def legacy_wall_notice(memory):
     cause = {"auth": "is signed out on %s", "usage": "has no room left on %s"}[memory["kind"]]
     account = memory["account"] or "its default account"
@@ -1347,6 +1352,11 @@ class Watch:
             memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"))
         else:
             memory["controller"] = rows.get("controller")
+            restart = self.state.get("exited")
+            if restart is not None and restart.get("controller") is None:
+                # A status read in parallel with succession may first see
+                # the replacement already ended.
+                restart["controller"] = restart_identity(memory["controller"])
         self.state["wall"] = memory
         self.save()
         if kind == "usage":
@@ -1487,8 +1497,8 @@ class Watch:
         a controller that exits on every resume is not restarted in a loop.
         A failed one ends once a controller runs again.
 
-        The episode is the restarted controller's: the first running reading
-        after the restart ran binds its identity. An asked Stop, or a reading
+        The episode is the restarted controller's. A running status or a
+        bound auth wall supplies its identity. An asked Stop, or a reading
         of another controller, ends the episode once its notice is sent, so
         an exit of a controller the owner started is its own."""
         if isinstance(answer, Failure):
@@ -1502,7 +1512,7 @@ class Watch:
             return None
         self.state.pop("exited_failure", None)
         reading, controller = (answer.get("state"), answer.get("reason")), answer.get("controller")
-        identity = {key: controller.get(key) for key in ("session_id", "pane", "server_start")} if controller else None
+        identity = restart_identity(controller)
         wall = self.state.get("wall")
         auth_exit = (reading == ("stopped", "ended") and wall is not None and wall["kind"] == "auth"
                      and controller and controller.get("auth") is not None
@@ -1577,6 +1587,8 @@ class Watch:
             return None
         if state == "running":
             memory["ran"], memory["ran_at"] = True, now
+            if memory.get("controller") is None:
+                memory["controller"] = restart_identity(answer.get("controller"))
             memory["outcome"] = ("It started again on " + (answer.get("account") or "its default account")
                                  + " (" + str(reason) + ").")
         else:
