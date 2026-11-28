@@ -420,6 +420,105 @@ pnpm-variant-pnpm|tools/fixture.txt||true\n
 pnpm-variant-pnpm|pnpm-workspace.yaml|esbuild: true|prisma: true
 pnpm-variant-pnpm|prisma/schema.prisma||model User {}\n
 ROWS
+
+# Use one gated job so its verdict depends only on its own reads.
+git -C "$repo" checkout -qb fixture-literal-job "$static_base"
+write_workflow web-only >"$repo/.github/workflows/ci.yml"
+edit_workflow '      - working-directory: web\n        run: ./node_modules/.bin/vitest run\n' \
+  '      - run: cat ./tools/input.sh\n'
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+printf '%s\n' 'setting' >"$repo/tools/ci.config"
+printf '%s\n' 'source ./tools/env-lib.sh' >"$repo/tools/step-env.sh"
+printf '%s\n' 'true' >"$repo/tools/env-lib.sh"
+mkdir -p "$repo/tools/bin"
+printf '%s\n' '#!/bin/bash' '/usr/bin/cat ./tools/path-input.config "$@"' >"$repo/tools/bin/cat"
+chmod +x "$repo/tools/bin/cat"
+printf '%s\n' 'setting' >"$repo/tools/path-input.config"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a shell job with no overlapping lane reads'
+literal_job_base="$(git -C "$repo" rev-parse HEAD)"
+while IFS='|' read -r variant old new; do
+  git -C "$repo" checkout -qb "fixture-$variant" "$literal_job_base"
+  edit_workflow "$old" "$new"
+  case "$variant" in
+    *-computed|literal-job-path)
+      printf '%s\n' 'web tools/ci.config # reason: the web check reads its protected setting' \
+        >"$repo/.github/ci-lanes.conf" ;;
+  esac
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm "$variant"
+done <<'ROWS'
+literal-matrix|    runs-on: ubuntu-latest\n|    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n        include:\n          - os: ubuntu-latest\n            config: tools/ci.config\n    runs-on: ${{ matrix.os }}\n
+literal-matrix-computed|    runs-on: ubuntu-latest\n|    strategy:\n      matrix: ${{ fromJSON(vars.MATRIX) }}\n    runs-on: ubuntu-latest\n
+literal-step|      - run: cat ./tools/input.sh\n|      - if: ${{ 'ci' == 'ci' }}\n        env:\n          BASH_ENV: ./tools/step-env.sh\n        run: cat ./tools/input.sh\n
+literal-step-if-computed|      - run: cat ./tools/input.sh\n|      - if: ${{ vars.RUN_CHECK }}\n        run: cat ./tools/input.sh\n
+literal-step-env-computed|      - run: cat ./tools/input.sh\n|      - env:\n          CI_CONFIG: ${{ vars.CI_CONFIG }}\n        run: cat ./tools/input.sh\n
+literal-job-env|    runs-on: ubuntu-latest\n|    env:\n      CI_CONFIG: tools/ci.config\n    runs-on: ubuntu-latest\n
+literal-job-env-computed|    runs-on: ubuntu-latest\n|    env:\n      CI_CONFIG: ${{ vars.CI_CONFIG }}\n    runs-on: ubuntu-latest\n
+literal-job-path|    runs-on: ubuntu-latest\n|    env:\n      PATH: tools/bin\n    runs-on: ubuntu-latest\n
+ROWS
+
+# HTIO-57's checkout ref and Node setup, with a script-free install.
+git -C "$repo" checkout -qb fixture-npm "$literal_job_base"
+edit_workflow '      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n' \
+  '      - uses: actions/checkout@v7\n        with:\n          ref: ${{ github.sha }}\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n'
+printf '%s\n' '{"private":true}' >"$repo/package.json"
+printf '%s\n' '{"lockfileVersion":3,"packages":{"":{}}}' >"$repo/package-lock.json"
+printf '%s\n' 'setting' >"$repo/tools/check.config"
+printf '%s\n' 'setting' >"$repo/tools/npm-input.config"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a script-free npm install'
+npm_base="$(git -C "$repo" rev-parse HEAD)"
+
+while IFS='|' read -r variant file old new; do
+  git -C "$repo" checkout -qb "fixture-$variant" "$npm_base"
+  touch "$repo/$file"
+  edit_file "$repo/$file" "$old" "$new"
+  case "$variant" in
+    npm-lifecycle)
+      printf '%s\n' '{"optionalDependencies":{"fsevents":"2.3.3"}}' >"$repo/package.json"
+      edit_workflow '    runs-on: ubuntu-latest\n' '    runs-on: macos-latest\n' ;;
+    npm-preload)
+      mkdir -p "$repo/web/tools"
+      printf '%s\n' 'require("node:fs").readFileSync("../tools/npm-input.config")' >"$repo/web/tools/node-setup.js" ;;
+    npm-prefixed-install)
+      printf '%s\n' '{"scripts":{"postinstall":"cat ../tools/npm-input.config"}}' >"$repo/web/package.json"
+      printf '%s\n' '{"lockfileVersion":3,"packages":{"":{}}}' >"$repo/web/package-lock.json" ;;
+    npm-global-option)
+      printf '%s\n' '{"scripts":{"test":"cat ./tools/npm-input.config"}}' >"$repo/package.json" ;;
+    npm-script-retained)
+      printf '%s\n' '{"scripts":{"check:vercel":"cat ./tools/check.config"}}' >"$repo/package.json" ;;
+    npm-project-lifecycle)
+      edit_workflow '      - run: npm ci\n' '      - run: echo Checking\n      - run: npm ci --no-audit\n' ;;
+  esac
+  printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' \
+    >"$repo/.github/ci-lanes.conf"
+  git -C "$repo" add -A
+  git -C "$repo" commit -qm "$variant"
+done <<'ROWS'
+npm-config-claim|.npmrc||legacy-peer-deps=true\n
+npm-lifecycle|package-lock.json|{"":{}}|{"":{"optionalDependencies":{"fsevents":"2.3.3"}},"node_modules/fsevents":{"version":"2.3.3","resolved":"https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz","hasInstallScript":true,"optional":true,"os":["darwin"]}}
+npm-project-lifecycle|package.json|{"private":true}|{"scripts":{"postinstall":"cat ./tools/npm-input.config"}}
+npm-preload|.github/workflows/ci.yml|      - run: npm ci\n|      - run: echo Checking\n      - working-directory: web\n        env:\n          NODE_OPTIONS: --require ./tools/node-setup\n        run: npm ci\n
+npm-prefixed-install|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --prefix web\n
+npm-global-option|.github/workflows/ci.yml|      - run: npm ci\n|      - run: echo Checking\n      - run: npm --silent test\n
+npm-unsupported-invocation|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci --no-audit\n
+npm-script-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: npm run-script check:vercel\n
+vercel-retained|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: echo Checking\n      - run: vercel build\n
+vercel-after-pnpm|.github/workflows/ci.yml|      - run: npm ci\n|      - run: npm ci\n      - run: pnpm install --frozen-lockfile\n      - run: vercel build\n
+ROWS
+# npm v3 records a file: dependency's hook on the link target.
+git -C "$repo" checkout -qb fixture-npm-linked-lifecycle "$npm_base"
+edit_workflow '      - run: npm ci\n' '      - run: echo Checking\n      - run: npm ci\n'
+printf '%s\n' '{"dependencies":{"shared":"file:./shared"}}' >"$repo/package.json"
+printf '%s\n' '{"lockfileVersion":3,"packages":{"":{"dependencies":{"shared":"file:./shared"}},"node_modules/shared":{"resolved":"shared","link":true},"shared":{"version":"1.0.0","hasInstallScript":true}}}' \
+  >"$repo/package-lock.json"
+mkdir -p "$repo/shared"
+printf '%s\n' '{"name":"shared","version":"1.0.0","scripts":{"postinstall":"cat ../tools/npm-input.config"}}' \
+  >"$repo/shared/package.json"
+printf '%s\n' 'web tools/check.config # reason: the check reads the Vercel setting' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a linked dependency has an install hook'
 # HTIO-57's ci.yml gates: each lane also runs only in the merge queue. The
 # unguarded copy drops the classifier-failure fallback.
 for shape in event-gate event-gate-unguarded; do
@@ -1295,6 +1394,12 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     pnpm-talk-*) base="$pnpm_base" ;;
     pnpm-setup-*) base="$pnpm_setup_base" ;;
     pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
+    literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
+    literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
+    literal-*|npm-config-claim|npm-*lifecycle|npm-preload|npm-prefixed-install|npm-global-option|npm-unsupported-invocation|npm-script-retained|vercel-*)
+      base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    npm-*|vercel-*) base="$npm_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
   event="${event:-merge_group}"
@@ -1400,7 +1505,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   esac
   printf '{"ref":"%s","before":"%s","after":"%s","forced":false,"repository":{"default_branch":"main"}}\n' \
     "$push_ref" "$base" "$head" >"$SANDBOX/event"
-  PATH="$tools:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" \
+  PATH="$tools:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" GITHUB_SHA="$head" \
     GITHUB_REPOSITORY=example/lane-reach GITHUB_JOB=changes GITHUB_REF="$push_ref" \
     GITHUB_WORKFLOW_REF="example/lane-reach/.github/workflows/ci.yml@$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
     QUEUE_ONLY_DEFAULT=true \
@@ -1408,7 +1513,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     >"$SANDBOX/stdout" 2>"$SANDBOX/action-log" || { cat "$SANDBOX/action-log"; exit 1; }
   (
     unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
-    PATH="$tools:$PATH" GITHUB_REF="$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
+    PATH="$tools:$PATH" GITHUB_REF="$push_ref" GITHUB_SHA="$head" GITHUB_EVENT_PATH="$SANDBOX/event" \
       "$cli" --event "$event" --base "$base" --head "$head" --queue-only-default true \
       --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/local"
   ) \
@@ -1471,8 +1576,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
               "$(sed -n 's/^lane: name=check-lane-host verdict=[a-z]* cause=\([a-z-]*\) .*/\1/p' "$log")" ;;
           dispatch-opaque-prefix)
             assert_eq "$label $implementation conditional step diagnostic" \
-              'job=check-scans cause=opaque-step command=bin/check --lane check-scans' \
-              "$(sed -n 's/^lane-reach: \(job=check-scans cause=opaque-step.*\)/\1/p' "$log")"
+              'job=check-scans cause=opaque-step-condition command=bin/check --lane check-scans' \
+              "$(sed -n 's/^lane-reach: \(job=check-scans cause=opaque-step-condition.*\)/\1/p' "$log")"
             assert_eq "$label $implementation unsupported setup diagnostic" \
               'job=check-lane-host cause=computed-command command=bin/check --lane check-lane-host' \
               "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=computed-command.*\)/\1/p' "$log")" ;;
@@ -1512,11 +1617,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     refused-runner)
       refused_jobs='job=cargo cause=opaque-action,job=shell cause=unresolved-lane-dispatch,job=web cause=vitest-opaque-source' ;;
     refused-executable)
-      refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-shell-command' ;;
-    refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-shell-command' ;;
+      refused_jobs='job=cargo cause=opaque-action,job=shell cause=unsupported-script-interpreter,job=web cause=opaque-npm-lock' ;;
+    refused-*) refused_jobs='job=cargo cause=opaque-action,job=web cause=opaque-npm-lock' ;;
     checkout-path|restored-workdir|symlink-workdir|linked-workdir-swap)
-      refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-shell-command' ;;
-    linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-shell-command' ;;
+      refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-npm-lock' ;;
+    linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-npm-lock' ;;
     vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
     vitest-root-config) refused_jobs='job=web cause=vitest-loaded-config' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
@@ -1524,6 +1629,19 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-changed-unread) refused_jobs='job=web cause=vitest-changed-paths-unread' ;;
     pnpm-talk-*|pnpm-variant-pnpm) refused_jobs='job=web cause=pnpm-config-unread' ;;
     pnpm-variant-input|pnpm-variant-volta|pnpm-variant-newline) refused_jobs='job=web cause=opaque-action' ;;
+    literal-matrix-computed) refused_jobs='job=web cause=opaque-matrix' ;;
+    literal-step-if-computed) refused_jobs='job=web cause=opaque-step-condition' ;;
+    literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
+    literal-job-env-computed) refused_jobs='job=web cause=opaque-job-env' ;;
+    literal-job-path) refused_jobs='job=web cause=opaque-job-env' ;;
+    npm-script-retained|npm-project-lifecycle) refused_jobs='job=web cause=opaque-npm-script' ;;
+    npm-unsupported-invocation) refused_jobs='job=web cause=opaque-shell-command' ;;
+    npm-config-claim) refused_jobs='job=web cause=opaque-npm-config' ;;
+    npm-lifecycle|npm-linked-lifecycle) refused_jobs='job=web cause=opaque-npm-dependency' ;;
+    npm-preload) refused_jobs='job=web cause=opaque-step-env' ;;
+    npm-prefixed-install|npm-global-option) refused_jobs='job=web cause=opaque-npm-options' ;;
+    npm-ref-mismatch) refused_jobs='job=web cause=opaque-checkout-ref' ;;
+    vercel-*) refused_jobs='job=web cause=opaque-vercel-command' ;;
   esac
   if [ -n "$refused_jobs" ]; then
     # Each row holds only while the reader refuses these jobs for these causes.
@@ -1536,6 +1654,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   case "$label" in
     workflow-env-unreadable) env_refusal='key=BASH_ENV path=tools/env.sh reason=computed-command' ;;
     workflow-env-preload) env_refusal='key=NODE_OPTIONS path=tools/setup.cjs reason=unsupported-script-interpreter' ;;
+    npm-preload)
+      for implementation in action local; do
+        assert_eq "$label $implementation resolved preload" 'key=NODE_OPTIONS path=web/tools/node-setup reason=node-preload-unresolved' \
+          "$(sed -n 's/^lane-reach: job=web cause=opaque-step-env //p' "$SANDBOX/$implementation-log")"
+      done ;;
   esac
   if [ -n "$env_refusal" ]; then
     for implementation in action local; do
@@ -1687,6 +1810,31 @@ pnpm-variant-input|.gitignore|||true|
 pnpm-variant-volta|.gitignore|||true|
 pnpm-variant-newline|.gitignore|||true|
 pnpm-variant-pnpm|prisma/schema.prisma|||true|
+literal-matrix|tools/unrelated.txt|||false|
+literal-matrix-read|tools/ci.config|||true|
+literal-matrix-computed|tools/unrelated.txt|||true|
+literal-step|tools/unrelated.txt|||false|
+literal-step-read|tools/env-lib.sh|||true|
+literal-step-if-computed|tools/unrelated.txt|||true|
+literal-step-env-computed|tools/unrelated.txt|||true|
+literal-job-env|tools/unrelated.txt|||false|
+literal-job-env-read|tools/ci.config|||true|
+literal-job-env-computed|tools/unrelated.txt|||true|
+literal-job-path|tools/path-input.config|||true|
+npm-ci-unrelated|tools/unrelated.txt|||false|
+npm-ci-config-input|.npmrc|||true|
+npm-script-retained|tools/unrelated.txt|||true|
+npm-config-claim|tools/unrelated.txt|||false|
+npm-lifecycle|tools/unrelated.txt|||true|
+npm-project-lifecycle|tools/npm-input.config|||true|
+npm-linked-lifecycle|tools/npm-input.config|||true|
+npm-preload|tools/npm-input.config|||true|
+npm-prefixed-install|tools/npm-input.config|||true|
+npm-global-option|tools/npm-input.config|||true|
+npm-ref-mismatch|tools/unrelated.txt|||true||pull_request
+npm-unsupported-invocation|tools/unrelated.txt|||false|
+vercel-retained|tools/unrelated.txt|||true|
+vercel-after-pnpm|tools/unrelated.txt|||true|
 ROWS
 require_rows "derived lane reach" "$rows"
 report "derived lane reach"
