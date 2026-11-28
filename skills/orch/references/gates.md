@@ -145,7 +145,7 @@ A fallback grants no approval:
 
 The notice:
 
-- Its first line is `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]`, with ` exit=[N]` after `refused`.
+- Its first line is `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]`, with ` exit=[N]` after `refused` or ` base=[BASE_SHA]` after `quick`.
 - Its second line is the lane's status path, for the overseer to read.
 - Nothing holds the notice: not Copilot's work, an open review thread or a standing change request.
 - The overseer's approval follows [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval), and the merge path's own thread and change-request checks still hold the merge.

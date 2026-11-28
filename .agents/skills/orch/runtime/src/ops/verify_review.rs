@@ -820,6 +820,30 @@ impl Gate<'_> {
                 && !(ready && head.held_as_draft())
         };
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
+            if let Some(request) = head
+                .request
+                .as_ref()
+                .filter(|request| request.fell_back_as(QUICK))
+                && head
+                    .notices
+                    .iter()
+                    .any(|notice| notice.text.ends_with(" cause=quick"))
+                && !head.notices.iter().any(|notice| {
+                    review::quick_notice_base(&notice.text, self.r.pr, &self.view.head).is_some_and(
+                        |base| {
+                            request
+                                .reason
+                                .as_deref()
+                                .and_then(|reason| reason.strip_prefix("base="))
+                                == Some(base)
+                        },
+                    )
+                })
+            {
+                // A delivered notice from before the range was included
+                // needs a replacement even when the current proof still holds.
+                return self.replace_with_fallback(request, QUICK);
+            }
             if !self.review.copilot_requests
                 && !head.fell_back()
                 && self.ineligible()? == Some("off")
@@ -1457,6 +1481,10 @@ impl Gate<'_> {
             "{NOTICE_KEY} PR #{} head {} cause={cause}",
             self.r.pr, self.view.head
         );
+        if cause == QUICK {
+            text.push(' ');
+            text.push_str(self.quick_reason.as_deref()?);
+        }
         if let Some(exit) = exit {
             text.push_str(&format!(" exit={exit}"));
         }
@@ -1501,11 +1529,16 @@ impl Gate<'_> {
         let Some(head) = head_record(self.path, &snapshot.doc, &self.view.head)? else {
             return Ok(());
         };
-        let current_quick = self.quick_reason.as_ref().is_some_and(|reason| {
-            head.request.as_ref().is_some_and(|request| {
-                request.fell_back_as(QUICK) && request.reason.as_ref() == Some(reason)
+        let current_base = self
+            .quick_reason
+            .as_deref()
+            .filter(|reason| {
+                head.request.as_ref().is_some_and(|request| {
+                    request.fell_back_as(QUICK) && request.reason.as_deref() == Some(*reason)
+                })
             })
-        });
+            .and_then(|reason| reason.strip_prefix("base="))
+            .map(str::to_owned);
         let mut reports = Vec::with_capacity(head.notices.len());
         for (index, notice) in head.notices.into_iter().enumerate() {
             let standing = |sent_now, unmarked| NoticeReport {
@@ -1514,9 +1547,11 @@ impl Gate<'_> {
                 sent_now,
                 unmarked,
             };
-            if (!notice.owed() && !notice.unanswered())
-                || (!current_quick && notice.text.ends_with(" cause=quick"))
-            {
+            let stale_quick = notice.text.split_ascii_whitespace().nth(5) == Some("cause=quick")
+                && (current_base.is_none()
+                    || review::quick_notice_base(&notice.text, self.r.pr, &self.view.head)
+                        != current_base.as_deref());
+            if (!notice.owed() && !notice.unanswered()) || stale_quick {
                 reports.push(standing(false, None));
                 continue;
             }

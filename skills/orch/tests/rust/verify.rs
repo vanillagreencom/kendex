@@ -21,6 +21,7 @@
 use agent_runtime::record::Locking;
 use std::collections::BTreeSet;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 mod support;
 
@@ -4611,8 +4612,8 @@ impl Github {
         );
     }
 
-    fn quick_tools(&self, base: &str, quick: bool, class: &str) -> String {
-        let scripts = self.dir.path().join(".agents/skills/change-scope/scripts");
+    fn quick_tools(&self, checkout: &Path, base: &str, quick: bool, class: &str) -> String {
+        let scripts = checkout.join(".agents/skills/change-scope/scripts");
         fs::create_dir_all(&scripts).unwrap();
         support::write_executable(
             &scripts.join("change-scope"),
@@ -4627,19 +4628,89 @@ printf '%s\n' 'quick-proof: proved={quick}' '{class}' >&2
         );
         let bin = self.dir.path().join("tools");
         fs::create_dir_all(&bin).unwrap();
+        let git = support::program("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap();
+        assert!(git.status.success(), "{}", support::stderr(&git));
+        let git = String::from_utf8(git.stdout).unwrap();
+        let git = git.trim();
         support::write_executable(
             &bin.join("git"),
             format!(
                 r#"#!/bin/sh
 if [ "$1" != rev-list ]; then
-  printf '%s\n' 'fatal: not a git repository' >&2
-  exit 128
+  exec '{git}' "$@"
 fi
 [ "$*" = 'rev-list --no-walk --quiet {base} {HEAD} --' ]
 "#
             ),
         );
         support::tool_path(&[bin.as_path(), fixtures().as_path()])
+    }
+
+    fn approve_quick_notice(&self, checkout: &Path, path: &str, notice: &str) -> Output {
+        let scripts = checkout.join(".agents/skills/github/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        support::write_executable(
+            &scripts.join("github.sh"),
+            format!("#!/bin/sh\nprintf '%s\\n' 'review-replies: pass head={HEAD}'\n"),
+        );
+        let approval_bin = self.dir.path().join("approval-bin");
+        fs::create_dir_all(&approval_bin).unwrap();
+        let fixture = fixtures().join("gh");
+        support::write_executable(
+            &approval_bin.join("gh"),
+            format!(
+                r#"#!/bin/sh
+case "$*" in
+  'api repos/{REPO}/pulls/{PR} --jq .head.sha') printf '%s\n' '{HEAD}' ;;
+  'api --method POST repos/{REPO}/pulls/{PR}/reviews --input -')
+    printf '%s\n' "$*" >> "$GH_FAKE_LOG"
+    cat > /dev/null
+    printf '%s\n' '{{"state":"APPROVED","commit_id":"{HEAD}","user":{{"login":"review-app[bot]"}}}}' ;;
+  *) exec '{}' "$@" ;;
+esac
+"#,
+                fixture.display()
+            ),
+        );
+        let credentials = self.dir.path().join("approval-credentials");
+        fs::create_dir_all(&credentials).unwrap();
+        fs::set_permissions(&credentials, fs::Permissions::from_mode(0o700)).unwrap();
+        let token = credentials.join("token");
+        fs::write(&token, "approval-fixture-token\n").unwrap();
+        fs::set_permissions(&token, fs::Permissions::from_mode(0o600)).unwrap();
+        let replies = self.dir.path().join("replies.json");
+        fs::write(&replies, serde_json::to_vec(&self.replies).unwrap()).unwrap();
+        let body = self.dir.path().join("approval-body");
+        fs::write(&body, "Lane review passed.").unwrap();
+        let request = self.dir.path().join("approve-request.json");
+        fs::write(
+            &request,
+            json!({"op": "approve-head", "repo": REPO, "pr": PR, "head": HEAD, "body_file": body,
+                "hold_copilot": true, "quick_notice": notice})
+            .to_string(),
+        )
+        .unwrap();
+        support::isolated()
+            .args([
+                "--state-dir",
+                &self.dir.path().display().to_string(),
+                "op",
+                "--item",
+                "KEN-4687",
+                "--request",
+            ])
+            .arg(&request)
+            .env("PATH", format!("{}:{path}", approval_bin.display()))
+            .env("GH_FAKE_REPLIES", &replies)
+            .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", token)
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .current_dir(checkout)
+            .output()
+            .unwrap()
     }
 
     fn head_record(&self) -> Value {
@@ -7106,7 +7177,7 @@ fn copilot_requests_follow_the_quick_proof_and_overseer_exception() {
     ] {
         let mut gh = Github::review_world();
         gh.quick_range(login, OTHER_SHA, MOVED, parent);
-        let path = gh.quick_tools(MOVED, quick, class);
+        let path = gh.quick_tools(gh.dir.path(), MOVED, quick, class);
         let env = [BLOCK[0], ("PATH", path.as_str())];
 
         let result = ok_result(&gh.review(false, &env));
@@ -7143,6 +7214,7 @@ fn vanished_copilot_work_on_a_proved_quick_head_records_the_fallback() {
     let measured = "class: class=trivial measured=true cause=quick-files";
     for work_started in [false, true] {
         let mut gh = Github::review_world();
+        let lane = LaneWorld::new(&gh, true);
         gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
         if work_started {
             gh.answer(
@@ -7150,8 +7222,8 @@ fn vanished_copilot_work_on_a_proved_quick_head_records_the_fallback() {
                 check_runs_page(1, vec![copilot_check(31, "queued")]),
             );
         }
-        let path = gh.quick_tools(MOVED, false, measured);
-        let first = ok_result(&gh.review(false, &[("PATH", &path)]));
+        let path = gh.quick_tools(&lane.main, MOVED, false, measured);
+        let first = lane.review(&gh, &lane.root, &[("PATH", &path)]);
         let outcome = if work_started {
             "existing"
         } else {
@@ -7173,12 +7245,82 @@ fn vanished_copilot_work_on_a_proved_quick_head_records_the_fallback() {
             check_runs_page(1, vec![cancelled])
         };
         gh.answer(&check_runs(HEAD, 1), ended);
-        let path = gh.quick_tools(MOVED, true, measured);
+        let path = gh.quick_tools(&lane.main, MOVED, true, measured);
         let count = gh.requests();
-        let fallback = ok_result(&gh.review(false, &[("PATH", &path)]));
+        let fallback = lane.review(&gh, &lane.root, &[("PATH", &path)]);
         assert_eq!(fallback["request"]["outcome"], "fallback", "{fallback}");
         assert_eq!(fallback["request"]["cause"], "quick", "{fallback}");
         assert_eq!(gh.requests(), count, "{:?}", gh.log());
+        let notice = format!("{} base={MOVED}", fallback_line("quick"));
+        assert_eq!(
+            lane.head_at_send(0)["notices"],
+            json!([{"key": "copilot-fallback", "text": notice, "to": "KEN-4687", "owner": "owed"}])
+        );
+        let notices = lane.box_notices(&lane.root);
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert_eq!(notices[0]["text"], lane.text(&notice));
+    }
+}
+
+#[test]
+fn a_delivered_quick_notice_cannot_approve_after_a_same_head_base_advance() {
+    let measured = "class: class=trivial measured=true cause=quick-files";
+    for (base_moves, still_quick) in [(false, true), (true, false), (true, true)] {
+        let mut gh = Github::review_world();
+        let lane = LaneWorld::new(&gh, true);
+        gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
+        let path = gh.quick_tools(&lane.main, MOVED, true, measured);
+        let first = lane.review(&gh, &lane.root, &[("PATH", &path)]);
+        assert_eq!(first["request"]["cause"], "quick", "{first}");
+        let notices = lane.box_notices(&lane.root);
+        let delivered = notices[0]["text"].as_str().unwrap().lines().next().unwrap();
+        let legacy = fallback_line("quick");
+        assert_eq!(delivered, format!("{legacy} base={MOVED}"));
+
+        if !base_moves {
+            let approval = ok_result(&gh.approve_quick_notice(&lane.main, &path, delivered));
+            assert_eq!(approval["status"], "confirmed", "{approval}");
+            assert!(
+                gh.log()
+                    .iter()
+                    .any(|call| call.starts_with("api --method POST"))
+            );
+            assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+            continue;
+        }
+        gh.quick_range("lane-app[bot]", WORKFLOW_SHA, OTHER_SHA, HEAD);
+        let path = gh.quick_tools(&lane.main, OTHER_SHA, still_quick, measured);
+        let from = gh.log().len();
+        for notice in [delivered, &legacy] {
+            let approval = gh.approve_quick_notice(&lane.main, &path, notice);
+            let result = reply(&approval);
+            assert_eq!(result["refusal"]["key"], "quick-proof-stale", "{result}");
+        }
+        let calls = gh.log_since(from);
+        assert!(
+            calls.contains(&format!("api repos/{REPO}/git/commits/{WORKFLOW_SHA}")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("api --method POST")),
+            "{calls:?}"
+        );
+
+        let routed = lane.review(&gh, &lane.root, &[("PATH", &path)]);
+        if still_quick {
+            assert_eq!(routed["request"]["cause"], "quick", "{routed}");
+            assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+            let notices = lane.box_notices(&lane.root);
+            assert_eq!(
+                notices[1]["text"],
+                lane.text(&format!("{legacy} base={OTHER_SHA}"))
+            );
+        } else {
+            assert_eq!(routed["request"]["outcome"], "requested", "{routed}");
+            assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+        }
     }
 }
 
@@ -7187,7 +7329,7 @@ fn the_same_head_after_a_base_advance_rechecks_the_quick_fallback() {
     let mut gh = Github::review_world();
     gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
     let measured = "class: class=trivial measured=true cause=quick-files";
-    let path = gh.quick_tools(MOVED, true, measured);
+    let path = gh.quick_tools(gh.dir.path(), MOVED, true, measured);
     let first = ok_result(&gh.review(false, &[("PATH", &path)]));
     assert_eq!(first["request"]["cause"], "quick", "{first}");
     assert_eq!(
@@ -7201,13 +7343,13 @@ fn the_same_head_after_a_base_advance_rechecks_the_quick_fallback() {
         "notices",
         json!([{
             "key": "copilot-fallback",
-            "text": format!("copilot-fallback PR #{PR} head {HEAD} cause=quick"),
+            "text": format!("{} base={MOVED}", fallback_line("quick")),
             "to": "KEN-4687",
             "owner": "owed"
         }]),
     );
     gh.quick_range("lane-app[bot]", WORKFLOW_SHA, OTHER_SHA, HEAD);
-    let path = gh.quick_tools(OTHER_SHA, false, measured);
+    let path = gh.quick_tools(gh.dir.path(), OTHER_SHA, false, measured);
     let second = ok_result(&gh.review(false, &[("PATH", &path)]));
     assert_eq!(second["request"]["outcome"], "requested", "{second}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());

@@ -212,6 +212,13 @@ struct CommitId {
     sha: String,
 }
 
+/// The notice's base is usable only with the pull request and full head the
+/// gate wrote. An older notice ended at `cause=quick` and carries no proof.
+pub(crate) fn quick_notice_base<'a>(notice: &'a str, pr: u64, head: &str) -> Option<&'a str> {
+    let prefix = format!("copilot-fallback PR #{pr} head {head} cause=quick base=");
+    notice.strip_prefix(&prefix).filter(|base| head_form(base))
+}
+
 /// The base of a current, proved quick range. `None` is a negative proof
 /// and an error retains the cause without withholding the ordinary request.
 /// The installed producer in the main checkout reads both endpoints as Git
