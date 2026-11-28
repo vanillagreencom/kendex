@@ -172,8 +172,17 @@ elif verb == ("issues", "update"):
         if judged.returncode:
             sys.stderr.write(judged.stderr)
             sys.exit(1)
-    # wrong-body stands for another writer that changes this line each time.
-    issues[args[2]]["description"] = args[4].replace("Jarvis outcome", "Jarvis outcome edited") if mode == "wrong-body" else args[4]
+    body = args[4]
+    if mode in ("normalize-checked", "normalize-and-edit"):
+        # KEN-5933's stored Linear examples return checked task markers as [X].
+        body = "".join(line.replace("- [x] ", "- [X] ", 1) if line.startswith("- [x] ") else line
+                       for line in body.splitlines(keepends=True))
+    # These modes stand for another writer making an edit on every write.
+    if mode == "normalize-and-edit":
+        body = body.replace("  Evidence: delivered ", "  Evidence: confirmed ")
+    if mode == "wrong-body":
+        body = body.replace("Jarvis outcome", "Jarvis outcome edited")
+    issues[args[2]]["description"] = body
     world["written"] = True
     store.write_text(json.dumps(world))
     if mode == "lost-update":
@@ -597,6 +606,36 @@ class ProgressLog(ProgressLogCommands):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(world["issues"]["KEN-1"]["description"], OPENING + SIBLING + "".join(lines) + FILING)
                 self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True)), [])
+
+    def test_stored_outcome_normalization(self):
+        before = state_handoff("- KEN-1: retry\n")
+        old = (f"- [X] Jarvis outcome {REQUEST} ask 1: Earlier receipt.\n"
+               "  Evidence: delivered C0123ABC:1793515999.000099\n")
+        stored = f"- [X] Jarvis outcome {REQUEST} ask 1: {ACTION}\n  Evidence: delivered {DELIVERY}\n"
+        duplicate = old + box(REQUEST, 1, ACTION, DELIVERY)
+        for name, initial, mode, expected, error, writes in (
+            ("add", SIBLING, "normalize-checked", SIBLING + stored, None, 1),
+            ("replace", old + SIBLING, "normalize-checked", stored + SIBLING, None, 1),
+            ("already stored", stored + SIBLING, "normalize-checked", stored + SIBLING, None, 0),
+            ("changed evidence", SIBLING, "normalize-and-edit", None, "tracker-body-changed", 2),
+            ("ambiguous key", duplicate, "normalize-checked", duplicate, "tracker-line-ambiguous", 0),
+        ):
+            with self.subTest(case=name):
+                self.handoff.write_text(before)
+                self.action_world(issues={"KEN-1": self.issue(body=OPENING + initial + FILING)}, mode=mode)
+                result = self.next_action(delivered=DELIVERY)
+                if error is None:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    saved, = records(self.handoff.read_text())
+                    self.assertIn(f"Tracker next action: KEN-1 outcome={REQUEST} ask=1",
+                                  saved["Observed result and source"])
+                else:
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: " + error)
+                    self.assertEqual(self.handoff.read_text(), before)
+                if expected is not None:
+                    self.assertEqual(self.world()["issues"]["KEN-1"]["description"], OPENING + expected + FILING)
+                self.assertEqual(self.action_calls().count(("issues", "update")), writes)
 
     def test_two_writers_keep_both_lines(self):
         self.action_world(issues={"KEN-1": self.issue(body=OPENING + SIBLING + FILING)},
