@@ -45,6 +45,116 @@ fn an_add_leaves_the_scopes_followers_at_their_commits() {
     assert_eq!(locked_commit(&w, "a"), first);
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_explicit_add_revision_survives_subscription_reuse_and_fetch() {
+    use kendex_core::{error::CoreError, hash, manifest, remote};
+
+    let w = world();
+    let requires = "dependencies:\n  required: [shared]\n";
+    for (name, dependencies) in [("shared", ""), ("solo", ""), ("added", requires)] {
+        write_skill(&w.upstream, name, dependencies, "version one.");
+    }
+    let first = commit(&w.upstream, "installed");
+    declare(
+        &w,
+        "[skills.shared]\nsource = \"cat\"\n[skills.solo]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+    for (name, dependencies) in [("shared", ""), ("solo", ""), ("added", requires)] {
+        write_skill(&w.upstream, name, dependencies, "version two.");
+    }
+    let second = commit(&w.upstream, "current");
+    fetch_mirrors(&w);
+
+    let project = w.home.join("app");
+    let before = hash::hash_tree(&project).unwrap();
+    let request = |rev: &str| AddRequest {
+        source: Some(format!("{}@{rev}", super::REPO)),
+        skills: vec!["added".into()],
+        ..AddRequest::default()
+    };
+    assert!(matches!(
+        ops::add(&w.env, &w.scope, &request(&second)),
+        Err(CoreError::AddRevisionConflict { name, existing, requested, .. })
+            if name == "shared" &&
+                ((existing == first && requested == second)
+                    || (existing == second && requested == first))
+    ));
+    for (rev, available) in [("absent-revision", false), ("install-compatible", true)] {
+        if available {
+            super::git(&w.upstream, &["tag", rev, &first]);
+        }
+        let requested = request(rev);
+        assert!(matches!(
+            ops::add(&w.env, &w.scope, &requested),
+            Err(CoreError::SourcePending { name }) if name == "cat"
+        ));
+        let fetch = ops::manifest_for_request(&w.env, &w.scope, &requested).unwrap();
+        assert_eq!(fetch.sources["cat"].rev.as_deref(), Some(rev));
+        match remote::sync_sources(&w.env, &fetch) {
+            Err(CoreError::PinUnavailable { repo, pin, .. }) if !available => {
+                assert_eq!(repo, super::REPO);
+                assert_eq!(pin, rev);
+            }
+            Ok(_) if available => {}
+            Err(error) => panic!("unexpected fetch failure for {rev}: {error}"),
+            Ok(_) => panic!("the missing revision resolved: {rev}"),
+        }
+        assert_eq!(hash::hash_tree(&project).unwrap(), before);
+    }
+
+    let held_before = ["shared", "solo"].map(|name| installed_body(&w, name));
+    let report = ops::add(&w.env, &w.scope, &request("install-compatible")).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "added").contains("version one."));
+    assert_eq!(locked_commit(&w, "added"), first);
+    for (name, body) in ["shared", "solo"].into_iter().zip(held_before) {
+        assert_eq!(locked_commit(&w, name), first);
+        assert!(installed_body(&w, name) == body, "{name} changed");
+    }
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.sources["cat"].rev, None);
+    assert_eq!(
+        super::declared_rev(&w, "added").as_deref(),
+        Some(first.as_str())
+    );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_qualified_add_fetches_the_same_source_it_plans() {
+    use kendex_core::{error::CoreError, remote};
+
+    let w = world();
+    write_skill(&w.upstream, "unused", "", "Positional catalog.");
+    commit(&w.upstream, "positional");
+    let other = w.home.join("git/owner/other");
+    std::fs::create_dir_all(&other).unwrap();
+    super::git(&other, &["init", "--quiet", "-b", "main"]);
+    write_skill(&other, "tool", "", "Qualified catalog.");
+    let revision = commit(&other, "qualified");
+    declare(&w, "[sources.other]\nrepo = \"owner/other\"\n");
+    let request = AddRequest {
+        source: Some(format!("{}@absent-revision", super::REPO)),
+        skills: vec!["other::tool".into()],
+        ..AddRequest::default()
+    };
+
+    assert!(matches!(
+        ops::add(&w.env, &w.scope, &request),
+        Err(CoreError::SourcePending { name }) if name == "other"
+    ));
+    let fetch = ops::manifest_for_request(&w.env, &w.scope, &request).unwrap();
+    remote::sync_sources(&w.env, &fetch).unwrap();
+    let report = ops::add(&w.env, &w.scope, &request).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "tool").contains("Qualified catalog."));
+    assert_eq!(locked_commit(&w, "tool"), revision);
+}
+
 /// A successful add preserves unrelated records and files, including a
 /// missing installed file that a scope reconciliation would restore.
 #[test]

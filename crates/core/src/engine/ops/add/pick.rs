@@ -6,19 +6,31 @@
 use crate::error::{CoreError, Result};
 use crate::manifest::{DEFAULT_SOURCE_NAME, Manifest, SourceDecl};
 
+pub(super) struct Selection {
+    pub name: String,
+    /// A positional selector for a subscription whose declaration stays as written.
+    pub override_rev: Option<String>,
+}
+
+impl Selection {
+    fn declared(name: String) -> Self {
+        Self {
+            name,
+            override_rev: None,
+        }
+    }
+}
+
 /// Map a CLI source argument to a declared source name, declaring it when
 /// undeclared. References parse through [`crate::source_ref::parse_typed`], and a
 /// repository already subscribed under any spelling reuses that
 /// subscription.
-pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) -> Result<String> {
+pub(super) fn ensure_source(manifest: &mut Manifest, requested: &str) -> Result<Selection> {
     for name in manifest.sources.keys() {
         crate::manifest::check_source_alias(name)?;
     }
-    let Some(requested) = requested else {
-        return default_source(manifest);
-    };
     if crate::manifest::is_reserved_source(requested) || manifest.sources.contains_key(requested) {
-        return Ok(requested.to_owned());
+        return Ok(Selection::declared(requested.to_owned()));
     }
     let decl = match crate::source_ref::parse_typed(requested)? {
         crate::source_ref::SourceRef::Remote { repo, rev } => {
@@ -29,7 +41,10 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
                     .as_deref()
                     .is_some_and(|existing| crate::source_ref::repo_identity(existing) == identity)
                 {
-                    return Ok(name.clone());
+                    return Ok(Selection {
+                        name: name.clone(),
+                        override_rev: rev,
+                    });
                 }
             }
             SourceDecl {
@@ -42,7 +57,7 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
         crate::source_ref::SourceRef::Path { path } => {
             for (name, existing) in &manifest.sources {
                 if existing.path.as_deref() == Some(path.as_str()) {
-                    return Ok(name.clone());
+                    return Ok(Selection::declared(name.clone()));
                 }
             }
             SourceDecl {
@@ -76,7 +91,7 @@ pub(super) fn ensure_source(manifest: &mut Manifest, requested: Option<&str>) ->
         .unwrap_or_default();
     let name = crate::manifest::catalog_alias(manifest, &reference);
     manifest.sources.insert(name.clone(), decl);
-    Ok(name)
+    Ok(Selection::declared(name))
 }
 
 /// The default marketplace is found by repository, never by name: the

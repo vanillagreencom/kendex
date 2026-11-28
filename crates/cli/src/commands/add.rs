@@ -208,6 +208,8 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
     };
     let report = match planned {
         Err(kendex_core::error::CoreError::SourcePending { name }) => {
+            // The fetch uses the positional revision for packages that
+            // placement assigns to that subscription.
             let manifest = ops::manifest_for_request(env, &scope, &request)?;
             let synced = {
                 let _reading = ui::spinner("reading marketplaces");
