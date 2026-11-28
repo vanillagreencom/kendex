@@ -473,6 +473,7 @@ pub fn walk(
     let ground = Ground {
         host: &mut host,
         pick: &mut pick,
+        controller_launch: Some(&settings.launch),
     };
     let accounts = Judged {
         read: Ok(settings.accounts_now()?.accounts),

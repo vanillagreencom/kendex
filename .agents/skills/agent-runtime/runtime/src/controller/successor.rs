@@ -2,8 +2,9 @@
 //! into the pending a start or transfer request carries. A first
 //! controller walks with no source session, so only an entry whose harness
 //! writes a full bypass is taken, and runs under the settings' posture; a
-//! succession walks with the recorded controller's posture as the source
-//! and keeps it on a same-harness successor. A succession a mark sent walks
+//! succession keeps the controller's recorded posture on the same harness
+//! and uses the target's authorized launch posture when changing harness.
+//! A succession a mark sent walks
 //! as that mark decides (`walk_request`). Nothing is written: the request
 //! that carries the answer records it. The walk judges on its opener's
 //! ground: the host each entry names and the pick over the accounts there.
@@ -51,12 +52,9 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     Error::refused(key, fields)
 }
 
-/// The walk's source for a succession: a recorded bypass is a posture any
-/// harness with a bypass word takes, so its row answers; a native posture
-/// carries only its own words, and an unrecorded one none, so no entry of
-/// another harness is launched under a posture nobody recorded. Every
-/// overseer walk with a source session takes it, the watch's walled one
-/// included.
+/// The controller's own harness and recorded words. The harness ties its
+/// numeric preference entries to their CLI and its native arguments to
+/// same-harness successors.
 pub fn source(caller: &Caller, harness: Harness) -> Source {
     Source {
         harness,
@@ -338,18 +336,11 @@ fn opened(
         WalkAnswer::Lane(chosen) => chosen,
         WalkAnswer::None | WalkAnswer::Held { .. } => return Ok(None),
     };
-    let mut pending = match recorded {
-        None => {
-            let mut pending = Caller::default().successor_of(chosen);
-            pending.permission = Some(choosing.launch.permission.get()?);
-            pending
-        }
-        Some(recorded) => {
-            let mut pending = recorded.caller.successor_of(chosen);
-            posture(&mut pending, choosing.launch)?;
-            pending
-        }
-    };
+    let mut pending = recorded.map_or_else(
+        || Caller::default().successor_of(chosen),
+        |recorded| recorded.caller.successor_of(chosen),
+    );
+    posture(&mut pending, choosing.launch)?;
     pending.cwd.get_or_insert_with(|| cwd.display().to_string());
     pending.handoff = handoff
         .map(str::to_owned)

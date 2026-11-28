@@ -166,8 +166,8 @@ impl Caller {
 
     /// The pending the walk's choice opens: its harness, account, model,
     /// effort and class, in this session's directory; a same-harness entry
-    /// keeps this session's posture and words, another harness runs the
-    /// full bypass the walk admitted with none of them. The launch prepares
+    /// keeps this session's posture and words. Another harness runs under
+    /// the posture the walk selected for it. The launch prepares
     /// the home its harness and account run under; the one home named is
     /// this session's own root, kept by a same-harness successor whose
     /// account is not its home (a Pi seat). An account the walk admitted
@@ -192,7 +192,7 @@ impl Caller {
             permission: if same {
                 self.permission
             } else {
-                Some(Permission::Bypass)
+                chosen.cross_permission
             },
             extra_args: if same {
                 self.extra_args.clone()

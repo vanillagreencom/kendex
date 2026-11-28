@@ -21,6 +21,7 @@ use crate::group::{self, Seats};
 use crate::harness::Harness;
 use crate::host::{self, Place};
 use crate::process;
+use crate::settings::LaunchSettings;
 
 /// Where a project holds orch's entry, the one program that counts its lanes.
 pub const ORCH_ENTRY: &str = ".agents/skills/orch/scripts/orch-runtime";
@@ -285,6 +286,7 @@ pub fn walk(
     project: &Path,
     record: Option<&Path>,
     req: &WalkRequest,
+    controller_launch: Option<&LaunchSettings>,
     now: u64,
 ) -> Result<Walked> {
     let ground = Beside::read(settings, project, record)?;
@@ -304,6 +306,7 @@ pub fn walk(
         Ground {
             host: &mut host,
             pick: &mut pick,
+            controller_launch,
         },
         req,
         now,

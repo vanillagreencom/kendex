@@ -12044,6 +12044,216 @@ fn a_start_naming_no_session_opens_in_the_session_the_fleets_lanes_open_in() {
 // succession the watch asks.
 // ---------------------------------------------------------------------------
 
+#[test]
+fn succession_uses_the_authorized_target_posture_in_preference_order() {
+    use agent_runtime::accounts::walk::{self, Hosted, WalkRequest};
+    use agent_runtime::accounts::{AccountRow, Judged, PickAnswer, PickRequest};
+    use agent_runtime::controller::Pending;
+    use agent_runtime::controller::successor::{self, Choosing, Ground, Stopped};
+    use agent_runtime::harness::Harness;
+    use agent_runtime::launch::Permission;
+    use agent_runtime::record::FLEET_FILE_NAME;
+    use agent_runtime::settings::{CONTROLLER_PREFERENCE_KEY, LAUNCH_PERMISSION_KEY, Roots};
+    use agent_runtime::stop::{Episode, Kind, PROVIDER_PATIENCE};
+    use orch_runtime::{ops::accounts, settings};
+
+    const NAME: &str = "succession_uses_the_authorized_target_posture_in_preference_order";
+    const NOW: u64 = 1_800_000_000;
+    if !isolated_row(NAME) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FLEET_FILE_NAME);
+    let roots = Roots {
+        project: dir.path().to_owned(),
+        common: dir.path().to_owned(),
+    };
+    for (from, to, model, native_words) in [
+        (
+            Harness::Claude,
+            Harness::Codex,
+            "opus",
+            ["--permission-mode", "dontAsk"],
+        ),
+        (
+            Harness::Codex,
+            Harness::Claude,
+            "gpt-6.2-sol",
+            ["--ask-for-approval", "never"],
+        ),
+    ] {
+        let preference = format!("{}::high,{}::high", to.name(), from.name());
+        for (recorded_posture, policy, crosses) in [
+            (Permission::Native, Some(Permission::Bypass), true),
+            (Permission::Native, Some(Permission::Native), false),
+            (Permission::Bypass, Some(Permission::Native), false),
+            (Permission::Native, None, false),
+            (Permission::Bypass, None, true),
+        ] {
+            let words = if recorded_posture == Permission::Native {
+                native_words.as_slice()
+            } else {
+                &[]
+            };
+            std::fs::write(
+                &path,
+                json!({
+                    "controller": {
+                        "server": 123,
+                        "pane": "%7",
+                        "harness": from,
+                        "model": model,
+                        "account": "/a/predecessor",
+                        "permission": recorded_posture,
+                        "extra_args": words,
+                    },
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let mut environment =
+                vec![(CONTROLLER_PREFERENCE_KEY.into(), preference.clone().into())];
+            if let Some(permission) = policy {
+                let word = match permission {
+                    Permission::Bypass => "bypass",
+                    Permission::Native => "native",
+                };
+                environment.push((LAUNCH_PERMISSION_KEY.into(), word.into()));
+            }
+            let settings = settings::load(
+                &roots,
+                &environment,
+                &settings::Flags {
+                    state_dir: None,
+                    private_env: false,
+                },
+            )
+            .unwrap();
+            let account_settings = settings.accounts.get().unwrap();
+            let env = accounts::env(&settings, &settings.accounts);
+            let choosing = Choosing {
+                accounts: env,
+                launch: &settings.launch,
+                controller: &settings.controller,
+                wall_minutes: &settings.marks.wall_minutes,
+            };
+            for kind in [None, Some(Kind::Usage), Some(Kind::Provider)] {
+                let mut run_walk = |request: &WalkRequest| {
+                    let mut pick = |req: &PickRequest, _: Option<&str>| {
+                        match kind {
+                            Some(Kind::Usage) => assert_eq!(req.exclude, ["/a/predecessor"]),
+                            Some(Kind::Provider) => assert_eq!(req.harness, to),
+                            _ => {}
+                        }
+                        let account = format!("/a/{}-room", req.harness.name());
+                        let row = AccountRow::parse(
+                            &json!({
+                                "alias": "room", "harness": req.harness, "config_dir": account,
+                                "status": "ok", "verdict": "room", "headroom_pct": 60,
+                            }),
+                            &account_settings,
+                        )
+                        .unwrap();
+                        PickAnswer::Lane(Judged {
+                            row,
+                            verdict: "room".to_owned(),
+                            wall: Some(40.0),
+                            binding: None,
+                            claims: 0,
+                            projection: None,
+                            seat: false,
+                            credits: false,
+                            grant: None,
+                            score: None,
+                            qualifying: None,
+                            usage_stale: false,
+                        })
+                    };
+                    walk::walk(
+                        &env,
+                        walk::Ground {
+                            host: &mut |_, _, _| {
+                                Ok(Hosted::Judge {
+                                    host: None,
+                                    launch: None,
+                                })
+                            },
+                            pick: &mut pick,
+                            controller_launch: policy.map(|_| &settings.launch),
+                        },
+                        request,
+                        NOW,
+                    )
+                };
+                let ground = Ground {
+                    walk: &mut run_walk,
+                    pick: &mut |_, _| panic!("the walk either moves or resumes"),
+                };
+                let result = match kind {
+                    None => successor::successor(
+                        &choosing,
+                        &path,
+                        Some("%7"),
+                        None,
+                        dir.path(),
+                        None,
+                        ground,
+                        NOW,
+                    ),
+                    Some(kind) => successor::stopped(
+                        &choosing,
+                        &path,
+                        "%7",
+                        Stopped {
+                            kind,
+                            recorded: Some(Episode {
+                                since: NOW - PROVIDER_PATIENCE.as_secs() - 1,
+                                last: NOW - 1,
+                            }),
+                        },
+                        dir.path(),
+                        None,
+                        ground,
+                        NOW,
+                    ),
+                }
+                .unwrap();
+                let pending: Option<Pending> =
+                    serde_json::from_value(result["successor"].clone()).unwrap();
+                let case =
+                    format!("{from:?} to {to:?}, {recorded_posture:?}, {policy:?}, {kind:?}");
+                if crosses {
+                    let pending = pending.unwrap();
+                    assert_eq!(
+                        pending.harness.as_deref(),
+                        Some(to.name()),
+                        "{case}: {result}"
+                    );
+                    assert_eq!(pending.permission, Some(Permission::Bypass), "{case}");
+                    assert!(pending.extra_args.is_empty(), "{case}");
+                } else {
+                    let skip = &result["walk"]["skipped"][0];
+                    assert_eq!(skip["reason"], "entry-permission-untransferable", "{case}");
+                    assert_eq!(skip["harness"], json!(to), "{case}");
+                    if kind == Some(Kind::Provider) {
+                        assert!(pending.is_none(), "{case}: {result}");
+                        assert_eq!(result["action"]["action"], "resume", "{case}");
+                    } else {
+                        let pending = pending.unwrap();
+                        assert_eq!(
+                            pending.harness.as_deref(),
+                            Some(from.name()),
+                            "{case}: {result}"
+                        );
+                        assert_eq!(pending.permission, Some(recorded_posture), "{case}");
+                        assert_eq!(pending.extra_args, words, "{case}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The pending the watch's walled succession opens for the recorded
 /// controller when its walk chose `entry` on `account`: the watch's own
 /// `Caller::successor_of` over the record as the fleet state holds it.
@@ -12075,6 +12285,8 @@ fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
         record: None,
         warning: None,
         launch: None,
+        cross_permission: (record.harness.map(|h| h.name()) != Some(harness))
+            .then_some(agent_runtime::launch::Permission::Bypass),
         kept: false,
         kept_unmeasured: false,
     };
