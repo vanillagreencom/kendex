@@ -109,7 +109,7 @@ Only `SLACK_OWNERS` steer. Anyone in the channel can read what the overseer post
 
 An :eyes: reaction means delivered; :white_check_mark: means read. These marks post no text. Refused marks retry on the next poll. Owner text reaches the overseer as plain text: Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 
-A tracker-posted question shows an @mention, its first line, item link and deadline if present; its detail stays on the item. Other questions include the complete question and @mention, with their choices, recommendation, deadline and draft where supplied.
+Slack asks include an @mention and the full question, with any choices, recommendation and draft, when the message fits Slack's limit. Each ask states what happens at its deadline if one is set. If the question also posts to a work item, Slack links to that item and opens a short thread when the full question exceeds the limit.
 
 The overseer records its ruling and closes the question. A reserved question waits for your decision; no option stands by default. [Owner asks](../orch/references/communication-modes.md#owner-asks) defines question closure and deadline handling.
 

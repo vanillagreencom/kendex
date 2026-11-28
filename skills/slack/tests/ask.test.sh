@@ -63,18 +63,39 @@ sk_assert_red "$POSTED" "markdown_text|$MARKDOWN_WANT" "control: a fence its bac
 
 sk_bin_reset
 
-# The tracker carries the detail. Slack posts one line: the owner mention and
-# question frame, the first question line, the issue identifier, which
-# outbound markup expands into its link, and the deadline.
-tracker_ask() { # NAME FAILURE
-  local root scripts phase="${2:-}" at deadline ask_rc=0 notice
-  root="$(sk_tracker_root "$1" Team '')"
-  sk_bind "$root"
-  scripts="$root/.agents/skills/mailbox/scripts"
+# Read the deadline lane-mail assigned so the assertion checks Slack's date
+# token and fallback without depending on the time the test takes to post.
+ask_deadline() { # ROOT ASK_ID
+  local at deadline
+  at="$(jq -er --arg id "$2" 'select(.kind == "ask" and .id == $id) | .deadline' \
+    "$(sk_box "$1")/to-overseer.jsonl")" || return 1
+  deadline="$(jq -rn --arg at "$at" '$at | fromdateiso8601')" || return 1
+  printf 'It stands at <!date^%s^{date_short_pretty} at {time}|%s> unless you reply in this thread.' "$deadline" "$at"
+}
+
+create_tracker_ask() { # NAME FAILURE QUESTION [referenced] [ASK_OPTIONS...]
+  local name="$1" phase="$2" question="$3" scripts ask_rc=0 notice
+  shift 3
+  ROOT="$(sk_tracker_root "$name" Team '')" || return 1
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")" || return 1
+  TRACKER_REF_LINK=""
+  if [ "${1:-}" = referenced ]; then
+    shift
+    local ref_ts ref
+    sk_poll "$ROOT"
+    ref_ts="$(sk_inject "$CH" U001 'Earlier work-item request.')" || { bad "$name receives its referenced request"; return 1; }
+    sk_poll "$ROOT"
+    ref="$(jq -er 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")" ||
+      { bad "$name records its referenced request"; return 1; }
+    TRACKER_REF_LINK="https://workspace.slack.com/archives/$CH/p${ref_ts/./}"
+    set -- "$@" --ref "$ref"
+  fi
+  scripts="$ROOT/.agents/skills/mailbox/scripts"
   rm -- "${scripts:?}"
   cp -R "${SK_LANE_MAIL%/*}" "$scripts"
-  mkdir -p "$root/.agents/skills/linear/scripts"
-  cat >"$root/.agents/skills/linear/scripts/linear.sh" <<'STUB'
+  mkdir -p "$ROOT/.agents/skills/linear/scripts"
+  cat >"$ROOT/.agents/skills/linear/scripts/linear.sh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${TRACKER_FAILURE:-}:$1:$2:${4:-}" in
@@ -95,57 +116,58 @@ case "$1:$2" in
   *) exit 1 ;;
 esac
 STUB
-  chmod +x "$root/.agents/skills/linear/scripts/linear.sh"
-  ASK="$(cd "$root" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
+  chmod +x "$ROOT/.agents/skills/linear/scripts/linear.sh"
+  ASK="$(cd "$ROOT" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
     TRACKER_FAILURE="$phase" "$scripts/lane-mail" ask --item overseer --to owner \
-    --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$1" 'Approve action?
-Details on the item.')" --options approve,hold --recommend approve --effect none --wait 60 2>"$root/tracker.err")" || ask_rc=$?
-  assert_eq "$ask_rc" 0 "$1 creates the owner ask"
+    --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$name" "$question")" \
+    --options approve,hold --wait 60 "$@" 2>"$ROOT/tracker.err")" || ask_rc=$?
+  assert_eq "$ask_rc" 0 "$name creates the owner ask"
   case "$ASK" in
-    id=?*) ok "$1 returns its owner ask id" ;;
-    *) bad "$1 returns its owner ask id" "$ASK"; TRACKER_POST=""; FALLBACK_FACTS=false; return ;;
+    id=?*) ok "$name returns its owner ask id" ;;
+    *) bad "$name returns its owner ask id" "$ASK"; return 1 ;;
   esac
   ASK="${ASK#id=}"
   if [ -n "$phase" ]; then
-    notice="$(sed -n '1p' "$root/tracker.err")"
+    notice="$(sed -n '1p' "$ROOT/tracker.err")"
     assert_eq "$(field "$notice" issue)|$(field "$notice" cause)" "KEN-1|$phase" \
-      "$1 reaches its selected tracker failure"
+      "$name reaches its selected tracker failure"
   fi
   local posted=false
   [ -n "$phase" ] || posted=true
   assert_eq "$(jq -s --arg id "$ASK" 'any(.[]; .kind == "tracker-posted" and .re == $id)' \
-    "$(sk_box "$root")/to-overseer.jsonl")" "$posted" "$1 records the intended tracker posting result"
-  at="$(jq -r 'select(.kind == "ask") | .deadline' "$(sk_box "$root")/to-overseer.jsonl")"
-  deadline="$(jq -rn --arg at "$at" '$at | fromdateiso8601')"
-  sk_poll "$root"
-  TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
-  # The one line still names the owner, frames the decision and gives its deadline.
-  TRACKER_LINE="<@U001> <@U002> Question from overseer: Approve action? $LINK It stands at <!date^$deadline^{date_short_pretty} at {time}|$at> unless you reply in this thread."
-  # Slack's API post must carry the supplied question, choices and the date
-  # token for the ask's deadline, rather than a guessed wall-clock value.
-  FALLBACK_FACTS="$(jq -cn --arg text "$TRACKER_POST" --arg deadline "$deadline" \
-    '$text | contains("Details on the item.") and contains("approve, hold") and contains($deadline)')"
+    "$(sk_box "$ROOT")/to-overseer.jsonl")" "$posted" "$name records the intended tracker posting result"
 }
-tracker_ask tracker-line
-assert_eq "$TRACKER_POST" "$TRACKER_LINE" \
-  'tracker ask posts the owner mention, the question frame, its first line, issue link and deadline'
-sk_mutant tracker-line relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if False:'
-tracker_ask tracker-line-control
-sk_assert_red "$TRACKER_POST" "$TRACKER_LINE" \
-  'control: posting the whole ask fails the tracker line assertion'
-sk_bin_reset
+
+tracker_ask() { # NAME FAILURE
+  local phase="${2:-}" deadline actual expected
+  local question='Approve action?
+The action updates the release checklist.'
+  create_tracker_ask "$1" "$phase" "$question" --recommend approve --effect none || return
+  deadline="$(ask_deadline "$ROOT" "$ASK")" || { bad "$1 records a deadline"; return; }
+  sk_poll "$ROOT"
+  actual="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Approve action?\")) | .text")"
+  expected="<@U001> <@U002> Question from overseer:
+
+$question"
+  if [ -z "$phase" ]; then
+    expected="$expected
+
+$LINK"
+  fi
+  assert_eq "$actual" "$expected
+
+Options: approve, hold. Recommended: approve. $deadline" \
+    "$1 posts the whole question, options, recommendation and deadline"
+}
+tracker_ask tracker-posted
 for failure in assign labels-read label comment; do
   tracker_ask "tracker-fallback-$failure" "$failure"
-  assert_eq "$FALLBACK_FACTS" true "$failure keeps the question, options and deadline in the Slack API post"
 done
-sk_mutant tracker-confirmation relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if envelope.get("issue"):'
-tracker_ask tracker-fallback-control comment
-sk_assert_red "$FALLBACK_FACTS" true \
-  'control: issue presence fails the full chat fallback assertion'
-sk_bin_reset
 
 echo "=== slack referenced ask ==="
 # A linked ask stays separate from the directive, so its reply answers the ask.
+REFERENCED_QUESTION='Approve referenced action?
+The action updates the release checklist.'
 referenced_ask() {
   ROOT="$(sk_tracker_root "$1" Team '')"
   sk_bind "$ROOT"
@@ -154,7 +176,8 @@ referenced_ask() {
   REF_TS="$(sk_inject "$CH" U001 'Earlier conversation.')"
   sk_poll "$ROOT"
   REF="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
-  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold --effect none)"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" "$REFERENCED_QUESTION")" \
+    --options approve,hold --recommend hold --effect none --wait 60)"
   ASK="${ASK#id=}"
   if [ -n "${2:-}" ]; then
     if [ -n "${3:-}" ]; then
@@ -172,7 +195,15 @@ referenced_ask() {
 }
 referenced_ask referenced
 assert_eq "$RC" 0 'the fake Slack server supports the permalink request'
-assert_has "$POSTED" "$REF_LINK" 'the ask carries the referenced Slack conversation permalink'
+DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the itemless ask records a deadline'
+assert_eq "$POSTED" "<@U001> <@U002> Question from overseer:
+
+$REFERENCED_QUESTION
+
+Options: approve, hold. Recommended: hold. $DEADLINE
+
+[Referenced conversation]($REF_LINK)" \
+  'the itemless ask posts the whole question, options, recommendation, deadline and referenced conversation link'
 assert_eq "$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .thread_ts // \"top-level\"][0]")" \
   top-level 'the ask starts its own thread'
 sk_inject "$CH" U001 approve "$ASK_TS" >/dev/null
@@ -211,7 +242,7 @@ read-auth|{"method":"chat.getPermalink","error":"invalid_auth"}||2|0|retry|1
 read-first|{"method":"chat.getPermalink","drop":true}|{"method":"chat.getPermalink","error":"message_not_found"}|1|1|retry|1
 ROWS
 
-sk_mutant ref-link relay.py '            pieces \+= \[f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"\]' '            pieces += []'
+sk_mutant ref-link relay.py '            conversation_link = f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"' '            conversation_link = ""'
 referenced_ask referenced-control
 sk_assert_red "$(jq -cn --arg text "$POSTED" --arg link "$REF_LINK" '$text | contains($link)')" true \
   'control: dropping the link fails the referenced conversation assertion'
@@ -267,6 +298,85 @@ age_read_mailbox() {
   done
   printf '50\n' >"$(sk_box "$ROOT")/to-lane.cursor"
 }
+
+echo "=== slack oversized work-item ask ==="
+# Fits before linking. The production renderer expands each repeated issue
+# reference, which pushes the full Markdown body past the Slack API cap.
+LONG_TRACKER_ASK="$(awk 'BEGIN {print "Approve action?"; for (n=100; n<215; n++) print "- KEN-" n ": Review release notes, acceptance checks and remaining work."}')"
+if create_tracker_ask tracker-overflow '' "$LONG_TRACKER_ASK" referenced --recommend approve --effect none; then
+  DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the oversized item ask records a deadline'
+  sk_poll "$ROOT"
+  OVERFLOW_POST="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\"))")"
+  assert_eq "$(jq -r '.text' <<<"$OVERFLOW_POST")" \
+    "<@U001> <@U002> Question from overseer: Approve action? $LINK $DEADLINE
+
+[Referenced conversation]($TRACKER_REF_LINK)" \
+    'the short root keeps the first line, item link, deadline and referenced conversation'
+  OVERFLOW_TS="$(jq -r '.ts' <<<"$OVERFLOW_POST")"
+  if [ -n "$OVERFLOW_TS" ]; then
+    sk_inject "$CH" U001 hold "$OVERFLOW_TS" >/dev/null
+    sk_poll "$ROOT"
+    assert_eq "$(answers_to_ask)" 1 'a reply in the short Slack thread answers the original item ask'
+  fi
+fi
+
+if create_tracker_ask tracker-overflow-replacement '' "$LONG_TRACKER_ASK" --reserved; then
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\")) | .ts")"
+  if [ -n "$ASK_TS" ]; then
+    sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+    sk_poll "$ROOT"
+    past_deadline
+    assert_eq "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Overdue, no default\")) | .text")" \
+      "<@U001> <@U002> Overdue, no default. Question from overseer: Approve action? $LINK No default: this decision waits for your reply in this thread, due <!date^946684800^{date_short_pretty} at {time}|2000-01-01T00:00:00Z>." \
+      'a replacement root preserves the short question, item link and reserved deadline'
+    reply_to_reminder
+    assert_eq "$(answers_to_ask)" 1 'a reply in the replacement thread answers the original item ask'
+  else
+    bad 'the oversized reserved ask opens its first thread'
+  fi
+fi
+
+if create_tracker_ask tracker-overflow-reminder '' "$LONG_TRACKER_ASK" --reserved; then
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\")) | .ts")"
+  if [ -n "$ASK_TS" ]; then
+    past_deadline
+    assert_eq "$(reminders)" 1 'an oversized reserved ask gets one reminder in its original thread'
+    assert_eq "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK_TS\" and (.text | contains(\"Overdue, no default\"))) | .text")" \
+      "<@U001> <@U002> Overdue, no default: Approve action? $LINK" \
+      'the short in-thread reminder keeps the first line and item link'
+  else
+    bad 'the oversized reserved ask opens a thread for the reminder'
+  fi
+fi
+
+# The short form would fit with its first line if it omitted the permalink.
+LONG_TRACKER_LINE="Approve action? $(printf '%11700s' '' | tr ' ' x)"
+if create_tracker_ask tracker-overflow-line '' "$LONG_TRACKER_LINE" referenced --recommend approve --effect none; then
+  DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the long-first-line item ask records a deadline'
+  sk_poll "$ROOT"
+  assert_eq "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\")) | .text")" \
+    "<@U001> <@U002> Question from overseer: $LINK $DEADLINE
+
+[Referenced conversation]($TRACKER_REF_LINK)" \
+    'the permalink takes precedence over the first line when the short root would exceed the cap'
+fi
+
+if create_tracker_ask tracker-overflow-unconfirmed comment "$LONG_TRACKER_ASK" --recommend approve --effect none; then
+  sk_poll "$ROOT"
+  assert_eq "$(asks "$CH" 'Question from overseer:')|$(jq -r --arg id "$ASK" \
+    'select(.t == "out" and .id == $id and .state == "refused") | .reason' "$(sk_journal "$ROOT")")" \
+    '0|text-too-long' 'tracker comment failure leaves the oversized ask refused without a short post'
+fi
+
+SECRET_ASK="$(printf 'Approve action?\n%12000s\n%s%s' '' 'xoxb-' '0123456789abcdefghij')"
+if create_tracker_ask tracker-overflow-secret '' "$SECRET_ASK" --recommend approve --effect none; then
+  sk_poll "$ROOT"
+  assert_eq "$(asks "$CH" 'Question from overseer:')|$(jq -r --arg id "$ASK" \
+    'select(.t == "out" and .id == $id and .state == "refused") | .reason' "$(sk_journal "$ROOT")")" \
+    '0|secret-value' 'a value matching the secret pattern in the discarded tail refuses the whole ask'
+fi
 
 reserved_ask reserved 30
 assert_has "$POSTED" "No default: " "a reserved ask posts naming no default"
@@ -390,11 +500,13 @@ sk_mutant reserved-late relay.py 'if envelope\.get\("reserved"\) is True and at_
 reserved_ask control-late 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: without the first-post rule a late reserved ask is posted twice"
 
-sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=retained\)' 'ts = "1.000001"'
+sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=retained,\s+ask_post=\(envelope, header\), conversation_link=conversation_link\)' \
+  'ts = "1.000001"\n        self.bind_presentation(envelope, {"ts": ts}, "ask", retained)'
 reserved_ask control-unposted 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: an ask journaled open but never sent fails the posted assertion"
 
-sk_mutant reserved-rebind relay.py 'self\.bind_presentation\(envelope, \{"ts": landed, "text": excerpt\}, "ask", retained\)' 'None'
+sk_mutant reserved-rebind relay.py 'if ask_post is not None and root is not None and thread_ts is None:' \
+  'if ask_post is not None and root is not None and thread_ts is None and kind != "overdue":'
 reserved_ask control-rebind 30
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
 sk_poll "$ROOT"
