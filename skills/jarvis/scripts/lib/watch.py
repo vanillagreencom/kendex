@@ -498,6 +498,11 @@ def wall_time(at):
     return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def restart_identity(controller):
+    """The restart's controller as both marked status and an auth wall name it."""
+    return {key: controller.get(key) for key in ("session_id", "pane", "server_start")} if controller else None
+
+
 def legacy_wall_notice(memory):
     cause = {"auth": "is signed out on %s", "usage": "has no room left on %s"}[memory["kind"]]
     account = memory["account"] or "its default account"
@@ -1252,6 +1257,8 @@ class Watch:
             if rows["reading"] == "unreadable":
                 raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
             walled = rows["reading"] == "live" and rows["verdict"] == "walled"
+            if walled and rows["kind"] == "auth":
+                rows["controller"] = bound["controller"]
             # `watch wall --harness` answers `live` with no stop only for a
             # record whose last turn ended on no failure, or one still open
             # after it: every failed turn names its stop, or reads `wedged`
@@ -1329,14 +1336,27 @@ class Watch:
         if memory is not None and memory["noticed"] and reading is not None and kind is None:
             del self.state["wall"]
             memory = None
-        if kind is None or memory is not None and ((session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
-                                                   or not memory["noticed"]):
+        same = memory is not None and (session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
+        if same and kind == memory["kind"] == "auth" and memory.get("controller"):
+            # The same pane number and native session can be reused after
+            # a manual resume. Keep their server and launch facts attached.
+            keys = ("server_start", "generation", "harness_pid", "harness_start", "account")
+            current = rows.get("controller") or {}
+            same = all(current.get(key) == memory["controller"].get(key) for key in keys)
+        if kind is None or memory is not None and (same or not memory["noticed"]):
             self.save()
             return None
         memory = {"session": session, "pane": pane, "account": account, "kind": kind, "at": now,
                   "outcome": None, "noticed": False}
         if kind == "usage":
             memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"))
+        else:
+            memory["controller"] = rows.get("controller")
+            restart = self.state.get("exited")
+            if restart is not None and restart.get("controller") is None:
+                # A status read in parallel with succession may first see
+                # the replacement already ended.
+                restart["controller"] = restart_identity(memory["controller"])
         self.state["wall"] = memory
         self.save()
         if kind == "usage":
@@ -1364,12 +1384,16 @@ class Watch:
                 f"(read at {wall_time(now)}). The context window is full.")
         self.owner_notice(text, "wedged-notice", now, defer=True)
 
-    def session(self, operation, verb, *args):
+    def session(self, operation, verb, *args, auth_wall=None):
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
         try:
+            env = os.environ.copy()
+            env.pop("KENDEX_JARVIS_AUTH_CONTROLLER", None)
+            if auth_wall is not None:
+                env["KENDEX_JARVIS_AUTH_CONTROLLER"] = json.dumps(auth_wall)
             # The session command bounds each wait it makes, the hand-over's too.
             result = run([self.bash, LIB.parent / "jarvis-session", verb, "--home", self.home, *args],
-                         self.home, operation=operation, timeout=None)
+                         self.home, operation=operation, timeout=None, env=env)
             lines = result.stdout.splitlines()
             if not lines:
                 raise child_failure(operation, result)
@@ -1380,11 +1404,11 @@ class Watch:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure(operation, error)
 
-    def succeed(self, usage):
+    def succeed(self, usage, auth_wall=None):
         """jarvis-session succeed away from the walled account: its answer, or a Failure.
 
         Either wall kind is the account's own, so the successor leaves it."""
-        return self.session("succeed", "succeed", "--account-walled", *usage)
+        return self.session("succeed", "succeed", "--account-walled", *usage, auth_wall=auth_wall)
 
     def provider_stop(self, reading):
         """The `succeed --provider-stop` arguments READING asks for, or None.
@@ -1473,8 +1497,8 @@ class Watch:
         a controller that exits on every resume is not restarted in a loop.
         A failed one ends once a controller runs again.
 
-        The episode is the restarted controller's: the first running reading
-        after the restart ran binds its identity. An asked Stop, or a reading
+        The episode is the restarted controller's. A running status or a
+        bound auth wall supplies its identity. An asked Stop, or a reading
         of another controller, ends the episode once its notice is sent, so
         an exit of a controller the owner started is its own."""
         if isinstance(answer, Failure):
@@ -1487,9 +1511,15 @@ class Watch:
                                                answer.get("detail") or answer.get("reason")).record)
             return None
         self.state.pop("exited_failure", None)
+        reading, controller = (answer.get("state"), answer.get("reason")), answer.get("controller")
+        identity = restart_identity(controller)
+        wall = self.state.get("wall")
+        auth_exit = (reading == ("stopped", "ended") and wall is not None and wall["kind"] == "auth"
+                     and controller and controller.get("auth") is not None
+                     and controller["auth"] == wall.get("controller"))
         memory = self.state.get("exited")
-        reading, identity = (answer.get("state"), answer.get("reason")), answer.get("controller")
-        if memory is not None and memory.get("ran") and memory.get("controller") is None and reading[0] == "running":
+        if memory is not None and memory.get("controller") is None and (
+                auth_exit or memory.get("ran") and reading[0] == "running"):
             memory["controller"] = identity
             self.save()
         if memory is not None and (reading == ("stopped", "stopped")
@@ -1510,7 +1540,7 @@ class Watch:
             # Every recorded controller names its harness: this read names none.
             return None
         if memory is None:
-            if reading not in DOWN_READINGS:
+            if auth_exit or reading not in DOWN_READINGS:
                 return None
             # A stored Start failure is one more way down, recovered by the same route.
             stored = None if reading == ("stopped", "ended") else (reading[1] + " (" + (answer.get("detail") or "")[:200] + ")")
@@ -1522,6 +1552,11 @@ class Watch:
         if memory.get("ran") and reading in DOWN_READINGS:
             # The owner's one notice names this outcome, never a success
             # still owed from before it.
+            if auth_exit and memory["noticed"] and not any(
+                    entry["id"] == memory.get("notice_id") for entry in self.state.get("held_notices", [])):
+                del self.state["exited"]
+                self.save()
+                return None
             memory.update(ran=False, noticed=False, outcome=(
                 "It started again on " + (answer.get("account") or "its default account")
                 + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
@@ -1535,6 +1570,8 @@ class Watch:
             return None
         if memory["outcome"] is not None:
             self.tell_exited(memory, now)
+            return None
+        if auth_exit:
             return None
         return self.accept_restart(answer, now)
 
@@ -1550,6 +1587,8 @@ class Watch:
             return None
         if state == "running":
             memory["ran"], memory["ran_at"] = True, now
+            if memory.get("controller") is None:
+                memory["controller"] = restart_identity(answer.get("controller"))
             memory["outcome"] = ("It started again on " + (answer.get("account") or "its default account")
                                  + " (" + str(reason) + ").")
         else:
@@ -2093,6 +2132,7 @@ class Watch:
                 if kind is not None:
                     usage = []
                     requested = False
+                    auth_wall = None
                     if kind == "usage":
                         memory = self.state["wall"]
                         usage = ["--usage-wall", memory["session"], memory["pane"]]
@@ -2105,7 +2145,9 @@ class Watch:
                                 self.save()
                                 requested = True
                                 usage.append("--reset-passed")
-                    self.wall_pending = ("succession", passes.submit(self.succeed, usage), requested)
+                    else:
+                        auth_wall = self.state["wall"].get("controller") or {}
+                    self.wall_pending = ("succession", passes.submit(self.succeed, usage, auth_wall), requested)
                 elif provider is not None:
                     self.wall_pending = ("provider", passes.submit(self.recover_provider, provider), provider)
         exited = self.exited_pending
