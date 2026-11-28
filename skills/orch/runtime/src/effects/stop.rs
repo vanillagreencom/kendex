@@ -78,6 +78,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         cycle: members.cycle.as_ref().map(|row| &row.cycle),
         overseer: overseer.as_ref(),
         prior: intent.observation.as_ref(),
+        previously_signalled: operation.engine_ref().signalled(),
     };
     // A lane whose stamp or launch keys are not the intent's is a moved lane
     // (the one judgement the store applies too): before any signal the close
@@ -105,10 +106,20 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         // ground goes on only where that reading is the harness gone.
         if lane.viewer() {
             let provider = provider_stops(close.ground, &lane);
-            let stop = if provider { "provider" } else { "window-only" };
+            let stop = if provider && close.no_landing() {
+                "provider"
+            } else {
+                "window-only"
+            };
             let mut observation = json!({"identity": "none", "stop": stop});
-            if provider && let Err((cause, fields)) = close.guard_hosted(run, &operation) {
-                return Ok(close.refuse_or_hold(operation, cause, fields));
+            if provider && close.no_landing() {
+                match close.guard_hosted(run, &operation) {
+                    Ok(true) => observation["host_stop"] = json!("stopped processes=0"),
+                    Ok(false) => {}
+                    Err((cause, fields)) => {
+                        return Ok(close.refuse_or_hold(operation, cause, fields));
+                    }
+                }
             }
             if provider_reads_gone(close.ground, &lane)
                 && let Err((cause, fields)) = close.hosted_gone(run)
@@ -213,6 +224,7 @@ struct Close<'a> {
     /// What an earlier run of this intent recorded ([`RECEIPTS`]): a repeat
     /// whose own run reads them gone keeps them.
     prior: Option<&'a Value>,
+    previously_signalled: bool,
 }
 
 impl Close<'_> {
@@ -368,10 +380,10 @@ impl Close<'_> {
         &self,
         run: &Run,
         operation: &LaneOperation,
-    ) -> std::result::Result<(), (&'static str, Value)> {
+    ) -> std::result::Result<bool, (&'static str, Value)> {
         let state = self.hosted_state(run);
         match &state {
-            LaneState::Exited | LaneState::Gone => return Ok(()),
+            LaneState::Exited | LaneState::Gone => return Ok(true),
             // A walled harness takes no turn either, as `guard_live` reads it.
             LaneState::Idle { .. } | LaneState::Walled { .. } => {}
             LaneState::Working
@@ -391,7 +403,7 @@ impl Close<'_> {
                 return Err(("idle-unproved", json!({"pane": cause})));
             }
         }
-        self.no_ask(operation)
+        self.no_ask(operation).map(|()| false)
     }
 
     /// A hosted viewer's harness read gone before a close with no stated
@@ -467,7 +479,48 @@ impl Close<'_> {
     /// asks again (the provider's stop of a group already ended signals
     /// nothing).
     fn host_stopped(&self, operation: &mut LaneOperation, observation: &mut Value) -> Result<bool> {
+        if observation.get("host_stop").is_some() {
+            return Ok(true);
+        }
+        if let Some(receipt) = self
+            .prior
+            .and_then(|o| o.get("host_stop"))
+            .and_then(Value::as_str)
+            .filter(|r| r.starts_with("stopped ") || r.starts_with("stop-skipped "))
+        {
+            observation["host_stop"] = json!(receipt);
+            return Ok(true);
+        }
         let harness = self.lane.harness.as_deref().unwrap_or_default();
+        let scripts = crate::watch::overseer::scripts_dir(&self.settings.roots.project);
+        let host = hosted::host_of(self.lane);
+        // A full close already judged its running host before the intent.
+        // On a retry, check for a completed stop before asking again.
+        if (self.previously_signalled || harness == "copilot")
+            && matches!(
+                hosted::status(&scripts, host, self.item, harness),
+                Ok(hosted::HostStatus::Exited)
+            )
+        {
+            observation["host_stop"] = json!("stopped processes=0");
+            return Ok(true);
+        }
+        if harness == "copilot"
+            && !self.lane.exits_in_window()
+            && hosted::capabilities(&scripts, host)
+                .is_ok_and(|caps| caps.pane == hosted::PaneKind::Verb)
+        {
+            // Give Copilot its session totals before falling back to the host stop.
+            let _signalled = operation.engine().signal()?;
+            if hosted::send_key(&scripts, host, self.item, "C-c").is_ok()
+                && hosted::send_text(&scripts, host, self.item, &self.settings.state_dir, "/exit")
+                    .is_ok()
+                && matches!(operation.host_exited(self.lane, harness)?, Ok(true))
+            {
+                observation["host_stop"] = json!("stopped processes=0");
+                return Ok(true);
+            }
+        }
         let answer = operation.host_stop(self.lane, harness)?;
         let processes = match read_stop(answer, self.no_landing()) {
             StopRead::Stopped(processes) => processes,
@@ -540,6 +593,11 @@ impl Close<'_> {
         // The close-out and worktree release can carry the mailbox into
         // the main checkout. The lane's credential must leave first.
         remove_local_gh_token(self.lane)?;
+        if provider_stops(self.ground, self.lane)
+            && !self.host_stopped(&mut operation, &mut observation)?
+        {
+            return Ok(self.hold(operation, observation));
+        }
         // The item's files leave before the provider's close, so a close
         // that stops past this point repeats whole, the removal included.
         let ends_item = self.ground.is_some_and(CloseGround::ends_item);
@@ -564,11 +622,6 @@ impl Close<'_> {
                     return Ok(self.hold(operation, observation));
                 }
             }
-        }
-        if provider_stops(self.ground, self.lane)
-            && !self.host_stopped(&mut operation, &mut observation)?
-        {
-            return Ok(self.hold(operation, observation));
         }
         if provider_closes(self.ground, self.lane) {
             match self.last_mail(&operation) {
@@ -851,7 +904,18 @@ fn provider_stops(ground: Option<&CloseGround>, lane: &Lane) -> bool {
     let kept_viewer = lane.viewer()
         && lane.provider_hosted()
         && matches!(ground, Some(CloseGround::NoLanding { .. }));
-    (lane.exits_in_window() || kept_viewer) && !ground.is_some_and(CloseGround::host_absent)
+    let running_host = lane.provider_hosted()
+        && lane.status.in_flight()
+        && matches!(
+            ground,
+            Some(
+                CloseGround::NoLanding { .. }
+                    | CloseGround::Terminal { .. }
+                    | CloseGround::Ended { .. }
+            )
+        );
+    (lane.exits_in_window() || kept_viewer || running_host)
+        && !ground.is_some_and(CloseGround::host_absent)
 }
 
 /// Whether the close's effect needs a hosted viewer's harness read gone

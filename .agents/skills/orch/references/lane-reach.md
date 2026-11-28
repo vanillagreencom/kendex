@@ -84,7 +84,7 @@ The runtime's close is the `close-lane` request. Write it with the harness file 
 
 - `mode`:
   - `close`, the default, ends the lane and records it `done`.
-  - `keep-sandbox` ends its harness and records it `stopped`, keeping its worktree and a hosted lane's sandbox, which holds its slot.
+  - `keep-sandbox` ends its harness and records it `stopped`, keeping its worktree and a hosted lane's sandbox, which holds its slot. A checked recovery claim stays held. A confirmed park or terminal close releases the files.
   - `{"park": {...}}` parks a hosted lane's merge wait ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)).
   - `terminal-state` prints only the tracker's verdict, in `result.state`.
   - `if-terminal` closes only on a terminal verdict.
@@ -156,7 +156,7 @@ Before it acts on the merged ground, or on an item its tracker completed, the cl
 
 ### Hosted harness
 
-The close stops a hosted lane's harness through its provider. An exited lane needs no stop.
+The close commits its intent before it signals the harness or asks the provider to stop. An exited lane needs no stop. While the outcome is unresolved, the intent protects the paths it carried or acquired and the lane accepts neither joins nor path additions.
 
 - On `host-busy step=stop`, ask again.
 - On `harness-unsupported harness=unknown`, pass `harness` (§ Records with no identity).
@@ -203,7 +203,7 @@ The watch closes a merged hosted lane, and a parked or stopped record whose trac
 
 On the surfaces of [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launch-surface):
 
-- Surface 2 uses its native close, then sets its lane record `done`. The runtime's close stops only a harness its own launch recorded.
+- Surface 2 submits `{"op":"record-surface-lane","step":"close","item":"[ITEM_KEY]"}` through `orch-runtime op --fleet` before calling its native close. Use `"keep":true` for recovery, or supply the judged `park-lane` request's data in `park` for a native park. Report the reply's intent through [lane-launch.md § Lane record](lane-launch.md#lane-record) after observing absence or a completed park. An uncertain outcome stays open. The runtime's stop acts on its managed lanes.
 - Surface 3 continues in the overseer session and has no separate session or lane record to close.
 
 ## Per harness

@@ -48,22 +48,24 @@ A directed change's run comes back as the item [directed-change.md](directed-cha
 
 ## Shared files
 
-- Every first launch judges the files the item touches against the fleet's other lanes.
-- On surfaces 2 and 3, judge the same rule yourself.
-- The touched set is the item's Location paths, the paths the brief names and the paths the request adds.
-- A path the request's `in_scope` names as an append-only addition holds nothing.
-- A `read_only` launch touches nothing, and its lane holds nothing ([lane-directive.md § A read-only launch](lane-directive.md#a-read-only-launch)).
-- The launch judges a holder by its lane's liveness:
+The admission applies one file rule to first launch, both kinds of join, path additions, relaunch and close. It compares each lane's writable paths in its effective repository. For a legacy record without a set, it uses the writable paths in that lane's Location.
 
-| The holder's lane | The launch |
+- Declare the smallest complete write set before launch. Name tracked files and generated files the lane will edit or publish. Name a directory only when the lane needs its writable descendants. List read-only context and checkout-private scratch separately.
+- Admit related writable paths together. When active lanes need files held by each other, sequence the work under the existing item order, or release one claim through a confirmed park or terminal close before admitting the other.
+- The touched set includes writable Location paths, brief and request edit paths, and any admitted change-scope range. Use request-side `in_scope` only for a proven append-only addition.
+- A `read_only` launch holds no paths ([lane-directive.md § A read-only launch](lane-directive.md#a-read-only-launch)).
+- On surface 2, [§ Lane record](#lane-record) runs the same admission before the native launcher starts. Surface 3 works serially in the overseer's session.
+
+| The holder's lane | What the admission does |
 |---|---|
-| Running or preparing, before its review | Applies the eligibility rules in [lane-directive.md § A joined launch](lane-directive.md#a-joined-launch) |
-| Running or preparing, in its review | Refuses `launch-overlap` naming the `file` and the `holder` |
-| Stopped, parked or gone | Proceeds and records nothing |
-| Unreadable | Refuses `holder-unreadable` |
+| Writing before review | A managed first launch can join under [lane-directive.md § A joined launch](lane-directive.md#a-joined-launch) |
+| Writing in review | Refuses `launch-overlap` with the file and holder, subject to the direct-delivery exception below |
+| Preparing, closing, or retained for recovery | Protects the checked set and refuses joins and path additions during an unresolved transition |
+| Confirmed park, terminal close, or launch failure with proved absence | Releases that attempt's claim |
+| Evidence unreadable | Refuses `holder-unreadable` |
 
 - A joined launch's reply's `.result.report` reads `op` `joined` with the `holder`. Send nothing after it.
-- Under `ORCH_DELIVERY=push-base`, a first launch passes a holder in its review.
+- Under `ORCH_DELIVERY=push-base`, a launch can pass a local holder in review. The later writer can finish on the admitted set and yields on confirmed stop. The earlier writer keeps recovery precedence. An append-only exception gives no exclusive recovery hold for the append.
 - A `github` item's own pull request is no holder against it.
 - The lane record keeps the set as `touched` and the scope as `in_scope`.
 - A local or hosted lane's opening brief carries the record's set as one `Admitted paths:` line, a JSON array, ahead of the closing lines [lane-directive.md § Brief file](lane-directive.md#brief-file) lists. That section's item 1 says which records render the line. A `joined` directive carries the holder's widened set the same way, under the same rule ([lane-directive.md § A joined launch](lane-directive.md#a-joined-launch)). Each dev round the lane delegates carries the set ([dev-start.md § 2](../workflows/dev-start.md#2-delegate)).
@@ -83,7 +85,7 @@ A running lane that asks for a path outside its admitted set meets the same judg
 A launch on the tmux surface takes these steps in order, locally or on a remote control host.
 
 - [lane-directive.md § Launch gate](lane-directive.md#launch-gate) holds the per-provider rules of a Pi or Copilot launch and every refusal of the launch gate.
-- Every other surface launches as [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launch-surface) says, with no inventory or pick.
+- On surface 2, commit the preparation under [§ Lane record](#lane-record) before using the native launcher from [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launch-surface). Surface 3 starts the work in the overseer's session.
 
 1. **Inventory.** Read the accounts a lane can launch on. On a hosted fleet the provider's reading of an account can disagree with this machine's.
 
@@ -224,25 +226,28 @@ A record's `item` is `[ITEM_KEY]` throughout oversee.md and this reference, as t
 
 On surfaces 2 and 3 the overseer's first written record creates the state: a surface-2 lane record below, or a `fleet_log` or `triaged` entry ([oversee-events.md](oversee-events.md)). Before that first write, where `state exists --fleet` answers false, run `state init --fleet`.
 
-On surface 2, record the lane after an item's first launch, with `window` null.
+On surface 2, record the preparation before calling the native launcher. Wait for the reply's `result.intent.id`. A refusal leaves the launcher unused.
 
 - `[OBLIGATION_OR_NULL]` is the accepted object from [Obligation lineage](lane-directive.md#obligation-lineage), or JSON `null` when unknown.
 - `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it stamps.
+- Supply additional writable files in the lane's `touched` array and proven append-only exceptions in `in_scope`. The admission also reads the tracked item's Location.
+- A native relaunch uses the same preparation step and keeps the recorded scope. Prepare it from the checkout where the native launcher will run.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"create","lane":{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}}'
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"create","lane":{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"preparing","obligation":[OBLIGATION_OR_NULL]}}'
 ```
 
-For a recorded surface-2 item, write the changed fields to `tmp/lane-merge-[ITEM_KEY].json` with the harness file tool, and merge them.
+After the launcher answers, write a native observation to `tmp/lane-merge-[ITEM_KEY].json` and merge it. Name the intent and its evidence in the file. Use `confirmed` with the running session's identifier when known, `failed` when the attempt is proved unable to write, and `unconfirmed` while either outcome is possible. A pending intent keeps the set until the native outcome is known.
 
-- Each field the file names replaces the record's.
-- Its `obligation` binds once ([lane-directive.md § Obligation lineage](lane-directive.md#obligation-lineage)): state one only from the accepted directive.
-- Never append a second record for an item, and never replace a record whole.
-- A relaunch and a handoff keep `launched_at`. A fresh launch can renew it, keeping the obligation and the previous cycle.
+```json
+{"intent_id":"[INTENT_ID]","outcome":"confirmed","evidence":"[OBSERVED_RUNNING_SESSION]","session_id":"[SESSION_ID_OR_NULL]"}
+```
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"merge","item":"[ITEM_KEY]","file":"tmp/lane-merge-[ITEM_KEY].json"}'
 ```
+
+A metadata merge can bind an accepted `obligation` or update descriptive fields. Use the checked transitions for changes to repository, scope, or lifecycle status.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --fleet /lanes/0/launched_at

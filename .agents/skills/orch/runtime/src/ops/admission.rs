@@ -1,31 +1,16 @@
-//! The admission judgement a lane launch runs before the cap, and a
-//! running lane runs for a path it adds: the item's eligibility from its
-//! body, its touched set as the
-//! union of the item's Location paths, the brief's edit paths, the change-scope
-//! paths over the range the request names and the paths the request adds,
-//! and every holder of a shared path judged by its lane's liveness through
-//! the occupancy identity reads, never by its status word.
+//! Admission judges a writable set against the fleet's claims in the
+//! effective repository. An admitted attempt protects its paths from
+//! preparation through close and, where exclusively authorized, recovery.
+//! Confirmed park, terminal close and proven launch failure release that
+//! attempt's authority. A destination launch can protect a second set until
+//! it settles while the source's retained claim stays in place.
 //!
-//! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
-//! |---|---|
-//! | `live`, `wake` or `preparing`, before its review | a first launch joins it where [`join_checkout`] allows; a running lane's added path, and a relaunch's recorded set, block: `launch-overlap holder=<item>` |
-//! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch, or a relaunch beside a holder on this host, passes, nothing recorded: the publication takes the order |
-//! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
-//! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
-//! | `done` | no holder |
-//!
-//! A holder is a record of the item's repository: a path is relative to
-//! its own repository, so a lane of another holds nothing here. A holder's
-//! touched set is its record's, else its item's Location paths read now;
-//! a holder whose set cannot be read blocks `holder-unreadable
-//! read=touched`. `changelog.d/` paths never count, and a path the request
-//! names in scope is left out of the comparison. A `read_only` lane, which
-//! changes no repository file, takes no join on either side: it is no
-//! holder, by a shared path or by the blockers it carries, and its first
-//! launch touches none of its sources' paths, so it meets no holder and
-//! records none while the tier still classifies them. Its item's launch
-//! blockers are not read: they hold the item's writing launch alone.
+//! Only an active writer before review can receive a join. Direct delivery
+//! can admit a later writer beside a writer in review, with the earlier
+//! writer retaining recovery precedence. A read-only lane holds no paths
+//! and accepts no join. Legacy writers use their writable Location when
+//! their record has no set. Changelog fragments and proven request-side
+//! append-only exceptions follow the same path matching at every entry.
 //!
 //! A holder a first launch would join is in its review where it owns an
 //! open pull request of the item's repository: one its record names by its
@@ -84,7 +69,7 @@ use super::occupancy::{self, ChargeReason, Host};
 use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::{Delivery, Settings};
-use crate::state::{self, Carried, Lane, LaneMembers, LaneStatus, StageKind};
+use crate::state::{self, Carried, FileClaim, FileHold, Lane, LaneMembers, LaneStatus, StageKind};
 use crate::verify::wire::{Nullable, Pull, PullFile};
 use crate::verify::{Answer, Gh};
 use agent_runtime::journal::{Env, intents};
@@ -401,6 +386,8 @@ pub(super) enum Launch<'r> {
     /// A first launch, from the checkout it runs in, bound to the fleet's
     /// repository before anything is read: it may join a live holder.
     First(&'r Path),
+    /// Native surface preparation does the first launch checks and opens its own writer.
+    Surface(&'r Path),
     /// A recorded lane's relaunch, bound on its own ([`bound`]): it carries
     /// its own record's work, so it never joins another lane.
     Relaunch,
@@ -412,7 +399,7 @@ impl<'r> Admission<'r> {
     /// The checkout a first launch runs in; none for any other judgement.
     fn checkout(&self) -> Option<&'r Path> {
         match self.launch {
-            Launch::First(checkout) => Some(checkout),
+            Launch::First(checkout) | Launch::Surface(checkout) => Some(checkout),
             Launch::Relaunch | Launch::Added => None,
         }
     }
@@ -430,7 +417,8 @@ pub(super) struct Judged {
     pub join: Option<Join>,
     /// The launch checkout's canonical common git folder, as the binding
     /// read it; `None` where no checkout was read.
-    pub checkout_common: Option<PathBuf>,
+    pub binding: CheckoutBinding,
+    pub hold: FileHold,
 }
 
 /// A live holder before its review that a first launch ships with, at its
@@ -441,6 +429,7 @@ pub(super) struct Judged {
 pub(super) struct Join {
     pub holder: usize,
     tie: Tie,
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -859,30 +848,32 @@ fn shared(a: &[String], b: &[String], scope: &[String]) -> Vec<String> {
     files.into_iter().collect()
 }
 
-/// Whether a holder record belongs to the request's repository: both name
-/// the same one, case apart, or neither names one, the fleet's own.
-fn same_repo(lane: &Lane, repo: Option<&str>) -> bool {
-    match (lane.repo.as_deref(), repo) {
-        (None, None) => true,
+fn same_repo(a: Option<&str>, b: Option<&str>, own: Option<&str>) -> bool {
+    match (a.or(own), b.or(own)) {
         (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        (None, Some(_)) | (Some(_), None) => false,
+        (None, None) => true,
+        _ => false,
     }
 }
 
-/// How a holder stands: live blocks, unknown blocks as unreadable,
-/// anything else yields.
+pub(super) fn lane_repo(lane: &Lane) -> Option<&str> {
+    lane.file_repo.as_deref().or(lane.repo.as_deref())
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Holding {
-    Live,
+    Writing,
+    Protected,
     Unknown(String),
     Yields,
 }
 
-fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
-    if lane.host.is_some() {
-        return if lane.status.in_flight() {
-            Holding::Live
-        } else {
-            Holding::Yields
+fn execution(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
+    if lane.host.is_some() || lane.native_surface() {
+        return match lane.status {
+            LaneStatus::Running => Holding::Writing,
+            LaneStatus::Preparing => Holding::Protected,
+            LaneStatus::Stopped | LaneStatus::Parked | LaneStatus::Done => Holding::Yields,
         };
     }
     let ids = occupancy::read_identities(lane, host);
@@ -893,15 +884,223 @@ fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
         &ids,
     );
     match charge.map(|c| (c.reason, c.cause)) {
-        Some((
-            ChargeReason::Live
-            | ChargeReason::Wake
-            | ChargeReason::Preparing
-            | ChargeReason::Session,
-            _,
-        )) => Holding::Live,
+        Some((ChargeReason::Live | ChargeReason::Wake | ChargeReason::Session, _)) => {
+            Holding::Writing
+        }
+        Some((ChargeReason::Preparing, _)) => Holding::Protected,
         Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
         Some((ChargeReason::Reservation | ChargeReason::Sandbox, _)) | None => Holding::Yields,
+    }
+}
+
+fn handoff(lane: &Lane, intents: &[Intent]) -> bool {
+    lane.file_launch.is_some()
+        || lane.extra.contains_key(state::PARK_OWED)
+        || intents.iter().any(|i| {
+            i.target == lane.item
+                && i.open()
+                && matches!(i.op, EffectOp::CloseResources | EffectOp::LaunchSession)
+        })
+}
+
+fn writable(
+    lane: &Lane,
+    tracker: Option<&str>,
+    repo: Option<&str>,
+    host: &Host,
+) -> std::result::Result<Vec<String>, (&'static str, String)> {
+    if lane.read_only {
+        return Ok(Vec::new());
+    }
+    if let Some(touched) = &lane.touched {
+        return Ok(touched.clone());
+    }
+    let tracker = tracker.ok_or(("item", "tracker-unnamed".to_owned()))?;
+    let reads = host
+        .admission
+        .as_ref()
+        .ok_or(("item", "admission-reads-unavailable".to_owned()))?;
+    let item =
+        (reads.item)(&reads.clis, tracker, &lane.item, repo).map_err(|cause| ("item", cause))?;
+    let paths = location_paths(&item.body).map_err(|cause| ("location", cause.into()))?;
+    if paths.is_empty() {
+        return Err(("location", "location-unnamed".to_owned()));
+    }
+    Ok(folders(lane.mail_root.as_deref().map(Path::new), &paths))
+}
+
+fn required_paths(
+    lane: &Lane,
+    tracker: Option<&str>,
+    repo: Option<&str>,
+    host: &Host,
+) -> Result<Vec<String>> {
+    writable(lane, tracker, repo, host).map_err(|(read, cause)| Error::TouchedUnreadable {
+        item: lane.item.clone(),
+        read,
+        cause,
+    })
+}
+
+fn claim(lane: &Lane, paths: Vec<String>, hold: FileHold) -> FileClaim {
+    FileClaim {
+        repo: lane_repo(lane).map(str::to_owned),
+        touched: paths,
+        in_scope: lane.in_scope.clone().unwrap_or_default(),
+        hold,
+    }
+}
+
+struct Held {
+    state: Holding,
+    paths: std::result::Result<Vec<String>, (&'static str, String)>,
+    /// Only exclusive recovery authority drops the holder's append exceptions.
+    exceptions: Vec<String>,
+}
+
+fn closed_claim(claim: FileClaim) -> Held {
+    Held {
+        state: Holding::Protected,
+        paths: Ok(claim.touched),
+        exceptions: if claim.hold == FileHold::Retained {
+            claim.in_scope
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// Read both the admitted attempt and a source claim left by its launch.
+/// Lifecycle status and the journal decide whether the set can accept work.
+fn holding(
+    path: &Path,
+    lane: &Lane,
+    repo: Option<&str>,
+    own: Option<&str>,
+    intents: &[Intent],
+    env: &Env,
+    host: &Host,
+) -> Result<Vec<Held>> {
+    if lane.read_only || lane.status == LaneStatus::Done {
+        return Ok(Vec::new());
+    }
+    let mut held = Vec::new();
+    if let Some(launch) = lane
+        .file_launch
+        .as_ref()
+        .and_then(|id| intents.iter().find(|i| &i.id == id))
+        && let Some(previous) = LaneMembers::of(path, launch)?.previous_files
+        && let Some(claim) = previous.claim
+        && same_repo(claim.repo.as_deref(), repo, own)
+    {
+        held.push(closed_claim(claim));
+    }
+    if !same_repo(lane_repo(lane), repo, own) {
+        return Ok(held);
+    }
+    if let Some(close) = intents
+        .iter()
+        .find(|i| i.target == lane.item && i.open() && i.op == EffectOp::CloseResources)
+        && let Some(claim) = LaneMembers::of(path, close)?.close_files
+    {
+        held.push(closed_claim(claim));
+        return Ok(held);
+    }
+    if lane.status == LaneStatus::Parked {
+        return Ok(held);
+    }
+    let moving = handoff(lane, intents);
+    let state = match lane.file_hold {
+        Some(FileHold::Released) => Holding::Yields,
+        Some(FileHold::Retained) => Holding::Protected,
+        Some(FileHold::Exclusive | FileHold::Shared) if moving => Holding::Protected,
+        Some(FileHold::Exclusive | FileHold::Shared) => match execution(lane, intents, env, host) {
+            Holding::Yields => Holding::Protected,
+            other => other,
+        },
+        None => match execution(lane, intents, env, host) {
+            Holding::Writing if moving => Holding::Protected,
+            // A pre-upgrade close can outlive its active process. Keep that
+            // attempt's authority until the journal settles it.
+            Holding::Yields if moving && lane.status.in_flight() => Holding::Protected,
+            other => other,
+        },
+    };
+    if state != Holding::Yields {
+        held.push(Held {
+            state,
+            paths: writable(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host),
+            exceptions: if lane.file_hold == Some(FileHold::Retained) {
+                lane.in_scope.clone().unwrap_or_default()
+            } else {
+                Vec::new()
+            },
+        });
+    }
+    Ok(held)
+}
+
+/// The old claim a replacement leaves behind until it settles.
+pub(super) fn retained(lane: &Lane, host: &Host) -> Result<Option<FileClaim>> {
+    if lane.file_hold != Some(FileHold::Retained) || lane.read_only {
+        return Ok(None);
+    }
+    let paths = required_paths(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host)?;
+    Ok(Some(claim(lane, paths, FileHold::Retained)))
+}
+
+/// A close carries an existing authorization, or checks the entire set
+/// before a legacy record can gain recovery authority.
+pub(super) fn closing(
+    path: &Path,
+    lanes: &[Lane],
+    intents: &[Intent],
+    lane: &Lane,
+    retain: bool,
+    env: &Env,
+    host: &Host,
+) -> Result<Option<FileClaim>> {
+    if lane.read_only {
+        return Ok(None);
+    }
+    match lane.file_hold {
+        Some(FileHold::Exclusive | FileHold::Shared | FileHold::Retained) => {
+            let paths = required_paths(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host)?;
+            return Ok(Some(claim(lane, paths, lane.file_hold.unwrap())));
+        }
+        Some(FileHold::Released) if !retain => return Ok(None),
+        None if !retain => {
+            // Preserve a legacy writer's set while cleanup is still open.
+            // Unreadable paths cannot prevent a cleanup that yields.
+            return Ok((execution(lane, intents, env, host) != Holding::Yields)
+                .then(|| writable(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host).ok())
+                .flatten()
+                .map(|paths| claim(lane, paths, FileHold::Shared)));
+        }
+        Some(FileHold::Released) | None => {}
+    }
+    let paths = required_paths(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host)?;
+    let judged = judge_set(
+        path,
+        lanes,
+        intents,
+        lane,
+        &paths,
+        lane_repo(lane),
+        Launch::Added,
+        env,
+        host,
+    );
+    match judged {
+        Ok(_) => Ok(Some(claim(lane, paths, FileHold::Exclusive))),
+        // A legacy co-writer can stop its current worker, but only the
+        // first checked claimant can recover on the overlapping set.
+        Err(Error::LaunchOverlap { .. })
+            if execution(lane, intents, env, host) == Holding::Writing =>
+        {
+            Ok(Some(claim(lane, paths, FileHold::Shared)))
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -924,21 +1123,20 @@ fn holder_branch(fleet: &Path, holder: &str) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
-/// Whether a lane can hold a path or take a joined item: one of the
-/// request's repository, not `done`, and not `read_only`, which ships
-/// neither its own change nor a joined one's.
-fn holds(lane: &Lane, repo: Option<&str>) -> bool {
-    lane.status != LaneStatus::Done && !lane.read_only && same_repo(lane, repo)
-}
-
-/// The one lane that [`holds`] and carries every launch blocker, as its
-/// item or a joined one: the lane a blocked candidate ships with. None, or
-/// two, is no such lane.
-fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<usize> {
-    let mut found = lanes
-        .iter()
-        .enumerate()
-        .filter(|(_, lane)| holds(lane, repo) && blockers.iter().all(|b| lane.carries(b)));
+/// Locate the only lane carrying every blocker. Holding determines
+/// separately whether that lane can receive this join.
+fn carrier(
+    lanes: &[Lane],
+    blockers: &[String],
+    repo: Option<&str>,
+    own: Option<&str>,
+) -> Option<usize> {
+    let mut found = lanes.iter().enumerate().filter(|(_, lane)| {
+        lane.status != LaneStatus::Done
+            && !lane.read_only
+            && same_repo(lane_repo(lane), repo, own)
+            && blockers.iter().all(|b| lane.carries(b))
+    });
     match (found.next(), found.next()) {
         (Some((index, _)), None) => Some(index),
         _ => None,
@@ -1098,11 +1296,14 @@ fn bind(
     checkout: &Path,
     reads: &AdmissionReads,
     settings: Option<&Settings>,
-) -> Result<Option<PathBuf>> {
+) -> Result<CheckoutBinding> {
     let fleet_dir = path.parent().unwrap_or(Path::new("/"));
     let fleet = (reads.checkout)(&reads.clis, fleet_dir)
         .map_err(|_| unjudged("overseer-root", fleet_dir))?;
-    let mut common = None;
+    let mut checkout_binding = CheckoutBinding {
+        repo: a.repo.map(str::to_owned),
+        ..CheckoutBinding::default()
+    };
     let binding = match fleet {
         None => Binding::Own,
         Some(fleet) => {
@@ -1114,7 +1315,15 @@ fn bind(
                 (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
                 _ => false,
             };
-            common = Some(launch.root.clone());
+            if a.tracker != Some("github")
+                && let (Some(asked), Some(actual)) = (a.repo, launch.slug.as_deref())
+                && !asked.eq_ignore_ascii_case(actual)
+            {
+                return Err(item_foreign(asked));
+            }
+            checkout_binding.common = Some(launch.root.clone());
+            checkout_binding.repo = launch.slug.clone().or(checkout_binding.repo);
+            checkout_binding.own = fleet.slug.clone();
             if launch.root == fleet.root || same_slug {
                 Binding::Own
             } else {
@@ -1157,7 +1366,7 @@ fn bind(
         }
         (Some("linear"), _) if binding == Binding::Own => {
             let Some(team) = settings.and_then(|s| s.linear_team.as_deref()) else {
-                return Ok(common);
+                return Ok(checkout_binding);
             };
             let key = (reads.team_key)(&reads.clis, team)
                 .map_err(|_| unresolved(&[("tracker", "linear"), ("team", team)]))?;
@@ -1168,7 +1377,7 @@ fn bind(
         }
         _ => {}
     }
-    Ok(common)
+    Ok(checkout_binding)
 }
 
 /// The binding alone (the module's binding paragraph): a first launch's,
@@ -1176,6 +1385,23 @@ fn bind(
 /// gate were judged when it was first admitted but whose checkout, tracker
 /// and repository the request may change. Answers the checkout's common
 /// git folder as [`bind`] read it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct CheckoutBinding {
+    pub common: Option<PathBuf>,
+    pub repo: Option<String>,
+    own: Option<String>,
+}
+
+impl CheckoutBinding {
+    pub(super) fn carries(&self, previous: &FileClaim) -> bool {
+        same_repo(
+            self.repo.as_deref(),
+            previous.repo.as_deref(),
+            self.own.as_deref(),
+        )
+    }
+}
+
 pub(super) fn bound(
     path: &Path,
     item: &str,
@@ -1183,7 +1409,7 @@ pub(super) fn bound(
     repo: Option<&str>,
     checkout: &Path,
     host: &Host,
-) -> Result<Option<PathBuf>> {
+) -> Result<CheckoutBinding> {
     let reads = host
         .admission
         .as_ref()
@@ -1203,68 +1429,84 @@ pub(super) fn bound(
     bind(path, &a, checkout, reads, host.accounts)
 }
 
-/// A relaunch's holders (the module's binding paragraph): the record's
-/// touched set and scope, kept from its admission, met against the lanes
-/// that hold paths now, as a running lane's added path is, never joined. A
-/// stopped or parked record yields while it stands, so another lane can be
-/// admitted a path it holds; its relaunch must not take that path back.
-/// `tracker` and `repo` are the relaunch's effective ones, the request's
-/// else the record's. A record no judgement wrote, a surface lane's, holds
-/// no set: its item's Location paths are its set, read as a first launch
-/// reads them, and refused where the item names no Location path, since
-/// a surface lane's item can keep its paths outside its description. A
-/// record naming no tracker is judged on no item, as a first launch naming
-/// none is.
+/// A relaunch keeps its recorded scope and checks its entire set against
+/// the destination. A missing set is read in the effective tracker.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the relaunch's one holder judgement: the fleet as the transition read it, the record and its effective tracker and repository, and the host"
+    reason = "the relaunch judges the current fleet and destination"
 )]
 pub(super) fn relaunch_held(
     path: &Path,
     lanes: &[Lane],
     intents: &[Intent],
-    record: &Lane,
+    lane: &Lane,
     tracker: Option<&str>,
     repo: Option<&str>,
     env: &Env,
     host: &Host,
-) -> Result<()> {
-    let unreadable = |read: &'static str, cause: String| Error::TouchedUnreadable {
-        item: record.item.clone(),
-        read,
-        cause,
+) -> Result<Judged> {
+    let paths = if tracker.is_none() && lane.touched.is_none() {
+        Vec::new()
+    } else {
+        required_paths(lane, tracker, repo, host)?
     };
-    let read;
-    let paths = match (&record.touched, tracker) {
-        (Some(paths), _) => paths.as_slice(),
-        (None, Some(tracker)) if !record.read_only => {
-            let reads = host
-                .admission
-                .as_ref()
-                .ok_or_else(|| unreadable("item", "admission-reads-unavailable".to_owned()))?;
-            let item = (reads.item)(&reads.clis, tracker, &record.item, repo)
-                .map_err(|c| unreadable("item", c))?;
-            read = location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?;
-            if read.is_empty() {
-                return Err(unreadable("location", "location-unnamed".to_owned()));
-            }
-            read.as_slice()
-        }
-        (None, _) => &[],
-    };
-    let a = Admission {
-        item: &record.item,
-        tracker: None,
+    judge_set(
+        path,
+        lanes,
+        intents,
+        lane,
+        &paths,
         repo,
-        brief_file: None,
-        repo_dir: None,
-        scope_range: None,
-        in_scope: record.in_scope.as_deref().unwrap_or_default(),
-        paths,
-        launch: Launch::Relaunch,
-        read_only: record.read_only,
+        Launch::Relaunch,
+        env,
+        host,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one judgement over the fleet and the record's set"
+)]
+fn judge_set(
+    path: &Path,
+    lanes: &[Lane],
+    intents: &[Intent],
+    lane: &Lane,
+    paths: &[String],
+    repo: Option<&str>,
+    mode: Launch<'_>,
+    env: &Env,
+    host: &Host,
+) -> Result<Judged> {
+    judge(
+        path,
+        lanes,
+        intents,
+        &Admission {
+            item: &lane.item,
+            tracker: None,
+            repo,
+            brief_file: None,
+            repo_dir: None,
+            scope_range: None,
+            in_scope: lane.in_scope.as_deref().unwrap_or_default(),
+            paths,
+            launch: mode,
+            read_only: lane.read_only,
+        },
+        env,
+        host,
+    )
+}
+
+fn own_repo(path: &Path, host: &Host) -> Result<Option<String>> {
+    let Some(reads) = &host.admission else {
+        return Ok(None);
     };
-    judge(path, lanes, intents, &a, env, host).map(drop)
+    let dir = path.parent().unwrap_or(Path::new("/"));
+    (reads.checkout)(&reads.clis, dir)
+        .map(|checkout| checkout.and_then(|r| r.slug))
+        .map_err(|_| unjudged("overseer-root", dir))
 }
 
 /// The judgement (the module's table). `lanes` and `intents` are the
@@ -1287,10 +1529,23 @@ pub(super) fn judge(
             .as_ref()
             .ok_or_else(|| unreadable(read, "admission-reads-unavailable".to_owned()))
     };
-    let checkout_common = match a.checkout() {
+    let mut binding = match a.checkout() {
         Some(checkout) => bound(path, a.item, a.tracker, a.repo, checkout, host)?,
-        None => None,
+        None => CheckoutBinding {
+            repo: a.repo.map(str::to_owned),
+            ..CheckoutBinding::default()
+        },
     };
+    if a.checkout().is_none()
+        && lanes.iter().any(|lane| {
+            lane_repo(lane).is_some() != binding.repo.is_some() || lane.file_launch.is_some()
+        })
+    {
+        binding.own = own_repo(path, host)?;
+    }
+    let repo = binding.repo.as_deref();
+    let own = binding.own.as_deref();
+    let joins = matches!(a.launch, Launch::First(_));
     let mut body = None;
     let mut blocked = None;
     if let Some(tracker) = a.tracker {
@@ -1313,8 +1568,8 @@ pub(super) fn judge(
             match launch_blockers(a.item, &item, |parent| {
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
             }) {
-                Err(Error::LaunchBlocked { item, blockers }) if a.checkout().is_some() => {
-                    match carrier(lanes, &blockers, a.repo) {
+                Err(Error::LaunchBlocked { item, blockers }) if joins => {
+                    match carrier(lanes, &blockers, repo, own) {
                         Some(index) => blocked = Some((index, blockers)),
                         None => return Err(Error::LaunchBlocked { item, blockers }),
                     }
@@ -1358,20 +1613,6 @@ pub(super) fn judge(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let mut join = None;
-    if let Some((index, blockers)) = blocked {
-        let holder = &lanes[index];
-        let tied = Join {
-            holder: index,
-            tie: Tie::Blockers(blockers),
-        };
-        let joins = matches!(holding(holder, intents, env, host), Holding::Live)
-            && before_review(path, holder, a.item, &tied.tie)?;
-        if !joins {
-            return Err(tied.refusal(a.item, &holder.item));
-        }
-        join = Some(tied);
-    }
     let holder_unreadable =
         |holder: &str, read: &'static str, cause: String| Error::HolderUnreadable {
             item: a.item.to_owned(),
@@ -1379,82 +1620,91 @@ pub(super) fn judge(
             read,
             cause,
         };
+    let mut join = None;
+    let mut blocker_claims = None;
+    if let Some((index, blockers)) = blocked {
+        let holder = &lanes[index];
+        let claims = holding(path, holder, repo, own, intents, env, host)?;
+        let mut tied = Join {
+            holder: index,
+            tie: Tie::Blockers(blockers),
+            paths: Vec::new(),
+        };
+        let Some(writing) = claims.iter().find(|held| held.state == Holding::Writing) else {
+            return Err(tied.refusal(a.item, &holder.item));
+        };
+        if !before_review(path, holder, a.item, &tied.tie)? {
+            return Err(tied.refusal(a.item, &holder.item));
+        }
+        tied.paths = writing
+            .paths
+            .clone()
+            .map_err(|(_, cause)| holder_unreadable(&holder.item, "touched", cause))?;
+        join = Some(tied);
+        blocker_claims = Some((index, claims));
+    }
+    let mut hold = FileHold::Exclusive;
     for (index, lane) in lanes.iter().enumerate().filter(|_| !touched.is_empty()) {
-        if lane.item == a.item || !holds(lane, a.repo) {
+        if lane.item == a.item {
             continue;
         }
-        // A holder that yields holds nothing, so its set is never read: an
-        // item that cannot be read refuses only beside a lane holding paths.
-        let live = match holding(lane, intents, env, host) {
-            Holding::Yields => continue,
-            Holding::Live => Ok(()),
-            Holding::Unknown(cause) => Err(cause),
-        };
-        let read;
-        let held = match &lane.touched {
-            Some(paths) => paths,
-            None => {
-                let tracker = lane.tracker.as_deref().ok_or_else(|| {
-                    holder_unreadable(&lane.item, "touched", "tracker-unnamed".to_owned())
-                })?;
-                let reads = host.admission.as_ref().ok_or_else(|| {
-                    holder_unreadable(
-                        &lane.item,
-                        "touched",
-                        "admission-reads-unavailable".to_owned(),
-                    )
-                })?;
-                let item = (reads.item)(&reads.clis, tracker, &lane.item, lane.repo.as_deref())
-                    .map_err(|c| holder_unreadable(&lane.item, "touched", c))?;
-                read = location_paths(&item.body)
-                    .map_err(|c| holder_unreadable(&lane.item, "touched", c.to_owned()))?;
-                &read
-            }
-        };
-        let paths = shared(&touched, held, &in_scope);
-        let Some(file) = paths.first() else {
-            continue;
-        };
-        if let Err(cause) = live {
-            return Err(holder_unreadable(&lane.item, "identity", cause));
-        }
-        // A first launch joins one live holder before its review, and under
-        // direct delivery passes one in its review, the publication taking
-        // the order; a relaunch, which never joins, passes one in its review
-        // there too, where its review reads here; the paths a running lane
-        // adds never merge two lanes.
-        let first = a.checkout().is_some();
-        let tie = Tie::File(file.clone());
-        if first && let Some(route) = unreachable(lane) {
-            branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
-        }
-        let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
-        let direct = match a.launch {
-            Launch::First(_) => direct(host)?,
-            Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
-            Launch::Added => false,
-        };
-        let before = if joinable || direct {
-            Some(before_review(path, lane, a.item, &tie)?)
+        let claims = if blocker_claims
+            .as_ref()
+            .is_some_and(|(holder, _)| *holder == index)
+        {
+            blocker_claims.take().expect("matching blocker carrier").1
         } else {
-            None
+            holding(path, lane, repo, own, intents, env, host)?
         };
-        match before {
-            Some(true) if joinable => {
-                join.get_or_insert(Join { holder: index, tie });
+        for held in claims {
+            let held_paths = held
+                .paths
+                .map_err(|(_, cause)| holder_unreadable(&lane.item, "touched", cause))?;
+            let paths = shared(&touched, &held_paths, &union(&in_scope, &held.exceptions));
+            let Some(file) = paths.first() else { continue };
+            if let Holding::Unknown(cause) = held.state {
+                return Err(holder_unreadable(&lane.item, "identity", cause));
             }
-            Some(false) if direct => {}
-            _ => {
-                return Err(Error::LaunchOverlap {
-                    item: a.item.to_owned(),
-                    file: file.clone(),
-                    holder: lane.item.clone(),
-                });
+            let conflict = || Error::LaunchOverlap {
+                item: a.item.to_owned(),
+                file: file.clone(),
+                holder: lane.item.clone(),
+            };
+            if held.state != Holding::Writing {
+                return Err(conflict());
+            }
+            let tie = Tie::File(file.clone());
+            if a.checkout().is_some()
+                && let Some(route) = unreachable(lane)
+            {
+                branch_judged(lane, route, &tie, &touched, &in_scope, a.item, host)?;
+            }
+            let joinable = joins && join.as_ref().is_none_or(|j: &Join| j.holder == index);
+            let direct = match a.launch {
+                Launch::First(_) | Launch::Surface(_) => direct(host)?,
+                Launch::Relaunch => unreachable(lane).is_none() && direct(host)?,
+                Launch::Added => false,
+            };
+            let before = if joinable || direct {
+                Some(before_review(path, lane, a.item, &tie)?)
+            } else {
+                None
+            };
+            match before {
+                Some(true) if joinable => {
+                    join.get_or_insert(Join {
+                        holder: index,
+                        tie,
+                        paths: held_paths,
+                    });
+                }
+                Some(false) if direct => hold = FileHold::Shared,
+                _ => return Err(conflict()),
             }
         }
     }
     let check_unowned = a.checkout().is_some() && !touched.is_empty();
-    if (join.is_some() || check_unowned) && (a.repo.is_some() || a.repo_dir.is_some()) {
+    if (join.is_some() || check_unowned) && (repo.is_some() || a.repo_dir.is_some()) {
         let reads = host
             .admission
             .as_ref()
@@ -1468,7 +1718,7 @@ pub(super) fn judge(
                 read: "pulls",
                 cause: "admission-reads-unavailable".to_owned(),
             })?;
-        let read = (reads.pulls)(&reads.clis, a.repo, a.repo_dir).map_err(|failure| {
+        let read = (reads.pulls)(&reads.clis, repo, a.repo_dir).map_err(|failure| {
             Error::HoldersUnreadable {
                 item: a.item.to_owned(),
                 repo: failure.repo,
@@ -1498,7 +1748,10 @@ pub(super) fn judge(
                 let closes = issue_number.map_or_else(|| a.item.to_owned(), |n| format!("#{n}"));
                 let named = lanes
                     .iter()
-                    .filter(|lane| lane.status != LaneStatus::Done && same_repo(lane, a.repo))
+                    .filter(|lane| {
+                        lane.status != LaneStatus::Done
+                            && same_repo(lane_repo(lane), Some(&repo), own)
+                    })
                     .map(|lane| Ok((lane, holder_branch(path, &lane.item)?)))
                     .collect::<Result<Vec<_>>>()?;
                 for pull in pulls {
@@ -1539,7 +1792,8 @@ pub(super) fn judge(
         classified,
         in_scope,
         join,
-        checkout_common,
+        binding,
+        hold,
     })
 }
 
@@ -1632,11 +1886,30 @@ fn union(a: &[String], b: &[String]) -> Vec<String> {
 /// Write a launch's judgement onto the lane record at `index`: the set it
 /// opens with replaces whatever an earlier opening left,
 /// [`state::UNBOUNDED`] included.
-pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Judged) -> Result<()> {
+pub(super) fn record(
+    path: &Path,
+    doc: &mut Document,
+    index: usize,
+    judged: &Judged,
+    relaunch: bool,
+) -> Result<()> {
     let lane = lane_doc_mut(path, doc, index)?;
+    if relaunch && lane.get("touched").is_none_or(Value::is_null) {
+        record::set(lane, state::UNBOUNDED, true);
+    }
+    if !relaunch {
+        record::delete(lane, state::UNBOUNDED);
+    }
     record::set(lane, "touched", serde_json::to_value(&judged.touched)?);
     record::set(lane, "in_scope", serde_json::to_value(&judged.in_scope)?);
-    record::delete(lane, state::UNBOUNDED);
+    record::set(lane, "file_hold", serde_json::to_value(judged.hold)?);
+    match &judged.binding.repo {
+        Some(repo) => record::set(lane, "file_repo", repo.as_str()),
+        None => {
+            record::delete(lane, "file_repo");
+        }
+    }
+
     Ok(())
 }
 
@@ -1679,10 +1952,27 @@ pub(super) fn join(
     host: &Host,
 ) -> Result<Lane> {
     let holder = lane_at(path, doc, index)?;
-    let touched = union(
-        holder.touched.as_deref().unwrap_or_default(),
-        &judged.touched,
-    );
+    let rows = lanes(path, doc)?;
+    let open = intents(path, doc)?;
+    let standing = &judged
+        .join
+        .as_ref()
+        .expect("a join carries its judged set")
+        .paths;
+    if holder.touched.is_none() {
+        judge_set(
+            path,
+            &rows,
+            &open,
+            &holder,
+            standing,
+            lane_repo(&holder),
+            Launch::Added,
+            env,
+            host,
+        )?;
+    }
+    let touched = union(standing, &judged.touched);
     if let Some(tier) = holder.extra.get("tier").and_then(Value::as_str) {
         let dir = a.checkout().unwrap_or(Path::new(""));
         if let Some(needs) = wider_cycle(a.item, tier, &touched, dir, host)? {
@@ -1713,6 +2003,9 @@ pub(super) fn join(
     widen(path, doc, index, &holder, &touched, &in_scope)?;
     let lane = lane_doc_mut(path, doc, index)?;
     record::set(lane, "carried", serde_json::to_value(&carried)?);
+    if judged.hold == FileHold::Shared {
+        record::set(lane, "file_hold", serde_json::to_value(FileHold::Shared)?);
+    }
     let widened = lane_at(path, doc, index)?;
     tell(path, a, &widened, env, host)?;
     Ok(widened)
@@ -1809,12 +2102,25 @@ pub(super) fn admit_paths(
     // A standing lane's paths are judged in its own repository, the one its
     // holders are compared in: a request naming none takes the lane's, and
     // one naming another is refused.
-    let repo = match position.map(|i| lanes[i].repo.as_deref()) {
+    let standing = position.map(|i| &lanes[i]);
+    if let Some(lane) = standing
+        && handoff(lane, &intents)
+    {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "lane-admission-pending",
+            &[("item", &lane.item)],
+        )));
+    }
+    let repo = match standing.map(lane_repo) {
         None => r.repo.as_deref(),
         Some(lane_repo) => match (r.repo.as_deref(), lane_repo) {
             (None, lane_repo) => lane_repo,
-            (Some(asked), Some(lane_repo)) if asked.eq_ignore_ascii_case(lane_repo) => {
-                Some(lane_repo)
+            (Some(asked), lane_repo)
+                if same_repo(Some(asked), lane_repo, None)
+                    || (lane_repo.is_none()
+                        && same_repo(Some(asked), lane_repo, own_repo(path, host)?.as_deref())) =>
+            {
+                Some(asked)
             }
             (Some(asked), lane_repo) => {
                 return Err(Error::from(agent_runtime::Error::refused(
@@ -1832,6 +2138,26 @@ pub(super) fn admit_paths(
         .and_then(|i| lanes[i].in_scope.clone())
         .unwrap_or_default();
     let in_scope = union(&standing_scope, &r.in_scope);
+    let standing_paths = standing
+        .map(|lane| {
+            if lane.touched.is_none() && lane.tracker.is_none() {
+                // A record with no tracker or set has no Location to carry.
+                Ok(Vec::new())
+            } else {
+                required_paths(lane, lane.tracker.as_deref(), lane.repo.as_deref(), host)
+            }
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let added = folders(
+        standing.and_then(|l| l.mail_root.as_deref()).map(Path::new),
+        &r.paths,
+    );
+    let check = if standing.is_some_and(|l| l.touched.is_none()) {
+        union(&standing_paths, &added)
+    } else {
+        added
+    };
     let judged = judge(
         path,
         &lanes,
@@ -1844,7 +2170,7 @@ pub(super) fn admit_paths(
             repo_dir: r.repo_dir.as_deref(),
             scope_range: r.scope_range.as_ref(),
             in_scope: &in_scope,
-            paths: &r.paths,
+            paths: &check,
             launch: Launch::Added,
             read_only: position.is_some_and(|i| lanes[i].read_only),
         },
@@ -1866,7 +2192,7 @@ pub(super) fn admit_paths(
         standing.mail_root.as_deref().map(Path::new),
         &judged.touched,
     );
-    let touched = union(standing.touched.as_deref().unwrap_or_default(), &added);
+    let touched = union(&standing_paths, &added);
     widen(path, doc, index, standing, &touched, &judged.in_scope)?;
     Ok(PathsAdmitted {
         lane: Some(Box::new(lane_at(path, doc, index)?)),
@@ -2954,9 +3280,500 @@ mod tests {
                 Some(Join {
                     holder: 0,
                     tie: Tie::File("scripts/sandbox-shots.sh".into()),
+                    paths: vec!["scripts/sandbox-shots.sh".into()],
                 }),
                 "{brief}"
             );
+        }
+    }
+
+    fn blank_fleet(at: &Path) -> PathBuf {
+        let path = fleet_file(at);
+        let mut doc = crate::ops::loaded(&path).unwrap().doc;
+        doc.insert("lanes".into(), json!([]));
+        doc.insert("intents".into(), json!([]));
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        path
+    }
+
+    fn call(path: &Path, request: &Value, host: &Host) -> Result<super::super::Applied> {
+        let request = serde_json::from_value(request.clone()).unwrap();
+        let env = Env {
+            nonce: NONCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ..env()
+        };
+        super::super::apply_on(path, &request, &env, LOCK, host)
+    }
+
+    fn launch_request(item: &str, root: &Path, repo: Option<&str>, brief: &Path) -> Value {
+        json!({
+            "op": "launch-lane", "item": item, "repo": repo, "mail_root": root, "brief_file": brief,
+            "harness": "claude", "model": "claude-opus-5-5", "class": "standard", "class_reason": "test",
+        })
+    }
+
+    fn keep_request(item: &str) -> Value {
+        json!({
+            "op": "close-owned-resources", "item": item,
+            "no_landing": { "reason": "restart-recovery", "source": "test" },
+        })
+    }
+
+    fn settle(path: &Path, id: &str, outcome: &str, host: &Host) {
+        call(
+            path,
+            &json!({"op": "record-outcome", "intent_id": id, "outcome": outcome, "launch": {"pid": 6001, "start": "ticks:6001"}}),
+            host,
+        )
+        .unwrap();
+    }
+
+    fn contenders(path: &Path, host: &Host, states: &[(Option<&str>, bool)]) {
+        for &(repo, held) in states {
+            let got = call(
+                path,
+                &json!({
+                    "op": "admit-paths", "item": "KEN-C", "repo": repo, "paths": ["src/shared.rs"],
+                }),
+                host,
+            );
+            if held {
+                assert!(
+                    matches!(got, Err(Error::LaunchOverlap { .. })),
+                    "{repo:?} {got:?}"
+                );
+            } else {
+                assert!(got.is_ok(), "{repo:?} {got:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn confirmed_park_or_close_releases_but_failed_recovery_preserves_the_prior_authority() {
+        for hosted in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = blank_fleet(dir.path());
+            let brief = dir.path().join("brief");
+            std::fs::write(&brief, "Edit `src/shared.rs`.").unwrap();
+            let mut launch = launch_request("KEN-L", dir.path(), None, &brief);
+            if hosted {
+                launch["host"] = json!("example");
+            }
+            let host = host();
+            let checks = |held| contenders(&path, &host, &[(None, held)]);
+            let issue = |request: &Value| intent_id(&call(&path, request, &host).unwrap());
+            let keep = keep_request("KEN-L");
+            let full = json!({"op": "close-owned-resources", "item": "KEN-L",
+                "ended": {"source": "test"}});
+            let id = issue(&launch);
+            checks(true);
+            settle(&path, &id, "failed", &host);
+            checks(false);
+            let id = issue(&launch);
+            settle(&path, &id, "confirmed", &host);
+            checks(true);
+            let id = issue(&keep);
+            settle(&path, &id, "unconfirmed", &host);
+            checks(true);
+            settle(&path, &id, "failed", &host);
+            checks(true);
+            settle(&path, &issue(&keep), "confirmed", &host);
+            checks(true);
+            settle(&path, &issue(&launch), "failed", &host);
+            checks(true);
+
+            if hosted {
+                let park = json!({"op":"park-lane", "item":"KEN-L", "repo":"o/r",
+                    "head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "hold":true});
+                let mut owed = park.clone();
+                owed["owed"] = json!(true);
+                call(&path, &owed, &host).unwrap();
+                checks(true);
+                call(&path, &park, &host).unwrap();
+                checks(false);
+                settle(&path, &issue(&launch), "failed", &host);
+                checks(false);
+            } else {
+                settle(&path, &issue(&full), "failed", &host);
+                checks(true);
+                settle(&path, &issue(&full), "confirmed", &host);
+                checks(false);
+                settle(&path, &issue(&launch), "failed", &host);
+                checks(false);
+            }
+        }
+    }
+
+    #[test]
+    fn a_connected_move_has_two_claims_through_supersession_and_restores_the_retry_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = blank_fleet(dir.path());
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let brief = dir.path().join("brief");
+        std::fs::write(&brief, "Edit `src/shared.rs`.").unwrap();
+        let settings = crate::settings::load(
+            &agent_runtime::settings::Roots {
+                project: a.clone(),
+                common: a.clone(),
+            },
+            &[("ORCH_CONNECTED_REPOS".into(), "owner/b".into())],
+            &crate::settings::Flags {
+                state_dir: None,
+                private_env: false,
+            },
+        )
+        .unwrap();
+        let mut host = host().judging(&settings);
+        host.admission.as_mut().unwrap().checkout = Box::new(|_, root| {
+            let is_b = root == b;
+            Ok(Some(Repository {
+                root: if is_b { b.clone() } else { a.clone() },
+                slug: Some(if is_b { "owner/b" } else { "owner/a" }.into()),
+            }))
+        });
+        let issue = |request: &Value| intent_id(&call(&path, request, &host).unwrap());
+        let mut first = launch_request("KEN-L", &a, None, &brief);
+        first["host"] = json!("source-host");
+        let first_id = issue(&first);
+        call(
+            &path,
+            &json!({"op": "record-outcome", "intent_id": first_id,
+            "outcome": "confirmed", "mail_root": "/source-host/checkout"}),
+            &host,
+        )
+        .unwrap();
+        let keep = keep_request("KEN-L");
+        settle(&path, &issue(&keep), "confirmed", &host);
+        contenders(
+            &path,
+            &host,
+            &[
+                (Some("OWNER/A"), true),
+                (Some("owner/b"), false),
+                (Some("owner/c"), false),
+            ],
+        );
+
+        let other = launch_request("KEN-B", &b, Some("owner/b"), &brief);
+        let blocker = issue(&other);
+        let before = std::fs::read(&path).unwrap();
+        let destination = launch_request("KEN-L", &b, Some("OWNER/B"), &brief);
+        assert!(matches!(
+            call(&path, &destination, &host),
+            Err(Error::LaunchOverlap { .. })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        settle(&path, &blocker, "failed", &host);
+
+        let both = [(None, true), (Some("owner/b"), true)];
+        let id = issue(&destination);
+        contenders(&path, &host, &both);
+        settle(&path, &id, "failed", &host);
+        let restored = lane(&path, "KEN-L");
+        assert_eq!(restored.repo, None);
+        assert_eq!(restored.host.as_deref(), Some("source-host"));
+        assert_eq!(restored.mail_root.as_deref(), Some("/source-host/checkout"));
+        assert_eq!(restored.extra["checkout"], json!(a));
+        contenders(&path, &host, &[(None, true), (Some("owner/b"), false)]);
+
+        for cloud in [false, true] {
+            let mut destination = destination.clone();
+            let mut observation = if cloud {
+                destination["host"] = json!("claude-cloud");
+                json!({"cloud_create":"pending"})
+            } else {
+                json!({"pane":"%1"})
+            };
+            let id = issue(&destination);
+            observation["cause"] = json!(super::super::SUPERSEDED_LAUNCH);
+            call(
+                &path,
+                &json!({"op":"record-outcome", "intent_id":id, "outcome":"failed",
+                "observation": observation}),
+                &host,
+            )
+            .unwrap();
+            // After the superseding outcome and before a close exists, both
+            // repositories still have a writer or an older recovery claim.
+            contenders(&path, &host, &both);
+            assert_eq!(
+                call(&path, &destination, &host).unwrap_err().key(),
+                "intent-open"
+            );
+            let mut observed_keep = keep.clone();
+            if cloud {
+                assert_eq!(
+                    call(&path, &keep, &host).unwrap_err().key(),
+                    "cloud-writer-unsettled"
+                );
+                contenders(&path, &host, &both);
+                observed_keep["no_landing"]["source"] = json!("cloud-writer-absent");
+            }
+            let close = issue(&observed_keep);
+            contenders(&path, &host, &both);
+            settle(&path, &close, "confirmed", &host);
+            contenders(&path, &host, &[(None, true), (Some("owner/b"), false)]);
+        }
+
+        let id = issue(&destination);
+        settle(&path, &id, "confirmed", &host);
+        contenders(&path, &host, &[(None, false), (Some("owner/b"), true)]);
+    }
+
+    #[test]
+    fn legacy_location_survives_each_widening_and_open_close_refuses_writes() {
+        for mode in ["paths", "file", "blocker"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let path = blank_fleet(&root);
+            let mut doc = crate::ops::loaded(&path).unwrap().doc;
+            doc.insert(
+                "lanes".into(),
+                json!([{
+                    "item":"KEN-L", "tracker":"linear", "status":"running",
+                    "harness":"claude", "surface":"gui", "mail_root": root,
+                }]),
+            );
+            std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+            let mail = root.join("lane-mail");
+            std::fs::write(
+                &mail,
+                "#!/bin/sh\nprintf 'lane-mail: sent item=KEN-L id=joined monitor=none\\n'\n",
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let settings = crate::settings::load(
+                &agent_runtime::settings::Roots {
+                    project: root.clone(),
+                    common: root.clone(),
+                },
+                &[("LANE_MAIL_CLI".into(), mail.as_os_str().to_owned())],
+                &crate::settings::Flags {
+                    state_dir: None,
+                    private_env: false,
+                },
+            )
+            .unwrap();
+            let mut candidate = body("`src/new.rs`").unwrap();
+            if mode == "blocker" {
+                candidate.blocked_by_launch = Some(vec!["KEN-L".into()]);
+            }
+            let planted = Planted {
+                items: [
+                    ("KEN-L".into(), body("`src/shared.rs`, `src/legacy/`")),
+                    ("KEN-X".into(), Ok(candidate)),
+                ]
+                .into(),
+                readings: BTreeMap::new(),
+                ranges: Vec::new(),
+                reads: RefCell::new(Vec::new()),
+            };
+            let still_runs = planted.still_runs();
+            let host = planted.host(&still_runs).judging(&settings);
+            let brief = root.join("brief");
+            std::fs::write(
+                &brief,
+                if mode == "file" {
+                    "Edit `src/legacy/deep.rs`."
+                } else {
+                    "Edit `src/new.rs`."
+                },
+            )
+            .unwrap();
+            let mut candidate = launch_request("KEN-X", &root, None, &brief);
+            candidate["tracker"] = json!("linear");
+            let widen = json!({"op":"admit-paths", "item":"KEN-L", "paths":["src/new.rs"]});
+
+            // Stage the recovery via the native record adapter. Its close
+            // carries the same fallback as a managed transition.
+            let env = env();
+            let native_close = super::super::records::Record::decode(&json!({
+                "op":"record-surface-lane", "step":"close", "item":"KEN-L"
+            }))
+            .unwrap()
+            .unwrap();
+            let closing =
+                super::super::records::apply_record(&path, &native_close, &settings, &env, LOCK)
+                    .unwrap();
+            let id = closing["intent"]["id"].as_str().unwrap();
+            assert_eq!(
+                call(&path, &widen, &host).unwrap_err().key(),
+                "lane-admission-pending"
+            );
+            if mode != "paths" {
+                assert_eq!(
+                    call(&path, &candidate, &host).unwrap_err().key(),
+                    if mode == "blocker" {
+                        "launch-blocked"
+                    } else {
+                        "launch-overlap"
+                    }
+                );
+            }
+            let observed = root.join("observed");
+            std::fs::write(
+                &observed,
+                json!({"intent_id":id, "outcome":"failed", "evidence":"no stop"}).to_string(),
+            )
+            .unwrap();
+            let merge = super::super::records::Record::decode(&json!({
+                "op":"record-surface-lane", "step":"merge", "item":"KEN-L", "file":observed
+            }))
+            .unwrap()
+            .unwrap();
+            super::super::records::apply_record(&path, &merge, &settings, &env, LOCK).unwrap();
+
+            if mode == "paths" {
+                call(&path, &widen, &host).unwrap();
+            } else {
+                let reply = call(&path, &candidate, &host).unwrap();
+                assert!(matches!(reply.report, super::super::Report::Joined(_)));
+            }
+            assert!(lane(&path, "KEN-L").admitted_line().is_none());
+            let touched = lane(&path, "KEN-L").touched.unwrap();
+            assert!(touched.iter().any(|p| p == "src/legacy/"));
+            contenders(&path, &host, &[(None, true)]);
+        }
+    }
+
+    #[test]
+    fn review_overlap_gives_the_earlier_writer_recovery_precedence() {
+        for (stop, retry) in [
+            (["KEN-A", "KEN-B"], ["KEN-B", "KEN-A"]),
+            (["KEN-B", "KEN-A"], ["KEN-A", "KEN-B"]),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = blank_fleet(dir.path());
+            let mut doc = crate::ops::loaded(&path).unwrap().doc;
+            doc.insert(
+                "lanes".into(),
+                json!([{
+                    "item":"KEN-A", "status":"running", "touched":["src/shared.rs"],
+                    "file_hold":"exclusive", "pending_pr":{"pr":1,"head":"abc"},
+                    "launch":{"pid":6000,"start":"ticks:6000"},
+                }]),
+            );
+            std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+            let settings = crate::settings::load(
+                &agent_runtime::settings::Roots {
+                    project: dir.path().into(),
+                    common: dir.path().into(),
+                },
+                &[("ORCH_DELIVERY".into(), "push-base".into())],
+                &crate::settings::Flags {
+                    state_dir: None,
+                    private_env: false,
+                },
+            )
+            .unwrap();
+            let a_live = std::cell::Cell::new(true);
+            let reads = |identity: &Identity| {
+                if identity.pid == 6000 && a_live.get() {
+                    Reading::Live(identity.clone())
+                } else {
+                    Reading::Gone
+                }
+            };
+            let mut host = host().judging(&settings);
+            host.still_runs = &reads;
+            let brief = dir.path().join("brief");
+            std::fs::write(&brief, "Edit `src/shared.rs`.").unwrap();
+            let issue = |request: &Value| intent_id(&call(&path, request, &host).unwrap());
+            let b = launch_request("KEN-B", dir.path(), None, &brief);
+            settle(&path, &issue(&b), "confirmed", &host);
+            assert_eq!(lane(&path, "KEN-B").file_hold, Some(FileHold::Shared));
+            for item in stop {
+                settle(&path, &issue(&keep_request(item)), "confirmed", &host);
+                if item == "KEN-A" {
+                    a_live.set(false);
+                }
+            }
+            for item in retry {
+                let reply = call(
+                    &path,
+                    &launch_request(item, dir.path(), None, &brief),
+                    &host,
+                );
+                if item == "KEN-A" {
+                    // Leave A in preparation so B must meet it in either order.
+                    assert!(reply.is_ok(), "{reply:?}");
+                } else {
+                    assert!(
+                        matches!(reply, Err(Error::LaunchOverlap { .. })),
+                        "{reply:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn append_only_permission_does_not_become_an_exclusive_recovery_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = blank_fleet(dir.path());
+        let brief = dir.path().join("brief");
+        std::fs::write(&brief, "Edit `src/shared.rs`.").unwrap();
+        let host = host();
+        let issue = |request: &Value| intent_id(&call(&path, request, &host).unwrap());
+        let a = launch_request("KEN-A", dir.path(), None, &brief);
+        let mut append = launch_request("KEN-B", dir.path(), None, &brief);
+        append["in_scope"] = json!(["src/shared.rs"]);
+        settle(&path, &issue(&a), "confirmed", &host);
+        settle(&path, &issue(&append), "confirmed", &host);
+        settle(&path, &issue(&keep_request("KEN-A")), "confirmed", &host);
+        settle(&path, &issue(&keep_request("KEN-B")), "confirmed", &host);
+        contenders(&path, &host, &[(None, true)]);
+        settle(
+            &path,
+            &issue(&json!({
+                "op":"close-owned-resources", "item":"KEN-A", "ended":{"source":"test"}
+            })),
+            "confirmed",
+            &host,
+        );
+        contenders(&path, &host, &[(None, false)]);
+    }
+
+    #[test]
+    fn a_yielding_legacy_stop_checks_its_full_location_before_acquiring_recovery() {
+        for (body, error) in [
+            (body("`src/shared.rs`"), "launch-overlap"),
+            (Ok(ItemRead::default()), "touched-unreadable"),
+            (Err("tracker-unavailable".into()), "touched-unreadable"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = blank_fleet(dir.path());
+            let mut doc = crate::ops::loaded(&path).unwrap().doc;
+            doc.insert("lanes".into(), json!([
+                {"item":"KEN-A", "status":"stopped", "touched":["src/shared.rs"], "file_hold":"retained"},
+                {"item":"KEN-B", "status":"stopped", "tracker":"linear", "host":"example"},
+            ]));
+            std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+            let planted = Planted {
+                items: [("KEN-B".into(), body)].into(),
+                readings: BTreeMap::new(),
+                ranges: Vec::new(),
+                reads: RefCell::new(Vec::new()),
+            };
+            let still_runs = planted.still_runs();
+            let host = planted.host(&still_runs);
+            for reason in ["restart-recovery", "keep-sandbox"] {
+                let before = std::fs::read(&path).unwrap();
+                let mut keep = keep_request("KEN-B");
+                keep["no_landing"]["reason"] = json!(reason);
+                let refusal = call(&path, &keep, &host).unwrap_err();
+                assert_eq!(refusal.key(), error);
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
+            let full =
+                json!({"op":"close-owned-resources", "item":"KEN-B", "ended":{"source":"test"}});
+            let id = intent_id(&call(&path, &full, &host).unwrap());
+            settle(&path, &id, "confirmed", &host);
         }
     }
 

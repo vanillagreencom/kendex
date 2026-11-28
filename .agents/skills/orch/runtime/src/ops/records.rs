@@ -161,40 +161,55 @@ pub fn apply_record(
         | Record::RecordPrProgress(_)
         | Record::RecordSurfaceLane(_) => None,
     };
-    record::reread(
-        || {
-            let snapshot = loaded(path)?;
-            let mut doc = snapshot.doc.clone();
-            let report = match record {
-                Record::RecordRound(r) => {
-                    item::record_round(path, &mut doc, r, env, head.as_deref())?
-                }
-                Record::RecordPanel(r) => reviewers::record_panel(path, &mut doc, store, r)?,
-                Record::RecordAgents(r) => {
-                    reviewers::record_agents(path, &mut doc, r, opener.as_ref())?
-                }
-                Record::RecordDisposition(r) => findings::record_disposition(path, &mut doc, r)?,
-                Record::RecordCommentLedger(r) => {
-                    findings::record_comment_ledger(path, &mut doc, r)?
-                }
-                Record::RecordRoute(r) => progress::record_route(path, &mut doc, r)?,
-                Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
-                Record::RecordPrProgress(r) => {
-                    progress::record_pr_progress(path, &mut doc, env, r)?
-                }
-                Record::RecordSurfaceLane(r) => lane::record_surface_lane(path, &mut doc, r)?,
-                Record::RecordOverseerLedger(r) => {
-                    if let Some(mirror) = &mirror {
-                        mirror.judge(&doc)?;
+    let commit = || {
+        record::reread(
+            || {
+                let snapshot = loaded(path)?;
+                let mut doc = snapshot.doc.clone();
+                let report = match record {
+                    Record::RecordRound(r) => {
+                        item::record_round(path, &mut doc, r, env, head.as_deref())?
                     }
-                    ledger::record_overseer_ledger(path, &mut doc, env, r)?
-                }
-            };
-            record::store(path, &snapshot.doc, &doc, locking)?;
-            Ok(report)
-        },
-        Error::key,
-    )
+                    Record::RecordPanel(r) => reviewers::record_panel(path, &mut doc, store, r)?,
+                    Record::RecordAgents(r) => {
+                        reviewers::record_agents(path, &mut doc, r, opener.as_ref())?
+                    }
+                    Record::RecordDisposition(r) => {
+                        findings::record_disposition(path, &mut doc, r)?
+                    }
+                    Record::RecordCommentLedger(r) => {
+                        findings::record_comment_ledger(path, &mut doc, r)?
+                    }
+                    Record::RecordRoute(r) => progress::record_route(path, &mut doc, r)?,
+                    Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
+                    Record::RecordPrProgress(r) => {
+                        progress::record_pr_progress(path, &mut doc, env, r)?
+                    }
+                    Record::RecordSurfaceLane(r) => lane::record_surface_lane(
+                        path,
+                        &mut doc,
+                        r,
+                        env,
+                        &super::admission_host(settings),
+                    )?,
+                    Record::RecordOverseerLedger(r) => {
+                        if let Some(mirror) = &mirror {
+                            mirror.judge(&doc)?;
+                        }
+                        ledger::record_overseer_ledger(path, &mut doc, env, r)?
+                    }
+                };
+                record::store(path, &snapshot.doc, &doc, locking)?;
+                Ok(report)
+            },
+            Error::key,
+        )
+    };
+    if matches!(record, Record::RecordSurfaceLane(_)) {
+        super::with_file_lock(path, locking, commit)
+    } else {
+        commit()
+    }
 }
 
 /// A field's check over its value before (`None` where absent) and after a
@@ -434,6 +449,9 @@ pub(crate) fn owned_refusal(field: &str, op: &str, cause: &str) -> Error {
 /// Hold every owned field a write moved between `before` and `after` to its
 /// owner's check.
 pub(crate) fn check_owned(before: &Document, after: &Document) -> Result<()> {
+    if before.get("lanes") != after.get("lanes") {
+        check_lane_ownership(before, after)?;
+    }
     for (field, op, check) in owned_fields() {
         let was = before.get(field);
         let Some(now) = after.get(field).filter(|now| was != Some(*now)) else {
@@ -444,6 +462,51 @@ pub(crate) fn check_owned(before: &Document, after: &Document) -> Result<()> {
             Check::Added(check) => check(was, now),
         };
         checked.map_err(|cause| owned_refusal(field, op, &cause))?;
+    }
+    Ok(())
+}
+
+fn lane_rows(doc: &Document) -> impl Iterator<Item = &Document> {
+    doc.get("lanes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+}
+
+fn check_lane_ownership(before: &Document, after: &Document) -> Result<()> {
+    for previous in lane_rows(before) {
+        let mut matches = lane_rows(after).filter(|l| l.get("item") == previous.get("item"));
+        let Some(now) = matches.next() else {
+            lane::check_lane_field(previous, "status")?;
+            continue;
+        };
+        if matches.next().is_some() {
+            return Err(owned_refusal("lanes", "lane admission", "duplicate-item"));
+        }
+        for key in previous.keys().chain(now.keys()) {
+            if previous.get(key) != now.get(key) {
+                lane::check_lane_field(previous, key)?;
+            }
+        }
+    }
+    for row in lane_rows(after) {
+        if !lane_rows(before).any(|prior| prior.get("item") == row.get("item")) {
+            if row
+                .get("surface")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !matches!(s, "tmux" | "cloud"))
+            {
+                return Err(owned_refusal(
+                    "lanes",
+                    "record-surface-lane",
+                    "checked-transition-required",
+                ));
+            }
+            for key in row.keys() {
+                lane::check_lane_field(&Document::new(), key)?;
+            }
+        }
     }
     Ok(())
 }

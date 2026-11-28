@@ -74,9 +74,9 @@ pub fn run(
                 limit: None,
                 ..request.clone()
             }));
-            Ok(serde_json::to_value(super::lane_operation::apply_request(
-                path, &marked, env, locking,
-            )?)?)
+            Ok(serde_json::to_value(
+                super::lane_operation::apply_bookkeeping(path, &marked, env, locking)?,
+            )?)
         }
     }
 }
@@ -106,7 +106,7 @@ fn recover(
         limit: Some(settings.model_recovery_limit.get()?),
         ..request.clone()
     }));
-    let applied = super::lane_operation::apply_request(path, &claim, env, locking)?;
+    let applied = super::lane_operation::apply_bookkeeping(path, &claim, env, locking)?;
     let Report::RecoverLaneModel(recorded) = applied.report else {
         unreachable!("a recovery's claim reports its claim")
     };
@@ -295,7 +295,7 @@ pub fn stop_predecessor_run(
         failure: Some(failure.clone()),
         ..request.clone()
     }));
-    if let Err(e) = super::lane_operation::apply_request(path, &kept, env, locking) {
+    if let Err(e) = super::lane_operation::apply_bookkeeping(path, &kept, env, locking) {
         let cause = e.to_string();
         return Err(refused(
             "model-predecessor-unrecorded",
