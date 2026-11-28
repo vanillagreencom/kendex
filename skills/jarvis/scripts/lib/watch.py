@@ -1508,7 +1508,8 @@ class Watch:
                      and controller and controller.get("auth") is not None
                      and controller["auth"] == wall.get("controller"))
         memory = self.state.get("exited")
-        if memory is not None and memory.get("ran") and memory.get("controller") is None and reading[0] == "running":
+        if memory is not None and memory.get("controller") is None and (
+                auth_exit or memory.get("ran") and reading[0] == "running"):
             memory["controller"] = identity
             self.save()
         if memory is not None and (reading == ("stopped", "stopped")
@@ -1543,6 +1544,8 @@ class Watch:
             # still owed from before it.
             if auth_exit and memory["noticed"] and not any(
                     entry["id"] == memory.get("notice_id") for entry in self.state.get("held_notices", [])):
+                del self.state["exited"]
+                self.save()
                 return None
             memory.update(ran=False, noticed=False, outcome=(
                 "It started again on " + (answer.get("account") or "its default account")
