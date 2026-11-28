@@ -7019,6 +7019,59 @@ fn a_retargeted_head_reads_the_new_bases_mode() {
     );
 }
 
+/// The classifier's quick proof suppresses a lane request while the base
+/// still requires an approval. The central workflow's overseer exception
+/// keeps Copilot as the separate approver on the app's own pull requests.
+#[test]
+fn copilot_requests_follow_the_quick_proof_and_overseer_exception() {
+    for (name, login, quick, requests) in [
+        ("lane quick", "lane-app[bot]", true, 0),
+        ("lane non-quick", "lane-app[bot]", false, 1),
+        ("overseer quick", "vanillagreen-overseer[bot]", true, 1),
+    ] {
+        let mut gh = Github::review_world();
+        let mut pull = rest_pull(false, "feat", login, "Bot");
+        pull["base"]["sha"] = json!(WORKFLOW_SHA);
+        gh.answer(&pull_path(), pull);
+        let scripts = gh.base().join(".agents/skills/harness-ci/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        support::write_executable(
+            &scripts.join("change-class"),
+            format!(
+                r#"#!/bin/sh
+[ "$#" -eq 10 ] &&
+  [ "$1 $2 $3 $4 $5 $6 $7" = '--event pull_request --base {WORKFLOW_SHA} --head {HEAD} --repo' ] &&
+  [ "$0" = "$8/.agents/skills/harness-ci/scripts/change-class" ] &&
+  [ "$9 ${{10}}" = '--output /dev/null' ] || exit 2
+printf '%s\n' 'change_class=trivial'
+printf '%s\n' 'quick-proof: proved={quick}' >&2
+"#
+            ),
+        );
+
+        let result = ok_result(&gh.review(false, BLOCK));
+        assert_eq!(gh.requests(), requests, "{name}: {:?}", gh.log());
+        assert_eq!(result["mode"], "approval", "{name}: {result}");
+        assert_eq!(result["status"], "pending", "{name}: {result}");
+        if requests == 0 {
+            assert_eq!(result["request"]["outcome"], "fallback", "{name}: {result}");
+            assert_eq!(result["request"]["cause"], "quick", "{name}: {result}");
+            gh.answer(
+                &format!("pr view {PR}"),
+                review_view("APPROVED", &[], false),
+            );
+            let approved = ok_result(&gh.review(false, BLOCK));
+            assert_eq!(approved["verdict"], "approved", "{name}: {approved}");
+            assert_eq!(gh.requests(), 0, "{name}: {:?}", gh.log());
+        } else {
+            assert_eq!(
+                result["request"]["outcome"], "requested",
+                "{name}: {result}"
+            );
+        }
+    }
+}
+
 /// A request that sends nothing records why under the head, once: the
 /// consumer's declared refresh head, Copilot requests off, a draft without
 /// the ready mark, Copilot's no-files answer, and a refused POST with its

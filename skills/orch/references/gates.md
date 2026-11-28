@@ -125,6 +125,7 @@ Route the `request` before the verdict word:
   - `off`: the call recorded the fallback while `PR_COPILOT_REQUESTS` was `off`.
   - `draft`: the head is a draft the call was not asked to mark ready. Keep the draft. This fallback lapses once the gate's ready mark lands, or once the view and `pulls/N` both read the head ready. That call answers the head's request as on a head with no request recorded, and starts the head's hold and review period.
   - `refresh`: the consumer's base-checkout `REVIEW_GATE_REFRESH_REVIEW=overseer` declares this pull request its refresh head. The head takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval).
+  - `quick` means the change classifier proves the head is quick and the overseer app did not author the pull request. The head takes the same Fallback approval.
   - `no-files`: Copilot's current-head answer says it could review no files. The head takes the same Fallback approval with no further request.
   - `refused` with `exit`: GitHub answered the request with a 4xx refusal.
   - `unconfirmed`: the request and its resend drew neither Copilot's work in flight nor a Copilot review of the head.

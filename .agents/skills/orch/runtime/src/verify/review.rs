@@ -6,6 +6,10 @@
 //! Every read answers a closed wire type or a refusal with its cause; a
 //! failed read is never a verdict, a count or an empty requirement.
 
+use std::path::Path;
+use std::time::Duration;
+
+use agent_runtime::host;
 use serde_json::Value;
 
 pub(crate) use super::Acted;
@@ -182,14 +186,60 @@ pub(crate) fn gate_mode(gh: &Gh, repo: &str, base: &str) -> Read<GateMode> {
     })
 }
 
-/// The pull request object, for the refresh route and the draft flag;
-/// the gate judges the flag, so an object without it is unreadable.
+/// The pull request object, for request eligibility. The gate judges the
+/// draft flag, so an object without it is unreadable.
 pub(crate) fn pull(gh: &Gh, repo: &str, pr: u64) -> Read<Pull> {
     let pull: Pull = Reader { gh }.object(Endpoint::Pull, &format!("repos/{repo}/pulls/{pr}"))?;
     if !head_form(&pull.head.sha) || pull.draft.present().is_none() {
         return Err(Cause::ResponseInvalid(Endpoint::Pull));
     }
     Ok(pull)
+}
+
+/// Read the proof `.github/actions/change-class` forwards as `quick`. The
+/// base checkout supplies the classifier so the judged head cannot replace it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the classifier reads only the pinned range in the base checkout, without inherited Git overrides"
+)]
+pub(crate) fn quick(checkout: &Path, pull: &Pull) -> bool {
+    if !head_form(&pull.base.sha) {
+        return false;
+    }
+    let script = checkout.join(".agents/skills/harness-ci/scripts/change-class");
+    let repo = checkout.to_string_lossy();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let answer = host::run_tagged_alone(
+        "verify-review",
+        "change-class",
+        &script,
+        "class",
+        &[
+            "--event",
+            "pull_request",
+            "--base",
+            &pull.base.sha,
+            "--head",
+            &pull.head.sha,
+            "--repo",
+            &repo,
+            "--output",
+            "/dev/null",
+        ],
+        host::Place {
+            cwd: None,
+            env: &[("PATH", &path)],
+        },
+        Duration::from_secs(120),
+    );
+    answer.is_ok_and(|out| {
+        out.status.success()
+            && out
+                .stderr
+                .split(|byte| *byte == b'\n')
+                .filter_map(|line| line.strip_prefix(b"quick-proof: proved="))
+                .eq([b"true".as_slice()])
+    })
 }
 
 /// Copilot's reviews bound to the head: the arrival time the timeline

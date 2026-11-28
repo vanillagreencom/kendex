@@ -44,6 +44,8 @@ const GATE_MODE_KEY: &str = "REVIEW_GATE_MODE";
 const REFRESH_REVIEW_KEY: &str = "REVIEW_GATE_REFRESH_REVIEW";
 const REFRESH_BRANCH_KEY: &str = "REVIEW_GATE_REFRESH_BRANCH";
 const REFRESH_AUTHOR_KEY: &str = "REVIEW_GATE_REFRESH_AUTHOR";
+// The central request workflow keeps Copilot as the overseer app's separate approver.
+const OVERSEER_APP_LOGIN: &str = "vanillagreen-overseer[bot]";
 /// The blocker kind the merge refuses on while one stands open on the
 /// item's escalated findings.
 const REGRESSION_KIND: &str = "regression-against-main";
@@ -971,7 +973,8 @@ impl Gate<'_> {
     /// `refresh` where the consumer's refresh policy names the pull request
     /// its refresh head, `off` where `PR_COPILOT_REQUESTS` is `off`, `draft`
     /// where the view's draft this call did not mark ready, or `pulls/N`,
-    /// reads it draft; `None` where it may. Judged once per call, over the
+    /// reads it draft, and `quick` where the classifier proves the head may
+    /// skip the request. Judged once per call, over the
     /// `pulls/N` read the call already made, else one read here; a head
     /// that moved between the two reads is `pending head-moved`.
     fn ineligible(&mut self) -> Step<Option<&'static str>> {
@@ -1021,6 +1024,11 @@ impl Gate<'_> {
             Some("off")
         } else if self.draft || pull.draft == Optional::Present(true) {
             Some("draft")
+        } else if pull.base.branch == self.view.base
+            && !matches!(&pull.user, Nullable::Present(user) if user.login == OVERSEER_APP_LOGIN && user.kind == "Bot")
+            && review::quick(&self.r.base_checkout, &pull)
+        {
+            Some("quick")
         } else {
             None
         };
@@ -1093,7 +1101,11 @@ impl Gate<'_> {
         error_id: u64,
         error_at: &str,
     ) -> Step<Option<Verdict>> {
-        if record.held_as_draft() {
+        if record.held_as_draft()
+            || record.request.as_ref().is_some_and(|request| {
+                request.outcome == FALLBACK && request.cause.as_deref() == Some("quick")
+            })
+        {
             return Ok(None);
         }
         let Some(retry) = record.retry.clone() else {
