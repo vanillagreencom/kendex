@@ -1834,10 +1834,21 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   esac
   if [ "$label" = vitest-scratch-path ]; then
     scratch="$SANDBOX/node_modules-cache"
-    mkdir -p "$scratch"
+    mkdir -p "$scratch/bin"
+    # Apple's mktemp -d can choose the Darwin temporary directory over TMPDIR.
+    real_mktemp="$(type -P mktemp)"
+    cat >"$scratch/bin/mktemp" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = -d ]; then
+  exec "$LANE_REACH_REAL_MKTEMP" -d "$TMPDIR/lane-reach.XXXXXXXXXX"
+fi
+exec "$LANE_REACH_REAL_MKTEMP" "$@"
+SH
+    chmod +x "$scratch/bin/mktemp"
     (
       unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
-      TMPDIR="$scratch" PATH="$tools:$PATH" GITHUB_REF="$push_ref" GITHUB_SHA="$head" GITHUB_EVENT_PATH="$SANDBOX/event" \
+      LANE_REACH_REAL_MKTEMP="$real_mktemp" TMPDIR="$scratch" PATH="$scratch/bin:$tools:$PATH" \
+        GITHUB_REF="$push_ref" GITHUB_SHA="$head" GITHUB_EVENT_PATH="$SANDBOX/event" \
         "$cli" --event "$event" --base "$base" --head "$head" --queue-only-default true \
         --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/scratch-output"
     ) >"$SANDBOX/stdout" 2>"$SANDBOX/scratch-log" || { cat "$SANDBOX/scratch-log"; exit 1; }
