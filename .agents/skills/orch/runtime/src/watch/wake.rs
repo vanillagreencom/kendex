@@ -57,8 +57,8 @@
 //! `rows-host-unread`. An unanswered transport paste keeps
 //! `paste-unanswered`. A Claude provider stop uses the confirmed launch's
 //! root for both reads. A refused status or cursor read leaves the request
-//! pending. The saved receipt remains open after lane observation clears
-//! the request. A wall's resume is local alone.
+//! pending. A retired continuation keeps its own receipt if another wake
+//! replaces its mark on the same launch. A wall's resume is local alone.
 //!
 //! The duty starts no detached process: nothing new charges the lane cap.
 //!
@@ -85,6 +85,7 @@
 //! the owner told once, as for its mail.
 
 use agent_runtime::controller::Overseer;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -134,6 +135,35 @@ fn receipt_key(target: &str, cause: Option<&str>) -> String {
     match cause {
         Some(RESTACK_CAUSE) => restack_key(target),
         _ => target.to_owned(),
+    }
+}
+
+const RETIRED_RESUME: &str = "retired-resume:";
+
+struct RetiredReceipt<'a> {
+    item: &'a str,
+    row: &'a str,
+    through: Option<u64>,
+}
+
+impl<'a> RetiredReceipt<'a> {
+    fn from_key(key: &'a str) -> Option<Self> {
+        let (item, rest) = key.strip_prefix(RETIRED_RESUME)?.split_once(':')?;
+        let (through, row) = rest.split_once(':')?;
+        let through = if through.is_empty() {
+            None
+        } else {
+            Some(through.parse().ok()?)
+        };
+        Some(Self { item, row, through })
+    }
+
+    fn key(&self) -> String {
+        let through = self
+            .through
+            .map(|position| position.to_string())
+            .unwrap_or_default();
+        format!("{RETIRED_RESUME}{}:{through}:{}", self.item, self.row)
     }
 }
 
@@ -389,7 +419,7 @@ struct Target {
     cwd: PathBuf,
     session_id: Option<String>,
     route: Route,
-    prompt_rows: bool,
+    prompt_rows: Option<std::result::Result<Capabilities, String>>,
     rows_root: RowsRoot,
 }
 
@@ -401,17 +431,25 @@ enum RowsRoot {
 
 impl Target {
     /// The same resolved lane and root policy own cursor and receipt reads.
-    fn session_rows(&self, scripts: &Path) -> Option<hosted::Answer<String>> {
-        if !self.prompt_rows {
-            return None;
-        }
+    fn session_rows(&self, scripts: &Path) -> Option<hosted::Answer<hosted::SessionRows>> {
+        let caps = self.prompt_rows.as_ref()?;
         let lane = match &self.route {
             Route::Transport { lane, .. } | Route::Send { lane, .. } => lane,
             Route::Pane => return None,
         };
+        let caps = match caps {
+            Ok(caps) => *caps,
+            Err(cause) => {
+                return Some(hosted::session_rows_unreadable(
+                    hosted::host_of(lane),
+                    &lane.item,
+                    cause,
+                ));
+            }
+        };
         Some(match self.rows_root {
-            RowsRoot::Recorded => hosted::session_rows(scripts, lane),
-            RowsRoot::Confirmed => hosted::confirmed_session_rows(scripts, lane),
+            RowsRoot::Recorded => hosted::session_rows(scripts, lane, caps),
+            RowsRoot::Confirmed => hosted::confirmed_session_rows(scripts, lane, caps),
         })
     }
 }
@@ -482,7 +520,8 @@ fn hosted_target(lane: &Lane, caps: Capabilities, socket: &Path) -> Option<Targe
         home: None,
         session_id: None,
         route,
-        prompt_rows: caps.files == Files::Verb && target.harness != Harness::Pi,
+        prompt_rows: (caps.files == Files::Verb && target.harness != Harness::Pi)
+            .then_some(Ok(caps)),
         ..target
     })
 }
@@ -497,18 +536,35 @@ fn target_of(
     lane_target(lane, socket).or_else(|| hosted_target(lane, line()?, socket))
 }
 
-fn resume_target(
-    lane: &Lane,
+type RootReads<'a> = BTreeMap<&'a str, std::result::Result<Cow<'a, Lane>, String>>;
+
+fn wake_target<'a>(
+    scripts: &Path,
+    lane: &'a Lane,
     intents: &[Intent],
     rows_root: RowsRoot,
     socket: &Path,
     caps: Option<Capabilities>,
+    roots: &mut RootReads<'a>,
 ) -> Option<Target> {
     if rows_root == RowsRoot::Recorded {
-        return target_of(lane, socket, || caps);
+        if let Some(target) = lane_target(lane, socket) {
+            return Some(target);
+        }
+        if !hosted::needs_mail_root(lane) {
+            return hosted_target(lane, caps?, socket);
+        }
     }
-    let rooted = hosted::with_session_root(lane, intents);
-    let mut target = hosted_target(&rooted, caps?, socket)?;
+    let caps = caps?;
+    let rooted = roots
+        .entry(&lane.item)
+        .or_insert_with(|| hosted::with_session_root(scripts, lane, intents, caps));
+    let mut target = hosted_target(rooted.as_deref().unwrap_or(lane), caps, socket)?;
+    if let Err(cause) = rooted
+        && target.prompt_rows.is_some()
+    {
+        target.prompt_rows = Some(Err(cause.clone()));
+    }
     target.rows_root = rows_root;
     Some(target)
 }
@@ -558,6 +614,87 @@ fn hosted_open(mark: &WakeMark) -> bool {
         }
 }
 
+fn resume_receipt(item: &str, mark: &WakeMark) -> Option<Resume> {
+    if !hosted_open(mark) {
+        return None;
+    }
+    let resume = Resume::of(item, mark.resume.as_deref()?)?;
+    // The inbox mark also carries the last request. The digest identifies
+    // whether this mark was recorded before typing the continuation itself.
+    (mark.line_digest == line_digest(&resume.line(item))).then_some(resume)
+}
+
+/// Move a replaced continuation's receipt into the same durable write as
+/// the new mark. Each receipt lives until confirmation or lane replacement.
+fn retain_receipt(
+    record: &mut WakeRecord,
+    target: &Target,
+    standing: Option<&WakeMark>,
+) -> Option<String> {
+    let lane = match &target.route {
+        Route::Transport { lane, .. } | Route::Send { lane, .. } => lane,
+        Route::Pane => return None,
+    };
+    let mark = standing?;
+    let item = &target.name;
+    let resume = resume_receipt(item, mark)?;
+    if resume.rows_root(lane) != RowsRoot::Confirmed
+        || mark.pane != target.pane
+        || mark.server != target.server
+        || mark.server_start != target.server_start
+    {
+        return None;
+    }
+    let key = RetiredReceipt {
+        item,
+        row: &resume.row,
+        through: None,
+    }
+    .key();
+    if record.get(&key).is_some() {
+        return None;
+    }
+    record.set(&key, mark.clone());
+    Some(key)
+}
+
+/// A later send with the same digest makes rows after its cursor ambiguous
+/// for the earlier send. Keep the first such boundary with each receipt.
+fn bound_retired_receipts(
+    record: &mut WakeRecord,
+    item: &str,
+    sending: &WakeMark,
+) -> Vec<(String, String)> {
+    let moved: Vec<_> = record
+        .marks
+        .iter()
+        .filter_map(|(key, mark)| {
+            let mut retired = RetiredReceipt::from_key(key)?;
+            if retired.item != item
+                || retired.through.is_some()
+                || mark.line_digest != sending.line_digest
+                || mark.pane != sending.pane
+                || mark.server != sending.server
+                || mark.server_start != sending.server_start
+            {
+                return None;
+            }
+            retired.through = Some(sending.turns_before);
+            Some((key.clone(), retired.key()))
+        })
+        .collect();
+    for (before, after) in &moved {
+        move_receipt(record, before, after);
+    }
+    moved
+}
+
+fn move_receipt(record: &mut WakeRecord, before: &str, after: &str) {
+    if let Some(mark) = record.marks.remove(before) {
+        record.set(after, mark);
+    }
+}
+
 fn hosted_rows_refused(cause: &str) -> bool {
     cause.split_ascii_whitespace().next() == Some(hosted::SESSION_ROWS_READ_FAILED)
 }
@@ -591,7 +728,7 @@ fn window_target(lane: &Lane, socket: &Path) -> Option<Target> {
         cwd: PathBuf::from(lane.mail_root.as_deref()?),
         session_id: lane.session_id.clone(),
         route: Route::Pane,
-        prompt_rows: false,
+        prompt_rows: None,
         rows_root: RowsRoot::Recorded,
     })
 }
@@ -621,7 +758,7 @@ fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
         cwd: PathBuf::from(text("cwd")?),
         session_id: overseer.session_id.clone(),
         route: Route::Pane,
-        prompt_rows: false,
+        prompt_rows: None,
         rows_root: RowsRoot::Recorded,
     })
 }
@@ -647,6 +784,76 @@ enum Paste {
     /// Refused before anything was typed: the pane was no longer idle, or
     /// gone or unreadable, or the line never reached it.
     Refused,
+}
+
+enum ReceiptProgress {
+    Answer(Paste),
+    Waiting(&'static str),
+    Exhausted,
+}
+
+struct SavedReceipt<'a> {
+    key: &'a str,
+    resume: Option<&'a str>,
+    snapshot: Option<&'a hosted::Answer<hosted::SessionRows>>,
+}
+
+fn read_receipt(
+    snapshot: Option<&hosted::Answer<hosted::SessionRows>>,
+    root: RowsRoot,
+    cursor: u64,
+    digest: u32,
+    through: Option<u64>,
+) -> ReceiptProgress {
+    let unconfirmed = |cause: &str| {
+        ReceiptProgress::Answer(Paste::Unconfirmed {
+            cause: cause.to_owned(),
+        })
+    };
+    if cursor == ROWS_CURSOR_UNREAD {
+        return unconfirmed("rows-host-unread");
+    }
+    let rows = match snapshot {
+        Some(hosted::Answer::Live(rows)) => rows,
+        Some(hosted::Answer::Unreadable { cause }) if root == RowsRoot::Confirmed => {
+            return unconfirmed(cause);
+        }
+        Some(hosted::Answer::Gone | hosted::Answer::Unreadable { .. }) => {
+            return unconfirmed("rows-host-unread");
+        }
+        None => return unconfirmed("session-hosted"),
+    };
+    let Some(readings) = rows.after(cursor, through) else {
+        return unconfirmed("rows-host-unread");
+    };
+    let mut unmatched = false;
+    for reading in readings {
+        let row = match reading {
+            Reading::Live(row) => row,
+            Reading::Gone => continue,
+            Reading::Unreadable { .. } => return unconfirmed("rows-host-unread"),
+        };
+        if row.event.as_deref() != Some("UserPromptSubmit") {
+            continue;
+        }
+        match row.digest {
+            Some(value) if value == digest => {
+                return ReceiptProgress::Answer(Paste::Confirmed {
+                    turns_after: row.position as u64,
+                });
+            }
+            Some(_) => unmatched = true,
+            None if root == RowsRoot::Confirmed => return unconfirmed("rows-host-unread"),
+            None => return unconfirmed("session-hosted"),
+        }
+    }
+    if through.is_some_and(|through| rows.complete_position() >= through) {
+        ReceiptProgress::Exhausted
+    } else if unmatched {
+        ReceiptProgress::Waiting("turn-unmatched")
+    } else {
+        ReceiptProgress::Waiting("turn-pending")
+    }
 }
 
 enum Confirmation {
@@ -852,13 +1059,10 @@ impl Wake {
         let pending: Vec<_> = record
             .marks
             .iter()
-            .filter(|(_, mark)| hosted_open(mark))
-            .filter_map(|(item, mark)| {
-                let resume = Resume::of(item, mark.resume.as_deref()?)?;
-                // An ordinary inbox wake carries the last resume row too.
-                // The saved digest identifies which line this mark sent.
-                (mark.line_digest == line_digest(&resume.line(item)))
-                    .then(|| (item.clone(), mark.clone(), resume))
+            .filter_map(|(key, mark)| {
+                let item =
+                    RetiredReceipt::from_key(key).map_or(key.as_str(), |retired| retired.item);
+                resume_receipt(item, mark).map(|resume| (key.clone(), mark.clone(), resume))
             })
             .collect();
         if unread.is_empty() && resumes.is_empty() && pending.is_empty() {
@@ -872,19 +1076,27 @@ impl Wake {
         // Each host's line is shared by new sends and open receipt reads
         // in this pass.
         let mut lines = BTreeMap::new();
+        let mut roots = RootReads::new();
         let mut provider_resumes = BTreeSet::new();
-        // Read the saved receipt before any send can replace its cursor.
-        // An active request holds off new inbox wakes. A matching unread
-        // value shares this receipt and does not need a second reader.
-        for (item, mark, resume) in pending {
+        let mut covered_unread = BTreeSet::new();
+        let mut receipt_rows = BTreeMap::new();
+        // One snapshot of each running attempt serves its saved receipts.
+        // An active request holds off new mail. A matching unread value is
+        // already covered by the continuation.
+        for (key, mark, resume) in pending {
+            let item = &resume.lane;
             let Some(lane) = fleet.lanes.iter().find(|lane| {
-                lane.item == item
+                lane.item == *item
+                    && lane.status == LaneStatus::Running
                     && lane.launch.as_ref().is_some_and(|launch| {
                         launch.pane.as_deref() == Some(mark.pane.as_str())
                             && launch.server == Some(mark.server)
                             && launch.server_start == mark.server_start
                     })
             }) else {
+                if RetiredReceipt::from_key(&key).is_some() {
+                    self.write(&mut record, &key, None)?;
+                }
                 continue;
             };
             let rows_root = resume.rows_root(lane);
@@ -892,21 +1104,41 @@ impl Wake {
                 continue;
             }
             let name = super::lanes::lane_name(lane);
-            if resumes.iter().any(|(lane_name, _)| lane_name == &name)
-                || unread
-                    .iter()
-                    .any(|(target, state)| target == &item && state == &mark.unread)
+            if resumes
+                .iter()
+                .any(|(lane_name, row)| lane_name == &name && row == &resume.row)
             {
-                provider_resumes.insert(item);
+                provider_resumes.insert(item.clone());
             }
-            let caps = host_line(&mut lines, &scripts, lane);
-            if let Some(target) = resume_target(lane, &fleet.intents, rows_root, &socket, caps)
-                .filter(|target| target.prompt_rows)
+            if unread
+                .iter()
+                .any(|(target, state)| target == item && state == &mark.unread)
             {
-                self.repeat(
-                    &target,
+                covered_unread.insert(item.clone());
+            }
+            let evidence = receipt_rows.entry(&lane.item).or_insert_with(|| {
+                let caps = host_line(&mut lines, &scripts, lane);
+                let target = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    rows_root,
+                    &socket,
+                    caps,
+                    &mut roots,
+                )?;
+                let snapshot = target.session_rows(&scripts)?;
+                Some((target, snapshot))
+            });
+            if let Some((target, snapshot)) = evidence {
+                self.repeat_at(
+                    target,
+                    SavedReceipt {
+                        key: &key,
+                        resume: Some(&resume.cause),
+                        snapshot: Some(snapshot),
+                    },
                     mark,
-                    Some(&resume.cause),
                     &mut record,
                     &mut produced,
                 )?;
@@ -1001,11 +1233,25 @@ impl Wake {
             if let Some(mark) = marked.filter(|m| m.resume.as_deref() == Some(row.as_str())) {
                 if mark.outcome.is_none() {
                     let mark = mark.clone();
+                    let caps = host_line(&mut lines, &scripts, lane);
+                    let target = wake_target(
+                        &scripts,
+                        lane,
+                        &fleet.intents,
+                        resume.rows_root(lane),
+                        &socket,
+                        caps,
+                        &mut roots,
+                    );
                     self.reconcile(
                         lane,
-                        &socket,
+                        target,
                         mark,
-                        Some(&resume.cause),
+                        SavedReceipt {
+                            key: &lane.item,
+                            resume: Some(&resume.cause),
+                            snapshot: None,
+                        },
                         &mut record,
                         &mut produced,
                     )?;
@@ -1017,8 +1263,25 @@ impl Wake {
                 continue;
             }
             let rows_root = resume.rows_root(lane);
-            let Some(target) = resume_target(lane, &fleet.intents, rows_root, &socket, caps) else {
-                continue;
+            let resolved;
+            let target = if rows_root == RowsRoot::Confirmed
+                && let Some(Some((target, _))) = receipt_rows.get(&lane.item)
+            {
+                target
+            } else {
+                let Some(target) = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    rows_root,
+                    &socket,
+                    caps,
+                    &mut roots,
+                ) else {
+                    continue;
+                };
+                resolved = target;
+                &resolved
             };
             if rows_root == RowsRoot::Confirmed {
                 // The resume line includes the inbox read. A second send
@@ -1068,7 +1331,7 @@ impl Wake {
                 }
             }
             self.first_pass(
-                &target,
+                target,
                 &state,
                 Some(&resume),
                 tick,
@@ -1077,7 +1340,7 @@ impl Wake {
             )?;
         }
         for (name, state) in unread {
-            if provider_resumes.contains(&name) {
+            if provider_resumes.contains(&name) || covered_unread.contains(&name) {
                 continue;
             }
             let target = if name == OVERSEER_TARGET {
@@ -1089,21 +1352,39 @@ impl Wake {
                 let Some(lane) = fleet.lanes.iter().find(|l| l.item == name) else {
                     continue;
                 };
+                let caps = (!marked(&record, lane, &state)
+                    || record.get(&lane.item).is_some_and(hosted_open))
+                .then(|| host_line(&mut lines, &scripts, lane))
+                .flatten();
+                let target = wake_target(
+                    &scripts,
+                    lane,
+                    &fleet.intents,
+                    RowsRoot::Recorded,
+                    &socket,
+                    caps,
+                    &mut roots,
+                );
                 if let Some(mark) = record
                     .get(&lane.item)
                     .filter(|m| m.outcome.is_none() && marked(&record, lane, &state))
                     .cloned()
                 {
-                    self.reconcile(lane, &socket, mark, None, &mut record, &mut produced)?;
+                    self.reconcile(
+                        lane,
+                        target,
+                        mark,
+                        SavedReceipt {
+                            key: &name,
+                            resume: None,
+                            snapshot: None,
+                        },
+                        &mut record,
+                        &mut produced,
+                    )?;
                     continue;
                 }
-                let line = || {
-                    (!marked(&record, lane, &state)
-                        || record.get(&lane.item).is_some_and(hosted_open))
-                    .then(|| host_line(&mut lines, &scripts, lane))
-                    .flatten()
-                };
-                target_of(lane, &socket, line)
+                target
             };
             let Some(target) = target else {
                 continue;
@@ -1213,25 +1494,23 @@ impl Wake {
     fn reconcile(
         &self,
         lane: &Lane,
-        socket: &Path,
+        target: Option<Target>,
         mark: WakeMark,
-        resume: Option<&str>,
+        receipt: SavedReceipt<'_>,
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
         if hosted::host_of(lane) != crate::provider::LOCAL {
-            let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
             if mark.turns_before != ROWS_CURSOR_UNREAD
-                && let Ok(caps) = hosted::capabilities(&scripts, hosted::host_of(lane))
-                && let Some(target) = hosted_target(lane, caps, socket)
-                && target.prompt_rows
+                && let Some(target) = target
+                && target.prompt_rows.is_some()
             {
-                return self.repeat(&target, mark, resume, record, produced);
+                return self.repeat_at(&target, receipt, mark, record, produced);
             }
-            return self.lost(&lane.item, mark, resume, record, produced);
+            return self.lost(&lane.item, mark, receipt.resume, record, produced);
         }
-        match lane_target(lane, socket) {
-            Some(target) => self.repeat(&target, mark, resume, record, produced),
+        match target {
+            Some(target) => self.repeat_at(&target, receipt, mark, record, produced),
             None => Ok(()),
         }
     }
@@ -1266,13 +1545,36 @@ impl Wake {
     fn repeat(
         &self,
         target: &Target,
-        mut mark: WakeMark,
+        mark: WakeMark,
         resume: Option<&str>,
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<()> {
+        self.repeat_at(
+            target,
+            SavedReceipt {
+                key: &receipt_key(&target.name, resume),
+                resume,
+                snapshot: None,
+            },
+            mark,
+            record,
+            produced,
+        )
+    }
+
+    fn repeat_at(
+        &self,
+        target: &Target,
+        receipt: SavedReceipt<'_>,
+        mut mark: WakeMark,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<()> {
         let name = target.name.clone();
-        let key = receipt_key(&name, resume);
+        let key = receipt.key;
+        let resume = receipt.resume;
+        let retired = RetiredReceipt::from_key(key);
         match &mark.outcome {
             Some(WakeOutcome::Delivered { .. }) => return Ok(()),
             // A limit stands as read: the pane is not read again for it,
@@ -1292,15 +1594,42 @@ impl Wake {
             if mark.outcome.is_some() && !hosted_open(&mark) {
                 return Ok(());
             }
-            match self.hosted_confirmation(
-                target,
+            let read = if receipt.snapshot.is_none() && mark.turns_before != ROWS_CURSOR_UNREAD {
+                let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
+                target.session_rows(&scripts)
+            } else {
+                None
+            };
+            let paste = match read_receipt(
+                receipt.snapshot.or(read.as_ref()),
+                target.rows_root,
                 mark.turns_before,
                 mark.line_digest,
-                Duration::ZERO,
+                retired.as_ref().and_then(|receipt| receipt.through),
             ) {
+                ReceiptProgress::Answer(paste) => paste,
+                ReceiptProgress::Waiting(cause) => Paste::Unconfirmed {
+                    cause: cause.to_owned(),
+                },
+                ReceiptProgress::Exhausted => {
+                    self.write(record, key, None)?;
+                    if !matches!(&mark.outcome, Some(WakeOutcome::Unconfirmed { cause }) if cause == "turn-unmatched")
+                    {
+                        produced.events.push(Event::WakeUnconfirmed {
+                            target: name,
+                            cause: "turn-unmatched".to_owned(),
+                            resume: resume.map(str::to_owned),
+                        });
+                    }
+                    return Ok(());
+                }
+            };
+            match paste {
                 Paste::Confirmed { turns_after } => Confirmation::Matched { turns_after },
                 Paste::Unconfirmed { ref cause }
-                    if mark.outcome.is_none() && !hosted_rows_refused(cause) =>
+                    if mark.outcome.is_none()
+                        && target.rows_root != RowsRoot::Confirmed
+                        && !hosted_rows_refused(cause) =>
                 {
                     return self.lost(&name, mark, resume, record, produced);
                 }
@@ -1313,7 +1642,7 @@ impl Wake {
                 mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                 // Woken after all: nothing is owed to the owner.
                 mark.owner = None;
-                self.write(record, &key, Some(mark))?;
+                self.write(record, key, retired.is_none().then_some(mark))?;
                 produced
                     .events
                     .extend(delivered(&name, resume.map(str::to_owned)));
@@ -1333,7 +1662,7 @@ impl Wake {
                 if !had_outcome {
                     mark.owner = owner_word(&name, &mark);
                 }
-                self.write(record, &key, Some(mark))?;
+                self.write(record, key, Some(mark))?;
                 produced.events.push(Event::WakeUnconfirmed {
                     target: name,
                     cause,
@@ -1355,7 +1684,7 @@ impl Wake {
                     cause: cause.clone(),
                 });
                 mark.owner = owner_word(&name, &mark);
-                self.write(record, &key, Some(mark))?;
+                self.write(record, key, Some(mark))?;
                 produced.events.push(Event::WakeLimit {
                     target: name,
                     harness,
@@ -1707,7 +2036,16 @@ impl Wake {
                     }
                 };
                 clear_refusal(produced);
-                // The mark is on disk before anything is typed.
+                let retained = retain_receipt(record, target, standing.as_ref());
+                let bounded = if mark.turns_before != ROWS_CURSOR_UNREAD
+                    && !matches!(target.route, Route::Pane)
+                {
+                    bound_retired_receipts(record, &name, &mark)
+                } else {
+                    Vec::new()
+                };
+                // The new mark and any displaced receipt stand on disk
+                // before anything is typed.
                 self.write(record, &key, Some(mark.clone()))?;
                 match self.paste(target, &line, mark.turns_before, room)? {
                     Paste::Confirmed { turns_after } => {
@@ -1730,6 +2068,9 @@ impl Wake {
                     Paste::Refused => {
                         // Nothing was typed: the mark that stood before
                         // stands again.
+                        for (before, after) in bounded {
+                            move_receipt(record, &after, &before);
+                        }
                         if !self.untyped(
                             target,
                             standing.as_ref(),
@@ -1738,6 +2079,9 @@ impl Wake {
                             record,
                             produced,
                         )? {
+                            if let Some(retained) = retained {
+                                record.clear(&retained);
+                            }
                             self.write(record, &key, standing)?;
                         }
                         return Ok(());
@@ -1783,6 +2127,7 @@ impl Wake {
                 ..mark.clone()
             })
         };
+        let _ = retain_receipt(record, target, standing);
         self.write(record, &target.name, Some(kept))?;
         produced.events.push(Event::IdleAfterReturn {
             lane: resume.lane.clone(),
@@ -1931,7 +2276,7 @@ impl Wake {
     fn hosted_cursor(&self, target: &Target) -> std::result::Result<u64, String> {
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
         match target.session_rows(&scripts) {
-            Some(hosted::Answer::Live(text)) => Ok(agent_runtime::rows::complete_line_count(&text)),
+            Some(hosted::Answer::Live(rows)) => Ok(rows.complete_position()),
             None | Some(hosted::Answer::Gone) => Ok(0),
             Some(hosted::Answer::Unreadable { cause }) => Err(cause),
         }
@@ -1957,42 +2302,13 @@ impl Wake {
         let scripts = super::overseer::scripts_dir(&self.settings.roots.project);
         let deadline = self.clock.now() + bound;
         loop {
-            let Some(answer) = target.session_rows(&scripts) else {
-                return unconfirmed("session-hosted");
-            };
-            let text = match answer {
-                hosted::Answer::Live(text) => text,
-                hosted::Answer::Gone => return unconfirmed("rows-host-unread"),
-                hosted::Answer::Unreadable { cause } if target.rows_root == RowsRoot::Confirmed => {
-                    return Paste::Unconfirmed { cause };
-                }
-                hosted::Answer::Unreadable { .. } => return unconfirmed("rows-host-unread"),
-            };
-            let mut unmatched = false;
-            for reading in agent_runtime::rows::rows_after_in(&text, cursor) {
-                let row = match reading {
-                    Reading::Live(row) => row,
-                    Reading::Gone => continue,
-                    Reading::Unreadable { .. } => return unconfirmed("rows-host-unread"),
+            let snapshot = target.session_rows(&scripts);
+            let pending =
+                match read_receipt(snapshot.as_ref(), target.rows_root, cursor, digest, None) {
+                    ReceiptProgress::Answer(paste) => return paste,
+                    ReceiptProgress::Waiting(cause) => cause,
+                    ReceiptProgress::Exhausted => unreachable!("a new paste has no upper cursor"),
                 };
-                if row.event.as_deref() != Some("UserPromptSubmit") {
-                    continue;
-                }
-                match row.digest {
-                    Some(value) if value == digest => {
-                        return Paste::Confirmed {
-                            turns_after: row.position as u64,
-                        };
-                    }
-                    Some(_) => unmatched = true,
-                    None => return unconfirmed("session-hosted"),
-                }
-            }
-            let pending = if unmatched {
-                "turn-unmatched"
-            } else {
-                "turn-pending"
-            };
             let remaining = deadline.saturating_duration_since(self.clock.now());
             if remaining.is_zero() {
                 return unconfirmed(pending);

@@ -1876,6 +1876,10 @@ if [[ "$1" == -T && -e "$here/refuse-status" && "$*" == *"orch_take_lock 9"* ]];
     exit 255
 fi
 if [[ "$1" == -T && -f "$here/defer-row-refusal" && "$*" == *"$(cat "$here/defer-row-refusal")"* ]]; then
+    if [[ -f "$here/skip-defer" ]]; then
+        rm -- "$here/skip-defer"
+        exec "$here/ssh-fixture" "$@"
+    fi
     "$here/ssh-fixture" "$@"
     code=$?
     mv -- "$here/defer-row-refusal" "$here/drop-on"
@@ -2031,10 +2035,11 @@ done
     stop();
     continue_once(&mut baseline, 0);
 
-    // Replace an older watch whose active record still holds its checkout.
+    // Replace an older watch whose active record has no saved mail root.
     let lane = record["lanes"][0].as_object_mut().unwrap();
     lane.remove("session_rows_at_launch");
     lane.remove("mail_root_confirmed");
+    lane.insert("mail_root".to_owned(), Value::Null);
     let mut mismatched = record.clone();
     mismatched["lanes"][0]["launch"]["start"] = json!("an-earlier-process");
     fleet.write_fleet(&mismatched);
@@ -2059,9 +2064,21 @@ done
         reads_before
     );
 
-    let lane = record["lanes"][0].as_object_mut().unwrap();
-    lane.insert("mail_root".to_owned(), lane["checkout"].clone());
+    {
+        let phase = record["intents"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["phase"]
+            .as_object_mut()
+            .unwrap();
+        assert!(phase.remove("hosted_mail_root").is_some());
+    }
     fleet.write_fleet(&record);
+    assert_eq!(
+        fleet.read_fleet()["lanes"][0].get("mail_root"),
+        Some(&Value::Null)
+    );
     stop();
     baseline = Baseline::default();
     let pass = observe_ssh_worker(&fleet, &mut baseline, &clock);
@@ -2077,6 +2094,10 @@ done
     assert_eq!(typed().lines().count(), 1);
     stop();
     continue_once(&mut baseline, 1);
+    assert_eq!(
+        fleet.read_fleet()["lanes"][0].get("mail_root"),
+        Some(&Value::Null)
+    );
 
     stop();
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
@@ -2112,13 +2133,13 @@ done
     let refuse_status = host.tools.join("refuse-status");
     std::fs::write(&refuse_status, "").unwrap();
     let refused = wake(&mut baseline);
+    assert!(refused.events.is_empty(), "{refused:?}");
     assert!(
-        matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
-            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
-                && cause.contains("harness-probe-failed")),
-        "{refused:?}"
+        !refuse_status.exists(),
+        "root recovery must reach the SSH status refusal"
     );
-    assert!(!refuse_status.exists());
+    assert_eq!(fleet.mark("KEN-1"), prior);
+    assert_eq!(typed().lines().count(), 2);
     for first in [true, false] {
         if !first {
             let observed = observe_ssh_worker(&fleet, &mut baseline, &clock);
@@ -2243,12 +2264,6 @@ done
         [watch::Event::LaneUnreadable { lane, cause }]
             if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
     ));
-    // Normal inbox wakes use the recorded root. Restore the launch's
-    // confirmed fields after the legacy replacement scenario.
-    let mut rooted = fleet.read_fleet();
-    rooted["lanes"][0]["mail_root"] = confirmed["lane"]["mail_root"].clone();
-    rooted["lanes"][0]["mail_root_confirmed"] = confirmed["lane"]["mail_root_confirmed"].clone();
-    fleet.write_fleet(&rooted);
     let omit_prompt = host.worktree().join("omit-next-prompt");
     std::fs::write(&omit_prompt, "").unwrap();
     std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
@@ -2277,11 +2292,39 @@ done
         observe_ssh_worker(&fleet, &mut baseline, &clock);
     }
     assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
-    baseline.apply(Change::Set {
-        kind: UNREAD_KIND.into(),
-        identity: "KEN-1".into(),
-        value: "unread-after-retired-resume".into(),
+    let envelope = json!({
+        "id": "unread-after-retired-resume",
+        "kind": "directive",
+        "at": "2026-01-29T15:13:20Z",
+        "from": "overseer:kendex",
+        "text": "Continue the outstanding work.",
     });
+    std::fs::write(
+        rows.with_file_name("to-lane.jsonl"),
+        format!("{envelope}\n"),
+    )
+    .unwrap();
+    let mut mail = watch::mail::MailDuty::new(
+        Mailbox::new(lane_mail().to_path_buf()),
+        watch::mail::Config::of(&fleet.settings, &fleet.paths).unwrap(),
+    );
+    let pass = mail
+        .run(&Tick {
+            duty: Duty::Mail,
+            now: clock.now(),
+            wall: clock.wall_secs(),
+            baseline: &baseline,
+            clock: &clock,
+        })
+        .unwrap();
+    assert!(pass.failed.is_none(), "{pass:?}");
+    for change in pass.changes {
+        baseline.apply(change);
+    }
+    assert_eq!(
+        baseline.get(UNREAD_KIND, "KEN-1"),
+        Some("unread-after-retired-resume")
+    );
     let delivered = wake(&mut baseline);
     assert_eq!(
         rendered(&delivered),
@@ -2295,16 +2338,203 @@ done
     assert_eq!(mark.resume, old_resume);
     assert_eq!(mark.unread, "unread-after-retired-resume");
     assert!(matches!(mark.outcome, Some(WakeOutcome::Delivered { .. })));
-    assert!(wake(&mut baseline).events.is_empty());
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeUnconfirmed { target, cause, resume }]
+            if target == "KEN-1" && cause == "turn-unmatched" && resume.as_deref() == Some("server_error")
+    ));
     let sent = typed();
     assert_eq!(sent.lines().count(), 5);
     assert_eq!(sent.lines().last(), Some(inbox_line()));
-    assert!(
-        host.calls()
-            .iter()
-            .filter(|call| call.ends_with("/session-rows.jsonl"))
-            .all(|call| call.ends_with(rows.to_str().unwrap()))
+    // The old continuation's own prompt can become visible after the new
+    // inbox wake has written its mark. A fresh watch still confirms it.
+    let delayed = sent.lines().nth(3).unwrap();
+    let receipt = json!({
+        "harness": "claude",
+        "event": "UserPromptSubmit",
+        "digest": agent_runtime::session::text_digest(delayed),
+    });
+    std::io::Write::write_all(
+        &mut std::fs::OpenOptions::new()
+            .append(true)
+            .open(&rows)
+            .unwrap(),
+        format!("{receipt}\n").as_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeDelivered { target, resume }]
+            if target == "KEN-1" && resume.as_deref() == Some("server_error")
+    ));
+    assert!(wake(&mut baseline).events.is_empty());
+    assert_eq!(typed().lines().count(), 5);
+
+    // A newer continuation can type the same line. Its prompt row must not
+    // settle the earlier receipt if that send never wrote one.
+    baseline.apply(Change::Clear {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+    });
+    clock.pass(secs(1));
+    stop();
+    observe_twice(&mut baseline);
+    std::fs::write(&omit_prompt, "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeUnconfirmed { resume, .. }] if resume.as_deref() == Some("server_error")
+    ));
+    let retained = fleet.mark("KEN-1").unwrap();
+    let earlier = retained.resume.clone();
+    let deadline = Instant::now() + secs(5);
+    while omit_prompt.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the continuation was never typed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    clock.pass(secs(1));
+    stop();
+    observe_twice(&mut baseline);
+    assert_ne!(
+        baseline.get(wake::RESUME_KIND, lane_name),
+        earlier.as_deref()
     );
+    // Keep both receipts open across the same refused snapshot. The new
+    // prompt is already on disk when the next pass reads their evidence.
+    std::fs::write(host.tools.join("skip-defer"), "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    let later = wake(&mut baseline);
+    assert!(later.events.iter().any(|event| matches!(
+        event, watch::Event::WakeUnconfirmed { cause, resume, .. }
+            if cause.contains("255") && resume.as_deref() == Some("server_error")
+    )));
+    let deadline = Instant::now() + secs(5);
+    while !std::fs::read_to_string(&rows)
+        .unwrap()
+        .lines()
+        .last()
+        .is_some_and(|row| row.contains("UserPromptSubmit"))
+    {
+        assert!(Instant::now() < deadline, "the typed turn wrote no receipt");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let count_reads = |from: usize| {
+        host.calls()[from..]
+            .iter()
+            .filter(|call| call.ends_with(rows.to_str().unwrap()))
+            .count()
+    };
+    let before = host.calls().len();
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let refused = wake(&mut baseline);
+    assert!(!drop_on.exists());
+    assert_eq!(count_reads(before), 1, "{refused:?}");
+    let before = host.calls().len();
+    let settled = wake(&mut baseline);
+    assert_eq!(
+        settled
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event, watch::Event::WakeDelivered { resume, .. }
+                    if resume.as_deref() == Some("server_error")
+            ))
+            .count(),
+        1,
+        "{settled:?}"
+    );
+    assert_eq!(count_reads(before), 1, "{settled:?}");
+    let before = host.calls().len();
+    assert!(
+        wake(&mut baseline)
+            .events
+            .iter()
+            .all(|event| !matches!(event, watch::Event::WakeDelivered { .. }))
+    );
+    assert_eq!(count_reads(before), 0);
+    let sent = typed();
+    assert_eq!(sent.lines().count(), 7);
+    assert_eq!(sent.lines().nth(5), sent.lines().nth(6));
+
+    let calls = host.calls();
+    let row_reads: Vec<_> = calls
+        .iter()
+        .filter(|call| call.ends_with("/session-rows.jsonl"))
+        .collect();
+    assert!(!row_reads.is_empty());
+    for call in row_reads {
+        assert!(call.ends_with(rows.to_str().unwrap()), "{call}");
+        assert!(
+            call.split_whitespace().any(|word| word == "--session-rows"),
+            "{call}"
+        );
+    }
+
+    // A legacy lane record stores a different root from the provider
+    // proof. The inbox receipt's cursor belongs to the recorded file.
+    let recorded = host.worktree().join("recorded-root");
+    let recorded_rows = recorded.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    std::fs::create_dir_all(recorded_rows.parent().unwrap()).unwrap();
+    let digest = agent_runtime::session::text_digest(inbox_line());
+    let cursor = agent_runtime::rows::complete_line_count(&std::fs::read_to_string(&rows).unwrap());
+    let row = json!({"event": "UserPromptSubmit", "digest": digest});
+    let history = "{\"event\":\"Stop\"}\n".repeat(usize::try_from(cursor).unwrap());
+    std::fs::write(&recorded_rows, format!("{history}{row}\n")).unwrap();
+    let mut lane_record = fleet.read_fleet();
+    lane_record["lanes"][0]["mail_root"] = json!(recorded);
+    lane_record["lanes"][0]["mail_root_confirmed"] = json!(false);
+    fleet.write_fleet(&lane_record);
+
+    let mut wakes = WakeRecord::default();
+    let key = format!(
+        "retired-resume:KEN-1:{}:{}",
+        retained.turns_before,
+        earlier.unwrap()
+    );
+    wakes.set(&key, retained.clone());
+    let unread = "unread-at-recorded-root";
+    wakes.set(
+        "KEN-1",
+        WakeMark {
+            unread: unread.to_owned(),
+            turns_before: cursor,
+            line_digest: digest,
+            outcome: None,
+            resume: None,
+            ..retained
+        },
+    );
+    std::fs::write(fleet.record_file(), serde_json::to_vec(&wakes).unwrap()).unwrap();
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: unread.into(),
+    });
+    let before = host.calls().len();
+    let pass = wake(&mut baseline);
+    assert!(
+        matches!(
+            pass.events.as_slice(),
+            [.., watch::Event::WakeDelivered { target, resume: None }] if target == "KEN-1"
+        ),
+        "{pass:?}"
+    );
+    assert_eq!(count_reads(before), 1);
+    assert!(
+        host.calls()[before..]
+            .iter()
+            .any(|call| call.ends_with(recorded_rows.to_str().unwrap()))
+    );
+    assert_eq!(typed().lines().count(), 7);
 }
 
 /// A baseline holding the lanes duty's resume row `value` for `lane`.
