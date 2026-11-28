@@ -1096,6 +1096,57 @@ os.execvp(argv[0], argv)
                 self.assertEqual([row["what"] for row in rows[login]], ["Remote original"])
                 self.assertEqual(rows[login], rows["sh"])
 
+    def test_direct_thread_at_registered_linked_checkout_and_remote_origin(self):
+        origin = make_project(self.root / "origin")
+        linked, remote = self.root / "linked", make_project(self.root / "remote")
+        self.command(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                      "commit", "-qm", "Fixture", "--allow-empty"], origin).check_returncode()
+        self.command(["git", "worktree", "add", "--quiet", "--detach", linked], origin).check_returncode()
+        self.registry.write_text(listing(self.home, entry(linked, main=origin)))
+        remote_registry = self.root / "remote-registry"
+        self.register(remote_registry, remote)
+        self.env.update(REMOTE_REGISTRY=str(remote_registry), LOGIN_SHELL="sh")
+        self.executable("ssh", "#!" + sys.executable + "\n" + self.LOGIN_SSH)
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
+        self.tracker_api([])
+        expected = {}
+        mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        for destination, root, binding_root, channel, stamp in (
+            ("local", origin, linked, "C123", "1795800000.000001"),
+            ("ssh:fixture", remote, remote, "C456", "1795800000.000002"),
+        ):
+            question = "Approval at " + destination
+            ask = self.mail(root, "ask", question, "--to", "owner", "--options", "a,b", "--reserved")
+            presenter = "slack:" + channel
+            permalink = f"https://workspace.slack.com/archives/{channel}/p{stamp.replace('.', '')}"
+            self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", presenter],
+                         root).check_returncode()
+            self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", presenter,
+                          "--thread-url", permalink, "--thread-ts", stamp], root).check_returncode()
+            self.confirmed_relay_post(binding_root, ask, channel, presenter, stamp, permalink)
+            expected[question] = permalink
+            result, receipt = self.run_cli("present", None, None, "--destination", destination,
+                                           "--root", binding_root, "--id", ask)
+            self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("delivery"), receipt.get("thread")),
+                             (0, "already-presented", "confirmed", permalink), result.stderr + result.stdout)
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual({row["what"]: row["link"]["url"] for row in page["rows"]}, expected)
+        self.assertTrue(all(row["statusText"].startswith("Type yes") for row in page["rows"]))
+
+    @staticmethod
+    def confirmed_relay_post(root, ask, channel, presenter, stamp, permalink):
+        relay = root / "tmp/slack"
+        relay.mkdir(parents=True)
+        (relay / "binding.json").write_text(json.dumps({
+            "channel": channel, "channel_name": "owner", "bound_at": "1795800000.000000",
+            "owners": ["owner@example.test"], "owner_ids": {"owner@example.test": "U001"},
+        }))
+        (relay / "journal.jsonl").write_text(json.dumps({
+            "t": "out", "id": ask, "kind": "ask", "state": "open", "at": "2026-11-27T00:00:00Z",
+            "thread": stamp, "presenter": presenter, "channel": channel, "permalink": permalink,
+        }) + "\n")
+
     def test_mailbox_frames_keep_owner_evidence_without_outward_bodies(self):
         active = self.mail(self.home, "ask", "Question still open", "--to", "owner", "--options", "a,b", "--reserved")
         closed = self.mail(self.home, "ask", "Question already resolved", "--to", "owner", "--options", "a,b", "--reserved")
@@ -1850,5 +1901,46 @@ sys.exit(result.returncode)
         self.assertEqual(len(list((self.root / "runtime").rglob("owner-asks.json"))), 1)
 
 
+def render_fixture(home, failure):
+    """A fixed source revision for the Slack suite's actual command adapter."""
+    now = owner_asks.instant("2026-11-02T03:00:00Z")
+    source = CanonicalFixture(home, 35)
+    for number, request in enumerate(source.data["tracker"]["requests"]):
+        length = 4200 if number == 34 else 800
+        request["comment"]["body"] = f"Row {number:02} " + "x" * length + " end. Second sentence."
+    mailbox, = mailbox_projection(home)["mailboxes"]
+    ask, = mailbox["asks"]
+    stamp = "1793498400.000001"
+    thread = "https://workspace.slack.com/archives/C123/p1793498400000001"
+    ask.update(kind="ask", reserved=True, presentation={"presenter": "slack:C123", "thread_ts": stamp})
+    mailbox["relay_threads"] = [{ask["id"]: {"ts": stamp, "presenter": "slack:C123", "url": thread}}]
+    source.data["mailboxes"] = [mailbox]
+    fixture_clock = now + (61 if Path(failure).exists() else 0)
+
+    class FixtureOwner(owner_asks.OwnerAsks):
+        def __init__(self, session, sources):
+            super().__init__(session, sources, lambda: fixture_clock)
+
+    if fixture_clock != now:
+        def read_failure(requests):
+            raise owner_asks.source_failure("project-list", "ssh:fixture", OSError("registry unreadable"))
+        source.collect = read_failure
+    else:
+        session = Session(home)
+        session.path = session.path.with_name("owner-asks.json")
+        owner = FixtureOwner(session, source)
+        with session.locked():
+            state = owner.read()
+            row = owner.page(state, "active", None)["rows"][0]
+            if row["kind"] == "jarvis-ask":
+                owner.act(state, "later", row["id"], {"requestId": "snooze-fixture",
+                          "expectedRevision": row["revision"], "until": owner_asks.iso(now + 3600)})
+
+    with patch.object(owner_asks, "Sources", return_value=source), patch.object(owner_asks, "OwnerAsks", FixtureOwner):
+        return owner_asks.main(argparse.Namespace(action="render", home=home), Session, Refusal)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--render-fixture":
+        sys.exit(render_fixture(*sys.argv[2:]))
     unittest.main()

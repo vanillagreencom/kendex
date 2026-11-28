@@ -127,7 +127,7 @@ from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tupl
 
 from api import MARKDOWN_LIMIT, RETRIES, Slack, markdown_checked
 from mailbox import CommandSetupError, LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail, run_bounded
-from markup import Verbatim, continuations, outbound, plain
+from markup import Verbatim, continuations, escape, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -206,6 +206,9 @@ REPLY_CHARS = 4000
 # (https://docs.slack.dev/reference/block-kit/blocks/section-block).
 HOME_BLOCKS = 100
 SECTION_CHARS = 3000
+# The stdout contract of jarvis-session owner-asks render. Other configured
+# commands keep their ordinary text replies.
+OWNER_ASKS_HEADER = "kendex-owner-asks-v1\n"
 # A trigger_id keys /report's delivery. Slack documents no stability across
 # a redelivery; one with whitespace or none at all is no key.
 TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
@@ -367,8 +370,69 @@ def home_blocks(text: str) -> List[Dict]:
     """`text` as the mrkdwn sections of a home view, within Slack's block and
     section limits."""
     text = bounded(text, HOME_BLOCKS * SECTION_CHARS)
-    return [{"type": "section", "text": {"type": "mrkdwn", "text": text[i : i + SECTION_CHARS]}}
-            for i in range(0, len(text), SECTION_CHARS)]
+    return slack_sections(text[i : i + SECTION_CHARS] for i in range(0, len(text), SECTION_CHARS))
+
+
+def slack_sections(texts: Iterable[str]) -> List[Dict]:
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": text}} for text in texts]
+
+
+def owner_ask_line(row: Dict, label: str) -> str:
+    details = [label, escape(row["age"]), escape(row["asker"])]
+    if row["state"] == "checking":
+        details.append("Checking")
+    link = row["link"]
+    if link:
+        url = escape(link["url"].replace("|", "%7C"))
+        details.append(f"<{url}|{escape(link['label'])}>")
+    if row["status"]:
+        details.append(escape(row["status"]))
+    return f"• {escape(row['question'])}\n  " + " · ".join(details)
+
+
+def owner_ask_sections(output: str, limit: int, block_limit: int, hint: str = "") -> Optional[List[str]]:
+    """Fit complete rows and count every row missing from the canonical views."""
+    if not output.startswith(OWNER_ASKS_HEADER):
+        return None
+    try:
+        document = json.loads(output[len(OWNER_ASKS_HEADER):])
+        if "cause" in document:
+            return [bounded(f"Owner asks unavailable. {escape(document['cause'])}", limit)]
+        revision = document["revision"]
+        if not re.fullmatch(r"[0-9a-f]{64}", revision):
+            raise ValueError("revision")
+        active, snoozed = document["activeCount"], document["snoozedCount"]
+        omitted = {"active": active, "snoozed": snoozed}
+        if any(type(count) is not int or count < 0 for count in omitted.values()):
+            raise ValueError("counts")
+        heading = (f"*Owner asks* · Read {escape(document['observedAt'])}\n"
+                   f"Revision `{revision}`\n*Active* {active} · *Set aside* {snoozed}")
+        labels = {"active": "Active", "snoozed": "Set aside"}
+        lines = [(row["view"], owner_ask_line(row, labels[row["view"]])) for row in document["rows"]]
+        if any(count < sum(view == scope for view, _ in lines) for scope, count in omitted.items()):
+            raise ValueError("rows exceed counts")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ["Owner asks unavailable. The configured command returned an invalid owner-ask reading."]
+
+    def omission() -> str:
+        return f"\n\nOmitted rows · {omitted['active']} active · {omitted['snoozed']} set aside.{hint}"
+
+    sections = [heading]
+    reserve = len(omission())
+    for view, line in lines:
+        if len(sections[-1]) + 2 + len(line) <= limit - (reserve if len(sections) == block_limit else 0):
+            sections[-1] += "\n\n" + line
+        elif len(sections) < block_limit and len(line) <= limit - (reserve if len(sections) + 1 == block_limit else 0):
+            sections.append(line)
+        else:
+            continue
+        omitted[view] -= 1
+    if any(omitted.values()):
+        if len(sections[-1]) + len(omission()) <= limit:
+            sections[-1] += omission()
+        else:
+            sections.append(omission().strip())
+    return sections
 
 
 def overdue_id(ask_id: str) -> str:
@@ -2109,9 +2173,9 @@ class Relay:
             print_refusal(err)
             return f"{name} failed ({err.key}); nothing more is shown here."
 
-    def command_output(self, setting: str, argv: Tuple[str, ...]) -> Tuple[str, str]:
-        """A configured command's stdout and an empty cause, or no text and
-        the cause it failed by: `start`, `timeout`, `exit-N` or `empty`,
+    def command_output(self, setting: str, argv: Tuple[str, ...]) -> Tuple[str, str, str]:
+        """A configured command's stdout, output-limit annotation and failure
+        cause. A failure returns no stdout. The cause is `start`, `timeout`, `exit-N` or `empty`,
         printed as `command-failed`, or the refusal key of the secret-value
         check, printed as that refusal. No payload field reaches its argv,
         environment or stdin. It runs in the directory the relay started
@@ -2155,24 +2219,28 @@ class Relay:
             cause = "empty"
         if cause:
             print(keyed("command-failed", f"{setting} cause={cause}{setup}"), file=sys.stderr, flush=True)
-            return annotation, cause
+            return "", annotation, cause
         try:
             secret_check(out.encode(), f"command={setting}", complete=not result.stdout_cut)
         except Refusal as refusal:
             print_refusal(refusal)
             if result.stdout_cut:
                 annotation += "Whole-output secret checking is unavailable. "
-            return annotation, refusal.key
-        return annotation + out, ""
+            return "", annotation, refusal.key
+        return out, annotation, ""
 
     def answer_with(self, name: str, setting: str, argv: Tuple[str, ...]) -> str:
         """The reply of a command that shows a configured command's output."""
         if not argv:
             return f"{name} is not enabled on this relay; {setting} turns it on."
-        text, cause = self.command_output(setting, argv)
+        text, annotation, cause = self.command_output(setting, argv)
         if cause:
-            return text + withheld(name, cause)
-        return bounded(text, REPLY_CHARS)
+            return annotation + withheld(name, cause)
+        if name == "/asks":
+            rendered = owner_ask_sections(text, REPLY_CHARS, 1, " Open App Home for more.")
+            if rendered is not None:
+                return rendered[0]
+        return bounded(annotation + text, REPLY_CHARS)
 
     def report(self, payload: Dict) -> str:
         """/report: one directive to SLACK_REPORT_ROOT's overseer, keyed by
@@ -2204,12 +2272,13 @@ class Relay:
         try:
             if user not in self.owner_ids():
                 return
-            text, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
-            if cause:
-                text += withheld("SLACK_HOME_COMMAND", cause)
+            text, annotation, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
+            rendered = owner_ask_sections(text, SECTION_CHARS, HOME_BLOCKS)
+            blocks = slack_sections(rendered) if rendered is not None else home_blocks(
+                annotation + (withheld("SLACK_HOME_COMMAND", cause) if cause else text))
             # views.publish takes `view` as a JSON-encoded string
             # (https://docs.slack.dev/reference/methods/views.publish).
-            self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": home_blocks(text)}))
+            self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": blocks}))
         except Refusal as err:
             if err.key == "slack-auth-failed":
                 raise

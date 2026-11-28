@@ -4,6 +4,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
+from itertools import zip_longest
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,12 @@ CALL_SECONDS = 14
 TRANSPORT_SECONDS = 2
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
+# This result is the stdout of the command configured for Slack /asks and
+# Home. Leave room under the relay's configured-command capture bound.
+RENDER_BYTES = 48 * 1024
+RENDER_HEADER = "kendex-owner-asks-v1\n"
+VIEWS = ("active", "snoozed")
+PAGE_READING = ("revision", "observedAt", "activeCount", "snoozedCount")
 # A first page reuses the last complete collection younger than this, so
 # consoles polling an unchanged list cost at most one collection a window,
 # about four Linear requests, however many poll.
@@ -173,6 +180,16 @@ shift 2
 exec env JARVIS_OWNER_ASK_MAIN=1 JARVIS_OWNER_ASK_BUDGET="$budget" "$BASH" .agents/skills/jarvis/scripts/jarvis-session owner-asks "$@" --home "$home"
 ''' % {"reached": shlex.quote(REACHED)}
 
+# Run the shipped Slack reader against checkouts on the account that owns
+# them. The registered checkout can own the journal for a shared mailbox.
+RELAY_FILES = ("slack/scripts/lib/store.py", "slack/scripts/lib/refusals.py")
+RELAY_READS = """import json, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+from store import presentation_threads
+print(json.dumps({root: presentation_threads(Path(root)) for root in sys.argv[2:]}))
+"""
+
 
 class Unavailable(ValueError):
     """The source or consistency evidence needed for an answer is unread."""
@@ -220,6 +237,23 @@ def diagnostic(error, operation):
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def rendered_row(row, observed):
+    question = " ".join(row["what"].split())
+    sentence = re.split(r"(?<=[.!?])\s+", question, maxsplit=1)[0]
+    minutes = max(0, int((observed - instant(row["askedAt"])) / 60))
+    if minutes < 1:
+        age = "just now"
+    elif minutes < 60:
+        age = f"{minutes}m ago"
+    elif minutes < 24 * 60:
+        age = f"{minutes // 60}h ago"
+    else:
+        age = f"{minutes // (24 * 60)}d ago"
+    return {"question": sentence, "age": age, "asker": row["askedBy"]["name"],
+            "link": row["link"], "status": row.get("statusText", ""),
+            "state": row["state"]}
 
 
 def digest(value):
@@ -278,8 +312,8 @@ class Sources:
 
     def __init__(self, session, settings):
         self.session, self.settings = session, settings
-        # Encoded at the first host read; a host read sends it once per destination and collect.
-        self.closure = None
+        # Encode each package at its first host read.
+        self.closures = {}
 
     def call(self, target, root, package, script, args=(), shell_args=(), data=None, check=True):
         """The command's result; DATA is its stdin, after a host's command and closure."""
@@ -288,8 +322,9 @@ class Sources:
         name = package + "/scripts/" + script
         try:
             if target.host:
-                if self.closure is None:
-                    self.closure = watch.package_files(watch.MAILBOX_FILES)
+                if package not in self.closures:
+                    self.closures[package] = watch.package_files(RELAY_FILES if package == "slack" else watch.MAILBOX_FILES)
+                closure = self.closures[package]
                 # The login shell parses only "bash -s": fish turns \\ inside
                 # single quotes into \, so a quoted command reaches bash
                 # changed. POSIX sh's INPUT FILES leaves a shell reading stdin
@@ -298,11 +333,11 @@ class Sources:
                 # DATA, the closure rides fd 3 inside the command and DATA
                 # follows it, the command's own stdin.
                 if data is None:
-                    command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
+                    command, payload = watch.remote_command(closure, name, args, stdin=True, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
                                        operation=operation, timeout=self.remaining())
                 else:
-                    command, _ = watch.remote_command(self.closure, name, args, shell_args=shell_args)
+                    command, _ = watch.remote_command(closure, name, args, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + data,
                                        operation=operation, timeout=self.remaining())
             else:
@@ -356,8 +391,13 @@ class Sources:
             if [read["root"] for read in reads] != list(mailboxes):
                 raise ValueError("mailbox-reads")
             own = next((answer["mailbox"] for answer in answers if answer["registered"] == self.session.home), None)
+            relay_roots = {root: {root: None} for root in mailboxes}
+            for answer in answers:
+                if answer["mailbox"] is not None:
+                    relay_roots[answer["mailbox"]][answer["registered"]] = None
             for read in reads:
                 read["own"] = not target.host and read["root"] == own
+                read["relay_roots"] = list(relay_roots[read["root"]])
         except (ValueError, TypeError, KeyError) as error:
             raise source_failure("mailbox/lane-mail", target.key, error) from error
         return reads
@@ -391,20 +431,24 @@ class Sources:
             roots.append(self.session.home)
         mailboxes = [{"destination": target.key, "root": record["root"],
                       "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
-                      "own": record["own"], "answered": record["answered"],
+                      "own": record["own"], "answered": record["answered"], "relay_roots": record["relay_roots"],
                       "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
-        for mailbox in mailboxes:
-            if mailbox["own"]:
-                mailbox["relay_threads"] = self.home_threads(mailbox["outward"])
+        presented = [box for box in mailboxes if any((row.get("presentation") or {}).get("thread_ts")
+                                                    for row in box["outward"]["rows"])]
+        if presented:
+            bindings = self.relay_threads(target, [root for box in presented for root in box["relay_roots"]])
+            for box in presented:
+                box["relay_threads"] = [bindings.get(root, {}) for root in box["relay_roots"]]
         return mailboxes
 
-    def home_threads(self, outward):
-        if any((row.get("presentation") or {}).get("thread_ts") for row in outward["rows"]):
-            try:
-                return self.caller("slack", "slack", ["listen", "--root", self.session.home, "--presentation-threads"])
-            except Unavailable as error:
-                diagnostic(error, "owner-asks-presentation-threads")
-        return {}
+    def relay_threads(self, target, roots):
+        try:
+            result = self.call(target, None, "slack", "lib/store.py", [RELAY_READS, *roots],
+                               shell_args=["-c", 'exec python3 -I -c "$2" "$1" "${@:3}"', "owner-asks"])
+            return json.loads(result.stdout)
+        except Unavailable as error:
+            diagnostic(error, "owner-asks-presentation-threads")
+            return {}
 
     def open_tracker(self, tracker, mailboxes, requests):
         if tracker is None:
@@ -521,15 +565,14 @@ class Sources:
     def presentation_status(self, target, root, ask_id, receipt):
         presenter = receipt["presenter"]
         thread = None
-        if not presenter.startswith("slack:"):
-            try:
-                home = self.session.home
-                outward = self.events(self.mailbox(self.target("local"), home, "events", ["--box", "to-overseer"]).stdout)
-                mailbox = {"destination": "local", "root": home, "own": True, "outward": outward,
-                           "relay_threads": self.home_threads(outward)}
-                thread = presentation_links([mailbox]).get((target.key, root, ask_id, presenter))
-            except Unavailable as error:
-                diagnostic(error, "owner-asks-presentation-threads")
+        try:
+            direct = presenter.startswith("slack:")
+            mailboxes = self.destination(target if direct else self.target("local"))
+            if direct:
+                root = next((box["root"] for box in mailboxes if root in box["relay_roots"]), root)
+            thread = presentation_links(mailboxes).get((target.key, root, ask_id, presenter))
+        except Unavailable as error:
+            diagnostic(error, "owner-asks-presentation-threads")
         return {"presentation": {"presenter": presenter, "at": receipt["at"]}, "thread": thread,
                 "delivery": "confirmed" if thread else "unconfirmed"}
 
@@ -594,8 +637,14 @@ def presentation_links(mailboxes):
         for row in mailbox["outward"]["rows"]:
             presentation = row.get("presentation") or {}
             presenter = presentation.get("presenter", "")
-            binding = mailbox.get("relay_threads", {}).get(row["id"], {})
-            if not binding or (binding["ts"], binding["presenter"]) != (presentation.get("thread_ts"), presenter):
+            bindings = mailbox.get("relay_threads", [])
+            # Older saved collections held the one Jarvis-home journal.
+            if isinstance(bindings, dict):
+                bindings = [bindings]
+            urls = {record["url"] for binding in bindings
+                    for record in (binding.get(row["id"]),)
+                    if record and (record["ts"], record["presenter"]) == (presentation.get("thread_ts"), presenter)}
+            if len(urls) != 1:
                 continue
             route = presentation.get("route")
             if row["kind"] == "ask" and presenter.startswith("slack:"):
@@ -604,7 +653,7 @@ def presentation_links(mailboxes):
                 key = route["destination"], route["root"], route["ask"], presenter
             else:
                 continue
-            links[key] = binding["url"]
+            links[key] = urls.pop()
     return links
 
 
@@ -638,7 +687,7 @@ def source_rows(source):
                 continue
             presenter = presentation.get("presenter")
             thread = presented_threads.get((destination, root, ask["id"], presenter))
-            original = mailbox["links"].get(ask["id"]) if not presentation else None
+            original = mailbox["links"].get(ask["id"])
             link = {"label": "Slack thread", "url": thread} if thread else (
                 {"label": "Original ask", "url": original["url"]} if original else None)
             identity = ["mailbox", destination, root, ask["id"]]
@@ -785,6 +834,34 @@ class OwnerAsks:
                 self.session.write(state)
         return page
 
+    def render(self, state):
+        """Walk the two public views at one reading and bound only whole rows."""
+        pages = {view: self.page(state, view, None) for view in VIEWS}
+        reading = {key: pages["active"][key] for key in PAGE_READING}
+        observed = instant(reading["observedAt"])
+        rows = []
+        document = {**reading, "rows": rows}
+        remaining = RENDER_BYTES - len((RENDER_HEADER + encoded(document) + "\n").encode())
+        def walk(view, page):
+            while True:
+                if any(page[key] != value for key, value in reading.items()):
+                    raise Unavailable("The owner-ask reading changed during the page walk. Open it again.")
+                yield from ((view, row) for row in page["rows"])
+                if page["complete"]:
+                    break
+                page = self.page(state, view, page["nextCursor"])
+
+        # Share the command's byte budget between the two views. All pages
+        # still have to agree, even after no further rows fit.
+        for pair in zip_longest(*(walk(view, page) for view, page in pages.items())):
+            for view, row in filter(None, pair):
+                rendered = {"view": view, **rendered_row(row, observed)}
+                size = len(encoded(rendered).encode()) + bool(rows)
+                if size <= remaining:
+                    rows.append(rendered)
+                    remaining -= size
+        return document
+
     def receipt(self, request, kind, state, cause=""):
         return {"v": 1, "requestId": request["requestId"], "kind": kind, "state": state, "cause": cause}
 
@@ -866,7 +943,7 @@ def main(args, session_type, refusal_type):
         session.deadline = time.monotonic() + min(CALL_SECONDS, budget)
         settings = watch.config(session.env["JARVIS_BASH"], session.home)
         role = watch.role(settings)
-        data = sys.stdin.read() if args.action not in ("list", "deliver", "present") else None
+        data = sys.stdin.read() if args.action not in ("list", "render", "deliver", "present") else None
         if role.kind == "invalid":
             raise Unavailable("The main-home setting is invalid.")
         if role.kind == "satellite":
@@ -881,7 +958,7 @@ def main(args, session_type, refusal_type):
                 argv += ["--id", args.id, "--destination", args.destination, "--root", args.root]
                 if args.reserved:
                     argv += ["--reserved"]
-            elif args.action != "deliver":
+            elif args.action not in ("render", "deliver"):
                 argv += ["--id", args.id]
             cause, result = forward.host_call(role, session.deadline, MAIN, argv, data, reached=REACHED)
             if cause != "ok":
@@ -909,16 +986,25 @@ def main(args, session_type, refusal_type):
             elif args.action == "list":
                 state = owner.read()
                 result = owner.page(state, args.view, args.cursor)
+            elif args.action == "render":
+                result = owner.render(owner.read())
             else:
                 state = owner.read()
                 request = json.loads(data)
                 if not isinstance(request, dict) or not printable(request.get("requestId")) or not printable(request.get("expectedRevision")):
                     raise Unavailable("The action needs a printable request identity and revision.")
                 result = owner.act(state, args.action, args.id, request)
-        print(encoded(result))
+        if args.action == "render":
+            print(RENDER_HEADER + encoded(result))
+        else:
+            print(encoded(result))
         return int(bool(result.get("undelivered")))
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, OverflowError, watch.DestinationRefusal, refusal_type) as error:
         diagnostic(error, "owner-asks-" + args.action)
         cause = str(error) if isinstance(error, Unavailable) else "The owner-ask operation could not read its required evidence."
+        if args.action == "render":
+            # The adapter still needs to display the configured read's cause.
+            print(RENDER_HEADER + encoded({"cause": cause}))
+            return 0
         print(encoded({"v": 1, "kind": "unavailable", "cause": cause}))
         return 1
