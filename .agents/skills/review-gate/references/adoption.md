@@ -372,7 +372,7 @@ On a new publication, the refresh pull request also adds Consumer settings. The 
 - A run that retains an unchanged head includes the classifier's setting notes in that summary.
 - A report that fails, such as on an unreadable list, stops publication and auto-merge.
 
-The Kendex changelog section uses the kendex source commits recorded in each selected project's committed and rendered locks. It lists catalog commit subjects and added changelog text for those revisions. When the report would put the pull request body over GitHub's limit, the section links to the full report in the published refresh commit. Where the history cannot be read, the report says so and the refresh can still land.
+The Kendex changelog section uses the kendex source commits recorded in each selected project's committed and rendered locks. It lists catalog commit subjects and added changelog text for those revisions. When the report would put the pull request body over GitHub's limit, the section links to the full report in the published refresh commit or identifies a retained commit from before the report existed. Where the history cannot be read, the report says so and the refresh can still land.
 
 For a direct landing, the consumer overseer reads the Kendex changelog and retired settings in the refresh commit message in the default branch's push history. The run summary also carries the classifier's setting notes.
 

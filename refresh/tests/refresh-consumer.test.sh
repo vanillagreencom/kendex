@@ -438,6 +438,11 @@ case "$1" in
       [ -e "$TEST_STATE/adopted" ] || exit 52
     fi
     [ ! -e .fixture-verify-fail ] || exit 49
+    if [ "$TEST_VERIFY" = withheld ]; then
+      printf '%s\n' '{"version":1,"clean":false,"failed":0,"rows":[{"kind":"record","name":".kendex-lock.json","state":"ok"},{"kind":"skill","name":"probe","state":"unrecorded","detail":"withheld: a dependency is excluded"}]}'
+      printf '1 checked, 1 OK, 0 failed\n' >&2
+      exit 1
+    fi
     if [[ " $* " == *' --json '* ]] && [ -f "$TEST_STATE/classifier-proof" ]; then
       failed=0
       [ "$(cat "$TEST_STATE/classifier-proof")" != verify-not-clean ] || failed=1
@@ -1824,6 +1829,21 @@ for report_case in pull landed legacy catch-up; do
       { [ "$report_case" = catch-up ] || ! grep -qF 'Newer catalog entry outside the recorded range' "$report"; }; then
     ok "$report_case reports the exact catalog interval"
   else bad "$report_case changelog from recorded commits" "$OUT"; fi
+  if [ "$report_case" = catch-up ] && [ "$RC" -eq 0 ]; then
+    # An older runner could have published this tree without the report.
+    retained="$(git -C "$repo" commit-tree "$published^{tree}" -p "$land_base" -m 'chore: refresh kendex renders')"
+    git -C "$repo" push -q --force origin "$retained:refs/heads/kendex/refresh"
+    : >"$TMP/state/pr-draft"
+    : >"$TMP/state/calls"
+    run_refresh "catalog-report-$report_case" withheld render
+    if [ "$RC" -eq 0 ] && grep -qxF "refresh-state=held pr=1 class=render head=$retained" <<<"$OUT" &&
+        grep -qF 'The retained commit predates the catalog report.' "$TMP/state/body" &&
+        ! grep -qF '/commit/' "$TMP/state/body" &&
+        ! grep -qE '^git push|^pr merge ' "$TMP/state/calls"; then
+      ok 'catch-up draft retains its older commit and reports the unavailable catalog report'
+    else bad 'catch-up draft report on a retained commit' "$OUT"; fi
+    rm -f -- "$TMP/state/pr-draft"
+  fi
   git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
 done
 runner="$saved_runner"

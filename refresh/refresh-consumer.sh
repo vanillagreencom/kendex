@@ -823,6 +823,11 @@ if [ -n "$verify_report" ]; then
 fi
 pull_body="$TMP/pull-body"
 printf '%s' "$body" >"$pull_body"
+report_location="[Read the full catalog report in the refresh commit](https://github.com/$GH_REPO/commit/$head)."
+if [ "$state" = unchanged ] &&
+    ! git show -s --format=%B "$head" | grep -Fx '## Kendex changelog' >/dev/null; then
+  report_location='The full report exceeds GitHub’s limit. The retained commit predates the catalog report.'
+fi
 # Stream the report to keep it outside argv and check GitHub's character limit before publication.
 printf '%s' "${changelog_report:+$'\n'$changelog_report$'\n'}" | python3 -c '
 from pathlib import Path
@@ -831,13 +836,13 @@ path = Path(sys.argv[1])
 body = path.read_text(encoding="utf-8", errors="replace")
 report = sys.stdin.buffer.read().decode("utf-8", errors="replace")
 if report and len(body + report) > 65536:
-    report = f"\n## Kendex changelog\n\n[Read the full catalog report in the refresh commit]({sys.argv[2]}).\n"
+    report = f"\n## Kendex changelog\n\n{sys.argv[2]}\n"
     if len(body + report) > 65536:
         body = body.replace(sys.argv[3] + "\n", "", 1)
 if len(body + report) > 65536:
     raise SystemExit("refresh-error=pull-body value=too-large")
 path.write_text(body + report, encoding="utf-8")
-' "$pull_body" "https://github.com/$GH_REPO/commit/$head" "$merge_note"
+' "$pull_body" "$report_location" "$merge_note"
 if [ "$state" = pushed ] || [ -n "$verify_report" ]; then
   # An old arm survives a push and could merge the replacement before review,
   # and a held head must not merge at all. Read lifecycle again after

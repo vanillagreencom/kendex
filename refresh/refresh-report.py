@@ -82,8 +82,7 @@ def retired_list_path(root):
     if root is None:
         return release
     project = Path(root).resolve()
-    # The generated inventory names the actual files of this render, including
-    # harness copies. A pinned package that predates the list emits no entry.
+    # The inventory names emitted files. A pin predating the list emits no entry.
     try:
         inventory = json.loads((project / ".kendex-generated.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -130,8 +129,7 @@ def source_records(tree, lock):
     if not subprocess.check_output(["git", *listing, "--", f":(literal){lock}"]):
         return {}
     data = json.loads(subprocess.check_output(["git", "show", f"{tree}:{lock}"]))
-    # The lock preserves the declaration's spelling. Match the fixed GitHub
-    # identity the engine selects as the default catalog.
+    # The lock preserves the spelling of the engine's default catalog identity.
     records = {name: row["commit"] for name, row in data.get("sources", {}).items()
                if KENDEX_REPO.fullmatch(row["repo"].strip())}
     if any(not re.fullmatch(r"[0-9a-f]{40}", commit) for commit in records.values()):
