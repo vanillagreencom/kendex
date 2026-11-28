@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use super::AddRequest;
-use super::pick::{Selection, default_source, ensure_source};
+use super::pick::{default_source, ensure_source};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
@@ -34,6 +34,8 @@ pub(super) struct Wanted {
     pub commands: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub bundles: Vec<String>,
+    pub take_all: bool,
+    pub override_rev: Option<String>,
 }
 
 impl Wanted {
@@ -50,15 +52,14 @@ impl Wanted {
     }
 }
 
-/// Group every requested name under the subscription it installs from,
-/// and say which subscription the request named positionally (the context
-/// `--all` and bare bundle names land on).
+/// Group each requested package and its source options under the
+/// subscription it installs from.
 pub(super) fn place(
     env: &Env,
     scope: &Scope,
     manifest: &mut Manifest,
     request: &AddRequest,
-) -> Result<(BTreeMap<String, Wanted>, Option<Selection>)> {
+) -> Result<BTreeMap<String, Wanted>> {
     let context = match &request.source {
         Some(source) => Some(ensure_source(manifest, source)?),
         None => None,
@@ -103,7 +104,19 @@ pub(super) fn place(
         };
         groups.entry(source_name).or_default().bundles.push(bare);
     }
-    Ok((groups, context))
+    if request.all {
+        let source_name = match &context {
+            Some(ctx) => ctx.name.clone(),
+            None => default_source(manifest)?,
+        };
+        groups.entry(source_name).or_default().take_all = true;
+    }
+    if let Some(ctx) = context
+        && let Some(wanted) = groups.get_mut(&ctx.name)
+    {
+        wanted.override_rev = ctx.override_rev;
+    }
+    Ok(groups)
 }
 
 /// A qualifier resolves against subscription aliases and nothing else —

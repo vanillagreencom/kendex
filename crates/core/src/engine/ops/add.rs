@@ -92,17 +92,16 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
 /// need to reach the fetch before the add can be planned again.
 pub fn manifest_for_request(env: &Env, scope: &Scope, request: &AddRequest) -> Result<Manifest> {
     let mut manifest = manifest_for_mutation(env, scope)?;
-    if let Some(source) = &request.source {
-        let selection = pick::ensure_source(&mut manifest, source)?;
-        if let Some(rev) = selection.override_rev {
-            let decl =
-                manifest
+    // Bare placement reads catalogs during search. Fetch them before trying again.
+    if request.source.is_some() {
+        for (name, wanted) in place::place(env, scope, &mut manifest, request)? {
+            if let Some(rev) = wanted.override_rev {
+                let decl = manifest
                     .sources
-                    .get_mut(&selection.name)
-                    .ok_or(CoreError::UnknownSource {
-                        name: selection.name,
-                    })?;
-            decl.rev = Some(rev);
+                    .get_mut(&name)
+                    .ok_or(CoreError::UnknownSource { name })?;
+                decl.rev = Some(rev);
+            }
         }
     }
     Ok(manifest)
@@ -215,23 +214,11 @@ impl PreparedAddition {
         if let Some(reason) = lands_nowhere(request, &targets, scope) {
             return Err(CoreError::InstallsNowhere { reason });
         }
-        let (mut groups, context) = place::place(env, scope, manifest, request)?;
-        let all_source = match (request.all, &context) {
-            (false, _) => None,
-            (true, Some(ctx)) => Some(ctx.name.clone()),
-            (true, None) => Some(pick::default_source(manifest)?),
-        };
-        if let Some(source_name) = &all_source {
-            groups.entry(source_name.clone()).or_default();
-        }
+        let groups = place::place(env, scope, manifest, request)?;
 
         let mut optional_offers: Vec<(String, String)> = Vec::new();
         let mut declaring: BTreeSet<Held> = BTreeSet::new();
         for (source_name, wanted) in &groups {
-            let override_rev = context
-                .as_ref()
-                .filter(|ctx| ctx.name == *source_name)
-                .and_then(|ctx| ctx.override_rev.as_deref());
             declaring.extend(add_from(
                 env,
                 scope,
@@ -240,12 +227,10 @@ impl PreparedAddition {
                 request,
                 source_name,
                 wanted,
-                all_source.as_deref() == Some(source_name),
                 notes,
                 &mut optional_offers,
-                revision,
+                wanted.override_rev.as_deref().or(revision),
                 member_hold_at,
-                override_rev,
             )?);
         }
         if request.harnesses.is_some() {
@@ -411,22 +396,20 @@ fn add_from(
     request: &AddRequest,
     source_name: &str,
     wanted: &place::Wanted,
-    take_all: bool,
     notes: &mut Vec<String>,
     optional_offers: &mut Vec<(String, String)>,
     revision: Option<&str>,
     member_hold_at: Option<&str>,
-    override_rev: Option<&str>,
 ) -> Result<BTreeSet<Held>> {
-    let ready =
-        source::require_ready_at(env, scope, source_name, manifest, override_rev.or(revision))?;
+    let ready = source::require_ready_at(env, scope, source_name, manifest, revision)?;
     // An override belongs to the requested packages. Recording the resolved
     // commit keeps their plan and declaration on the same snapshot.
-    let hold_at = hold_commit(request.hold || override_rev.is_some(), source_name, &ready)?;
+    let hold = request.hold || wanted.override_rev.is_some();
+    let hold_at = hold_commit(hold, source_name, &ready)?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let config = source_config_for(&sealed, &ready.provenance)?;
 
-    let selected = |kind, names: &Vec<String>| match take_all {
+    let selected = |kind, names: &Vec<String>| match wanted.take_all {
         true => list_items(&sealed, &config, kind),
         false => names.clone(),
     };

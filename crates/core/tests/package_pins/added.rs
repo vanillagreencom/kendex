@@ -123,6 +123,38 @@ fn an_explicit_add_revision_survives_subscription_reuse_and_fetch() {
     );
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_qualified_add_fetches_the_same_source_it_plans() {
+    use kendex_core::{error::CoreError, remote};
+
+    let w = world();
+    write_skill(&w.upstream, "unused", "", "Positional catalog.");
+    commit(&w.upstream, "positional");
+    let other = w.home.join("git/owner/other");
+    std::fs::create_dir_all(&other).unwrap();
+    super::git(&other, &["init", "--quiet", "-b", "main"]);
+    write_skill(&other, "tool", "", "Qualified catalog.");
+    let revision = commit(&other, "qualified");
+    declare(&w, "[sources.other]\nrepo = \"owner/other\"\n");
+    let request = AddRequest {
+        source: Some(format!("{}@absent-revision", super::REPO)),
+        skills: vec!["other::tool".into()],
+        ..AddRequest::default()
+    };
+
+    assert!(matches!(
+        ops::add(&w.env, &w.scope, &request),
+        Err(CoreError::SourcePending { name }) if name == "other"
+    ));
+    let fetch = ops::manifest_for_request(&w.env, &w.scope, &request).unwrap();
+    remote::sync_sources(&w.env, &fetch).unwrap();
+    let report = ops::add(&w.env, &w.scope, &request).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "tool").contains("Qualified catalog."));
+    assert_eq!(locked_commit(&w, "tool"), revision);
+}
+
 /// A successful add preserves unrelated records and files, including a
 /// missing installed file that a scope reconciliation would restore.
 #[test]
