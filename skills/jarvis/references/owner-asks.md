@@ -5,7 +5,7 @@ Read when a console lists owner asks or sends Reply, Done or Later through `jarv
 ```bash
 .agents/skills/jarvis/scripts/jarvis-session owner-asks list --home HOME --view active|snoozed [--cursor CURSOR]
 .agents/skills/jarvis/scripts/jarvis-session owner-asks reply|done|later --home HOME --id ID
-.agents/skills/jarvis/scripts/jarvis-session owner-asks present --home HOME --destination KEY --root ROOT --id ASK [--reserved]
+.agents/skills/jarvis/scripts/jarvis-session owner-asks present --home HOME --destination KEY --root ROOT --id ASK
 .agents/skills/jarvis/scripts/jarvis-session owner-asks deliver --home HOME
 ```
 
@@ -69,7 +69,7 @@ A Slack reply through a presentation already bound to an ask can arrive after cl
 
 ## Presenting an overseer's ask
 
-`present` takes the introduction on stdin. Use the destination, repository root and ask id from the original mailbox's event. For a new presentation, Jarvis verifies that the local origin uses the installed mailbox package that retains closed asks and their presentation bindings. A missing proof, including an SSH origin or a running watch whose launch-time mailbox program cannot be read, keeps the manual owner-ask route. Once admitted, the command claims the presentation at the source, reserves the ask when requested, then writes a notice for the relay bound to the Jarvis home. Repeat the same command to resume after an interrupted claim. The first receipt also holds any requested reservation.
+New delegated presentations are on hold at every origin. Use the manual owner-ask route. The `present` command reads an existing receipt using the destination, repository root and ask id from the original mailbox event. An ask without a receipt returns `unavailable` and directs the caller to the manual route. A notice already waiting to post stays held.
 
 The `present` receipt carries a confirmed thread or `delivery: unconfirmed` when the relay has yet to establish it. A second presenter sees the first presentation's state. `deliver` reads replies bound to presentation notices and writes the owner's words to their original mailboxes with the Slack event's delivery identity. Run it from the home watch alongside `lane-mail owner-answers`. It reports undelivered replies until each originating mailbox confirms its copy. Repeating the command resumes unconfirmed deliveries.
 

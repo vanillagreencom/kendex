@@ -38,14 +38,20 @@ printf 'Which release can ship?\n' >"$TMP_ROOT/question"
 printf 'Only the first.\n' >"$TMP_ROOT/reply"
 ASK="$(mail "$ORIGIN" ask --to owner --options first,both --reserved --file "$TMP_ROOT/question")"
 ASK="${ASK#id=}"
-mail "$ORIGIN" present --id "$ASK" --presenter jarvis-retention >/dev/null
+# A delegated exchange from before the hold. The installed commands still
+# need to retain and deliver a reply already bound to it.
+jq -cn --arg id "$ASK" '{id:($id+"-owner-presentation"), kind:"owner-presentation", re:$id,
+  at:"2000-01-01T00:00:00Z", text:"", presenter:"jarvis-retention", reserved:true}' \
+  >>"$ORIGIN/tmp/lane-mail/overseer/to-overseer.jsonl"
+BOX="$HOME_BOX/tmp/lane-mail/overseer"
+mkdir -p "$BOX"
 mail "$ORIGIN" pending --to owner |
-  jq --arg root "$ORIGIN" '{destination:"local",root:$root,ask:.,introduction:"Please review."}' >"$TMP_ROOT/notice"
-mail "$HOME_BOX" present --file "$TMP_ROOT/notice" >/dev/null
+  jq -c --arg root "$ORIGIN" '{id:"jarvis-retention", kind:"notice", from:"overseer", to:"owner",
+    at:"2000-01-01T00:00:00Z", text:"Please review.", presentation:{presenter:"jarvis-retention",
+    route:{destination:"local",root:$root,ask:.id},question:{text,options,deadline,reserved}}}' >"$BOX/to-overseer.jsonl"
 printf '{"ts":"1.000001","author":"bot","envelope":"jarvis-retention","excerpt":"Which release can ship?"}\n' >"$TMP_ROOT/parent"
 mail "$HOME_BOX" send --directive --delivery-id C123:1.000002 --thread-ts 1.000001 \
   --parent "$TMP_ROOT/parent" --file "$TMP_ROOT/reply" >/dev/null
-BOX="$HOME_BOX/tmp/lane-mail/overseer"
 for file in "$BOX/to-overseer.jsonl" "$BOX/to-lane.jsonl"; do
   jq -c '.at="2000-01-01T00:00:00Z"' "$file" >"$TMP_ROOT/aged"
   mv -- "$TMP_ROOT/aged" "$file"

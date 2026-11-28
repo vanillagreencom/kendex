@@ -43,7 +43,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [options]
        lane-mail reserve --item overseer --id MSGID
        lane-mail present --item overseer --id MSGID --presenter KEY [--reserved | --thread-url URL [--thread-ts TS]] [--root ROOT]
-       lane-mail present --item overseer (--file NOTICE | --id MSGID --owner-delivered) [--root ROOT]
+       lane-mail present --item overseer --id MSGID --owner-delivered [--root ROOT]
        lane-mail replace --item overseer --id MSGID [--root ROOT]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
@@ -449,15 +449,13 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               does; an id naming no message is `ask-unknown`, and one naming
               any message but an owner ask is `not-owner-ask` with its kind=
   present --item overseer --id MSGID --presenter KEY [--reserved]
-              returns the originating mailbox's first presentation receipt.
+              returns the originating mailbox's first Slack presentation receipt.
               The append lock makes the first presenter and time final.
               --reserved records that the presenter must reserve the ask
               before posting. A second presenter reads the first receipt.
               --thread-url URL and --thread-ts TS record the relay's current
               thread for that presenter, on the ask or its presentation notice.
-              --file NOTICE writes the delegate's presentation notice once.
-              The file carries destination, root, the original ask envelope
-              and a separate introduction. It produces a notice id.
+              New delegated presentations use the manual owner-ask route.
               --id MSGID --owner-delivered records confirmation that the
               originating mailbox accepted the owner directive named by MSGID.
   replace --item overseer --id MSGID [--root ROOT]
@@ -934,6 +932,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     delivery-repeated) text='An envelope carrying this delivery id already stands in the mailbox, named by id= above: this send is a retry of a delivery that landed, so nothing is appended. Record that id against the delivery and go on.' ;;
     owner-notice-repeated) text='The owner already holds this notice: the owner notice named by id= above carries the same text and was sent within the last 24 hours, so nothing is appended whatever the attachment or reference. That id is the receipt of the send that landed. New words send it again; waiting does not.' ;;
     overseer-only) text='resolve and reserve act on an ask in the overseer mailbox alone. A lane ask is answered with `send --item ITEM --re MSGID`.' ;;
+    presentation-held) text='New delegated presentations are on hold. Use the manual owner-ask route.' ;;
     not-owner-ask) text='reserve keeps an owner ask open past its deadline, and the id names another message, of the kind above: a notice, an answer, a directive, a private record, or an ask a peer or nobody is to answer. None of them has a deadline a default would close.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
@@ -1137,7 +1136,8 @@ fi
 if [ "$VERB" = present ]; then
   for given in $OPTS_GIVEN; do
     case "$given" in
-      --item | --id | --root | --file | --presenter | --thread-url | --thread-ts | --reserved | --owner-delivered) ;;
+      --item | --id | --root | --presenter | --thread-url | --thread-ts | --reserved | --owner-delivered) ;;
+      --file) refuse presentation-held "$given" ;;
       *) refuse option-unknown "$given" ;;
     esac
   done
@@ -3741,27 +3741,6 @@ case "$VERB" in
 
   present)
     [ "$ITEM:$HOST" = overseer:0 ] || refuse overseer-only "$ITEM"
-    if [ -n "$FILE" ]; then
-      [ -z "$MSGID$THREAD_URL$PRESENTER" ] && [ "$OWNER_DELIVERED:$RESERVED" = 0:0 ] ||
-        refuse option-conflict --file
-      lm_read_file
-      NOW="$(date -u +%s)" || refuse write-failed "$TO_OVERSEER"
-      LINE="$(jq -ces --argjson now "$NOW" '
-        select(length == 1) | .[0]
-        | select((.introduction | type) == "string"
-          and all(.destination, .root, .ask.id, .ask.presentation.presenter; type == "string" and length > 0)
-          and .ask.kind == "ask" and .ask.to == "owner")
-        | {id: .ask.presentation.presenter, kind: "notice", to: "owner", from: "overseer",
-           at: ($now | todate), text: .introduction,
-           presentation: {presenter: .ask.presentation.presenter, route: {destination, root, ask: .ask.id},
-                          question: (.ask | {text, options, recommend, deadline, reserved, draft})}}
-        | . + {delivery_id: .id}' "$FILE")" || refuse option-conflict --file
-      DELIVERY_ID="$(jq -r .id <<<"$LINE")" || refuse file-unreadable "$FILE"
-      lm_append_local "$TO_OVERSEER" "$LINE" lm_guard_delivery || :
-      lm_ask_find "$DELIVERY_ID" notice:owner || refuse ref-unknown "$DELIVERY_ID"
-      printf '%s\n' "$ASK_JSON"
-      exit 0
-    fi
     [ -n "$MSGID" ] || refuse option-required --id
     PRESENT_BOX="$TO_OVERSEER"
     PRESENT_RESERVED=false
@@ -3781,6 +3760,7 @@ case "$VERB" in
       PRESENT_KIND=owner-presented
     else
       [ -n "$PRESENTER" ] || refuse option-required --presenter
+      case "$PRESENTER" in slack:?*) ;; *) refuse presentation-held "$MSGID" ;; esac
       lm_ask "$MSGID"
       lm_reserve_unclosed locked
       PRESENT_KIND=owner-presentation

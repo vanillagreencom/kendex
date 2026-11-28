@@ -3,7 +3,6 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import datetime
-import filecmp
 import hashlib
 import json
 import os
@@ -42,6 +41,7 @@ COLLECTION_SECONDS = 60
 # completion, so the claim says so where the delegate reads it.
 DONE_CLAIM = "Done claim; delegate verification is still required."
 DELIVERY_UNCONFIRMED = "Delivery is not confirmed; retry with the same request identity and text."
+PRESENTATION_HELD = "New delegated presentations are on hold. Use the manual owner-ask route."
 # The caller's mailbox code over each root's data. Each registered root
 # answers one record and each distinct mailbox one read, so the caller can
 # prove the read complete. jq carries every path and payload as a JSON
@@ -505,69 +505,18 @@ class Sources:
         return self.call(target, root, "mailbox", "lane-mail", [root, verb, *args],
                          shell_args=["-c", script, "owner-asks"], data=data, check=check)
 
-    def origin_retains_presentation(self, target, root):
-        if target.host:
-            return False
-        bash = self.session.env["JARVIS_BASH"]
-        try:
-            common = watch.mailbox_root(bash, Path(root))
-            if Path(root) != common:
-                return False
-            runtime = watch.orch_runtime()
-            status = json.loads(watch.checked([bash, runtime, "watch", "status", "--fleet"], common,
-                                              operation="presentation-cleanup", timeout=self.remaining()))
-            if status["protocol"] != "orch-runtime-v1" or status["ok"] is not True:
-                return False
-            claim = status["result"]["claim"]
-            if claim is not None and claim["standing"] != "gone":
-                # An active watch uses launch-time arguments. Status cannot
-                # prove which mailbox program those arguments named.
-                return False
-            installed_packages = common / ".agents/skills"
-            installed = installed_packages / "mailbox/scripts/lane-mail"
-            program = watch.checked([bash, runtime.with_name("orch-env"), "LANE_MAIL_CLI", installed], common,
-                                    operation="presentation-cleanup", timeout=self.remaining()).rstrip("\n")
-            if Path(program) != installed:
-                return False
-            caller_packages = watch.LIB.parents[2]
-            return os.access(installed, os.X_OK) and all(
-                filecmp.cmp(installed_packages / name, caller_packages / name, shallow=False)
-                for name in watch.MAILBOX_FILES)
-        except (OSError, ValueError, TypeError, KeyError, watch.Failure):
-            return False
-
-    def present(self, destination, root, ask_id, introduction, reserved):
-        if not introduction.strip():
-            raise Unavailable("Write Jarvis's introduction to the original question.")
+    def present(self, destination, root, ask_id):
+        """Read an existing receipt while delegated presentation is on hold."""
         target = self.target(destination)
-        if not target.host:
-            bash = self.session.env["JARVIS_BASH"]
-            if watch.mailbox_root(bash, Path(root)) == watch.mailbox_root(bash, Path(self.session.home)):
-                raise Unavailable("Jarvis's own question has its own presentation route.")
-        outward = self.events(self.mailbox(target, root, "events", ["--box", "to-overseer"]).stdout)
-        original = next((row for row in outward["rows"] if row["id"] == ask_id and row["kind"] == "ask"), None)
-        if original is None:
-            raise Unavailable("The original mailbox no longer holds the question.")
-        if not original.get("presentation") and not self.origin_retains_presentation(target, root):
-            raise Unavailable("The origin's mailbox cleanup is unconfirmed. Use the manual owner-ask route.")
-        presenter = "jarvis-" + digest([self.session.home, destination, root, ask_id])
-        args = ["--id", ask_id, "--presenter", presenter]
-        if reserved:
-            args.append("--reserved")
-        receipt = json.loads(self.mailbox(target, root, "present", args).stdout)
-        if receipt["presenter"] != presenter:
-            return {"v": 1, "kind": "already-presented", **self.presentation_status(target, root, ask_id, receipt)}
-        if receipt.get("reserve"):
-            self.mailbox(target, root, "reserve", ["--id", ask_id])
         pending = self.mailbox(target, root, "pending", ["--to", "owner"]).stdout
-        asks = {ask["id"]: ask for ask in map(json.loads, filter(None, pending.split("\n")))}
-        ask = asks.get(ask_id)
-        if ask is None:
-            raise Unavailable("The original question closed before it could be presented.")
-        notice = encoded({"destination": destination, "root": root, "ask": ask, "introduction": introduction})
-        posted = json.loads(self.mailbox(self.target("local"), self.session.home, "present", data=notice).stdout)
-        return {"v": 1, "kind": "presented", "notice": posted["id"],
-                **self.presentation_status(target, root, ask_id, receipt)}
+        original = next((row for row in map(json.loads, filter(None, pending.split("\n")))
+                         if row["id"] == ask_id), None)
+        if original is None or not original.get("presentation"):
+            raise Unavailable(PRESENTATION_HELD)
+        status = self.presentation_status(target, root, ask_id, original["presentation"])
+        if status["delivery"] == "unconfirmed":
+            status["cause"] = PRESENTATION_HELD
+        return {"v": 1, "kind": "already-presented", **status}
 
     def presentation_status(self, target, root, ask_id, receipt):
         presenter = receipt["presenter"]
@@ -917,7 +866,7 @@ def main(args, session_type, refusal_type):
         session.deadline = time.monotonic() + min(CALL_SECONDS, budget)
         settings = watch.config(session.env["JARVIS_BASH"], session.home)
         role = watch.role(settings)
-        data = sys.stdin.read() if args.action not in ("list", "deliver") else None
+        data = sys.stdin.read() if args.action not in ("list", "deliver", "present") else None
         if role.kind == "invalid":
             raise Unavailable("The main-home setting is invalid.")
         if role.kind == "satellite":
@@ -950,10 +899,7 @@ def main(args, session_type, refusal_type):
         owner = OwnerAsks(session, Sources(session, settings))
         with session.locked():
             if args.action == "present":
-                result = owner.sources.present(args.destination, args.root, args.id, data, args.reserved)
-                state = owner.read()
-                state.pop("collection", None)
-                session.write(state)
+                result = owner.sources.present(args.destination, args.root, args.id)
             elif args.action == "deliver":
                 result = owner.sources.deliver_presented()
                 if result["delivered"]:

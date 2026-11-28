@@ -1520,39 +1520,36 @@ sys.exit(result.returncode)
         self.executable("ssh", "#!" + sys.executable + "\n" + self.DROPPING_SSH)
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
         question = "Can the two changes ship?"
-        ask = self.mail(origin, "ask", question, "--to", "owner", "--options", "first,both",
-                        "--recommend", "first", "--effect", "none")
+        ask = self.mail(origin, "ask", question, "--to", "owner", "--options", "first,both", "--reserved")
         mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
         args = ("--destination", "ssh:fixture", "--root", origin, "--id", ask)
+        original = self.box(origin, "to-overseer")
         result, receipt = self.run_cli("present", None, "Please choose the part to ship.", *args)
         self.assertEqual((result.returncode, receipt["kind"]), (1, "unavailable"), result.stderr)
         self.assertIn("manual owner-ask route", receipt["cause"])
-        self.assertFalse(any(row["kind"] == "owner-presentation" for row in self.box(origin, "to-overseer")))
-        self.assertFalse(any(row["kind"] == "notice" for row in self.box(self.home, "to-overseer")))
-        presenter = "jarvis-" + owner_asks.digest([str(self.home), "ssh:fixture", str(origin), ask])
-        first = self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", presenter,
-                              "--reserved"], origin)
-        first.check_returncode()
-        # The process stopped after the claim. The first receipt still
-        # requires a reservation when the caller retries without the flag.
-        for _ in range(2):
-            result, receipt = self.run_cli("present", None, "Please choose the part to ship.", *args)
-            self.assertEqual((result.returncode, receipt.get("notice")), (0, presenter), result.stderr + result.stdout)
-        notice, = [row for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"]
-        self.assertEqual(notice["presentation"]["question"]["reserved"], True)
-        self.assertEqual(notice["presentation"]["question"]["text"], question)
-        self.command([mail, "resolve", "--item", "overseer", "--id", ask], origin).check_returncode()
+        self.assertEqual(self.box(origin, "to-overseer"), original)
+        self.assertEqual(self.box(self.home, "to-overseer"), [])
 
-        closed = self.mail(origin, "ask", "This one closed during review.", "--to", "owner", "--options", "yes,no",
-                           "--recommend", "no", "--effect", "none")
-        interrupted = "jarvis-" + owner_asks.digest([str(self.home), "ssh:fixture", str(origin), closed])
-        self.command([mail, "present", "--item", "overseer", "--id", closed, "--presenter", interrupted,
-                      "--reserved"], origin).check_returncode()
-        self.command([mail, "resolve", "--item", "overseer", "--id", closed], origin).check_returncode()
-        result, closed_receipt = self.run_cli("present", None, "This must not post.",
-                                              "--destination", "ssh:fixture", "--root", origin, "--id", closed, "--reserved")
-        self.assertEqual((result.returncode, closed_receipt["kind"]), (1, "unavailable"), result.stderr)
-        self.assertEqual([row["id"] for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"], [presenter])
+        # These rows record a presentation from before the hold. The current
+        # receipt reader and answer delivery can recover it without posting.
+        presenter = "jarvis-established"
+        at = original[0]["at"]
+        claim = {"id": ask + "-owner-presentation", "kind": "owner-presentation", "re": ask,
+                 "at": at, "text": "", "presenter": presenter, "reserved": True}
+        with (origin / "tmp/lane-mail/overseer/to-overseer.jsonl").open("a") as stream:
+            stream.write(json.dumps(claim) + "\n")
+        notice = {"id": presenter, "kind": "notice", "at": at, "text": "Please review.", "from": "overseer", "to": "owner",
+                  "presentation": {"presenter": presenter, "route": {"destination": "ssh:fixture", "root": str(origin), "ask": ask},
+                                   "question": {"text": question, "options": ["first", "both"], "reserved": True}}}
+        home_box = self.home / "tmp/lane-mail/overseer"
+        home_box.mkdir(parents=True, exist_ok=True)
+        (home_box / "to-overseer.jsonl").write_text(json.dumps(notice) + "\n")
+        result, receipt = self.run_cli("present", None, None, *args)
+        self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("delivery")),
+                         (0, "already-presented", "unconfirmed"), result.stderr + result.stdout)
+        self.assertEqual(self.box(origin, "to-overseer"), original + [claim])
+        self.assertEqual(self.box(self.home, "to-overseer"), [notice])
+        self.command([mail, "resolve", "--item", "overseer", "--id", ask], origin).check_returncode()
 
         parent = self.root / "parent"
         parent.write_text(json.dumps({"ts": "1.000001", "author": "bot", "excerpt": question, "envelope": presenter}))
@@ -1576,26 +1573,17 @@ sys.exit(result.returncode)
         self.assertEqual((answer["re"], answer["sender"], answer["delivery_id"], answer["text"], answer["owner_question"]["text"]),
                          (ask, "owner", "C123:1.000002", "Only the first one.", question))
 
-    def test_local_presentation_requires_a_separate_mailbox(self):
+    def test_new_local_delegated_presentation_is_held(self):
         origin = make_project(self.root / "local-overseer")
-        custom = make_project(self.root / "custom-cleanup")
-        program = self.executable("unexpected-cleanup", '#!/bin/sh\nprintf %s run > "unexpected-cleanup-ran"\n')
-        (custom / "kendex.settings.toml").write_text(f'[env]\nLANE_MAIL_CLI="{program}"\n')
-        for checkout, expected in ((self.home, "unavailable"), (custom, "unavailable"), (origin, "presented")):
-            with self.subTest(checkout=checkout.name):
-                ask = self.mail(checkout, "ask", "Should this safe step go ahead?", "--to", "owner",
-                                "--options", "yes,no", "--recommend", "no", "--effect", "none")
-                result, receipt = self.run_cli("present", None, "Please consider the original question.",
-                                               "--destination", "local", "--root", checkout, "--id", ask)
-                self.assertEqual(receipt["kind"], expected, result.stderr)
-                self.assertEqual(result.returncode, int(expected != "presented"))
-                if checkout == custom:
-                    self.assertIn("manual owner-ask route", receipt["cause"])
-                    self.assertFalse(any(row["kind"] == "owner-presentation"
-                                         for row in self.box(custom, "to-overseer")))
-                    self.assertFalse((custom / "unexpected-cleanup-ran").exists())
-        notice, = [row for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"]
-        self.assertEqual(notice["presentation"]["route"]["root"], str(origin))
+        ask = self.mail(origin, "ask", "Should this safe step go ahead?", "--to", "owner",
+                        "--options", "yes,no", "--recommend", "no", "--effect", "none")
+        original = self.box(origin, "to-overseer")
+        result, receipt = self.run_cli("present", None, "Please consider the original question.",
+                                       "--destination", "local", "--root", origin, "--id", ask, "--reserved")
+        self.assertEqual((result.returncode, receipt["kind"]), (1, "unavailable"), result.stderr)
+        self.assertIn("manual owner-ask route", receipt["cause"])
+        self.assertEqual(self.box(origin, "to-overseer"), original)
+        self.assertEqual(self.box(self.home, "to-overseer"), [])
 
     def test_answer_to_a_closed_ask_adds_nothing(self):
         # A delegate's close that lands between the list and the answer.

@@ -406,7 +406,7 @@ else
   ok 'control: splitting a fitting linked line fails the payload contract'
 fi
 sk_bin_reset
-sk_mutant question-cap relay.py 'if kind in \("ask", "overdue", "presentation"\):' 'if False and kind in ("ask", "overdue", "presentation"):'
+sk_mutant question-cap relay.py 'if kind in \("ask", "overdue"\):' 'if False and kind in ("ask", "overdue"):'
 if continuation_cases questions >"$SK_TMP/question-cap.out" 2>&1; then
   bad 'control: allowing oversized questions must fail the refusal contract'
 else

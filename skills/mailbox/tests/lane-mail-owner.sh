@@ -1712,14 +1712,18 @@ mkdir "$LANE/subdir"
 lm present --item overseer --root "$LANE/subdir" --id "$ASK" --presenter subdir
 assert_eq "${ERR%%=*}" "lane-mail: root-not-checkout" "presentation requires a checkout root"
 lm present --item overseer --id "$ASK" --presenter jarvis-first
-FIRST="$OUT"
+assert_eq "$RC|${ERR%%=*}" "2|lane-mail: presentation-held" "a new delegated claim is refused"
+lm present --item overseer --file "$F"
+assert_eq "$RC|${ERR%%=*}" "2|lane-mail: presentation-held" "a new delegated notice is refused"
 lm present --item overseer --id "$ASK" --presenter slack:C123
+FIRST="$OUT"
+lm present --item overseer --id "$ASK" --presenter slack:C456
 assert_eq "$RC|$OUT" "0|$FIRST" "a second presenter reads the first receipt"
-lm present --item overseer --id "$ASK" --presenter jarvis-first --thread-url 'https://workspace.slack.test/archives/C123/p1'
+lm present --item overseer --id "$ASK" --presenter slack:C123 --thread-url 'https://workspace.slack.test/archives/C123/p1'
 lm resolve --item overseer --id "$ASK"
 F="$(text presentation-answer 'Only the first part.')"
 for key in C123:1.000001 C123:1.000001 C123:1.000002; do
-  lm send --item overseer --re "$ASK" --sender owner --presenter jarvis-first --delivery-id "$key" --file "$F"
+  lm send --item overseer --re "$ASK" --sender owner --presenter slack:C123 --delivery-id "$key" --file "$F"
 done
 lm events --item overseer --box to-lane
 assert_eq "$(jq -cRs '[split("\n")[] | fromjson? | select(.kind == "answer")

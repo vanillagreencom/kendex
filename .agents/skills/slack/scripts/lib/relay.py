@@ -635,7 +635,7 @@ class RootRelay:
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
             self.post_events([routed for routed in self.routes(self.mail.events())
-                              if routed[1] in ("reply", "presentation", "confirm")])
+                              if routed[1] in ("reply", "confirm")])
         else:
             events = self.mail.events()
             if self.state.held:
@@ -1111,7 +1111,7 @@ class RootRelay:
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
         `answer`, `resolution`, `seen` for an ask or notice the Jarvis session read on resume,
-        `presentation` for a delegated notice, `confirm` for its recorded thread,
+        `confirm` for a recorded presentation thread,
         `overdue` for a posted reserved ask open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record, and a
         reply to a forwarded directive carries that directive with its `citation`."""
@@ -1157,8 +1157,8 @@ class RootRelay:
                          or legacy_ask and self.mail.retains_presentations())):
                 routed.append((envelope, "confirm", {}))
             if presenting:
-                if not presentation.get("thread") and env_id not in state.carried and self.mail.retains_presentations():
-                    routed.append((envelope, "presentation", {}))
+                # Delegated notices can still acquire readback for posts that
+                # already landed. A pending notice sends nothing.
                 continue
             if env_id in closures:
                 thread_ts = state.by_envelope.get(str(envelope.get("re", "")))
@@ -1243,8 +1243,6 @@ class RootRelay:
                     landed.append(str(envelope["id"]))
             elif route == "overdue":
                 self.post_overdue(envelope)
-            elif route == "presentation":
-                self.post_presentation(envelope)
             elif route == "confirm":
                 self.confirm_presentation(envelope)
             elif route in ("notice", "reply"):
@@ -1273,7 +1271,7 @@ class RootRelay:
         anything else journals retry, fails this poll and leaves the envelope for the next."""
         # Slack documents that internal_error and fatal_error can follow a
         # successful chat.postMessage write, just like a lost response.
-        ambiguous = (kind in ("ask", "presentation", "overdue") and err.error in ("internal_error", "fatal_error")
+        ambiguous = (kind in ("ask", "overdue") and err.error in ("internal_error", "fatal_error")
                      and err.value.startswith("chat.postMessage "))
         if not read and (err.key == "slack-response-lost" or ambiguous):
             self._out(envelope, kind, "unknown")
@@ -1301,7 +1299,7 @@ class RootRelay:
         try:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
-            if kind in ("ask", "overdue", "presentation"):
+            if kind in ("ask", "overdue"):
                 markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
             parts = [text] if attach else continuations(text)
@@ -1387,16 +1385,6 @@ class RootRelay:
                 # Confirming an existing post must never make it postable again.
                 if self.post_failed is None:
                     self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
-
-    def post_presentation(self, envelope: Dict) -> None:
-        question = dict(envelope["presentation"]["question"], id=envelope["id"])
-        intro = f"{mention(self.binding)} Jarvis: {envelope['text']}\n\nQuestion from the overseer:"
-        pieces = self.ask_pieces(question, intro)
-        ts = self._send(envelope, "presentation", pieces, None, presentation=True)
-        if ts is not None:
-            excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-            self.bind_presentation(envelope, {"ts": ts, "text": excerpt}, "presentation")
-            self.confirm_presentation(envelope)
 
     def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
         """The whole question under `header`: its text, any draft, and its

@@ -62,20 +62,26 @@ assert_eq "$(asks "$CH" 'Continue the original work?')" 1 "the relay never repea
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread != null')" true \
   "a Slack readback confirms the thread on the ask"
 
-ORIGIN="$(sk_new_root presented-origin)"
-ROOT="$(sk_new_root presenter)"
-sk_bind "$ORIGIN"
+ROOT="$(sk_new_root jarvis-home)"
 sk_bind "$ROOT"
 CH="$(sk_channel "$ROOT")"
-sk_poll "$ORIGIN"
 sk_poll "$ROOT"
+BOX="$(sk_box "$ROOT")"
+mkdir -p "$BOX"
+# A notice queued before the hold, without a corresponding Slack post.
+jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg root "$ROOT" '
+  {id:"jarvis-held",kind:"notice",from:"overseer",to:"owner",at:$at,text:"Do not post the queued delegation.",
+   presentation:{presenter:"jarvis-held",route:{destination:"local",root:$root,ask:"held-ask"},
+                 question:{text:"Which part can go ahead?",options:["first","both"],reserved:true}}}' >>"$BOX/to-overseer.jsonl"
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Do not post the queued delegation.')" 0 "a queued delegation never starts a new Slack post"
+
 printf '%s' '{"recipient":"release@example.test","medium":"email","text":"Release exactly this note."}' >"$SK_TMP/approved-draft"
-ASK="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text original 'Send this release draft?')" \
-  --draft "$SK_TMP/approved-draft")"
+ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text original 'Send this release draft?')" \
+  --draft "$SK_TMP/approved-draft")" || exit 1
 ASK="${ASK#id=}"
 mkdir -p "$SK_TMP/jarvis-bin"
-jq -cn --arg root "$ROOT" --arg origin "$ORIGIN" \
-  '[{folder:$root,state:"ok",worktree:null},{folder:$origin,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry"
+jq -cn --arg root "$ROOT" '[{folder:$root,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry"
 cat >"$SK_TMP/jarvis-bin/kendex" <<'SH'
 #!/bin/sh
 [ "$*" = "project list --json" ] || exit 97
@@ -89,41 +95,30 @@ jarvis() {
     AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
     FIXTURE_REGISTRY="$SK_TMP/jarvis-registry" "$BASH" "$SK_ROOT/skills/jarvis/scripts/jarvis-session" owner-asks "$@")
 }
-NOTICE="$(printf '%s\n' 'Please review the original question.' |
-  jarvis present --home "$ROOT" --destination local --root "$ORIGIN" --id "$ASK" --reserved | jq -r .notice)" || exit 1
-sk_poll "$ORIGIN"
-assert_eq "$(asks "$(sk_channel "$ORIGIN")" 'Send this release draft?')" 0 "the second presenter leaves the original unposted"
-sk_lm "$ORIGIN" present --item overseer --id "$ASK" --presenter "$NOTICE" \
-  --thread-url 'https://untrusted.example.test/approval' >/dev/null
-PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/preview" jarvis list --home "$ROOT" --view active)" || exit 1
-assert_eq "$(jq -cr '[.activeCount,.rows[0].link]' <<<"$PAGE")" '[1,null]' \
-  "a source checkout cannot set the delegated approval link"
+
 OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
 sk_ctl /_test/fault "$(jq -cn --arg ts "$OLD_TS" \
   '{method:"chat.postMessage",accepted:true,error:"internal_error",message_ts:$ts}')" >/dev/null
 sk_recovery "$ROOT" poll
+PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/preview" jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -cr '[.activeCount,.rows[0].link]' <<<"$PAGE")" '[1,null]' \
+  "the home approval link is unconfirmed before the relay reads the post back"
 sk_event "$ROOT" "$CH" "$OLD_TS"
 sk_poll "$ROOT"
-sk_lm "$ROOT" present --item overseer --id "$NOTICE" --presenter "$NOTICE" \
+sk_lm "$ROOT" present --item overseer --id "$ASK" --presenter "slack:$CH" \
   --thread-url 'https://untrusted.example.test/same-stamp' --thread-ts "$OLD_TS" >/dev/null || exit 1
-OTHER="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text other 'Which other changes?')" \
-  --options yes,no --reserved)"
-sk_lm "$ORIGIN" present --item overseer --id "${OTHER#id=}" --presenter "$NOTICE" >/dev/null
 PAGE="$(jarvis list --home "$ROOT" --view active)" || exit 1
-assert_eq "$(jq -r '.rows[] | select(.what == "Which other changes?") | .link' <<<"$PAGE")" null \
-  "a different ask cannot borrow the home thread by copying its presenter"
 assert_eq "$(jq -r '.rows[] | select(.what == "Send this release draft?") | .link.url' <<<"$PAGE")" \
-  "https://workspace.slack.com/archives/$CH/p${OLD_TS/./}" "the relay link wins over a mailbox URL with the same stamp"
+  "https://workspace.slack.com/archives/$CH/p${OLD_TS/./}" "the confirmed home relay link wins over a mailbox URL with the same stamp"
 ROW="$(jq -r '.rows[] | select(.what == "Send this release draft?") | .id' <<<"$PAGE")"
 CONSOLE="$(jq -c '{requestId:"console",expectedRevision:.revision,text:"Read the exact wording back."}' <<<"$PAGE" |
   jarvis reply --home "$ROOT" --id "$ROW")" || exit 1
-assert_eq "$(jq -r .kind <<<"$CONSOLE")" accepted "the installed Console Reply accepts the presented draft"
+assert_eq "$(jq -r .kind <<<"$CONSOLE")" accepted "the installed Console Reply accepts the direct draft"
 REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$OLD_TS")"
 sk_poll "$ROOT"
-jarvis deliver --home "$ROOT" >/dev/null || exit 1
-jarvis deliver --home "$ROOT" >/dev/null || exit 1
-assert_eq "$(asks "$CH" 'Send this release draft?')" 1 "the ambiguous response never posts a second delegated notice"
-assert_eq "$(sk_lm "$ORIGIN" events --item overseer | jq -cs --arg ask "$ASK" --arg slack "$CH:$REPLY" '
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Send this release draft?')" 1 "the ambiguous response never posts the direct ask twice"
+assert_eq "$(sk_lm "$ROOT" events --item overseer | jq -cs --arg ask "$ASK" --arg slack "$CH:$REPLY" '
   (map(select(.id == $ask))[0]) as $original
   | [$original.text,$original.options,$original.draft.recipient,$original.draft.text_hash,
      [ .[] | select(.kind == "answer" and .re == $ask)
@@ -132,17 +127,7 @@ assert_eq "$(sk_lm "$ORIGIN" events --item overseer | jq -cs --arg ask "$ASK" --
   "$(python3 -c 'import hashlib,json; print(json.dumps(["Send this release draft?",["approve","deny"],"release@example.test",
     hashlib.sha256(b"Release exactly this note.").hexdigest(),
     [["owner","console","Read the exact wording back."],["owner","slack","Only the first change."]]], separators=(",",":")))')" \
-  "an offline reply to an aged thread and a Console Reply retain both sources on the original draft ask"
-
-# The direct approval link is read from Jarvis's own channel.
-DIRECT="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text direct 'Approve the home question?')" \
-  --reserved --options yes,no)" || exit 1
-DIRECT="${DIRECT#id=}"
-sk_poll "$ROOT"
-DIRECT_TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$DIRECT\") | .ts")"
-PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/direct-home" jarvis list --home "$ROOT" --view active)" || exit 1
-assert_eq "$(jq -r '.rows[] | select(.what == "Approve the home question?") | .link.url' <<<"$PAGE")" \
-  "https://workspace.slack.com/archives/$CH/p${DIRECT_TS/./}" "Jarvis shows the direct approval link from its own channel"
+  "the Slack and Console replies retain their sources and the original direct draft"
 
 # A failed pre-send append sends nothing. The next run can still post it.
 ROOT="$(sk_new_root disk-full)"
