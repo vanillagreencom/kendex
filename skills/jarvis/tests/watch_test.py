@@ -523,6 +523,22 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.assertIn("after the interrupted producer", output)
         self.assertEqual(cursor[str(self.home)]["to-overseer"]["count"], before + 2)
 
+    def test_mail_pass_resumes_from_legacy_count(self):
+        for text in ("first saved notice", "second saved notice"):
+            self.mail(self.peer, "notice", text, "--to", "owner")
+        box = self.peer / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        saved = {str(self.peer): {"to-overseer": {"count": 2, "size": box.stat().st_size}}}
+        new = self.mail(self.peer, "notice", "new notice", "--to", "owner")
+        new_id = new.stdout.split("id=", 1)[1].split()[0]
+
+        output, cursor = self.read_pass(saved)
+        lines = output.splitlines()
+        delivered = [lines[index + 1].split()[0] for index, line in enumerate(lines)
+                     if line.startswith("EVENT mail ")]
+        self.assertEqual(delivered, [new_id])
+        position = cursor[str(self.peer)]["to-overseer"]
+        self.assertEqual((position["last_id"], position["last_line"]), (new_id, 3))
+
     def test_mail_pass_reads_replacement_before_next_pass(self):
         rows = (("one-row replacement", False, False),
                 ("older copy with original first id", True, False),
