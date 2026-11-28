@@ -139,9 +139,8 @@ fn f64_value(n: Option<f64>) -> Value {
 
 /// Claude: `.seven_day` carries utilization and resets_at; the 5-hour
 /// `.five_hour` is no plan window the listing rates, kept as
-/// `session_5h_pct`, which no judgement but a launch's and a controller's
-/// question about its own account reads (`accounts::SESSION`) and whose
-/// reset the usage cache reads;
+/// `session_5h_pct` for the judge (`accounts::SESSION`), with its reset for
+/// the usage cache;
 /// `.iguana_necktie`, the cloud credit in dollars, is kept as `credits`.
 /// The model-scoped weekly windows are the `limits[]` entries of kind
 /// `weekly_scoped`; the older `seven_day_sonnet` and `seven_day_opus`
