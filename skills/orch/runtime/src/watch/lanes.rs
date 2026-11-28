@@ -1639,7 +1639,7 @@ fn observe_one(
             out.changes
                 .push(set("lane-exited", lane, format!("{pane_key}|reported")));
             out.changes.push(clear("lane-asking", lane));
-            hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, out);
+            hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, false, out);
             restart_exited(obs, pass, out);
         } else {
             out.changes.push(set("lane-exited", lane, pane_key));
@@ -1792,7 +1792,7 @@ fn observe_one(
                 note,
             });
             out.events.extend(payload(bounded_tail(&slice, cap)));
-            hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
+            hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, false, out);
         }
         // A pass that reads no stopped turn ends a first sighting, which two
         // consecutive idle passes confirm, but never a told one: the told

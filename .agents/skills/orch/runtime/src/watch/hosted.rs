@@ -81,10 +81,11 @@ pub const ORCH_RUNTIME: &str = "orch-runtime";
 /// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
 pub const PREPARE_ROW: &str = "lane-prepare";
-/// `close-pending<TAB><lane><TAB><row>|<key>`: a finished close the
-/// tracker's quota hold deferred, retried while the notification row still
-/// reads `<key>|reported`.
+/// `close-pending<TAB><lane><TAB><row>|[owed|]<key>`: a finished close
+/// retried while its notification row still reads `<key>|reported`.
+/// `owed|` records that the close-out notice was emitted for that key.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
+const OWED_PREFIX: &str = "owed|";
 /// `lane-left<TAB><lane><TAB><screen key>|reported`: the screen under which
 /// a merged lane read neither idle nor exited was asked whether its work
 /// left nothing behind.
@@ -2828,13 +2829,26 @@ pub fn close_finished(
     hosts: &Hosts,
     row: &str,
     key: &str,
+    retry: bool,
     out: &mut Produced,
 ) {
     let name = lane_name(lane);
+    let told = pass
+        .baseline
+        .get(CLOSE_PENDING_ROW, &name)
+        .and_then(pending_close)
+        == Some((row, key, true));
+    let defer = |out: &mut Produced, told: bool| {
+        let marker = if told { OWED_PREFIX } else { "" };
+        out.changes.push(set(
+            CLOSE_PENDING_ROW,
+            &name,
+            format!("{row}|{marker}{key}"),
+        ));
+    };
     let merge = finished_merge(pass.baseline, lane);
     if matches!(merge, FinishedMerge::Undated) {
-        out.changes
-            .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+        defer(out, told);
         return;
     }
     let Ok(caps) = hosts.of(lane) else {
@@ -2846,15 +2860,26 @@ pub fn close_finished(
         };
         match left {
             Answer::Live(Some(path)) if matches!(row, "lane-idle" | "lane-exited") => {
-                if pass.baseline.get(row, &name) != Some(format!("{key}|reported").as_str()) {
+                if !told {
+                    if retry {
+                        // Other observations may have printed since the
+                        // original notice. Give the payload its own heading.
+                        out.events.push(if row == "lane-idle" {
+                            Event::IdleAfterReturn {
+                                lane: name.clone(),
+                                note: None,
+                            }
+                        } else {
+                            Event::LaneExited { lane: name.clone() }
+                        });
+                    }
                     out.events.push(Event::Tail(format!(
                         "close-out-owed item={} path={}",
                         lane.item,
                         path.display()
                     )));
                 }
-                out.changes
-                    .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+                defer(out, true);
                 return;
             }
             Answer::Live(_) => return,
@@ -2864,8 +2889,7 @@ pub fn close_finished(
                     out,
                     format!("worktree-read-failed item={} cause={cause}", lane.item),
                 );
-                out.changes
-                    .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+                defer(out, told);
                 return;
             }
         }
@@ -2878,9 +2902,8 @@ pub fn close_finished(
         }
         return;
     };
-    let pending = format!("{row}|{key}");
     if reason == "finished" && tracker_held(pass, lane) {
-        out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
+        defer(out, told);
         return;
     }
     let Some(closed) = close_once(pass, lane, reason, out) else {
@@ -2889,7 +2912,7 @@ pub fn close_finished(
     say_closed(&lane.item, &closed, out);
     match closed {
         Closed::Failed { .. } | Closed::Deferred => {
-            out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
+            defer(out, told);
         }
         Closed::Closed { .. } | Closed::Refused { .. } | Closed::Unanswered { .. } => {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
@@ -2914,7 +2937,15 @@ pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut 
         return;
     }
     out.changes.push(set(LEFT_ROW, &name, reported));
-    close_finished(lane, pass, hosts, LEFT_ROW, key, out);
+    close_finished(lane, pass, hosts, LEFT_ROW, key, false, out);
+}
+
+fn pending_close(value: &str) -> Option<(&str, &str, bool)> {
+    let (row, key) = value.split_once('|')?;
+    Some(match key.strip_prefix(OWED_PREFIX) {
+        Some(key) => (row, key, true),
+        None => (row, key, false),
+    })
 }
 
 /// The retry of failed or deferred closes:
@@ -2927,22 +2958,21 @@ pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &m
         let Some(pending) = pass.baseline.get(CLOSE_PENDING_ROW, &name) else {
             continue;
         };
+        let Some((row, key, _)) = pending_close(pending) else {
+            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
+            continue;
+        };
         let touched = out.changes.iter().any(|change| match change {
             Change::Set { kind, identity, .. } | Change::Clear { kind, identity } => {
-                identity == &name
-                    && (kind == CLOSE_PENDING_ROW || pending.starts_with(&format!("{kind}|")))
+                identity == &name && (kind == CLOSE_PENDING_ROW || kind == row)
             }
             Change::Pass { .. } => false,
         });
         if touched {
             continue;
         }
-        let Some((row, key)) = pending.split_once('|') else {
-            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
-            continue;
-        };
         if pass.baseline.get(row, &name) == Some(format!("{key}|reported").as_str()) {
-            close_finished(lane, pass, hosts, row, key, out);
+            close_finished(lane, pass, hosts, row, key, true, out);
         } else {
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }

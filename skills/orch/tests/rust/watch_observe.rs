@@ -7031,6 +7031,26 @@ esac
 /// and removal of the record lets the pending close finish.
 #[test]
 fn a_merged_idle_hosted_lane_reports_close_out_owed_once_then_closes() {
+    hosted_idle_close_out(FirstCloseOut::Live);
+}
+
+/// A reported idle key still owes the path when its first hosted read
+/// refused the record or its merge was undated. A refusal after the path
+/// was printed does not rearm the notice.
+#[test]
+fn a_hosted_idle_retry_reports_the_previously_unread_close_out_path_once() {
+    hosted_idle_close_out(FirstCloseOut::Refused);
+    hosted_idle_close_out(FirstCloseOut::Undated);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FirstCloseOut {
+    Live,
+    Refused,
+    Undated,
+}
+
+fn hosted_idle_close_out(first: FirstCloseOut) {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
@@ -7053,24 +7073,98 @@ fn a_merged_idle_hosted_lane_reports_close_out_owed_once_then_closes() {
     std::fs::create_dir_all(&state_dir).unwrap();
     let record = support::item_record(&state_dir, "issue-1");
     std::fs::write(&record, "{}").unwrap();
+    let refuse = world.scripts.join("refuse-record");
+    if first == FirstCloseOut::Refused {
+        let provider = world.scripts.join("provider");
+        let ssh = world.scripts.join("ssh-provider");
+        std::fs::rename(&provider, &ssh).unwrap();
+        write_executable(
+            &provider,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = cat ] && [ "${{4-}}" = '{record}' ] && [ -f '{refuse}' ]; then
+  echo 'lane-host-ssh: record read unavailable' >&2
+  exit 1
+fi
+exec '{ssh}' "$@"
+"#,
+                record = record.display(),
+                refuse = refuse.display(),
+                ssh = ssh.display(),
+            ),
+        );
+    }
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     let merged = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
-    driver.baseline.apply(Change::Set {
+    let merge_row = |value: String| Change::Set {
         kind: "merged".into(),
         identity: "issue-1".into(),
-        value: format!("o/r#7@{merged}"),
-    });
+        value,
+    };
+    let dated = format!("o/r#7@{merged}");
+    driver
+        .baseline
+        .apply(merge_row(if first == FirstCloseOut::Undated {
+            "o/r#7".into()
+        } else {
+            dated.clone()
+        }));
     assert!(event_lines(&driver.pass(&fleet.read())).is_empty());
+    if first == FirstCloseOut::Refused {
+        std::fs::write(&refuse, "").unwrap();
+    }
     let idle = driver.pass(&fleet.read());
-    assert_eq!(event_lines(&idle), ["EVENT idle-after-return gh-1"]);
+    let header = "EVENT idle-after-return gh-1";
+    assert_eq!(event_lines(&idle), [header], "{first:?}");
+    let owed = format!("close-out-owed item=issue-1 path={}", record.display());
+    let has_owed = |produced: &Produced| lines(produced).contains(&owed);
+    let assert_refused = |produced: &Produced| {
+        assert!(
+            produced.failed.as_deref().is_some_and(|cause| {
+                cause.starts_with("worktree-read-failed item=issue-1 ")
+                    && cause.contains("record read unavailable")
+            }),
+            "{:?}",
+            produced.failed
+        );
+    };
+    let told = match first {
+        FirstCloseOut::Live => idle,
+        FirstCloseOut::Refused => {
+            assert_refused(&idle);
+            assert!(!has_owed(&idle));
+            std::fs::remove_file(&refuse).unwrap();
+            driver.pass(&fleet.read())
+        }
+        FirstCloseOut::Undated => {
+            assert_eq!(idle.failed, None);
+            assert!(!has_owed(&idle));
+            driver.baseline.apply(merge_row(dated));
+            driver.pass(&fleet.read())
+        }
+    };
+    let said = lines(&told);
+    assert_eq!(
+        said.iter().filter(|line| **line == owed).count(),
+        1,
+        "{first:?}: {said:?}"
+    );
+    if first != FirstCloseOut::Live {
+        assert_eq!(said, [header, &owed], "{first:?}");
+    }
+    assert_eq!(told.failed, None);
+    if first == FirstCloseOut::Refused {
+        std::fs::write(&refuse, "").unwrap();
+        let unread = driver.pass(&fleet.read());
+        assert_refused(&unread);
+        assert!(lines(&unread).is_empty(), "{:?}", lines(&unread));
+        std::fs::remove_file(&refuse).unwrap();
+    }
     let repeated = driver.pass(&fleet.read());
     assert!(lines(&repeated).is_empty(), "{:?}", lines(&repeated));
     assert_eq!(closes(&fleet, "issue-1"), 0);
-    let owed = format!("close-out-owed item=issue-1 path={}", record.display());
-    assert_eq!(lines(&idle).iter().filter(|line| **line == owed).count(), 1);
-    assert_eq!(idle.failed, None);
     assert_eq!(repeated.failed, None);
 
     std::fs::remove_file(&record).unwrap();
