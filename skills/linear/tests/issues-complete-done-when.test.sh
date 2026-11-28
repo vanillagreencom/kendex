@@ -477,7 +477,7 @@ waive-checked|{"1":"waived"}|{"1":"owner comment c1: dropped"}|done-when-retirem
 waive-no-reason|{"2":"waived"}|{"3":"unrelated"}|done-when-retirement
 supersede-no-id|{"3":"superseded"}|{"3":"The owner sees the update card"}|done-when-retirement
 ROWS
-# complete_issue owns the selections and the transfer read-back.
+# complete_issue owns the selections and the replacement or repair read-back.
 # Columns: name | options | evidence-file lines | replacement CC-730's state
 # type, or archived or trashed | what CC-730's Done when holds: the criterion
 # as a box, as a post-merge reading, or another criterion | expected state, or
@@ -488,6 +488,7 @@ while IFS='|' read -r name options lines held holds expected; do
     box) cp "$replacement" "$TMP_ROOT/replacement-row.md" ;;
     post-merge) printf '%s\n' '## Done when' "- [ ] $own_box" >"$TMP_ROOT/replacement-row.md" ;;
     other) printf '%s\n' '## Done when' '- [ ] The owner sees a different card' >"$TMP_ROOT/replacement-row.md" ;;
+    none) : >"$TMP_ROOT/replacement-row.md" ;;
   esac
   log="$TMP_ROOT/retire-$name.jsonl"
   type="$held" archived=null trashed=null
@@ -495,11 +496,14 @@ while IFS='|' read -r name options lines held holds expected; do
     archived) type=unstarted archived='"2026-10-02T00:00:00Z"' ;;
     trashed) type=unstarted trashed=true ;;
   esac
+  summary_option=()
+  [[ "$expected" == state-* ]] || summary_option=(--summary 'Completion after retirement')
   rc=0
   # shellcheck disable=SC2086  # the options column holds separate words
   REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$TMP_ROOT/replacement-row.md" REPLACEMENT_TYPE="$type" \
     REPLACEMENT_ARCHIVED_AT="$archived" REPLACEMENT_TRASHED="$trashed" \
-    run_complete "$retire" "$log" CC-720 --post-merge-at "$merged" $options --evidence-file "$TMP_ROOT/retire-evidence.txt" \
+    SUPERSEDED_ID=CC-731 SUPERSEDED_READ_FAILS=1 \
+    run_complete "$retire" "$log" CC-720 --post-merge-at "$merged" $options "${summary_option[@]}" --evidence-file "$TMP_ROOT/retire-evidence.txt" \
     >"$TMP_ROOT/retire.out" 2>"$TMP_ROOT/retire.err" || rc=$?
   if [[ "$expected" == state-* ]]; then
     assert_eq "retire $name completes" "$rc" 0
@@ -508,8 +512,12 @@ while IFS='|' read -r name options lines held holds expected; do
       '.variables.input.description | contains("- Waived: Post-merge: p95") and (test("\\[x\\] Post-merge: p95") | not)'
   else
     assert_ne "retire $name refuses" "$rc" 0
-    assert_jq "retire $name names its refusal" "$(cat "$TMP_ROOT/retire.err")" "$expected"
-    assert_not "retire $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+    if [[ "$expected" == unread ]]; then
+      assert "retire $name reads the missing repair" jq -se 'any(.[]; (.query | contains("issue(id:")) and .variables.id == "CC-731")' "$log"
+    else
+      assert_jq "retire $name names its refusal" "$(cat "$TMP_ROOT/retire.err")" "$expected"
+    fi
+    assert_not "retire $name writes nothing" jq -se 'any(.[]; .query | contains("mutation"))' "$log"
   fi
 done <<'ROWS'
 waive-one|--done-when-waived 2|2: owner comment c1: the job reader was retired|unstarted|box|state-verifying
@@ -523,6 +531,13 @@ supersede-archived|--done-when-superseded 3|3: CC-730 The owner sees the update 
 supersede-trashed|--done-when-superseded 3|3: CC-730 The owner sees the update card|trashed|box|.error == "done-when-transfer-unread"
 supersede-self|--done-when-superseded 3|3: CC-720 The owner sees the update card|unstarted|box|.error == "done-when-transfer-unread"
 supersede-self-historical|--done-when-superseded 3|3: CC-650 The owner sees the update card|unstarted|box|.error == "done-when-transfer-unread"
+failed-live|--done-when-failed 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The card never appeared|unstarted|none|state-done
+failed-done|--done-when-failed 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The card never appeared|completed|none|state-done
+failed-canceled|--done-when-failed 3|3: CC-730 The card never appeared|canceled|none|.error == "done-when-repair-unread" and .box == 3 and .repair == "CC-730"
+failed-duplicate|--done-when-failed 3|3: CC-730 The card never appeared|duplicate|none|.error == "done-when-repair-unread"
+failed-archived|--done-when-failed 3|3: CC-730 The card never appeared|archived|none|.error == "done-when-repair-unread"
+failed-trashed|--done-when-failed 3|3: CC-730 The card never appeared|trashed|none|.error == "done-when-repair-unread"
+failed-missing|--done-when-failed 3|3: CC-731 The card never appeared|unstarted|none|unread
 overlap|--done-when-waived 2 --done-when-met 2|2: dropped|unstarted|box|.error == "done-when-disposition-overlap"
 overlap-all|--done-when-superseded 3 --done-when-met all|3: CC-730 The owner sees the update card|unstarted|box|.error == "done-when-disposition-overlap"
 ROWS
@@ -532,6 +547,17 @@ record_tail="- Waived: Post-merge: p95 create latency <= 300 ms; Where: job; Why
 - Superseded: $own_box
   Replacement: CC-730 The owner sees the update card"
 assert_eq "a retired box keeps its criterion, reason and replacement" "${record: -${#record_tail}}" "$record_tail"
+
+for name in failed-live failed-done; do
+  record="$(updates "$TMP_ROOT/retire-$name.jsonl" | jq -r '.variables.input.description')"
+  record_tail="- Failed: $own_box
+  Repair: CC-730
+  Reason: The card never appeared"
+  assert_eq "retire $name preserves the box as a failure with its repair and reason" "${record: -${#record_tail}}" "$record_tail"
+done
+assert_jq "replaying a written failure preserves the original disposition" \
+  "$(done_when_parse "$record" '[]' "$merged" '{"3":"CC-730 The card never appeared"}' '{"3":"failed"}')" \
+  '.changed == false and .ticked == 0 and .errors == [] and .completion_state == "Done"'
 
 # A Done update that wrote its retirements and then failed a supersession
 # returns a retry. Against the written description that retry finishes: each
