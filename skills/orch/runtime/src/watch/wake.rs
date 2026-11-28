@@ -850,8 +850,8 @@ impl Wake {
         // in this pass.
         let mut lines = BTreeMap::new();
         let mut provider_resumes = BTreeSet::new();
-        // The saved mark owns the receipt even after lanes retires the
-        // request. Read it before any send can replace the saved cursor.
+        // Read the saved receipt before any send can replace its cursor.
+        // Only an active resume request holds off a new inbox wake.
         for (item, mark, resume) in pending {
             let Some(lane) = fleet.lanes.iter().find(|lane| {
                 lane.item == item
@@ -867,7 +867,10 @@ impl Wake {
             if rows_root != RowsRoot::Confirmed {
                 continue;
             }
-            provider_resumes.insert(item);
+            let name = super::lanes::lane_name(lane);
+            if resumes.iter().any(|(lane_name, _)| lane_name == &name) {
+                provider_resumes.insert(item);
+            }
             let caps = host_line(&mut lines, &scripts, lane);
             if let Some(target) = resume_target(lane, &fleet.intents, rows_root, &socket, caps)
                 .filter(|target| target.prompt_rows)

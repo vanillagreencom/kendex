@@ -1898,9 +1898,13 @@ composer() { printf '\xe2\x9d\xaf\xc2\xa0\n  ? for shortcuts\n'; }
 composer
 while IFS= read -r line; do
     printf '%s\n' "$line" >> typed
-    digest=$(printf '%s' "$line" | cksum)
-    printf '{"harness":"claude","event":"UserPromptSubmit","digest":%s}\n' "${digest%% *}" \
-        >> tmp/lane-mail/KEN-1/session-rows.jsonl
+    if [ -e omit-next-prompt ]; then
+        rm -- omit-next-prompt
+    else
+        digest=$(printf '%s' "$line" | cksum)
+        printf '{"harness":"claude","event":"UserPromptSubmit","digest":%s}\n' "${digest%% *}" \
+            >> tmp/lane-mail/KEN-1/session-rows.jsonl
+    fi
     composer
 done
 "#,
@@ -2181,19 +2185,7 @@ done
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(typed().lines().count(), 3);
-    write_row(agent_runtime::rows::TurnEvent::Stop);
-    for _ in 0..2 {
-        observe_ssh_worker(&fleet, &mut baseline, &clock);
-    }
-    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
-    assert!(
-        !baseline
-            .identities(UNREAD_KIND)
-            .iter()
-            .any(|item| item == "KEN-1")
-    );
-    // New inbox mail cannot take over the mark while the receipt is open.
-    // The same provider refusal does not produce another notice.
+    // An active resume still holds its mark during a repeated refusal.
     let mut with_unread = baseline.clone();
     with_unread.apply(Change::Set {
         kind: UNREAD_KIND.into(),
@@ -2204,6 +2196,12 @@ done
     assert!(wake(&mut with_unread).events.is_empty());
     assert!(!drop_on.exists());
     assert_eq!(fleet.mark("KEN-1"), Some(mark));
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    assert!(baseline.identities(UNREAD_KIND).is_empty());
     assert_eq!(
         rendered(&wake(&mut baseline)),
         vec!["EVENT wake-delivered KEN-1 resume=server_error"]
@@ -2218,7 +2216,62 @@ done
         [watch::Event::LaneUnreadable { lane, cause }]
             if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
     ));
-    continue_once(&mut baseline, 3);
+    // Normal inbox wakes use the recorded root. Restore the launch's
+    // confirmed fields after the legacy replacement scenario.
+    let mut rooted = fleet.read_fleet();
+    rooted["lanes"][0]["mail_root"] = confirmed["lane"]["mail_root"].clone();
+    rooted["lanes"][0]["mail_root_confirmed"] = confirmed["lane"]["mail_root_confirmed"].clone();
+    fleet.write_fleet(&rooted);
+    let omit_prompt = host.worktree().join("omit-next-prompt");
+    std::fs::write(&omit_prompt, "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    let unconfirmed = wake(&mut baseline);
+    assert!(
+        matches!(
+            unconfirmed.events.as_slice(),
+            [watch::Event::WakeUnconfirmed { target, cause, resume }]
+                if target == "KEN-1" && cause.contains("255") && resume.as_deref() == Some("server_error")
+        ),
+        "{unconfirmed:?}"
+    );
+    assert!(!defer.exists() && !drop_on.exists());
+    let deadline = Instant::now() + secs(5);
+    while omit_prompt.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the continuation was never typed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(typed().lines().count(), 4);
+    let old_resume = fleet.mark("KEN-1").unwrap().resume;
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: "unread-after-retired-resume".into(),
+    });
+    let delivered = wake(&mut baseline);
+    assert_eq!(
+        rendered(&delivered),
+        vec![
+            "EVENT wake-unconfirmed KEN-1 cause=turn-pending resume=server_error",
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-delivered KEN-1",
+        ]
+    );
+    let mark = fleet.mark("KEN-1").unwrap();
+    assert_eq!(mark.resume, old_resume);
+    assert_eq!(mark.unread, "unread-after-retired-resume");
+    assert!(matches!(mark.outcome, Some(WakeOutcome::Delivered { .. })));
+    assert!(wake(&mut baseline).events.is_empty());
+    let sent = typed();
+    assert_eq!(sent.lines().count(), 5);
+    assert_eq!(sent.lines().last(), Some(inbox_line()));
     assert!(
         host.calls()
             .iter()
