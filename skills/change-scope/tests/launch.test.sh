@@ -206,17 +206,23 @@ settings_control root-resolution resolver-failed \
 settings_control local-precedence local-empty \
   '    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' '    : "$root/.kendex/settings.toml" || exit 1'
 
-while IFS='|' read -r glob path; do
+while read -r glob outside folders; do
   printf '[env]\nHARNESS_CI_STANDARD_PATHS = "%s"\n' "$glob" >"$WORK/kendex.settings.toml"
-  for entry in "$path" "$path/"; do
-    assert_eq "configured extglob reaches under $entry" "standard cause=repository-standard-path rc=0" \
+  read -r -a folder_paths <<<"$folders"
+  for path in "${folder_paths[@]}"; do
+    for entry in "$path" "$path/"; do
+      assert_eq "configured extglob $glob reaches under $entry" "standard cause=repository-standard-path rc=0" \
+        "$(run_arm --production 1 --path "$entry")"
+    done
+  done
+  for entry in "$outside" "$outside/"; do
+    assert_eq "configured extglob $glob leaves $entry micro" "micro cause=estimate-within-micro rc=0" \
       "$(run_arm --production 1 --path "$entry")"
   done
-  assert_eq "configured extglob $glob keeps a folder outside its tree micro" "micro cause=estimate-within-micro rc=0" \
-    "$(run_arm --production 1 --path unrelated/)"
 done <<'EXTGLOBS'
-runtime/!(kept).ts|runtime/generated
-src/@(generated/api)/*.rs|src/generated
+runtime/!(kept).ts unrelated runtime/generated
+src/@(generated/api)/*.rs unrelated src/generated
+@(runtime|cli)/*.rs docs/neutral runtime cli
 EXTGLOBS
 rm -- "$WORK/kendex.settings.toml"
 

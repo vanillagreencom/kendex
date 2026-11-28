@@ -97,13 +97,17 @@ change_class_descendant_match() { # DIRECTORY GLOB SCOPE
     catalog:\*/*) rest="${rest#\*/}"; scope=any-depth ;;
     catalog:\**/*) rest="${rest#\*}"; scope=any-depth ;;
     repository:*[?*+@!]\(*)
-      # Extended globs can consume slashes inside an operator. Keep the
-      # repository's literal directory prefix when that boundary is unclear.
-      prefix="${rest%%[?*+@!]\(*}"
-      prefix="${prefix%%[*?\[\\]*}"
-      case "$prefix" in */*) prefix="${prefix%/*}/" ;; *) prefix="" ;; esac
-      [[ "$dir/" = "$prefix"* || "$prefix" = "$dir/"* ]]
-      return ;;
+      # The component matcher below keeps a leading group of literal roots.
+      local literal_roots='^@\([[:alnum:]_.-]+(\|[[:alnum:]_.-]+)+\)/[^()]*$'
+      if [[ ! "$rest" =~ $literal_roots ]]; then
+        # Extended globs can consume slashes inside an operator. Keep the
+        # repository's literal directory prefix when that boundary is unclear.
+        prefix="${rest%%[?*+@!]\(*}"
+        prefix="${prefix%%[*?\[\\]*}"
+        case "$prefix" in */*) prefix="${prefix%/*}/" ;; *) prefix="" ;; esac
+        [[ "$dir/" = "$prefix"* || "$prefix" = "$dir/"* ]]
+        return
+      fi ;;
   esac
   while [[ "$rest" = *[/*]* ]]; do
     prefix="${rest%[/*]*}"
