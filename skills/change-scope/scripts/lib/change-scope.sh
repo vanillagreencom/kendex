@@ -97,8 +97,9 @@ change_class_descendant_match() { # DIRECTORY GLOB SCOPE
     catalog:\*/*) rest="${rest#\*/}"; scope=any-depth ;;
     catalog:\**/*) rest="${rest#\*}"; scope=any-depth ;;
     repository:*[?*+@!]\(*)
-      # The component matcher below keeps a leading group of literal roots.
-      local literal_roots='^@\([[:alnum:]_.-]+(\|[[:alnum:]_.-]+)+\)/[^()]*$'
+      # The component matcher keeps literal roots with a suffix of literal
+      # path characters, slashes and plain stars.
+      local literal_roots='^@\([[:alnum:]_.-]+(\|[[:alnum:]_.-]+)+\)/[[:alnum:]_.*/-]*$'
       if [[ ! "$rest" =~ $literal_roots ]]; then
         # Extended globs can consume slashes inside an operator. Keep the
         # repository's literal directory prefix when that boundary is unclear.
