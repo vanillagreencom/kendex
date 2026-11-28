@@ -65,8 +65,9 @@
 #                      groups it here rather than reading the diff again.
 #   lanes              true|false: whether the diff runs a workflow's lanes.
 #                      A proved render runs the lanes reached through installed
-#                      package reads or applicable claims. An unproved render
-#                      cannot use the docs-only waiver. The skip conditions follow
+#                      package reads or applicable claims. A render proof or
+#                      ownership refusal keeps ordinary lanes and their derived
+#                      prerequisites eligible. The skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or queue-only where

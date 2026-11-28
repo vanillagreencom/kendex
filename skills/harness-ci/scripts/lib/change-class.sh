@@ -35,8 +35,8 @@ unread_list_match() { # PATH GLOBS
 
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in
-# WORK, the log also holding change-class's per-push line. The consumer
-# action passes the closing class record in that log as well.
+# WORK, the log also holding change-class's per-push line and closing class
+# record.
 # Results are lanes, lanes_cause, and lane_values and lane_causes per
 # declared lane. Refusals pass cause= fields to the caller's die formatter.
 #
@@ -123,7 +123,8 @@ if [ "$docs" = docs_only=true ] && [ "$class" = standard ]; then
     die "cause=class-record-unreadable" "could not read change-class's closing record"
   case "$class_cause" in
     no-verifier | verify-* | source-mirror-missing | head-rev-missing | head-checkout-failed | \
-      file-lookup-failed | unreadable-head-inventory | render-path-* | render-retirement-unproved | mixed-render-paths-unreadable)
+      file-lookup-failed | unreadable-base-inventory | unreadable-head-inventory | invalid-generated-paths | \
+      render-path-* | render-retirement-unproved | mixed-render-paths-unreadable)
       render_refusal="$class_cause" ;;
   esac
 fi
@@ -316,7 +317,7 @@ derive_lanes() {
   ) >"$work/lane-exceptions" 3>"$work/lane-claims" || return 2
 
   python3 "$HARNESS_CI_LIB_DIR/lane-reach.py" "$REPO" "$authority" "$compared" "$head" \
-    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" >"$work/lane-reach" || return $?
+    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" "$render_refusal" >"$work/lane-reach" || return $?
   [ -s "$work/lane-reach" ] || return 2
   if [ -s "$exact" ]; then
     ci_lanes_read "$exact" || return 2
@@ -562,7 +563,7 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   elif [ "${lane_nightly[$index]}" = true ]; then
     lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
-  elif [ -n "$render_refusal" ]; then
+  elif [ "$derived" = false ] && [ -n "$render_refusal" ]; then
     lane_values[$index]=true lane_causes[$index]="cause=$render_refusal"
   elif [ -n "$unread_hit" ]; then
     lane_values[$index]=false lane_causes[$index]="cause=unread-path setting=HARNESS_CI_UNREAD_PATHS $unread_hit"

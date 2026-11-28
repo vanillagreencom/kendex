@@ -1293,11 +1293,15 @@ def declared_lanes(work):
     # base copy here, emptied where the base declares no lane.
     declaration = work / "derived-ci-lanes.conf"
     if not declaration.read_text():
-        return []
-    script = '. "$1" && ci_lanes_read "$2" && printf "%s\\n" "${lane_names[@]}"'
+        return set(), set()
+    script = '''. "$1" && ci_lanes_read "$2" || exit 2
+for index in "${!lane_names[@]}"; do
+    printf '%s\\t%s\\n' "${lane_names[$index]}" "${lane_nightly[$index]}"
+done'''
     listed = command(["bash", "-c", script, "ci-lanes", str(Path(__file__).with_name("ci-lanes.sh")),
                       str(declaration)], work)
-    return listed.decode().splitlines()
+    marks = dict(line.split("\t") for line in listed.decode().splitlines())
+    return set(marks), {name for name, nightly in marks.items() if nightly == "true"}
 
 
 def claimed_paths(work):
@@ -1577,7 +1581,7 @@ def npm_install_reads(evidence, lock):
                     "opaque-npm-dependency")
 
 
-def derived(evidence, claimed, settings, declared):
+def derived(evidence, claimed, settings, declared, nightly, render_refusal):
     path, document, classifiers = workflow(evidence)
     jobs = document["jobs"]
     if not classifiers:
@@ -1690,7 +1694,13 @@ def derived(evidence, claimed, settings, declared):
         elif hits and outcomes[lane] == "miss":
             outcomes[lane] = "hit"
     shared_unread = any(len(reached[path]) > 1 for path in unread)
-    return keep_prerequisites(retain_all if shared_unread else outcomes)
+    if shared_unread:
+        return keep_prerequisites(retain_all)
+    if render_refusal:
+        for lane in lanes - nightly:
+            if outcomes[lane] == "miss":
+                outcomes[lane] = render_refusal
+    return keep_prerequisites(outcomes)
 
 
 def trusted_push(authority, head):
@@ -1707,14 +1717,15 @@ def trusted_push(authority, head):
 
 
 def main():
-    repo, authority, compared, head, work, trusted, rendered, settings, event = sys.argv[1:]
+    repo, authority, compared, head, work, trusted, rendered, settings, event, render_refusal = sys.argv[1:]
     if event == "push" and not trusted_push(authority, head):
         return 3
     try:
         evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render", event)
         claimed = claimed_paths(Path(work))
-        declared = declared_lanes(Path(work))
-        for name, result in sorted(derived(evidence, claimed, settings.split(), declared).items()):
+        declared, nightly = declared_lanes(Path(work))
+        outcomes = derived(evidence, claimed, settings.split(), declared, nightly, render_refusal)
+        for name, result in sorted(outcomes.items()):
             print(f"{name}\t{result}")
     except (*UNAVAILABLE, ImportError) as error:
         cause = str(error).splitlines()
