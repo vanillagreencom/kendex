@@ -270,10 +270,13 @@ pub const CONTROLLER_AGENT: &str = "controller";
 /// The variables a launch declares the model it pins under, read back by
 /// `agent-runtime session model` where the session's own record names none,
 /// and the name its opener gives the session, which no harness records.
-/// Every launch clears both before it sets what it pins, so a session never
+/// Every launch clears these before it sets what it pins, so a session never
 /// answers with its opener's.
 pub const LAUNCH_MODEL_VAR: &str = "AGENT_RUNTIME_LAUNCH_MODEL";
 pub const LAUNCH_AGENT_VAR: &str = "AGENT_RUNTIME_LAUNCH_AGENT";
+/// The selected effort, read by `orch-runtime session` for an authenticated
+/// launch when the native session did not record one.
+pub const LAUNCH_EFFORT_VAR: &str = "AGENT_RUNTIME_LAUNCH_EFFORT";
 
 /// Claude's prompt switches a full-bypass launch sets to `1` in the
 /// environment, which the provider reads from the launch environment only
@@ -389,14 +392,27 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
             env_remove.push(name.to_owned());
         }
     }
+    let effort = intent
+        .effort
+        .as_deref()
+        .filter(|word| !word.is_empty())
+        .or_else(|| {
+            // `Harness::model_words` passes Pi's existing model suffix through
+            // when the launch does not supply a separate level.
+            let model = intent.model.as_deref().filter(|_| h == Harness::Pi)?;
+            let (_, level) = model.rsplit('/').next()?.rsplit_once(':')?;
+            Some(level)
+        });
+    env.remove(LAUNCH_EFFORT_VAR);
     for (name, pinned) in [
-        (LAUNCH_MODEL_VAR, &intent.model),
-        (LAUNCH_AGENT_VAR, &intent.agent),
+        (LAUNCH_MODEL_VAR, intent.model.as_deref()),
+        (LAUNCH_AGENT_VAR, intent.agent.as_deref()),
+        (LAUNCH_EFFORT_VAR, effort),
     ] {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
         }
-        if let Some(word) = pinned.as_deref().filter(|w| !w.is_empty()) {
+        if let Some(word) = pinned.filter(|w| !w.is_empty()) {
             env.insert(name.to_owned(), word.to_owned());
         }
     }
@@ -998,7 +1014,7 @@ mod tests {
             .iter()
             .chain(&DESKTOP_DISPLAY)
             .copied()
-            .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR])
+            .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR, LAUNCH_EFFORT_VAR])
             .chain(CLAUDE_CREDENTIALS)
             .chain(i.env_remove.iter().map(String::as_str))
         {
@@ -1473,29 +1489,47 @@ cat > /dev/null
         }
     }
 
-    /// The child of every harness reads the model and name its launch
+    /// The child of every harness reads the model, effort and name its launch
     /// pinned under the declared names, and none where the launch pins none:
     /// the opener's own values never reach it.
     #[test]
-    fn a_launch_declares_the_model_and_name_it_pins_and_clears_its_opener_s() {
+    fn a_launch_declares_its_values_and_clears_its_opener_s() {
         let dir = tempfile::tempdir().unwrap();
         for h in Harness::ALL {
             let mut i = bare(h);
             i.home = Some(dir.path().join(format!(".1{h}")));
             i.model = Some("gpt-6.1-sol".into());
             i.agent = Some("KEN-7".into());
+            i.effort = Some("high".into());
             let env = child_env(dir.path(), i.clone());
             let declared = |env: &BTreeMap<String, String>| {
-                [LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR].map(|n| env.get(n).cloned())
+                [LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR, LAUNCH_EFFORT_VAR].map(|n| env.get(n).cloned())
             };
             assert_eq!(
                 declared(&env),
-                [Some("gpt-6.1-sol".into()), Some("KEN-7".into())],
+                [
+                    Some("gpt-6.1-sol".into()),
+                    Some("KEN-7".into()),
+                    Some("high".into())
+                ],
                 "{h}"
             );
             i.model = None;
             i.agent = None;
-            assert_eq!(declared(&child_env(dir.path(), i)), [None, None], "{h}");
+            i.effort = None;
+            i.env.insert(LAUNCH_EFFORT_VAR.into(), "opener".into());
+            assert_eq!(
+                declared(&child_env(dir.path(), i.clone())),
+                [None, None, None],
+                "{h}"
+            );
+            if h == Harness::Pi {
+                i.model = Some("github-copilot/claude-opus-5.5:high".into());
+                assert_eq!(
+                    declared(&child_env(dir.path(), i))[2].as_deref(),
+                    Some("high")
+                );
+            }
         }
     }
 
@@ -1541,7 +1575,8 @@ cat > /dev/null
 
     /// The JSON is pinned as the hook's reader parses it, keys sorted, the
     /// caller's own `-c` spellings included, under the variable the opener
-    /// names; an opener naming none gets nothing written.
+    /// names. Without that variable, the fixture exports its home, model
+    /// and effort declarations alone.
     #[test]
     fn a_codex_launch_hands_its_compaction_overrides_to_the_hook_s_reader() {
         const NAMED: &str = "OPENER_COMPACTION";
@@ -1580,8 +1615,8 @@ cat > /dev/null
         unnamed.compaction = Compaction::Off;
         assert_eq!(
             build(&unnamed).unwrap().env.keys().collect::<Vec<_>>(),
-            [LAUNCH_MODEL_VAR, "CODEX_HOME"],
-            "the home and the declared model alone"
+            [LAUNCH_EFFORT_VAR, LAUNCH_MODEL_VAR, "CODEX_HOME"],
+            "the home and the declared model and effort alone"
         );
         for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
             let mut i = named(h);

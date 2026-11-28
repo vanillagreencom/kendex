@@ -3814,7 +3814,10 @@ fn the_admission_refuses_a_record_of_no_session_or_another_pane() {
 impl World {
     /// `orch-runtime session` run from the lane, with `env` added.
     fn session(&self, env: Env) -> Out {
-        let mut command = isolated();
+        self.session_process(isolated(), env)
+    }
+
+    fn session_process(&self, mut command: std::process::Command, env: Env) -> Out {
         command
             .arg("session")
             .current_dir(&self.lane)
@@ -3868,6 +3871,306 @@ fn a_call_naming_no_session_reads_the_session_bound_at_its_pane() {
     );
     let out = world.session(&four);
     assert!(refused(&out), "another pane: {} {}", out.stdout, out.stderr);
+    fs::write(world.fleet(), "{").unwrap();
+    let out = world.session(&three);
+    assert!(
+        refused(&out),
+        "unreadable fleet: {} {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(out.stdout.contains(world.fleet().to_str().unwrap()));
+}
+
+#[test]
+fn a_lane_session_uses_only_its_own_launch_effort() {
+    let world = World::launched();
+    let env = [
+        ("AGENT_RUNTIME_LAUNCH_AGENT", ITEM),
+        ("AGENT_RUNTIME_LAUNCH_EFFORT", "medium"),
+    ];
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    world.tool_call("claude", Some(&transcript), &env);
+    let mut context = world.record();
+    let pane = world.on_pane("%3");
+    let mut pane_env = borrowed(&pane);
+    pane_env.extend(env);
+    let unrelated = Owned::sleep();
+    let here = json!({"pid": std::process::id(), "start": start_of(std::process::id())});
+    let elsewhere = json!({"pid": unrelated.pid(), "start": unrelated.start()});
+    for (session, launch, pane_bound, code, line) in [
+        ("s1", here.clone(), false, 0, "effort=medium source=launch"),
+        (
+            "previous",
+            here,
+            false,
+            1,
+            "session-effort-unrecorded harness=claude session=s1",
+        ),
+        ("s1", elsewhere, false, 2, "session-unnamed"),
+        ("s1", Value::Null, false, 2, "session-unnamed"),
+        ("s1", Value::Null, true, 0, "effort=high source=launch"),
+    ] {
+        context["pane_key"] = json!(pane_bound.then(|| format!("{SERVER_PID} %3")));
+        world.plant_record(context.clone());
+        fs::write(
+            world.fleet(),
+            json!({"lanes": [{"item": ITEM, "harness": "claude",
+        "status": "running", "session_id": session, "effort": "high",
+        "launch": launch}]})
+            .to_string(),
+        )
+        .unwrap();
+        let out = world.session(if pane_bound { &pane_env } else { &env });
+        assert_eq!(out.code, code, "{} {}", out.stdout, out.stderr);
+        if code == 2 {
+            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            assert_eq!(out.stdout.split_whitespace().next(), Some(line));
+        } else {
+            assert_eq!(out.stdout.lines().nth(1), Some(line));
+        }
+    }
+}
+
+#[test]
+fn a_session_uses_launch_effort_only_when_the_native_effort_is_unrecorded() {
+    let world = World::launched();
+    let env = [("AGENT_RUNTIME_LAUNCH_AGENT", ITEM)];
+    let transcript = world.transcript(
+        "r.jsonl",
+        &[json!({"type": "turn_context", "payload": {"model": "gpt-5", "effort": "medium"}})],
+    );
+    world.tool_call("codex", Some(&transcript), &env);
+    fs::write(
+        world.fleet(),
+        json!({"lanes": [{"item": ITEM, "harness": "codex", "status": "running",
+            "session_id": "s1", "effort": "high", "launch": {"pid": std::process::id(),
+            "start": start_of(std::process::id())}}]})
+        .to_string(),
+    )
+    .unwrap();
+    let native = world.session(&env);
+    fs::remove_file(&transcript).unwrap();
+    let unread = world.session(&env);
+    assert_eq!(
+        [native.code, unread.code],
+        [0, 2],
+        "{}{}{}{}",
+        native.stdout,
+        native.stderr,
+        unread.stdout,
+        unread.stderr
+    );
+    assert_eq!(
+        [
+            native.stdout.lines().nth(1),
+            unread
+                .stdout
+                .lines()
+                .nth(1)
+                .and_then(|line| line.split_whitespace().next())
+        ],
+        [
+            Some("effort=medium source=session"),
+            Some("session-file-unreadable")
+        ]
+    );
+}
+
+#[test]
+fn a_hosted_lane_session_is_named_only_for_its_launch_lead() {
+    let world = World::launched();
+    let env = [
+        ("AGENT_RUNTIME_LAUNCH_AGENT", ITEM),
+        ("AGENT_RUNTIME_LAUNCH_EFFORT", "high"),
+    ];
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    world.tool_call("claude", Some(&transcript), &env);
+    let identity = world.root.join("identity");
+    let launches = world.common().join("lane-launch");
+    fs::create_dir_all(&launches).unwrap();
+    fs::write(
+        launches.join("ken-1.json"),
+        json!({"identity_file": identity}).to_string(),
+    )
+    .unwrap();
+    // The hosted provider records the program it execs. The fixture keeps
+    // that lead alive as the direct parent while it serves each valid call.
+    let shell = r#""$@"; result=$?; exit "$result""#;
+    let run = |nested: Option<&Path>| {
+        let mut lead = program(agent_runtime());
+        lead.args(["process", "lead", "--file"])
+            .arg(&identity)
+            .args(["--", "/bin/sh", "-c", shell, "hosted"]);
+        if let Some(nested) = nested {
+            lead.arg(nested).args(["-c", shell, "nested"]);
+        }
+        lead.arg(binary());
+        world.session_process(lead, &env)
+    };
+    let out = run(None);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (
+            0,
+            "model=claude-haiku-5-5 source=session\neffort=high source=launch\nagent=ken-1 source=launch\n"
+        ),
+        "{}",
+        out.stderr
+    );
+    let nested = world.root.join("pi");
+    copy_executable(Path::new("/bin/sh"), &nested);
+    for out in [run(Some(&nested)), world.session(&env)] {
+        assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
+        assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+        assert_eq!(
+            out.stdout.split_whitespace().next(),
+            Some("session-unnamed")
+        );
+    }
+}
+
+#[test]
+fn a_controller_session_is_named_only_for_its_own_caller() {
+    for jarvis in [false, true] {
+        let mut world = World::new();
+        if jarvis {
+            // Jarvis starts its controller from a home outside any repository.
+            world.lane = world.root.join("jarvis-home");
+        }
+        fs::create_dir_all(world.lane.join("tmp")).unwrap();
+        let pane = world.on_pane("%3");
+        let mut env = borrowed(&pane);
+        env.push(("AGENT_RUNTIME_LAUNCH_AGENT", "controller"));
+        let account = world.home.join(".claude");
+        let transcript = agent_runtime::session::fixed_file(
+            agent_runtime::harness::Harness::Claude,
+            &account,
+            &world.lane,
+            "s1",
+        )
+        .unwrap();
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(
+            transcript,
+            format!("{}\n", claude_usage("claude-haiku-5-5", 1_000)),
+        )
+        .unwrap();
+        let socket = world.root.join("tmux-socket");
+        let mut controller = json!({"harness": "claude", "session_id": "s1",
+            "seat": if jarvis { "jarvis" } else { "overseer" }, "cwd": world.lane,
+            "effort": "high", "server": SERVER_PID, "server_start": 1700000000,
+            "server_socket": socket, "pane": "%3", "harness_pid": std::process::id(),
+            "harness_start": start_of(std::process::id())});
+        fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
+        for (declared, effort) in [(None, "high"), (Some("medium"), "medium")] {
+            let mut caller = env.clone();
+            if let Some(declared) = declared {
+                caller.push(("AGENT_RUNTIME_LAUNCH_EFFORT", declared));
+            }
+            let out = world.session(&caller);
+            assert_eq!(
+                out.code, 0,
+                "jarvis={jarvis} effort={declared:?}: {} {}",
+                out.stdout, out.stderr
+            );
+            assert_eq!(
+                out.stdout,
+                format!(
+                    "model=claude-haiku-5-5 source=session\neffort={effort} source=launch\nagent=controller source=launch\n"
+                )
+            );
+        }
+        let unnamed = |out: Out| {
+            assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
+            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            assert!(out.stdout.starts_with("session-unnamed "), "{}", out.stdout);
+        };
+        let other = world.on_pane("%4");
+        unnamed(world.session(&borrowed(&other)));
+        unnamed(world.session(&[]));
+        let unrelated = Owned::sleep();
+        controller["harness_pid"] = json!(unrelated.pid());
+        controller["harness_start"] = json!(unrelated.start());
+        fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
+        unnamed(world.session(&env));
+        fs::write(world.fleet(), "{").unwrap();
+        let out = world.session(&env);
+        assert!(out.stdout.contains(world.fleet().to_str().unwrap()));
+        unnamed(out);
+    }
+}
+
+#[test]
+fn pi_attribution_requires_the_current_native_session() {
+    for (world, agent) in [(World::new(), "controller"), (World::launched(), ITEM)] {
+        fs::create_dir_all(world.lane.join("tmp")).unwrap();
+        let pane = world.on_pane("%3");
+        let mut env = borrowed(&pane);
+        env.extend([
+            ("AGENT_RUNTIME_LAUNCH_AGENT", agent),
+            ("PI_REASONING_LEVEL", "medium"),
+        ]);
+        let sessions = world
+            .home
+            .join(".pi/agent/sessions")
+            .join(agent_runtime::session::pi_slug(&world.lane));
+        fs::create_dir_all(&sessions).unwrap();
+        let transcript = sessions.join("start_s1.jsonl");
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "type": "message", "message": {"role": "assistant", "provider": "openai",
+                        "model": "gpt-5", "usage": {"input": 100, "output": 10}}
+                })
+            ),
+        )
+        .unwrap();
+        if agent == ITEM {
+            world.tool_call("pi", Some(&transcript), &env);
+        } else {
+            fs::write(
+                world.fleet(),
+                json!({"controller": {
+                    "harness": "pi", "session_id": "s1", "cwd": world.lane, "effort": "high",
+                    "server": SERVER_PID, "server_start": 1700000000,
+                    "server_socket": world.root.join("tmux-socket"), "pane": "%3",
+                    "harness_pid": std::process::id(), "harness_start": start_of(std::process::id())
+                }})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        // Pi's Bash tool supplies the active session ID anew after a switch.
+        for (id, code) in [(Some("s1"), 0), (Some("replacement"), 2), (None, 2)] {
+            let mut caller = env.clone();
+            if let Some(id) = id {
+                caller.push(("PI_SESSION_ID", id));
+            }
+            let out = world.session(&caller);
+            assert_eq!(
+                out.code, code,
+                "{agent} {id:?}: {} {}",
+                out.stdout, out.stderr
+            );
+            if code == 0 {
+                assert_eq!(
+                    out.stdout,
+                    format!(
+                        "model=openai/gpt-5 source=session\neffort=medium source=session\nagent={agent} source=launch\n"
+                    )
+                );
+            } else {
+                assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+                assert_eq!(
+                    out.stdout.split_whitespace().next(),
+                    Some("session-unnamed")
+                );
+            }
+        }
+    }
 }
 
 /// A Codex attached launch the reserve alone refuses, the plain mark still

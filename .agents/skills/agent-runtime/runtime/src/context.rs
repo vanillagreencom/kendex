@@ -522,11 +522,10 @@ pub struct Now {
     pub agent: Member,
 }
 
-/// Whether `harness`'s own session record is measured to carry the effort:
+/// Whether `harness`'s transcript is measured to carry the effort:
 /// a Codex `turn_context` does. Claude Code's transcript, Copilot CLI's
-/// status-line record and Pi's session file are not, so their effort is
-/// unrecorded: the effort a launch asked for is no reading of the one the
-/// session runs on.
+/// status-line record and Pi's transcript model reader supply none here.
+/// Pi's shell tool supplies its active level independently.
 fn effort_recorded(harness: Harness) -> bool {
     match harness {
         Harness::Codex => true,
@@ -570,7 +569,7 @@ pub fn calling_session(harness: Harness, session: &str, transcript: Option<&Path
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let declared = |name: &str| std::env::var(name).ok();
-    session_now(
+    let mut answer = session_now(
         &SessionAt {
             harness,
             session,
@@ -581,7 +580,24 @@ pub fn calling_session(harness: Harness, session: &str, transcript: Option<&Path
         },
         declared(crate::launch::LAUNCH_MODEL_VAR).as_deref(),
         declared(crate::launch::LAUNCH_AGENT_VAR).as_deref(),
-    )
+    );
+    if harness == Harness::Pi
+        && pi_tool_session().as_deref() == Some(session)
+        && let Some(effort) = declared("PI_REASONING_LEVEL").filter(|word| !word.is_empty())
+    {
+        answer.effort = Ok(Member::Session(effort));
+    }
+    answer
+}
+
+/// The native ID Pi's Bash tool sets for each invocation, including after
+/// an in-process switch. The caller separately proves launch ownership.
+/// See Pi v0.87.1 `packages/coding-agent/src/core/tools/bash.ts`,
+/// `resolveSpawnContext`.
+pub fn pi_tool_session() -> Option<String> {
+    std::env::var("PI_SESSION_ID")
+        .ok()
+        .filter(|id| !id.is_empty())
 }
 
 impl Now {

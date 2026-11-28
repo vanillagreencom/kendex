@@ -4,6 +4,13 @@
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
+use agent_runtime::context::{Member, calling_session, pi_tool_session};
+use agent_runtime::controller::{Overseer, status};
+use agent_runtime::effects::{Target, predecessor_identity};
+use agent_runtime::harness::Harness as NativeHarness;
+use agent_runtime::launch::LAUNCH_EFFORT_VAR;
+use agent_runtime::reading::Reading as ProcessReading;
+use agent_runtime::{record, rows, session as native_session};
 use serde_json::{Value, json};
 
 use super::answer::{Harness, Said};
@@ -14,6 +21,7 @@ use super::role;
 use super::{Answer, Flow, Turn, Vars};
 use crate::marker::{self, CONTEXT_RECORD};
 use crate::ops::store::handoff_standing;
+use crate::settings::Settings;
 use crate::watch::context::ContextRecord;
 
 /// Why no record of the caller's session could be bound.
@@ -54,12 +62,9 @@ pub fn bound_session(mailbox: &Path) -> Result<ContextRecord, Unbound> {
 }
 
 /// The model, effort and name of the session bound at the caller's pane,
-/// for a call that names no session: the lane at the caller's directory,
-/// its record bound by [`bound_session`], and agent-runtime's reading of the
-/// session that record names, printed as `agent-runtime session model`
-/// prints it, so the record keeps one reader and the session one. With no
-/// lane, no record or one of another pane, the one line `session-unnamed`
-/// at exit 2; a lane the turn end refuses to read keeps that refusal.
+/// for a call that names no session. The lane's context or the live
+/// controller binds it. The session reader supplies the current values,
+/// with a bound launch's effort filling an unrecorded session effort.
 pub fn session(private_env: bool) -> Answer {
     let vars = Vars::read(private_env);
     let mut turn = Turn::new(Harness::Unlisted, PathBuf::new());
@@ -75,15 +80,16 @@ pub fn session(private_env: bool) -> Answer {
         Err(invalid) => return turn.refuse(Said::PayloadInvalid, &invalid.0),
     };
     let dir = vars.project_dir.as_ref().unwrap_or(&vars.pwd).clone();
-    let mailbox = match Lane::read(&mut turn, &vars, &payload) {
-        Ok(Lane {
-            mail_root,
-            item: Some(item),
-            ..
-        }) => mail_root.join(item),
+    let lane = match Lane::read(&mut turn, &vars, &payload) {
+        Ok(lane) => lane,
         Err(answer) if answer.code != 0 => return answer,
-        Ok(_) | Err(_) => return unnamed(format!("dir={} cause=no lane", dir.display())),
+        Err(_) => return unnamed(format!("dir={} cause=no lane", dir.display())),
     };
+    let Some(item) = &lane.item else {
+        return controller_session(&mut turn, &vars, &lane, &payload)
+            .unwrap_or_else(|cause| unnamed(format!("dir={} cause={cause}", dir.display())));
+    };
+    let mailbox = lane.mail_root.join(item);
     let path = mailbox.join(CONTEXT_RECORD);
     let record = match bound_session(&mailbox) {
         Ok(record) => record,
@@ -100,21 +106,196 @@ pub fn session(private_env: bool) -> Answer {
             ));
         }
     };
-    let harness = record
-        .harness
-        .as_deref()
-        .and_then(agent_runtime::harness::Harness::parse);
-    let Some(harness) = harness else {
+    let Some(harness) = record.harness.as_deref().and_then(NativeHarness::parse) else {
         return unnamed(format!("record={} cause=no harness", path.display()));
     };
     let session = record.session_id.unwrap_or_default();
-    let transcript = record.transcript.map(PathBuf::from);
-    let now = agent_runtime::context::calling_session(harness, &session, transcript.as_deref());
-    let mut stdout = String::new();
-    for line in now.lines(harness, &session) {
-        stdout.push_str(&line);
-        stdout.push('\n');
+    let bound = |cause| unnamed(format!("record={} cause={cause}", path.display()));
+    if let Err(cause) = verify_native(harness, &session) {
+        return bound(cause);
     }
+    let settings = match marks::marks_settings(&mut turn, &lane.root, vars.private_env) {
+        Ok(settings) => settings,
+        Err(cause) => return bound(format!("settings unreadable: {cause}")),
+    };
+    let effort = match lane_effort(
+        &lane,
+        item,
+        &settings,
+        harness,
+        &session,
+        record.pane_key.is_some(),
+    ) {
+        Ok(effort) => effort,
+        Err(cause) => return bound(cause),
+    };
+    session_answer(
+        harness,
+        &session,
+        record.transcript.as_deref().map(Path::new),
+        effort.as_deref(),
+    )
+}
+
+/// Binding comes before reading either the launch declaration or transcript.
+fn lane_effort(
+    lane: &Lane,
+    item: &str,
+    settings: &Settings,
+    harness: NativeHarness,
+    session: &str,
+    pane_bound: bool,
+) -> Result<Option<String>, String> {
+    if let Some(hosted) = super::model::hosted_caller(lane)? {
+        require_ancestor(settings, harness, hosted.leader.pid)?;
+        return Ok(declared_launch_effort());
+    }
+    let launch = crate::send::lane_record(settings, item).map_err(|cause| {
+        let fleet = record::fleet_path(&settings.state_dir);
+        format!("fleet {} unreadable: {cause}", fleet.display())
+    })?;
+    let lead = launch
+        .as_ref()
+        .filter(|launch| !launch.provider_hosted() && !launch.session_channel())
+        .and_then(|launch| crate::send::lead_call(settings, launch));
+    let process_bound = match lead {
+        Some(ProcessReading::Live(_)) => true,
+        Some(ProcessReading::Unreadable { cause }) => return Err(cause.to_owned()),
+        None if pane_bound => false,
+        Some(ProcessReading::Gone) | None => return Err("no caller binding".to_owned()),
+    };
+    let effort = launch
+        .filter(|launch| {
+            launch.session_id.as_deref() == Some(session)
+                && launch.harness.as_deref() == Some(harness.name())
+        })
+        .and_then(|launch| {
+            if process_bound && let Some(effort) = declared_launch_effort() {
+                return Some(effort);
+            }
+            launch.effort
+        });
+    Ok(effort)
+}
+
+/// Jarvis's status command resolves its home's fleet and calls this same
+/// status reader. Use the reader directly so a comment cannot reconcile
+/// open controller intents as the command can.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "find the bound Claude controller's transcript from its launch directory for the shared session reader"
+)]
+fn controller_session(
+    turn: &mut Turn,
+    vars: &Vars,
+    lane: &Lane,
+    payload: &Payload,
+) -> Result<Answer, String> {
+    role::session_pane(turn, vars, lane, payload).map_err(|answer| answer.stderr)?;
+    let key = turn.role.key.clone().ok_or_else(|| {
+        turn.role
+            .unkeyed
+            .clone()
+            .unwrap_or_else(|| "no caller pane".to_owned())
+    })?;
+    let settings = marks::marks_settings(turn, &lane.root, vars.private_env)
+        .map_err(|cause| format!("settings unreadable: {cause}"))?;
+    let fleet = record::fleet_path(&settings.state_dir);
+    // This invocation has no native hook payload. The caller's pane and the
+    // live harness process serving this command establish its identity.
+    let caller = status::CallerKey {
+        server: &key.server.to_string(),
+        socket: Some(&key.socket),
+        pane: &key.pane,
+        harness: "",
+        home: "",
+        session: "",
+    };
+    let status = status::status(&fleet, &settings.engine, Some(&caller)).map_err(|cause| {
+        if matches!(cause, agent_runtime::Error::RecordMissing { .. }) {
+            return "no controller record".to_owned();
+        }
+        format!("controller status {} unreadable: {cause}", fleet.display())
+    })?;
+    if !status.live
+        || !status
+            .caller
+            .is_some_and(|caller| caller.binding == status::Binding::Bound)
+    {
+        return Err("no caller binding".to_owned());
+    }
+    let recorded = status
+        .recorded
+        .ok_or_else(|| "no controller record".to_owned())?;
+    let controller: Overseer = serde_json::from_value(recorded)
+        .map_err(|cause| format!("controller record unreadable: {cause}"))?;
+    let identity =
+        predecessor_identity(&controller).ok_or_else(|| "no controller process".to_owned())?;
+    let word = |key| controller.extra.get(key).and_then(Value::as_str);
+    let harness = word("harness")
+        .and_then(NativeHarness::parse)
+        .ok_or_else(|| "no controller harness".to_owned())?;
+    require_ancestor(&settings, harness, identity.pid)?;
+    let session = controller
+        .session_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "no controller session".to_owned())?;
+    verify_native(harness, session)?;
+    let transcript = word("cwd").and_then(|cwd| {
+        let home = super::model::harness_home(harness, vars);
+        native_session::fixed_file(harness, &home, Path::new(cwd), session)
+    });
+    let effort = declared_launch_effort();
+    Ok(session_answer(
+        harness,
+        session,
+        transcript.as_deref(),
+        effort.as_deref().or_else(|| word("effort")),
+    ))
+}
+
+fn require_ancestor(settings: &Settings, harness: NativeHarness, pid: u32) -> Result<(), String> {
+    let target = Target::new(&settings.engine.harness_binaries, harness).ok();
+    let is_harness = |name: &str| {
+        NativeHarness::ALL
+            .iter()
+            .any(|harness| harness.owns_process(name))
+            || target.as_ref().is_some_and(|target| target.owns(name))
+    };
+    match rows::served_by_here(pid, &is_harness) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("no caller binding".to_owned()),
+        Err(unread) => Err(unread.cause.to_owned()),
+    }
+}
+
+fn verify_native(harness: NativeHarness, session: &str) -> Result<(), String> {
+    if harness == NativeHarness::Pi && pi_tool_session().as_deref() != Some(session) {
+        return Err("Pi tool session does not match the bound session".to_owned());
+    }
+    Ok(())
+}
+
+fn declared_launch_effort() -> Option<String> {
+    std::env::var(LAUNCH_EFFORT_VAR)
+        .ok()
+        .filter(|effort| !effort.is_empty())
+}
+
+fn session_answer(
+    harness: NativeHarness,
+    session: &str,
+    transcript: Option<&Path>,
+    launch_effort: Option<&str>,
+) -> Answer {
+    let mut now = calling_session(harness, session, transcript);
+    if matches!(now.effort, Ok(Member::Unrecorded))
+        && let Some(effort) = launch_effort.filter(|effort| !effort.is_empty())
+    {
+        now.effort = Ok(Member::Launch(effort.to_owned()));
+    }
+    let stdout = format!("{}\n", now.lines(harness, session).join("\n"));
     Answer {
         stdout,
         stderr: String::new(),

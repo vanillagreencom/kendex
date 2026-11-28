@@ -327,10 +327,13 @@ fn launch_record(lane: &Lane) -> Result<Option<serde_json::Map<String, Value>>, 
     };
     let item = marker::item_name(item).map_err(|e| e.to_string())?;
     let path = marker::launch_path(common, item);
-    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
-        return Ok(None);
-    }
     let unread = |cause: &dyn std::fmt::Display| format!("{}: {cause}", path.display());
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(cause) => return Err(unread(&cause)),
+    }
     let text = std::fs::read_to_string(&path).map_err(|e| unread(&e))?;
     let record: Value = serde_json::from_str(&text).map_err(|e| unread(&e))?;
     let Value::Object(record) = record else {
@@ -346,6 +349,39 @@ fn identity_file(record: &serde_json::Map<String, Value>) -> Option<&str> {
         .get("identity_file")
         .and_then(Value::as_str)
         .filter(|file| file.starts_with('/'))
+}
+
+pub(super) struct HostedCaller {
+    record: serde_json::Map<String, Value>,
+    file: PathBuf,
+    pub leader: agent_runtime::process::Identity,
+}
+
+/// The hosted launch, only when its live recorded group serves this caller.
+pub(super) fn hosted_caller(lane: &Lane) -> Result<Option<HostedCaller>, String> {
+    let Some(record) = launch_record(lane)? else {
+        return Ok(None);
+    };
+    let Some(file) = identity_file(&record).map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if !std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.is_file()) {
+        return Err(format!("{}: no regular identity file", file.display()));
+    }
+    let reading = agent_runtime::group::reading(&file, Some(std::process::id()))
+        .map_err(|e| e.to_string())?;
+    if reading["reading"] != "live" || reading["member"] != true {
+        return Err(format!(
+            "{}: this caller is no member of the recorded group: {reading}",
+            file.display()
+        ));
+    }
+    let leader = serde_json::from_value(reading).map_err(|e| e.to_string())?;
+    Ok(Some(HostedCaller {
+        record,
+        file,
+        leader,
+    }))
 }
 
 /// A hosted lane's switch as its member read found it: the launch record
@@ -761,38 +797,18 @@ impl Switch<'_> {
     /// launch record names no identity file, which nothing here recovers;
     /// each read that fails is told once through the item's slot.
     fn hosting(&self, turn: &mut Turn, lane: &Lane) -> Flow<Option<Hosting>> {
-        let unread = |cause: String| ("launch-unread", cause);
-        let read = launch_record(lane).and_then(|record| {
-            let Some(record) = record else {
-                return Ok(None);
-            };
-            let Some(file) = identity_file(&record) else {
-                return Ok(None);
-            };
-            let file = PathBuf::from(file);
-            if !std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.is_file()) {
-                return Err(format!("{}: no regular identity file", file.display()));
-            }
-            let reading = agent_runtime::group::reading(&file, Some(std::process::id()))
-                .map_err(|e| e.to_string())?;
-            let leader = match (&reading["reading"], &reading["member"]) {
-                (Value::String(live), Value::Bool(true)) if live == "live" => {
-                    serde_json::from_value::<agent_runtime::process::Identity>(reading.clone())
-                        .map_err(|e| e.to_string())?
-                }
-                _ => {
-                    return Err(format!(
-                        "{}: this turn end is no member of the recorded group: {reading}",
-                        file.display()
-                    ));
-                }
-            };
-            Ok(Some((record, file, leader)))
-        });
-        let (record, file, leader) = match read.map_err(unread) {
+        let HostedCaller {
+            record,
+            file,
+            leader,
+        } = match hosted_caller(lane) {
             Ok(Some(read)) => read,
             Ok(None) => return Ok(None),
-            Err((cause, words)) => return self.unavailable(turn, cause, &words).map(|()| None),
+            Err(words) => {
+                return self
+                    .unavailable(turn, "launch-unread", &words)
+                    .map(|()| None);
+            }
         };
         if self.session.is_empty() {
             return self.unavailable(turn, "launch-unbound", "").map(|()| None);
